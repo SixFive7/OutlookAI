@@ -9,6 +9,8 @@ namespace OutlookAI.Services
 {
     public class ClaudeService
     {
+        private const string Model = "claude-opus-4-6";
+
         private static readonly object _warmLock = new object();
         private static Process _warmProcess;
         private static string _warmSystemPrompt;
@@ -46,7 +48,7 @@ namespace OutlookAI.Services
                 // Kill any existing warm process
                 KillWarmProcess();
 
-                var effectiveModel = model ?? Config.Model;
+                var effectiveModel = model ?? Model;
                 var effectivePrompt = systemPrompt ?? "You are a professional email writing assistant.";
 
                 var args = new StringBuilder();
@@ -107,7 +109,7 @@ namespace OutlookAI.Services
             if (_lastPrerequisiteError != null)
             {
                 // Try once more in case the user fixed it
-                WarmUpCore(GetSystemPrompt(action), Config.Model);
+                WarmUpCore(GetSystemPrompt(action), Model);
                 if (_lastPrerequisiteError != null)
                     throw new Exception(_lastPrerequisiteError);
             }
@@ -126,7 +128,7 @@ namespace OutlookAI.Services
             {
                 // Use the warm process if it matches and is still alive
                 if (_warmProcess != null && !_warmProcess.HasExited
-                    && _warmSystemPrompt == systemPrompt && _warmModel == Config.Model)
+                    && _warmSystemPrompt == systemPrompt && _warmModel == Model)
                 {
                     process = _warmProcess;
                     _warmProcess = null;
@@ -200,7 +202,7 @@ namespace OutlookAI.Services
         {
             var args = new StringBuilder();
             args.Append("-p - --output-format json --max-turns 1");
-            args.Append(" --model \"").Append(Config.Model).Append("\"");
+            args.Append(" --model \"").Append(Model).Append("\"");
             args.Append(" --system-prompt \"").Append(EscapeShellArg(systemPrompt)).Append("\"");
 
             try

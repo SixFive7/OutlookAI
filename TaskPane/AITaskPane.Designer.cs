@@ -21,7 +21,6 @@ namespace OutlookAI.TaskPane
         private void InitializeComponent()
         {
             this.lblTitle = new System.Windows.Forms.Label();
-            this.btnSettings = new System.Windows.Forms.Button();
             this.grpQuickActions = new System.Windows.Forms.GroupBox();
             this.btnProofread = new System.Windows.Forms.Button();
             this.btnRevise = new System.Windows.Forms.Button();
@@ -56,16 +55,6 @@ namespace OutlookAI.TaskPane
             this.lblTitle.Name = "lblTitle";
             this.lblTitle.Size = new System.Drawing.Size(150, 21);
             this.lblTitle.Text = "AI Writing Assistant";
-
-            // btnSettings
-            this.btnSettings.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.btnSettings.Font = new System.Drawing.Font("Segoe UI", 10F);
-            this.btnSettings.Location = new System.Drawing.Point(220, 8);
-            this.btnSettings.Name = "btnSettings";
-            this.btnSettings.Size = new System.Drawing.Size(30, 26);
-            this.btnSettings.Text = "\u2699";
-            this.btnSettings.UseVisualStyleBackColor = true;
-            this.btnSettings.Click += new System.EventHandler(this.btnSettings_Click);
 
             // grpQuickActions
             this.grpQuickActions.Controls.Add(this.btnProofread);
@@ -244,7 +233,6 @@ namespace OutlookAI.TaskPane
             this.AutoScroll = true;
             this.BackColor = System.Drawing.Color.FromArgb(250, 249, 248);
             this.Controls.Add(this.lblTitle);
-            this.Controls.Add(this.btnSettings);
             this.Controls.Add(this.grpQuickActions);
             this.Controls.Add(this.grpDraft);
             this.Controls.Add(this.grpCustom);
@@ -266,7 +254,6 @@ namespace OutlookAI.TaskPane
         #endregion
 
         private System.Windows.Forms.Label lblTitle;
-        private System.Windows.Forms.Button btnSettings;
         private System.Windows.Forms.GroupBox grpQuickActions;
         private System.Windows.Forms.Button btnProofread;
         private System.Windows.Forms.Button btnRevise;
