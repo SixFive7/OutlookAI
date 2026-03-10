@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.0.0.1 - 2026-03-10
+
 - Use Inno Setup for a proper single-file installer experience
 
 ## v1.0.0.5 - 2026-03-10 (yanked)
