@@ -1,0 +1,55 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Restore packages
+        run: nuget restore OutlookAI.csproj
+
+      - name: Build and Publish
+        run: >
+          msbuild OutlookAI.csproj
+          /target:Publish
+          /p:Configuration=Release
+          /p:ApplicationVersion=1.0.0.${{ github.run_number }}
+          /p:PublishDir=publish\
+          /p:BootstrapperEnabled=true
+          /p:IsWebBootstrapper=false
+
+      - name: Create release archive
+        run: Compress-Archive -Path publish\* -DestinationPath OutlookAI-v1.0.0.${{ github.run_number }}.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0.${{ github.run_number }}
+          name: OutlookAI v1.0.0.${{ github.run_number }}
+          body: |
+            ## OutlookAI v1.0.0.${{ github.run_number }}
+
+            ### Installation
+            1. Download `OutlookAI-v1.0.0.${{ github.run_number }}.zip`
+            2. Extract the zip
+            3. Run `setup.exe`
+
+            ### Prerequisites (installed automatically by setup.exe)
+            - .NET Framework 4.8
+            - Visual Studio Tools for Office Runtime
+          files: OutlookAI-v1.0.0.${{ github.run_number }}.zip

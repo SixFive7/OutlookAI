@@ -17,14 +17,11 @@ An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add
 - [Claude Code Integration](#claude-code-integration)
 - [Getting Started](#getting-started)
   - [Installation](#installation)
-    - [Option 1: Pre-configured Build (Enterprise/RDS)](#option-1-pre-configured-build-enterpriserds)
-    - [Option 2: Per-User Install](#option-2-per-user-install)
   - [Building from Source](#building-from-source)
 - [Usage](#usage)
   - [Quick Actions](#quick-actions)
   - [Draft New Email](#draft-new-email)
   - [Custom Action](#custom-action)
-- [Deployment Scripts](#deployment-scripts)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
@@ -76,25 +73,10 @@ OutlookAI uses a **pre-warmed fire-and-forget** approach: it spawns a `claude -p
 
 ### Installation
 
-#### Option 1: Pre-configured Build (Enterprise/RDS)
-
-1. Build the solution in Release mode
-2. Publish from Visual Studio (Right-click project > Publish)
-3. Copy the publish folder to your deployment location
-4. Run `Deploy\Install-OutlookAI.ps1` as Administrator:
-
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine
-Unblock-File -Path "C:\OutlookAI\Install-OutlookAI.ps1"
-cd C:\OutlookAI
-.\Install-OutlookAI.ps1 -SourcePath "C:\OutlookAI"
-```
-
-#### Option 2: Per-User Install
-
-1. Build and publish the solution
-2. Run `setup.exe` from the publish folder
-3. Open Outlook — the add-in is ready to use
+1. Download the latest release from [GitHub Releases](../../releases/latest)
+2. Extract the zip
+3. Run `setup.exe` (installs prerequisites automatically)
+4. Open Outlook — the add-in is ready to use
 
 ### Building from Source
 
@@ -134,16 +116,6 @@ cd C:\OutlookAI
 - Type any instruction in the Custom Action text box
 - Click **Run Custom Action**
 - The AI will apply your instruction to the current email content
-
-## Deployment Scripts
-
-Located in the `Deploy` folder:
-
-| Script | Purpose |
-|---|---|
-| `Install-OutlookAI.ps1` | Per-machine install for all users (RDS/Terminal Server) |
-| `Uninstall-OutlookAI.ps1` | Remove the add-in |
-| `Enable-OutlookAI-User.ps1` | Re-enable if Outlook disabled the add-in |
 
 ## Troubleshooting
 
