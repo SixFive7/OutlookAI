@@ -95,38 +95,11 @@ jobs:
           /p:IsWebBootstrapper=false
           /p:DefineConstants="VSTO40%3BTRACE%3BUseOfficeInterop"
 
-      - name: Create self-extracting installer
-        shell: pwsh
-        run: |
-          $version = "${{ steps.version.outputs.FULL_VERSION }}"
-          $7z = "C:\Program Files\7-Zip\7z.exe"
-          $sfxModule = "C:\Program Files\7-Zip\7z.sfx"
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
 
-          # Verify the SFX module exists on the runner
-          if (-not (Test-Path $sfxModule)) {
-            Write-Host "Available files in 7-Zip directory:"
-            Get-ChildItem "C:\Program Files\7-Zip" | ForEach-Object { Write-Host "  $_" }
-            throw "7z.sfx not found at $sfxModule"
-          }
-          Write-Host "SFX module: $sfxModule ($(( Get-Item $sfxModule).Length) bytes)"
-
-          # Create archive of publish folder
-          & $7z a -t7z -mx=5 publish.7z .\publish\*
-
-          # SFX config — auto-runs setup.exe after extraction
-          $config = ";!@Install@!UTF-8!`r`nTitle=`"OutlookAI v$version`"`r`nRunProgram=`"setup.exe`"`r`n;!@InstallEnd@!`r`n"
-          [System.IO.File]::WriteAllBytes("sfx_config.txt", [System.Text.Encoding]::ASCII.GetBytes($config))
-
-          # Combine: SFX module + config + archive = single exe
-          $output = "OutlookAI-v$version.exe"
-          cmd /c copy /b "$sfxModule" + sfx_config.txt + publish.7z "$output"
-
-          if (Test-Path $output) {
-            $size = [math]::Round((Get-Item $output).Length / 1MB, 2)
-            Write-Host "Created: $output ($size MB)"
-          } else {
-            throw "Failed to create $output"
-          }
+      - name: Create installer
+        run: iscc /DMyAppVersion=${{ steps.version.outputs.FULL_VERSION }} installer.iss
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
