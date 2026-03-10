@@ -9,13 +9,11 @@ namespace OutlookAI.TaskPane
 {
     public partial class AITaskPane : UserControl
     {
-        private readonly ClaudeService _claudeService;
         private string _lastResult;
 
         public AITaskPane()
         {
             InitializeComponent();
-            _claudeService = new ClaudeService();
         }
 
         /// <summary>
@@ -99,7 +97,7 @@ namespace OutlookAI.TaskPane
 
             try
             {
-                string result = await _claudeService.ProcessEmailAsync(action, emailContent, prompt);
+                string result = await ClaudeService.ProcessEmailAsync(action, emailContent, prompt);
 
                 _lastResult = result;
 

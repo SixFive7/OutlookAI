@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace OutlookAI.Services
 {
-    public class ClaudeService
+    public static class ClaudeService
     {
         private const string Model = "claude-opus-4-6";
         private static readonly string CliArgs = "-p - --output-format json --max-turns 1 --model \"" + Model + "\"";
@@ -69,7 +69,7 @@ namespace OutlookAI.Services
             }
         }
 
-        public async Task<string> ProcessEmailAsync(ActionType action, string emailContent, string customPrompt = "")
+        public static async Task<string> ProcessEmailAsync(ActionType action, string emailContent, string customPrompt = "")
         {
             // Check for known prerequisite issues
             if (_lastPrerequisiteError != null)
@@ -85,7 +85,7 @@ namespace OutlookAI.Services
             return await Task.Run(() => ExecutePrompt(userMessage));
         }
 
-        private string ExecutePrompt(string userMessage)
+        private static string ExecutePrompt(string userMessage)
         {
             Process process = null;
 
@@ -196,7 +196,7 @@ namespace OutlookAI.Services
         /// <summary>
         /// Parses the "result" field from the Claude CLI JSON output.
         /// </summary>
-        private string ParseResult(string json)
+        private static string ParseResult(string json)
         {
             // The --output-format json output has a "result" field with the text
             var resultMarker = "\"result\":\"";
@@ -297,7 +297,7 @@ namespace OutlookAI.Services
             }
         }
 
-        private string UnescapeJson(string text)
+        private static string UnescapeJson(string text)
         {
             if (string.IsNullOrEmpty(text)) return "";
             return text
@@ -314,7 +314,7 @@ namespace OutlookAI.Services
             return text.Substring(0, maxLength) + "...";
         }
 
-        private string GetSystemPrompt(ActionType action)
+        private static string GetSystemPrompt(ActionType action)
         {
             switch (action)
             {
@@ -339,7 +339,7 @@ namespace OutlookAI.Services
             }
         }
 
-        private string BuildUserMessage(ActionType action, string emailContent, string customPrompt)
+        private static string BuildUserMessage(ActionType action, string emailContent, string customPrompt)
         {
             var instructions = GetSystemPrompt(action);
             string task;
