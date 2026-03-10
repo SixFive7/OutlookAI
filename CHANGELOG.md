@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.0.0.5 - 2026-03-10
+
 - Add automated build and release pipeline via GitHub Actions
 - Add ClickOnce installer published as GitHub Release on every push to master
 - Add assembly version synchronization with release version
