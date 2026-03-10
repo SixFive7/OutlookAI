@@ -1,5 +1,7 @@
 # OutlookAI
 
+> **Based on [OutlookAI by kirklandsig](https://github.com/kirklandsig/OutlookAI)** — originally created and released under the MIT License.
+
 An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add-in.
 
 <img width="283" height="317" alt="image" src="https://github.com/user-attachments/assets/7513e75c-c226-4791-853a-d1aacd897883" />
@@ -125,9 +127,15 @@ Located in the `Deploy` folder:
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) file
+This project is a fork of [OutlookAI by kirklandsig](https://github.com/kirklandsig/OutlookAI), licensed under the [MIT License](LICENSE).
+
+Original work: Copyright (c) 2026 kirklandsig
+
+See the [LICENSE](LICENSE) file for the full license text.
 
 ## Acknowledgments
+
+- [kirklandsig/OutlookAI](https://github.com/kirklandsig/OutlookAI) - Original project this fork is based on
 
 - [Anthropic Claude API](https://www.anthropic.com) - AI text generation
 - [OpenAI Whisper API](https://openai.com) - Speech-to-text
