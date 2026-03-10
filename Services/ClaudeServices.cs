@@ -9,11 +9,10 @@ namespace OutlookAI.Services
     public class ClaudeService
     {
         private const string Model = "claude-opus-4-6";
+        private static readonly string CliArgs = "-p - --output-format json --max-turns 1 --model \"" + Model + "\"";
 
         private static readonly object _warmLock = new object();
         private static Process _warmProcess;
-        private static string _warmSystemPrompt;
-        private static string _warmModel;
         private static string _lastPrerequisiteError;
 
         public enum ActionType
@@ -25,13 +24,13 @@ namespace OutlookAI.Services
         /// Pre-warms a Claude CLI process so it's ready when the user clicks an action.
         /// Called at add-in startup and after each completed request.
         /// </summary>
-        public static void WarmUp(string systemPrompt = null, string model = null)
+        public static void WarmUp()
         {
             Task.Run(() =>
             {
                 try
                 {
-                    WarmUpCore(systemPrompt, model);
+                    WarmUpCore();
                 }
                 catch
                 {
@@ -40,38 +39,15 @@ namespace OutlookAI.Services
             });
         }
 
-        private static void WarmUpCore(string systemPrompt, string model)
+        private static void WarmUpCore()
         {
             lock (_warmLock)
             {
-                // Kill any existing warm process
                 KillWarmProcess();
-
-                var effectiveModel = model ?? Model;
-                var effectivePrompt = systemPrompt ?? "You are a professional email writing assistant.";
-
-                var args = new StringBuilder();
-                args.Append("-p - --output-format json --max-turns 1");
-                args.Append(" --model \"").Append(effectiveModel).Append("\"");
-                args.Append(" --system-prompt \"").Append(EscapeShellArg(effectivePrompt)).Append("\"");
 
                 try
                 {
-                    var process = new Process();
-                    process.StartInfo = new ProcessStartInfo
-                    {
-                        FileName = "claude",
-                        Arguments = args.ToString(),
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardInput = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        StandardOutputEncoding = Encoding.UTF8,
-                        StandardErrorEncoding = Encoding.UTF8,
-                    };
-
-                    process.Start();
+                    var process = SpawnProcess();
 
                     // Check if the process exited immediately (missing prerequisites)
                     if (process.WaitForExit(1500) && process.HasExited)
@@ -82,22 +58,13 @@ namespace OutlookAI.Services
                     }
 
                     _warmProcess = process;
-                    _warmSystemPrompt = effectivePrompt;
-                    _warmModel = effectiveModel;
                     _lastPrerequisiteError = null;
-                }
-                catch (Win32Exception)
-                {
-                    _lastPrerequisiteError =
-                        "Claude Code CLI is not installed or not on PATH.\n\n" +
-                        "Install it by running:\n" +
-                        "  npm install -g @anthropic-ai/claude-code\n\n" +
-                        "Then authenticate by running:\n" +
-                        "  claude auth login";
                 }
                 catch (Exception ex)
                 {
-                    _lastPrerequisiteError = "Failed to start Claude Code: " + ex.Message;
+                    // SpawnProcess sets _lastPrerequisiteError for Win32Exception (CLI not found)
+                    if (_lastPrerequisiteError == null)
+                        _lastPrerequisiteError = "Failed to start Claude Code: " + ex.Message;
                 }
             }
         }
@@ -108,36 +75,32 @@ namespace OutlookAI.Services
             if (_lastPrerequisiteError != null)
             {
                 // Try once more in case the user fixed it
-                WarmUpCore(GetSystemPrompt(action), Model);
+                WarmUpCore();
                 if (_lastPrerequisiteError != null)
                     throw new Exception(_lastPrerequisiteError);
             }
 
-            var systemPrompt = GetSystemPrompt(action);
             var userMessage = BuildUserMessage(action, emailContent, customPrompt);
 
-            return await Task.Run(() => ExecutePrompt(systemPrompt, userMessage));
+            return await Task.Run(() => ExecutePrompt(userMessage));
         }
 
-        private string ExecutePrompt(string systemPrompt, string userMessage)
+        private string ExecutePrompt(string userMessage)
         {
             Process process = null;
 
             lock (_warmLock)
             {
-                // Use the warm process if it matches and is still alive
-                if (_warmProcess != null && !_warmProcess.HasExited
-                    && _warmSystemPrompt == systemPrompt && _warmModel == Model)
+                if (_warmProcess != null && !_warmProcess.HasExited)
                 {
                     process = _warmProcess;
                     _warmProcess = null;
                 }
             }
 
-            // If no matching warm process, spawn a fresh one
             if (process == null)
             {
-                process = SpawnProcess(systemPrompt);
+                process = SpawnProcess();
             }
 
             try
@@ -179,7 +142,7 @@ namespace OutlookAI.Services
                     var error = DiagnoseError(stderr, process.ExitCode);
                     _lastPrerequisiteError = IsPrerequisiteError(stderr) ? error : null;
                     // Pre-warm for next attempt
-                    WarmUp(systemPrompt);
+                    WarmUp();
                     throw new Exception(error);
                 }
 
@@ -197,20 +160,15 @@ namespace OutlookAI.Services
             }
         }
 
-        private Process SpawnProcess(string systemPrompt)
+        private static Process SpawnProcess()
         {
-            var args = new StringBuilder();
-            args.Append("-p - --output-format json --max-turns 1");
-            args.Append(" --model \"").Append(Model).Append("\"");
-            args.Append(" --system-prompt \"").Append(EscapeShellArg(systemPrompt)).Append("\"");
-
             try
             {
                 var process = new Process();
                 process.StartInfo = new ProcessStartInfo
                 {
                     FileName = "claude",
-                    Arguments = args.ToString(),
+                    Arguments = CliArgs,
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardInput = true,
@@ -339,12 +297,6 @@ namespace OutlookAI.Services
             }
         }
 
-        private static string EscapeShellArg(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return "";
-            return text.Replace("\\", "\\\\").Replace("\"", "\\\"");
-        }
-
         private string UnescapeJson(string text)
         {
             if (string.IsNullOrEmpty(text)) return "";
@@ -389,20 +341,31 @@ namespace OutlookAI.Services
 
         private string BuildUserMessage(ActionType action, string emailContent, string customPrompt)
         {
+            var instructions = GetSystemPrompt(action);
+            string task;
+
             if (action == ActionType.Draft)
             {
                 if (!string.IsNullOrWhiteSpace(emailContent))
                 {
-                    return "Write a reply email based on these instructions:\n\n" + customPrompt +
+                    task = "Write a reply email based on these instructions:\n\n" + customPrompt +
                            "\n\n--- Email thread for context (do NOT include this in your response, just use it for context) ---\n\n" + emailContent;
                 }
-                return "Write an email based on these instructions:\n\n" + customPrompt;
+                else
+                {
+                    task = "Write an email based on these instructions:\n\n" + customPrompt;
+                }
             }
-            if (action == ActionType.Custom)
+            else if (action == ActionType.Custom)
             {
-                return "Email content:\n\n" + emailContent + "\n\nInstructions: " + customPrompt;
+                task = "Email content:\n\n" + emailContent + "\n\nInstructions: " + customPrompt;
             }
-            return "Email to " + action.ToString().ToLower() + ":\n\n" + emailContent;
+            else
+            {
+                task = "Email to " + action.ToString().ToLower() + ":\n\n" + emailContent;
+            }
+
+            return instructions + "\n\n" + task;
         }
     }
 }
