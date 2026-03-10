@@ -6,7 +6,7 @@ AppId={{78AF2871-0CEB-4451-B80D-455552E37C91}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={tmp}\{#MyAppName}
+DefaultDirName={localappdata}\{#MyAppName}\Setup
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 DisableReadyPage=yes
@@ -23,4 +23,4 @@ CreateAppDir=yes
 Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Run]
-Filename: "{app}\setup.exe"; Flags: nowait shellexec
+Filename: "{app}\setup.exe"; Flags: shellexec waituntilterminated
