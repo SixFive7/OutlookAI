@@ -101,26 +101,41 @@ jobs:
           $version = "${{ steps.version.outputs.FULL_VERSION }}"
           $7z = "C:\Program Files\7-Zip\7z.exe"
 
-          # Download 7-Zip Extra package for the installer SFX module
+          # Download 7-Zip Extra package for the installer SFX module (7zSD.sfx)
           Invoke-WebRequest -Uri "https://www.7-zip.org/a/7z2408-extra.7z" -OutFile 7z-extra.7z
-          & $7z e 7z-extra.7z 7zSD.sfx -o"$PWD" -y
+
+          # Extract everything and find 7zSD.sfx (may be in a subdirectory)
+          & $7z x 7z-extra.7z -osfx-extracted -y
+          $sfxFile = Get-ChildItem -Path sfx-extracted -Recurse -Filter "7zSD.sfx" | Select-Object -First 1
+          if (-not $sfxFile) {
+            Write-Host "Archive contents:"
+            & $7z l 7z-extra.7z
+            throw "7zSD.sfx not found in 7-Zip Extra package"
+          }
+          Write-Host "Found SFX module: $($sfxFile.FullName)"
 
           # Create archive of publish folder
           & $7z a -t7z -mx=5 publish.7z .\publish\*
 
           # SFX config — extracts to temp and auto-runs setup.exe
-          @"
-          ;!@Install@!UTF-8!
-          Title="OutlookAI v$version"
-          RunProgram="setup.exe"
-          ;!@InstallEnd@!
-          "@ | ForEach-Object { $_.Trim() } | Set-Content -Path sfx_config.txt -NoNewline
+          $config = @(
+            ';!@Install@!UTF-8!'
+            "Title=`"OutlookAI v$version`""
+            'RunProgram="setup.exe"'
+            ';!@InstallEnd@!'
+          ) -join "`r`n"
+          [System.IO.File]::WriteAllBytes("sfx_config.txt", [System.Text.Encoding]::ASCII.GetBytes($config))
 
           # Combine: SFX module + config + archive = single exe
-          cmd /c copy /b 7zSD.sfx + sfx_config.txt + publish.7z "OutlookAI-v$version.exe"
+          $output = "OutlookAI-v$version.exe"
+          cmd /c copy /b "$($sfxFile.FullName)" + sfx_config.txt + publish.7z "$output"
 
-          $size = [math]::Round((Get-Item "OutlookAI-v$version.exe").Length / 1MB, 2)
-          Write-Host "Created: OutlookAI-v$version.exe ($size MB)"
+          if (Test-Path $output) {
+            $size = [math]::Round((Get-Item $output).Length / 1MB, 2)
+            Write-Host "Created: $output ($size MB)"
+          } else {
+            throw "Failed to create $output"
+          }
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
