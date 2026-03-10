@@ -12,7 +12,7 @@ namespace OutlookAI.Services
 
         public enum ActionType
         {
-            Proofread, Revise, Draft, Shorten, Lengthen, Formal, Friendly
+            Proofread, Revise, Draft, Shorten, Lengthen, Formal, Friendly, Custom
         }
 
         public async Task<string> ProcessEmailAsync(ActionType action, string emailContent, string customPrompt = "")
@@ -190,6 +190,10 @@ namespace OutlookAI.Services
                 }
                 // New email with no context
                 return "Write an email based on these instructions:\n\n" + customPrompt;
+            }
+            if (action == ActionType.Custom)
+            {
+                return "Email content:\n\n" + emailContent + "\n\nInstructions: " + customPrompt;
             }
             return "Email to " + action.ToString().ToLower() + ":\n\n" + emailContent;
         }
