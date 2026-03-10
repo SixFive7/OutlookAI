@@ -24,7 +24,6 @@ An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add
   - [Quick Actions](#quick-actions)
   - [Draft New Email](#draft-new-email)
   - [Custom Action](#custom-action)
-- [Configuration](#configuration)
 - [Deployment Scripts](#deployment-scripts)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
@@ -108,7 +107,7 @@ cd C:\OutlookAI
 **Build Steps:**
 
 1. Clone this repository
-2. Open `VSTO2\OutlookAI\OutlookAI.sln`
+2. Open `OutlookAI.csproj`
 3. Restore NuGet packages
 4. Build > Rebuild Solution
 
@@ -135,12 +134,6 @@ cd C:\OutlookAI
 - Type any instruction in the Custom Action text box
 - Click **Run Custom Action**
 - The AI will apply your instruction to the current email content
-
-## Configuration
-
-Settings are stored in `%APPDATA%\OutlookAI\config.xml`.
-
-Access the Settings panel by clicking the gear icon in the add-in. The default admin password is `admin`.
 
 ## Deployment Scripts
 
