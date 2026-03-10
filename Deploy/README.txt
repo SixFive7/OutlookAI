@@ -75,9 +75,6 @@ Add-in shows in list but won't load / keeps unchecking:
      * OutlookAI.dll
      * OutlookAI.vsto
      * OutlookAI.dll.manifest
-     * NAudio.Core.dll
-     * NAudio.WinMM.dll
-
 6. Re-register with full trust (run as admin):
 
    $path = "HKLM:\SOFTWARE\Microsoft\Office\Outlook\Addins\OutlookAI"
@@ -111,7 +108,6 @@ Location: C:\Program Files\OutlookAI\
 - OutlookAI.dll          (main add-in)
 - OutlookAI.vsto         (deployment manifest)
 - OutlookAI.dll.manifest (application manifest)
-- NAudio*.dll            (audio recording for voice input)
 - Microsoft.Office.Tools.*.dll (VSTO utilities)
 
 Registry: HKLM\SOFTWARE\Microsoft\Office\Outlook\Addins\OutlookAI

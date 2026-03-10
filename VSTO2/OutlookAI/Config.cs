@@ -15,10 +15,6 @@ namespace OutlookAI
         // Your Anthropic API Key (get one at https://console.anthropic.com)
         public static string ApiKey { get; set; } = "";
 
-        // OpenAI API Key for Whisper speech-to-text (get one at https://platform.openai.com)
-        // Optional - voice input will be disabled if not set
-        public static string OpenAIApiKey { get; set; } = "";
-
         // Admin password for settings panel (set your own password)
         public static string AdminPassword { get; set; } = "admin";
 
@@ -54,8 +50,6 @@ namespace OutlookAI
 
                     if (root.Element("ApiKey") != null)
                         ApiKey = root.Element("ApiKey").Value;
-                    if (root.Element("OpenAIApiKey") != null)
-                        OpenAIApiKey = root.Element("OpenAIApiKey").Value;
                     if (root.Element("AdminPassword") != null)
                         AdminPassword = root.Element("AdminPassword").Value;
                     if (root.Element("Model") != null)
@@ -81,7 +75,6 @@ namespace OutlookAI
                 var doc = new XDocument(
                     new XElement("Config",
                         new XElement("ApiKey", ApiKey),
-                        new XElement("OpenAIApiKey", OpenAIApiKey),
                         new XElement("AdminPassword", AdminPassword),
                         new XElement("Model", Model),
                         new XElement("MaxTokens", MaxTokens)

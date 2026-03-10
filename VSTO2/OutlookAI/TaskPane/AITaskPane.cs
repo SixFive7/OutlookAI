@@ -2,10 +2,6 @@ using System;
 using System.Drawing;
 using System.Windows.Forms;
 using System.Threading.Tasks;
-using System.IO;
-using System.Net;
-using System.Text;
-using NAudio.Wave;
 using OutlookAI.Services;
 using Outlook = Microsoft.Office.Interop.Outlook;
 
@@ -15,13 +11,6 @@ namespace OutlookAI.TaskPane
     {
         private readonly ClaudeService _claudeService;
         private string _lastResult;
-        private WaveInEvent _waveIn;
-        private WaveFileWriter _waveWriter;
-        private string _tempAudioFile;
-        private TextBox _activeTextBox;
-        private Button _activeMicButton;
-        private bool _isRecording = false;
-        private readonly object _recordLock = new object();
 
         public AITaskPane()
         {
@@ -39,275 +28,6 @@ namespace OutlookAI.TaskPane
             panelResult.Visible = false;
             lblStatus.Visible = false;
             _lastResult = null;
-        }
-
-        private void StartRecording(TextBox targetTextBox, Button micButton)
-        {
-            if (_isRecording)
-            {
-                StopRecordingAndTranscribe();
-                return;
-            }
-
-            try
-            {
-                _activeTextBox = targetTextBox;
-                _activeMicButton = micButton;
-
-                // Create temp file for audio
-                _tempAudioFile = Path.Combine(Path.GetTempPath(), $"outlook_ai_{Guid.NewGuid()}.wav");
-
-                // Setup audio recording
-                _waveIn = new WaveInEvent();
-                _waveIn.WaveFormat = new WaveFormat(16000, 16, 1); // 16kHz, 16-bit, mono (optimal for Whisper)
-                _waveIn.DataAvailable += WaveIn_DataAvailable;
-                _waveIn.RecordingStopped += WaveIn_RecordingStopped;
-
-                _waveWriter = new WaveFileWriter(_tempAudioFile, _waveIn.WaveFormat);
-
-                _isRecording = true;
-
-                // Visual feedback
-                micButton.BackColor = Color.LightCoral;
-                micButton.ForeColor = Color.White;
-                micButton.Text = "...";
-                ShowStatus("Recording... Click again to stop and transcribe.", false);
-
-                _waveIn.StartRecording();
-                System.Diagnostics.Debug.WriteLine("Recording started: " + _tempAudioFile);
-            }
-            catch (Exception ex)
-            {
-                ShowStatus("Mic error: " + ex.Message, true);
-                System.Diagnostics.Debug.WriteLine("Recording error: " + ex.Message);
-                CleanupRecording();
-            }
-        }
-
-        private void WaveIn_DataAvailable(object sender, WaveInEventArgs e)
-        {
-            lock (_recordLock)
-            {
-                if (_waveWriter != null && _isRecording)
-                {
-                    _waveWriter.Write(e.Buffer, 0, e.BytesRecorded);
-                }
-            }
-        }
-
-        private void WaveIn_RecordingStopped(object sender, StoppedEventArgs e)
-        {
-            System.Diagnostics.Debug.WriteLine("Recording stopped event fired");
-        }
-
-        private async void StopRecordingAndTranscribe()
-        {
-            if (!_isRecording) return;
-
-            _isRecording = false;
-            var textBox = _activeTextBox;
-            var micButton = _activeMicButton;
-            var audioFile = _tempAudioFile;
-
-            try
-            {
-                // Stop recording
-                _waveIn?.StopRecording();
-
-                lock (_recordLock)
-                {
-                    _waveWriter?.Dispose();
-                    _waveWriter = null;
-                }
-
-                _waveIn?.Dispose();
-                _waveIn = null;
-
-                // Update UI
-                if (micButton != null)
-                {
-                    micButton.BackColor = SystemColors.Control;
-                    micButton.ForeColor = Color.Red;
-                    micButton.Text = "\u25CF";
-                }
-
-                ShowStatus("Transcribing...", false);
-
-                // Check file size
-                var fileInfo = new FileInfo(audioFile);
-                System.Diagnostics.Debug.WriteLine($"Audio file size: {fileInfo.Length} bytes");
-
-                if (fileInfo.Length < 1000)
-                {
-                    ShowStatus("Recording too short. Please try again.", true);
-                    return;
-                }
-
-                // Send to Whisper API
-                string transcription = await Task.Run(() => TranscribeWithWhisper(audioFile));
-
-                if (!string.IsNullOrEmpty(transcription))
-                {
-                    InvokeOnUI(() =>
-                    {
-                        if (textBox != null)
-                        {
-                            // Replace text instead of appending
-                            textBox.Text = transcription;
-                        }
-                        ShowStatus("Transcription complete!", false);
-                    });
-                }
-                else
-                {
-                    InvokeOnUI(() => ShowStatus("No speech detected. Please try again.", true));
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine("Transcription error: " + ex.Message);
-                InvokeOnUI(() => ShowStatus("Transcription error: " + ex.Message, true));
-            }
-            finally
-            {
-                // Cleanup temp file
-                try
-                {
-                    if (File.Exists(audioFile))
-                        File.Delete(audioFile);
-                }
-                catch { }
-
-                _activeTextBox = null;
-                _activeMicButton = null;
-            }
-        }
-
-        private string TranscribeWithWhisper(string audioFilePath)
-        {
-            try
-            {
-                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-
-                string boundary = "----WebKitFormBoundary" + DateTime.Now.Ticks.ToString("x");
-                byte[] fileBytes = File.ReadAllBytes(audioFilePath);
-
-                // Build multipart body in memory
-                using (var bodyStream = new MemoryStream())
-                {
-                    var encoding = new UTF8Encoding(false); // No BOM
-
-                    // File field
-                    byte[] fileHeader = encoding.GetBytes(
-                        $"--{boundary}\r\n" +
-                        $"Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n" +
-                        $"Content-Type: audio/wav\r\n\r\n");
-                    bodyStream.Write(fileHeader, 0, fileHeader.Length);
-                    bodyStream.Write(fileBytes, 0, fileBytes.Length);
-
-                    // Model field
-                    byte[] modelField = encoding.GetBytes(
-                        $"\r\n--{boundary}\r\n" +
-                        $"Content-Disposition: form-data; name=\"model\"\r\n\r\n" +
-                        $"whisper-1");
-                    bodyStream.Write(modelField, 0, modelField.Length);
-
-                    // Language field
-                    byte[] langField = encoding.GetBytes(
-                        $"\r\n--{boundary}\r\n" +
-                        $"Content-Disposition: form-data; name=\"language\"\r\n\r\n" +
-                        $"en");
-                    bodyStream.Write(langField, 0, langField.Length);
-
-                    // Closing boundary
-                    byte[] closing = encoding.GetBytes($"\r\n--{boundary}--\r\n");
-                    bodyStream.Write(closing, 0, closing.Length);
-
-                    byte[] bodyBytes = bodyStream.ToArray();
-
-                    var request = (HttpWebRequest)WebRequest.Create("https://api.openai.com/v1/audio/transcriptions");
-                    request.Method = "POST";
-                    request.ContentType = "multipart/form-data; boundary=" + boundary;
-                    request.ContentLength = bodyBytes.Length;
-                    request.Headers.Add("Authorization", "Bearer " + Config.OpenAIApiKey);
-
-                    using (var requestStream = request.GetRequestStream())
-                    {
-                        requestStream.Write(bodyBytes, 0, bodyBytes.Length);
-                    }
-
-                    using (var response = (HttpWebResponse)request.GetResponse())
-                    using (var reader = new StreamReader(response.GetResponseStream()))
-                    {
-                        string json = reader.ReadToEnd();
-                        System.Diagnostics.Debug.WriteLine("Whisper response: " + json);
-
-                        // Parse "text" field from JSON
-                        int textStart = json.IndexOf("\"text\":");
-                        if (textStart >= 0)
-                        {
-                            textStart = json.IndexOf("\"", textStart + 7) + 1;
-                            int textEnd = json.IndexOf("\"", textStart);
-                            if (textEnd > textStart)
-                            {
-                                string text = json.Substring(textStart, textEnd - textStart);
-                                return text.Replace("\\n", "\n").Replace("\\\"", "\"");
-                            }
-                        }
-                    }
-                }
-            }
-            catch (WebException ex)
-            {
-                if (ex.Response != null)
-                {
-                    using (var reader = new StreamReader(ex.Response.GetResponseStream()))
-                    {
-                        string error = reader.ReadToEnd();
-                        System.Diagnostics.Debug.WriteLine("Whisper API error: " + error);
-                        throw new Exception("Whisper API: " + error);
-                    }
-                }
-                throw;
-            }
-
-            return null;
-        }
-
-        private void CleanupRecording()
-        {
-            _isRecording = false;
-
-            lock (_recordLock)
-            {
-                try { _waveWriter?.Dispose(); } catch { }
-                _waveWriter = null;
-            }
-
-            try { _waveIn?.Dispose(); } catch { }
-            _waveIn = null;
-
-            if (_activeMicButton != null)
-            {
-                _activeMicButton.BackColor = SystemColors.Control;
-                _activeMicButton.ForeColor = Color.Red;
-                _activeMicButton.Text = "\u25CF";
-            }
-
-            try
-            {
-                if (!string.IsNullOrEmpty(_tempAudioFile) && File.Exists(_tempAudioFile))
-                    File.Delete(_tempAudioFile);
-            }
-            catch { }
-
-            _activeTextBox = null;
-            _activeMicButton = null;
-        }
-
-        private void btnMicDraft_Click(object sender, EventArgs e)
-        {
-            StartRecording(txtDraftPrompt, btnMicDraft);
         }
 
         // SetMailItem removed - we always use ActiveInspector now
@@ -354,9 +74,6 @@ namespace OutlookAI.TaskPane
 
         private async Task ProcessAction(ClaudeService.ActionType action, string prompt = "")
         {
-            // Stop any active recording
-            if (_isRecording) CleanupRecording();
-
             string emailContent = GetEmailBody();
 
             // For non-Draft actions, we need existing content to work with
@@ -545,13 +262,11 @@ namespace OutlookAI.TaskPane
             btnFormal.Enabled = enabled;
             btnFriendly.Enabled = enabled;
             btnDraft.Enabled = enabled;
-            btnMicDraft.Enabled = enabled;
             txtDraftPrompt.Enabled = enabled;
         }
 
         partial void DisposeCustomResources()
         {
-            CleanupRecording();
         }
     }
 

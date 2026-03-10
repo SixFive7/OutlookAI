@@ -15,7 +15,6 @@ An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add
   - Formal / Friendly tone
 
 - **Draft New Emails** - Describe what you want to write and let AI generate the email
-  - Voice input support using OpenAI Whisper
   - Context-aware replies (AI sees the email chain)
 
 - **Insert or Replace** - Choose to add content at the top (preserving email chain) or replace everything
@@ -31,13 +30,12 @@ An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add
 
 This add-in requires:
 - **Anthropic API Key** (Claude) - Required for all AI features. Get one at [console.anthropic.com](https://console.anthropic.com)
-- **OpenAI API Key** (Whisper) - Optional, for voice input. Get one at [platform.openai.com](https://platform.openai.com)
 
 ## Installation
 
 ### Option 1: Pre-configured Build (Enterprise/RDS)
 
-1. Edit `VSTO2\OutlookAI\Config.cs` and add your API keys
+1. Edit `VSTO2\OutlookAI\Config.cs` and add your API key
 2. Build the solution in Release mode
 3. Publish from Visual Studio (Right-click project > Publish)
 4. Copy the publish folder to your deployment location
@@ -54,7 +52,7 @@ cd C:\OutlookAI
 
 1. Build and publish the solution
 2. Run `setup.exe` from the publish folder
-3. Open Outlook and configure API keys in the Settings panel
+3. Open Outlook and configure API key in the Settings panel
 
 ## Usage
 
@@ -68,15 +66,9 @@ cd C:\OutlookAI
 - Review the result and click **Insert** or **Replace**
 
 ### Draft New Email
-- Type or speak your instructions (e.g., "Write a thank you email to John for the meeting")
+- Type your instructions (e.g., "Write a thank you email to John for the meeting")
 - Click **Draft Email**
 - Review and insert the result
-
-### Voice Input
-- Click the red circle button to start recording
-- Speak your instructions
-- Click again to stop and transcribe
-- Requires OpenAI API key
 
 ## Building from Source
 
@@ -121,7 +113,7 @@ Located in the `Deploy` folder:
 - Or run: `Get-ChildItem -Path "C:\Program Files\OutlookAI" -Recurse | Unblock-File`
 
 ### API errors
-- Verify your API keys are correct
+- Verify your API key is correct
 - Check your API account has credits/quota
 - Ensure TLS 1.2 is enabled (default on modern Windows)
 
@@ -136,7 +128,4 @@ See the [LICENSE](LICENSE) file for the full license text.
 ## Acknowledgments
 
 - [kirklandsig/OutlookAI](https://github.com/kirklandsig/OutlookAI) - Original project this fork is based on
-
 - [Anthropic Claude API](https://www.anthropic.com) - AI text generation
-- [OpenAI Whisper API](https://openai.com) - Speech-to-text
-- [NAudio](https://github.com/naudio/NAudio) - Audio recording

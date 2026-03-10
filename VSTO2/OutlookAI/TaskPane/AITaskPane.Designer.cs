@@ -32,7 +32,6 @@ namespace OutlookAI.TaskPane
             this.grpDraft = new System.Windows.Forms.GroupBox();
             this.txtDraftPrompt = new System.Windows.Forms.TextBox();
             this.btnDraft = new System.Windows.Forms.Button();
-            this.btnMicDraft = new System.Windows.Forms.Button();
             this.lblStatus = new System.Windows.Forms.Label();
             this.panelResult = new System.Windows.Forms.Panel();
             this.lblResult = new System.Windows.Forms.Label();
@@ -129,7 +128,6 @@ namespace OutlookAI.TaskPane
 
             // grpDraft
             this.grpDraft.Controls.Add(this.txtDraftPrompt);
-            this.grpDraft.Controls.Add(this.btnMicDraft);
             this.grpDraft.Controls.Add(this.btnDraft);
             this.grpDraft.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
             this.grpDraft.Location = new System.Drawing.Point(10, 140);
@@ -144,17 +142,7 @@ namespace OutlookAI.TaskPane
             this.txtDraftPrompt.Location = new System.Drawing.Point(10, 22);
             this.txtDraftPrompt.Multiline = true;
             this.txtDraftPrompt.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.txtDraftPrompt.Size = new System.Drawing.Size(185, 50);
-
-            // btnMicDraft
-            this.btnMicDraft.Font = new System.Drawing.Font("Segoe UI", 14F);
-            this.btnMicDraft.ForeColor = System.Drawing.Color.Red;
-            this.btnMicDraft.Location = new System.Drawing.Point(200, 22);
-            this.btnMicDraft.Name = "btnMicDraft";
-            this.btnMicDraft.Size = new System.Drawing.Size(30, 50);
-            this.btnMicDraft.Text = "\u25CF";
-            this.btnMicDraft.UseVisualStyleBackColor = true;
-            this.btnMicDraft.Click += new System.EventHandler(this.btnMicDraft_Click);
+            this.txtDraftPrompt.Size = new System.Drawing.Size(220, 50);
 
             // btnDraft
             this.btnDraft.Font = new System.Drawing.Font("Segoe UI", 8F);
@@ -256,7 +244,6 @@ namespace OutlookAI.TaskPane
         private System.Windows.Forms.GroupBox grpDraft;
         private System.Windows.Forms.TextBox txtDraftPrompt;
         private System.Windows.Forms.Button btnDraft;
-        private System.Windows.Forms.Button btnMicDraft;
         private System.Windows.Forms.Label lblStatus;
         private System.Windows.Forms.Panel panelResult;
         private System.Windows.Forms.Label lblResult;
