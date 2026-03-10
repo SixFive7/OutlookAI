@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.0.0.1 - 2026-03-10
+
 - Replace Anthropic API with Claude Code CLI as AI backend, using pre-warmed subprocess for zero-latency requests
 - Add Custom Action feature for arbitrary user instructions on email content
 - Add automated build and release pipeline via GitHub Actions
