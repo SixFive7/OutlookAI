@@ -94,12 +94,6 @@ namespace OutlookAI.TaskPane
                 return;
             }
 
-            // For Draft, truncate chain to avoid token limits (keep ~4000 chars)
-            if (action == ClaudeService.ActionType.Draft && emailContent.Length > 4000)
-            {
-                emailContent = emailContent.Substring(0, 4000) + "\n[... earlier messages truncated ...]";
-            }
-
             SetUIEnabled(false);
             ShowStatus("Processing...", false);
 
