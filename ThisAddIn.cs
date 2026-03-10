@@ -34,12 +34,13 @@ namespace OutlookAI
                     return;
                 }
 
-                // Check if task pane already exists for this inspector
+                // Check if task pane already exists for this inspector.
+                // When re-showing a hidden pane, reset it so stale results from
+                // a previous email don't bleed into the new session.
                 foreach (CustomTaskPane pane in this.CustomTaskPanes)
                 {
                     if (pane.Window == inspector)
                     {
-                        // Toggle visibility, reset if showing
                         if (!pane.Visible)
                         {
                             var existingControl = pane.Control as AITaskPane;

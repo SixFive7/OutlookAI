@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 using System.Threading.Tasks;
+using System.Web.Script.Serialization;
 
 namespace OutlookAI.Services
 {
@@ -198,33 +200,17 @@ namespace OutlookAI.Services
         /// </summary>
         private static string ParseResult(string json)
         {
-            // The --output-format json output has a "result" field with the text
-            var resultMarker = "\"result\":\"";
-            var startIndex = json.LastIndexOf(resultMarker);
+            var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+            var parsed = serializer.Deserialize<Dictionary<string, object>>(json);
 
-            if (startIndex == -1)
-            {
-                // Fallback: try "text" field (older CLI versions)
-                resultMarker = "\"text\":\"";
-                startIndex = json.LastIndexOf(resultMarker);
-            }
+            if (parsed.TryGetValue("result", out var result) && result is string resultStr)
+                return resultStr;
 
-            if (startIndex == -1)
-                throw new Exception("Could not parse Claude response. Raw output:\n" + Truncate(json, 500));
+            // Fallback: try "text" field (older CLI versions)
+            if (parsed.TryGetValue("text", out var text) && text is string textStr)
+                return textStr;
 
-            startIndex += resultMarker.Length;
-            var endIndex = startIndex;
-            while (endIndex < json.Length)
-            {
-                endIndex = json.IndexOf("\"", endIndex);
-                if (endIndex == -1) break;
-                if (json[endIndex - 1] != '\\') break;
-                endIndex++;
-            }
-            if (endIndex == -1)
-                throw new Exception("Could not parse Claude response. Raw output:\n" + Truncate(json, 500));
-
-            return UnescapeJson(json.Substring(startIndex, endIndex - startIndex));
+            throw new Exception("Could not parse Claude response. Raw output:\n" + Truncate(json, 500));
         }
 
         private static string DiagnoseError(string stderr, int exitCode)
@@ -295,17 +281,6 @@ namespace OutlookAI.Services
                 _warmProcess.Dispose();
                 _warmProcess = null;
             }
-        }
-
-        private static string UnescapeJson(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return "";
-            return text
-                .Replace("\\n", "\n")
-                .Replace("\\r", "\r")
-                .Replace("\\t", "\t")
-                .Replace("\\\"", "\"")
-                .Replace("\\\\", "\\");
         }
 
         private static string Truncate(string text, int maxLength)

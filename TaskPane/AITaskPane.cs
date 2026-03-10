@@ -137,7 +137,7 @@ namespace OutlookAI.TaskPane
         {
             if (!string.IsNullOrEmpty(_lastResult))
             {
-                if (InsertEmailBody(_lastResult))
+                if (UpdateEmailBody(_lastResult, insert: true))
                 {
                     panelResult.Visible = false;
                     txtDraftPrompt.Text = "";
@@ -150,7 +150,7 @@ namespace OutlookAI.TaskPane
         {
             if (!string.IsNullOrEmpty(_lastResult))
             {
-                if (SetEmailBody(_lastResult))
+                if (UpdateEmailBody(_lastResult, insert: false))
                 {
                     panelResult.Visible = false;
                     txtDraftPrompt.Text = "";
@@ -166,75 +166,41 @@ namespace OutlookAI.TaskPane
             lblStatus.Visible = false;
         }
 
+        private Outlook.MailItem GetCurrentMailItem()
+        {
+            var inspector = Globals.ThisAddIn.Application.ActiveInspector();
+            return inspector?.CurrentItem as Outlook.MailItem;
+        }
+
         private string GetEmailBody()
         {
             try
             {
-                var inspector = Globals.ThisAddIn.Application.ActiveInspector();
-                if (inspector != null)
-                {
-                    var currentItem = inspector.CurrentItem;
-                    if (currentItem is Outlook.MailItem mail)
-                    {
-                        return mail.Body ?? "";
-                    }
-                }
+                return GetCurrentMailItem()?.Body ?? "";
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("GetEmailBody error: " + ex.Message);
-            }
-
-            return "";
-        }
-
-        private bool InsertEmailBody(string text)
-        {
-            try
-            {
-                var inspector = Globals.ThisAddIn.Application.ActiveInspector();
-                if (inspector != null)
-                {
-                    var currentItem = inspector.CurrentItem;
-                    if (currentItem is Outlook.MailItem mail)
-                    {
-                        string existingBody = mail.Body ?? "";
-                        // Insert at top with separator
-                        mail.Body = text + "\n\n" + existingBody;
-                        return true;
-                    }
-                }
-                ShowStatus("Could not find active email window.", true);
-                return false;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine("InsertEmailBody error: " + ex.Message);
-                ShowStatus("Could not update email: " + ex.Message, true);
-                return false;
+                return "";
             }
         }
 
-        private bool SetEmailBody(string text)
+        private bool UpdateEmailBody(string text, bool insert)
         {
             try
             {
-                var inspector = Globals.ThisAddIn.Application.ActiveInspector();
-                if (inspector != null)
+                var mail = GetCurrentMailItem();
+                if (mail == null)
                 {
-                    var currentItem = inspector.CurrentItem;
-                    if (currentItem is Outlook.MailItem mail)
-                    {
-                        mail.Body = text;
-                        return true;
-                    }
+                    ShowStatus("Could not find active email window.", true);
+                    return false;
                 }
-                ShowStatus("Could not find active email window.", true);
-                return false;
+                mail.Body = insert ? text + "\n\n" + (mail.Body ?? "") : text;
+                return true;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine("SetEmailBody error: " + ex.Message);
+                System.Diagnostics.Debug.WriteLine("UpdateEmailBody error: " + ex.Message);
                 ShowStatus("Could not update email: " + ex.Message, true);
                 return false;
             }
