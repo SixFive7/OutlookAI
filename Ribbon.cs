@@ -9,8 +9,6 @@ namespace OutlookAI
     [ComVisible(true)]
     public class Ribbon : Office.IRibbonExtensibility
     {
-        private Office.IRibbonUI ribbon;
-
         public Ribbon()
         {
         }
@@ -26,7 +24,6 @@ namespace OutlookAI
 
         public void Ribbon_Load(Office.IRibbonUI ribbonUI)
         {
-            this.ribbon = ribbonUI;
         }
 
         public void OnAIAssistantClick(Office.IRibbonControl control)
@@ -41,7 +38,7 @@ namespace OutlookAI
 
             foreach (string name in resourceNames)
             {
-                if (name.EndsWith("Ribbon.xml", StringComparison.OrdinalIgnoreCase))
+                if (name.EndsWith(resourceName, StringComparison.OrdinalIgnoreCase))
                 {
                     using (StreamReader reader = new StreamReader(asm.GetManifestResourceStream(name)))
                     {

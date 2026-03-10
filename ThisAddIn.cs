@@ -1,6 +1,5 @@
 ﻿using System;
 using Microsoft.Office.Tools;
-using Outlook = Microsoft.Office.Interop.Outlook;
 using OutlookAI.Services;
 using OutlookAI.TaskPane;
 

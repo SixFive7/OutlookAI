@@ -2,7 +2,6 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace OutlookAI.Services
@@ -277,16 +276,16 @@ namespace OutlookAI.Services
 
             var lower = stderr.ToLowerInvariant();
 
+            if (lower.Contains("node") && (lower.Contains("not recognized") || lower.Contains("not found")))
+                return "Node.js is required for Claude Code CLI but was not found.\n\n" +
+                       "Install Node.js from https://nodejs.org";
+
             if (lower.Contains("not recognized") || lower.Contains("not found") || lower.Contains("no such file"))
                 return "Claude Code CLI is not installed or not on PATH.\n\n" +
                        "Install it by running:\n" +
                        "  npm install -g @anthropic-ai/claude-code\n\n" +
                        "Then authenticate by running:\n" +
                        "  claude auth login";
-
-            if (lower.Contains("node") && (lower.Contains("not recognized") || lower.Contains("not found")))
-                return "Node.js is required for Claude Code CLI but was not found.\n\n" +
-                       "Install Node.js from https://nodejs.org";
 
             if (lower.Contains("auth") || lower.Contains("login") || lower.Contains("unauthorized")
                 || lower.Contains("not logged in") || lower.Contains("token"))
