@@ -4,6 +4,8 @@
 
 An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add-in.
 
+> **⚠️ WARNING: The screenshot below is outdated and does not reflect the current UI. It is a placeholder only and needs to be replaced with an up-to-date screenshot.**
+
 <img width="283" height="317" alt="image" src="https://github.com/user-attachments/assets/7513e75c-c226-4791-853a-d1aacd897883" />
 
 ## Features
@@ -16,6 +18,8 @@ An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add
 
 - **Draft New Emails** - Describe what you want to write and let AI generate the email
   - Context-aware replies (AI sees the email chain)
+
+- **Custom Action** - Type any instruction to apply to the current email (e.g., "translate to Spanish", "add bullet points")
 
 - **Insert, Replace, or Discard** - Review AI results and choose to insert at the top (preserving email chain), replace everything, or discard
 
@@ -69,6 +73,11 @@ cd C:\OutlookAI
 - Type your instructions (e.g., "Write a thank you email to John for the meeting")
 - Click **Draft Email**
 - Review and insert the result
+
+### Custom Action
+- Type any instruction in the Custom Action text box
+- Click **Run Custom Action**
+- The AI will apply your instruction to the current email content
 
 ## Building from Source
 

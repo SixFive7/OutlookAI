@@ -133,6 +133,8 @@ namespace OutlookAI.Services
                     return GetFormalPrompt();
                 case ActionType.Friendly:
                     return GetFriendlyPrompt();
+                case ActionType.Custom:
+                    return GetCustomPrompt();
                 default:
                     return GetDefaultPrompt();
             }
@@ -171,6 +173,11 @@ namespace OutlookAI.Services
         private string GetFriendlyPrompt()
         {
             return "You are a professional editor. Rewrite this email in a warmer, friendlier tone while remaining professional. Return only the rewritten email text.";
+        }
+
+        private string GetCustomPrompt()
+        {
+            return "You are a professional email writing assistant. Follow the user's instructions exactly and apply them to the provided email content. Return only the modified email text without any explanations.";
         }
 
         private string GetDefaultPrompt()

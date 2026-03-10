@@ -24,6 +24,7 @@ namespace OutlookAI.TaskPane
         public void ResetForNewEmail()
         {
             txtDraftPrompt.Text = "";
+            txtCustomPrompt.Text = "";
             txtResult.Text = "";
             panelResult.Visible = false;
             lblStatus.Visible = false;
@@ -72,12 +73,22 @@ namespace OutlookAI.TaskPane
             await ProcessAction(ClaudeService.ActionType.Draft, txtDraftPrompt.Text);
         }
 
+        private async void btnCustom_Click(object sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(txtCustomPrompt.Text))
+            {
+                ShowStatus("Please enter instructions for the custom action.", true);
+                return;
+            }
+            await ProcessAction(ClaudeService.ActionType.Custom, txtCustomPrompt.Text);
+        }
+
         private async Task ProcessAction(ClaudeService.ActionType action, string prompt = "")
         {
             string emailContent = GetEmailBody();
 
-            // For non-Draft actions, we need existing content to work with
-            if (action != ClaudeService.ActionType.Draft && string.IsNullOrWhiteSpace(emailContent))
+            // For non-Draft/Custom actions, we need existing content to work with
+            if (action != ClaudeService.ActionType.Draft && action != ClaudeService.ActionType.Custom && string.IsNullOrWhiteSpace(emailContent))
             {
                 ShowStatus("No email content found. Please write something first.", true);
                 return;
@@ -263,6 +274,8 @@ namespace OutlookAI.TaskPane
             btnFriendly.Enabled = enabled;
             btnDraft.Enabled = enabled;
             txtDraftPrompt.Enabled = enabled;
+            btnCustom.Enabled = enabled;
+            txtCustomPrompt.Enabled = enabled;
         }
 
         partial void DisposeCustomResources()
