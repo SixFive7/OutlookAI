@@ -4,40 +4,64 @@
 
 An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add-in.
 
-> **⚠️ WARNING: The screenshot below is outdated and does not reflect the current UI. It is a placeholder only and needs to be replaced with an up-to-date screenshot.**
+> **WARNING: The screenshot below is outdated and does not reflect the current UI. It is a placeholder only and needs to be replaced with an up-to-date screenshot.**
 
-<img width="283" height="317" alt="image" src="https://github.com/user-attachments/assets/7513e75c-c226-4791-853a-d1aacd897883" />
+<img width="283" height="317" alt="OutlookAI screenshot" src="https://github.com/user-attachments/assets/7513e75c-c226-4791-853a-d1aacd897883" />
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Getting Started](#getting-started)
+  - [API Keys](#api-keys)
+  - [Installation](#installation)
+    - [Option 1: Pre-configured Build (Enterprise/RDS)](#option-1-pre-configured-build-enterpriserds)
+    - [Option 2: Per-User Install](#option-2-per-user-install)
+  - [Building from Source](#building-from-source)
+- [Usage](#usage)
+  - [Quick Actions](#quick-actions)
+  - [Draft New Email](#draft-new-email)
+  - [Custom Action](#custom-action)
+- [Configuration](#configuration)
+- [Deployment Scripts](#deployment-scripts)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
+
+---
 
 ## Features
 
-- **Quick Actions** - One-click buttons to improve your email drafts:
+- **Quick Actions** — One-click buttons to improve your email drafts:
   - Proofread (grammar, spelling, punctuation)
   - Revise (clarity and flow)
   - Shorten / Lengthen
   - Formal / Friendly tone
-
-- **Draft New Emails** - Describe what you want to write and let AI generate the email
+- **Draft New Emails** — Describe what you want to write and let AI generate the email
   - Context-aware replies (AI sees the email chain)
-
-- **Custom Action** - Type any instruction to apply to the current email (e.g., "translate to Spanish", "add bullet points")
-
-- **Insert, Replace, or Discard** - Review AI results and choose to insert at the top (preserving email chain), replace everything, or discard
+- **Custom Action** — Type any instruction to apply to the current email (e.g., "translate to Spanish", "add bullet points")
+- **Insert, Replace, or Discard** — Review AI results and choose to insert at the top (preserving email chain), replace everything, or discard
 
 ## Requirements
 
-- Windows 10/11 or Windows Server 2019/2022/2025
-- Microsoft Outlook 2016, 2019, 2021, or 2024 (desktop version)
-- .NET Framework 4.8
-- [Visual Studio Tools for Office Runtime](https://aka.ms/VSTORuntime)
+| Requirement | Details |
+|---|---|
+| **OS** | Windows 10/11 or Windows Server 2019/2022/2025 |
+| **Outlook** | Microsoft Outlook 2016, 2019, 2021, or 2024 (desktop version) |
+| **Runtime** | .NET Framework 4.8 |
+| **VSTO** | [Visual Studio Tools for Office Runtime](https://aka.ms/VSTORuntime) |
 
-## API Keys Required
+## Getting Started
 
-This add-in requires:
-- **Anthropic API Key** (Claude) - Required for all AI features. Get one at [console.anthropic.com](https://console.anthropic.com)
+### API Keys
 
-## Installation
+This add-in requires an **Anthropic API Key** (Claude) for all AI features. Get one at [console.anthropic.com](https://console.anthropic.com).
 
-### Option 1: Pre-configured Build (Enterprise/RDS)
+### Installation
+
+#### Option 1: Pre-configured Build (Enterprise/RDS)
 
 1. Edit `VSTO2\OutlookAI\Config.cs` and add your API key
 2. Build the solution in Release mode
@@ -52,11 +76,26 @@ cd C:\OutlookAI
 .\Install-OutlookAI.ps1 -SourcePath "C:\OutlookAI"
 ```
 
-### Option 2: Per-User Install
+#### Option 2: Per-User Install
 
 1. Build and publish the solution
 2. Run `setup.exe` from the publish folder
 3. Open Outlook and configure API key in the Settings panel
+
+### Building from Source
+
+**Prerequisites:**
+
+- Visual Studio 2022
+- Office/SharePoint development workload
+- .NET desktop development workload
+
+**Build Steps:**
+
+1. Clone this repository
+2. Open `VSTO2\OutlookAI\OutlookAI.sln`
+3. Restore NuGet packages
+4. Build > Rebuild Solution
 
 ## Usage
 
@@ -65,36 +104,26 @@ cd C:\OutlookAI
 3. The task pane opens on the right side
 
 ### Quick Actions
+
 - Write your email draft first
 - Click any Quick Action button (Proofread, Revise, etc.)
 - Review the result and click **Insert**, **Replace**, or **Discard**
 
 ### Draft New Email
+
 - Type your instructions (e.g., "Write a thank you email to John for the meeting")
 - Click **Draft Email**
 - Review and insert the result
 
 ### Custom Action
+
 - Type any instruction in the Custom Action text box
 - Click **Run Custom Action**
 - The AI will apply your instruction to the current email content
 
-## Building from Source
-
-### Prerequisites
-- Visual Studio 2022
-- Office/SharePoint development workload
-- .NET desktop development workload
-
-### Build Steps
-1. Clone this repository
-2. Open `VSTO2\OutlookAI\OutlookAI.sln`
-3. Restore NuGet packages
-4. Build > Rebuild Solution
-
 ## Configuration
 
-Settings are stored in `%APPDATA%\OutlookAI\config.xml`
+Settings are stored in `%APPDATA%\OutlookAI\config.xml`.
 
 Access the Settings panel by clicking the gear icon in the add-in. The default admin password is `admin`.
 
@@ -102,29 +131,43 @@ Access the Settings panel by clicking the gear icon in the add-in. The default a
 
 Located in the `Deploy` folder:
 
-- `Install-OutlookAI.ps1` - Per-machine install for all users (RDS/Terminal Server)
-- `Uninstall-OutlookAI.ps1` - Remove the add-in
-- `Enable-OutlookAI-User.ps1` - Re-enable if Outlook disabled the add-in
+| Script | Purpose |
+|---|---|
+| `Install-OutlookAI.ps1` | Per-machine install for all users (RDS/Terminal Server) |
+| `Uninstall-OutlookAI.ps1` | Remove the add-in |
+| `Enable-OutlookAI-User.ps1` | Re-enable if Outlook disabled the add-in |
 
 ## Troubleshooting
 
-### Add-in doesn't appear
+<details>
+<summary><strong>Add-in doesn't appear</strong></summary>
+
 - Restart Outlook
 - Check File > Options > Add-ins
 - Run `Enable-OutlookAI-User.ps1`
+</details>
 
-### Add-in keeps getting disabled
+<details>
+<summary><strong>Add-in keeps getting disabled</strong></summary>
+
 - Outlook's "Resiliency" feature may disable slow-loading add-ins
 - Run `Enable-OutlookAI-User.ps1` or add it to logon scripts
+</details>
 
-### "Untrusted" or security errors
+<details>
+<summary><strong>"Untrusted" or security errors</strong></summary>
+
 - Ensure all files are unblocked (Right-click > Properties > Unblock)
 - Or run: `Get-ChildItem -Path "C:\Program Files\OutlookAI" -Recurse | Unblock-File`
+</details>
 
-### API errors
+<details>
+<summary><strong>API errors</strong></summary>
+
 - Verify your API key is correct
 - Check your API account has credits/quota
 - Ensure TLS 1.2 is enabled (default on modern Windows)
+</details>
 
 ## License
 
@@ -136,5 +179,5 @@ See the [LICENSE](LICENSE) file for the full license text.
 
 ## Acknowledgments
 
-- [kirklandsig/OutlookAI](https://github.com/kirklandsig/OutlookAI) - Original project this fork is based on
-- [Anthropic Claude API](https://www.anthropic.com) - AI text generation
+- [kirklandsig/OutlookAI](https://github.com/kirklandsig/OutlookAI) — Original project this fork is based on
+- [Anthropic Claude API](https://www.anthropic.com) — AI text generation
