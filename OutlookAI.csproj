@@ -210,7 +210,6 @@
       <SubType>Code</SubType>
     </Compile>
     <None Include="OutlookAI_TemporaryKey.pfx" />
-    <None Include="packages.config" />
     <Compile Include="Ribbon.cs" />
     <Compile Include="Services\ClaudeServices.cs" />
     <Compile Include="TaskPane\AITaskPane.cs">
