@@ -1,6 +1,7 @@
 ﻿using System;
 using Microsoft.Office.Tools;
 using Outlook = Microsoft.Office.Interop.Outlook;
+using OutlookAI.Services;
 using OutlookAI.TaskPane;
 
 namespace OutlookAI
@@ -9,12 +10,14 @@ namespace OutlookAI
     {
         private void ThisAddIn_Startup(object sender, System.EventArgs e)
         {
-            // Add-in started
+            // Pre-warm a Claude CLI process so the first request is fast
+            ClaudeService.WarmUp();
         }
 
         private void ThisAddIn_Shutdown(object sender, System.EventArgs e)
         {
-            // Cleanup
+            // Kill any idle pre-warmed process
+            ClaudeService.Shutdown();
         }
 
         public void ShowTaskPane()

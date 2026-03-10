@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Xml.Linq;
 
@@ -8,12 +8,9 @@ namespace OutlookAI
     {
         // ============================================================
         // CONFIGURATION
-        // These defaults are empty - configure via Settings panel or
-        // edit before building for pre-configured deployment
+        // These defaults can be changed via Settings panel or
+        // edited before building for pre-configured deployment
         // ============================================================
-
-        // Your Anthropic API Key (get one at https://console.anthropic.com)
-        public static string ApiKey { get; set; } = "";
 
         // Admin password for settings panel (set your own password)
         public static string AdminPassword { get; set; } = "admin";
@@ -48,8 +45,6 @@ namespace OutlookAI
                     var doc = XDocument.Load(ConfigFilePath);
                     var root = doc.Root;
 
-                    if (root.Element("ApiKey") != null)
-                        ApiKey = root.Element("ApiKey").Value;
                     if (root.Element("AdminPassword") != null)
                         AdminPassword = root.Element("AdminPassword").Value;
                     if (root.Element("Model") != null)
@@ -74,7 +69,6 @@ namespace OutlookAI
 
                 var doc = new XDocument(
                     new XElement("Config",
-                        new XElement("ApiKey", ApiKey),
                         new XElement("AdminPassword", AdminPassword),
                         new XElement("Model", Model),
                         new XElement("MaxTokens", MaxTokens)

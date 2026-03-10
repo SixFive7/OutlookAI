@@ -2,7 +2,7 @@
 
 > **Based on [OutlookAI by kirklandsig](https://github.com/kirklandsig/OutlookAI)** — originally created and released under the MIT License.
 
-An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add-in.
+An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add-in. Uses Claude Code CLI as its AI backend, allowing you to use your existing Claude Pro or Max subscription with no separate API key or per-token billing.
 
 > **WARNING: The screenshot below is outdated and does not reflect the current UI. It is a placeholder only and needs to be replaced with an up-to-date screenshot.**
 
@@ -14,8 +14,8 @@ An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add
 
 - [Features](#features)
 - [Requirements](#requirements)
+- [Claude Code Integration](#claude-code-integration)
 - [Getting Started](#getting-started)
-  - [API Keys](#api-keys)
   - [Installation](#installation)
     - [Option 1: Pre-configured Build (Enterprise/RDS)](#option-1-pre-configured-build-enterpriserds)
     - [Option 2: Per-User Install](#option-2-per-user-install)
@@ -52,22 +52,37 @@ An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add
 | **Outlook** | Microsoft Outlook 2016, 2019, 2021, or 2024 (desktop version) |
 | **Runtime** | .NET Framework 4.8 |
 | **VSTO** | [Visual Studio Tools for Office Runtime](https://aka.ms/VSTORuntime) |
+| **Claude Code CLI** | [Install instructions](https://code.claude.com/docs/en/getting-started) — requires a Claude Pro or Max subscription |
+
+## Claude Code Integration
+
+OutlookAI invokes the Claude Code CLI (`claude -p`) as a subprocess for each AI request. Several integration approaches were evaluated during development:
+
+| Approach | Tradeoff |
+|---|---|
+| Persistent subprocess with NDJSON protocol | Eliminates startup latency but requires ~150 lines of protocol handling, process lifecycle management, and crash recovery |
+| Claude Agent SDK via HTTP bridge | Same latency benefit, but adds a Node.js middleman process, ~150MB of deployment overhead, and an extra IPC hop |
+| MCP server mode (`claude mcp serve`) | Designed for tool integration, not prompt-response — adds ~300 lines of JSON-RPC client code for no benefit in this use case |
+| Fire-and-forget subprocess (`claude -p`) | Simple, but pays ~500ms CLI startup cost on every request |
+
+OutlookAI uses a **pre-warmed fire-and-forget** approach: it spawns a `claude -p` process at Outlook startup that waits for input. When the user triggers an action, the prompt is written to the already-warm process's stdin and the response is read from stdout. A new process is immediately pre-warmed in the background for the next request. This gives the zero-latency benefit of a persistent process with the simplicity of fire-and-forget — no protocol implementation, no process lifecycle management, no extra dependencies.
 
 ## Getting Started
 
-### API Keys
+### Claude Code Setup
 
-This add-in requires an **Anthropic API Key** (Claude) for all AI features. Get one at [console.anthropic.com](https://console.anthropic.com).
+1. Install Claude Code CLI: `npm install -g @anthropic-ai/claude-code`
+2. Authenticate: `claude auth login` (sign in with your Claude Pro or Max subscription)
+3. Verify it works: `claude -p "Hello"` should print a response
 
 ### Installation
 
 #### Option 1: Pre-configured Build (Enterprise/RDS)
 
-1. Edit `VSTO2\OutlookAI\Config.cs` and add your API key
-2. Build the solution in Release mode
-3. Publish from Visual Studio (Right-click project > Publish)
-4. Copy the publish folder to your deployment location
-5. Run `Deploy\Install-OutlookAI.ps1` as Administrator:
+1. Build the solution in Release mode
+2. Publish from Visual Studio (Right-click project > Publish)
+3. Copy the publish folder to your deployment location
+4. Run `Deploy\Install-OutlookAI.ps1` as Administrator:
 
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine
@@ -80,7 +95,7 @@ cd C:\OutlookAI
 
 1. Build and publish the solution
 2. Run `setup.exe` from the publish folder
-3. Open Outlook and configure API key in the Settings panel
+3. Open Outlook — the add-in is ready to use
 
 ### Building from Source
 
@@ -162,11 +177,25 @@ Located in the `Deploy` folder:
 </details>
 
 <details>
-<summary><strong>API errors</strong></summary>
+<summary><strong>"Claude Code CLI is not installed" error</strong></summary>
 
-- Verify your API key is correct
-- Check your API account has credits/quota
-- Ensure TLS 1.2 is enabled (default on modern Windows)
+- Install Claude Code: `npm install -g @anthropic-ai/claude-code`
+- Ensure `claude` is on your PATH (restart Outlook after installing)
+</details>
+
+<details>
+<summary><strong>"Claude Code is not authenticated" error</strong></summary>
+
+- Run `claude auth login` in a terminal and sign in with your Claude subscription
+- Restart Outlook after authenticating
+</details>
+
+<details>
+<summary><strong>Requests timing out</strong></summary>
+
+- Check your internet connection
+- Verify Claude Code works: `claude -p "Hello"`
+- Claude may be temporarily overloaded — try again in a moment
 </details>
 
 ## License
@@ -180,4 +209,4 @@ See the [LICENSE](LICENSE) file for the full license text.
 ## Acknowledgments
 
 - [kirklandsig/OutlookAI](https://github.com/kirklandsig/OutlookAI) — Original project this fork is based on
-- [Anthropic Claude API](https://www.anthropic.com) — AI text generation
+- [Claude Code CLI](https://code.claude.com) — AI backend via Claude Code

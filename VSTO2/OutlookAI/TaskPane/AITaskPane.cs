@@ -105,8 +105,7 @@ namespace OutlookAI.TaskPane
 
             try
             {
-                string result = await Task.Run(() =>
-                    _claudeService.ProcessEmailAsync(action, emailContent, prompt).Result);
+                string result = await _claudeService.ProcessEmailAsync(action, emailContent, prompt);
 
                 _lastResult = result;
 
@@ -280,13 +279,13 @@ namespace OutlookAI.TaskPane
 
         partial void DisposeCustomResources()
         {
+            ClaudeService.Shutdown();
         }
     }
 
     public class SettingsForm : Form
     {
         private TextBox txtPassword;
-        private TextBox txtApiKey;
         private ComboBox cboModel;
         private NumericUpDown numMaxTokens;
         private TextBox txtNewPassword;
@@ -298,7 +297,7 @@ namespace OutlookAI.TaskPane
         public SettingsForm()
         {
             this.Text = "AI Assistant Settings";
-            this.Size = new Size(400, 350);
+            this.Size = new Size(400, 300);
             this.StartPosition = FormStartPosition.CenterParent;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
@@ -311,29 +310,26 @@ namespace OutlookAI.TaskPane
 
             lblError = new Label { Location = new Point(20, 80), AutoSize = true, ForeColor = Color.DarkRed, Visible = false };
 
-            panelSettings = new Panel { Location = new Point(0, 110), Size = new Size(400, 200), Visible = false };
+            panelSettings = new Panel { Location = new Point(0, 110), Size = new Size(400, 160), Visible = false };
 
-            var lblApiKey = new Label { Text = "API Key (leave blank to keep current):", Location = new Point(20, 10), AutoSize = true };
-            txtApiKey = new TextBox { Location = new Point(20, 30), Width = 340, PasswordChar = '*' };
-
-            var lblModel = new Label { Text = "Model:", Location = new Point(20, 60), AutoSize = true };
-            cboModel = new ComboBox { Location = new Point(20, 80), Width = 340, DropDownStyle = ComboBoxStyle.DropDownList };
+            var lblModel = new Label { Text = "Model:", Location = new Point(20, 10), AutoSize = true };
+            cboModel = new ComboBox { Location = new Point(20, 30), Width = 340, DropDownStyle = ComboBoxStyle.DropDownList };
             cboModel.Items.AddRange(Config.AvailableModels);
             cboModel.SelectedItem = Config.Model;
 
-            var lblMaxTokens = new Label { Text = "Max Tokens:", Location = new Point(20, 110), AutoSize = true };
-            numMaxTokens = new NumericUpDown { Location = new Point(20, 130), Width = 100, Minimum = 256, Maximum = 4096, Value = Config.MaxTokens };
+            var lblMaxTokens = new Label { Text = "Max Tokens:", Location = new Point(20, 60), AutoSize = true };
+            numMaxTokens = new NumericUpDown { Location = new Point(20, 80), Width = 100, Minimum = 256, Maximum = 4096, Value = Config.MaxTokens };
 
-            var lblNewPassword = new Label { Text = "New Password (leave blank to keep):", Location = new Point(20, 160), AutoSize = true };
-            txtNewPassword = new TextBox { Location = new Point(20, 180), Width = 200, PasswordChar = '*' };
+            var lblNewPassword = new Label { Text = "New Password (leave blank to keep):", Location = new Point(20, 110), AutoSize = true };
+            txtNewPassword = new TextBox { Location = new Point(20, 130), Width = 200, PasswordChar = '*' };
 
-            btnSave = new Button { Text = "Save", Location = new Point(200, 210), Width = 80 };
+            btnSave = new Button { Text = "Save", Location = new Point(200, 160), Width = 80 };
             btnSave.Click += BtnSave_Click;
 
-            var btnCancel = new Button { Text = "Cancel", Location = new Point(290, 210), Width = 80 };
+            var btnCancel = new Button { Text = "Cancel", Location = new Point(290, 160), Width = 80 };
             btnCancel.Click += (s, e) => this.Close();
 
-            panelSettings.Controls.AddRange(new Control[] { lblApiKey, txtApiKey, lblModel, cboModel, lblMaxTokens, numMaxTokens, lblNewPassword, txtNewPassword, btnSave, btnCancel });
+            panelSettings.Controls.AddRange(new Control[] { lblModel, cboModel, lblMaxTokens, numMaxTokens, lblNewPassword, txtNewPassword, btnSave, btnCancel });
             this.Controls.AddRange(new Control[] { lblPassword, txtPassword, btnLogin, lblError, panelSettings });
         }
 
@@ -356,7 +352,6 @@ namespace OutlookAI.TaskPane
         private void BtnSave_Click(object sender, EventArgs e)
         {
             if (!_authenticated) return;
-            if (!string.IsNullOrWhiteSpace(txtApiKey.Text)) Config.ApiKey = txtApiKey.Text;
             if (cboModel.SelectedItem != null) Config.Model = cboModel.SelectedItem.ToString();
             Config.MaxTokens = (int)numMaxTokens.Value;
             if (!string.IsNullOrWhiteSpace(txtNewPassword.Text)) Config.AdminPassword = txtNewPassword.Text;

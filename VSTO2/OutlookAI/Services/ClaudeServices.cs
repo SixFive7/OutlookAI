@@ -1,85 +1,259 @@
 using System;
-using System.IO;
-using System.Net;
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace OutlookAI.Services
 {
     public class ClaudeService
     {
-        private const string ApiUrl = "https://api.anthropic.com/v1/messages";
+        private static readonly object _warmLock = new object();
+        private static Process _warmProcess;
+        private static string _warmSystemPrompt;
+        private static string _warmModel;
+        private static string _lastPrerequisiteError;
 
         public enum ActionType
         {
             Proofread, Revise, Draft, Shorten, Lengthen, Formal, Friendly, Custom
         }
 
+        /// <summary>
+        /// Pre-warms a Claude CLI process so it's ready when the user clicks an action.
+        /// Called at add-in startup and after each completed request.
+        /// </summary>
+        public static void WarmUp(string systemPrompt = null, string model = null)
+        {
+            Task.Run(() =>
+            {
+                try
+                {
+                    WarmUpCore(systemPrompt, model);
+                }
+                catch
+                {
+                    // Warm-up failure is not fatal; error will surface on first use
+                }
+            });
+        }
+
+        private static void WarmUpCore(string systemPrompt, string model)
+        {
+            lock (_warmLock)
+            {
+                // Kill any existing warm process
+                KillWarmProcess();
+
+                var effectiveModel = model ?? Config.Model;
+                var effectivePrompt = systemPrompt ?? "You are a professional email writing assistant.";
+
+                var args = new StringBuilder();
+                args.Append("-p - --output-format json --max-turns 1");
+                args.Append(" --model \"").Append(effectiveModel).Append("\"");
+                args.Append(" --system-prompt \"").Append(EscapeShellArg(effectivePrompt)).Append("\"");
+
+                try
+                {
+                    var process = new Process();
+                    process.StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "claude",
+                        Arguments = args.ToString(),
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardInput = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        StandardOutputEncoding = Encoding.UTF8,
+                        StandardErrorEncoding = Encoding.UTF8,
+                    };
+
+                    process.Start();
+
+                    // Check if the process exited immediately (missing prerequisites)
+                    if (process.WaitForExit(1500) && process.HasExited)
+                    {
+                        var stderr = process.StandardError.ReadToEnd();
+                        _lastPrerequisiteError = DiagnoseError(stderr, process.ExitCode);
+                        return;
+                    }
+
+                    _warmProcess = process;
+                    _warmSystemPrompt = effectivePrompt;
+                    _warmModel = effectiveModel;
+                    _lastPrerequisiteError = null;
+                }
+                catch (Win32Exception)
+                {
+                    _lastPrerequisiteError =
+                        "Claude Code CLI is not installed or not on PATH.\n\n" +
+                        "Install it by running:\n" +
+                        "  npm install -g @anthropic-ai/claude-code\n\n" +
+                        "Then authenticate by running:\n" +
+                        "  claude auth login";
+                }
+                catch (Exception ex)
+                {
+                    _lastPrerequisiteError = "Failed to start Claude Code: " + ex.Message;
+                }
+            }
+        }
+
         public async Task<string> ProcessEmailAsync(ActionType action, string emailContent, string customPrompt = "")
         {
+            // Check for known prerequisite issues
+            if (_lastPrerequisiteError != null)
+            {
+                // Try once more in case the user fixed it
+                WarmUpCore(GetSystemPrompt(action), Config.Model);
+                if (_lastPrerequisiteError != null)
+                    throw new Exception(_lastPrerequisiteError);
+            }
+
+            var systemPrompt = GetSystemPrompt(action);
+            var userMessage = BuildUserMessage(action, emailContent, customPrompt);
+
+            return await Task.Run(() => ExecutePrompt(systemPrompt, userMessage));
+        }
+
+        private string ExecutePrompt(string systemPrompt, string userMessage)
+        {
+            Process process = null;
+
+            lock (_warmLock)
+            {
+                // Use the warm process if it matches and is still alive
+                if (_warmProcess != null && !_warmProcess.HasExited
+                    && _warmSystemPrompt == systemPrompt && _warmModel == Config.Model)
+                {
+                    process = _warmProcess;
+                    _warmProcess = null;
+                }
+            }
+
+            // If no matching warm process, spawn a fresh one
+            if (process == null)
+            {
+                process = SpawnProcess(systemPrompt);
+            }
+
             try
             {
-                // Enable TLS 1.2 and 1.3
-                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls;
-                ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };
+                var stdoutBuilder = new StringBuilder();
+                var stderrBuilder = new StringBuilder();
 
-                var systemPrompt = GetSystemPrompt(action);
-                var userMessage = BuildUserMessage(action, emailContent, customPrompt);
-                var requestBody = CreateRequestJson(systemPrompt, userMessage);
-
-                var request = (HttpWebRequest)WebRequest.Create(ApiUrl);
-                request.Method = "POST";
-                request.ContentType = "application/json";
-                request.Headers.Add("x-api-key", Config.ApiKey);
-                request.Headers.Add("anthropic-version", "2023-06-01");
-
-                using (var streamWriter = new StreamWriter(await request.GetRequestStreamAsync()))
+                process.OutputDataReceived += (s, e) =>
                 {
-                    await streamWriter.WriteAsync(requestBody);
+                    if (e.Data != null) stdoutBuilder.AppendLine(e.Data);
+                };
+                process.ErrorDataReceived += (s, e) =>
+                {
+                    if (e.Data != null) stderrBuilder.AppendLine(e.Data);
+                };
+
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                // Write the user message to stdin, then close to signal EOF
+                process.StandardInput.Write(userMessage);
+                process.StandardInput.Close();
+
+                bool exited = process.WaitForExit(120_000);
+                if (!exited)
+                {
+                    try { process.Kill(); } catch { }
+                    // Pre-warm the next process for the next attempt
+                    WarmUp();
+                    throw new Exception("Request timed out after 2 minutes. Please try again.");
                 }
 
-                using (var response = await request.GetResponseAsync())
-                using (var streamReader = new StreamReader(response.GetResponseStream()))
+                // Flush async output buffers
+                process.WaitForExit();
+
+                if (process.ExitCode != 0)
                 {
-                    var responseText = await streamReader.ReadToEndAsync();
-                    return ParseResponse(responseText);
+                    var stderr = stderrBuilder.ToString();
+                    var error = DiagnoseError(stderr, process.ExitCode);
+                    _lastPrerequisiteError = IsPrerequisiteError(stderr) ? error : null;
+                    // Pre-warm for next attempt
+                    WarmUp(systemPrompt);
+                    throw new Exception(error);
                 }
+
+                var stdout = stdoutBuilder.ToString().Trim();
+                var result = ParseResult(stdout);
+
+                // Pre-warm the next process in the background
+                WarmUp();
+
+                return result;
             }
-            catch (WebException ex)
+            finally
             {
-                if (ex.Response != null)
-                {
-                    using (var streamReader = new StreamReader(ex.Response.GetResponseStream()))
-                    {
-                        var errorText = streamReader.ReadToEnd();
-                        throw new Exception("API Error: " + errorText);
-                    }
-                }
-                throw new Exception("Connection error: " + ex.Message);
+                process.Dispose();
             }
         }
 
-        private string CreateRequestJson(string systemPrompt, string userMessage)
+        private Process SpawnProcess(string systemPrompt)
         {
-            var sb = new StringBuilder();
-            sb.Append("{");
-            sb.Append("\"model\":\"" + EscapeJson(Config.Model) + "\",");
-            sb.Append("\"max_tokens\":" + Config.MaxTokens + ",");
-            sb.Append("\"system\":\"" + EscapeJson(systemPrompt) + "\",");
-            sb.Append("\"messages\":[{");
-            sb.Append("\"role\":\"user\",");
-            sb.Append("\"content\":\"" + EscapeJson(userMessage) + "\"");
-            sb.Append("}]}");
-            return sb.ToString();
+            var args = new StringBuilder();
+            args.Append("-p - --output-format json --max-turns 1");
+            args.Append(" --model \"").Append(Config.Model).Append("\"");
+            args.Append(" --system-prompt \"").Append(EscapeShellArg(systemPrompt)).Append("\"");
+
+            try
+            {
+                var process = new Process();
+                process.StartInfo = new ProcessStartInfo
+                {
+                    FileName = "claude",
+                    Arguments = args.ToString(),
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    StandardOutputEncoding = Encoding.UTF8,
+                    StandardErrorEncoding = Encoding.UTF8,
+                };
+
+                process.Start();
+                return process;
+            }
+            catch (Win32Exception)
+            {
+                _lastPrerequisiteError =
+                    "Claude Code CLI is not installed or not on PATH.\n\n" +
+                    "Install it by running:\n" +
+                    "  npm install -g @anthropic-ai/claude-code\n\n" +
+                    "Then authenticate by running:\n" +
+                    "  claude auth login";
+                throw new Exception(_lastPrerequisiteError);
+            }
         }
 
-        private string ParseResponse(string json)
+        /// <summary>
+        /// Parses the "result" field from the Claude CLI JSON output.
+        /// </summary>
+        private string ParseResult(string json)
         {
-            var contentMarker = "\"text\":\"";
-            var startIndex = json.LastIndexOf(contentMarker);
-            if (startIndex == -1) throw new Exception("Could not parse API response");
+            // The --output-format json output has a "result" field with the text
+            var resultMarker = "\"result\":\"";
+            var startIndex = json.LastIndexOf(resultMarker);
 
-            startIndex += contentMarker.Length;
+            if (startIndex == -1)
+            {
+                // Fallback: try "text" field (older CLI versions)
+                resultMarker = "\"text\":\"";
+                startIndex = json.LastIndexOf(resultMarker);
+            }
+
+            if (startIndex == -1)
+                throw new Exception("Could not parse Claude response. Raw output:\n" + Truncate(json, 500));
+
+            startIndex += resultMarker.Length;
             var endIndex = startIndex;
             while (endIndex < json.Length)
             {
@@ -88,20 +262,86 @@ namespace OutlookAI.Services
                 if (json[endIndex - 1] != '\\') break;
                 endIndex++;
             }
-            if (endIndex == -1) throw new Exception("Could not parse API response");
+            if (endIndex == -1)
+                throw new Exception("Could not parse Claude response. Raw output:\n" + Truncate(json, 500));
 
             return UnescapeJson(json.Substring(startIndex, endIndex - startIndex));
         }
 
-        private string EscapeJson(string text)
+        private static string DiagnoseError(string stderr, int exitCode)
+        {
+            if (string.IsNullOrWhiteSpace(stderr))
+                return $"Claude Code exited with code {exitCode}.";
+
+            var lower = stderr.ToLowerInvariant();
+
+            if (lower.Contains("not recognized") || lower.Contains("not found") || lower.Contains("no such file"))
+                return "Claude Code CLI is not installed or not on PATH.\n\n" +
+                       "Install it by running:\n" +
+                       "  npm install -g @anthropic-ai/claude-code\n\n" +
+                       "Then authenticate by running:\n" +
+                       "  claude auth login";
+
+            if (lower.Contains("node") && (lower.Contains("not recognized") || lower.Contains("not found")))
+                return "Node.js is required for Claude Code CLI but was not found.\n\n" +
+                       "Install Node.js from https://nodejs.org";
+
+            if (lower.Contains("auth") || lower.Contains("login") || lower.Contains("unauthorized")
+                || lower.Contains("not logged in") || lower.Contains("token"))
+                return "Claude Code is not authenticated.\n\n" +
+                       "Run this command in a terminal:\n" +
+                       "  claude auth login\n\n" +
+                       "Then sign in with your Claude subscription.";
+
+            if (lower.Contains("rate limit") || lower.Contains("too many"))
+                return "Rate limit reached. Please wait a moment and try again.";
+
+            if (lower.Contains("overloaded") || lower.Contains("capacity"))
+                return "Claude is currently overloaded. Please try again in a moment.";
+
+            return "Claude Code error: " + Truncate(stderr.Trim(), 300);
+        }
+
+        private static bool IsPrerequisiteError(string stderr)
+        {
+            if (string.IsNullOrWhiteSpace(stderr)) return false;
+            var lower = stderr.ToLowerInvariant();
+            return lower.Contains("not recognized") || lower.Contains("not found")
+                || lower.Contains("auth") || lower.Contains("login")
+                || lower.Contains("unauthorized") || lower.Contains("not logged in")
+                || lower.Contains("no such file");
+        }
+
+        /// <summary>
+        /// Kills any pre-warmed process. Called at add-in shutdown.
+        /// </summary>
+        public static void Shutdown()
+        {
+            lock (_warmLock)
+            {
+                KillWarmProcess();
+            }
+        }
+
+        private static void KillWarmProcess()
+        {
+            if (_warmProcess != null)
+            {
+                try
+                {
+                    if (!_warmProcess.HasExited)
+                        _warmProcess.Kill();
+                }
+                catch { }
+                _warmProcess.Dispose();
+                _warmProcess = null;
+            }
+        }
+
+        private static string EscapeShellArg(string text)
         {
             if (string.IsNullOrEmpty(text)) return "";
-            return text
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"")
-                .Replace("\n", "\\n")
-                .Replace("\r", "\\r")
-                .Replace("\t", "\\t");
+            return text.Replace("\\", "\\\\").Replace("\"", "\\\"");
         }
 
         private string UnescapeJson(string text)
@@ -115,74 +355,35 @@ namespace OutlookAI.Services
                 .Replace("\\\\", "\\");
         }
 
+        private static string Truncate(string text, int maxLength)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length <= maxLength) return text;
+            return text.Substring(0, maxLength) + "...";
+        }
+
         private string GetSystemPrompt(ActionType action)
         {
             switch (action)
             {
                 case ActionType.Proofread:
-                    return GetProofreadPrompt();
+                    return "You are a professional editor. Review the email for grammar, spelling, punctuation, and clarity issues. Return the corrected email text only. Do not add any explanations.";
                 case ActionType.Revise:
-                    return GetRevisePrompt();
+                    return "You are a professional writing assistant. Improve the email clarity, flow, and impact. Return only the revised email text without any explanations.";
                 case ActionType.Draft:
-                    return GetDraftPrompt();
+                    return "You are a professional email writer. Write a clear, professional email based on the instructions. If replying to an email thread, write only your reply - do not include the previous messages. Return only the email text you are composing.";
                 case ActionType.Shorten:
-                    return GetShortenPrompt();
+                    return "You are a professional editor. Condense this email to be more concise while keeping essential information. Return only the shortened email text.";
                 case ActionType.Lengthen:
-                    return GetLengthenPrompt();
+                    return "You are a professional writer. Expand this email with more detail while maintaining professionalism. Return only the expanded email text.";
                 case ActionType.Formal:
-                    return GetFormalPrompt();
+                    return "You are a professional editor. Rewrite this email in a more formal tone suitable for business. Return only the rewritten email text.";
                 case ActionType.Friendly:
-                    return GetFriendlyPrompt();
+                    return "You are a professional editor. Rewrite this email in a warmer, friendlier tone while remaining professional. Return only the rewritten email text.";
                 case ActionType.Custom:
-                    return GetCustomPrompt();
+                    return "You are a professional email writing assistant. Follow the user's instructions exactly and apply them to the provided email content. Return only the modified email text without any explanations.";
                 default:
-                    return GetDefaultPrompt();
+                    return "You are a professional email writing assistant. Help the user with their email based on their instructions. Return only the result.";
             }
-        }
-
-        private string GetProofreadPrompt()
-        {
-            return "You are a professional editor. Review the email for grammar, spelling, punctuation, and clarity issues. Return the corrected email text only. Do not add any explanations.";
-        }
-
-        private string GetRevisePrompt()
-        {
-            return "You are a professional writing assistant. Improve the email clarity, flow, and impact. Return only the revised email text without any explanations.";
-        }
-
-        private string GetDraftPrompt()
-        {
-            return "You are a professional email writer. Write a clear, professional email based on the instructions. If replying to an email thread, write only your reply - do not include the previous messages. Return only the email text you are composing.";
-        }
-
-        private string GetShortenPrompt()
-        {
-            return "You are a professional editor. Condense this email to be more concise while keeping essential information. Return only the shortened email text.";
-        }
-
-        private string GetLengthenPrompt()
-        {
-            return "You are a professional writer. Expand this email with more detail while maintaining professionalism. Return only the expanded email text.";
-        }
-
-        private string GetFormalPrompt()
-        {
-            return "You are a professional editor. Rewrite this email in a more formal tone suitable for business. Return only the rewritten email text.";
-        }
-
-        private string GetFriendlyPrompt()
-        {
-            return "You are a professional editor. Rewrite this email in a warmer, friendlier tone while remaining professional. Return only the rewritten email text.";
-        }
-
-        private string GetCustomPrompt()
-        {
-            return "You are a professional email writing assistant. Follow the user's instructions exactly and apply them to the provided email content. Return only the modified email text without any explanations.";
-        }
-
-        private string GetDefaultPrompt()
-        {
-            return "You are a professional email writing assistant. Help the user with their email based on their instructions. Return only the result.";
         }
 
         private string BuildUserMessage(ActionType action, string emailContent, string customPrompt)
@@ -191,11 +392,9 @@ namespace OutlookAI.Services
             {
                 if (!string.IsNullOrWhiteSpace(emailContent))
                 {
-                    // Replying to an existing email chain
                     return "Write a reply email based on these instructions:\n\n" + customPrompt +
                            "\n\n--- Email thread for context (do NOT include this in your response, just use it for context) ---\n\n" + emailContent;
                 }
-                // New email with no context
                 return "Write an email based on these instructions:\n\n" + customPrompt;
             }
             if (action == ActionType.Custom)
