@@ -35,7 +35,8 @@ jobs:
       - name: Set version
         id: version
         run: |
-          $version = "${{ env.BASE_VERSION }}.${{ github.run_number }}"
+          $count = git rev-list --count HEAD
+          $version = "${{ env.BASE_VERSION }}.$count"
           echo "FULL_VERSION=$version" >> $env:GITHUB_OUTPUT
 
       - name: Stamp assembly version
