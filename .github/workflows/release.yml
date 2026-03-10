@@ -13,9 +13,12 @@ env:
 jobs:
   build:
     runs-on: windows-latest
+    if: github.actor != 'github-actions[bot]'
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
@@ -44,6 +47,40 @@ jobs:
           Set-Content $file $content
           Write-Host "Stamped version: $version"
 
+      - name: Extract changelog
+        id: changelog
+        shell: pwsh
+        run: |
+          $content = Get-Content CHANGELOG.md -Raw
+          # Extract text between "## Unreleased" and the next "## " heading (or end of file)
+          if ($content -match '(?s)## Unreleased\r?\n(.*?)(?=\r?\n## |\z)') {
+            $notes = $Matches[1].Trim()
+          } else {
+            $notes = ""
+          }
+          if ([string]::IsNullOrWhiteSpace($notes)) {
+            # Fallback to commit messages since last tag
+            $lastTag = git describe --tags --abbrev=0 2>$null
+            if ($lastTag) {
+              $notes = git log "$lastTag..HEAD" --oneline --no-merges | Out-String
+            } else {
+              $notes = "Initial release"
+            }
+            $notes = $notes.Trim()
+          }
+          # Write to file to avoid multiline output issues
+          Set-Content -Path release_notes.txt -Value $notes
+          Write-Host "Release notes:`n$notes"
+
+      - name: Stamp changelog
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.FULL_VERSION }}"
+          $date = Get-Date -Format "yyyy-MM-dd"
+          $content = Get-Content CHANGELOG.md -Raw
+          $content = $content -replace '## Unreleased', "## Unreleased`n`n## v$version - $date"
+          Set-Content -Path CHANGELOG.md -Value $content -NoNewline
+
       - name: Restore packages
         run: nuget restore OutlookAI.csproj
 
@@ -66,15 +103,13 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.FULL_VERSION }}
           name: OutlookAI v${{ steps.version.outputs.FULL_VERSION }}
-          body: |
-            ## OutlookAI v${{ steps.version.outputs.FULL_VERSION }}
-
-            ### Installation
-            1. Download `OutlookAI-v${{ steps.version.outputs.FULL_VERSION }}.zip`
-            2. Extract the zip
-            3. Run `setup.exe`
-
-            ### Prerequisites (installed automatically by setup.exe)
-            - .NET Framework 4.8
-            - Visual Studio Tools for Office Runtime
+          body_path: release_notes.txt
           files: OutlookAI-v${{ steps.version.outputs.FULL_VERSION }}.zip
+
+      - name: Commit stamped changelog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "Release v${{ steps.version.outputs.FULL_VERSION }}"
+          git push

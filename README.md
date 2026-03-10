@@ -124,14 +124,13 @@ OutlookAI uses a **pre-warmed fire-and-forget** approach: it spawns a `claude -p
 
 - Restart Outlook
 - Check File > Options > Add-ins
-- Run `Enable-OutlookAI-User.ps1`
 </details>
 
 <details>
 <summary><strong>Add-in keeps getting disabled</strong></summary>
 
 - Outlook's "Resiliency" feature may disable slow-loading add-ins
-- Run `Enable-OutlookAI-User.ps1` or add it to logon scripts
+- File > Options > Add-ins > Manage "Disabled Items" > Go > re-enable OutlookAI
 </details>
 
 <details>
