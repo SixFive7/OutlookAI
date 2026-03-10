@@ -20,6 +20,11 @@ jobs:
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v2
 
+      - name: Import signing certificate
+        run: |
+          $cert = Import-PfxCertificate -FilePath OutlookAI.pfx -CertStoreLocation Cert:\CurrentUser\My
+          Write-Host "Imported certificate: $($cert.Thumbprint)"
+
       - name: Restore packages
         run: nuget restore OutlookAI.csproj
 
@@ -32,6 +37,7 @@ jobs:
           /p:PublishDir=publish\
           /p:BootstrapperEnabled=true
           /p:IsWebBootstrapper=false
+          /p:DefineConstants="VSTO40;TRACE;UseOfficeInterop"
 
       - name: Create release archive
         run: Compress-Archive -Path publish\* -DestinationPath OutlookAI-v1.0.0.${{ github.run_number }}.zip
