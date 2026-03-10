@@ -1,0 +1,139 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+env:
+  BASE_VERSION: "1.0.0"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    if: github.actor != 'github-actions[bot]'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Import signing certificate
+        run: |
+          $cert = Import-PfxCertificate -FilePath OutlookAI.pfx -CertStoreLocation Cert:\CurrentUser\My
+          Write-Host "Imported certificate: $($cert.Thumbprint)"
+
+      - name: Set version
+        id: version
+        run: |
+          $version = "${{ env.BASE_VERSION }}.${{ github.run_number }}"
+          echo "FULL_VERSION=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Stamp assembly version
+        run: |
+          $version = "${{ steps.version.outputs.FULL_VERSION }}"
+          $file = "Properties/AssemblyInfo.cs"
+          $content = Get-Content $file -Raw
+          $content = $content -replace 'AssemblyVersion\(".*?"\)', "AssemblyVersion(`"$version`")"
+          $content = $content -replace 'AssemblyFileVersion\(".*?"\)', "AssemblyFileVersion(`"$version`")"
+          Set-Content $file $content
+          Write-Host "Stamped version: $version"
+
+      - name: Extract changelog
+        id: changelog
+        shell: pwsh
+        run: |
+          $content = Get-Content CHANGELOG.md -Raw
+          # Extract text between "## Unreleased" and the next "## " heading (or end of file)
+          if ($content -match '(?s)## Unreleased\r?\n(.*?)(?=\r?\n## |\z)') {
+            $notes = $Matches[1].Trim()
+          } else {
+            $notes = ""
+          }
+          if ([string]::IsNullOrWhiteSpace($notes)) {
+            # Fallback to commit messages since last tag
+            $lastTag = git describe --tags --abbrev=0 2>$null
+            if ($lastTag) {
+              $notes = git log "$lastTag..HEAD" --oneline --no-merges | Out-String
+            } else {
+              $notes = "Initial release"
+            }
+            $notes = $notes.Trim()
+          }
+          # Write to file to avoid multiline output issues
+          Set-Content -Path release_notes.txt -Value $notes
+          Write-Host "Release notes:`n$notes"
+
+      - name: Stamp changelog
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.FULL_VERSION }}"
+          $date = Get-Date -Format "yyyy-MM-dd"
+          $content = Get-Content CHANGELOG.md -Raw
+          $content = $content -replace '## Unreleased', "## Unreleased`n`n## v$version - $date"
+          Set-Content -Path CHANGELOG.md -Value $content -NoNewline
+
+      - name: Restore packages
+        run: nuget restore OutlookAI.csproj
+
+      - name: Build and Publish
+        run: >
+          msbuild OutlookAI.csproj
+          /target:Publish
+          /p:Configuration=Release
+          /p:ApplicationVersion=${{ steps.version.outputs.FULL_VERSION }}
+          /p:PublishDir=publish\
+          /p:BootstrapperEnabled=true
+          /p:IsWebBootstrapper=false
+          /p:DefineConstants="VSTO40%3BTRACE%3BUseOfficeInterop"
+
+      - name: Create self-extracting installer
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.FULL_VERSION }}"
+          $7z = "C:\Program Files\7-Zip\7z.exe"
+
+          # Download 7-Zip Extra package for the installer SFX module
+          Invoke-WebRequest -Uri "https://www.7-zip.org/a/7z2408-extra.7z" -OutFile 7z-extra.7z
+          & $7z e 7z-extra.7z 7zSD.sfx -o"$PWD" -y
+
+          # Create archive of publish folder
+          & $7z a -t7z -mx=5 publish.7z .\publish\*
+
+          # SFX config — extracts to temp and auto-runs setup.exe
+          @"
+          ;!@Install@!UTF-8!
+          Title="OutlookAI v$version"
+          RunProgram="setup.exe"
+          ;!@InstallEnd@!
+          "@ | ForEach-Object { $_.Trim() } | Set-Content -Path sfx_config.txt -NoNewline
+
+          # Combine: SFX module + config + archive = single exe
+          cmd /c copy /b 7zSD.sfx + sfx_config.txt + publish.7z "OutlookAI-v$version.exe"
+
+          $size = [math]::Round((Get-Item "OutlookAI-v$version.exe").Length / 1MB, 2)
+          Write-Host "Created: OutlookAI-v$version.exe ($size MB)"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.FULL_VERSION }}
+          name: OutlookAI v${{ steps.version.outputs.FULL_VERSION }}
+          body_path: release_notes.txt
+          files: OutlookAI-v${{ steps.version.outputs.FULL_VERSION }}.exe
+
+      - name: Commit stamped changelog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "Release v${{ steps.version.outputs.FULL_VERSION }}"
+          git push
