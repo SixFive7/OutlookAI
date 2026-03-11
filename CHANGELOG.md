@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.0.0.49 - 2026-03-11
+
 - Add AI Assistant sidebar for inline replies in the reading pane
 - Auto-show the AI sidebar whenever composing an email (new, reply, forward)
 - Remove the ribbon button — the sidebar now appears automatically
