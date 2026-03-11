@@ -30,8 +30,8 @@
     <DefineConstants>VSTO40</DefineConstants>
     <ResolveComReferenceSilent>true</ResolveComReferenceSilent>
     <PublishUrl>publish\</PublishUrl>
-    <ApplicationVersion>1.0.0.*</ApplicationVersion>
-    <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
+    <ApplicationVersion>1.0.0.0</ApplicationVersion>
+    <AutoIncrementApplicationRevision>false</AutoIncrementApplicationRevision>
     <BootstrapperEnabled>true</BootstrapperEnabled>
     <IsWebBootstrapper>false</IsWebBootstrapper>
     <ProductName>OutlookAI</ProductName>
@@ -197,7 +197,7 @@
     <Compile Include="Properties\AssemblyInfo.cs">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="Ribbon.cs" />
+
     <Compile Include="Services\ClaudeServices.cs" />
     <Compile Include="TaskPane\AITaskPane.cs">
       <SubType>UserControl</SubType>
@@ -216,9 +216,6 @@
       <DependentUpon>ThisAddIn.Designer.xml</DependentUpon>
     </Compile>
     <AppDesigner Include="Properties\" />
-  </ItemGroup>
-  <ItemGroup>
-    <EmbeddedResource Include="Ribbon.xml" />
   </ItemGroup>
   <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">10.0</VisualStudioVersion>

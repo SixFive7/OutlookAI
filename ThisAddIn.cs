@@ -1,75 +1,151 @@
-﻿using System;
+using System;
 using Microsoft.Office.Tools;
 using OutlookAI.Services;
 using OutlookAI.TaskPane;
+using Outlook = Microsoft.Office.Interop.Outlook;
 
 namespace OutlookAI
 {
     public partial class ThisAddIn
     {
-        private void ThisAddIn_Startup(object sender, System.EventArgs e)
+        private Outlook.Inspectors _inspectors;
+        private Outlook.Explorer _explorer;
+
+        private void ThisAddIn_Startup(object sender, EventArgs e)
         {
-            // Pre-warm a Claude CLI process so the first request is fast
             ClaudeService.WarmUp();
+
+            // Auto-show task pane when a compose inspector opens
+            _inspectors = this.Application.Inspectors;
+            _inspectors.NewInspector += Inspectors_NewInspector;
+
+            // Auto-show task pane for inline replies in the Explorer.
+            // Wrapped in try-catch so a failure here doesn't prevent the
+            // Inspector hookup above from working.
+            try
+            {
+                _explorer = this.Application.ActiveExplorer();
+                if (_explorer != null)
+                {
+                    ((Outlook.ExplorerEvents_10_Event)_explorer).InlineResponse += Explorer_InlineResponse;
+                    ((Outlook.ExplorerEvents_10_Event)_explorer).InlineResponseClose += Explorer_InlineResponseClose;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("Explorer event hookup failed: " + ex.Message);
+            }
         }
 
-        private void ThisAddIn_Shutdown(object sender, System.EventArgs e)
+        private void ThisAddIn_Shutdown(object sender, EventArgs e)
         {
-            // Kill any idle pre-warmed process
             ClaudeService.Shutdown();
+
+            if (_inspectors != null)
+                _inspectors.NewInspector -= Inspectors_NewInspector;
+
+            if (_explorer != null)
+            {
+                try
+                {
+                    ((Outlook.ExplorerEvents_10_Event)_explorer).InlineResponse -= Explorer_InlineResponse;
+                    ((Outlook.ExplorerEvents_10_Event)_explorer).InlineResponseClose -= Explorer_InlineResponseClose;
+                }
+                catch { }
+            }
         }
 
-        public void ShowTaskPane()
+        private void Inspectors_NewInspector(Outlook.Inspector inspector)
         {
             try
             {
-                var inspector = this.Application.ActiveInspector();
-                if (inspector == null)
+                // CurrentItem is often not available yet when NewInspector fires.
+                // Defer task pane creation to the Activate event which fires once
+                // the inspector window is fully loaded.
+                ((Outlook.InspectorEvents_10_Event)inspector).Activate += () =>
                 {
-                    System.Windows.Forms.MessageBox.Show(
-                        "Please open an email first.",
-                        "AI Assistant",
-                        System.Windows.Forms.MessageBoxButtons.OK,
-                        System.Windows.Forms.MessageBoxIcon.Information);
-                    return;
-                }
+                    ShowTaskPaneForInspector(inspector);
+                };
+            }
+            catch
+            {
+                // Fallback: try creating the task pane immediately
+                ShowTaskPaneForInspector(inspector);
+            }
+        }
 
-                // Check if task pane already exists for this inspector.
-                // When re-showing a hidden pane, reset it so stale results from
-                // a previous email don't bleed into the new session.
+        private void ShowTaskPaneForInspector(Outlook.Inspector inspector)
+        {
+            try
+            {
+                // Activate fires on every focus gain; only add the pane once.
                 foreach (CustomTaskPane pane in this.CustomTaskPanes)
                 {
                     if (pane.Window == inspector)
-                    {
-                        if (!pane.Visible)
-                        {
-                            var existingControl = pane.Control as AITaskPane;
-                            existingControl?.ResetForNewEmail();
-                        }
-                        pane.Visible = !pane.Visible;
                         return;
-                    }
                 }
 
-                // Create new task pane
-                var taskPaneControl = new AITaskPane();
+                if (!(inspector.CurrentItem is Outlook.MailItem mailItem) || mailItem.Sent)
+                    return;
+
+                var taskPaneControl = new AITaskPane(isInlineResponse: false);
                 var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", inspector);
                 customTaskPane.Width = 280;
                 customTaskPane.Visible = true;
             }
             catch (Exception ex)
             {
-                System.Windows.Forms.MessageBox.Show(
-                    $"Error: {ex.Message}",
-                    "AI Assistant",
-                    System.Windows.Forms.MessageBoxButtons.OK,
-                    System.Windows.Forms.MessageBoxIcon.Error);
+                System.Diagnostics.Debug.WriteLine("ShowTaskPaneForInspector error: " + ex.Message);
             }
         }
 
-        protected override Microsoft.Office.Core.IRibbonExtensibility CreateRibbonExtensibilityObject()
+        private void Explorer_InlineResponse(object item)
         {
-            return new Ribbon();
+            try
+            {
+                if (!(item is Outlook.MailItem))
+                    return;
+
+                // Reuse existing explorer task pane if one was already created
+                foreach (CustomTaskPane pane in this.CustomTaskPanes)
+                {
+                    if (pane.Window == _explorer)
+                    {
+                        var ctrl = pane.Control as AITaskPane;
+                        ctrl?.ResetForNewEmail();
+                        pane.Visible = true;
+                        return;
+                    }
+                }
+
+                var taskPaneControl = new AITaskPane(isInlineResponse: true);
+                var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", _explorer);
+                customTaskPane.Width = 280;
+                customTaskPane.Visible = true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("InlineResponse error: " + ex.Message);
+            }
+        }
+
+        private void Explorer_InlineResponseClose()
+        {
+            try
+            {
+                foreach (CustomTaskPane pane in this.CustomTaskPanes)
+                {
+                    if (pane.Window == _explorer)
+                    {
+                        pane.Visible = false;
+                        return;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("InlineResponseClose error: " + ex.Message);
+            }
         }
 
         #region VSTO generated code

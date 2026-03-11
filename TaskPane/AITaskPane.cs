@@ -10,9 +10,11 @@ namespace OutlookAI.TaskPane
     public partial class AITaskPane : UserControl
     {
         private string _lastResult;
+        private readonly bool _isInlineResponse;
 
-        public AITaskPane()
+        public AITaskPane(bool isInlineResponse = false)
         {
+            _isInlineResponse = isInlineResponse;
             InitializeComponent();
         }
 
@@ -28,8 +30,6 @@ namespace OutlookAI.TaskPane
             lblStatus.Visible = false;
             _lastResult = null;
         }
-
-        // SetMailItem removed - we always use ActiveInspector now
 
         private async void btnProofread_Click(object sender, EventArgs e)
         {
@@ -168,6 +168,12 @@ namespace OutlookAI.TaskPane
 
         private Outlook.MailItem GetCurrentMailItem()
         {
+            if (_isInlineResponse)
+            {
+                var explorer = Globals.ThisAddIn.Application.ActiveExplorer();
+                return explorer?.ActiveInlineResponse as Outlook.MailItem;
+            }
+
             var inspector = Globals.ThisAddIn.Application.ActiveInspector();
             return inspector?.CurrentItem as Outlook.MailItem;
         }
