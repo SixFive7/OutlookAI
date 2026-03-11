@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.0.0.51 - 2026-03-11
+
 ## v1.0.0.49 - 2026-03-11
 
 - Add AI Assistant sidebar for inline replies in the reading pane
