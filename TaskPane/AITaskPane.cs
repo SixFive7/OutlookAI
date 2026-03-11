@@ -11,10 +11,12 @@ namespace OutlookAI.TaskPane
     {
         private string _lastResult;
         private readonly bool _isInlineResponse;
+        private readonly Outlook.Inspector _owningInspector;
 
-        public AITaskPane(bool isInlineResponse = false)
+        public AITaskPane(bool isInlineResponse = false, Outlook.Inspector inspector = null)
         {
             _isInlineResponse = isInlineResponse;
+            _owningInspector = inspector;
             InitializeComponent();
         }
 
@@ -123,6 +125,9 @@ namespace OutlookAI.TaskPane
 
         private void InvokeOnUI(Action action)
         {
+            if (this.IsDisposed || !this.IsHandleCreated)
+                return;
+
             if (this.InvokeRequired)
             {
                 this.Invoke(action);
@@ -174,8 +179,9 @@ namespace OutlookAI.TaskPane
                 return explorer?.ActiveInlineResponse as Outlook.MailItem;
             }
 
-            var inspector = Globals.ThisAddIn.Application.ActiveInspector();
-            return inspector?.CurrentItem as Outlook.MailItem;
+            // Use the owning inspector rather than ActiveInspector so that
+            // clicking a button in a background window processes the right email.
+            return _owningInspector?.CurrentItem as Outlook.MailItem;
         }
 
         private string GetEmailBody()
@@ -235,7 +241,9 @@ namespace OutlookAI.TaskPane
 
         partial void DisposeCustomResources()
         {
-            ClaudeService.Shutdown();
+            // Don't call ClaudeService.Shutdown() here -- it kills the shared
+            // warm process that other panes still need. ThisAddIn_Shutdown
+            // handles final cleanup.
         }
     }
 }

@@ -7,6 +7,8 @@
 - Add AI Assistant sidebar for inline replies in the reading pane
 - Auto-show the AI sidebar whenever composing an email (new, reply, forward)
 - Remove the ribbon button — the sidebar now appears automatically
+- Fix crash when closing a compose window while an AI request is in-flight
+- Fix wrong email being processed when multiple compose windows are open
 
 ## v1.0.0.47 - 2026-03-10
 

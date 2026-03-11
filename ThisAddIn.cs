@@ -62,10 +62,22 @@ namespace OutlookAI
                 // CurrentItem is often not available yet when NewInspector fires.
                 // Defer task pane creation to the Activate event which fires once
                 // the inspector window is fully loaded.
-                ((Outlook.InspectorEvents_10_Event)inspector).Activate += () =>
+                var events = (Outlook.InspectorEvents_10_Event)inspector;
+
+                Outlook.InspectorEvents_10_ActivateEventHandler activateHandler = null;
+                Outlook.InspectorEvents_10_CloseEventHandler closeHandler = null;
+
+                activateHandler = () => ShowTaskPaneForInspector(inspector);
+                closeHandler = () =>
                 {
-                    ShowTaskPaneForInspector(inspector);
+                    // Release event subscriptions and the captured inspector
+                    // reference so the COM RCW can be garbage-collected.
+                    events.Activate -= activateHandler;
+                    events.Close -= closeHandler;
                 };
+
+                events.Activate += activateHandler;
+                events.Close += closeHandler;
             }
             catch
             {
@@ -88,7 +100,7 @@ namespace OutlookAI
                 if (!(inspector.CurrentItem is Outlook.MailItem mailItem) || mailItem.Sent)
                     return;
 
-                var taskPaneControl = new AITaskPane(isInlineResponse: false);
+                var taskPaneControl = new AITaskPane(isInlineResponse: false, inspector: inspector);
                 var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", inspector);
                 customTaskPane.Width = 280;
                 customTaskPane.Visible = true;
