@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Microsoft.Office.Tools;
 using OutlookAI.Services;
 using OutlookAI.TaskPane;
@@ -9,7 +10,8 @@ namespace OutlookAI
     public partial class ThisAddIn
     {
         private Outlook.Inspectors _inspectors;
-        private Outlook.Explorer _explorer;
+        private Outlook.Explorers _explorers;
+        private readonly List<Outlook.Explorer> _hookedExplorers = new List<Outlook.Explorer>();
 
         private void ThisAddIn_Startup(object sender, EventArgs e)
         {
@@ -19,17 +21,15 @@ namespace OutlookAI
             _inspectors = this.Application.Inspectors;
             _inspectors.NewInspector += Inspectors_NewInspector;
 
-            // Auto-show task pane for inline replies in the Explorer.
-            // Wrapped in try-catch so a failure here doesn't prevent the
-            // Inspector hookup above from working.
+            // Hook inline response events on all current and future Explorer windows
             try
             {
-                _explorer = this.Application.ActiveExplorer();
-                if (_explorer != null)
-                {
-                    ((Outlook.ExplorerEvents_10_Event)_explorer).InlineResponse += Explorer_InlineResponse;
-                    ((Outlook.ExplorerEvents_10_Event)_explorer).InlineResponseClose += Explorer_InlineResponseClose;
-                }
+                _explorers = this.Application.Explorers;
+                _explorers.NewExplorer += Explorers_NewExplorer;
+
+                var explorer = this.Application.ActiveExplorer();
+                if (explorer != null)
+                    HookExplorer(explorer);
             }
             catch (Exception ex)
             {
@@ -44,15 +44,38 @@ namespace OutlookAI
             if (_inspectors != null)
                 _inspectors.NewInspector -= Inspectors_NewInspector;
 
-            if (_explorer != null)
+            if (_explorers != null)
+                _explorers.NewExplorer -= Explorers_NewExplorer;
+
+            foreach (var explorer in _hookedExplorers)
             {
                 try
                 {
-                    ((Outlook.ExplorerEvents_10_Event)_explorer).InlineResponse -= Explorer_InlineResponse;
-                    ((Outlook.ExplorerEvents_10_Event)_explorer).InlineResponseClose -= Explorer_InlineResponseClose;
+                    ((Outlook.ExplorerEvents_10_Event)explorer).InlineResponse -= Explorer_InlineResponse;
+                    ((Outlook.ExplorerEvents_10_Event)explorer).InlineResponseClose -= Explorer_InlineResponseClose;
                 }
                 catch { }
             }
+            _hookedExplorers.Clear();
+        }
+
+        private void HookExplorer(Outlook.Explorer explorer)
+        {
+            try
+            {
+                ((Outlook.ExplorerEvents_10_Event)explorer).InlineResponse += Explorer_InlineResponse;
+                ((Outlook.ExplorerEvents_10_Event)explorer).InlineResponseClose += Explorer_InlineResponseClose;
+                _hookedExplorers.Add(explorer);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("HookExplorer failed: " + ex.Message);
+            }
+        }
+
+        private void Explorers_NewExplorer(Outlook.Explorer explorer)
+        {
+            HookExplorer(explorer);
         }
 
         private void Inspectors_NewInspector(Outlook.Inspector inspector)
@@ -118,10 +141,15 @@ namespace OutlookAI
                 if (!(item is Outlook.MailItem))
                     return;
 
+                // Find the explorer that owns this inline response
+                var explorer = this.Application.ActiveExplorer();
+                if (explorer == null)
+                    return;
+
                 // Reuse existing explorer task pane if one was already created
                 foreach (CustomTaskPane pane in this.CustomTaskPanes)
                 {
-                    if (pane.Window == _explorer)
+                    if (pane.Window == explorer)
                     {
                         var ctrl = pane.Control as AITaskPane;
                         ctrl?.ResetForNewEmail();
@@ -131,7 +159,7 @@ namespace OutlookAI
                 }
 
                 var taskPaneControl = new AITaskPane(isInlineResponse: true);
-                var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", _explorer);
+                var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", explorer);
                 customTaskPane.Width = 280;
                 customTaskPane.Visible = true;
             }
@@ -145,9 +173,13 @@ namespace OutlookAI
         {
             try
             {
+                var explorer = this.Application.ActiveExplorer();
+                if (explorer == null)
+                    return;
+
                 foreach (CustomTaskPane pane in this.CustomTaskPanes)
                 {
-                    if (pane.Window == _explorer)
+                    if (pane.Window == explorer)
                     {
                         pane.Visible = false;
                         return;

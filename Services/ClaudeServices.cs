@@ -15,7 +15,7 @@ namespace OutlookAI.Services
 
         private static readonly object _warmLock = new object();
         private static Process _warmProcess;
-        private static string _lastPrerequisiteError;
+        private static volatile string _lastPrerequisiteError;
 
         public enum ActionType
         {
