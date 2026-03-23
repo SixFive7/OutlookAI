@@ -14,7 +14,6 @@ namespace OutlookAI.TaskPane
 {
     public partial class AITaskPane : UserControl
     {
-        private string _lastResult;
         private readonly bool _isInlineResponse;
         private readonly Outlook.Inspector _owningInspector;
         private readonly Timer _versionTimer;
@@ -26,9 +25,6 @@ namespace OutlookAI.TaskPane
         private string _threadHtml;      // HTML from reply boundary to end (includes </body></html>)
         private bool _threadCaptured;
         private string _firstTurnEmailContent; // Full plain text sent on first turn only
-        private ClaudeService.ActionType _pendingAction;
-        private string _pendingPrompt;
-        private string _pendingSelectedText;
 
         public AITaskPane(bool isInlineResponse = false, Outlook.Inspector inspector = null)
         {
@@ -94,10 +90,7 @@ namespace OutlookAI.TaskPane
         {
             txtDraftPrompt.Text = "";
             txtCustomPrompt.Text = "";
-            txtResult.Text = "";
-            panelResult.Visible = false;
             lblStatus.Visible = false;
-            _lastResult = null;
             _editHistory.Clear();
             _htmlPrefix = null;
             _signatureHtml = null;
@@ -237,16 +230,20 @@ namespace OutlookAI.TaskPane
                 string result = await ClaudeService.ProcessEmailAsync(
                     action, prompt, _editHistory, emailContent, currentDraft, signatureText, selectedText);
 
-                _lastResult = result;
-                _pendingAction = action;
-                _pendingPrompt = prompt;
-                _pendingSelectedText = selectedText;
-
                 InvokeOnUI(() =>
                 {
-                    txtResult.Text = _lastResult;
-                    panelResult.Visible = true;
-                    ShowStatus("Done! Review the result below.", false);
+                    if (WriteDraftToEmail(result))
+                    {
+                        _editHistory.Add(new EditTurn
+                        {
+                            Action = action,
+                            Instruction = prompt,
+                            SelectedText = selectedText,
+                            Result = result
+                        });
+
+                        ShowStatus("Done!", false);
+                    }
                     SetUIEnabled(true);
                 });
             }
@@ -256,42 +253,9 @@ namespace OutlookAI.TaskPane
                 {
                     string msg = ex.InnerException != null ? ex.InnerException.Message : ex.Message;
                     ShowStatus(msg, true);
-                    panelResult.Visible = false;
                     SetUIEnabled(true);
                 });
             }
-        }
-
-        // === Result panel actions ===
-
-        private void btnApply_Click(object sender, EventArgs e)
-        {
-            if (string.IsNullOrEmpty(_lastResult))
-                return;
-
-            if (WriteDraftToEmail(_lastResult))
-            {
-                // Record this turn in the edit history
-                _editHistory.Add(new EditTurn
-                {
-                    Action = _pendingAction,
-                    Instruction = _pendingPrompt,
-                    SelectedText = _pendingSelectedText,
-                    Result = _lastResult
-                });
-
-                panelResult.Visible = false;
-                if (_pendingAction == ClaudeService.ActionType.Draft)
-                    txtDraftPrompt.Text = "";
-                ShowStatus("Draft applied!", false);
-            }
-        }
-
-        private void btnDiscard_Click(object sender, EventArgs e)
-        {
-            _lastResult = null;
-            panelResult.Visible = false;
-            lblStatus.Visible = false;
         }
 
         // === Email access ===
@@ -668,7 +632,7 @@ namespace OutlookAI.TaskPane
             }
 
             // Text boxes
-            foreach (var txt in new[] { txtDraftPrompt, txtCustomPrompt, txtResult })
+            foreach (var txt in new[] { txtDraftPrompt, txtCustomPrompt })
             {
                 txt.BackColor = ThemeService.TextBoxBackground;
                 txt.ForeColor = ThemeService.Text;
@@ -677,10 +641,6 @@ namespace OutlookAI.TaskPane
             // Buttons
             foreach (Control ctrl in this.Controls)
                 ApplyThemeToButtons(ctrl);
-
-            // Result panel
-            panelResult.BackColor = ThemeService.Background;
-            lblResult.ForeColor = ThemeService.Text;
 
             // Status label will be themed via ShowStatus
         }
