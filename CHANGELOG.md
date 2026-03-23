@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v2.0.0.87 - 2026-03-23
+
 - Preserve email signature formatting when drafting or editing with AI
 
 ## v2.0.0.84 - 2026-03-23
