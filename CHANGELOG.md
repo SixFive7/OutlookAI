@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v2.0.0.94 - 2026-03-23
+
 - Add dark mode support matching Outlook's theme setting
 - Preserve email signature formatting when drafting or editing with AI
 - Update CI actions to fix Node.js 20 deprecation warnings
