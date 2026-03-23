@@ -212,8 +212,12 @@ namespace OutlookAI.TaskPane
                 // Email content is only sent on the first turn (when history is empty)
                 string emailContent = _editHistory.Count == 0 ? _firstTurnEmailContent : null;
 
+                // Signature context — sent every turn so Claude knows not to add a sign-off
+                string signatureText = !string.IsNullOrEmpty(_signatureHtml)
+                    ? HtmlToPlainText(_signatureHtml) : null;
+
                 string result = await ClaudeService.ProcessEmailAsync(
-                    action, prompt, _editHistory, emailContent, currentDraft, selectedText);
+                    action, prompt, _editHistory, emailContent, currentDraft, signatureText, selectedText);
 
                 _lastResult = result;
                 _pendingAction = action;

@@ -90,11 +90,12 @@ namespace OutlookAI.Services
         /// <param name="editHistory">Previous editing turns in this session.</param>
         /// <param name="emailContent">Full email plain text — only provided on the first turn.</param>
         /// <param name="currentDraft">Current draft text re-read from the email (may include manual edits).</param>
+        /// <param name="signatureText">Plain text of the email signature (shown as context every turn).</param>
         /// <param name="selectedText">Selected text in the editor, if action targets a selection.</param>
         public static async Task<string> ProcessEmailAsync(
             ActionType action, string customPrompt,
             List<EditTurn> editHistory, string emailContent,
-            string currentDraft, string selectedText = null)
+            string currentDraft, string signatureText, string selectedText = null)
         {
             // Check for known prerequisite issues
             if (_lastPrerequisiteError != null)
@@ -105,7 +106,7 @@ namespace OutlookAI.Services
                     throw new Exception(_lastPrerequisiteError);
             }
 
-            var prompt = BuildIterativePrompt(action, customPrompt, editHistory, emailContent, currentDraft, selectedText);
+            var prompt = BuildIterativePrompt(action, customPrompt, editHistory, emailContent, currentDraft, signatureText, selectedText);
 
             return await Task.Run(() => ExecutePrompt(prompt));
         }
@@ -113,7 +114,7 @@ namespace OutlookAI.Services
         private static string BuildIterativePrompt(
             ActionType action, string customPrompt,
             List<EditTurn> editHistory, string emailContent,
-            string currentDraft, string selectedText)
+            string currentDraft, string signatureText, string selectedText)
         {
             var sb = new StringBuilder();
 
@@ -161,6 +162,17 @@ namespace OutlookAI.Services
                 sb.AppendLine();
                 sb.AppendLine("\"\"\"");
                 sb.AppendLine(currentDraft);
+                sb.AppendLine("\"\"\"");
+                sb.AppendLine();
+            }
+
+            // Signature context (every turn — so Claude knows not to add its own sign-off)
+            if (!string.IsNullOrWhiteSpace(signatureText))
+            {
+                sb.AppendLine("## Signature (appended automatically after your draft — do NOT include in your response)");
+                sb.AppendLine();
+                sb.AppendLine("\"\"\"");
+                sb.AppendLine(signatureText);
                 sb.AppendLine("\"\"\"");
                 sb.AppendLine();
             }
