@@ -2,9 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
-using System.Net;
-using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using OutlookAI.Services;
@@ -24,7 +21,10 @@ namespace OutlookAI.TaskPane
         private string _signatureHtml;   // Signature HTML block (preserved across draft writes)
         private string _threadHtml;      // HTML from reply boundary to end (includes </body></html>)
         private bool _threadCaptured;
-        private string _firstTurnEmailContent; // Full plain text sent on first turn only
+        private bool _freshDraft;         // When true, send empty draft zone (no previous AI content)
+
+        private const string DraftStartMarker = "<!-- DRAFT_START -->";
+        private const string DraftEndMarker = "<!-- DRAFT_END -->";
 
         public AITaskPane(bool isInlineResponse = false, Outlook.Inspector inspector = null)
         {
@@ -96,7 +96,6 @@ namespace OutlookAI.TaskPane
             _signatureHtml = null;
             _threadHtml = null;
             _threadCaptured = false;
-            _firstTurnEmailContent = null;
         }
 
         // === Button click handlers ===
@@ -138,10 +137,10 @@ namespace OutlookAI.TaskPane
                 ShowStatus("Please enter instructions for the email you want to draft.", true);
                 return;
             }
-            // Draft Email = fresh start — clear history and re-capture email structure
+            // Draft Email = fresh start — clear history, re-capture structure, empty draft zone
             _editHistory.Clear();
             _threadCaptured = false;
-            _firstTurnEmailContent = null;
+            _freshDraft = true;
             await ProcessAction(ClaudeService.ActionType.Draft, txtDraftPrompt.Text);
         }
 
@@ -207,28 +206,29 @@ namespace OutlookAI.TaskPane
 
             try
             {
-                // Capture email structure on first interaction
+                // Capture email structure on first interaction (or re-capture for fresh drafts)
                 if (!_threadCaptured)
                 {
                     string htmlBody = GetEmailHtmlBody();
                     CaptureEmailStructure(htmlBody);
                     _threadCaptured = true;
-                    // Store full plain text for the first turn's context
-                    _firstTurnEmailContent = GetEmailPlainBody();
                 }
 
-                // Get current draft from the live email (captures any manual edits)
-                string currentDraft = ExtractCurrentDraftText();
-
-                // Email content is only sent on the first turn (when history is empty)
-                string emailContent = _editHistory.Count == 0 ? _firstTurnEmailContent : null;
-
-                // Signature context — sent every turn so Claude knows not to add a sign-off
-                string signatureText = !string.IsNullOrEmpty(_signatureHtml)
-                    ? HtmlToPlainText(_signatureHtml) : null;
+                string markedBodyHtml;
+                if (_freshDraft)
+                {
+                    // Fresh draft — empty draft zone, signature + thread for context only
+                    _freshDraft = false;
+                    markedBodyHtml = DraftStartMarker + DraftEndMarker + _signatureHtml + _threadHtml;
+                }
+                else
+                {
+                    // Re-read live email to capture manual edits
+                    markedBodyHtml = BuildMarkedBodyHtml();
+                }
 
                 string result = await ClaudeService.ProcessEmailAsync(
-                    action, prompt, _editHistory, emailContent, currentDraft, signatureText, selectedText);
+                    action, prompt, _editHistory, markedBodyHtml, selectedText);
 
                 InvokeOnUI(() =>
                 {
@@ -303,27 +303,6 @@ namespace OutlookAI.TaskPane
             }
         }
 
-        private string GetEmailPlainBody()
-        {
-            Outlook.MailItem mail = null;
-            Outlook.Explorer explorer = null;
-            try
-            {
-                mail = GetCurrentMailItem(out explorer);
-                return mail?.Body ?? "";
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine("GetEmailPlainBody error: " + ex.Message);
-                return "";
-            }
-            finally
-            {
-                ThisAddIn.ReleaseCom(mail);
-                ThisAddIn.ReleaseCom(explorer);
-            }
-        }
-
         // === HTML boundary detection and draft extraction ===
 
         private void CaptureEmailStructure(string htmlBody)
@@ -375,42 +354,63 @@ namespace OutlookAI.TaskPane
             }
         }
 
-        private string ExtractCurrentDraftText()
+        /// <summary>
+        /// Builds the body inner HTML with DRAFT_START/DRAFT_END markers around the editable zone.
+        /// Signature and thread HTML appear after the markers so Claude can see them for context.
+        /// </summary>
+        private string BuildMarkedBodyHtml()
         {
             string htmlBody = GetEmailHtmlBody();
             if (string.IsNullOrWhiteSpace(htmlBody))
-                return "";
+                return DraftStartMarker + DraftEndMarker;
 
             int bodyTagEnd = FindBodyTagEnd(htmlBody);
             if (bodyTagEnd < 0)
-                return HtmlToPlainText(htmlBody);
+                return DraftStartMarker + DraftEndMarker;
 
             int boundary = FindDraftBoundary(htmlBody);
+
+            string draftHtml;
+            string afterDraft; // signature + thread (read-only context for Claude)
+
             if (boundary >= 0)
             {
-                // Extract only the draft portion (before the reply boundary)
-                string draftAreaHtml = htmlBody.Substring(bodyTagEnd, boundary - bodyTagEnd);
-
-                // Exclude the signature from the draft text sent to Claude
-                if (!string.IsNullOrEmpty(_signatureHtml))
+                string draftArea = htmlBody.Substring(bodyTagEnd, boundary - bodyTagEnd);
+                int sigIdx = FindSignatureStart(draftArea);
+                if (sigIdx >= 0)
                 {
-                    int sigIdx = FindSignatureStart(draftAreaHtml);
-                    if (sigIdx >= 0)
-                        draftAreaHtml = draftAreaHtml.Substring(0, sigIdx);
+                    draftHtml = draftArea.Substring(0, sigIdx);
+                    afterDraft = draftArea.Substring(sigIdx) + htmlBody.Substring(boundary);
                 }
-
-                return HtmlToPlainText(draftAreaHtml);
+                else
+                {
+                    draftHtml = draftArea;
+                    afterDraft = htmlBody.Substring(boundary);
+                }
+            }
+            else
+            {
+                int bodyClose = htmlBody.IndexOf("</body>", StringComparison.OrdinalIgnoreCase);
+                string fullContent = bodyClose >= 0
+                    ? htmlBody.Substring(bodyTagEnd, bodyClose - bodyTagEnd)
+                    : htmlBody.Substring(bodyTagEnd);
+                int sigIdx = FindSignatureStart(fullContent);
+                if (sigIdx >= 0)
+                {
+                    draftHtml = fullContent.Substring(0, sigIdx);
+                    afterDraft = fullContent.Substring(sigIdx);
+                }
+                else
+                {
+                    draftHtml = fullContent;
+                    afterDraft = "";
+                }
             }
 
-            // No boundary found — send everything (safe default, as discussed)
-            int bodyClose = htmlBody.IndexOf("</body>", StringComparison.OrdinalIgnoreCase);
-            string allContentHtml = bodyClose >= 0
-                ? htmlBody.Substring(bodyTagEnd, bodyClose - bodyTagEnd)
-                : htmlBody.Substring(bodyTagEnd);
-            return HtmlToPlainText(allContentHtml);
+            return DraftStartMarker + draftHtml + DraftEndMarker + afterDraft;
         }
 
-        private bool WriteDraftToEmail(string plainTextDraft)
+        private bool WriteDraftToEmail(string draftHtml)
         {
             Outlook.MailItem mail = null;
             Outlook.Explorer explorer = null;
@@ -423,7 +423,14 @@ namespace OutlookAI.TaskPane
                     return false;
                 }
 
-                string draftHtml = PlainTextToHtml(plainTextDraft);
+                // Sanitize: strip markers if Claude accidentally included them
+                draftHtml = draftHtml
+                    .Replace(DraftStartMarker, "")
+                    .Replace(DraftEndMarker, "");
+
+                // Strip code fences if Claude wrapped response in ```html ... ```
+                draftHtml = StripCodeFences(draftHtml);
+
                 mail.HTMLBody = _htmlPrefix + draftHtml + _signatureHtml + _threadHtml;
                 return true;
             }
@@ -469,6 +476,27 @@ namespace OutlookAI.TaskPane
         }
 
         // === HTML utilities ===
+
+        private static string StripCodeFences(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            var trimmed = text.Trim();
+            if (trimmed.StartsWith("```"))
+            {
+                // Remove opening fence (e.g. ```html or just ```)
+                int firstNewline = trimmed.IndexOf('\n');
+                if (firstNewline >= 0)
+                    trimmed = trimmed.Substring(firstNewline + 1);
+                // Remove closing fence
+                if (trimmed.TrimEnd().EndsWith("```"))
+                {
+                    int lastFence = trimmed.LastIndexOf("```");
+                    if (lastFence >= 0)
+                        trimmed = trimmed.Substring(0, lastFence);
+                }
+            }
+            return trimmed;
+        }
 
         private static int FindBodyTagEnd(string html)
         {
@@ -566,38 +594,6 @@ namespace OutlookAI.TaskPane
                 if (html[i] == '<') return i;
             }
             return -1;
-        }
-
-        private static string HtmlToPlainText(string html)
-        {
-            if (string.IsNullOrEmpty(html)) return "";
-            // Replace block-level closers with newlines before stripping tags
-            string text = Regex.Replace(html, @"<br\s*/?>", "\n", RegexOptions.IgnoreCase);
-            text = Regex.Replace(text, @"</p>", "\n\n", RegexOptions.IgnoreCase);
-            text = Regex.Replace(text, @"</div>", "\n", RegexOptions.IgnoreCase);
-            // Strip all remaining HTML tags
-            text = Regex.Replace(text, @"<[^>]+>", "");
-            // Decode HTML entities
-            text = WebUtility.HtmlDecode(text);
-            // Collapse excessive blank lines
-            text = Regex.Replace(text, @"\n{3,}", "\n\n");
-            return text.Trim();
-        }
-
-        private static string PlainTextToHtml(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return "";
-            string encoded = WebUtility.HtmlEncode(text);
-            // Split on double newlines into paragraphs
-            var paragraphs = Regex.Split(encoded, @"\r?\n\r?\n");
-            var sb = new StringBuilder();
-            foreach (var para in paragraphs)
-            {
-                if (string.IsNullOrWhiteSpace(para)) continue;
-                string content = para.Replace("\r\n", "<br>").Replace("\n", "<br>");
-                sb.Append("<p style=\"margin:0\">").Append(content).Append("</p>");
-            }
-            return sb.ToString();
         }
 
         // === UI helpers ===

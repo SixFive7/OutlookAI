@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fix signature layout being destroyed when drafting emails by switching to HTML-native editing
+- Ensure "Draft new email" starts with a clean slate, excluding any previous AI-generated content
+
 ## v2.0.0.94 - 2026-03-23
 
 - Add dark mode support matching Outlook's theme setting
