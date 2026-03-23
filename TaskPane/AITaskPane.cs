@@ -37,7 +37,7 @@ namespace OutlookAI.TaskPane
             {
                 lblVersion.Text = error != null
                     ? version
-                    : $"{version} \u2022 checking\u2026";
+                    : $"{version}   checking\u2026";
             }
             else
             {
@@ -52,7 +52,7 @@ namespace OutlookAI.TaskPane
                 else
                     agoText = $"{(int)ago.TotalDays}d ago";
 
-                lblVersion.Text = $"{version} \u2022 checked {agoText}";
+                lblVersion.Text = $"{version}   checked {agoText}";
             }
 
             lnkUpdateError.Visible = error != null;
