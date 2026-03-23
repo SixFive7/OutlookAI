@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Remove empty release entries from changelog
+- Fix CI creating empty changelog headings when no unreleased entries exist
+
 ## v1.0.0.57 - 2026-03-23
 
 - Add ribbon toggle button to show/hide the AI sidebar in compose windows and inline replies
@@ -10,10 +13,6 @@
 - Fix sidebar staying hidden when opening a new compose window after closing a previous one
 - Fix Claude Code not being found by using its default install path instead of relying on PATH
 
-## v1.0.0.53 - 2026-03-11
-
-## v1.0.0.51 - 2026-03-11
-
 ## v1.0.0.49 - 2026-03-11
 
 - Add AI Assistant sidebar for inline replies in the reading pane
@@ -21,10 +20,6 @@
 - Remove the ribbon button — the sidebar now appears automatically
 - Fix crash when closing a compose window while an AI request is in-flight
 - Fix wrong email being processed when multiple compose windows are open
-
-## v1.0.0.47 - 2026-03-10
-
-## v1.0.0.3 - 2026-03-10
 
 ## v1.0.0.1 - 2026-03-10
 

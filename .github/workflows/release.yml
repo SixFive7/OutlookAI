@@ -78,11 +78,22 @@ jobs:
       - name: Stamp changelog
         shell: pwsh
         run: |
-          $version = "${{ steps.version.outputs.FULL_VERSION }}"
-          $date = Get-Date -Format "yyyy-MM-dd"
           $content = Get-Content CHANGELOG.md -Raw
-          $content = $content -replace '## Unreleased', "## Unreleased`n`n## v$version - $date"
-          Set-Content -Path CHANGELOG.md -Value $content -NoNewline
+          # Only stamp if there are actual entries under Unreleased
+          if ($content -match '(?s)## Unreleased\r?\n(.*?)(?=\r?\n## |\z)') {
+            $section = $Matches[1].Trim()
+          } else {
+            $section = ""
+          }
+          if ([string]::IsNullOrWhiteSpace($section)) {
+            Write-Host "No unreleased entries — skipping changelog stamp"
+          } else {
+            $version = "${{ steps.version.outputs.FULL_VERSION }}"
+            $date = Get-Date -Format "yyyy-MM-dd"
+            $content = $content -replace '## Unreleased', "## Unreleased`n`n## v$version - $date"
+            Set-Content -Path CHANGELOG.md -Value $content -NoNewline
+            Write-Host "Stamped changelog for v$version"
+          }
 
       - name: Restore packages
         run: nuget restore OutlookAI.csproj
@@ -117,5 +128,4 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add CHANGELOG.md
-          git commit -m "Release v${{ steps.version.outputs.FULL_VERSION }}"
-          git push
+          git diff --staged --quiet && echo "No changelog changes to commit" || (git commit -m "Release v${{ steps.version.outputs.FULL_VERSION }}" && git push)
