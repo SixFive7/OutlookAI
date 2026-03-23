@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.1.0.73 - 2026-03-23
+
 - Fix COM object leaks by releasing all Outlook COM references after use
 
 ## v1.1.0.71 - 2026-03-23
