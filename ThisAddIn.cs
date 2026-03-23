@@ -181,8 +181,14 @@ namespace OutlookAI
                     return true;
                 }
 
-                mailItem = inspector.CurrentItem as Outlook.MailItem;
-                if (mailItem == null || mailItem.Sent)
+                object rawItem = inspector.CurrentItem;
+                mailItem = rawItem as Outlook.MailItem;
+                if (mailItem == null)
+                {
+                    ReleaseCom(rawItem);
+                    return false;
+                }
+                if (mailItem.Sent)
                     return false;
 
                 var taskPaneControl = new AITaskPane(isInlineResponse: false, inspector: inspector);
@@ -291,8 +297,13 @@ namespace OutlookAI
                     Outlook.MailItem mailItem = null;
                     try
                     {
-                        mailItem = asInspector.CurrentItem as Outlook.MailItem;
-                        if (mailItem != null && !mailItem.Sent)
+                        object rawItem = asInspector.CurrentItem;
+                        mailItem = rawItem as Outlook.MailItem;
+                        if (mailItem == null)
+                        {
+                            ReleaseCom(rawItem);
+                        }
+                        else if (!mailItem.Sent)
                         {
                             var taskPaneControl = new AITaskPane(isInlineResponse: false, inspector: asInspector);
                             var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", asInspector);
@@ -311,8 +322,13 @@ namespace OutlookAI
                     Outlook.MailItem inlineItem = null;
                     try
                     {
-                        inlineItem = asExplorer.ActiveInlineResponse as Outlook.MailItem;
-                        if (inlineItem != null)
+                        object rawInline = asExplorer.ActiveInlineResponse;
+                        inlineItem = rawInline as Outlook.MailItem;
+                        if (inlineItem == null)
+                        {
+                            ReleaseCom(rawInline);
+                        }
+                        else
                         {
                             var taskPaneControl = new AITaskPane(isInlineResponse: true);
                             var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", asExplorer);

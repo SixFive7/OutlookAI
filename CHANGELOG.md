@@ -6,6 +6,7 @@
 
 - Fix inspector COM leak for non-compose windows (read emails, calendar items)
 - Fix inspector COM ownership: Close handler releases when no task pane owns it, task pane releases on dispose
+- Fix COM leak when CurrentItem or ActiveInlineResponse returns a non-MailItem object
 
 ## v1.1.0.77 - 2026-03-23
 

@@ -220,12 +220,20 @@ namespace OutlookAI.TaskPane
             if (_isInlineResponse)
             {
                 explorer = Globals.ThisAddIn.Application.ActiveExplorer();
-                return explorer?.ActiveInlineResponse as Outlook.MailItem;
+                object rawInline = explorer?.ActiveInlineResponse;
+                var mail = rawInline as Outlook.MailItem;
+                if (mail == null)
+                    ThisAddIn.ReleaseCom(rawInline);
+                return mail;
             }
 
             // Use the owning inspector rather than ActiveInspector so that
             // clicking a button in a background window processes the right email.
-            return _owningInspector?.CurrentItem as Outlook.MailItem;
+            object rawItem = _owningInspector?.CurrentItem;
+            var mailItem = rawItem as Outlook.MailItem;
+            if (mailItem == null)
+                ThisAddIn.ReleaseCom(rawItem);
+            return mailItem;
         }
 
         private string GetEmailBody()
