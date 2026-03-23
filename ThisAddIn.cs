@@ -29,6 +29,7 @@ namespace OutlookAI
         private void ThisAddIn_Startup(object sender, EventArgs e)
         {
             ClaudeService.WarmUp();
+            _ = UpdateService.CheckForUpdateAsync();
 
             // Auto-show task pane when a compose inspector opens
             _inspectors = this.Application.Inspectors;
@@ -52,6 +53,7 @@ namespace OutlookAI
 
         private void ThisAddIn_Shutdown(object sender, EventArgs e)
         {
+            UpdateService.ApplyIfReady();
             ClaudeService.Shutdown();
 
             if (_inspectors != null)

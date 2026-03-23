@@ -18,6 +18,8 @@ Compression=lzma2
 SolidCompression=yes
 Uninstallable=no
 PrivilegesRequired=lowest
+CloseApplications=force
+RestartApplications=no
 CreateAppDir=yes
 
 [Files]

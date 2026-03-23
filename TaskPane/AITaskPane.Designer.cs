@@ -41,6 +41,7 @@ namespace OutlookAI.TaskPane
             this.btnInsert = new System.Windows.Forms.Button();
             this.btnReplace = new System.Windows.Forms.Button();
             this.btnDiscard = new System.Windows.Forms.Button();
+            this.lblVersion = new System.Windows.Forms.Label();
             this.grpQuickActions.SuspendLayout();
             this.grpDraft.SuspendLayout();
             this.grpCustom.SuspendLayout();
@@ -227,11 +228,21 @@ namespace OutlookAI.TaskPane
             this.btnDiscard.UseVisualStyleBackColor = true;
             this.btnDiscard.Click += new System.EventHandler(this.btnDiscard_Click);
 
+            // lblVersion
+            this.lblVersion.Dock = System.Windows.Forms.DockStyle.Bottom;
+            this.lblVersion.Font = new System.Drawing.Font("Segoe UI", 7.5F);
+            this.lblVersion.ForeColor = System.Drawing.Color.Gray;
+            this.lblVersion.Name = "lblVersion";
+            this.lblVersion.Size = new System.Drawing.Size(260, 18);
+            this.lblVersion.Text = "v" + System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString();
+            this.lblVersion.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+
             // AITaskPane
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.AutoScroll = true;
             this.BackColor = System.Drawing.Color.FromArgb(250, 249, 248);
+            this.Controls.Add(this.lblVersion);
             this.Controls.Add(this.lblTitle);
             this.Controls.Add(this.grpQuickActions);
             this.Controls.Add(this.grpDraft);
@@ -274,5 +285,6 @@ namespace OutlookAI.TaskPane
         private System.Windows.Forms.Button btnInsert;
         private System.Windows.Forms.Button btnReplace;
         private System.Windows.Forms.Button btnDiscard;
+        private System.Windows.Forms.Label lblVersion;
     }
 }
