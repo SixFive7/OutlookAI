@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.0.0.57 - 2026-03-23
+
 - Add ribbon toggle button to show/hide the AI sidebar in compose windows and inline replies
 - Toggle button reflects sidebar state (pressed when open, unpressed when closed)
 - Sidebar auto-shows for each new composition and can be toggled off via button or close control
