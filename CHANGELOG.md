@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.1.0.77 - 2026-03-23
+
 - Fix double-release race condition on inspector COM object between Close handler and task pane disposal
 
 ## v1.1.0.75 - 2026-03-23
