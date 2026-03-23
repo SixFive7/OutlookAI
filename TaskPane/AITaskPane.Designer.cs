@@ -129,10 +129,10 @@ namespace OutlookAI.TaskPane
             this.grpDraft.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
             this.grpDraft.Location = new System.Drawing.Point(10, 140);
             this.grpDraft.Name = "grpDraft";
-            this.grpDraft.Size = new System.Drawing.Size(240, 140);
+            this.grpDraft.Size = new System.Drawing.Size(240, 110);
             this.grpDraft.TabIndex = 1;
             this.grpDraft.TabStop = false;
-            this.grpDraft.Text = "Draft Email";
+            this.grpDraft.Text = "Instruction";
 
             // txtDraftPrompt
             this.txtDraftPrompt.Font = new System.Drawing.Font("Segoe UI", 8F);
@@ -142,18 +142,18 @@ namespace OutlookAI.TaskPane
             this.txtDraftPrompt.Size = new System.Drawing.Size(220, 50);
 
             // btnDraft
-            this.btnDraft.Font = new System.Drawing.Font("Segoe UI", 8F);
+            this.btnDraft.Font = new System.Drawing.Font("Segoe UI", 7F);
             this.btnDraft.Location = new System.Drawing.Point(10, 78);
-            this.btnDraft.Size = new System.Drawing.Size(220, 26);
-            this.btnDraft.Text = "Draft Email";
+            this.btnDraft.Size = new System.Drawing.Size(107, 26);
+            this.btnDraft.Text = "Draft with instruction";
             this.btnDraft.UseVisualStyleBackColor = true;
             this.btnDraft.Click += new System.EventHandler(this.btnDraft_Click);
 
             // btnEditDraft
-            this.btnEditDraft.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.btnEditDraft.Location = new System.Drawing.Point(10, 108);
-            this.btnEditDraft.Size = new System.Drawing.Size(220, 26);
-            this.btnEditDraft.Text = "Edit Draft";
+            this.btnEditDraft.Font = new System.Drawing.Font("Segoe UI", 7F);
+            this.btnEditDraft.Location = new System.Drawing.Point(123, 78);
+            this.btnEditDraft.Size = new System.Drawing.Size(107, 26);
+            this.btnEditDraft.Text = "Update with instruction";
             this.btnEditDraft.UseVisualStyleBackColor = true;
             this.btnEditDraft.Click += new System.EventHandler(this.btnEditDraft_Click);
 
@@ -162,7 +162,7 @@ namespace OutlookAI.TaskPane
             this.grpCustom.Controls.Add(this.btnCustom);
             this.grpCustom.Controls.Add(this.btnCustomSelection);
             this.grpCustom.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
-            this.grpCustom.Location = new System.Drawing.Point(10, 285);
+            this.grpCustom.Location = new System.Drawing.Point(10, 255);
             this.grpCustom.Name = "grpCustom";
             this.grpCustom.Size = new System.Drawing.Size(240, 140);
             this.grpCustom.TabIndex = 2;
@@ -194,7 +194,7 @@ namespace OutlookAI.TaskPane
 
             // lblStatus
             this.lblStatus.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.lblStatus.Location = new System.Drawing.Point(10, 430);
+            this.lblStatus.Location = new System.Drawing.Point(10, 400);
             this.lblStatus.Name = "lblStatus";
             this.lblStatus.Size = new System.Drawing.Size(240, 20);
             this.lblStatus.Visible = false;
@@ -204,7 +204,7 @@ namespace OutlookAI.TaskPane
             this.panelResult.Controls.Add(this.txtResult);
             this.panelResult.Controls.Add(this.btnApply);
             this.panelResult.Controls.Add(this.btnDiscard);
-            this.panelResult.Location = new System.Drawing.Point(10, 455);
+            this.panelResult.Location = new System.Drawing.Point(10, 425);
             this.panelResult.Name = "panelResult";
             this.panelResult.Size = new System.Drawing.Size(240, 180);
             this.panelResult.Visible = false;
