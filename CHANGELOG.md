@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add iterative draft editing with full conversation history across multiple AI turns
+- Add "Edit Draft" button for refining an existing AI draft without starting over
+- Add "Run Custom Action on Selection" button to apply instructions to selected text only
+- Preserve email formatting by reading and writing HTMLBody instead of plain text Body
+- Detect Outlook reply boundaries to separate draft from quoted thread
+- Send email thread context to AI only once, not on every subsequent edit
+- Capture manual edits made in the Outlook editor between AI turns
+- Replace Insert/Replace buttons with a single Apply button for cleaner workflow
+- Bump major version to 2.0.0
+
 ## v1.1.0.82 - 2026-03-23
 
 - Fix update installer showing a popup by using silent VSTO installation

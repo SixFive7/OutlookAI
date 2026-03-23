@@ -1,7 +1,12 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
-using System.Windows.Forms;
+using System.Net;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 using OutlookAI.Services;
 using Outlook = Microsoft.Office.Interop.Outlook;
 
@@ -14,11 +19,27 @@ namespace OutlookAI.TaskPane
         private readonly Outlook.Inspector _owningInspector;
         private readonly Timer _versionTimer;
 
+        // Iterative editing state
+        private readonly List<EditTurn> _editHistory = new List<EditTurn>();
+        private string _htmlPrefix;      // HTML from start up to and including <body...> tag
+        private string _threadHtml;      // HTML from reply boundary to end (includes </body></html>)
+        private bool _threadCaptured;
+        private string _firstTurnEmailContent; // Full plain text sent on first turn only
+        private ClaudeService.ActionType _pendingAction;
+        private string _pendingPrompt;
+        private string _pendingSelectedText;
+
         public AITaskPane(bool isInlineResponse = false, Outlook.Inspector inspector = null)
         {
             _isInlineResponse = isInlineResponse;
             _owningInspector = inspector;
             InitializeComponent();
+
+            // Selection-based buttons require WordEditor, only available for Inspector windows
+            if (_isInlineResponse)
+            {
+                btnCustomSelection.Enabled = false;
+            }
 
             _versionTimer = new Timer();
             _versionTimer.Interval = 1000; // 1 second
@@ -64,7 +85,7 @@ namespace OutlookAI.TaskPane
         }
 
         /// <summary>
-        /// Call this when the task pane becomes visible for a new email
+        /// Call this when the task pane becomes visible for a new email.
         /// </summary>
         public void ResetForNewEmail()
         {
@@ -74,7 +95,14 @@ namespace OutlookAI.TaskPane
             panelResult.Visible = false;
             lblStatus.Visible = false;
             _lastResult = null;
+            _editHistory.Clear();
+            _htmlPrefix = null;
+            _threadHtml = null;
+            _threadCaptured = false;
+            _firstTurnEmailContent = null;
         }
+
+        // === Button click handlers ===
 
         private async void btnProofread_Click(object sender, EventArgs e)
         {
@@ -113,6 +141,21 @@ namespace OutlookAI.TaskPane
                 ShowStatus("Please enter instructions for the email you want to draft.", true);
                 return;
             }
+            // Draft Email = fresh start — clear history and re-capture email structure
+            _editHistory.Clear();
+            _threadCaptured = false;
+            _firstTurnEmailContent = null;
+            await ProcessAction(ClaudeService.ActionType.Draft, txtDraftPrompt.Text);
+        }
+
+        private async void btnEditDraft_Click(object sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(txtDraftPrompt.Text))
+            {
+                ShowStatus("Please enter instructions for editing the draft.", true);
+                return;
+            }
+            // Edit Draft = iterative — keep history, continue conversation
             await ProcessAction(ClaudeService.ActionType.Draft, txtDraftPrompt.Text);
         }
 
@@ -126,25 +169,54 @@ namespace OutlookAI.TaskPane
             await ProcessAction(ClaudeService.ActionType.Custom, txtCustomPrompt.Text);
         }
 
-        private async Task ProcessAction(ClaudeService.ActionType action, string prompt = "")
+        private async void btnCustomSelection_Click(object sender, EventArgs e)
         {
-            string emailContent = GetEmailBody();
-
-            // For non-Draft/Custom actions, we need existing content to work with
-            if (action != ClaudeService.ActionType.Draft && action != ClaudeService.ActionType.Custom && string.IsNullOrWhiteSpace(emailContent))
+            if (string.IsNullOrWhiteSpace(txtCustomPrompt.Text))
             {
-                ShowStatus("No email content found. Please write something first.", true);
+                ShowStatus("Please enter instructions for the custom action.", true);
                 return;
             }
+            string selectedText = GetSelectedText();
+            if (string.IsNullOrWhiteSpace(selectedText))
+            {
+                ShowStatus("Please select text in the email editor first.", true);
+                return;
+            }
+            await ProcessAction(ClaudeService.ActionType.Custom, txtCustomPrompt.Text, selectedText);
+        }
 
+        // === Core processing ===
+
+        private async Task ProcessAction(ClaudeService.ActionType action, string prompt = "", string selectedText = null)
+        {
             SetUIEnabled(false);
             ShowStatus("Processing...", false);
 
             try
             {
-                string result = await ClaudeService.ProcessEmailAsync(action, emailContent, prompt);
+                // Capture email structure on first interaction
+                if (!_threadCaptured)
+                {
+                    string htmlBody = GetEmailHtmlBody();
+                    CaptureEmailStructure(htmlBody);
+                    _threadCaptured = true;
+                    // Store full plain text for the first turn's context
+                    _firstTurnEmailContent = GetEmailPlainBody();
+                }
+
+                // Get current draft from the live email (captures any manual edits)
+                string currentDraft = ExtractCurrentDraftText();
+
+                // Email content is only sent on the first turn (when history is empty)
+                string emailContent = _editHistory.Count == 0 ? _firstTurnEmailContent : null;
+
+                string result = await ClaudeService.ProcessEmailAsync(
+                    action, prompt, _editHistory, emailContent, currentDraft, selectedText);
 
                 _lastResult = result;
+                _pendingAction = action;
+                _pendingPrompt = prompt;
+                _pendingSelectedText = selectedText;
 
                 InvokeOnUI(() =>
                 {
@@ -166,44 +238,28 @@ namespace OutlookAI.TaskPane
             }
         }
 
-        private void InvokeOnUI(Action action)
+        // === Result panel actions ===
+
+        private void btnApply_Click(object sender, EventArgs e)
         {
-            if (this.IsDisposed || !this.IsHandleCreated)
+            if (string.IsNullOrEmpty(_lastResult))
                 return;
 
-            if (this.InvokeRequired)
+            if (WriteDraftToEmail(_lastResult))
             {
-                this.Invoke(action);
-            }
-            else
-            {
-                action();
-            }
-        }
-
-        private void btnInsert_Click(object sender, EventArgs e)
-        {
-            if (!string.IsNullOrEmpty(_lastResult))
-            {
-                if (UpdateEmailBody(_lastResult, insert: true))
+                // Record this turn in the edit history
+                _editHistory.Add(new EditTurn
                 {
-                    panelResult.Visible = false;
-                    txtDraftPrompt.Text = "";
-                    ShowStatus("Draft inserted!", false);
-                }
-            }
-        }
+                    Action = _pendingAction,
+                    Instruction = _pendingPrompt,
+                    SelectedText = _pendingSelectedText,
+                    Result = _lastResult
+                });
 
-        private void btnReplace_Click(object sender, EventArgs e)
-        {
-            if (!string.IsNullOrEmpty(_lastResult))
-            {
-                if (UpdateEmailBody(_lastResult, insert: false))
-                {
-                    panelResult.Visible = false;
+                panelResult.Visible = false;
+                if (_pendingAction == ClaudeService.ActionType.Draft)
                     txtDraftPrompt.Text = "";
-                    ShowStatus("Email replaced!", false);
-                }
+                ShowStatus("Draft applied!", false);
             }
         }
 
@@ -213,6 +269,8 @@ namespace OutlookAI.TaskPane
             panelResult.Visible = false;
             lblStatus.Visible = false;
         }
+
+        // === Email access ===
 
         private Outlook.MailItem GetCurrentMailItem(out Outlook.Explorer explorer)
         {
@@ -236,7 +294,28 @@ namespace OutlookAI.TaskPane
             return mailItem;
         }
 
-        private string GetEmailBody()
+        private string GetEmailHtmlBody()
+        {
+            Outlook.MailItem mail = null;
+            Outlook.Explorer explorer = null;
+            try
+            {
+                mail = GetCurrentMailItem(out explorer);
+                return mail?.HTMLBody ?? "";
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("GetEmailHtmlBody error: " + ex.Message);
+                return "";
+            }
+            finally
+            {
+                ThisAddIn.ReleaseCom(mail);
+                ThisAddIn.ReleaseCom(explorer);
+            }
+        }
+
+        private string GetEmailPlainBody()
         {
             Outlook.MailItem mail = null;
             Outlook.Explorer explorer = null;
@@ -247,7 +326,7 @@ namespace OutlookAI.TaskPane
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine("GetEmailBody error: " + ex.Message);
+                Debug.WriteLine("GetEmailPlainBody error: " + ex.Message);
                 return "";
             }
             finally
@@ -257,7 +336,69 @@ namespace OutlookAI.TaskPane
             }
         }
 
-        private bool UpdateEmailBody(string text, bool insert)
+        // === HTML boundary detection and draft extraction ===
+
+        private void CaptureEmailStructure(string htmlBody)
+        {
+            if (string.IsNullOrWhiteSpace(htmlBody))
+            {
+                _htmlPrefix = "<html><body>";
+                _threadHtml = "</body></html>";
+                return;
+            }
+
+            int bodyTagEnd = FindBodyTagEnd(htmlBody);
+            if (bodyTagEnd < 0)
+            {
+                // Not proper HTML — wrap as-is
+                _htmlPrefix = "<html><body>";
+                _threadHtml = "</body></html>";
+                return;
+            }
+
+            _htmlPrefix = htmlBody.Substring(0, bodyTagEnd);
+
+            int boundary = FindDraftBoundary(htmlBody);
+            if (boundary >= 0)
+            {
+                // Everything from boundary onward is the thread (preserved on each write)
+                _threadHtml = htmlBody.Substring(boundary);
+            }
+            else
+            {
+                // No thread boundary — this is a new email (not a reply)
+                int bodyClose = htmlBody.IndexOf("</body>", StringComparison.OrdinalIgnoreCase);
+                _threadHtml = bodyClose >= 0 ? htmlBody.Substring(bodyClose) : "</body></html>";
+            }
+        }
+
+        private string ExtractCurrentDraftText()
+        {
+            string htmlBody = GetEmailHtmlBody();
+            if (string.IsNullOrWhiteSpace(htmlBody))
+                return "";
+
+            int bodyTagEnd = FindBodyTagEnd(htmlBody);
+            if (bodyTagEnd < 0)
+                return HtmlToPlainText(htmlBody);
+
+            int boundary = FindDraftBoundary(htmlBody);
+            if (boundary >= 0)
+            {
+                // Extract only the draft portion (before the reply boundary)
+                string draftHtml = htmlBody.Substring(bodyTagEnd, boundary - bodyTagEnd);
+                return HtmlToPlainText(draftHtml);
+            }
+
+            // No boundary found — send everything (safe default, as discussed)
+            int bodyClose = htmlBody.IndexOf("</body>", StringComparison.OrdinalIgnoreCase);
+            string allContentHtml = bodyClose >= 0
+                ? htmlBody.Substring(bodyTagEnd, bodyClose - bodyTagEnd)
+                : htmlBody.Substring(bodyTagEnd);
+            return HtmlToPlainText(allContentHtml);
+        }
+
+        private bool WriteDraftToEmail(string plainTextDraft)
         {
             Outlook.MailItem mail = null;
             Outlook.Explorer explorer = null;
@@ -269,12 +410,14 @@ namespace OutlookAI.TaskPane
                     ShowStatus("Could not find active email window.", true);
                     return false;
                 }
-                mail.Body = insert ? text + "\n\n" + (mail.Body ?? "") : text;
+
+                string draftHtml = PlainTextToHtml(plainTextDraft);
+                mail.HTMLBody = _htmlPrefix + draftHtml + _threadHtml;
                 return true;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine("UpdateEmailBody error: " + ex.Message);
+                Debug.WriteLine("WriteDraftToEmail error: " + ex.Message);
                 ShowStatus("Could not update email: " + ex.Message, true);
                 return false;
             }
@@ -282,6 +425,136 @@ namespace OutlookAI.TaskPane
             {
                 ThisAddIn.ReleaseCom(mail);
                 ThisAddIn.ReleaseCom(explorer);
+            }
+        }
+
+        // === Selection support ===
+
+        private string GetSelectedText()
+        {
+            if (_isInlineResponse)
+                return null;
+
+            object doc = null;
+            try
+            {
+                doc = _owningInspector?.WordEditor;
+                if (doc == null) return null;
+                string text = ((dynamic)doc).Application.Selection.Text as string;
+                // Word appends a trailing paragraph mark to selections
+                if (!string.IsNullOrEmpty(text) && text.EndsWith("\r"))
+                    text = text.Substring(0, text.Length - 1);
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                ThisAddIn.ReleaseCom(doc);
+            }
+        }
+
+        // === HTML utilities ===
+
+        private static int FindBodyTagEnd(string html)
+        {
+            int bodyStart = html.IndexOf("<body", StringComparison.OrdinalIgnoreCase);
+            if (bodyStart < 0) return -1;
+            int bodyEnd = html.IndexOf('>', bodyStart);
+            return bodyEnd >= 0 ? bodyEnd + 1 : -1;
+        }
+
+        /// <summary>
+        /// Finds the boundary between the user's draft area and the quoted thread.
+        /// Returns the index of the opening tag of the boundary element, or -1 if not found.
+        /// Checks for appendonsend first (preserves Outlook signature insertion),
+        /// then divRplyFwdMsg (reply/forward header), then border-top separator.
+        /// </summary>
+        private static int FindDraftBoundary(string html)
+        {
+            // appendonsend — Outlook's signature insertion point (preserves signature on send)
+            int idx = FindTagWithAttribute(html, "id", "appendonsend");
+            if (idx >= 0) return idx;
+
+            // divRplyFwdMsg — reply/forward header block
+            idx = FindTagWithAttribute(html, "id", "divRplyFwdMsg");
+            if (idx >= 0) return idx;
+
+            // border-top separator (older Outlook versions)
+            idx = html.IndexOf("border-top:solid #E1E1E1", StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0)
+            {
+                // Walk back to find the opening '<' of this element
+                for (int i = idx - 1; i >= 0; i--)
+                {
+                    if (html[i] == '<') return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private static int FindTagWithAttribute(string html, string attr, string value)
+        {
+            string pattern = attr + "=\"" + value + "\"";
+            int idx = html.IndexOf(pattern, StringComparison.OrdinalIgnoreCase);
+            if (idx < 0) return -1;
+            // Walk back to find the opening '<'
+            for (int i = idx - 1; i >= 0; i--)
+            {
+                if (html[i] == '<') return i;
+            }
+            return -1;
+        }
+
+        private static string HtmlToPlainText(string html)
+        {
+            if (string.IsNullOrEmpty(html)) return "";
+            // Replace block-level closers with newlines before stripping tags
+            string text = Regex.Replace(html, @"<br\s*/?>", "\n", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, @"</p>", "\n\n", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, @"</div>", "\n", RegexOptions.IgnoreCase);
+            // Strip all remaining HTML tags
+            text = Regex.Replace(text, @"<[^>]+>", "");
+            // Decode HTML entities
+            text = WebUtility.HtmlDecode(text);
+            // Collapse excessive blank lines
+            text = Regex.Replace(text, @"\n{3,}", "\n\n");
+            return text.Trim();
+        }
+
+        private static string PlainTextToHtml(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            string encoded = WebUtility.HtmlEncode(text);
+            // Split on double newlines into paragraphs
+            var paragraphs = Regex.Split(encoded, @"\r?\n\r?\n");
+            var sb = new StringBuilder();
+            foreach (var para in paragraphs)
+            {
+                if (string.IsNullOrWhiteSpace(para)) continue;
+                string content = para.Replace("\r\n", "<br>").Replace("\n", "<br>");
+                sb.Append("<p style=\"margin:0\">").Append(content).Append("</p>");
+            }
+            return sb.ToString();
+        }
+
+        // === UI helpers ===
+
+        private void InvokeOnUI(Action action)
+        {
+            if (this.IsDisposed || !this.IsHandleCreated)
+                return;
+
+            if (this.InvokeRequired)
+            {
+                this.Invoke(action);
+            }
+            else
+            {
+                action();
             }
         }
 
@@ -301,8 +574,10 @@ namespace OutlookAI.TaskPane
             btnFormal.Enabled = enabled;
             btnFriendly.Enabled = enabled;
             btnDraft.Enabled = enabled;
+            btnEditDraft.Enabled = enabled;
             txtDraftPrompt.Enabled = enabled;
             btnCustom.Enabled = enabled;
+            btnCustomSelection.Enabled = enabled && !_isInlineResponse;
             txtCustomPrompt.Enabled = enabled;
         }
 

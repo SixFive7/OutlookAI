@@ -31,15 +31,16 @@ namespace OutlookAI.TaskPane
             this.grpDraft = new System.Windows.Forms.GroupBox();
             this.txtDraftPrompt = new System.Windows.Forms.TextBox();
             this.btnDraft = new System.Windows.Forms.Button();
+            this.btnEditDraft = new System.Windows.Forms.Button();
             this.grpCustom = new System.Windows.Forms.GroupBox();
             this.txtCustomPrompt = new System.Windows.Forms.TextBox();
             this.btnCustom = new System.Windows.Forms.Button();
+            this.btnCustomSelection = new System.Windows.Forms.Button();
             this.lblStatus = new System.Windows.Forms.Label();
             this.panelResult = new System.Windows.Forms.Panel();
             this.lblResult = new System.Windows.Forms.Label();
             this.txtResult = new System.Windows.Forms.TextBox();
-            this.btnInsert = new System.Windows.Forms.Button();
-            this.btnReplace = new System.Windows.Forms.Button();
+            this.btnApply = new System.Windows.Forms.Button();
             this.btnDiscard = new System.Windows.Forms.Button();
             this.lblVersion = new System.Windows.Forms.Label();
             this.lnkUpdateError = new System.Windows.Forms.LinkLabel();
@@ -124,13 +125,14 @@ namespace OutlookAI.TaskPane
             // grpDraft
             this.grpDraft.Controls.Add(this.txtDraftPrompt);
             this.grpDraft.Controls.Add(this.btnDraft);
+            this.grpDraft.Controls.Add(this.btnEditDraft);
             this.grpDraft.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
             this.grpDraft.Location = new System.Drawing.Point(10, 140);
             this.grpDraft.Name = "grpDraft";
-            this.grpDraft.Size = new System.Drawing.Size(240, 110);
+            this.grpDraft.Size = new System.Drawing.Size(240, 140);
             this.grpDraft.TabIndex = 1;
             this.grpDraft.TabStop = false;
-            this.grpDraft.Text = "Draft New Email";
+            this.grpDraft.Text = "Draft Email";
 
             // txtDraftPrompt
             this.txtDraftPrompt.Font = new System.Drawing.Font("Segoe UI", 8F);
@@ -147,13 +149,22 @@ namespace OutlookAI.TaskPane
             this.btnDraft.UseVisualStyleBackColor = true;
             this.btnDraft.Click += new System.EventHandler(this.btnDraft_Click);
 
+            // btnEditDraft
+            this.btnEditDraft.Font = new System.Drawing.Font("Segoe UI", 8F);
+            this.btnEditDraft.Location = new System.Drawing.Point(10, 108);
+            this.btnEditDraft.Size = new System.Drawing.Size(220, 26);
+            this.btnEditDraft.Text = "Edit Draft";
+            this.btnEditDraft.UseVisualStyleBackColor = true;
+            this.btnEditDraft.Click += new System.EventHandler(this.btnEditDraft_Click);
+
             // grpCustom
             this.grpCustom.Controls.Add(this.txtCustomPrompt);
             this.grpCustom.Controls.Add(this.btnCustom);
+            this.grpCustom.Controls.Add(this.btnCustomSelection);
             this.grpCustom.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
-            this.grpCustom.Location = new System.Drawing.Point(10, 255);
+            this.grpCustom.Location = new System.Drawing.Point(10, 285);
             this.grpCustom.Name = "grpCustom";
-            this.grpCustom.Size = new System.Drawing.Size(240, 110);
+            this.grpCustom.Size = new System.Drawing.Size(240, 140);
             this.grpCustom.TabIndex = 2;
             this.grpCustom.TabStop = false;
             this.grpCustom.Text = "Custom Action";
@@ -173,9 +184,17 @@ namespace OutlookAI.TaskPane
             this.btnCustom.UseVisualStyleBackColor = true;
             this.btnCustom.Click += new System.EventHandler(this.btnCustom_Click);
 
+            // btnCustomSelection
+            this.btnCustomSelection.Font = new System.Drawing.Font("Segoe UI", 8F);
+            this.btnCustomSelection.Location = new System.Drawing.Point(10, 108);
+            this.btnCustomSelection.Size = new System.Drawing.Size(220, 26);
+            this.btnCustomSelection.Text = "Run Custom Action on Selection";
+            this.btnCustomSelection.UseVisualStyleBackColor = true;
+            this.btnCustomSelection.Click += new System.EventHandler(this.btnCustomSelection_Click);
+
             // lblStatus
             this.lblStatus.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.lblStatus.Location = new System.Drawing.Point(10, 370);
+            this.lblStatus.Location = new System.Drawing.Point(10, 430);
             this.lblStatus.Name = "lblStatus";
             this.lblStatus.Size = new System.Drawing.Size(240, 20);
             this.lblStatus.Visible = false;
@@ -183,12 +202,11 @@ namespace OutlookAI.TaskPane
             // panelResult
             this.panelResult.Controls.Add(this.lblResult);
             this.panelResult.Controls.Add(this.txtResult);
-            this.panelResult.Controls.Add(this.btnInsert);
-            this.panelResult.Controls.Add(this.btnReplace);
+            this.panelResult.Controls.Add(this.btnApply);
             this.panelResult.Controls.Add(this.btnDiscard);
-            this.panelResult.Location = new System.Drawing.Point(10, 395);
+            this.panelResult.Location = new System.Drawing.Point(10, 455);
             this.panelResult.Name = "panelResult";
-            this.panelResult.Size = new System.Drawing.Size(240, 210);
+            this.panelResult.Size = new System.Drawing.Size(240, 180);
             this.panelResult.Visible = false;
 
             // lblResult
@@ -205,26 +223,18 @@ namespace OutlookAI.TaskPane
             this.txtResult.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
             this.txtResult.Size = new System.Drawing.Size(240, 125);
 
-            // btnInsert
-            this.btnInsert.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.btnInsert.Location = new System.Drawing.Point(0, 150);
-            this.btnInsert.Size = new System.Drawing.Size(75, 26);
-            this.btnInsert.Text = "Insert";
-            this.btnInsert.UseVisualStyleBackColor = true;
-            this.btnInsert.Click += new System.EventHandler(this.btnInsert_Click);
-
-            // btnReplace
-            this.btnReplace.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.btnReplace.Location = new System.Drawing.Point(80, 150);
-            this.btnReplace.Size = new System.Drawing.Size(75, 26);
-            this.btnReplace.Text = "Replace";
-            this.btnReplace.UseVisualStyleBackColor = true;
-            this.btnReplace.Click += new System.EventHandler(this.btnReplace_Click);
+            // btnApply
+            this.btnApply.Font = new System.Drawing.Font("Segoe UI", 8F);
+            this.btnApply.Location = new System.Drawing.Point(0, 150);
+            this.btnApply.Size = new System.Drawing.Size(115, 26);
+            this.btnApply.Text = "Apply";
+            this.btnApply.UseVisualStyleBackColor = true;
+            this.btnApply.Click += new System.EventHandler(this.btnApply_Click);
 
             // btnDiscard
             this.btnDiscard.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.btnDiscard.Location = new System.Drawing.Point(160, 150);
-            this.btnDiscard.Size = new System.Drawing.Size(75, 26);
+            this.btnDiscard.Location = new System.Drawing.Point(125, 150);
+            this.btnDiscard.Size = new System.Drawing.Size(115, 26);
             this.btnDiscard.Text = "Discard";
             this.btnDiscard.UseVisualStyleBackColor = true;
             this.btnDiscard.Click += new System.EventHandler(this.btnDiscard_Click);
@@ -263,7 +273,7 @@ namespace OutlookAI.TaskPane
             this.Controls.Add(this.lblStatus);
             this.Controls.Add(this.panelResult);
             this.Name = "AITaskPane";
-            this.Size = new System.Drawing.Size(260, 585);
+            this.Size = new System.Drawing.Size(260, 650);
             this.grpQuickActions.ResumeLayout(false);
             this.grpDraft.ResumeLayout(false);
             this.grpDraft.PerformLayout();
@@ -288,15 +298,16 @@ namespace OutlookAI.TaskPane
         private System.Windows.Forms.GroupBox grpDraft;
         private System.Windows.Forms.TextBox txtDraftPrompt;
         private System.Windows.Forms.Button btnDraft;
+        private System.Windows.Forms.Button btnEditDraft;
         private System.Windows.Forms.GroupBox grpCustom;
         private System.Windows.Forms.TextBox txtCustomPrompt;
         private System.Windows.Forms.Button btnCustom;
+        private System.Windows.Forms.Button btnCustomSelection;
         private System.Windows.Forms.Label lblStatus;
         private System.Windows.Forms.Panel panelResult;
         private System.Windows.Forms.Label lblResult;
         private System.Windows.Forms.TextBox txtResult;
-        private System.Windows.Forms.Button btnInsert;
-        private System.Windows.Forms.Button btnReplace;
+        private System.Windows.Forms.Button btnApply;
         private System.Windows.Forms.Button btnDiscard;
         private System.Windows.Forms.Label lblVersion;
         private System.Windows.Forms.LinkLabel lnkUpdateError;

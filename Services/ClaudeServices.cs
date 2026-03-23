@@ -8,6 +8,14 @@ using System.Web.Script.Serialization;
 
 namespace OutlookAI.Services
 {
+    public class EditTurn
+    {
+        public ClaudeService.ActionType Action { get; set; }
+        public string Instruction { get; set; }
+        public string SelectedText { get; set; }
+        public string Result { get; set; }
+    }
+
     public static class ClaudeService
     {
         private const string Model = "claude-opus-4-6";
@@ -74,7 +82,19 @@ namespace OutlookAI.Services
             }
         }
 
-        public static async Task<string> ProcessEmailAsync(ActionType action, string emailContent, string customPrompt = "")
+        /// <summary>
+        /// Processes an email action using iterative editing with full conversation history.
+        /// </summary>
+        /// <param name="action">The editing action to perform.</param>
+        /// <param name="customPrompt">User-typed instruction (for Draft/Custom actions).</param>
+        /// <param name="editHistory">Previous editing turns in this session.</param>
+        /// <param name="emailContent">Full email plain text — only provided on the first turn.</param>
+        /// <param name="currentDraft">Current draft text re-read from the email (may include manual edits).</param>
+        /// <param name="selectedText">Selected text in the editor, if action targets a selection.</param>
+        public static async Task<string> ProcessEmailAsync(
+            ActionType action, string customPrompt,
+            List<EditTurn> editHistory, string emailContent,
+            string currentDraft, string selectedText = null)
         {
             // Check for known prerequisite issues
             if (_lastPrerequisiteError != null)
@@ -85,9 +105,109 @@ namespace OutlookAI.Services
                     throw new Exception(_lastPrerequisiteError);
             }
 
-            var userMessage = BuildUserMessage(action, emailContent, customPrompt);
+            var prompt = BuildIterativePrompt(action, customPrompt, editHistory, emailContent, currentDraft, selectedText);
 
-            return await Task.Run(() => ExecutePrompt(userMessage));
+            return await Task.Run(() => ExecutePrompt(prompt));
+        }
+
+        private static string BuildIterativePrompt(
+            ActionType action, string customPrompt,
+            List<EditTurn> editHistory, string emailContent,
+            string currentDraft, string selectedText)
+        {
+            var sb = new StringBuilder();
+
+            // Unified system instruction
+            sb.AppendLine("You are a professional email writing assistant. You help compose and refine email drafts through iterative editing.");
+            sb.AppendLine();
+            sb.AppendLine("On each turn, the user gives an editing command. Apply it to the current draft and return ONLY the updated email text. No explanations, no commentary, no quoted thread text — just the draft.");
+            sb.AppendLine();
+
+            // Email content (first turn only — full email including thread for context)
+            if (!string.IsNullOrWhiteSpace(emailContent))
+            {
+                sb.AppendLine("## Email Content (for context — do NOT include previous messages in your response)");
+                sb.AppendLine();
+                sb.AppendLine("\"\"\"");
+                sb.AppendLine(emailContent);
+                sb.AppendLine("\"\"\"");
+                sb.AppendLine();
+            }
+
+            // Edit history from previous turns
+            if (editHistory.Count > 0)
+            {
+                sb.AppendLine("## Edit History");
+                sb.AppendLine();
+                for (int i = 0; i < editHistory.Count; i++)
+                {
+                    var turn = editHistory[i];
+                    string label = GetActionLabel(turn.Action, turn.Instruction);
+                    if (!string.IsNullOrEmpty(turn.SelectedText))
+                        label += " (applied to selection)";
+                    sb.AppendLine($"### Turn {i + 1} — {label}");
+                    sb.AppendLine("Result:");
+                    sb.AppendLine("\"\"\"");
+                    sb.AppendLine(turn.Result);
+                    sb.AppendLine("\"\"\"");
+                    sb.AppendLine();
+                }
+            }
+
+            // Current draft (may include manual edits since last AI turn)
+            if (!string.IsNullOrWhiteSpace(currentDraft))
+            {
+                sb.AppendLine("## Current Draft");
+                sb.AppendLine();
+                sb.AppendLine("\"\"\"");
+                sb.AppendLine(currentDraft);
+                sb.AppendLine("\"\"\"");
+                sb.AppendLine();
+            }
+
+            // Current request
+            sb.AppendLine("## Current Request");
+            sb.AppendLine();
+            string currentLabel = GetActionLabel(action, customPrompt);
+            sb.AppendLine($"Action: {currentLabel}");
+            sb.AppendLine();
+
+            // Selection constraint
+            if (!string.IsNullOrWhiteSpace(selectedText))
+            {
+                sb.AppendLine("The user has selected the following portion of the draft. Limit your changes to ONLY this section — keep everything else exactly as-is:");
+                sb.AppendLine("\"\"\"");
+                sb.AppendLine(selectedText);
+                sb.AppendLine("\"\"\"");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("Write the complete updated draft only.");
+
+            return sb.ToString();
+        }
+
+        private static string GetActionLabel(ActionType action, string instruction)
+        {
+            switch (action)
+            {
+                case ActionType.Proofread: return "Proofread";
+                case ActionType.Revise: return "Revise";
+                case ActionType.Shorten: return "Shorten";
+                case ActionType.Lengthen: return "Lengthen";
+                case ActionType.Formal: return "Formal";
+                case ActionType.Friendly: return "Friendly";
+                case ActionType.Draft:
+                    return string.IsNullOrWhiteSpace(instruction)
+                        ? "Draft"
+                        : "Draft: \"" + instruction + "\"";
+                case ActionType.Custom:
+                    return string.IsNullOrWhiteSpace(instruction)
+                        ? "Custom"
+                        : "Custom: \"" + instruction + "\"";
+                default:
+                    return action.ToString();
+            }
         }
 
         private static string ExecutePrompt(string userMessage)
@@ -290,60 +410,6 @@ namespace OutlookAI.Services
         {
             if (string.IsNullOrEmpty(text) || text.Length <= maxLength) return text;
             return text.Substring(0, maxLength) + "...";
-        }
-
-        private static string GetSystemPrompt(ActionType action)
-        {
-            switch (action)
-            {
-                case ActionType.Proofread:
-                    return "You are a professional editor. Review the email for grammar, spelling, punctuation, and clarity issues. Return the corrected email text only. Do not add any explanations.";
-                case ActionType.Revise:
-                    return "You are a professional writing assistant. Improve the email clarity, flow, and impact. Return only the revised email text without any explanations.";
-                case ActionType.Draft:
-                    return "You are a professional email writer. Write a clear, professional email based on the instructions. If replying to an email thread, write only your reply - do not include the previous messages. Return only the email text you are composing.";
-                case ActionType.Shorten:
-                    return "You are a professional editor. Condense this email to be more concise while keeping essential information. Return only the shortened email text.";
-                case ActionType.Lengthen:
-                    return "You are a professional writer. Expand this email with more detail while maintaining professionalism. Return only the expanded email text.";
-                case ActionType.Formal:
-                    return "You are a professional editor. Rewrite this email in a more formal tone suitable for business. Return only the rewritten email text.";
-                case ActionType.Friendly:
-                    return "You are a professional editor. Rewrite this email in a warmer, friendlier tone while remaining professional. Return only the rewritten email text.";
-                case ActionType.Custom:
-                    return "You are a professional email writing assistant. Follow the user's instructions exactly and apply them to the provided email content. Return only the modified email text without any explanations.";
-                default:
-                    return "You are a professional email writing assistant. Help the user with their email based on their instructions. Return only the result.";
-            }
-        }
-
-        private static string BuildUserMessage(ActionType action, string emailContent, string customPrompt)
-        {
-            var instructions = GetSystemPrompt(action);
-            string task;
-
-            if (action == ActionType.Draft)
-            {
-                if (!string.IsNullOrWhiteSpace(emailContent))
-                {
-                    task = "Write a reply email based on these instructions:\n\n" + customPrompt +
-                           "\n\n--- Email thread for context (do NOT include this in your response, just use it for context) ---\n\n" + emailContent;
-                }
-                else
-                {
-                    task = "Write an email based on these instructions:\n\n" + customPrompt;
-                }
-            }
-            else if (action == ActionType.Custom)
-            {
-                task = "Email content:\n\n" + emailContent + "\n\nInstructions: " + customPrompt;
-            }
-            else
-            {
-                task = "Email to " + action.ToString().ToLower() + ":\n\n" + emailContent;
-            }
-
-            return instructions + "\n\n" + task;
         }
     }
 }
