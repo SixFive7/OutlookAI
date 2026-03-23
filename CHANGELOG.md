@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve email signature formatting when drafting or editing with AI
+
 ## v2.0.0.84 - 2026-03-23
 
 - Add iterative draft editing with full conversation history across multiple AI turns

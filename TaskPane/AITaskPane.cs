@@ -22,6 +22,7 @@ namespace OutlookAI.TaskPane
         // Iterative editing state
         private readonly List<EditTurn> _editHistory = new List<EditTurn>();
         private string _htmlPrefix;      // HTML from start up to and including <body...> tag
+        private string _signatureHtml;   // Signature HTML block (preserved across draft writes)
         private string _threadHtml;      // HTML from reply boundary to end (includes </body></html>)
         private bool _threadCaptured;
         private string _firstTurnEmailContent; // Full plain text sent on first turn only
@@ -97,6 +98,7 @@ namespace OutlookAI.TaskPane
             _lastResult = null;
             _editHistory.Clear();
             _htmlPrefix = null;
+            _signatureHtml = null;
             _threadHtml = null;
             _threadCaptured = false;
             _firstTurnEmailContent = null;
@@ -343,6 +345,7 @@ namespace OutlookAI.TaskPane
             if (string.IsNullOrWhiteSpace(htmlBody))
             {
                 _htmlPrefix = "<html><body>";
+                _signatureHtml = "";
                 _threadHtml = "</body></html>";
                 return;
             }
@@ -350,8 +353,8 @@ namespace OutlookAI.TaskPane
             int bodyTagEnd = FindBodyTagEnd(htmlBody);
             if (bodyTagEnd < 0)
             {
-                // Not proper HTML — wrap as-is
                 _htmlPrefix = "<html><body>";
+                _signatureHtml = "";
                 _threadHtml = "</body></html>";
                 return;
             }
@@ -370,6 +373,20 @@ namespace OutlookAI.TaskPane
                 int bodyClose = htmlBody.IndexOf("</body>", StringComparison.OrdinalIgnoreCase);
                 _threadHtml = bodyClose >= 0 ? htmlBody.Substring(bodyClose) : "</body></html>";
             }
+
+            // Extract signature from the draft area (between body tag and thread boundary).
+            // Outlook places the signature before appendonsend/divRplyFwdMsg.
+            int draftEnd = boundary >= 0 ? boundary : htmlBody.Length;
+            string draftArea = htmlBody.Substring(bodyTagEnd, draftEnd - bodyTagEnd);
+            int sigStart = FindSignatureStart(draftArea);
+            if (sigStart >= 0)
+            {
+                _signatureHtml = draftArea.Substring(sigStart);
+            }
+            else
+            {
+                _signatureHtml = "";
+            }
         }
 
         private string ExtractCurrentDraftText()
@@ -386,8 +403,17 @@ namespace OutlookAI.TaskPane
             if (boundary >= 0)
             {
                 // Extract only the draft portion (before the reply boundary)
-                string draftHtml = htmlBody.Substring(bodyTagEnd, boundary - bodyTagEnd);
-                return HtmlToPlainText(draftHtml);
+                string draftAreaHtml = htmlBody.Substring(bodyTagEnd, boundary - bodyTagEnd);
+
+                // Exclude the signature from the draft text sent to Claude
+                if (!string.IsNullOrEmpty(_signatureHtml))
+                {
+                    int sigIdx = FindSignatureStart(draftAreaHtml);
+                    if (sigIdx >= 0)
+                        draftAreaHtml = draftAreaHtml.Substring(0, sigIdx);
+                }
+
+                return HtmlToPlainText(draftAreaHtml);
             }
 
             // No boundary found — send everything (safe default, as discussed)
@@ -412,7 +438,7 @@ namespace OutlookAI.TaskPane
                 }
 
                 string draftHtml = PlainTextToHtml(plainTextDraft);
-                mail.HTMLBody = _htmlPrefix + draftHtml + _threadHtml;
+                mail.HTMLBody = _htmlPrefix + draftHtml + _signatureHtml + _threadHtml;
                 return true;
             }
             catch (Exception ex)
@@ -493,6 +519,53 @@ namespace OutlookAI.TaskPane
                 }
             }
 
+            return -1;
+        }
+
+        /// <summary>
+        /// Finds the start of the email signature within a draft area HTML fragment.
+        /// Looks for common Outlook signature markers: id containing "signature",
+        /// or class "MsoSignature". Returns the index of the opening tag, or -1.
+        /// </summary>
+        private static int FindSignatureStart(string html)
+        {
+            // Outlook desktop: <div id="Signature">, <div id="signature_...">, etc.
+            int idx = FindTagWithAttributeContaining(html, "id", "signature");
+            if (idx >= 0) return idx;
+
+            // Outlook web / some configurations: class="MsoSignature"
+            idx = FindTagWithAttributeContaining(html, "class", "MsoSignature");
+            if (idx >= 0) return idx;
+
+            // Some Outlook versions use id="ms-outlook-mobile-signature"
+            idx = FindTagWithAttributeContaining(html, "id", "ms-outlook");
+            if (idx >= 0) return idx;
+
+            return -1;
+        }
+
+        private static int FindTagWithAttributeContaining(string html, string attr, string substring)
+        {
+            string prefix = attr + "=\"";
+            int searchFrom = 0;
+            while (searchFrom < html.Length)
+            {
+                int attrIdx = html.IndexOf(prefix, searchFrom, StringComparison.OrdinalIgnoreCase);
+                if (attrIdx < 0) return -1;
+                int valueStart = attrIdx + prefix.Length;
+                int valueEnd = html.IndexOf('"', valueStart);
+                if (valueEnd < 0) return -1;
+                string value = html.Substring(valueStart, valueEnd - valueStart);
+                if (value.IndexOf(substring, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    // Walk back to the opening '<'
+                    for (int i = attrIdx - 1; i >= 0; i--)
+                    {
+                        if (html[i] == '<') return i;
+                    }
+                }
+                searchFrom = valueEnd + 1;
+            }
             return -1;
         }
 
