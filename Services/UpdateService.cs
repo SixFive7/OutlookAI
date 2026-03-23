@@ -42,6 +42,7 @@ namespace OutlookAI.Services
         {
             try
             {
+                ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
                 using (var client = new HttpClient())
                 {
                     client.DefaultRequestHeaders.Add("User-Agent", "OutlookAI-Updater");

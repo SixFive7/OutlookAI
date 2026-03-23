@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix update check failing with TLS error on .NET Framework 4.8
+
 ## v1.1.0.66 - 2026-03-23
 
 - Fix update error link never appearing when all update checks fail
