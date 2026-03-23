@@ -14,7 +14,9 @@ Rules:
 
 ## Build and Release
 
-- The project builds via GitHub Actions on push to master (`.github/workflows/release.yml`).
-- Version is `BASE_VERSION` (in the workflow) + CI run number. To bump major/minor, edit `BASE_VERSION`.
-- The CI extracts the Unreleased changelog section as release notes, then commits a stamped changelog back.
-- The workflow ignores commits from `github-actions[bot]` to avoid infinite loops.
+- **Build** runs automatically on every push to master (`.github/workflows/build.yml`). It only compiles — no releases, no tags, no changelog changes.
+- **Release** is triggered on demand (`.github/workflows/release.yml`) via `gh workflow run release`. It extracts the Unreleased changelog section, builds, creates an installer, publishes a GitHub Release, and stamps the changelog.
+- The release workflow **fails if the Unreleased section is empty** — you must have release notes before creating a release.
+- Version is `BASE_VERSION` (in the workflow) + commit count. To bump major/minor, edit `BASE_VERSION` in both workflow files.
+- After committing, ask the user if they want to create a release. If yes, run: `gh workflow run release && gh run watch` to trigger and monitor the release.
+- After a release, pull the stamped changelog commit before continuing work: `git pull --rebase`.

@@ -1,0 +1,59 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+
+env:
+  BASE_VERSION: "2.0.0"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Import signing certificate
+        run: |
+          $cert = Import-PfxCertificate -FilePath OutlookAI.pfx -CertStoreLocation Cert:\CurrentUser\My
+          Write-Host "Imported certificate: $($cert.Thumbprint)"
+
+      - name: Set version
+        id: version
+        run: |
+          $count = git rev-list --count HEAD
+          $version = "${{ env.BASE_VERSION }}.$count"
+          echo "FULL_VERSION=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Stamp assembly version
+        run: |
+          $version = "${{ steps.version.outputs.FULL_VERSION }}"
+          $file = "Properties/AssemblyInfo.cs"
+          $content = Get-Content $file -Raw
+          $content = $content -replace 'AssemblyVersion\(".*?"\)', "AssemblyVersion(`"$version`")"
+          $content = $content -replace 'AssemblyFileVersion\(".*?"\)', "AssemblyFileVersion(`"$version`")"
+          Set-Content $file $content
+          Write-Host "Stamped version: $version"
+
+      - name: Restore packages
+        run: nuget restore OutlookAI.csproj
+
+      - name: Build and Publish
+        run: >
+          msbuild OutlookAI.csproj
+          /target:Publish
+          /p:Configuration=Release
+          /p:ApplicationVersion=${{ steps.version.outputs.FULL_VERSION }}
+          /p:PublishDir=publish\
+          /p:BootstrapperEnabled=true
+          /p:IsWebBootstrapper=false
+          /p:DefineConstants="VSTO40%3BTRACE%3BUseOfficeInterop"

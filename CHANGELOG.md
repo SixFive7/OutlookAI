@@ -6,6 +6,12 @@
 
 - Add dark mode support matching Outlook's theme setting
 - Preserve email signature formatting when drafting or editing with AI
+- Include signature as context in AI prompts to prevent duplicate sign-offs
+- Add "Draft new email", "Edit current draft", and "Edit selection only" buttons
+- Add "Run Custom Action on Selection" for targeted edits
+- Apply AI results immediately instead of showing a preview panel
+- Remove result preview panel, Apply, and Discard buttons
+- Split CI into build-only (every push) and release (on demand) workflows
 - Update CI actions to fix Node.js 20 deprecation warnings
 
 ## v2.0.0.87 - 2026-03-23

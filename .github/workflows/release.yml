@@ -1,8 +1,7 @@
-name: Build and Release
+name: Release
 
 on:
-  push:
-    branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,9 +10,8 @@ env:
   BASE_VERSION: "2.0.0"
 
 jobs:
-  build:
+  release:
     runs-on: windows-latest
-    if: github.actor != 'github-actions[bot]'
 
     steps:
       - uses: actions/checkout@v6
@@ -21,16 +19,22 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v3
-
-      - name: Setup NuGet
-        uses: NuGet/setup-nuget@v2
-
-      - name: Import signing certificate
+      - name: Extract changelog
+        id: changelog
+        shell: pwsh
         run: |
-          $cert = Import-PfxCertificate -FilePath OutlookAI.pfx -CertStoreLocation Cert:\CurrentUser\My
-          Write-Host "Imported certificate: $($cert.Thumbprint)"
+          $content = Get-Content CHANGELOG.md -Raw
+          if ($content -match '(?s)## Unreleased\r?\n(.*?)(?=\r?\n## |\z)') {
+            $notes = $Matches[1].Trim()
+          } else {
+            $notes = ""
+          }
+          if ([string]::IsNullOrWhiteSpace($notes)) {
+            Write-Error "No entries under '## Unreleased' in CHANGELOG.md. Add release notes before creating a release."
+            exit 1
+          }
+          Set-Content -Path release_notes.txt -Value $notes
+          Write-Host "Release notes:`n$notes"
 
       - name: Set version
         id: version
@@ -49,51 +53,26 @@ jobs:
           Set-Content $file $content
           Write-Host "Stamped version: $version"
 
-      - name: Extract changelog
-        id: changelog
-        shell: pwsh
-        run: |
-          $content = Get-Content CHANGELOG.md -Raw
-          # Extract text between "## Unreleased" and the next "## " heading (or end of file)
-          if ($content -match '(?s)## Unreleased\r?\n(.*?)(?=\r?\n## |\z)') {
-            $notes = $Matches[1].Trim()
-          } else {
-            $notes = ""
-          }
-          if ([string]::IsNullOrWhiteSpace($notes)) {
-            # Fallback to commit messages since last tag
-            $lastTag = git describe --tags --abbrev=0 2>&1 | Where-Object { $_ -is [string] }
-            $global:LASTEXITCODE = 0
-            if ($lastTag) {
-              $notes = git log "$lastTag..HEAD" --oneline --no-merges | ForEach-Object { "- " + ($_ -replace '^\w+ ', '') } | Out-String
-            } else {
-              $notes = "Initial release"
-            }
-            $notes = $notes.Trim()
-          }
-          # Write to file to avoid multiline output issues
-          Set-Content -Path release_notes.txt -Value $notes
-          Write-Host "Release notes:`n$notes"
-
       - name: Stamp changelog
         shell: pwsh
         run: |
+          $version = "${{ steps.version.outputs.FULL_VERSION }}"
+          $date = Get-Date -Format "yyyy-MM-dd"
           $content = Get-Content CHANGELOG.md -Raw
-          # Only stamp if there are actual entries under Unreleased
-          if ($content -match '(?s)## Unreleased\r?\n(.*?)(?=\r?\n## |\z)') {
-            $section = $Matches[1].Trim()
-          } else {
-            $section = ""
-          }
-          if ([string]::IsNullOrWhiteSpace($section)) {
-            Write-Host "No unreleased entries — skipping changelog stamp"
-          } else {
-            $version = "${{ steps.version.outputs.FULL_VERSION }}"
-            $date = Get-Date -Format "yyyy-MM-dd"
-            $content = $content -replace '## Unreleased', "## Unreleased`n`n## v$version - $date"
-            Set-Content -Path CHANGELOG.md -Value $content -NoNewline
-            Write-Host "Stamped changelog for v$version"
-          }
+          $content = $content -replace '## Unreleased', "## Unreleased`n`n## v$version - $date"
+          Set-Content -Path CHANGELOG.md -Value $content -NoNewline
+          Write-Host "Stamped changelog for v$version"
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Import signing certificate
+        run: |
+          $cert = Import-PfxCertificate -FilePath OutlookAI.pfx -CertStoreLocation Cert:\CurrentUser\My
+          Write-Host "Imported certificate: $($cert.Thumbprint)"
 
       - name: Restore packages
         run: nuget restore OutlookAI.csproj
