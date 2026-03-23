@@ -2,8 +2,10 @@
 
 ## Unreleased
 
-- Add ribbon toggle button to show/hide the AI sidebar in both compose windows and the main Outlook window
-- Allow closing the sidebar via the built-in close button; reopen it with the ribbon toggle
+- Add ribbon toggle button to show/hide the AI sidebar in compose windows and inline replies
+- Toggle button reflects sidebar state (pressed when open, unpressed when closed)
+- Sidebar auto-shows for each new composition and can be toggled off via button or close control
+- Fix sidebar staying hidden when opening a new compose window after closing a previous one
 - Fix Claude Code not being found by using its default install path instead of relying on PATH
 
 ## v1.0.0.51 - 2026-03-11
