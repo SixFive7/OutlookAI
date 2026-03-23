@@ -143,11 +143,10 @@ namespace OutlookAI
                 };
                 closeHandler = () =>
                 {
-                    // Release remaining event subscriptions so the COM
-                    // RCW can be garbage-collected.
+                    // Unsubscribe events. The inspector COM object is owned
+                    // by AITaskPane and released in DisposeCustomResources.
                     events.Activate -= activateHandler;
                     events.Close -= closeHandler;
-                    ReleaseCom(inspector);
                 };
 
                 events.Activate += activateHandler;
@@ -156,11 +155,11 @@ namespace OutlookAI
             catch
             {
                 // Fallback: try creating the task pane immediately.
-                // No Close handler was set up, so release the inspector
-                // unless ShowTaskPaneForInspector stored it in a task pane
-                // (AITaskPane.DisposeCustomResources handles that case).
+                // If a task pane is created, AITaskPane owns the inspector
+                // and releases it in DisposeCustomResources. If not (early
+                // return), the inspector is left for GC — acceptable since
+                // this path only fires for non-compose windows.
                 ShowTaskPaneForInspector(inspector);
-                ReleaseCom(inspector);
             }
         }
 
