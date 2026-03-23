@@ -31,7 +31,11 @@ jobs:
         run: |
           $bump = "${{ inputs.version_bump }}"
           if ($bump -notmatch '^\d+\.\d+\.\d+$') {
-            Write-Error "Invalid version_bump format '$bump'. Must be major.minor.patch (e.g. 0.0.0, 1.0.0, 0.1.0, 0.0.1)"
+            Write-Error "Invalid version_bump format '$bump'. Must be major.minor.patch (e.g. 1.0.0, 0.1.0, 0.0.1)"
+            exit 1
+          }
+          if ($bump -eq '0.0.0') {
+            Write-Error "Version bump 0.0.0 is not valid. Every release must bump at least the patch version (e.g. 0.0.1)."
             exit 1
           }
 
