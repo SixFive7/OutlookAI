@@ -4,9 +4,6 @@ on:
   push:
     branches: [master]
 
-env:
-  BASE_VERSION: "2.0.0"
-
 jobs:
   build:
     runs-on: windows-latest
@@ -15,6 +12,21 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Get base version from latest release
+        id: base
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = gh release view --json tagName -q .tagName 2>$null
+          if ($tag -match '^v?(\d+\.\d+\.\d+)') {
+            $base = $Matches[1]
+          } else {
+            $base = "0.0.0"
+          }
+          echo "BASE_VERSION=$base" >> $env:GITHUB_OUTPUT
+          Write-Host "Base version from latest release: $base"
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3
@@ -31,7 +43,7 @@ jobs:
         id: version
         run: |
           $count = git rev-list --count HEAD
-          $version = "${{ env.BASE_VERSION }}.$count"
+          $version = "${{ steps.base.outputs.BASE_VERSION }}.$count"
           echo "FULL_VERSION=$version" >> $env:GITHUB_OUTPUT
 
       - name: Stamp assembly version

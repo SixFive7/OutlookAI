@@ -4,6 +4,7 @@
 
 - Fix signature layout being destroyed when drafting emails by switching to HTML-native editing
 - Ensure "Draft new email" starts with a clean slate, excluding any previous AI-generated content
+- Fix release workflow failing to push version bump by deriving version from release tags instead of workflow files
 
 ## v2.0.0.94 - 2026-03-23
 
