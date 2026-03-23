@@ -18,5 +18,8 @@ Rules:
 - **Release** is triggered on demand (`.github/workflows/release.yml`) via `gh workflow run release`. It extracts the Unreleased changelog section, builds, creates an installer, publishes a GitHub Release, and stamps the changelog.
 - The release workflow **fails if the Unreleased section is empty** — you must have release notes before creating a release.
 - Version is `BASE_VERSION` (in the workflow) + commit count. To bump major/minor, edit `BASE_VERSION` in both workflow files.
-- After committing, ask the user if they want to create a release. If yes, run: `gh workflow run release && gh run watch` to trigger and monitor the release.
+- After committing, ask the user if they want to create a release. If yes:
+  1. Ask if they want to bump the version: major, minor, patch, or no change. Show the current `BASE_VERSION` and what each option would produce.
+  2. If bumping, edit `BASE_VERSION` in both `.github/workflows/build.yml` and `.github/workflows/release.yml`, commit, and push.
+  3. Run: `gh workflow run release && gh run watch` to trigger and monitor the release.
 - After a release, pull the stamped changelog commit before continuing work: `git pull --rebase`.
