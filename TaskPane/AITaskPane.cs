@@ -35,6 +35,7 @@ namespace OutlookAI.TaskPane
             _isInlineResponse = isInlineResponse;
             _owningInspector = inspector;
             InitializeComponent();
+            ApplyTheme();
 
             // Selection-based buttons require WordEditor, only available for Inspector windows
             if (_isInlineResponse)
@@ -652,10 +653,58 @@ namespace OutlookAI.TaskPane
             }
         }
 
+        private void ApplyTheme()
+        {
+            if (!ThemeService.IsDarkMode)
+                return;
+
+            // Main background
+            this.ForeColor = ThemeService.Text;
+
+            // Group boxes
+            foreach (var grp in new[] { grpQuickActions, grpDraft, grpCustom })
+            {
+                grp.ForeColor = ThemeService.Text;
+            }
+
+            // Text boxes
+            foreach (var txt in new[] { txtDraftPrompt, txtCustomPrompt, txtResult })
+            {
+                txt.BackColor = ThemeService.TextBoxBackground;
+                txt.ForeColor = ThemeService.Text;
+            }
+
+            // Buttons
+            foreach (Control ctrl in this.Controls)
+                ApplyThemeToButtons(ctrl);
+
+            // Result panel
+            panelResult.BackColor = ThemeService.Background;
+            lblResult.ForeColor = ThemeService.Text;
+
+            // Status label will be themed via ShowStatus
+        }
+
+        private void ApplyThemeToButtons(Control parent)
+        {
+            foreach (Control ctrl in parent.Controls)
+            {
+                if (ctrl is Button btn)
+                {
+                    btn.FlatStyle = FlatStyle.Flat;
+                    btn.FlatAppearance.BorderColor = ThemeService.Border;
+                    btn.BackColor = ThemeService.ButtonFace;
+                    btn.ForeColor = ThemeService.ButtonText;
+                }
+                if (ctrl.HasChildren)
+                    ApplyThemeToButtons(ctrl);
+            }
+        }
+
         private void ShowStatus(string message, bool isError)
         {
             lblStatus.Text = message;
-            lblStatus.ForeColor = isError ? Color.DarkRed : Color.DarkGreen;
+            lblStatus.ForeColor = isError ? ThemeService.StatusError : ThemeService.StatusSuccess;
             lblStatus.Visible = true;
         }
 

@@ -54,7 +54,7 @@ namespace OutlookAI.TaskPane
             // lblTitle
             this.lblTitle.AutoSize = true;
             this.lblTitle.Font = new System.Drawing.Font("Segoe UI", 12F, System.Drawing.FontStyle.Bold);
-            this.lblTitle.ForeColor = System.Drawing.Color.FromArgb(0, 120, 212);
+            this.lblTitle.ForeColor = Services.ThemeService.Accent;
             this.lblTitle.Location = new System.Drawing.Point(10, 10);
             this.lblTitle.Name = "lblTitle";
             this.lblTitle.Size = new System.Drawing.Size(150, 21);
@@ -252,7 +252,7 @@ namespace OutlookAI.TaskPane
             // lnkUpdateError
             this.lnkUpdateError.Dock = System.Windows.Forms.DockStyle.Bottom;
             this.lnkUpdateError.Font = new System.Drawing.Font("Segoe UI", 7F);
-            this.lnkUpdateError.LinkColor = System.Drawing.Color.IndianRed;
+            this.lnkUpdateError.LinkColor = Services.ThemeService.LinkError;
             this.lnkUpdateError.Name = "lnkUpdateError";
             this.lnkUpdateError.Size = new System.Drawing.Size(260, 14);
             this.lnkUpdateError.TabStop = false;
@@ -264,7 +264,7 @@ namespace OutlookAI.TaskPane
             // lblVersion
             this.lblVersion.Dock = System.Windows.Forms.DockStyle.Bottom;
             this.lblVersion.Font = new System.Drawing.Font("Segoe UI", 7.5F);
-            this.lblVersion.ForeColor = System.Drawing.Color.Gray;
+            this.lblVersion.ForeColor = Services.ThemeService.SecondaryText;
             this.lblVersion.Name = "lblVersion";
             this.lblVersion.Size = new System.Drawing.Size(260, 18);
             this.lblVersion.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
@@ -273,7 +273,7 @@ namespace OutlookAI.TaskPane
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.AutoScroll = true;
-            this.BackColor = System.Drawing.Color.FromArgb(250, 249, 248);
+            this.BackColor = Services.ThemeService.Background;
             this.Controls.Add(this.lnkUpdateError);
             this.Controls.Add(this.lblVersion);
             this.Controls.Add(this.lblTitle);

@@ -201,6 +201,7 @@
     </Compile>
 
     <Compile Include="Services\ClaudeServices.cs" />
+    <Compile Include="Services\ThemeService.cs" />
     <Compile Include="Services\UpdateService.cs" />
     <Compile Include="TaskPane\AITaskPane.cs">
       <SubType>UserControl</SubType>

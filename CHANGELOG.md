@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-## v2.0.0.87 - 2026-03-23
-
+- Add dark mode support matching Outlook's theme setting
 - Preserve email signature formatting when drafting or editing with AI
+
+## v2.0.0.87 - 2026-03-23
 
 ## v2.0.0.84 - 2026-03-23
 
