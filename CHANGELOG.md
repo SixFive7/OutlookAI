@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.1.0.63 - 2026-03-23
+
 - Check for updates every 10 minutes using conditional requests to avoid API rate limits
 - Show time since last update check in the sidebar version label
 
