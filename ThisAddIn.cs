@@ -24,6 +24,19 @@ namespace OutlookAI
             }
         }
 
+        internal CustomTaskPane FindPaneForWindow(object window)
+        {
+            foreach (CustomTaskPane pane in this.CustomTaskPanes)
+            {
+                object paneWindow = pane.Window;
+                bool match = (paneWindow == window);
+                ReleaseCom(paneWindow);
+                if (match)
+                    return pane;
+            }
+            return null;
+        }
+
         private void InvalidateRibbonToggle()
         {
             try { RibbonUI?.InvalidateControl("btnAICompose"); } catch { }
@@ -158,14 +171,11 @@ namespace OutlookAI
             {
                 // If a pane already exists for this inspector (Outlook recycles
                 // Inspector objects), ensure it is visible for the new composition.
-                foreach (CustomTaskPane pane in this.CustomTaskPanes)
+                var existingPane = FindPaneForWindow(inspector);
+                if (existingPane != null)
                 {
-                    if (pane.Window == inspector)
-                    {
-                        pane.Visible = true;
-
-                        return;
-                    }
+                    existingPane.Visible = true;
+                    return;
                 }
 
                 mailItem = inspector.CurrentItem as Outlook.MailItem;
@@ -202,16 +212,13 @@ namespace OutlookAI
                     return;
 
                 // Reuse existing explorer task pane if one was already created
-                foreach (CustomTaskPane pane in this.CustomTaskPanes)
+                var existingPane = FindPaneForWindow(explorer);
+                if (existingPane != null)
                 {
-                    if (pane.Window == explorer)
-                    {
-                        var ctrl = pane.Control as AITaskPane;
-                        ctrl?.ResetForNewEmail();
-                        pane.Visible = true;
-
-                        return;
-                    }
+                    var ctrl = existingPane.Control as AITaskPane;
+                    ctrl?.ResetForNewEmail();
+                    existingPane.Visible = true;
+                    return;
                 }
 
                 var taskPaneControl = new AITaskPane(isInlineResponse: true);
@@ -240,15 +247,9 @@ namespace OutlookAI
                 if (explorer == null)
                     return;
 
-                foreach (CustomTaskPane pane in this.CustomTaskPanes)
-                {
-                    if (pane.Window == explorer)
-                    {
-                        pane.Visible = false;
-
-                        return;
-                    }
-                }
+                var pane = FindPaneForWindow(explorer);
+                if (pane != null)
+                    pane.Visible = false;
             }
             catch (Exception ex)
             {
@@ -269,13 +270,11 @@ namespace OutlookAI
         {
             try
             {
-                foreach (CustomTaskPane pane in this.CustomTaskPanes)
+                var existingPane = FindPaneForWindow(context);
+                if (existingPane != null)
                 {
-                    if (pane.Window == context)
-                    {
-                        pane.Visible = !pane.Visible;
-                        return;
-                    }
+                    existingPane.Visible = !existingPane.Visible;
+                    return;
                 }
 
                 // No pane exists yet — create one.

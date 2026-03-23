@@ -44,12 +44,8 @@ namespace OutlookAI
             object context = control.Context;
             try
             {
-                foreach (CustomTaskPane pane in Globals.ThisAddIn.CustomTaskPanes)
-                {
-                    if (pane.Window == context)
-                        return pane.Visible;
-                }
-                return false;
+                var pane = Globals.ThisAddIn.FindPaneForWindow(context);
+                return pane != null && pane.Visible;
             }
             finally
             {
