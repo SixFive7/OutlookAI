@@ -143,10 +143,13 @@ namespace OutlookAI
                 };
                 closeHandler = () =>
                 {
-                    // Unsubscribe events. The inspector COM object is owned
-                    // by AITaskPane and released in DisposeCustomResources.
                     events.Activate -= activateHandler;
                     events.Close -= closeHandler;
+                    // Release the inspector only if no task pane owns it.
+                    // At Close-event time VSTO hasn't removed the pane yet,
+                    // so FindPaneForWindow is reliable here.
+                    if (FindPaneForWindow(inspector) == null)
+                        ReleaseCom(inspector);
                 };
 
                 events.Activate += activateHandler;
@@ -156,14 +159,15 @@ namespace OutlookAI
             {
                 // Fallback: try creating the task pane immediately.
                 // If a task pane is created, AITaskPane owns the inspector
-                // and releases it in DisposeCustomResources. If not (early
-                // return), the inspector is left for GC — acceptable since
-                // this path only fires for non-compose windows.
-                ShowTaskPaneForInspector(inspector);
+                // and releases it in DisposeCustomResources. Otherwise
+                // release it here since no Close handler was set up.
+                if (!ShowTaskPaneForInspector(inspector))
+                    ReleaseCom(inspector);
             }
         }
 
-        private void ShowTaskPaneForInspector(Outlook.Inspector inspector)
+        /// <returns>true if a task pane now owns the inspector reference.</returns>
+        private bool ShowTaskPaneForInspector(Outlook.Inspector inspector)
         {
             Outlook.MailItem mailItem = null;
             try
@@ -174,22 +178,24 @@ namespace OutlookAI
                 if (existingPane != null)
                 {
                     existingPane.Visible = true;
-                    return;
+                    return true;
                 }
 
                 mailItem = inspector.CurrentItem as Outlook.MailItem;
                 if (mailItem == null || mailItem.Sent)
-                    return;
+                    return false;
 
                 var taskPaneControl = new AITaskPane(isInlineResponse: false, inspector: inspector);
                 var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", inspector);
                 customTaskPane.Width = 280;
                 customTaskPane.VisibleChanged += TaskPane_VisibleChanged;
                 customTaskPane.Visible = true;
+                return true;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("ShowTaskPaneForInspector error: " + ex.Message);
+                return false;
             }
             finally
             {
