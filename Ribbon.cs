@@ -26,18 +26,35 @@ namespace OutlookAI
             Globals.ThisAddIn.RibbonUI = ribbonUI;
         }
 
-        public void OnAIAssistantToggle(Office.IRibbonControl control, bool pressed) =>
-            Globals.ThisAddIn.ToggleTaskPane(control.Context);
+        public void OnAIAssistantToggle(Office.IRibbonControl control, bool pressed)
+        {
+            object context = control.Context;
+            try
+            {
+                Globals.ThisAddIn.ToggleTaskPane(context);
+            }
+            finally
+            {
+                ThisAddIn.ReleaseCom(context);
+            }
+        }
 
         public bool GetAIAssistantPressed(Office.IRibbonControl control)
         {
-            var context = control.Context;
-            foreach (CustomTaskPane pane in Globals.ThisAddIn.CustomTaskPanes)
+            object context = control.Context;
+            try
             {
-                if (pane.Window == context)
-                    return pane.Visible;
+                foreach (CustomTaskPane pane in Globals.ThisAddIn.CustomTaskPanes)
+                {
+                    if (pane.Window == context)
+                        return pane.Visible;
+                }
+                return false;
             }
-            return false;
+            finally
+            {
+                ThisAddIn.ReleaseCom(context);
+            }
         }
 
         private static string GetResourceText(string resourceName)

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using Microsoft.Office.Tools;
 using OutlookAI.Services;
 using OutlookAI.TaskPane;
@@ -14,6 +15,14 @@ namespace OutlookAI
         private readonly List<Outlook.Explorer> _hookedExplorers = new List<Outlook.Explorer>();
 
         internal Microsoft.Office.Core.IRibbonUI RibbonUI { get; set; }
+
+        internal static void ReleaseCom(object obj)
+        {
+            if (obj != null)
+            {
+                try { Marshal.ReleaseComObject(obj); } catch { }
+            }
+        }
 
         private void InvalidateRibbonToggle()
         {
@@ -70,8 +79,14 @@ namespace OutlookAI
                     ((Outlook.ExplorerEvents_10_Event)explorer).InlineResponseClose -= Explorer_InlineResponseClose;
                 }
                 catch { }
+                ReleaseCom(explorer);
             }
             _hookedExplorers.Clear();
+
+            ReleaseCom(_inspectors);
+            _inspectors = null;
+            ReleaseCom(_explorers);
+            _explorers = null;
         }
 
         private void HookExplorer(Outlook.Explorer explorer)
@@ -85,6 +100,7 @@ namespace OutlookAI
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("HookExplorer failed: " + ex.Message);
+                ReleaseCom(explorer);
             }
         }
 
@@ -118,6 +134,7 @@ namespace OutlookAI
                     // RCW can be garbage-collected.
                     events.Activate -= activateHandler;
                     events.Close -= closeHandler;
+                    ReleaseCom(inspector);
                 };
 
                 events.Activate += activateHandler;
@@ -125,13 +142,18 @@ namespace OutlookAI
             }
             catch
             {
-                // Fallback: try creating the task pane immediately
+                // Fallback: try creating the task pane immediately.
+                // No Close handler was set up, so release the inspector
+                // unless ShowTaskPaneForInspector stored it in a task pane
+                // (AITaskPane.DisposeCustomResources handles that case).
                 ShowTaskPaneForInspector(inspector);
+                ReleaseCom(inspector);
             }
         }
 
         private void ShowTaskPaneForInspector(Outlook.Inspector inspector)
         {
+            Outlook.MailItem mailItem = null;
             try
             {
                 // If a pane already exists for this inspector (Outlook recycles
@@ -146,7 +168,8 @@ namespace OutlookAI
                     }
                 }
 
-                if (!(inspector.CurrentItem is Outlook.MailItem mailItem) || mailItem.Sent)
+                mailItem = inspector.CurrentItem as Outlook.MailItem;
+                if (mailItem == null || mailItem.Sent)
                     return;
 
                 var taskPaneControl = new AITaskPane(isInlineResponse: false, inspector: inspector);
@@ -159,17 +182,22 @@ namespace OutlookAI
             {
                 System.Diagnostics.Debug.WriteLine("ShowTaskPaneForInspector error: " + ex.Message);
             }
+            finally
+            {
+                ReleaseCom(mailItem);
+            }
         }
 
         private void Explorer_InlineResponse(object item)
         {
+            Outlook.Explorer explorer = null;
             try
             {
                 if (!(item is Outlook.MailItem))
                     return;
 
                 // Find the explorer that owns this inline response
-                var explorer = this.Application.ActiveExplorer();
+                explorer = this.Application.ActiveExplorer();
                 if (explorer == null)
                     return;
 
@@ -196,13 +224,19 @@ namespace OutlookAI
             {
                 System.Diagnostics.Debug.WriteLine("InlineResponse error: " + ex.Message);
             }
+            finally
+            {
+                ReleaseCom(explorer);
+                ReleaseCom(item);
+            }
         }
 
         private void Explorer_InlineResponseClose()
         {
+            Outlook.Explorer explorer = null;
             try
             {
-                var explorer = this.Application.ActiveExplorer();
+                explorer = this.Application.ActiveExplorer();
                 if (explorer == null)
                     return;
 
@@ -219,6 +253,10 @@ namespace OutlookAI
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("InlineResponseClose error: " + ex.Message);
+            }
+            finally
+            {
+                ReleaseCom(explorer);
             }
         }
 
@@ -246,25 +284,42 @@ namespace OutlookAI
 
                 if (asInspector != null)
                 {
-                    var mailItem = asInspector.CurrentItem as Outlook.MailItem;
-                    if (mailItem != null && !mailItem.Sent)
+                    Outlook.MailItem mailItem = null;
+                    try
                     {
-                        var taskPaneControl = new AITaskPane(isInlineResponse: false, inspector: asInspector);
-                        var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", asInspector);
-                        customTaskPane.Width = 280;
-                        customTaskPane.VisibleChanged += TaskPane_VisibleChanged;
-                        customTaskPane.Visible = true;
+                        mailItem = asInspector.CurrentItem as Outlook.MailItem;
+                        if (mailItem != null && !mailItem.Sent)
+                        {
+                            var taskPaneControl = new AITaskPane(isInlineResponse: false, inspector: asInspector);
+                            var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", asInspector);
+                            customTaskPane.Width = 280;
+                            customTaskPane.VisibleChanged += TaskPane_VisibleChanged;
+                            customTaskPane.Visible = true;
+                        }
+                    }
+                    finally
+                    {
+                        ReleaseCom(mailItem);
                     }
                 }
                 else if (asExplorer != null)
                 {
-                    if (asExplorer.ActiveInlineResponse as Outlook.MailItem != null)
+                    Outlook.MailItem inlineItem = null;
+                    try
                     {
-                        var taskPaneControl = new AITaskPane(isInlineResponse: true);
-                        var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", asExplorer);
-                        customTaskPane.Width = 280;
-                        customTaskPane.VisibleChanged += TaskPane_VisibleChanged;
-                        customTaskPane.Visible = true;
+                        inlineItem = asExplorer.ActiveInlineResponse as Outlook.MailItem;
+                        if (inlineItem != null)
+                        {
+                            var taskPaneControl = new AITaskPane(isInlineResponse: true);
+                            var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", asExplorer);
+                            customTaskPane.Width = 280;
+                            customTaskPane.VisibleChanged += TaskPane_VisibleChanged;
+                            customTaskPane.Visible = true;
+                        }
+                    }
+                    finally
+                    {
+                        ReleaseCom(inlineItem);
                     }
                 }
             }

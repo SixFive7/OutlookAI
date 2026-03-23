@@ -214,11 +214,12 @@ namespace OutlookAI.TaskPane
             lblStatus.Visible = false;
         }
 
-        private Outlook.MailItem GetCurrentMailItem()
+        private Outlook.MailItem GetCurrentMailItem(out Outlook.Explorer explorer)
         {
+            explorer = null;
             if (_isInlineResponse)
             {
-                var explorer = Globals.ThisAddIn.Application.ActiveExplorer();
+                explorer = Globals.ThisAddIn.Application.ActiveExplorer();
                 return explorer?.ActiveInlineResponse as Outlook.MailItem;
             }
 
@@ -229,22 +230,32 @@ namespace OutlookAI.TaskPane
 
         private string GetEmailBody()
         {
+            Outlook.MailItem mail = null;
+            Outlook.Explorer explorer = null;
             try
             {
-                return GetCurrentMailItem()?.Body ?? "";
+                mail = GetCurrentMailItem(out explorer);
+                return mail?.Body ?? "";
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("GetEmailBody error: " + ex.Message);
                 return "";
             }
+            finally
+            {
+                ThisAddIn.ReleaseCom(mail);
+                ThisAddIn.ReleaseCom(explorer);
+            }
         }
 
         private bool UpdateEmailBody(string text, bool insert)
         {
+            Outlook.MailItem mail = null;
+            Outlook.Explorer explorer = null;
             try
             {
-                var mail = GetCurrentMailItem();
+                mail = GetCurrentMailItem(out explorer);
                 if (mail == null)
                 {
                     ShowStatus("Could not find active email window.", true);
@@ -258,6 +269,11 @@ namespace OutlookAI.TaskPane
                 System.Diagnostics.Debug.WriteLine("UpdateEmailBody error: " + ex.Message);
                 ShowStatus("Could not update email: " + ex.Message, true);
                 return false;
+            }
+            finally
+            {
+                ThisAddIn.ReleaseCom(mail);
+                ThisAddIn.ReleaseCom(explorer);
             }
         }
 
@@ -286,6 +302,7 @@ namespace OutlookAI.TaskPane
         {
             _versionTimer?.Stop();
             _versionTimer?.Dispose();
+            ThisAddIn.ReleaseCom(_owningInspector);
             // Don't call ClaudeService.Shutdown() here -- it kills the shared
             // warm process that other panes still need. ThisAddIn_Shutdown
             // handles final cleanup.
