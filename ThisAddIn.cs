@@ -54,7 +54,6 @@ namespace OutlookAI
         private void ThisAddIn_Shutdown(object sender, EventArgs e)
         {
             UpdateService.Stop();
-            UpdateService.ApplyIfReady();
             ClaudeService.Shutdown();
 
             if (_inspectors != null)

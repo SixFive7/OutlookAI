@@ -21,7 +21,7 @@ namespace OutlookAI.TaskPane
             InitializeComponent();
 
             _versionTimer = new Timer();
-            _versionTimer.Interval = 30000; // 30 seconds
+            _versionTimer.Interval = 1000; // 1 second
             _versionTimer.Tick += (s, ev) => UpdateVersionLabel();
             _versionTimer.Start();
             UpdateVersionLabel();
@@ -32,29 +32,27 @@ namespace OutlookAI.TaskPane
             var version = "v" + System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             var lastChecked = UpdateService.LastChecked;
             var error = UpdateService.LastError;
+            var status = UpdateService.Status;
 
-            if (lastChecked == null)
-            {
-                lblVersion.Text = error != null
-                    ? version
-                    : $"{version}   checking\u2026";
-            }
+            string suffix;
+            if (status != null && status != "up to date")
+                suffix = status;
+            else if (lastChecked == null)
+                suffix = error != null ? null : "checking\u2026";
             else
             {
                 var ago = DateTime.Now - lastChecked.Value;
-                string agoText;
                 if (ago.TotalSeconds < 60)
-                    agoText = "just now";
+                    suffix = "checked just now";
                 else if (ago.TotalMinutes < 60)
-                    agoText = $"{(int)ago.TotalMinutes}m ago";
+                    suffix = $"checked {(int)ago.TotalMinutes}m ago";
                 else if (ago.TotalHours < 24)
-                    agoText = $"{(int)ago.TotalHours}h ago";
+                    suffix = $"checked {(int)ago.TotalHours}h ago";
                 else
-                    agoText = $"{(int)ago.TotalDays}d ago";
-
-                lblVersion.Text = $"{version}   checked {agoText}";
+                    suffix = $"checked {(int)ago.TotalDays}d ago";
             }
 
+            lblVersion.Text = suffix != null ? $"{version} - {suffix}" : version;
             lnkUpdateError.Visible = error != null;
         }
 

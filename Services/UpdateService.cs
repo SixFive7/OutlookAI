@@ -19,12 +19,13 @@ namespace OutlookAI.Services
         private const string GitHubRepo = "OutlookAI";
         private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(10);
 
-        private static string _stagedInstallerPath;
         private static string _etag;
         private static Timer _timer;
+        private static bool _updateLaunched;
 
         public static DateTime? LastChecked { get; private set; }
         public static string LastError { get; private set; }
+        public static string Status { get; private set; }
 
         public static void Start()
         {
@@ -83,11 +84,15 @@ namespace OutlookAI.Services
                     var localVersion = Assembly.GetExecutingAssembly().GetName().Version;
 
                     if (remoteVersion <= localVersion)
+                    {
+                        Status = "up to date";
+                        return;
+                    }
+
+                    if (_updateLaunched)
                         return;
 
-                    // Already have this update staged
-                    if (_stagedInstallerPath != null && File.Exists(_stagedInstallerPath))
-                        return;
+                    Status = $"downloading v{remoteVersion}\u2026";
 
                     // Find the .exe installer asset
                     string downloadUrl = null;
@@ -111,33 +116,27 @@ namespace OutlookAI.Services
                     var tempPath = Path.Combine(Path.GetTempPath(), "OutlookAI-Update.exe");
                     var bytes = await client.GetByteArrayAsync(downloadUrl);
                     File.WriteAllBytes(tempPath, bytes);
-                    _stagedInstallerPath = tempPath;
+
+                    // Spawn a hidden process that waits for Outlook to exit,
+                    // then runs the installer. This avoids depending on the
+                    // unreliable VSTO Shutdown event and never force-closes Outlook.
+                    var installerArgs = "/SILENT /SP- /NOCANCEL /NORESTART /NORESTARTAPPLICATIONS";
+                    var script = $"Get-Process outlook -ErrorAction SilentlyContinue | Wait-Process; Start-Process '{tempPath}' -ArgumentList '{installerArgs}'";
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "powershell.exe",
+                        Arguments = $"-WindowStyle Hidden -ExecutionPolicy Bypass -Command \"{script}\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    });
+
+                    _updateLaunched = true;
+                    Status = $"v{remoteVersion} ready - installs on close";
                 }
             }
             catch (Exception ex)
             {
                 LastError = ex.InnerException?.Message ?? ex.Message;
-            }
-        }
-
-        public static void ApplyIfReady()
-        {
-            try
-            {
-                var path = _stagedInstallerPath;
-                if (path == null || !File.Exists(path))
-                    return;
-
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = path,
-                    Arguments = "/SILENT /SP- /NOCANCEL /NORESTART /NORESTARTAPPLICATIONS",
-                    UseShellExecute = true
-                });
-            }
-            catch
-            {
-                // Silent failure
             }
         }
     }

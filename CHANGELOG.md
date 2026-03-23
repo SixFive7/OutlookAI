@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Install updates automatically when Outlook closes without force-quitting
+- Show update status in sidebar: downloading, ready, up to date
+- Prevent multiple installer instances from running simultaneously
+
 ## v1.1.0.68 - 2026-03-23
 
 - Fix update check failing with TLS error on .NET Framework 4.8
