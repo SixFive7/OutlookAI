@@ -12,6 +12,7 @@
 - Send email thread context to AI only once, not on every subsequent edit
 - Capture manual edits made in the Outlook editor between AI turns
 - Replace Insert/Replace buttons with a single Apply button for cleaner workflow
+- Fix installer failing to find VSTOInstaller.exe by using correct Common Files path
 - Bump major version to 2.0.0
 
 ## v1.1.0.82 - 2026-03-23

@@ -27,4 +27,4 @@ CreateAppDir=yes
 Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Run]
-Filename: "{commonpf}\microsoft shared\VSTO\10.0\VSTOInstaller.exe"; Parameters: "/S /I ""{app}\OutlookAI.vsto"""; Flags: waituntilterminated
+Filename: "{commoncf}\microsoft shared\VSTO\10.0\VSTOInstaller.exe"; Parameters: "/S /I ""{app}\OutlookAI.vsto"""; Flags: waituntilterminated
