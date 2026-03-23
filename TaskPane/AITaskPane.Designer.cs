@@ -234,7 +234,6 @@ namespace OutlookAI.TaskPane
             this.lblVersion.ForeColor = System.Drawing.Color.Gray;
             this.lblVersion.Name = "lblVersion";
             this.lblVersion.Size = new System.Drawing.Size(260, 18);
-            this.lblVersion.Text = "v" + System.Reflection.Assembly.GetExecutingAssembly().GetName().Version.ToString();
             this.lblVersion.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
 
             // AITaskPane

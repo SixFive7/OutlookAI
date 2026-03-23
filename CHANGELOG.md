@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Check for updates every 10 minutes using conditional requests to avoid API rate limits
+- Show time since last update check in the sidebar version label
+
 ## v1.1.0.61 - 2026-03-23
 
 - Add automatic silent updates via GitHub Releases on Outlook close
