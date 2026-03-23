@@ -31,26 +31,30 @@ namespace OutlookAI.TaskPane
         {
             var version = "v" + System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             var lastChecked = UpdateService.LastChecked;
+            var error = UpdateService.LastError;
+
             if (lastChecked == null)
             {
-                lblVersion.Text = version;
-                return;
+                lblVersion.Text = error != null
+                    ? version
+                    : $"{version} \u2022 checking\u2026";
+            }
+            else
+            {
+                var ago = DateTime.Now - lastChecked.Value;
+                string agoText;
+                if (ago.TotalSeconds < 60)
+                    agoText = "just now";
+                else if (ago.TotalMinutes < 60)
+                    agoText = $"{(int)ago.TotalMinutes}m ago";
+                else if (ago.TotalHours < 24)
+                    agoText = $"{(int)ago.TotalHours}h ago";
+                else
+                    agoText = $"{(int)ago.TotalDays}d ago";
+
+                lblVersion.Text = $"{version} \u2022 checked {agoText}";
             }
 
-            var ago = DateTime.Now - lastChecked.Value;
-            string agoText;
-            if (ago.TotalSeconds < 60)
-                agoText = "just now";
-            else if (ago.TotalMinutes < 60)
-                agoText = $"{(int)ago.TotalMinutes}m ago";
-            else if (ago.TotalHours < 24)
-                agoText = $"{(int)ago.TotalHours}h ago";
-            else
-                agoText = $"{(int)ago.TotalDays}d ago";
-
-            lblVersion.Text = $"{version} \u2022 checked {agoText}";
-
-            var error = UpdateService.LastError;
             lnkUpdateError.Visible = error != null;
         }
 

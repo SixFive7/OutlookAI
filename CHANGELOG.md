@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fix update error link never appearing when all update checks fail
+- Show "checking..." state before first update check completes
+
 ## v1.1.0.63 - 2026-03-23
 
 - Check for updates every 10 minutes using conditional requests to avoid API rate limits
