@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.1.0.68 - 2026-03-23
+
 - Fix update check failing with TLS error on .NET Framework 4.8
 
 ## v1.1.0.66 - 2026-03-23
