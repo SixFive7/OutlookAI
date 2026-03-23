@@ -49,6 +49,16 @@ namespace OutlookAI.TaskPane
                 agoText = $"{(int)ago.TotalDays}d ago";
 
             lblVersion.Text = $"{version} \u2022 checked {agoText}";
+
+            var error = UpdateService.LastError;
+            lnkUpdateError.Visible = error != null;
+        }
+
+        private void lnkUpdateError_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
+        {
+            var error = UpdateService.LastError;
+            if (error != null)
+                MessageBox.Show(error, "Update Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         /// <summary>

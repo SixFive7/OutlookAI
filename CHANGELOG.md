@@ -6,6 +6,8 @@
 
 - Check for updates every 10 minutes using conditional requests to avoid API rate limits
 - Show time since last update check in the sidebar version label
+- Show clickable error link in sidebar when update check fails
+- Show progress bar during automatic updates instead of running fully hidden
 
 ## v1.1.0.61 - 2026-03-23
 

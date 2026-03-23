@@ -24,6 +24,7 @@ namespace OutlookAI.Services
         private static Timer _timer;
 
         public static DateTime? LastChecked { get; private set; }
+        public static string LastError { get; private set; }
 
         public static void Start()
         {
@@ -56,13 +57,18 @@ namespace OutlookAI.Services
                     if (response.StatusCode == HttpStatusCode.NotModified)
                     {
                         LastChecked = DateTime.Now;
+                        LastError = null;
                         return;
                     }
 
                     if (!response.IsSuccessStatusCode)
+                    {
+                        LastError = $"GitHub API returned {(int)response.StatusCode} {response.ReasonPhrase}";
                         return;
+                    }
 
                     LastChecked = DateTime.Now;
+                    LastError = null;
 
                     if (response.Headers.ETag != null)
                         _etag = response.Headers.ETag.Tag;
@@ -96,7 +102,10 @@ namespace OutlookAI.Services
                     }
 
                     if (downloadUrl == null)
+                    {
+                        LastError = "No installer asset found in latest release";
                         return;
+                    }
 
                     var tempPath = Path.Combine(Path.GetTempPath(), "OutlookAI-Update.exe");
                     var bytes = await client.GetByteArrayAsync(downloadUrl);
@@ -104,9 +113,9 @@ namespace OutlookAI.Services
                     _stagedInstallerPath = tempPath;
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Silent failure — try again next poll
+                LastError = ex.InnerException?.Message ?? ex.Message;
             }
         }
 
@@ -121,7 +130,7 @@ namespace OutlookAI.Services
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = path,
-                    Arguments = "/VERYSILENT",
+                    Arguments = "/SILENT /SP- /NOCANCEL /NORESTART /NORESTARTAPPLICATIONS",
                     UseShellExecute = true
                 });
             }
