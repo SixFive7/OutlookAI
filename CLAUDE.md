@@ -20,10 +20,10 @@ Rules:
 - Version is `BASE_VERSION` (in both workflow files) + commit count. The release workflow handles bumping automatically.
 - The release workflow requires a `version_bump` input in `major.minor.patch` format (e.g. `1.0.0` for major bump, `0.1.0` for minor, `0.0.1` for patch). This input is **required** — the workflow will not run without it. `0.0.0` is rejected — every release must bump at least one version component.
 - **After committing, ALWAYS ask the user if they want to create a release.** If yes:
-  1. **ALWAYS ask the version bump question.** Read the current `BASE_VERSION` from `.github/workflows/release.yml` and present options in A/B/C format showing what each bump produces. Example with BASE_VERSION 2.0.0:
-     - A) Patch (0.0.1) → 2.0.1
-     - B) Minor (0.1.0) → 2.1.0
-     - C) Major (1.0.0) → 3.0.0
+  1. **ALWAYS ask the version bump question.** Read the current `BASE_VERSION` from `.github/workflows/release.yml` and present options in A/B/C format showing current → new version. Example with BASE_VERSION 2.0.0:
+     - A) Patch — 2.0.0 → 2.0.1
+     - B) Minor — 2.0.0 → 2.1.0
+     - C) Major — 2.0.0 → 3.0.0
   2. Run: `gh workflow run release -f version_bump=X.X.X` with the user's chosen bump value.
   3. Monitor with `gh run watch`.
 - After a release, pull the stamped changelog commit before continuing work: `git pull --rebase`.
