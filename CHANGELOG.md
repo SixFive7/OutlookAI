@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.0.0.59 - 2026-03-23
+
 - Remove empty release entries from changelog
 - Fix CI creating empty changelog headings when no unreleased entries exist
 
