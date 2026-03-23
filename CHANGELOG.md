@@ -2,12 +2,16 @@
 
 ## Unreleased
 
+## v1.1.0.61 - 2026-03-23
+
+- Add automatic silent updates via GitHub Releases on Outlook close
+- Show current version at the bottom of the AI sidebar
+- Bump minor version to 1.1.0
+
 ## v1.0.0.59 - 2026-03-23
 
 - Remove empty release entries from changelog
 - Fix CI creating empty changelog headings when no unreleased entries exist
-- Add automatic silent updates via GitHub Releases on Outlook close
-- Show current version at the bottom of the AI sidebar
 
 ## v1.0.0.57 - 2026-03-23
 
