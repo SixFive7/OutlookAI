@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v2.0.0.84 - 2026-03-23
+
 - Add iterative draft editing with full conversation history across multiple AI turns
 - Add "Edit Draft" button for refining an existing AI draft without starting over
 - Add "Run Custom Action on Selection" button to apply instructions to selected text only
