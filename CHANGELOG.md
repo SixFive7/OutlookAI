@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.1.0.71 - 2026-03-23
+
 - Install updates automatically when Outlook closes without force-quitting
 - Show update status in sidebar: downloading, ready, up to date
 - Prevent multiple installer instances from running simultaneously
