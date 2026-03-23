@@ -39,6 +39,7 @@ namespace OutlookAI.TaskPane
             // Selection-based buttons require WordEditor, only available for Inspector windows
             if (_isInlineResponse)
             {
+                btnDraftSelection.Enabled = false;
                 btnCustomSelection.Enabled = false;
             }
 
@@ -159,6 +160,22 @@ namespace OutlookAI.TaskPane
             }
             // Edit Draft = iterative — keep history, continue conversation
             await ProcessAction(ClaudeService.ActionType.Draft, txtDraftPrompt.Text);
+        }
+
+        private async void btnDraftSelection_Click(object sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(txtDraftPrompt.Text))
+            {
+                ShowStatus("Please enter instructions for editing the selection.", true);
+                return;
+            }
+            string selectedText = GetSelectedText();
+            if (string.IsNullOrWhiteSpace(selectedText))
+            {
+                ShowStatus("Please select text in the email editor first.", true);
+                return;
+            }
+            await ProcessAction(ClaudeService.ActionType.Draft, txtDraftPrompt.Text, selectedText);
         }
 
         private async void btnCustom_Click(object sender, EventArgs e)
@@ -652,6 +669,7 @@ namespace OutlookAI.TaskPane
             btnFriendly.Enabled = enabled;
             btnDraft.Enabled = enabled;
             btnEditDraft.Enabled = enabled;
+            btnDraftSelection.Enabled = enabled && !_isInlineResponse;
             txtDraftPrompt.Enabled = enabled;
             btnCustom.Enabled = enabled;
             btnCustomSelection.Enabled = enabled && !_isInlineResponse;

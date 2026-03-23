@@ -32,6 +32,7 @@ namespace OutlookAI.TaskPane
             this.txtDraftPrompt = new System.Windows.Forms.TextBox();
             this.btnDraft = new System.Windows.Forms.Button();
             this.btnEditDraft = new System.Windows.Forms.Button();
+            this.btnDraftSelection = new System.Windows.Forms.Button();
             this.grpCustom = new System.Windows.Forms.GroupBox();
             this.txtCustomPrompt = new System.Windows.Forms.TextBox();
             this.btnCustom = new System.Windows.Forms.Button();
@@ -126,10 +127,11 @@ namespace OutlookAI.TaskPane
             this.grpDraft.Controls.Add(this.txtDraftPrompt);
             this.grpDraft.Controls.Add(this.btnDraft);
             this.grpDraft.Controls.Add(this.btnEditDraft);
+            this.grpDraft.Controls.Add(this.btnDraftSelection);
             this.grpDraft.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
             this.grpDraft.Location = new System.Drawing.Point(10, 140);
             this.grpDraft.Name = "grpDraft";
-            this.grpDraft.Size = new System.Drawing.Size(240, 110);
+            this.grpDraft.Size = new System.Drawing.Size(240, 170);
             this.grpDraft.TabIndex = 1;
             this.grpDraft.TabStop = false;
             this.grpDraft.Text = "Instruction";
@@ -142,32 +144,40 @@ namespace OutlookAI.TaskPane
             this.txtDraftPrompt.Size = new System.Drawing.Size(220, 50);
 
             // btnDraft
-            this.btnDraft.Font = new System.Drawing.Font("Segoe UI", 7F);
+            this.btnDraft.Font = new System.Drawing.Font("Segoe UI", 8F);
             this.btnDraft.Location = new System.Drawing.Point(10, 78);
-            this.btnDraft.Size = new System.Drawing.Size(107, 26);
-            this.btnDraft.Text = "Draft with instruction";
+            this.btnDraft.Size = new System.Drawing.Size(220, 26);
+            this.btnDraft.Text = "Draft new email";
             this.btnDraft.UseVisualStyleBackColor = true;
             this.btnDraft.Click += new System.EventHandler(this.btnDraft_Click);
 
             // btnEditDraft
-            this.btnEditDraft.Font = new System.Drawing.Font("Segoe UI", 7F);
-            this.btnEditDraft.Location = new System.Drawing.Point(123, 78);
-            this.btnEditDraft.Size = new System.Drawing.Size(107, 26);
-            this.btnEditDraft.Text = "Update with instruction";
+            this.btnEditDraft.Font = new System.Drawing.Font("Segoe UI", 8F);
+            this.btnEditDraft.Location = new System.Drawing.Point(10, 108);
+            this.btnEditDraft.Size = new System.Drawing.Size(220, 26);
+            this.btnEditDraft.Text = "Edit current draft";
             this.btnEditDraft.UseVisualStyleBackColor = true;
             this.btnEditDraft.Click += new System.EventHandler(this.btnEditDraft_Click);
+
+            // btnDraftSelection
+            this.btnDraftSelection.Font = new System.Drawing.Font("Segoe UI", 8F);
+            this.btnDraftSelection.Location = new System.Drawing.Point(10, 138);
+            this.btnDraftSelection.Size = new System.Drawing.Size(220, 26);
+            this.btnDraftSelection.Text = "Edit selection only";
+            this.btnDraftSelection.UseVisualStyleBackColor = true;
+            this.btnDraftSelection.Click += new System.EventHandler(this.btnDraftSelection_Click);
 
             // grpCustom
             this.grpCustom.Controls.Add(this.txtCustomPrompt);
             this.grpCustom.Controls.Add(this.btnCustom);
             this.grpCustom.Controls.Add(this.btnCustomSelection);
             this.grpCustom.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
-            this.grpCustom.Location = new System.Drawing.Point(10, 255);
+            this.grpCustom.Location = new System.Drawing.Point(10, 315);
             this.grpCustom.Name = "grpCustom";
             this.grpCustom.Size = new System.Drawing.Size(240, 140);
             this.grpCustom.TabIndex = 2;
             this.grpCustom.TabStop = false;
-            this.grpCustom.Text = "Custom Action";
+            this.grpCustom.Text = "Custom Action Instruction";
 
             // txtCustomPrompt
             this.txtCustomPrompt.Font = new System.Drawing.Font("Segoe UI", 8F);
@@ -194,7 +204,7 @@ namespace OutlookAI.TaskPane
 
             // lblStatus
             this.lblStatus.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.lblStatus.Location = new System.Drawing.Point(10, 400);
+            this.lblStatus.Location = new System.Drawing.Point(10, 460);
             this.lblStatus.Name = "lblStatus";
             this.lblStatus.Size = new System.Drawing.Size(240, 20);
             this.lblStatus.Visible = false;
@@ -204,7 +214,7 @@ namespace OutlookAI.TaskPane
             this.panelResult.Controls.Add(this.txtResult);
             this.panelResult.Controls.Add(this.btnApply);
             this.panelResult.Controls.Add(this.btnDiscard);
-            this.panelResult.Location = new System.Drawing.Point(10, 425);
+            this.panelResult.Location = new System.Drawing.Point(10, 485);
             this.panelResult.Name = "panelResult";
             this.panelResult.Size = new System.Drawing.Size(240, 180);
             this.panelResult.Visible = false;
@@ -299,6 +309,7 @@ namespace OutlookAI.TaskPane
         private System.Windows.Forms.TextBox txtDraftPrompt;
         private System.Windows.Forms.Button btnDraft;
         private System.Windows.Forms.Button btnEditDraft;
+        private System.Windows.Forms.Button btnDraftSelection;
         private System.Windows.Forms.GroupBox grpCustom;
         private System.Windows.Forms.TextBox txtCustomPrompt;
         private System.Windows.Forms.Button btnCustom;
