@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add ribbon toggle button to show/hide the AI sidebar in both compose windows and the main Outlook window
+- Allow closing the sidebar via the built-in close button; reopen it with the ribbon toggle
+- Fix Claude Code not being found by using its default install path instead of relying on PATH
+
 ## v1.0.0.51 - 2026-03-11
 
 ## v1.0.0.49 - 2026-03-11

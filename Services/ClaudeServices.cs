@@ -12,6 +12,9 @@ namespace OutlookAI.Services
     {
         private const string Model = "claude-opus-4-6";
         private static readonly string CliArgs = "-p - --output-format json --max-turns 1 --model \"" + Model + "\"";
+        private static readonly string ClaudePath = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".local", "bin", "claude.exe");
 
         private static readonly object _warmLock = new object();
         private static Process _warmProcess;
@@ -169,7 +172,7 @@ namespace OutlookAI.Services
                 var process = new Process();
                 process.StartInfo = new ProcessStartInfo
                 {
-                    FileName = "claude",
+                    FileName = ClaudePath,
                     Arguments = CliArgs,
                     UseShellExecute = false,
                     CreateNoWindow = true,
