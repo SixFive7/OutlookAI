@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.1.0.82 - 2026-03-23
+
 - Fix update installer showing a popup by using silent VSTO installation
 
 ## v1.1.0.79 - 2026-03-23
