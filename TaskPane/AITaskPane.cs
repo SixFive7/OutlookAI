@@ -36,6 +36,7 @@ namespace OutlookAI.TaskPane
             ApplyTheme();
             SetupTooltips();
             lblVersion.Click += lblVersion_Click;
+            lblVersion.DoubleClick += lblVersion_Click;
 
             _versionTimer = new Timer();
             _versionTimer.Interval = 1000; // 1 second
