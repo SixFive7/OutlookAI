@@ -68,6 +68,7 @@ namespace OutlookAI.Services
                     {
                         var stderr = process.StandardError.ReadToEnd();
                         _lastPrerequisiteError = DiagnoseError(stderr, process.ExitCode);
+                        process.Dispose();
                         return;
                     }
 

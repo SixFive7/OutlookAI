@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix process handle leak when warm-up detects missing prerequisites and exits early
 - Fix Outlook UI freezing for up to 1.5 seconds when prerequisites were missing at startup
 - Fix non-ASCII email content being garbled when sent to Claude CLI by writing stdin as UTF-8
 - Rewrite README with comprehensive documentation of all features, limitations, context awareness, iterative editing, dark mode, auto-updates, debug mode, inline responses, and troubleshooting
