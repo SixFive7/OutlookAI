@@ -22,6 +22,7 @@ namespace OutlookAI.TaskPane
         private string _threadText;      // Cached plain text from _MailOriginal bookmark
         private bool _contextCaptured;   // Whether sig/thread have been read for this email
         private bool _freshDraft;        // When true, send empty draft (no previous AI content)
+        private bool _isProcessing;      // Reentrancy guard for ProcessAction
 
         // Debug: 7 clicks on version label to enable, accumulates log, copies to clipboard
         private bool _debug;
@@ -256,6 +257,8 @@ namespace OutlookAI.TaskPane
 
         private async Task ProcessAction(ClaudeService.ActionType action, string prompt = "", string selectedText = null)
         {
+            if (_isProcessing) return;
+            _isProcessing = true;
             try
             {
                 SetUIEnabled(false);
@@ -271,6 +274,7 @@ namespace OutlookAI.TaskPane
                     if (doc == null)
                     {
                         ShowStatus("Could not access email editor.", true);
+                        _isProcessing = false;
                         SetUIEnabled(true);
                         return;
                     }
@@ -328,6 +332,7 @@ namespace OutlookAI.TaskPane
 
                         ShowStatus("Done!", false);
                     }
+                    _isProcessing = false;
                     SetUIEnabled(true);
                 });
             }
@@ -337,6 +342,7 @@ namespace OutlookAI.TaskPane
                 {
                     string msg = ex.InnerException != null ? ex.InnerException.Message : ex.Message;
                     ShowStatus(msg, true);
+                    _isProcessing = false;
                     SetUIEnabled(true);
                 });
             }
