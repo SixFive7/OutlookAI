@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Switch from HTML parsing to Word Object Model for email structure detection, using bookmarks for reliable signature and thread boundary identification
+- Preserve email signature and thread formatting across all Outlook versions by never modifying them directly
+
 ## v2.1.1.103 - 2026-03-23
 
 - Fix signature layout being destroyed when drafting emails by switching to HTML-native editing

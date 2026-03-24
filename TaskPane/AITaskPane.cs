@@ -17,14 +17,10 @@ namespace OutlookAI.TaskPane
 
         // Iterative editing state
         private readonly List<EditTurn> _editHistory = new List<EditTurn>();
-        private string _htmlPrefix;      // HTML from start up to and including <body...> tag
-        private string _signatureHtml;   // Signature HTML block (preserved across draft writes)
-        private string _threadHtml;      // HTML from reply boundary to end (includes </body></html>)
-        private bool _threadCaptured;
-        private bool _freshDraft;         // When true, send empty draft zone (no previous AI content)
-
-        private const string DraftStartMarker = "<!-- DRAFT_START -->";
-        private const string DraftEndMarker = "<!-- DRAFT_END -->";
+        private string _signatureText;   // Cached plain text from _MailAutoSig bookmark
+        private string _threadText;      // Cached plain text from _MailOriginal bookmark
+        private bool _contextCaptured;   // Whether sig/thread have been read for this email
+        private bool _freshDraft;        // When true, send empty draft (no previous AI content)
 
         public AITaskPane(bool isInlineResponse = false, Outlook.Inspector inspector = null)
         {
@@ -32,6 +28,7 @@ namespace OutlookAI.TaskPane
             _owningInspector = inspector;
             InitializeComponent();
             ApplyTheme();
+            SetupTooltips();
 
             // Selection-based buttons require WordEditor, only available for Inspector windows
             if (_isInlineResponse)
@@ -92,10 +89,10 @@ namespace OutlookAI.TaskPane
             txtCustomPrompt.Text = "";
             lblStatus.Visible = false;
             _editHistory.Clear();
-            _htmlPrefix = null;
-            _signatureHtml = null;
-            _threadHtml = null;
-            _threadCaptured = false;
+            _signatureText = null;
+            _threadText = null;
+            _contextCaptured = false;
+            _freshDraft = false;
         }
 
         // === Button click handlers ===
@@ -137,9 +134,9 @@ namespace OutlookAI.TaskPane
                 ShowStatus("Please enter instructions for the email you want to draft.", true);
                 return;
             }
-            // Draft Email = fresh start — clear history, re-capture structure, empty draft zone
+            // Draft Email = fresh start — clear history, re-read context, send empty draft
             _editHistory.Clear();
-            _threadCaptured = false;
+            _contextCaptured = false;
             _freshDraft = true;
             await ProcessAction(ClaudeService.ActionType.Draft, txtDraftPrompt.Text);
         }
@@ -206,33 +203,67 @@ namespace OutlookAI.TaskPane
 
             try
             {
-                // Capture email structure on first interaction (or re-capture for fresh drafts)
-                if (!_threadCaptured)
-                {
-                    string htmlBody = GetEmailHtmlBody();
-                    CaptureEmailStructure(htmlBody);
-                    _threadCaptured = true;
-                }
+                string draftText;
+                string signatureText;
+                string threadText;
 
-                string markedBodyHtml;
-                if (_freshDraft)
+                if (_isInlineResponse)
                 {
-                    // Fresh draft — empty draft zone, signature + thread for context only
-                    _freshDraft = false;
-                    markedBodyHtml = DraftStartMarker + DraftEndMarker + _signatureHtml + _threadHtml;
+                    // Inline: no WordEditor, use MailItem.Body fallback
+                    draftText = ReadDraftTextFallback();
+                    signatureText = "";
+                    threadText = "";
                 }
                 else
                 {
-                    // Re-read live email to capture manual edits
-                    markedBodyHtml = BuildMarkedBodyHtml();
+                    object doc = null;
+                    try
+                    {
+                        doc = GetWordDocument();
+                        if (doc == null)
+                        {
+                            ShowStatus("Could not access email editor.", true);
+                            SetUIEnabled(true);
+                            return;
+                        }
+
+                        dynamic wordDoc = doc;
+                        wordDoc.Bookmarks.ShowHidden = true;
+
+                        // Capture signature and thread context on first interaction
+                        if (!_contextCaptured)
+                        {
+                            _signatureText = ReadSignatureText(wordDoc);
+                            _threadText = ReadThreadText(wordDoc);
+                            _contextCaptured = true;
+                        }
+
+                        signatureText = _signatureText;
+                        threadText = _threadText;
+
+                        // Read current draft (always re-read to capture manual edits)
+                        draftText = ReadDraftText(wordDoc);
+                    }
+                    finally
+                    {
+                        ThisAddIn.ReleaseCom(doc);
+                    }
+                }
+
+                // Fresh draft: send empty text so Claude drafts from scratch
+                if (_freshDraft)
+                {
+                    _freshDraft = false;
+                    draftText = "";
                 }
 
                 string result = await ClaudeService.ProcessEmailAsync(
-                    action, prompt, _editHistory, markedBodyHtml, selectedText);
+                    action, prompt, _editHistory,
+                    draftText, signatureText, threadText, selectedText);
 
                 InvokeOnUI(() =>
                 {
-                    if (WriteDraftToEmail(result))
+                    if (WriteDraftToDocument(result))
                     {
                         _editHistory.Add(new EditTurn
                         {
@@ -282,18 +313,91 @@ namespace OutlookAI.TaskPane
             return mailItem;
         }
 
-        private string GetEmailHtmlBody()
+        // === Word Object Model helpers ===
+
+        private object GetWordDocument()
+        {
+            if (_isInlineResponse)
+                return null;
+            try
+            {
+                return _owningInspector?.WordEditor;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Finds the draft boundary: _MailAutoSig.Start ?? _MailOriginal.Start ?? Content.End
+        /// </summary>
+        private int FindDraftEnd(dynamic doc)
+        {
+            if (doc.Bookmarks.Exists("_MailAutoSig"))
+            {
+                var bmk = doc.Bookmarks["_MailAutoSig"];
+                int pos = bmk.Range.Start;
+                ThisAddIn.ReleaseCom(bmk);
+                return pos;
+            }
+            if (doc.Bookmarks.Exists("_MailOriginal"))
+            {
+                var bmk = doc.Bookmarks["_MailOriginal"];
+                int pos = bmk.Range.Start;
+                ThisAddIn.ReleaseCom(bmk);
+                return pos;
+            }
+            return doc.Content.End;
+        }
+
+        private string ReadDraftText(dynamic doc)
+        {
+            int draftEnd = FindDraftEnd(doc);
+
+            var range = doc.Range(0, draftEnd);
+            string text = range.Text ?? "";
+            ThisAddIn.ReleaseCom(range);
+
+            return text.Trim('\r', '\n');
+        }
+
+        private string ReadSignatureText(dynamic doc)
+        {
+            if (!doc.Bookmarks.Exists("_MailAutoSig"))
+                return "";
+
+            var bmk = doc.Bookmarks["_MailAutoSig"];
+            string text = bmk.Range.Text ?? "";
+            ThisAddIn.ReleaseCom(bmk);
+
+            return text.TrimEnd('\r', '\n');
+        }
+
+        private string ReadThreadText(dynamic doc)
+        {
+            if (!doc.Bookmarks.Exists("_MailOriginal"))
+                return "";
+
+            var bmk = doc.Bookmarks["_MailOriginal"];
+            string text = bmk.Range.Text ?? "";
+            ThisAddIn.ReleaseCom(bmk);
+
+            return text.TrimEnd('\r', '\n');
+        }
+
+        private string ReadDraftTextFallback()
         {
             Outlook.MailItem mail = null;
             Outlook.Explorer explorer = null;
             try
             {
                 mail = GetCurrentMailItem(out explorer);
-                return mail?.HTMLBody ?? "";
+                return mail?.Body ?? "";
             }
             catch (Exception ex)
             {
-                Debug.WriteLine("GetEmailHtmlBody error: " + ex.Message);
+                Debug.WriteLine("ReadDraftTextFallback error: " + ex.Message);
                 return "";
             }
             finally
@@ -303,147 +407,94 @@ namespace OutlookAI.TaskPane
             }
         }
 
-        // === HTML boundary detection and draft extraction ===
-
-        private void CaptureEmailStructure(string htmlBody)
+        private bool WriteDraftToDocument(string newDraftText)
         {
-            if (string.IsNullOrWhiteSpace(htmlBody))
+            if (_isInlineResponse)
             {
-                _htmlPrefix = "<html><body>";
-                _signatureHtml = "";
-                _threadHtml = "</body></html>";
-                return;
-            }
-
-            int bodyTagEnd = FindBodyTagEnd(htmlBody);
-            if (bodyTagEnd < 0)
-            {
-                _htmlPrefix = "<html><body>";
-                _signatureHtml = "";
-                _threadHtml = "</body></html>";
-                return;
-            }
-
-            _htmlPrefix = htmlBody.Substring(0, bodyTagEnd);
-
-            int boundary = FindDraftBoundary(htmlBody);
-            if (boundary >= 0)
-            {
-                // Everything from boundary onward is the thread (preserved on each write)
-                _threadHtml = htmlBody.Substring(boundary);
-            }
-            else
-            {
-                // No thread boundary — this is a new email (not a reply)
-                int bodyClose = htmlBody.IndexOf("</body>", StringComparison.OrdinalIgnoreCase);
-                _threadHtml = bodyClose >= 0 ? htmlBody.Substring(bodyClose) : "</body></html>";
-            }
-
-            // Extract signature from the draft area (between body tag and thread boundary).
-            // Outlook places the signature before appendonsend/divRplyFwdMsg.
-            int draftEnd = boundary >= 0 ? boundary : htmlBody.Length;
-            string draftArea = htmlBody.Substring(bodyTagEnd, draftEnd - bodyTagEnd);
-            int sigStart = FindSignatureStart(draftArea);
-            if (sigStart >= 0)
-            {
-                _signatureHtml = draftArea.Substring(sigStart);
-            }
-            else
-            {
-                _signatureHtml = "";
-            }
-        }
-
-        /// <summary>
-        /// Builds the body inner HTML with DRAFT_START/DRAFT_END markers around the editable zone.
-        /// Signature and thread HTML appear after the markers so Claude can see them for context.
-        /// </summary>
-        private string BuildMarkedBodyHtml()
-        {
-            string htmlBody = GetEmailHtmlBody();
-            if (string.IsNullOrWhiteSpace(htmlBody))
-                return DraftStartMarker + DraftEndMarker;
-
-            int bodyTagEnd = FindBodyTagEnd(htmlBody);
-            if (bodyTagEnd < 0)
-                return DraftStartMarker + DraftEndMarker;
-
-            int boundary = FindDraftBoundary(htmlBody);
-
-            string draftHtml;
-            string afterDraft; // signature + thread (read-only context for Claude)
-
-            if (boundary >= 0)
-            {
-                string draftArea = htmlBody.Substring(bodyTagEnd, boundary - bodyTagEnd);
-                int sigIdx = FindSignatureStart(draftArea);
-                if (sigIdx >= 0)
+                Outlook.MailItem mail = null;
+                Outlook.Explorer explorer = null;
+                try
                 {
-                    draftHtml = draftArea.Substring(0, sigIdx);
-                    afterDraft = draftArea.Substring(sigIdx) + htmlBody.Substring(boundary);
+                    mail = GetCurrentMailItem(out explorer);
+                    if (mail == null)
+                    {
+                        ShowStatus("Could not find active email window.", true);
+                        return false;
+                    }
+                    mail.Body = newDraftText;
+                    return true;
                 }
-                else
+                catch (Exception ex)
                 {
-                    draftHtml = draftArea;
-                    afterDraft = htmlBody.Substring(boundary);
+                    Debug.WriteLine("WriteDraftToDocument (inline) error: " + ex.Message);
+                    ShowStatus("Could not update email: " + ex.Message, true);
+                    return false;
                 }
-            }
-            else
-            {
-                int bodyClose = htmlBody.IndexOf("</body>", StringComparison.OrdinalIgnoreCase);
-                string fullContent = bodyClose >= 0
-                    ? htmlBody.Substring(bodyTagEnd, bodyClose - bodyTagEnd)
-                    : htmlBody.Substring(bodyTagEnd);
-                int sigIdx = FindSignatureStart(fullContent);
-                if (sigIdx >= 0)
+                finally
                 {
-                    draftHtml = fullContent.Substring(0, sigIdx);
-                    afterDraft = fullContent.Substring(sigIdx);
-                }
-                else
-                {
-                    draftHtml = fullContent;
-                    afterDraft = "";
+                    ThisAddIn.ReleaseCom(mail);
+                    ThisAddIn.ReleaseCom(explorer);
                 }
             }
 
-            return DraftStartMarker + draftHtml + DraftEndMarker + afterDraft;
-        }
-
-        private bool WriteDraftToEmail(string draftHtml)
-        {
-            Outlook.MailItem mail = null;
-            Outlook.Explorer explorer = null;
+            object doc = null;
             try
             {
-                mail = GetCurrentMailItem(out explorer);
-                if (mail == null)
+                doc = GetWordDocument();
+                if (doc == null)
                 {
-                    ShowStatus("Could not find active email window.", true);
+                    ShowStatus("Could not access email editor.", true);
                     return false;
                 }
 
-                // Sanitize: strip markers if Claude accidentally included them
-                draftHtml = draftHtml
-                    .Replace(DraftStartMarker, "")
-                    .Replace(DraftEndMarker, "");
+                dynamic wordDoc = doc;
+                wordDoc.Bookmarks.ShowHidden = true;
 
-                // Strip code fences if Claude wrapped response in ```html ... ```
-                draftHtml = StripCodeFences(draftHtml);
+                // Determine which bookmark is the draft boundary and save its extent.
+                // Delete it before writing so it doesn't absorb our text.
+                string boundaryBookmark = null;
+                int draftEnd = wordDoc.Content.End;
+                int origBmkEnd = -1;
 
-                mail.HTMLBody = _htmlPrefix + draftHtml + _signatureHtml + _threadHtml;
+                if (wordDoc.Bookmarks.Exists("_MailAutoSig"))
+                    boundaryBookmark = "_MailAutoSig";
+                else if (wordDoc.Bookmarks.Exists("_MailOriginal"))
+                    boundaryBookmark = "_MailOriginal";
+
+                if (boundaryBookmark != null)
+                {
+                    var bmk = wordDoc.Bookmarks[boundaryBookmark];
+                    draftEnd = bmk.Range.Start;
+                    origBmkEnd = bmk.Range.End;
+                    bmk.Delete(); // removes bookmark marker, not the text
+                    ThisAddIn.ReleaseCom(bmk);
+                }
+
+                var range = wordDoc.Range(0, draftEnd);
+                range.Text = newDraftText + "\r\n";
+                int newDraftEnd = range.End;
+                ThisAddIn.ReleaseCom(range);
+
+                // Re-create the boundary bookmark at the adjusted position
+                if (boundaryBookmark != null && origBmkEnd >= 0)
+                {
+                    int newBmkEnd = origBmkEnd + (newDraftEnd - draftEnd);
+                    var bmkRange = wordDoc.Range(newDraftEnd, newBmkEnd);
+                    wordDoc.Bookmarks.Add(boundaryBookmark, bmkRange);
+                    ThisAddIn.ReleaseCom(bmkRange);
+                }
+
                 return true;
             }
             catch (Exception ex)
             {
-                Debug.WriteLine("WriteDraftToEmail error: " + ex.Message);
+                Debug.WriteLine("WriteDraftToDocument error: " + ex.Message);
                 ShowStatus("Could not update email: " + ex.Message, true);
                 return false;
             }
             finally
             {
-                ThisAddIn.ReleaseCom(mail);
-                ThisAddIn.ReleaseCom(explorer);
+                ThisAddIn.ReleaseCom(doc);
             }
         }
 
@@ -475,128 +526,23 @@ namespace OutlookAI.TaskPane
             }
         }
 
-        // === HTML utilities ===
-
-        private static string StripCodeFences(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return text;
-            var trimmed = text.Trim();
-            if (trimmed.StartsWith("```"))
-            {
-                // Remove opening fence (e.g. ```html or just ```)
-                int firstNewline = trimmed.IndexOf('\n');
-                if (firstNewline >= 0)
-                    trimmed = trimmed.Substring(firstNewline + 1);
-                // Remove closing fence
-                if (trimmed.TrimEnd().EndsWith("```"))
-                {
-                    int lastFence = trimmed.LastIndexOf("```");
-                    if (lastFence >= 0)
-                        trimmed = trimmed.Substring(0, lastFence);
-                }
-            }
-            return trimmed;
-        }
-
-        private static int FindBodyTagEnd(string html)
-        {
-            int bodyStart = html.IndexOf("<body", StringComparison.OrdinalIgnoreCase);
-            if (bodyStart < 0) return -1;
-            int bodyEnd = html.IndexOf('>', bodyStart);
-            return bodyEnd >= 0 ? bodyEnd + 1 : -1;
-        }
-
-        /// <summary>
-        /// Finds the boundary between the user's draft area and the quoted thread.
-        /// Returns the index of the opening tag of the boundary element, or -1 if not found.
-        /// Checks for appendonsend first (preserves Outlook signature insertion),
-        /// then divRplyFwdMsg (reply/forward header), then border-top separator.
-        /// </summary>
-        private static int FindDraftBoundary(string html)
-        {
-            // appendonsend — Outlook's signature insertion point (preserves signature on send)
-            int idx = FindTagWithAttribute(html, "id", "appendonsend");
-            if (idx >= 0) return idx;
-
-            // divRplyFwdMsg — reply/forward header block
-            idx = FindTagWithAttribute(html, "id", "divRplyFwdMsg");
-            if (idx >= 0) return idx;
-
-            // border-top separator (older Outlook versions)
-            idx = html.IndexOf("border-top:solid #E1E1E1", StringComparison.OrdinalIgnoreCase);
-            if (idx >= 0)
-            {
-                // Walk back to find the opening '<' of this element
-                for (int i = idx - 1; i >= 0; i--)
-                {
-                    if (html[i] == '<') return i;
-                }
-            }
-
-            return -1;
-        }
-
-        /// <summary>
-        /// Finds the start of the email signature within a draft area HTML fragment.
-        /// Looks for common Outlook signature markers: id containing "signature",
-        /// or class "MsoSignature". Returns the index of the opening tag, or -1.
-        /// </summary>
-        private static int FindSignatureStart(string html)
-        {
-            // Outlook desktop: <div id="Signature">, <div id="signature_...">, etc.
-            int idx = FindTagWithAttributeContaining(html, "id", "signature");
-            if (idx >= 0) return idx;
-
-            // Outlook web / some configurations: class="MsoSignature"
-            idx = FindTagWithAttributeContaining(html, "class", "MsoSignature");
-            if (idx >= 0) return idx;
-
-            // Some Outlook versions use id="ms-outlook-mobile-signature"
-            idx = FindTagWithAttributeContaining(html, "id", "ms-outlook");
-            if (idx >= 0) return idx;
-
-            return -1;
-        }
-
-        private static int FindTagWithAttributeContaining(string html, string attr, string substring)
-        {
-            string prefix = attr + "=\"";
-            int searchFrom = 0;
-            while (searchFrom < html.Length)
-            {
-                int attrIdx = html.IndexOf(prefix, searchFrom, StringComparison.OrdinalIgnoreCase);
-                if (attrIdx < 0) return -1;
-                int valueStart = attrIdx + prefix.Length;
-                int valueEnd = html.IndexOf('"', valueStart);
-                if (valueEnd < 0) return -1;
-                string value = html.Substring(valueStart, valueEnd - valueStart);
-                if (value.IndexOf(substring, StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    // Walk back to the opening '<'
-                    for (int i = attrIdx - 1; i >= 0; i--)
-                    {
-                        if (html[i] == '<') return i;
-                    }
-                }
-                searchFrom = valueEnd + 1;
-            }
-            return -1;
-        }
-
-        private static int FindTagWithAttribute(string html, string attr, string value)
-        {
-            string pattern = attr + "=\"" + value + "\"";
-            int idx = html.IndexOf(pattern, StringComparison.OrdinalIgnoreCase);
-            if (idx < 0) return -1;
-            // Walk back to find the opening '<'
-            for (int i = idx - 1; i >= 0; i--)
-            {
-                if (html[i] == '<') return i;
-            }
-            return -1;
-        }
-
         // === UI helpers ===
+
+        private void SetupTooltips()
+        {
+            var tip = new ToolTip();
+            tip.SetToolTip(btnProofread, "Fix any spelling, grammar, and punctuation errors.\nKeep the tone, meaning, and structure unchanged.");
+            tip.SetToolTip(btnRevise, "Improve clarity, flow, and word choice.\nPreserve the original meaning and tone.");
+            tip.SetToolTip(btnShorten, "Make the email more concise.\nRemove filler and redundancy while keeping all key points.");
+            tip.SetToolTip(btnLengthen, "Expand the email with more detail, context, or explanation.\nKeep the same tone and intent.");
+            tip.SetToolTip(btnFormal, "Rewrite in a more formal, professional tone.\nKeep the same content and meaning.");
+            tip.SetToolTip(btnFriendly, "Rewrite in a warmer, more conversational tone.\nKeep the same content and meaning.");
+            tip.SetToolTip(btnDraft, "Draft a new email from scratch based on your instruction.\nClears any previous AI draft.");
+            tip.SetToolTip(btnEditDraft, "Edit the current draft based on your instruction.\nPreserves conversation history for iterative refinement.");
+            tip.SetToolTip(btnDraftSelection, "Edit only the selected text based on your instruction.\nLeaves the rest of the draft unchanged.");
+            tip.SetToolTip(btnCustom, "Run a custom action on the entire draft.");
+            tip.SetToolTip(btnCustomSelection, "Run a custom action on the selected text only.");
+        }
 
         private void InvokeOnUI(Action action)
         {

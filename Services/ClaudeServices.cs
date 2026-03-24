@@ -85,14 +85,11 @@ namespace OutlookAI.Services
         /// <summary>
         /// Processes an email action using iterative editing with full conversation history.
         /// </summary>
-        /// <param name="action">The editing action to perform.</param>
-        /// <param name="customPrompt">User-typed instruction (for Draft/Custom actions).</param>
-        /// <param name="editHistory">Previous editing turns in this session.</param>
-        /// <param name="markedBodyHtml">Body inner HTML with DRAFT_START/DRAFT_END markers around the editable zone.</param>
-        /// <param name="selectedText">Selected text in the editor, if action targets a selection.</param>
         public static async Task<string> ProcessEmailAsync(
             ActionType action, string customPrompt,
-            List<EditTurn> editHistory, string markedBodyHtml, string selectedText = null)
+            List<EditTurn> editHistory,
+            string draftText, string signatureText, string threadText,
+            string selectedText = null)
         {
             // Check for known prerequisite issues
             if (_lastPrerequisiteError != null)
@@ -103,29 +100,32 @@ namespace OutlookAI.Services
                     throw new Exception(_lastPrerequisiteError);
             }
 
-            var prompt = BuildIterativePrompt(action, customPrompt, editHistory, markedBodyHtml, selectedText);
+            var prompt = BuildIterativePrompt(action, customPrompt, editHistory, draftText, signatureText, threadText, selectedText);
 
             return await Task.Run(() => ExecutePrompt(prompt));
         }
 
         private static string BuildIterativePrompt(
             ActionType action, string customPrompt,
-            List<EditTurn> editHistory, string markedBodyHtml, string selectedText)
+            List<EditTurn> editHistory,
+            string draftText, string signatureText, string threadText,
+            string selectedText)
         {
             var sb = new StringBuilder();
 
-            // System instruction — HTML-native editing with marker-based zones
+            // System instruction
             sb.AppendLine("You are a professional email writing assistant. You help compose and refine email drafts through iterative editing.");
             sb.AppendLine();
-            sb.AppendLine("The email HTML below contains <!-- DRAFT_START --> and <!-- DRAFT_END --> markers.");
-            sb.AppendLine("The content between these markers is the user's draft — this is what you edit.");
-            sb.AppendLine("Content after <!-- DRAFT_END --> (signature, quoted thread) is shown for context only.");
-            sb.AppendLine();
-            sb.AppendLine("On each turn, return ONLY the updated HTML content for the draft zone.");
-            sb.AppendLine("Do NOT include the <!-- DRAFT_START --> or <!-- DRAFT_END --> markers in your response.");
-            sb.AppendLine("Do NOT include the signature or quoted thread in your response.");
-            sb.AppendLine("Do NOT wrap your response in code fences or add any commentary.");
-            sb.AppendLine("Match the HTML styling conventions you see in the surrounding content.");
+            sb.AppendLine("Rules:");
+            sb.AppendLine("- Return ONLY the updated draft text. Nothing else.");
+            sb.AppendLine("- Do NOT include the signature in your response — it is preserved automatically.");
+            sb.AppendLine("- Do NOT include the quoted thread in your response.");
+            sb.AppendLine("- Do NOT add any commentary, explanations, or markdown formatting.");
+            sb.AppendLine("- Do NOT wrap your response in code fences.");
+            sb.AppendLine("- Write plain text only. No HTML tags.");
+            sb.AppendLine("- Use blank lines to separate paragraphs.");
+            if (!string.IsNullOrWhiteSpace(signatureText))
+                sb.AppendLine("- The user already has an email signature (shown below). Do NOT add a sign-off or closing like \"Best regards\" — the signature handles that.");
             sb.AppendLine();
 
             // Edit history from previous turns
@@ -148,13 +148,42 @@ namespace OutlookAI.Services
                 }
             }
 
-            // Full email HTML with draft zone markers
-            sb.AppendLine("## Email HTML");
+            // Current draft
+            sb.AppendLine("## Current Draft");
             sb.AppendLine();
-            sb.AppendLine("\"\"\"");
-            sb.AppendLine(markedBodyHtml);
-            sb.AppendLine("\"\"\"");
+            if (string.IsNullOrWhiteSpace(draftText))
+            {
+                sb.AppendLine("(empty — this is a new email, compose from scratch)");
+            }
+            else
+            {
+                sb.AppendLine("\"\"\"");
+                sb.AppendLine(draftText);
+                sb.AppendLine("\"\"\"");
+            }
             sb.AppendLine();
+
+            // Signature context
+            if (!string.IsNullOrWhiteSpace(signatureText))
+            {
+                sb.AppendLine("## Signature (for context — do NOT include in your response)");
+                sb.AppendLine();
+                sb.AppendLine("\"\"\"");
+                sb.AppendLine(signatureText);
+                sb.AppendLine("\"\"\"");
+                sb.AppendLine();
+            }
+
+            // Thread context
+            if (!string.IsNullOrWhiteSpace(threadText))
+            {
+                sb.AppendLine("## Quoted Thread (for context — do NOT include in your response)");
+                sb.AppendLine();
+                sb.AppendLine("\"\"\"");
+                sb.AppendLine(threadText);
+                sb.AppendLine("\"\"\"");
+                sb.AppendLine();
+            }
 
             // Current request
             sb.AppendLine("## Current Request");
@@ -166,14 +195,14 @@ namespace OutlookAI.Services
             // Selection constraint
             if (!string.IsNullOrWhiteSpace(selectedText))
             {
-                sb.AppendLine("The user has selected the following text in the draft. Find the corresponding content in the HTML between the DRAFT markers and modify ONLY that portion — keep all other HTML exactly as-is:");
+                sb.AppendLine("The user has selected the following text in the draft. Modify ONLY that portion — keep all other text exactly as-is:");
                 sb.AppendLine("\"\"\"");
                 sb.AppendLine(selectedText);
                 sb.AppendLine("\"\"\"");
                 sb.AppendLine();
             }
 
-            sb.AppendLine("Write the updated draft HTML only.");
+            sb.AppendLine("Write the updated draft text only.");
 
             return sb.ToString();
         }
@@ -182,12 +211,18 @@ namespace OutlookAI.Services
         {
             switch (action)
             {
-                case ActionType.Proofread: return "Proofread";
-                case ActionType.Revise: return "Revise";
-                case ActionType.Shorten: return "Shorten";
-                case ActionType.Lengthen: return "Lengthen";
-                case ActionType.Formal: return "Formal";
-                case ActionType.Friendly: return "Friendly";
+                case ActionType.Proofread:
+                    return "Proofread: Fix any spelling, grammar, and punctuation errors. Keep the tone, meaning, and structure unchanged.";
+                case ActionType.Revise:
+                    return "Revise: Improve clarity, flow, and word choice. Preserve the original meaning and tone.";
+                case ActionType.Shorten:
+                    return "Shorten: Make the email more concise. Remove filler and redundancy while keeping all key points.";
+                case ActionType.Lengthen:
+                    return "Lengthen: Expand the email with more detail, context, or explanation. Keep the same tone and intent.";
+                case ActionType.Formal:
+                    return "Formal: Rewrite in a more formal, professional tone. Keep the same content and meaning.";
+                case ActionType.Friendly:
+                    return "Friendly: Rewrite in a warmer, more conversational tone. Keep the same content and meaning.";
                 case ActionType.Draft:
                     return string.IsNullOrWhiteSpace(instruction)
                         ? "Draft"
