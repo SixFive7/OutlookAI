@@ -135,7 +135,7 @@ jobs:
         run: choco install innosetup -y --no-progress
 
       - name: Create installer
-        run: iscc /DMyAppVersion=${{ steps.version.outputs.FULL_VERSION }} installer.iss
+        run: iscc /DMyAppVersion=${{ steps.version.outputs.FULL_VERSION }} Installer.iss
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
