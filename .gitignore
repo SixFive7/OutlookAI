@@ -269,7 +269,6 @@ ClientBin/
 *.dbproj.schemaview
 *.jfm
 *.pfx
-!OutlookAI.pfx
 *.publishsettings
 orleans.codegen.cs
 

@@ -199,8 +199,7 @@
       <SubType>Code</SubType>
     </Compile>
     <EmbeddedResource Include="Ribbon.xml" />
-    <None Include="OutlookAI.pfx" />
-    <None Include="ThisAddIn.Designer.xml">
+<None Include="ThisAddIn.Designer.xml">
       <DependentUpon>ThisAddIn.cs</DependentUpon>
     </None>
     <Compile Include="ThisAddIn.Designer.cs">

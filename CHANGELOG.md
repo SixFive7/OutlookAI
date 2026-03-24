@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Move signing certificate out of repository into GitHub Actions secrets to prevent unauthorized use
 - Remove redundant build CI workflow (release workflow already covers the same build steps)
 - Update default Visual Studio version fallback from VS 2010 to VS 2022 in project file
 - Fix VSTO project metadata targeting Office 2013 instead of 2016, matching the actual minimum supported Outlook version

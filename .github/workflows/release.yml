@@ -114,7 +114,11 @@ jobs:
 
       - name: Import signing certificate
         run: |
-          $cert = Import-PfxCertificate -FilePath OutlookAI.pfx -CertStoreLocation Cert:\CurrentUser\My
+          $pfxBytes = [Convert]::FromBase64String("${{ secrets.PFX_BASE64 }}")
+          $pfxPath = Join-Path $env:RUNNER_TEMP "OutlookAI.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
+          $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My
+          Remove-Item $pfxPath
           Write-Host "Imported certificate: $($cert.Thumbprint)"
 
       - name: Restore packages
