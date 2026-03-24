@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v2.3.1.111 - 2026-03-24
+
 - Switch from HTML parsing to Word Object Model for email structure detection, using bookmarks for reliable signature and thread boundary identification
 - Preserve email signature and thread formatting across all Outlook versions by never modifying them directly
 - Fix upgrade error ("another version is currently installed") by uninstalling previous VSTO registration before installing new version
