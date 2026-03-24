@@ -27,6 +27,8 @@ namespace OutlookAI.Services
 
         private static readonly object _warmLock = new object();
         private static Process _warmProcess;
+        private static StringBuilder _warmStdout;
+        private static StringBuilder _warmStderr;
         private static volatile string _lastPrerequisiteError;
 
         public enum ActionType
@@ -61,18 +63,22 @@ namespace OutlookAI.Services
 
                 try
                 {
-                    var process = SpawnProcess();
+                    StringBuilder stdoutBuilder, stderrBuilder;
+                    var process = SpawnProcess(out stdoutBuilder, out stderrBuilder);
 
                     // Check if the process exited immediately (missing prerequisites)
                     if (process.WaitForExit(1500) && process.HasExited)
                     {
-                        var stderr = process.StandardError.ReadToEnd();
+                        process.WaitForExit(); // flush async output handlers
+                        var stderr = stderrBuilder.ToString();
                         _lastPrerequisiteError = DiagnoseError(stderr, process.ExitCode);
                         process.Dispose();
                         return;
                     }
 
                     _warmProcess = process;
+                    _warmStdout = stdoutBuilder;
+                    _warmStderr = stderrBuilder;
                     _lastPrerequisiteError = null;
                 }
                 catch (Exception ex)
@@ -235,38 +241,29 @@ namespace OutlookAI.Services
         private static string ExecutePrompt(string userMessage)
         {
             Process process = null;
+            StringBuilder stdoutBuilder = null;
+            StringBuilder stderrBuilder = null;
 
             lock (_warmLock)
             {
                 if (_warmProcess != null && !_warmProcess.HasExited)
                 {
                     process = _warmProcess;
+                    stdoutBuilder = _warmStdout;
+                    stderrBuilder = _warmStderr;
                     _warmProcess = null;
+                    _warmStdout = null;
+                    _warmStderr = null;
                 }
             }
 
             if (process == null)
             {
-                process = SpawnProcess();
+                process = SpawnProcess(out stdoutBuilder, out stderrBuilder);
             }
 
             try
             {
-                var stdoutBuilder = new StringBuilder();
-                var stderrBuilder = new StringBuilder();
-
-                process.OutputDataReceived += (s, e) =>
-                {
-                    if (e.Data != null) stdoutBuilder.AppendLine(e.Data);
-                };
-                process.ErrorDataReceived += (s, e) =>
-                {
-                    if (e.Data != null) stderrBuilder.AppendLine(e.Data);
-                };
-
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-
                 // Write the user message to stdin as UTF-8, then close to signal EOF
                 using (var writer = new StreamWriter(process.StandardInput.BaseStream, new UTF8Encoding(false)))
                 {
@@ -309,10 +306,13 @@ namespace OutlookAI.Services
             }
         }
 
-        private static Process SpawnProcess()
+        private static Process SpawnProcess(out StringBuilder stdoutBuilder, out StringBuilder stderrBuilder)
         {
             try
             {
+                stdoutBuilder = new StringBuilder();
+                stderrBuilder = new StringBuilder();
+
                 var process = new Process();
                 process.StartInfo = new ProcessStartInfo
                 {
@@ -327,7 +327,21 @@ namespace OutlookAI.Services
                     StandardErrorEncoding = Encoding.UTF8,
                 };
 
+                var stdout = stdoutBuilder;
+                var stderr = stderrBuilder;
+                process.OutputDataReceived += (s, e) =>
+                {
+                    if (e.Data != null) stdout.AppendLine(e.Data);
+                };
+                process.ErrorDataReceived += (s, e) =>
+                {
+                    if (e.Data != null) stderr.AppendLine(e.Data);
+                };
+
                 process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
                 return process;
             }
             catch (Win32Exception)
@@ -430,6 +444,8 @@ namespace OutlookAI.Services
                 catch { }
                 _warmProcess.Dispose();
                 _warmProcess = null;
+                _warmStdout = null;
+                _warmStderr = null;
             }
         }
 
