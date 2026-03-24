@@ -126,7 +126,13 @@ namespace OutlookAI.TaskPane
                     _debugLog.AppendLine($"  {extra}");
 
                 _debugLog.AppendLine();
-                Clipboard.SetText(_debugLog.ToString());
+
+                // Clipboard requires STA thread — marshal to UI thread
+                string logSnapshot = _debugLog.ToString();
+                if (this.InvokeRequired)
+                    this.Invoke((Action)(() => Clipboard.SetText(logSnapshot)));
+                else
+                    Clipboard.SetText(logSnapshot);
             }
             catch (Exception ex)
             {

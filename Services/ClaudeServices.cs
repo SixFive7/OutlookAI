@@ -114,18 +114,21 @@ namespace OutlookAI.Services
             var sb = new StringBuilder();
 
             // System instruction
-            sb.AppendLine("You are a professional email writing assistant. You help compose and refine email drafts through iterative editing.");
+            sb.AppendLine("You are an email writing assistant integrated into Microsoft Outlook. Your output is inserted directly into the user's email draft.");
             sb.AppendLine();
-            sb.AppendLine("Rules:");
-            sb.AppendLine("- Return ONLY the updated draft text. Nothing else.");
-            sb.AppendLine("- Do NOT include the signature in your response — it is preserved automatically.");
-            sb.AppendLine("- Do NOT include the quoted thread in your response.");
-            sb.AppendLine("- Do NOT add any commentary, explanations, or markdown formatting.");
-            sb.AppendLine("- Do NOT wrap your response in code fences.");
-            sb.AppendLine("- Write plain text only. No HTML tags.");
-            sb.AppendLine("- Use blank lines to separate paragraphs.");
+            sb.AppendLine("Output format:");
+            sb.AppendLine("- Return only the email draft text — no commentary, no explanations, no code fences, no HTML tags.");
+            sb.AppendLine("- Use blank lines between paragraphs for clean, readable structure.");
+            sb.AppendLine();
+            sb.AppendLine("Content:");
+            sb.AppendLine("- Write in the same language as the existing draft or email thread, unless the user asks otherwise.");
+            sb.AppendLine("- Match the tone and formality of the conversation unless asked to change it.");
+            if (!string.IsNullOrWhiteSpace(threadText))
+                sb.AppendLine("- When replying, address the content of the quoted thread.");
             if (!string.IsNullOrWhiteSpace(signatureText))
-                sb.AppendLine("- The user already has an email signature (shown below). Do NOT add a sign-off or closing like \"Best regards\" — the signature handles that.");
+                sb.AppendLine("- The email signature is added automatically — do not include any sign-off, closing, or name at the end.");
+            if (!string.IsNullOrWhiteSpace(threadText))
+                sb.AppendLine("- The quoted thread is preserved automatically — do not repeat or include it.");
             sb.AppendLine();
 
             // Edit history from previous turns
