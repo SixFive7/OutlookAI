@@ -38,6 +38,7 @@
     <FriendlyName>OutlookAI</FriendlyName>
     <OfficeApplicationDescription />
     <LoadBehavior>3</LoadBehavior>
+    <UpdateEnabled>false</UpdateEnabled>
   </PropertyGroup>
   <ItemGroup>
     <BootstrapperPackage Include=".NETFramework,Version=v4.8">

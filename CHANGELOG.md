@@ -4,6 +4,11 @@
 
 - Switch from HTML parsing to Word Object Model for email structure detection, using bookmarks for reliable signature and thread boundary identification
 - Preserve email signature and thread formatting across all Outlook versions by never modifying them directly
+- Fix upgrade error ("another version is currently installed") by uninstalling previous VSTO registration before installing new version
+- Disable built-in VSTO update checks that conflicted with the add-in's own update mechanism
+- Enable full feature parity for inline responses (reading pane replies) including selection editing
+- Add descriptive tooltips to all action buttons
+- Improve quick action prompts for more reliable results on short emails
 
 ## v2.1.1.103 - 2026-03-23
 

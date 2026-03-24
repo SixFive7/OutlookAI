@@ -30,13 +30,6 @@ namespace OutlookAI.TaskPane
             ApplyTheme();
             SetupTooltips();
 
-            // Selection-based buttons require WordEditor, only available for Inspector windows
-            if (_isInlineResponse)
-            {
-                btnDraftSelection.Enabled = false;
-                btnCustomSelection.Enabled = false;
-            }
-
             _versionTimer = new Timer();
             _versionTimer.Interval = 1000; // 1 second
             _versionTimer.Tick += (s, ev) => UpdateVersionLabel();
@@ -207,47 +200,37 @@ namespace OutlookAI.TaskPane
                 string signatureText;
                 string threadText;
 
-                if (_isInlineResponse)
+                object doc = null;
+                try
                 {
-                    // Inline: no WordEditor, use MailItem.Body fallback
-                    draftText = ReadDraftTextFallback();
-                    signatureText = "";
-                    threadText = "";
+                    doc = GetWordDocument();
+                    if (doc == null)
+                    {
+                        ShowStatus("Could not access email editor.", true);
+                        SetUIEnabled(true);
+                        return;
+                    }
+
+                    dynamic wordDoc = doc;
+                    wordDoc.Bookmarks.ShowHidden = true;
+
+                    // Capture signature and thread context on first interaction
+                    if (!_contextCaptured)
+                    {
+                        _signatureText = ReadSignatureText(wordDoc);
+                        _threadText = ReadThreadText(wordDoc);
+                        _contextCaptured = true;
+                    }
+
+                    signatureText = _signatureText;
+                    threadText = _threadText;
+
+                    // Read current draft (always re-read to capture manual edits)
+                    draftText = ReadDraftText(wordDoc);
                 }
-                else
+                finally
                 {
-                    object doc = null;
-                    try
-                    {
-                        doc = GetWordDocument();
-                        if (doc == null)
-                        {
-                            ShowStatus("Could not access email editor.", true);
-                            SetUIEnabled(true);
-                            return;
-                        }
-
-                        dynamic wordDoc = doc;
-                        wordDoc.Bookmarks.ShowHidden = true;
-
-                        // Capture signature and thread context on first interaction
-                        if (!_contextCaptured)
-                        {
-                            _signatureText = ReadSignatureText(wordDoc);
-                            _threadText = ReadThreadText(wordDoc);
-                            _contextCaptured = true;
-                        }
-
-                        signatureText = _signatureText;
-                        threadText = _threadText;
-
-                        // Read current draft (always re-read to capture manual edits)
-                        draftText = ReadDraftText(wordDoc);
-                    }
-                    finally
-                    {
-                        ThisAddIn.ReleaseCom(doc);
-                    }
+                    ThisAddIn.ReleaseCom(doc);
                 }
 
                 // Fresh draft: send empty text so Claude drafts from scratch
@@ -289,39 +272,27 @@ namespace OutlookAI.TaskPane
             }
         }
 
-        // === Email access ===
-
-        private Outlook.MailItem GetCurrentMailItem(out Outlook.Explorer explorer)
-        {
-            explorer = null;
-            if (_isInlineResponse)
-            {
-                explorer = Globals.ThisAddIn.Application.ActiveExplorer();
-                object rawInline = explorer?.ActiveInlineResponse;
-                var mail = rawInline as Outlook.MailItem;
-                if (mail == null)
-                    ThisAddIn.ReleaseCom(rawInline);
-                return mail;
-            }
-
-            // Use the owning inspector rather than ActiveInspector so that
-            // clicking a button in a background window processes the right email.
-            object rawItem = _owningInspector?.CurrentItem;
-            var mailItem = rawItem as Outlook.MailItem;
-            if (mailItem == null)
-                ThisAddIn.ReleaseCom(rawItem);
-            return mailItem;
-        }
-
         // === Word Object Model helpers ===
 
         private object GetWordDocument()
         {
-            if (_isInlineResponse)
-                return null;
             try
             {
-                return _owningInspector?.WordEditor;
+                if (!_isInlineResponse)
+                    return _owningInspector?.WordEditor;
+
+                // Inline response: use Explorer.ActiveInlineResponseWordEditor (Outlook 2016+).
+                // Accessed via late binding for compatibility with older Outlook PIAs.
+                var explorer = Globals.ThisAddIn.Application.ActiveExplorer();
+                if (explorer == null) return null;
+                try
+                {
+                    return ((dynamic)explorer).ActiveInlineResponseWordEditor;
+                }
+                finally
+                {
+                    ThisAddIn.ReleaseCom(explorer);
+                }
             }
             catch
             {
@@ -386,57 +357,8 @@ namespace OutlookAI.TaskPane
             return text.TrimEnd('\r', '\n');
         }
 
-        private string ReadDraftTextFallback()
-        {
-            Outlook.MailItem mail = null;
-            Outlook.Explorer explorer = null;
-            try
-            {
-                mail = GetCurrentMailItem(out explorer);
-                return mail?.Body ?? "";
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine("ReadDraftTextFallback error: " + ex.Message);
-                return "";
-            }
-            finally
-            {
-                ThisAddIn.ReleaseCom(mail);
-                ThisAddIn.ReleaseCom(explorer);
-            }
-        }
-
         private bool WriteDraftToDocument(string newDraftText)
         {
-            if (_isInlineResponse)
-            {
-                Outlook.MailItem mail = null;
-                Outlook.Explorer explorer = null;
-                try
-                {
-                    mail = GetCurrentMailItem(out explorer);
-                    if (mail == null)
-                    {
-                        ShowStatus("Could not find active email window.", true);
-                        return false;
-                    }
-                    mail.Body = newDraftText;
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine("WriteDraftToDocument (inline) error: " + ex.Message);
-                    ShowStatus("Could not update email: " + ex.Message, true);
-                    return false;
-                }
-                finally
-                {
-                    ThisAddIn.ReleaseCom(mail);
-                    ThisAddIn.ReleaseCom(explorer);
-                }
-            }
-
             object doc = null;
             try
             {
@@ -502,13 +424,10 @@ namespace OutlookAI.TaskPane
 
         private string GetSelectedText()
         {
-            if (_isInlineResponse)
-                return null;
-
             object doc = null;
             try
             {
-                doc = _owningInspector?.WordEditor;
+                doc = GetWordDocument();
                 if (doc == null) return null;
                 string text = ((dynamic)doc).Application.Selection.Text as string;
                 // Word appends a trailing paragraph mark to selections
@@ -620,10 +539,10 @@ namespace OutlookAI.TaskPane
             btnFriendly.Enabled = enabled;
             btnDraft.Enabled = enabled;
             btnEditDraft.Enabled = enabled;
-            btnDraftSelection.Enabled = enabled && !_isInlineResponse;
+            btnDraftSelection.Enabled = enabled;
             txtDraftPrompt.Enabled = enabled;
             btnCustom.Enabled = enabled;
-            btnCustomSelection.Enabled = enabled && !_isInlineResponse;
+            btnCustomSelection.Enabled = enabled;
             txtCustomPrompt.Enabled = enabled;
         }
 
