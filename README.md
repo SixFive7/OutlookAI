@@ -308,7 +308,7 @@ Or right-click each file > Properties > check "Unblock".
 The CLI was not found at `~/.local/bin/claude.exe`.
 
 1. Install Claude Code: `npm install -g @anthropic-ai/claude-code`
-2. Try your next action in Outlook — the add-in re-checks prerequisites automatically, so a restart is usually not needed
+2. Restart Outlook
 </details>
 
 <details>
@@ -318,7 +318,7 @@ Claude Code CLI requires Node.js to run.
 
 1. Install Node.js from [nodejs.org](https://nodejs.org)
 2. Restart your terminal and verify: `node --version`
-3. Try your next action in Outlook — the add-in re-checks prerequisites automatically, so a restart is usually not needed
+3. Restart Outlook
 </details>
 
 <details>
@@ -326,9 +326,7 @@ Claude Code CLI requires Node.js to run.
 
 1. Open a terminal and run: `claude auth login`
 2. Sign in with your Claude Pro or Max subscription
-3. Restart Outlook after authenticating
-
-Note: You don't always need to restart Outlook — the add-in re-checks prerequisites on the next action, so fixing the issue and clicking a button again may be enough.
+3. Restart Outlook
 </details>
 
 <details>

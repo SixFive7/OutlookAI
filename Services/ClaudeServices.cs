@@ -92,14 +92,9 @@ namespace OutlookAI.Services
             string draftText, string signatureText, string threadText,
             string selectedText = null)
         {
-            // Check for known prerequisite issues
+            // Check for known prerequisite issues (detected at startup)
             if (_lastPrerequisiteError != null)
-            {
-                // Try once more in case the user fixed it
-                WarmUpCore();
-                if (_lastPrerequisiteError != null)
-                    throw new Exception(_lastPrerequisiteError);
-            }
+                throw new Exception(_lastPrerequisiteError);
 
             var prompt = BuildIterativePrompt(action, customPrompt, editHistory, draftText, signatureText, threadText, selectedText);
 
@@ -341,7 +336,8 @@ namespace OutlookAI.Services
                     "Install it by running:\n" +
                     "  npm install -g @anthropic-ai/claude-code\n\n" +
                     "Then authenticate by running:\n" +
-                    "  claude auth login";
+                    "  claude auth login\n\n" +
+                    "Then restart Outlook.";
                 throw new Exception(_lastPrerequisiteError);
             }
         }
@@ -373,21 +369,23 @@ namespace OutlookAI.Services
 
             if (lower.Contains("node") && (lower.Contains("not recognized") || lower.Contains("not found")))
                 return "Node.js is required for Claude Code CLI but was not found.\n\n" +
-                       "Install Node.js from https://nodejs.org";
+                       "Install Node.js from https://nodejs.org\n\n" +
+                       "Then restart Outlook.";
 
             if (lower.Contains("not recognized") || lower.Contains("not found") || lower.Contains("no such file"))
                 return "Claude Code CLI is not installed or not on PATH.\n\n" +
                        "Install it by running:\n" +
                        "  npm install -g @anthropic-ai/claude-code\n\n" +
                        "Then authenticate by running:\n" +
-                       "  claude auth login";
+                       "  claude auth login\n\n" +
+                       "Then restart Outlook.";
 
             if (lower.Contains("auth") || lower.Contains("login") || lower.Contains("unauthorized")
                 || lower.Contains("not logged in") || lower.Contains("token"))
                 return "Claude Code is not authenticated.\n\n" +
                        "Run this command in a terminal:\n" +
                        "  claude auth login\n\n" +
-                       "Then sign in with your Claude subscription.";
+                       "Then sign in with your Claude subscription and restart Outlook.";
 
             if (lower.Contains("rate limit") || lower.Contains("too many"))
                 return "Rate limit reached. Please wait a moment and try again.";
