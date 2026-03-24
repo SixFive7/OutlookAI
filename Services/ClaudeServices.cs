@@ -327,6 +327,9 @@ namespace OutlookAI.Services
                     StandardErrorEncoding = Encoding.UTF8,
                 };
 
+                // Thread-safe by design: BeginOutputReadLine/BeginErrorReadLine serialize
+                // their callbacks (single producer per builder), and WaitForExit() provides
+                // the memory barrier before any read.
                 var stdout = stdoutBuilder;
                 var stderr = stderrBuilder;
                 process.OutputDataReceived += (s, e) =>
