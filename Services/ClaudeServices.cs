@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
@@ -270,9 +271,11 @@ namespace OutlookAI.Services
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
-                // Write the user message to stdin, then close to signal EOF
-                process.StandardInput.Write(userMessage);
-                process.StandardInput.Close();
+                // Write the user message to stdin as UTF-8, then close to signal EOF
+                using (var writer = new StreamWriter(process.StandardInput.BaseStream, new UTF8Encoding(false)))
+                {
+                    writer.Write(userMessage);
+                }
 
                 bool exited = process.WaitForExit(120_000);
                 if (!exited)

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix non-ASCII email content being garbled when sent to Claude CLI by writing stdin as UTF-8
 - Rewrite README with comprehensive documentation of all features, limitations, context awareness, iterative editing, dark mode, auto-updates, debug mode, inline responses, and troubleshooting
 - Fix incorrect Unblock-File path in README troubleshooting and clarify that Outlook restart is usually not needed after fixing prerequisites
 - Rename installer.iss to Installer.iss for consistent file casing
