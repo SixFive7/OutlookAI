@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix VSTO project metadata targeting Office 2013 instead of 2016, matching the actual minimum supported Outlook version
 - Remove dead USEOFFICEINTEROP conditional branch from project file (VSTO template boilerplate never used)
 - Fix rare double-processing when rapidly clicking action buttons by adding a reentrancy guard
 - Fix potential crash from unhandled exceptions in async button handlers and pre-try logic in ProcessAction

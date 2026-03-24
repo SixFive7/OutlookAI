@@ -140,7 +140,7 @@ OutlookAI is focused on email composition assistance. The following are **not** 
 | Requirement | Details |
 |---|---|
 | **OS** | Windows 10 or 11 (also Windows Server 2019/2022/2025) |
-| **Outlook** | Microsoft Outlook 2016, 2019, 2021, or 2024 — classic desktop version only |
+| **Outlook** | Microsoft Outlook 2016 or later (2016, 2019, 2021, 2024) — classic desktop version only. Outlook 2016 is the minimum supported version. |
 | **Runtime** | .NET Framework 4.8 |
 | **VSTO Runtime** | [Visual Studio Tools for Office Runtime](https://aka.ms/VSTORuntime) (installed automatically by the setup) |
 | **Claude Code CLI** | [Install instructions](https://docs.anthropic.com/en/docs/claude-code/overview) — requires a Claude Pro or Max subscription |
