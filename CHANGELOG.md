@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Rewrite README with comprehensive documentation of all features, limitations, context awareness, iterative editing, dark mode, auto-updates, debug mode, inline responses, and troubleshooting
+
 ## v2.3.1.111 - 2026-03-24
 
 - Switch from HTML parsing to Word Object Model for email structure detection, using bookmarks for reliable signature and thread boundary identification
