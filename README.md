@@ -5,8 +5,8 @@
 An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add-in. Uses the Claude Code CLI as its AI backend with the Claude Opus 4.6 model, letting you use your existing Claude Pro or Max subscription — no separate API key or per-token billing required.
 
 <p align="center">
-  <img src="docs/screenshot-light.png" alt="OutlookAI light mode" width="48%" />
-  <img src="docs/screenshot-dark.png" alt="OutlookAI dark mode" width="48%" />
+  <img src="Docs/screenshot-light.png" alt="OutlookAI light mode" width="48%" />
+  <img src="Docs/screenshot-dark.png" alt="OutlookAI dark mode" width="48%" />
 </p>
 
 ---
