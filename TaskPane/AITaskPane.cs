@@ -166,83 +166,100 @@ namespace OutlookAI.TaskPane
 
         private async void btnProofread_Click(object sender, EventArgs e)
         {
-            await ProcessAction(ClaudeService.ActionType.Proofread);
+            try { await ProcessAction(ClaudeService.ActionType.Proofread); }
+            catch (Exception ex) { ShowStatus(ex.Message, true); }
         }
 
         private async void btnRevise_Click(object sender, EventArgs e)
         {
-            await ProcessAction(ClaudeService.ActionType.Revise);
+            try { await ProcessAction(ClaudeService.ActionType.Revise); }
+            catch (Exception ex) { ShowStatus(ex.Message, true); }
         }
 
         private async void btnShorten_Click(object sender, EventArgs e)
         {
-            await ProcessAction(ClaudeService.ActionType.Shorten);
+            try { await ProcessAction(ClaudeService.ActionType.Shorten); }
+            catch (Exception ex) { ShowStatus(ex.Message, true); }
         }
 
         private async void btnLengthen_Click(object sender, EventArgs e)
         {
-            await ProcessAction(ClaudeService.ActionType.Lengthen);
+            try { await ProcessAction(ClaudeService.ActionType.Lengthen); }
+            catch (Exception ex) { ShowStatus(ex.Message, true); }
         }
 
         private async void btnFormal_Click(object sender, EventArgs e)
         {
-            await ProcessAction(ClaudeService.ActionType.Formal);
+            try { await ProcessAction(ClaudeService.ActionType.Formal); }
+            catch (Exception ex) { ShowStatus(ex.Message, true); }
         }
 
         private async void btnFriendly_Click(object sender, EventArgs e)
         {
-            await ProcessAction(ClaudeService.ActionType.Friendly);
+            try { await ProcessAction(ClaudeService.ActionType.Friendly); }
+            catch (Exception ex) { ShowStatus(ex.Message, true); }
         }
 
         private async void btnDraft_Click(object sender, EventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(txtPrompt.Text))
+            try
             {
-                ShowStatus("Please enter instructions for the email you want to draft.", true);
-                return;
+                if (string.IsNullOrWhiteSpace(txtPrompt.Text))
+                {
+                    ShowStatus("Please enter instructions for the email you want to draft.", true);
+                    return;
+                }
+                // Draft Email = fresh start — clear history, re-read context, send empty draft
+                _editHistory.Clear();
+                _contextCaptured = false;
+                _freshDraft = true;
+                await ProcessAction(ClaudeService.ActionType.Draft, txtPrompt.Text);
             }
-            // Draft Email = fresh start — clear history, re-read context, send empty draft
-            _editHistory.Clear();
-            _contextCaptured = false;
-            _freshDraft = true;
-            await ProcessAction(ClaudeService.ActionType.Draft, txtPrompt.Text);
+            catch (Exception ex) { ShowStatus(ex.Message, true); }
         }
 
         private async void btnEditDraft_Click(object sender, EventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(txtPrompt.Text))
+            try
             {
-                ShowStatus("Please enter instructions for editing the draft.", true);
-                return;
+                if (string.IsNullOrWhiteSpace(txtPrompt.Text))
+                {
+                    ShowStatus("Please enter instructions for editing the draft.", true);
+                    return;
+                }
+                await ProcessAction(ClaudeService.ActionType.Draft, txtPrompt.Text);
             }
-            await ProcessAction(ClaudeService.ActionType.Draft, txtPrompt.Text);
+            catch (Exception ex) { ShowStatus(ex.Message, true); }
         }
 
         private async void btnEditSelection_Click(object sender, EventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(txtPrompt.Text))
+            try
             {
-                ShowStatus("Please enter instructions for editing the selection.", true);
-                return;
+                if (string.IsNullOrWhiteSpace(txtPrompt.Text))
+                {
+                    ShowStatus("Please enter instructions for editing the selection.", true);
+                    return;
+                }
+                string selectedText = GetSelectedText();
+                if (string.IsNullOrWhiteSpace(selectedText))
+                {
+                    ShowStatus("Please select text in the email editor first.", true);
+                    return;
+                }
+                await ProcessAction(ClaudeService.ActionType.Draft, txtPrompt.Text, selectedText);
             }
-            string selectedText = GetSelectedText();
-            if (string.IsNullOrWhiteSpace(selectedText))
-            {
-                ShowStatus("Please select text in the email editor first.", true);
-                return;
-            }
-            await ProcessAction(ClaudeService.ActionType.Draft, txtPrompt.Text, selectedText);
+            catch (Exception ex) { ShowStatus(ex.Message, true); }
         }
 
         // === Core processing ===
 
         private async Task ProcessAction(ClaudeService.ActionType action, string prompt = "", string selectedText = null)
         {
-            SetUIEnabled(false);
-            ShowStatus("Processing...", false);
-
             try
             {
+                SetUIEnabled(false);
+                ShowStatus("Processing...", false);
                 string draftText;
                 string signatureText;
                 string threadText;
