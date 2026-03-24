@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Remove dead USEOFFICEINTEROP conditional branch from project file (VSTO template boilerplate never used)
 - Fix rare double-processing when rapidly clicking action buttons by adding a reentrancy guard
 - Fix potential crash from unhandled exceptions in async button handlers and pre-try logic in ProcessAction
 - Fix process handle leak when warm-up detects missing prerequisites and exits early
