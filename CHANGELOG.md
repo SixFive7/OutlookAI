@@ -9,6 +9,7 @@
 - Enable full feature parity for inline responses (reading pane replies) including selection editing
 - Add descriptive tooltips to all action buttons
 - Improve quick action prompts for more reliable results on short emails
+- Simplify UI by merging Instruction and Custom Action into a single text box with three buttons
 
 ## v2.1.1.103 - 2026-03-23
 

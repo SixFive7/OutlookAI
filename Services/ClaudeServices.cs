@@ -30,7 +30,7 @@ namespace OutlookAI.Services
 
         public enum ActionType
         {
-            Proofread, Revise, Draft, Shorten, Lengthen, Formal, Friendly, Custom
+            Proofread, Revise, Draft, Shorten, Lengthen, Formal, Friendly
         }
 
         /// <summary>
@@ -227,10 +227,6 @@ namespace OutlookAI.Services
                     return string.IsNullOrWhiteSpace(instruction)
                         ? "Draft"
                         : "Draft: \"" + instruction + "\"";
-                case ActionType.Custom:
-                    return string.IsNullOrWhiteSpace(instruction)
-                        ? "Custom"
-                        : "Custom: \"" + instruction + "\"";
                 default:
                     return action.ToString();
             }

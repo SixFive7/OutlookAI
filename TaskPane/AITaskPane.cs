@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using OutlookAI.Services;
@@ -22,6 +23,11 @@ namespace OutlookAI.TaskPane
         private bool _contextCaptured;   // Whether sig/thread have been read for this email
         private bool _freshDraft;        // When true, send empty draft (no previous AI content)
 
+        // Debug: 7 clicks on version label to enable, accumulates log, copies to clipboard
+        private bool _debug;
+        private int _debugClickCount;
+        private readonly StringBuilder _debugLog = new StringBuilder();
+
         public AITaskPane(bool isInlineResponse = false, Outlook.Inspector inspector = null)
         {
             _isInlineResponse = isInlineResponse;
@@ -29,6 +35,7 @@ namespace OutlookAI.TaskPane
             InitializeComponent();
             ApplyTheme();
             SetupTooltips();
+            lblVersion.Click += lblVersion_Click;
 
             _versionTimer = new Timer();
             _versionTimer.Interval = 1000; // 1 second
@@ -66,6 +73,67 @@ namespace OutlookAI.TaskPane
             lnkUpdateError.Visible = error != null;
         }
 
+        private void lblVersion_Click(object sender, EventArgs e)
+        {
+            if (_debug) return;
+            _debugClickCount++;
+            if (_debugClickCount >= 7)
+            {
+                _debug = true;
+                _debugLog.Clear();
+                lblVersion.Text = "Debug enabled";
+                _versionTimer.Stop();
+            }
+        }
+
+        private void DebugLog(string label, dynamic doc = null, string extra = null)
+        {
+            if (!_debug) return;
+            try
+            {
+                _debugLog.AppendLine($"=== {label} at {DateTime.Now:HH:mm:ss} ===");
+
+                if (doc != null)
+                {
+                    _debugLog.AppendLine($"Content.End = {doc.Content.End}");
+                    doc.Bookmarks.ShowHidden = true;
+                    foreach (var bmName in new[] { "_MailAutoSig", "_MailOriginal" })
+                    {
+                        if (doc.Bookmarks.Exists(bmName))
+                        {
+                            var bmk = doc.Bookmarks[bmName];
+                            int start = bmk.Range.Start, end = bmk.Range.End;
+                            string text = bmk.Range.Text ?? "";
+                            if (text.Length > 200) text = text.Substring(0, 200) + "...";
+                            _debugLog.AppendLine($"  {bmName}: [{start}, {end}] = {text}");
+                            ThisAddIn.ReleaseCom(bmk);
+                        }
+                        else
+                        {
+                            _debugLog.AppendLine($"  {bmName}: NOT FOUND");
+                        }
+                    }
+
+                    int draftEnd = FindDraftEnd(doc);
+                    var range = doc.Range(0, draftEnd);
+                    string draft = range.Text ?? "";
+                    if (draft.Length > 300) draft = draft.Substring(0, 300) + "...";
+                    _debugLog.AppendLine($"  Draft [0, {draftEnd}]: {draft}");
+                    ThisAddIn.ReleaseCom(range);
+                }
+
+                if (extra != null)
+                    _debugLog.AppendLine($"  {extra}");
+
+                _debugLog.AppendLine();
+                Clipboard.SetText(_debugLog.ToString());
+            }
+            catch (Exception ex)
+            {
+                _debugLog.AppendLine($"  DEBUG ERROR: {ex.Message}");
+            }
+        }
+
         private void lnkUpdateError_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
             var error = UpdateService.LastError;
@@ -78,8 +146,7 @@ namespace OutlookAI.TaskPane
         /// </summary>
         public void ResetForNewEmail()
         {
-            txtDraftPrompt.Text = "";
-            txtCustomPrompt.Text = "";
+            txtPrompt.Text = "";
             lblStatus.Visible = false;
             _editHistory.Clear();
             _signatureText = null;
@@ -122,7 +189,7 @@ namespace OutlookAI.TaskPane
 
         private async void btnDraft_Click(object sender, EventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(txtDraftPrompt.Text))
+            if (string.IsNullOrWhiteSpace(txtPrompt.Text))
             {
                 ShowStatus("Please enter instructions for the email you want to draft.", true);
                 return;
@@ -131,23 +198,22 @@ namespace OutlookAI.TaskPane
             _editHistory.Clear();
             _contextCaptured = false;
             _freshDraft = true;
-            await ProcessAction(ClaudeService.ActionType.Draft, txtDraftPrompt.Text);
+            await ProcessAction(ClaudeService.ActionType.Draft, txtPrompt.Text);
         }
 
         private async void btnEditDraft_Click(object sender, EventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(txtDraftPrompt.Text))
+            if (string.IsNullOrWhiteSpace(txtPrompt.Text))
             {
                 ShowStatus("Please enter instructions for editing the draft.", true);
                 return;
             }
-            // Edit Draft = iterative — keep history, continue conversation
-            await ProcessAction(ClaudeService.ActionType.Draft, txtDraftPrompt.Text);
+            await ProcessAction(ClaudeService.ActionType.Draft, txtPrompt.Text);
         }
 
-        private async void btnDraftSelection_Click(object sender, EventArgs e)
+        private async void btnEditSelection_Click(object sender, EventArgs e)
         {
-            if (string.IsNullOrWhiteSpace(txtDraftPrompt.Text))
+            if (string.IsNullOrWhiteSpace(txtPrompt.Text))
             {
                 ShowStatus("Please enter instructions for editing the selection.", true);
                 return;
@@ -158,33 +224,7 @@ namespace OutlookAI.TaskPane
                 ShowStatus("Please select text in the email editor first.", true);
                 return;
             }
-            await ProcessAction(ClaudeService.ActionType.Draft, txtDraftPrompt.Text, selectedText);
-        }
-
-        private async void btnCustom_Click(object sender, EventArgs e)
-        {
-            if (string.IsNullOrWhiteSpace(txtCustomPrompt.Text))
-            {
-                ShowStatus("Please enter instructions for the custom action.", true);
-                return;
-            }
-            await ProcessAction(ClaudeService.ActionType.Custom, txtCustomPrompt.Text);
-        }
-
-        private async void btnCustomSelection_Click(object sender, EventArgs e)
-        {
-            if (string.IsNullOrWhiteSpace(txtCustomPrompt.Text))
-            {
-                ShowStatus("Please enter instructions for the custom action.", true);
-                return;
-            }
-            string selectedText = GetSelectedText();
-            if (string.IsNullOrWhiteSpace(selectedText))
-            {
-                ShowStatus("Please select text in the email editor first.", true);
-                return;
-            }
-            await ProcessAction(ClaudeService.ActionType.Custom, txtCustomPrompt.Text, selectedText);
+            await ProcessAction(ClaudeService.ActionType.Draft, txtPrompt.Text, selectedText);
         }
 
         // === Core processing ===
@@ -213,6 +253,7 @@ namespace OutlookAI.TaskPane
 
                     dynamic wordDoc = doc;
                     wordDoc.Bookmarks.ShowHidden = true;
+                    DebugLog($"ProcessAction({action}) BEFORE read", wordDoc);
 
                     // Capture signature and thread context on first interaction
                     if (!_contextCaptured)
@@ -240,9 +281,14 @@ namespace OutlookAI.TaskPane
                     draftText = "";
                 }
 
+                DebugLog("Sending to Claude", extra:
+                    $"draftText ({draftText.Length} chars), sigText ({signatureText.Length} chars), threadText ({threadText.Length} chars)");
+
                 string result = await ClaudeService.ProcessEmailAsync(
                     action, prompt, _editHistory,
                     draftText, signatureText, threadText, selectedText);
+
+                DebugLog("Claude returned", extra: $"result ({result.Length} chars): {(result.Length > 300 ? result.Substring(0, 300) + "..." : result)}");
 
                 InvokeOnUI(() =>
                 {
@@ -371,6 +417,7 @@ namespace OutlookAI.TaskPane
 
                 dynamic wordDoc = doc;
                 wordDoc.Bookmarks.ShowHidden = true;
+                DebugLog("WriteDraft BEFORE", wordDoc);
 
                 // Determine which bookmark is the draft boundary and save its extent.
                 // Delete it before writing so it doesn't absorb our text.
@@ -406,6 +453,7 @@ namespace OutlookAI.TaskPane
                     ThisAddIn.ReleaseCom(bmkRange);
                 }
 
+                DebugLog("WriteDraft AFTER", wordDoc);
                 return true;
             }
             catch (Exception ex)
@@ -458,9 +506,7 @@ namespace OutlookAI.TaskPane
             tip.SetToolTip(btnFriendly, "Rewrite in a warmer, more conversational tone.\nKeep the same content and meaning.");
             tip.SetToolTip(btnDraft, "Draft a new email from scratch based on your instruction.\nClears any previous AI draft.");
             tip.SetToolTip(btnEditDraft, "Edit the current draft based on your instruction.\nPreserves conversation history for iterative refinement.");
-            tip.SetToolTip(btnDraftSelection, "Edit only the selected text based on your instruction.\nLeaves the rest of the draft unchanged.");
-            tip.SetToolTip(btnCustom, "Run a custom action on the entire draft.");
-            tip.SetToolTip(btnCustomSelection, "Run a custom action on the selected text only.");
+            tip.SetToolTip(btnEditSelection, "Edit only the selected text based on your instruction.\nLeaves the rest of the draft unchanged.");
         }
 
         private void InvokeOnUI(Action action)
@@ -487,13 +533,13 @@ namespace OutlookAI.TaskPane
             this.ForeColor = ThemeService.Text;
 
             // Group boxes
-            foreach (var grp in new[] { grpQuickActions, grpDraft, grpCustom })
+            foreach (var grp in new[] { grpQuickActions, grpInstruction })
             {
                 grp.ForeColor = ThemeService.Text;
             }
 
             // Text boxes
-            foreach (var txt in new[] { txtDraftPrompt, txtCustomPrompt })
+            foreach (var txt in new[] { txtPrompt })
             {
                 txt.BackColor = ThemeService.TextBoxBackground;
                 txt.ForeColor = ThemeService.Text;
@@ -539,11 +585,8 @@ namespace OutlookAI.TaskPane
             btnFriendly.Enabled = enabled;
             btnDraft.Enabled = enabled;
             btnEditDraft.Enabled = enabled;
-            btnDraftSelection.Enabled = enabled;
-            txtDraftPrompt.Enabled = enabled;
-            btnCustom.Enabled = enabled;
-            btnCustomSelection.Enabled = enabled;
-            txtCustomPrompt.Enabled = enabled;
+            btnEditSelection.Enabled = enabled;
+            txtPrompt.Enabled = enabled;
         }
 
         partial void DisposeCustomResources()
