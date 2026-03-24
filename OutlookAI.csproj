@@ -219,7 +219,7 @@
     <ManifestKeyFile>OutlookAI.pfx</ManifestKeyFile>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestCertificateThumbprint>E205060633DD7062D4F90033130542948A69D068</ManifestCertificateThumbprint>
+    <ManifestCertificateThumbprint>2578F7B869383572E751DD6B61B5374C55C6E995</ManifestCertificateThumbprint>
   </PropertyGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- Include additional build rules for an Office application add-in. -->
