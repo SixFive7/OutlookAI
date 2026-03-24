@@ -73,16 +73,36 @@ namespace OutlookAI.TaskPane
             lnkUpdateError.Visible = error != null;
         }
 
+        private Timer _debugClickTimer;
+
         private void lblVersion_Click(object sender, EventArgs e)
         {
             if (_debug) return;
+
+            // Pause version updates while counting clicks
+            _versionTimer.Stop();
             _debugClickCount++;
+
+            // Reset counter after 3 seconds of no clicks
+            if (_debugClickTimer == null)
+            {
+                _debugClickTimer = new Timer { Interval = 3000 };
+                _debugClickTimer.Tick += (s, ev) =>
+                {
+                    _debugClickTimer.Stop();
+                    _debugClickCount = 0;
+                    if (!_debug) _versionTimer.Start();
+                };
+            }
+            _debugClickTimer.Stop();
+            _debugClickTimer.Start();
+
             if (_debugClickCount >= 7)
             {
+                _debugClickTimer.Stop();
                 _debug = true;
                 _debugLog.Clear();
                 lblVersion.Text = "Debug enabled";
-                _versionTimer.Stop();
             }
         }
 
@@ -599,6 +619,8 @@ namespace OutlookAI.TaskPane
         {
             _versionTimer?.Stop();
             _versionTimer?.Dispose();
+            _debugClickTimer?.Stop();
+            _debugClickTimer?.Dispose();
             ThisAddIn.ReleaseCom(_owningInspector);
             // Don't call ClaudeService.Shutdown() here -- it kills the shared
             // warm process that other panes still need. ThisAddIn_Shutdown
