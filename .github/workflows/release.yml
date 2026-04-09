@@ -133,7 +133,7 @@ jobs:
           /p:PublishDir=publish\
           /p:BootstrapperEnabled=true
           /p:IsWebBootstrapper=false
-          /p:DefineConstants="VSTO40%3BTRACE%3BUseOfficeInterop"
+          /p:DefineConstants="VSTO40%3BTRACE"
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
