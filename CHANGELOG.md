@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v2.3.2.134 - 2026-04-09
+
 - Move signing certificate out of repository into GitHub Actions secrets to prevent unauthorized use
 - Fix CI release build by switching Office interop references to PIAs (previous attempt to remove dead conditional code broke CI builds)
 - Remove redundant build CI workflow (release workflow already covers the same build steps)
