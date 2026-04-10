@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Upgrade NuGet setup action to v3 for Node.js 24 compatibility
+
 ## v2.3.2.134 - 2026-04-09
 
 - Move signing certificate out of repository into GitHub Actions secrets to prevent unauthorized use
