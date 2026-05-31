@@ -64,6 +64,7 @@ function DownloadFile(const Url, DestPath: string; var ErrorDetail: string): Boo
 var
   ResultCode: Integer;
   CmdLine: string;
+  AnsiContent: AnsiString;
 begin
   Result := False;
   ErrorDetail := '';
@@ -83,8 +84,8 @@ begin
   if ResultCode <> 0 then
   begin
     if FileExists(DestPath + '.err') then
-      if LoadStringFromFile(DestPath + '.err', ErrorDetail) then
-        ErrorDetail := Trim(ErrorDetail);
+      if LoadStringFromFile(DestPath + '.err', AnsiContent) then
+        ErrorDetail := Trim(String(AnsiContent));
     if ErrorDetail = '' then
       ErrorDetail := 'Download failed (exit code ' + IntToStr(ResultCode) + ')';
     DeleteFile(DestPath + '.err');
