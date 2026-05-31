@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v2.3.3.141 - 2026-05-31
+
 - Fix 48 bugs across security, correctness, resource management, and UI
 - Add Authenticode signature verification on downloaded installer before execution
 - Add installer code signing step to release workflow
