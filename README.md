@@ -103,6 +103,7 @@ The add-in checks for updates automatically:
 - Uses ETags for conditional requests to minimize API rate limiting
 - When a new version is found, downloads the installer to a temp directory
 - Installs silently when Outlook closes — no manual download or re-installation needed
+- Stops retrying after 3 consecutive failures (resets on Outlook restart)
 - The version label at the bottom of the task pane shows update status: "up to date", "downloading v2.x.x…", or "v2.x.x ready — installs on close"
 - Click the "update error" link (if visible) to see error details
 
@@ -142,7 +143,7 @@ OutlookAI is focused on email composition assistance. The following are **not** 
 | **OS** | Windows 10 or 11 (also Windows Server 2019/2022/2025) |
 | **Outlook** | Microsoft Outlook 2016 or later (2016, 2019, 2021, 2024) — classic desktop version only. Outlook 2016 is the minimum supported version. |
 | **Runtime** | .NET Framework 4.8 |
-| **VSTO Runtime** | [Visual Studio Tools for Office Runtime](https://aka.ms/VSTORuntime) (installed automatically by the setup) |
+| **VSTO Runtime** | [Visual Studio Tools for Office Runtime](https://aka.ms/VSTORuntimeDownload) (downloaded and installed automatically if missing — requires admin elevation) |
 | **Claude Code CLI** | [Install instructions](https://docs.anthropic.com/en/docs/claude-code/overview) — requires a Claude Pro or Max subscription |
 | **Node.js** | Required by Claude Code CLI |
 
@@ -170,10 +171,11 @@ OutlookAI is focused on email composition assistance. The following are **not** 
 ### Installation
 
 1. Download the latest `.exe` installer from [GitHub Releases](../../releases/latest)
-2. Run the installer — it requires no admin privileges and installs to your local AppData
-3. Open Outlook — the AI Assistant button appears in the ribbon on compose windows
+2. Run the installer — it installs to your local AppData with no admin privileges required
+3. If .NET Framework 4.8 or the VSTO Runtime is missing, the installer downloads and installs them automatically (admin elevation is prompted only for these system-level prerequisites)
+4. Open Outlook — the AI Assistant button appears in the ribbon on compose windows
 
-The installer handles VSTO registration automatically. If a previous version is installed, it is uninstalled first to prevent conflicts.
+The installer registers the add-in directly via the Windows registry and installs the signing certificate to your Trusted Publishers store. To uninstall, use Add/Remove Programs.
 
 ### Building from Source
 
@@ -188,7 +190,7 @@ The installer handles VSTO registration automatically. If a previous version is 
 3. Restore NuGet packages
 4. Build > Rebuild Solution
 
-The project uses ClickOnce publishing with an Inno Setup wrapper for distribution. The build pipeline (`.github/workflows/build.yml`) runs automatically on every push to master. Releases are created on demand via the release workflow.
+The project uses MSBuild to generate VSTO manifests and Inno Setup for the installer. Releases are created on demand via the release workflow (`gh workflow run release`).
 
 ---
 
@@ -282,7 +284,7 @@ This gives the zero-latency benefit of a persistent process with the simplicity 
 <details>
 <summary><strong>Add-in keeps getting disabled</strong></summary>
 
-Outlook's "Resiliency" feature disables add-ins that load slowly:
+The installer sets a `DoNotDisableAddinList` registry key to prevent Outlook from disabling the add-in. If it was disabled before installing the latest version, reinstalling should clear it. If the issue persists:
 
 1. File > Options > Add-ins
 2. At the bottom, change the dropdown to "Disabled Items" and click **Go**
@@ -293,13 +295,17 @@ Outlook's "Resiliency" feature disables add-ins that load slowly:
 <details>
 <summary><strong>"Untrusted" or security errors</strong></summary>
 
-Windows may block downloaded files. Unblock all add-in files:
+The installer automatically adds the signing certificate to your Trusted Publishers store. If you still see trust errors:
 
-```powershell
-Get-ChildItem -Path "$env:LOCALAPPDATA\OutlookAI\Setup" -Recurse | Unblock-File
-```
-
-Or right-click each file > Properties > check "Unblock".
+1. Run the certificate install manually:
+   ```
+   certutil -f -user -addstore TrustedPublisher "%LOCALAPPDATA%\OutlookAI\Setup\OutlookAI.cer"
+   ```
+2. If files are blocked by Windows SmartScreen, unblock them:
+   ```powershell
+   Get-ChildItem -Path "$env:LOCALAPPDATA\OutlookAI\Setup" -Recurse | Unblock-File
+   ```
+3. Restart Outlook
 </details>
 
 <details>
@@ -345,14 +351,14 @@ You've hit Claude's rate limit for your subscription tier. Wait a moment and try
 </details>
 
 <details>
-<summary><strong>Upgrade fails with "another version is currently installed"</strong></summary>
+<summary><strong>Upgrade fails or add-in doesn't update</strong></summary>
 
-The installer should handle this automatically by unregistering the old VSTO add-in before installing. If it doesn't:
+The installer overwrites files and re-registers the add-in on every run. If an upgrade seems stuck:
 
 1. Close Outlook
-2. Open a terminal as administrator
-3. Run: `"%CommonProgramFiles%\microsoft shared\VSTO\10.0\VSTOInstaller.exe" /u /s "<install-path>\OutlookAI.vsto"`
-4. Run the new installer
+2. Delete the install directory: `%LOCALAPPDATA%\OutlookAI\Setup`
+3. Delete the registry key: `HKCU\Software\Microsoft\Office\Outlook\Addins\OutlookAI`
+4. Run the installer again
 </details>
 
 <details>
@@ -363,6 +369,7 @@ Click the "update error" link at the bottom of the task pane to see the full err
 - No internet connection
 - GitHub API rate limiting (the add-in uses ETags to minimize this)
 - Firewall blocking `api.github.com`
+- "Update failed 3 times, not retrying" — the auto-updater gave up after repeated failures. Restart Outlook to try again, or download the latest installer manually from [GitHub Releases](../../releases/latest).
 </details>
 
 ---
