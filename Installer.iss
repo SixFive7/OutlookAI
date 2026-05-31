@@ -21,7 +21,7 @@ Compression=lzma2
 SolidCompression=yes
 PrivilegesRequired=lowest
 SetupMutex=OutlookAISetup
-CloseApplications=no
+CloseApplications=yes
 RestartApplications=no
 CreateAppDir=yes
 

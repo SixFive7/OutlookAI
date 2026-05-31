@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version_bump:
-        description: 'Version bump as major.minor.patch (e.g. 0.0.0 for no change, 1.0.0 for major, 0.1.0 for minor, 0.0.1 for patch)'
+        description: 'Version bump as major.minor.patch (e.g. 1.0.0 for major, 0.1.0 for minor, 0.0.1 for patch)'
         required: true
         type: string
 
@@ -71,8 +71,8 @@ jobs:
           }
           $cv = $current -split '\.'
           $newMajor = [int]$cv[0] + $bumpMajor
-          $newMinor = [int]$cv[1] + $bumpMinor
-          $newPatch = [int]$cv[2] + $bumpPatch
+          $newMinor = if ($bumpMajor -gt 0) { $bumpMinor } else { [int]$cv[1] + $bumpMinor }
+          $newPatch = if ($bumpMajor -gt 0 -or $bumpMinor -gt 0) { $bumpPatch } else { [int]$cv[2] + $bumpPatch }
           $newBase = "$newMajor.$newMinor.$newPatch"
 
           Write-Host "Version: $current -> $newBase (bump: $bump)"
@@ -149,17 +149,26 @@ jobs:
       - name: Create installer
         run: iscc /DMyAppVersion=${{ steps.version.outputs.FULL_VERSION }} Installer.iss
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.version.outputs.FULL_VERSION }}
-          name: OutlookAI v${{ steps.version.outputs.FULL_VERSION }}
-          body_path: release_notes.txt
-          files: OutlookAI-v${{ steps.version.outputs.FULL_VERSION }}.exe
+      - name: Sign installer
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match 'x64' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { Write-Error "signtool.exe not found"; exit 1 }
+          & $signtool.FullName sign /a /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "OutlookAI-v${{ steps.version.outputs.FULL_VERSION }}.exe"
 
       - name: Commit stamped changelog
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add CHANGELOG.md
-          git diff --staged --quiet && echo "No changes to commit" || (git commit -m "Release v${{ steps.version.outputs.FULL_VERSION }}" && git push)
+          git diff --staged --quiet && echo "No changes to commit" || (git commit -m "Release v${{ steps.version.outputs.FULL_VERSION }}" && git pull --rebase && git push)
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.FULL_VERSION }}
+          target_commitish: ${{ github.ref_name }}
+          name: OutlookAI v${{ steps.version.outputs.FULL_VERSION }}
+          body_path: release_notes.txt
+          files: OutlookAI-v${{ steps.version.outputs.FULL_VERSION }}.exe

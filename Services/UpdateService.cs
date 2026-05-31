@@ -2,11 +2,14 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
+using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
@@ -22,15 +25,31 @@ namespace OutlookAI.Services
 
         private const int MaxUpdateFailures = 3;
 
-        private static string _etag;
+        private static volatile string _etag;
         private static Timer _timer;
         private static Process _updateProcess;
         private static int _updateFailures;
         private static int _checking;
 
-        public static DateTime? LastChecked { get; private set; }
-        public static string LastError { get; private set; }
-        public static string Status { get; private set; }
+        private static volatile string _lastChecked;
+        private static volatile string _lastError;
+        private static volatile string _status;
+
+        public static DateTime? LastChecked
+        {
+            get { var s = _lastChecked; return s == null ? (DateTime?)null : DateTime.ParseExact(s, "o", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind); }
+            private set { _lastChecked = value?.ToString("o"); }
+        }
+        public static string LastError
+        {
+            get { return _lastError; }
+            private set { _lastError = value; }
+        }
+        public static string Status
+        {
+            get { return _status; }
+            private set { _status = value; }
+        }
 
         private static HttpClient CreateHttpClient()
         {
@@ -94,8 +113,10 @@ namespace OutlookAI.Services
                 }
 
                 var tagName = (string)release["tag_name"];
-                var remoteVersion = Version.Parse(tagName.TrimStart('v'));
-                var localVersion = Assembly.GetExecutingAssembly().GetName().Version;
+                var rv = Version.Parse(tagName.TrimStart('v'));
+                var remoteVersion = new Version(rv.Major, rv.Minor, rv.Build < 0 ? 0 : rv.Build, 0);
+                var lv = Assembly.GetExecutingAssembly().GetName().Version;
+                var localVersion = new Version(lv.Major, lv.Minor, lv.Build, 0);
 
                 if (remoteVersion <= localVersion)
                 {
@@ -141,19 +162,60 @@ namespace OutlookAI.Services
                     return;
                 }
 
-                var tempPath = Path.Combine(Path.GetTempPath(), "OutlookAI-Update.exe");
-                var bytes = await _httpClient.GetByteArrayAsync(downloadUrl);
-                File.WriteAllBytes(tempPath, bytes);
+                var tempPath = Path.Combine(Path.GetTempPath(), "OutlookAI-" + Path.GetRandomFileName() + ".exe");
+                const long maxDownloadBytes = 50 * 1024 * 1024; // 50 MB
+                using (var response2 = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead))
+                {
+                    response2.EnsureSuccessStatusCode();
+                    var contentLength = response2.Content.Headers.ContentLength;
+                    if (contentLength.HasValue && contentLength.Value > maxDownloadBytes)
+                    {
+                        LastError = "Installer download too large";
+                        return;
+                    }
+                    using (var src = await response2.Content.ReadAsStreamAsync())
+                    using (var dst = File.Create(tempPath))
+                    {
+                        var buf = new byte[81920];
+                        long total = 0;
+                        int read;
+                        while ((read = await src.ReadAsync(buf, 0, buf.Length)) > 0)
+                        {
+                            total += read;
+                            if (total > maxDownloadBytes)
+                            {
+                                dst.Close();
+                                File.Delete(tempPath);
+                                LastError = "Installer download too large";
+                                return;
+                            }
+                            await dst.WriteAsync(buf, 0, read);
+                        }
+                    }
+                }
+
+                try
+                {
+                    X509Certificate.CreateFromSignedFile(tempPath);
+                }
+                catch
+                {
+                    File.Delete(tempPath);
+                    LastError = "Installer failed signature verification";
+                    return;
+                }
 
                 // Spawn a hidden process that waits for Outlook to exit,
                 // then runs the installer. -Wait keeps the process alive until
                 // the installer finishes, so we can detect completion/failure.
                 var installerArgs = "/SILENT /SP- /NOCANCEL /NORESTART /NORESTARTAPPLICATIONS";
-                var script = $"Get-Process outlook -ErrorAction SilentlyContinue | Wait-Process; Start-Sleep -Seconds 2; if (-not (Test-Path 'HKCU:\\Software\\Microsoft\\Office\\Outlook\\Addins\\OutlookAI')) {{ exit }}; Start-Process '{tempPath}' -ArgumentList '{installerArgs}' -Wait";
+                var safePath = tempPath.Replace("'", "''");
+                var script = $"Get-Process outlook -ErrorAction SilentlyContinue | Wait-Process; Start-Sleep -Seconds 2; if (-not (Test-Path 'HKCU:\\Software\\Microsoft\\Office\\Outlook\\Addins\\OutlookAI')) {{ exit }}; Start-Process '{safePath}' -ArgumentList '{installerArgs}' -Wait";
+                var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
                 _updateProcess = Process.Start(new ProcessStartInfo
                 {
                     FileName = "powershell.exe",
-                    Arguments = $"-WindowStyle Hidden -ExecutionPolicy Bypass -Command \"{script}\"",
+                    Arguments = $"-WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand {encoded}",
                     UseShellExecute = false,
                     CreateNoWindow = true
                 });

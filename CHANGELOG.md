@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+- Fix 48 bugs across security, correctness, resource management, and UI
+- Add Authenticode signature verification on downloaded installer before execution
+- Add installer code signing step to release workflow
+- Fix predictable temp file path for update downloads (now uses random filename)
+- Fix PowerShell command injection in update launcher via -EncodedCommand
+- Fix prompt injection vulnerability by replacing static delimiters with random fences
+- Fix COM object lifetime issues in ribbon callbacks that could crash Outlook
+- Fix writing AI output to wrong email when user switches during processing
+- Fix bookmark offset calculation that could produce invalid Word ranges
+- Fix semver arithmetic in release workflow (minor bump now resets patch)
+- Fix COM identity comparison using IUnknown pointer equality instead of RCW reference
+- Fix duplicate explorer event hookups and task pane lifecycle leaks
+- Fix ribbon toggle state not refreshing across all ribbon contexts
+- Fix race between inspector Activate and Close handlers
+- Fix process tree not being killed on timeout (orphaned Node.js processes)
+- Fix overly broad error keyword matching causing false authentication errors
+- Fix COM Range object leaks throughout Word document operations
+- Fix UI thread race condition in InvokeOnUI that could throw ObjectDisposedException
+- Fix released COM inspector reference causing crashes on async operations
+- Fix thread safety on update service shared state with volatile fields
+- Fix JSON parse errors showing cryptic messages instead of helpful diagnostics
+- Fix Office theme detection to check multiple Office versions (15.0, 16.0, 17.0)
+- Fix static constructor crash risk in ThemeService with safe fallback
+- Fix release workflow creating tag before changelog commit
+- Fix release workflow push failure by adding git pull --rebase
+- Fix misleading version_bump description suggesting 0.0.0 is valid
+- Fix bare catch blocks swallowing all exceptions including critical ones
+- Fix unbounded download into memory (now capped at 50 MB)
+- Add runtime theme change detection via SystemEvents
+- Add Anchor layout to task pane controls for proper resize behavior
+- Fix lblStatus truncating long error messages (AutoEllipsis enabled)
+- Fix ToolTip GDI handle leak
+- Fix timer tick firing on disposed controls by correcting dispose order
+- Fix debug mode activating from casual clicks (now requires 7 clicks within 3 seconds)
+- Fix version comparison with mixed 3/4-component versions
+- Fix dev builds triggering false auto-updates (placeholder version now 99.99.99.0)
+- Fix installer not prompting when Outlook is running during manual install
 - Upgrade NuGet setup action to v3 for Node.js 24 compatibility
 - Fix add-in silently failing to appear in Outlook on fresh systems by replacing VSTOInstaller.exe dependency with direct registry-based add-in registration
 - Add on-demand VSTO Runtime download and install with elevation if missing on target system

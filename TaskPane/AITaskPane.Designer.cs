@@ -10,8 +10,8 @@ namespace OutlookAI.TaskPane
         {
             if (disposing)
             {
-                components?.Dispose();
                 DisposeCustomResources();
+                components?.Dispose();
             }
             base.Dispose(disposing);
         }
@@ -50,6 +50,7 @@ namespace OutlookAI.TaskPane
             this.lblTitle.Text = "AI Writing Assistant";
 
             // grpQuickActions
+            this.grpQuickActions.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
             this.grpQuickActions.Controls.Add(this.btnProofread);
             this.grpQuickActions.Controls.Add(this.btnRevise);
             this.grpQuickActions.Controls.Add(this.btnShorten);
@@ -113,6 +114,7 @@ namespace OutlookAI.TaskPane
             this.btnFriendly.Click += new System.EventHandler(this.btnFriendly_Click);
 
             // grpInstruction
+            this.grpInstruction.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
             this.grpInstruction.Controls.Add(this.txtPrompt);
             this.grpInstruction.Controls.Add(this.btnDraft);
             this.grpInstruction.Controls.Add(this.btnEditDraft);
@@ -126,6 +128,7 @@ namespace OutlookAI.TaskPane
             this.grpInstruction.Text = "Instruction";
 
             // txtPrompt
+            this.txtPrompt.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
             this.txtPrompt.Font = new System.Drawing.Font("Segoe UI", 8F);
             this.txtPrompt.Location = new System.Drawing.Point(10, 22);
             this.txtPrompt.Multiline = true;
@@ -133,6 +136,7 @@ namespace OutlookAI.TaskPane
             this.txtPrompt.Size = new System.Drawing.Size(220, 50);
 
             // btnDraft
+            this.btnDraft.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
             this.btnDraft.Font = new System.Drawing.Font("Segoe UI", 8F);
             this.btnDraft.Location = new System.Drawing.Point(10, 78);
             this.btnDraft.Size = new System.Drawing.Size(220, 26);
@@ -141,6 +145,7 @@ namespace OutlookAI.TaskPane
             this.btnDraft.Click += new System.EventHandler(this.btnDraft_Click);
 
             // btnEditDraft
+            this.btnEditDraft.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
             this.btnEditDraft.Font = new System.Drawing.Font("Segoe UI", 8F);
             this.btnEditDraft.Location = new System.Drawing.Point(10, 108);
             this.btnEditDraft.Size = new System.Drawing.Size(220, 26);
@@ -149,6 +154,7 @@ namespace OutlookAI.TaskPane
             this.btnEditDraft.Click += new System.EventHandler(this.btnEditDraft_Click);
 
             // btnEditSelection
+            this.btnEditSelection.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
             this.btnEditSelection.Font = new System.Drawing.Font("Segoe UI", 8F);
             this.btnEditSelection.Location = new System.Drawing.Point(10, 138);
             this.btnEditSelection.Size = new System.Drawing.Size(220, 26);
@@ -157,10 +163,12 @@ namespace OutlookAI.TaskPane
             this.btnEditSelection.Click += new System.EventHandler(this.btnEditSelection_Click);
 
             // lblStatus
+            this.lblStatus.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+            this.lblStatus.AutoEllipsis = true;
             this.lblStatus.Font = new System.Drawing.Font("Segoe UI", 8F);
             this.lblStatus.Location = new System.Drawing.Point(10, 315);
             this.lblStatus.Name = "lblStatus";
-            this.lblStatus.Size = new System.Drawing.Size(240, 20);
+            this.lblStatus.Size = new System.Drawing.Size(240, 32);
             this.lblStatus.Visible = false;
 
             // lnkUpdateError

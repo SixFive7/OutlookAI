@@ -99,13 +99,22 @@ namespace OutlookAI.Services
             string draftText, string signatureText, string threadText,
             string selectedText = null)
         {
-            // Check for known prerequisite issues (detected at startup)
-            if (_lastPrerequisiteError != null)
-                throw new Exception(_lastPrerequisiteError);
+            var prereqError = _lastPrerequisiteError;
+            if (prereqError != null)
+                throw new Exception(prereqError);
 
             var prompt = BuildIterativePrompt(action, customPrompt, editHistory, draftText, signatureText, threadText, selectedText);
 
             return await Task.Run(() => ExecutePrompt(prompt));
+        }
+
+        private static string Fence(StringBuilder sb, string content)
+        {
+            var fence = "---CONTENT-" + Guid.NewGuid().ToString("N").Substring(0, 12) + "---";
+            sb.AppendLine(fence);
+            sb.AppendLine(content);
+            sb.AppendLine(fence);
+            return fence;
         }
 
         private static string BuildIterativePrompt(
@@ -135,7 +144,7 @@ namespace OutlookAI.Services
             sb.AppendLine();
 
             // Edit history from previous turns
-            if (editHistory.Count > 0)
+            if (editHistory != null && editHistory.Count > 0)
             {
                 sb.AppendLine("## Edit History");
                 sb.AppendLine();
@@ -147,9 +156,7 @@ namespace OutlookAI.Services
                         label += " (applied to selection)";
                     sb.AppendLine($"### Turn {i + 1} — {label}");
                     sb.AppendLine("Result:");
-                    sb.AppendLine("\"\"\"");
-                    sb.AppendLine(turn.Result);
-                    sb.AppendLine("\"\"\"");
+                    Fence(sb, turn.Result);
                     sb.AppendLine();
                 }
             }
@@ -163,9 +170,7 @@ namespace OutlookAI.Services
             }
             else
             {
-                sb.AppendLine("\"\"\"");
-                sb.AppendLine(draftText);
-                sb.AppendLine("\"\"\"");
+                Fence(sb, draftText);
             }
             sb.AppendLine();
 
@@ -174,9 +179,7 @@ namespace OutlookAI.Services
             {
                 sb.AppendLine("## Signature (for context — do NOT include in your response)");
                 sb.AppendLine();
-                sb.AppendLine("\"\"\"");
-                sb.AppendLine(signatureText);
-                sb.AppendLine("\"\"\"");
+                Fence(sb, signatureText);
                 sb.AppendLine();
             }
 
@@ -185,9 +188,7 @@ namespace OutlookAI.Services
             {
                 sb.AppendLine("## Quoted Thread (for context — do NOT include in your response)");
                 sb.AppendLine();
-                sb.AppendLine("\"\"\"");
-                sb.AppendLine(threadText);
-                sb.AppendLine("\"\"\"");
+                Fence(sb, threadText);
                 sb.AppendLine();
             }
 
@@ -202,9 +203,7 @@ namespace OutlookAI.Services
             if (!string.IsNullOrWhiteSpace(selectedText))
             {
                 sb.AppendLine("The user has selected the following text in the draft. Modify ONLY that portion — keep all other text exactly as-is:");
-                sb.AppendLine("\"\"\"");
-                sb.AppendLine(selectedText);
-                sb.AppendLine("\"\"\"");
+                Fence(sb, selectedText);
                 sb.AppendLine();
             }
 
@@ -273,7 +272,7 @@ namespace OutlookAI.Services
                 bool exited = process.WaitForExit(120_000);
                 if (!exited)
                 {
-                    try { process.Kill(); } catch { }
+                    KillProcessTree(process);
                     // Pre-warm the next process for the next attempt
                     WarmUp();
                     throw new Exception("Request timed out after 2 minutes. Please try again.");
@@ -365,14 +364,24 @@ namespace OutlookAI.Services
         /// </summary>
         private static string ParseResult(string json)
         {
-            var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
-            var parsed = serializer.Deserialize<Dictionary<string, object>>(json);
+            if (string.IsNullOrWhiteSpace(json))
+                throw new Exception("Claude returned an empty response.");
 
-            if (parsed.TryGetValue("result", out var result) && result is string resultStr)
+            Dictionary<string, object> parsed;
+            try
+            {
+                var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+                parsed = serializer.Deserialize<Dictionary<string, object>>(json);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("Could not parse Claude response: " + ex.Message + "\nRaw output:\n" + Truncate(json, 500));
+            }
+
+            if (parsed != null && parsed.TryGetValue("result", out var result) && result is string resultStr)
                 return resultStr;
 
-            // Fallback: try "text" field (older CLI versions)
-            if (parsed.TryGetValue("text", out var text) && text is string textStr)
+            if (parsed != null && parsed.TryGetValue("text", out var text) && text is string textStr)
                 return textStr;
 
             throw new Exception("Could not parse Claude response. Raw output:\n" + Truncate(json, 500));
@@ -398,8 +407,10 @@ namespace OutlookAI.Services
                        "  claude auth login\n\n" +
                        "Then restart Outlook.";
 
-            if (lower.Contains("auth") || lower.Contains("login") || lower.Contains("unauthorized")
-                || lower.Contains("not logged in") || lower.Contains("token"))
+            if (lower.Contains("unauthorized") || lower.Contains("not logged in")
+                || lower.Contains("auth required") || lower.Contains("not authenticated")
+                || lower.Contains("please login") || lower.Contains("authentication failed")
+                || lower.Contains("api key") || lower.Contains("invalid key"))
                 return "Claude Code is not authenticated.\n\n" +
                        "Run this command in a terminal:\n" +
                        "  claude auth login\n\n" +
@@ -419,8 +430,10 @@ namespace OutlookAI.Services
             if (string.IsNullOrWhiteSpace(stderr)) return false;
             var lower = stderr.ToLowerInvariant();
             return lower.Contains("not recognized") || lower.Contains("not found")
-                || lower.Contains("auth") || lower.Contains("login")
                 || lower.Contains("unauthorized") || lower.Contains("not logged in")
+                || lower.Contains("not authenticated") || lower.Contains("auth required")
+                || lower.Contains("please login") || lower.Contains("authentication failed")
+                || lower.Contains("api key") || lower.Contains("invalid key")
                 || lower.Contains("no such file");
         }
 
@@ -435,16 +448,38 @@ namespace OutlookAI.Services
             }
         }
 
+        private static void KillProcessTree(Process proc)
+        {
+            try
+            {
+                if (proc.HasExited) return;
+                int pid = proc.Id;
+                try
+                {
+                    using (var tk = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "taskkill",
+                        Arguments = $"/T /F /PID {pid}",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    }))
+                    {
+                        tk?.WaitForExit(5000);
+                    }
+                }
+                catch
+                {
+                    try { proc.Kill(); } catch { }
+                }
+            }
+            catch { }
+        }
+
         private static void KillWarmProcess()
         {
             if (_warmProcess != null)
             {
-                try
-                {
-                    if (!_warmProcess.HasExited)
-                        _warmProcess.Kill();
-                }
-                catch { }
+                KillProcessTree(_warmProcess);
                 _warmProcess.Dispose();
                 _warmProcess = null;
                 _warmStdout = null;

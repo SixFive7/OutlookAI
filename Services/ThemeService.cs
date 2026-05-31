@@ -1,3 +1,4 @@
+using System;
 using System.Drawing;
 using Microsoft.Win32;
 
@@ -23,7 +24,38 @@ namespace OutlookAI.Services
 
         static ThemeService()
         {
-            Detect();
+            SetLightDefaults();
+            try { Detect(); } catch { }
+
+            try
+            {
+                SystemEvents.UserPreferenceChanged += (s, e) =>
+                {
+                    if (e.Category == UserPreferenceCategory.General)
+                    {
+                        try { Detect(); } catch { }
+                    }
+                };
+            }
+            catch { }
+        }
+
+        private static void SetLightDefaults()
+        {
+            IsDarkMode = false;
+            Background = Color.FromArgb(250, 249, 248);
+            ControlBackground = SystemColors.Control;
+            TextBoxBackground = SystemColors.Window;
+            Text = SystemColors.ControlText;
+            SecondaryText = Color.Gray;
+            Accent = Color.FromArgb(0, 120, 212);
+            Border = SystemColors.ControlDark;
+            StatusError = Color.DarkRed;
+            StatusSuccess = Color.DarkGreen;
+            LinkError = Color.IndianRed;
+            ButtonFace = SystemColors.ButtonFace;
+            ButtonText = SystemColors.ControlText;
+            ResultBackground = SystemColors.Window;
         }
 
         public static void Detect()
@@ -48,44 +80,31 @@ namespace OutlookAI.Services
             }
             else
             {
-                Background = Color.FromArgb(250, 249, 248);
-                ControlBackground = SystemColors.Control;
-                TextBoxBackground = SystemColors.Window;
-                Text = SystemColors.ControlText;
-                SecondaryText = Color.Gray;
-                Accent = Color.FromArgb(0, 120, 212);
-                Border = SystemColors.ControlDark;
-                StatusError = Color.DarkRed;
-                StatusSuccess = Color.DarkGreen;
-                LinkError = Color.IndianRed;
-                ButtonFace = SystemColors.ButtonFace;
-                ButtonText = SystemColors.ControlText;
-                ResultBackground = SystemColors.Window;
+                SetLightDefaults();
             }
         }
 
         private static bool DetectDarkMode()
         {
-            // Check Office theme first (most accurate for Outlook)
             try
             {
-                using (var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Office\16.0\Common"))
+                foreach (var ver in new[] { "16.0", "17.0", "15.0" })
                 {
-                    var theme = key?.GetValue("UI Theme");
-                    if (theme is int themeValue)
+                    using (var key = Registry.CurrentUser.OpenSubKey($@"SOFTWARE\Microsoft\Office\{ver}\Common"))
                     {
-                        // 4 = Dark Gray, 5 = Black
-                        if (themeValue == 4 || themeValue == 5)
-                            return true;
-                        // 0 = Colorful, 3 = White — explicitly light
-                        if (themeValue == 0 || themeValue == 3)
-                            return false;
+                        var theme = key?.GetValue("UI Theme");
+                        if (theme is int themeValue)
+                        {
+                            if (themeValue == 4 || themeValue == 5)
+                                return true;
+                            if (themeValue == 0 || themeValue == 3)
+                                return false;
+                        }
                     }
                 }
             }
             catch { }
 
-            // Fall back to Windows system theme
             try
             {
                 using (var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize"))

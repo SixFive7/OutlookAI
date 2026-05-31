@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.Office.Tools;
@@ -9,7 +10,7 @@ namespace OutlookAI
     [ComVisible(true)]
     public class Ribbon : Office.IRibbonExtensibility
     {
-        private Office.IRibbonUI _ribbonUI;
+        private readonly List<Office.IRibbonUI> _ribbonUIs = new List<Office.IRibbonUI>();
 
         public string GetCustomUI(string ribbonID)
         {
@@ -17,46 +18,42 @@ namespace OutlookAI
                 ribbonID == "Microsoft.Outlook.Explorer")
                 return GetResourceText("OutlookAI.Ribbon.xml");
 
-            return null;
+            return string.Empty;
         }
 
         public void OnRibbonLoad(Office.IRibbonUI ribbonUI)
         {
-            _ribbonUI = ribbonUI;
+            _ribbonUIs.Add(ribbonUI);
             Globals.ThisAddIn.RibbonUI = ribbonUI;
+        }
+
+        internal void InvalidateAll(string controlId)
+        {
+            foreach (var ui in _ribbonUIs)
+            {
+                try { ui.InvalidateControl(controlId); } catch { }
+            }
         }
 
         public void OnAIAssistantToggle(Office.IRibbonControl control, bool pressed)
         {
-            object context = control.Context;
-            try
-            {
-                Globals.ThisAddIn.ToggleTaskPane(context);
-            }
-            finally
-            {
-                ThisAddIn.ReleaseCom(context);
-            }
+            Globals.ThisAddIn.ToggleTaskPane(control.Context);
         }
 
         public bool GetAIAssistantPressed(Office.IRibbonControl control)
         {
-            object context = control.Context;
-            try
-            {
-                var pane = Globals.ThisAddIn.FindPaneForWindow(context);
-                return pane != null && pane.Visible;
-            }
-            finally
-            {
-                ThisAddIn.ReleaseCom(context);
-            }
+            var pane = Globals.ThisAddIn.FindPaneForWindow(control.Context);
+            return pane != null && pane.Visible;
         }
 
         private static string GetResourceText(string resourceName)
         {
             using (Stream stream = typeof(Ribbon).Assembly.GetManifestResourceStream(resourceName))
-                return stream == null ? null : new StreamReader(stream).ReadToEnd();
+            {
+                if (stream == null) return string.Empty;
+                using (var reader = new StreamReader(stream))
+                    return reader.ReadToEnd();
+            }
         }
     }
 }

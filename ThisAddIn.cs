@@ -13,6 +13,7 @@ namespace OutlookAI
         private Outlook.Inspectors _inspectors;
         private Outlook.Explorers _explorers;
         private readonly List<Outlook.Explorer> _hookedExplorers = new List<Outlook.Explorer>();
+        private Ribbon _ribbon;
 
         internal Microsoft.Office.Core.IRibbonUI RibbonUI { get; set; }
 
@@ -20,7 +21,26 @@ namespace OutlookAI
         {
             if (obj != null)
             {
-                try { Marshal.ReleaseComObject(obj); } catch { }
+                try { Marshal.ReleaseComObject(obj); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("ReleaseCom: " + ex.Message); }
+            }
+        }
+
+        private static bool ComEqual(object a, object b)
+        {
+            if (a == b) return true;
+            if (a == null || b == null) return false;
+            IntPtr punkA = IntPtr.Zero, punkB = IntPtr.Zero;
+            try
+            {
+                punkA = Marshal.GetIUnknownForObject(a);
+                punkB = Marshal.GetIUnknownForObject(b);
+                return punkA == punkB;
+            }
+            finally
+            {
+                if (punkA != IntPtr.Zero) Marshal.Release(punkA);
+                if (punkB != IntPtr.Zero) Marshal.Release(punkB);
             }
         }
 
@@ -28,19 +48,29 @@ namespace OutlookAI
         {
             foreach (CustomTaskPane pane in this.CustomTaskPanes)
             {
-                object paneWindow = pane.Window;
-                bool match = (paneWindow == window);
-                ReleaseCom(paneWindow);
-                if (match)
-                    return pane;
+                object paneWindow = null;
+                try
+                {
+                    paneWindow = pane.Window;
+                    if (ComEqual(paneWindow, window))
+                        return pane;
+                }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("FindPaneForWindow: " + ex.Message); }
+                finally
+                {
+                    ReleaseCom(paneWindow);
+                }
             }
             return null;
         }
 
         private void InvalidateRibbonToggle()
         {
-            try { RibbonUI?.InvalidateControl("btnAICompose"); } catch { }
-            try { RibbonUI?.InvalidateControl("btnAIInline"); } catch { }
+            if (_ribbon != null)
+            {
+                _ribbon.InvalidateAll("btnAICompose");
+                _ribbon.InvalidateAll("btnAIInline");
+            }
         }
 
         private void TaskPane_VisibleChanged(object sender, EventArgs e)
@@ -50,8 +80,6 @@ namespace OutlookAI
 
         private void ThisAddIn_Startup(object sender, EventArgs e)
         {
-            // If the installer is currently running, skip initialization.
-            // The update will complete and the user can restart Outlook.
             bool installerRunning;
             try
             {
@@ -69,11 +97,9 @@ namespace OutlookAI
             ClaudeService.WarmUp();
             UpdateService.Start();
 
-            // Auto-show task pane when a compose inspector opens
             _inspectors = this.Application.Inspectors;
             _inspectors.NewInspector += Inspectors_NewInspector;
 
-            // Hook inline response events on all current and future Explorer windows
             try
             {
                 _explorers = this.Application.Explorers;
@@ -107,7 +133,7 @@ namespace OutlookAI
                     ((Outlook.ExplorerEvents_10_Event)explorer).InlineResponse -= Explorer_InlineResponse;
                     ((Outlook.ExplorerEvents_10_Event)explorer).InlineResponseClose -= Explorer_InlineResponseClose;
                 }
-                catch { }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine("Unhook explorer: " + ex.Message); }
                 ReleaseCom(explorer);
             }
             _hookedExplorers.Clear();
@@ -118,10 +144,22 @@ namespace OutlookAI
             _explorers = null;
         }
 
+        private bool IsExplorerHooked(Outlook.Explorer explorer)
+        {
+            foreach (var hooked in _hookedExplorers)
+            {
+                if (ComEqual(hooked, explorer))
+                    return true;
+            }
+            return false;
+        }
+
         private void HookExplorer(Outlook.Explorer explorer)
         {
             try
             {
+                if (IsExplorerHooked(explorer))
+                    return;
                 ((Outlook.ExplorerEvents_10_Event)explorer).InlineResponse += Explorer_InlineResponse;
                 ((Outlook.ExplorerEvents_10_Event)explorer).InlineResponseClose += Explorer_InlineResponseClose;
                 _hookedExplorers.Add(explorer);
@@ -129,7 +167,6 @@ namespace OutlookAI
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("HookExplorer failed: " + ex.Message);
-                ReleaseCom(explorer);
             }
         }
 
@@ -142,30 +179,27 @@ namespace OutlookAI
         {
             try
             {
-                // CurrentItem is often not available yet when NewInspector fires.
-                // Defer task pane creation to the Activate event which fires once
-                // the inspector window is fully loaded.
                 var events = (Outlook.InspectorEvents_10_Event)inspector;
+                bool handled = false;
 
                 Outlook.InspectorEvents_10_ActivateEventHandler activateHandler = null;
                 Outlook.InspectorEvents_10_CloseEventHandler closeHandler = null;
 
                 activateHandler = () =>
                 {
-                    ShowTaskPaneForInspector(inspector);
-                    // Only auto-show once per inspector lifecycle.
-                    // The user can toggle via the ribbon button after this.
+                    if (handled) return;
+                    handled = true;
                     events.Activate -= activateHandler;
+                    ShowTaskPaneForInspector(inspector);
                 };
                 closeHandler = () =>
                 {
+                    handled = true;
                     events.Activate -= activateHandler;
                     events.Close -= closeHandler;
-                    // Release the inspector only if no task pane owns it.
-                    // At Close-event time VSTO hasn't removed the pane yet,
-                    // so FindPaneForWindow is reliable here.
-                    if (FindPaneForWindow(inspector) == null)
-                        ReleaseCom(inspector);
+
+                    RemovePaneForWindow(inspector);
+                    ReleaseCom(inspector);
                 };
 
                 events.Activate += activateHandler;
@@ -173,23 +207,16 @@ namespace OutlookAI
             }
             catch
             {
-                // Fallback: try creating the task pane immediately.
-                // If a task pane is created, AITaskPane owns the inspector
-                // and releases it in DisposeCustomResources. Otherwise
-                // release it here since no Close handler was set up.
                 if (!ShowTaskPaneForInspector(inspector))
                     ReleaseCom(inspector);
             }
         }
 
-        /// <returns>true if a task pane now owns the inspector reference.</returns>
         private bool ShowTaskPaneForInspector(Outlook.Inspector inspector)
         {
             Outlook.MailItem mailItem = null;
             try
             {
-                // If a pane already exists for this inspector (Outlook recycles
-                // Inspector objects), ensure it is visible for the new composition.
                 var existingPane = FindPaneForWindow(inspector);
                 if (existingPane != null)
                 {
@@ -225,6 +252,23 @@ namespace OutlookAI
             }
         }
 
+        private void RemovePaneForWindow(object window)
+        {
+            try
+            {
+                var pane = FindPaneForWindow(window);
+                if (pane != null)
+                {
+                    pane.VisibleChanged -= TaskPane_VisibleChanged;
+                    this.CustomTaskPanes.Remove(pane);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("RemovePaneForWindow: " + ex.Message);
+            }
+        }
+
         private void Explorer_InlineResponse(object item)
         {
             Outlook.Explorer explorer = null;
@@ -233,12 +277,10 @@ namespace OutlookAI
                 if (!(item is Outlook.MailItem))
                     return;
 
-                // Find the explorer that owns this inline response
                 explorer = this.Application.ActiveExplorer();
                 if (explorer == null)
                     return;
 
-                // Reuse existing explorer task pane if one was already created
                 var existingPane = FindPaneForWindow(explorer);
                 if (existingPane != null)
                 {
@@ -261,7 +303,6 @@ namespace OutlookAI
             finally
             {
                 ReleaseCom(explorer);
-                ReleaseCom(item);
             }
         }
 
@@ -288,11 +329,6 @@ namespace OutlookAI
             }
         }
 
-        /// <summary>
-        /// Toggles the AI Assistant task pane for the given ribbon context
-        /// (Inspector or Explorer window).  If a pane already exists for
-        /// the window its visibility is toggled; otherwise a new pane is created.
-        /// </summary>
         public void ToggleTaskPane(object context)
         {
             try
@@ -304,7 +340,6 @@ namespace OutlookAI
                     return;
                 }
 
-                // No pane exists yet — create one.
                 var asInspector = context as Outlook.Inspector;
                 var asExplorer = context as Outlook.Explorer;
 
@@ -367,7 +402,8 @@ namespace OutlookAI
 
         protected override Microsoft.Office.Core.IRibbonExtensibility CreateRibbonExtensibilityObject()
         {
-            return new Ribbon();
+            _ribbon = new Ribbon();
+            return _ribbon;
         }
 
         #region VSTO generated code
