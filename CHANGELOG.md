@@ -3,6 +3,20 @@
 ## Unreleased
 
 - Upgrade NuGet setup action to v3 for Node.js 24 compatibility
+- Fix add-in silently failing to appear in Outlook on fresh systems by replacing VSTOInstaller.exe dependency with direct registry-based add-in registration
+- Add on-demand VSTO Runtime download and install with elevation if missing on target system
+- Add on-demand .NET Framework 4.8 download and install with elevation if missing on target system
+- Add signing certificate to user's Trusted Publishers store at install time to prevent silent trust failures
+- Prevent Outlook from disabling the add-in due to slow startup or crashes via DoNotDisableAddinList registry key
+- Add uninstall support via Add/Remove Programs, including certificate and registry cleanup
+- Fix update race condition where restarting Outlook during an update could cause file lock errors
+- Fix auto-update retries getting stuck after a failed update attempt until Outlook restart
+- Stop auto-update retries after 3 consecutive failures instead of retrying indefinitely
+- Fix potential socket exhaustion from creating a new HTTP client on every update check
+- Fix installer UI freezing during prerequisite downloads by running downloads out-of-process
+- Surface download error details (DNS, proxy, SSL) in installer error messages instead of generic failure
+- Fix concurrent update checks when a download takes longer than the 10-minute poll interval
+- Increase auto-update download timeout from 15 seconds to 5 minutes for slow connections
 
 ## v2.3.2.134 - 2026-04-09
 

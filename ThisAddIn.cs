@@ -50,6 +50,22 @@ namespace OutlookAI
 
         private void ThisAddIn_Startup(object sender, EventArgs e)
         {
+            // If the installer is currently running, skip initialization.
+            // The update will complete and the user can restart Outlook.
+            bool installerRunning;
+            try
+            {
+                System.Threading.Mutex mutex;
+                installerRunning = System.Threading.Mutex.TryOpenExisting("OutlookAISetup", out mutex);
+                mutex?.Dispose();
+            }
+            catch
+            {
+                installerRunning = false;
+            }
+            if (installerRunning)
+                return;
+
             ClaudeService.WarmUp();
             UpdateService.Start();
 
