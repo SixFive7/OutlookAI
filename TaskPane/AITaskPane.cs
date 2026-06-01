@@ -21,9 +21,6 @@ namespace OutlookAI.TaskPane
 
         // Iterative editing state
         private readonly List<EditTurn> _editHistory = new List<EditTurn>();
-        private string _signatureText;
-        private string _threadText;
-        private bool _contextCaptured;
         private bool _freshDraft;
         private bool _isProcessing;
 
@@ -67,6 +64,7 @@ namespace OutlookAI.TaskPane
             else
             {
                 var ago = DateTime.Now - lastChecked.Value;
+                if (ago < TimeSpan.Zero) ago = TimeSpan.Zero;
                 if (ago.TotalSeconds < 60)
                     suffix = "checked just now";
                 else if (ago.TotalMinutes < 60)
@@ -172,9 +170,6 @@ namespace OutlookAI.TaskPane
             txtPrompt.Text = "";
             lblStatus.Visible = false;
             _editHistory.Clear();
-            _signatureText = null;
-            _threadText = null;
-            _contextCaptured = false;
             _freshDraft = false;
         }
 
@@ -226,7 +221,6 @@ namespace OutlookAI.TaskPane
                     return;
                 }
                 _editHistory.Clear();
-                _contextCaptured = false;
                 _freshDraft = true;
                 await ProcessAction(ClaudeService.ActionType.Draft, txtPrompt.Text);
             }
@@ -273,6 +267,12 @@ namespace OutlookAI.TaskPane
         {
             if (_isProcessing) return;
             _isProcessing = true;
+            object preAsyncDoc = null;
+            // Consume the one-shot "fresh draft" signal exactly once per invocation, up
+            // front, so an early return or read error can't leave it set and then silently
+            // blank the draft on the next unrelated action.
+            bool freshDraft = _freshDraft;
+            _freshDraft = false;
             try
             {
                 SetUIEnabled(false);
@@ -280,7 +280,6 @@ namespace OutlookAI.TaskPane
                 string draftText;
                 string signatureText;
                 string threadText;
-                object preAsyncDoc = null;
 
                 object doc = null;
                 try
@@ -289,8 +288,6 @@ namespace OutlookAI.TaskPane
                     if (doc == null)
                     {
                         ShowStatus("Could not access email editor.", true);
-                        _isProcessing = false;
-                        SetUIEnabled(true);
                         return;
                     }
 
@@ -298,15 +295,11 @@ namespace OutlookAI.TaskPane
                     wordDoc.Bookmarks.ShowHidden = true;
                     DebugLog($"ProcessAction({action}) BEFORE read", wordDoc);
 
-                    if (!_contextCaptured)
-                    {
-                        _signatureText = ReadSignatureText(wordDoc);
-                        _threadText = ReadThreadText(wordDoc);
-                        _contextCaptured = true;
-                    }
-
-                    signatureText = _signatureText;
-                    threadText = _threadText;
+                    // Read signature/thread fresh on every action. Caching them across
+                    // the pane lifetime sent stale context to the AI when Outlook reused
+                    // an inspector window for a different mail item.
+                    signatureText = ReadSignatureText(wordDoc);
+                    threadText = ReadThreadText(wordDoc);
 
                     draftText = ReadDraftText(wordDoc);
                     preAsyncDoc = doc;
@@ -317,9 +310,8 @@ namespace OutlookAI.TaskPane
                     ThisAddIn.ReleaseCom(doc);
                 }
 
-                if (_freshDraft)
+                if (freshDraft)
                 {
-                    _freshDraft = false;
                     draftText = "";
                 }
 
@@ -348,8 +340,6 @@ namespace OutlookAI.TaskPane
 
                         ShowStatus("Done!", false);
                     }
-                    _isProcessing = false;
-                    SetUIEnabled(true);
                 });
             }
             catch (Exception ex)
@@ -358,9 +348,17 @@ namespace OutlookAI.TaskPane
                 {
                     string msg = ex.InnerException != null ? ex.InnerException.Message : ex.Message;
                     ShowStatus(msg, true);
-                    _isProcessing = false;
-                    SetUIEnabled(true);
                 });
+            }
+            finally
+            {
+                // Always release the captured doc and clear the processing/UI state,
+                // even if the pane was disposed during the await (so the UI can never
+                // latch permanently disabled with _isProcessing stuck true).
+                ThisAddIn.ReleaseCom(preAsyncDoc);
+                _isProcessing = false;
+                if (!_disposed && !IsDisposed)
+                    SetUIEnabled(true);
             }
         }
 
@@ -462,10 +460,15 @@ namespace OutlookAI.TaskPane
 
         private bool WriteDraftToDocument(string newDraftText, object capturedDoc = null)
         {
-            object doc = null;
+            object doc = capturedDoc;
+            bool ownDoc = false;
             try
             {
-                doc = capturedDoc ?? GetWordDocument();
+                if (doc == null)
+                {
+                    doc = GetWordDocument();
+                    ownDoc = true;
+                }
                 if (doc == null)
                 {
                     ShowStatus("Could not access email editor.", true);
@@ -498,18 +501,44 @@ namespace OutlookAI.TaskPane
                     ThisAddIn.ReleaseCom(bmk);
                 }
 
-                var range = wordDoc.Range(0, draftEnd);
-                range.Text = newDraftText + "\r\n";
-                int newDraftEnd = range.End;
-                ThisAddIn.ReleaseCom(range);
-
-                if (boundaryBookmark != null && origBmkEnd >= 0)
+                bool textReplaced = false;
+                int newDraftEnd = draftEnd;
+                try
                 {
-                    int newBmkEnd = origBmkEnd + (newDraftEnd - draftEnd);
-                    if (newBmkEnd < newDraftEnd) newBmkEnd = newDraftEnd;
-                    var restoreRange = wordDoc.Range(newDraftEnd, newBmkEnd);
-                    wordDoc.Bookmarks.Add(boundaryBookmark, restoreRange);
-                    ThisAddIn.ReleaseCom(restoreRange);
+                    var range = wordDoc.Range(0, draftEnd);
+                    range.Text = newDraftText + "\r\n";
+                    newDraftEnd = range.End;
+                    textReplaced = true;
+                    ThisAddIn.ReleaseCom(range);
+
+                    if (boundaryBookmark != null && origBmkEnd >= 0)
+                    {
+                        int newBmkEnd = origBmkEnd + (newDraftEnd - draftEnd);
+                        if (newBmkEnd < newDraftEnd) newBmkEnd = newDraftEnd;
+                        var restoreRange = wordDoc.Range(newDraftEnd, newBmkEnd);
+                        wordDoc.Bookmarks.Add(boundaryBookmark, restoreRange);
+                        ThisAddIn.ReleaseCom(restoreRange);
+                    }
+                }
+                catch
+                {
+                    // We deleted the boundary bookmark up front; if the write/recreate failed,
+                    // restore it so the signature/thread marker (and the context it anchors)
+                    // isn't silently lost. Re-throw so the normal error handling still runs.
+                    if (boundaryBookmark != null && origBmkEnd >= 0 && !wordDoc.Bookmarks.Exists(boundaryBookmark))
+                    {
+                        try
+                        {
+                            int rs = textReplaced ? newDraftEnd : draftEnd;
+                            int re = textReplaced ? origBmkEnd + (newDraftEnd - draftEnd) : origBmkEnd;
+                            if (re < rs) re = rs;
+                            var restore = wordDoc.Range(rs, re);
+                            wordDoc.Bookmarks.Add(boundaryBookmark, restore);
+                            ThisAddIn.ReleaseCom(restore);
+                        }
+                        catch { }
+                    }
+                    throw;
                 }
 
                 DebugLog("WriteDraft AFTER", wordDoc);
@@ -529,7 +558,7 @@ namespace OutlookAI.TaskPane
             }
             finally
             {
-                ThisAddIn.ReleaseCom(doc);
+                if (ownDoc) ThisAddIn.ReleaseCom(doc);
             }
         }
 
@@ -538,11 +567,15 @@ namespace OutlookAI.TaskPane
         private string GetSelectedText()
         {
             object doc = null;
+            object app = null;
+            object sel = null;
             try
             {
                 doc = GetWordDocument();
                 if (doc == null) return null;
-                string text = ((dynamic)doc).Application.Selection.Text as string;
+                app = ((dynamic)doc).Application;
+                sel = ((dynamic)app).Selection;
+                string text = ((dynamic)sel).Text as string;
                 if (!string.IsNullOrEmpty(text) && text.EndsWith("\r"))
                     text = text.Substring(0, text.Length - 1);
                 return string.IsNullOrWhiteSpace(text) ? null : text;
@@ -557,6 +590,8 @@ namespace OutlookAI.TaskPane
             }
             finally
             {
+                ThisAddIn.ReleaseCom(sel);
+                ThisAddIn.ReleaseCom(app);
                 ThisAddIn.ReleaseCom(doc);
             }
         }

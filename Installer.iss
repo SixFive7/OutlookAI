@@ -35,11 +35,15 @@ Root: HKCU; Subkey: "Software\Microsoft\Office\Outlook\Addins\OutlookAI"; ValueT
 Root: HKCU; Subkey: "Software\Microsoft\Office\Outlook\Addins\OutlookAI"; ValueType: string; ValueName: "FriendlyName"; ValueData: "OutlookAI"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Microsoft\Office\Outlook\Addins\OutlookAI"; ValueType: string; ValueName: "Description"; ValueData: "OutlookAI"; Flags: uninsdeletekey
 
-; Prevent Outlook from disabling the add-in (boot + crash + demand = 0xB)
-Root: HKCU; Subkey: "Software\Microsoft\Office\16.0\Outlook\Resiliency\DoNotDisableAddinList"; ValueType: dword; ValueName: "OutlookAI"; ValueData: "11"; Flags: uninsdeletevalue
+; Keep Outlook from auto-disabling the add-in after a slow start or a crash. What matters
+; for the exemption is that the value NAME (the add-in id) is present in this list; the DWORD
+; data is only a flag. Cover Outlook 2013 / 2016+ / future to match versions checked elsewhere.
+Root: HKCU; Subkey: "Software\Microsoft\Office\16.0\Outlook\Resiliency\DoNotDisableAddinList"; ValueType: dword; ValueName: "OutlookAI"; ValueData: "1"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Office\15.0\Outlook\Resiliency\DoNotDisableAddinList"; ValueType: dword; ValueName: "OutlookAI"; ValueData: "1"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Office\17.0\Outlook\Resiliency\DoNotDisableAddinList"; ValueType: dword; ValueName: "OutlookAI"; ValueData: "1"; Flags: uninsdeletevalue
 
 [UninstallRun]
-Filename: "certutil"; Parameters: "-user -delstore TrustedPublisher ""{app}\OutlookAI.cer"""; Flags: runhidden
+Filename: "certutil"; Parameters: "-user -delstore TrustedPublisher OutlookAI"; Flags: runhidden
 
 [Code]
 function IsVstoInstalled: Boolean;

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Fix: AI error responses (such as hitting the turn limit) are no longer written into your draft as if they were the reply — you now get a clear message instead.
+- Fix: the assistant no longer gets stuck with its buttons disabled if the email window is closed while a request is in progress.
+- Fix: a momentary "couldn't access the email editor" no longer causes your next action to silently blank the draft.
+- Fix: the AI now always uses the current email's signature and quoted thread as context (previously it could reuse a previous email's context when Outlook recycled a window).
+- Fix: if writing the AI result into the email fails partway through, the signature and quoted-thread markers are now restored instead of being lost.
+- Fix: setup or sign-in problems now surface a clear message quickly instead of retrying silently in the background.
+- Improve: the assistant now ignores instructions embedded in quoted/original email text (the random "fences" added previously are now actually described to the model as untrusted data).
+- Improve: downloaded updates are now genuinely verified — valid Authenticode signature (via WinVerifyTrust) plus a pinned publisher-certificate thumbprint — before they run.
+- Fix: the auto-updater no longer gets permanently stuck after a malformed GitHub response, no longer leaves partial installer files behind, pins the installer asset by name, and shows clearer status.
+- Fix: uninstalling now correctly removes the OutlookAI signing certificate from the trusted store.
+- Fix: resolved several memory/handle leaks (email editor, text selection, inspector/explorer windows) and a duplicated inspector COM release.
+
 ## v2.3.3.141 - 2026-05-31
 
 - Fix 48 bugs across security, correctness, resource management, and UI

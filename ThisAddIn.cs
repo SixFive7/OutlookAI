@@ -106,8 +106,8 @@ namespace OutlookAI
                 _explorers.NewExplorer += Explorers_NewExplorer;
 
                 var explorer = this.Application.ActiveExplorer();
-                if (explorer != null)
-                    HookExplorer(explorer);
+                if (explorer != null && !HookExplorer(explorer))
+                    ReleaseCom(explorer);
             }
             catch (Exception ex)
             {
@@ -154,25 +154,30 @@ namespace OutlookAI
             return false;
         }
 
-        private void HookExplorer(Outlook.Explorer explorer)
+        private bool HookExplorer(Outlook.Explorer explorer)
         {
             try
             {
                 if (IsExplorerHooked(explorer))
-                    return;
+                    return false;
                 ((Outlook.ExplorerEvents_10_Event)explorer).InlineResponse += Explorer_InlineResponse;
                 ((Outlook.ExplorerEvents_10_Event)explorer).InlineResponseClose += Explorer_InlineResponseClose;
                 _hookedExplorers.Add(explorer);
+                return true;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("HookExplorer failed: " + ex.Message);
+                return false;
             }
         }
 
         private void Explorers_NewExplorer(Outlook.Explorer explorer)
         {
-            HookExplorer(explorer);
+            // _hookedExplorers takes ownership when hooked (released at shutdown); otherwise
+            // release this RCW so an already-hooked / failed-hook explorer doesn't leak.
+            if (!HookExplorer(explorer))
+                ReleaseCom(explorer);
         }
 
         private void Inspectors_NewInspector(Outlook.Inspector inspector)
@@ -198,8 +203,10 @@ namespace OutlookAI
                     events.Activate -= activateHandler;
                     events.Close -= closeHandler;
 
-                    RemovePaneForWindow(inspector);
-                    ReleaseCom(inspector);
+                    // The pane (if present) owns the inspector RCW and releases it on dispose;
+                    // release here only when no pane took ownership, to avoid over-releasing.
+                    if (!RemovePaneForWindow(inspector))
+                        ReleaseCom(inspector);
                 };
 
                 events.Activate += activateHandler;
@@ -252,7 +259,7 @@ namespace OutlookAI
             }
         }
 
-        private void RemovePaneForWindow(object window)
+        private bool RemovePaneForWindow(object window)
         {
             try
             {
@@ -261,12 +268,14 @@ namespace OutlookAI
                 {
                     pane.VisibleChanged -= TaskPane_VisibleChanged;
                     this.CustomTaskPanes.Remove(pane);
+                    return true;
                 }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("RemovePaneForWindow: " + ex.Message);
             }
+            return false;
         }
 
         private void Explorer_InlineResponse(object item)
