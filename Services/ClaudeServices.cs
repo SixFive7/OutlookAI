@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 
@@ -30,6 +31,8 @@ namespace OutlookAI.Services
         private static StringBuilder _warmStdout;
         private static StringBuilder _warmStderr;
         private static volatile string _lastPrerequisiteError;
+        private static int _warmingUp;            // single-flight guard for WarmUpCore (0/1)
+        private static volatile bool _shutdown;   // set at Shutdown; stops a late warm-up orphaning a process
 
         public enum ActionType
         {
@@ -57,40 +60,66 @@ namespace OutlookAI.Services
 
         private static void WarmUpCore()
         {
-            lock (_warmLock)
+            // Single-flight: only one warm-up runs at a time. Concurrent or redundant WarmUp()
+            // calls (e.g. several compose windows finishing at once) skip instead of killing and
+            // respawning each other's process.
+            if (Interlocked.CompareExchange(ref _warmingUp, 1, 0) != 0)
+                return;
+            try
             {
-                KillWarmProcess();
+                lock (_warmLock)
+                {
+                    if (_shutdown) return;
+                    // A live pre-warmed process is already ready — nothing to do.
+                    if (_warmProcess != null && !_warmProcess.HasExited) return;
+                }
 
+                StringBuilder stdoutBuilder, stderrBuilder;
+                Process process;
                 try
                 {
-                    StringBuilder stdoutBuilder, stderrBuilder;
-                    var process = SpawnProcess(out stdoutBuilder, out stderrBuilder);
-
-                    // Check if the process exited immediately (missing prerequisites)
-                    if (process.WaitForExit(1500) && process.HasExited)
-                    {
-                        process.WaitForExit(); // flush async output handlers
-                        var stderr = stderrBuilder.ToString();
-                        _lastPrerequisiteError = DiagnoseError(stderr, process.ExitCode);
-                        process.Dispose();
-                        return;
-                    }
-
-                    // NOTE: a process that started and is waiting on stdin does NOT prove
-                    // prerequisites are OK — the CLI only validates auth after it reads the
-                    // prompt. So we must not clear _lastPrerequisiteError here; doing so used
-                    // to erase a real auth error and defeat the fast-fail gate. The flag is
-                    // cleared only after a genuinely successful run (see ExecutePrompt).
-                    _warmProcess = process;
-                    _warmStdout = stdoutBuilder;
-                    _warmStderr = stderrBuilder;
+                    process = SpawnProcess(out stdoutBuilder, out stderrBuilder);
                 }
                 catch (Exception ex)
                 {
                     // SpawnProcess sets _lastPrerequisiteError for Win32Exception (CLI not found)
                     if (_lastPrerequisiteError == null)
                         _lastPrerequisiteError = "Failed to start Claude Code: " + ex.Message;
+                    return;
                 }
+
+                // Probe for immediate exit (missing prerequisites) OUTSIDE the lock so the
+                // up-to-1.5s wait never blocks Shutdown() (UI thread) or ExecutePrompt().
+                if (process.WaitForExit(1500) && process.HasExited)
+                {
+                    process.WaitForExit(); // flush async output handlers
+                    var stderr = stderrBuilder.ToString();
+                    _lastPrerequisiteError = DiagnoseError(stderr, process.ExitCode);
+                    process.Dispose();
+                    return;
+                }
+
+                // NOTE: a process waiting on stdin does NOT prove prerequisites are OK — the CLI
+                // validates auth only after reading the prompt. So we do not clear
+                // _lastPrerequisiteError here; it is cleared only after a genuinely successful run.
+                // Publish under the lock; discard if we've since shut down or another warm exists.
+                lock (_warmLock)
+                {
+                    if (_shutdown || (_warmProcess != null && !_warmProcess.HasExited))
+                    {
+                        KillProcessTree(process);
+                        process.Dispose();
+                        return;
+                    }
+                    KillWarmProcess(); // clear any dead leftover
+                    _warmProcess = process;
+                    _warmStdout = stdoutBuilder;
+                    _warmStderr = stderrBuilder;
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _warmingUp, 0);
             }
         }
 
@@ -487,6 +516,7 @@ namespace OutlookAI.Services
         /// </summary>
         public static void Shutdown()
         {
+            _shutdown = true;
             lock (_warmLock)
             {
                 KillWarmProcess();

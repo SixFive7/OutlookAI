@@ -80,6 +80,11 @@ namespace OutlookAI
 
         private void ThisAddIn_Startup(object sender, EventArgs e)
         {
+            // If the installer is mid-run it holds the "OutlookAISetup" mutex; skip all
+            // startup work. Outlook can be reopened during a silent update install, and
+            // initializing here would re-trigger the updater and spin up work that the
+            // installer immediately tears down to swap the add-in files. The add-in
+            // loads cleanly on the next Outlook restart.
             bool installerRunning;
             try
             {
@@ -96,6 +101,7 @@ namespace OutlookAI
 
             ClaudeService.WarmUp();
             UpdateService.Start();
+            ThemeService.StartWatching();
 
             _inspectors = this.Application.Inspectors;
             _inspectors.NewInspector += Inspectors_NewInspector;
@@ -118,6 +124,7 @@ namespace OutlookAI
         private void ThisAddIn_Shutdown(object sender, EventArgs e)
         {
             UpdateService.Stop();
+            ThemeService.StopWatching();
             ClaudeService.Shutdown();
 
             if (_inspectors != null)
@@ -160,8 +167,33 @@ namespace OutlookAI
             {
                 if (IsExplorerHooked(explorer))
                     return false;
-                ((Outlook.ExplorerEvents_10_Event)explorer).InlineResponse += Explorer_InlineResponse;
-                ((Outlook.ExplorerEvents_10_Event)explorer).InlineResponseClose += Explorer_InlineResponseClose;
+                var events = (Outlook.ExplorerEvents_10_Event)explorer;
+                events.InlineResponse += Explorer_InlineResponse;
+                events.InlineResponseClose += Explorer_InlineResponseClose;
+
+                // Mirror the Inspector close pattern: when the Explorer window closes, dispose its
+                // inline pane (stops the pane's timer + unsubscribes it from theme changes), unhook
+                // the events, drop it from _hookedExplorers, and release the RCW. Unlike inspector
+                // panes, the inline pane does not own the explorer RCW, so we always release here.
+                Outlook.ExplorerEvents_10_CloseEventHandler closeHandler = null;
+                closeHandler = () =>
+                {
+                    try
+                    {
+                        events.InlineResponse -= Explorer_InlineResponse;
+                        events.InlineResponseClose -= Explorer_InlineResponseClose;
+                        events.Close -= closeHandler;
+                        RemovePaneForWindow(explorer);
+                        bool wasTracked = UnhookExplorer(explorer);
+                        // Release only if we removed it from _hookedExplorers here, so we never
+                        // double-release an explorer the shutdown path already released.
+                        if (wasTracked)
+                            ReleaseCom(explorer);
+                    }
+                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine("Explorer close cleanup: " + ex.Message); }
+                };
+                events.Close += closeHandler;
+
                 _hookedExplorers.Add(explorer);
                 return true;
             }
@@ -170,6 +202,20 @@ namespace OutlookAI
                 System.Diagnostics.Debug.WriteLine("HookExplorer failed: " + ex.Message);
                 return false;
             }
+        }
+
+        private bool UnhookExplorer(Outlook.Explorer explorer)
+        {
+            bool removed = false;
+            for (int i = _hookedExplorers.Count - 1; i >= 0; i--)
+            {
+                if (ComEqual(_hookedExplorers[i], explorer))
+                {
+                    _hookedExplorers.RemoveAt(i);
+                    removed = true;
+                }
+            }
+            return removed;
         }
 
         private void Explorers_NewExplorer(Outlook.Explorer explorer)

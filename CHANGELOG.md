@@ -13,6 +13,11 @@
 - Fix: the auto-updater no longer gets permanently stuck after a malformed GitHub response, no longer leaves partial installer files behind, pins the installer asset by name, and shows clearer status.
 - Fix: uninstalling now correctly removes the OutlookAI signing certificate from the trusted store.
 - Fix: resolved several memory/handle leaks (email editor, text selection, inspector/explorer windows) and a duplicated inspector COM release.
+- Improve: the assistant follows Windows/Office light–dark theme changes live while a pane is open, and the White Office theme is now correctly shown as light.
+- Fix: AI panes opened for inline replies are cleaned up when that window closes, instead of lingering hidden (with a background timer) until Outlook exits.
+- Change: update checks retry on every Outlook start rather than giving up after repeated failures.
+- Fix: the Claude helper no longer spawns extra background processes under rapid use, and Outlook no longer briefly stalls on shutdown.
+- Fix: a COM handle leak when reading the draft, signature, and quoted text.
 
 ## v2.3.3.141 - 2026-05-31
 

@@ -1,5 +1,7 @@
 using System;
 using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Threading;
 using Microsoft.Win32;
 
 namespace OutlookAI.Services
@@ -29,12 +31,13 @@ namespace OutlookAI.Services
 
             try
             {
+                // Re-detect on ANY preference change. Windows dark/light app-mode toggles
+                // arrive under inconsistent categories (General/Color/VisualStyle), so we must
+                // not filter by category. Detect() is cheap and ThemeChanged fires only on a
+                // real light<->dark flip.
                 SystemEvents.UserPreferenceChanged += (s, e) =>
                 {
-                    if (e.Category == UserPreferenceCategory.General)
-                    {
-                        try { Detect(); } catch { }
-                    }
+                    try { Detect(); } catch { }
                 };
             }
             catch { }
@@ -58,11 +61,21 @@ namespace OutlookAI.Services
             ResultBackground = SystemColors.Window;
         }
 
+        /// <summary>Raised when the detected theme actually flips (light&lt;-&gt;dark) at runtime.
+        /// May fire on a non-UI thread (driven by SystemEvents.UserPreferenceChanged).</summary>
+        public static event EventHandler ThemeChanged;
+
         public static void Detect()
         {
-            IsDarkMode = DetectDarkMode();
+            ApplyMode(DetectDarkMode());
+        }
 
-            if (IsDarkMode)
+        private static void ApplyMode(bool dark)
+        {
+            bool changed = dark != IsDarkMode;
+            IsDarkMode = dark;
+
+            if (dark)
             {
                 Background = Color.FromArgb(32, 32, 32);
                 ControlBackground = Color.FromArgb(45, 45, 48);
@@ -82,6 +95,20 @@ namespace OutlookAI.Services
             {
                 SetLightDefaults();
             }
+
+            // Notify open panes only when the theme actually changed (not on every
+            // unrelated UserPreferenceChanged). Isolate handlers so one can't break the rest.
+            if (changed)
+            {
+                var handler = ThemeChanged;
+                if (handler != null)
+                {
+                    foreach (EventHandler h in handler.GetInvocationList())
+                    {
+                        try { h(null, EventArgs.Empty); } catch { }
+                    }
+                }
+            }
         }
 
         private static bool DetectDarkMode()
@@ -95,9 +122,13 @@ namespace OutlookAI.Services
                         var theme = key?.GetValue("UI Theme");
                         if (theme is int themeValue)
                         {
-                            if (themeValue == 4 || themeValue == 5)
+                            // Office "Office Theme" values: 0=Colorful, 3=Dark Gray, 4=Black,
+                            // 5=White, 6=use system. Only "Black" is a true dark surface;
+                            // Colorful/Dark Gray/White keep a light content area. 6 (and any
+                            // other value) falls through to the Windows app-mode check below.
+                            if (themeValue == 4)
                                 return true;
-                            if (themeValue == 0 || themeValue == 3)
+                            if (themeValue == 0 || themeValue == 3 || themeValue == 5)
                                 return false;
                         }
                     }
@@ -117,6 +148,85 @@ namespace OutlookAI.Services
             catch { }
 
             return false;
+        }
+
+        // ===== Live watch for the Office "Office Theme" dropdown =====
+        // Office theme changes write HKCU\...\Office\<ver>\Common\UI Theme but do NOT raise
+        // SystemEvents.UserPreferenceChanged, so we watch the key directly and re-Detect on change.
+        private static readonly object _watchGate = new object();
+        private static Thread _watchThread;
+        private static ManualResetEvent _stopWatch;
+        private static volatile bool _watching;
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern int RegOpenKeyEx(IntPtr hKey, string subKey, int options, int samDesired, out IntPtr phkResult);
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern int RegNotifyChangeKeyValue(IntPtr hKey, bool watchSubtree, int notifyFilter, IntPtr hEvent, bool asynchronous);
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern int RegCloseKey(IntPtr hKey);
+        private static readonly IntPtr HKEY_CURRENT_USER = new IntPtr(unchecked((int)0x80000001));
+        private const int KEY_NOTIFY = 0x0010;
+        private const int REG_NOTIFY_CHANGE_LAST_SET = 0x0004;
+
+        public static void StartWatching()
+        {
+            lock (_watchGate)
+            {
+                if (_watching) return;
+                _watching = true;
+                var stop = new ManualResetEvent(false);
+                _stopWatch = stop;
+                _watchThread = new Thread(() => WatchLoop(stop)) { IsBackground = true, Name = "OfficeThemeWatcher" };
+                _watchThread.Start();
+            }
+        }
+
+        public static void StopWatching()
+        {
+            Thread t;
+            ManualResetEvent stop;
+            lock (_watchGate)
+            {
+                if (!_watching) return;
+                _watching = false;
+                t = _watchThread; stop = _stopWatch;
+                _watchThread = null; _stopWatch = null;
+            }
+            try { stop?.Set(); } catch { }
+            bool joined = true;
+            try { joined = t == null || t.Join(2000); } catch { }
+            if (joined) { try { stop?.Dispose(); } catch { } }
+        }
+
+        // Receives the stop-event as a captured local so it never reads a field that
+        // StopWatching may have nulled (avoids a WaitAny(null) crash on this background thread).
+        private static void WatchLoop(ManualResetEvent stop)
+        {
+            IntPtr hKey = IntPtr.Zero;
+            foreach (var ver in new[] { "16.0", "17.0", "15.0" })
+            {
+                if (RegOpenKeyEx(HKEY_CURRENT_USER, $@"SOFTWARE\Microsoft\Office\{ver}\Common", 0, KEY_NOTIFY, out hKey) == 0 && hKey != IntPtr.Zero)
+                    break;
+                hKey = IntPtr.Zero;
+            }
+            if (hKey == IntPtr.Zero) return;
+
+            try
+            {
+                using (var changed = new AutoResetEvent(false))
+                {
+                    var handles = new WaitHandle[] { changed, stop };
+                    while (_watching)
+                    {
+                        if (RegNotifyChangeKeyValue(hKey, false, REG_NOTIFY_CHANGE_LAST_SET, changed.SafeWaitHandle.DangerousGetHandle(), true) != 0)
+                            break;
+                        if (WaitHandle.WaitAny(handles) == 1 || !_watching)
+                            break;
+                        try { Detect(); } catch { }
+                    }
+                }
+            }
+            finally { RegCloseKey(hKey); }
         }
     }
 }

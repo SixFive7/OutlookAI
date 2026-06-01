@@ -29,6 +29,7 @@ namespace OutlookAI.TaskPane
         private int _debugClickCount;
         private DateTime _debugFirstClick;
         private readonly StringBuilder _debugLog = new StringBuilder();
+        private bool _lastStatusError;
 
         public AITaskPane(bool isInlineResponse = false, Outlook.Inspector inspector = null)
         {
@@ -36,6 +37,7 @@ namespace OutlookAI.TaskPane
             _owningInspector = inspector;
             InitializeComponent();
             ApplyTheme();
+            ThemeService.ThemeChanged += OnThemeChanged;
             SetupTooltips();
             lblVersion.Click += lblVersion_Click;
             lblVersion.DoubleClick += lblVersion_Click;
@@ -119,12 +121,13 @@ namespace OutlookAI.TaskPane
                     _debugLog.AppendLine($"Content.End = {content.End}");
                     ThisAddIn.ReleaseCom(content);
 
-                    doc.Bookmarks.ShowHidden = true;
+                    var bmks = doc.Bookmarks;
+                    bmks.ShowHidden = true;
                     foreach (var bmName in new[] { "_MailAutoSig", "_MailOriginal" })
                     {
-                        if (doc.Bookmarks.Exists(bmName))
+                        if (bmks.Exists(bmName))
                         {
-                            var bmk = doc.Bookmarks[bmName];
+                            var bmk = bmks[bmName];
                             var range = bmk.Range;
                             int start = range.Start, end = range.End;
                             string text = range.Text ?? "";
@@ -138,6 +141,7 @@ namespace OutlookAI.TaskPane
                             _debugLog.AppendLine($"  {bmName}: NOT FOUND");
                         }
                     }
+                    ThisAddIn.ReleaseCom((object)bmks);
 
                     int draftEnd = FindDraftEnd(doc);
                     var draftRange = doc.Range(0, draftEnd);
@@ -292,7 +296,9 @@ namespace OutlookAI.TaskPane
                     }
 
                     dynamic wordDoc = doc;
-                    wordDoc.Bookmarks.ShowHidden = true;
+                    var bmks = wordDoc.Bookmarks;
+                    bmks.ShowHidden = true;
+                    ThisAddIn.ReleaseCom((object)bmks);
                     DebugLog($"ProcessAction({action}) BEFORE read", wordDoc);
 
                     // Read signature/thread fresh on every action. Caching them across
@@ -395,23 +401,31 @@ namespace OutlookAI.TaskPane
 
         private int FindDraftEnd(dynamic doc)
         {
-            if (doc.Bookmarks.Exists("_MailAutoSig"))
+            var bookmarks = doc.Bookmarks;
+            try
             {
-                var bmk = doc.Bookmarks["_MailAutoSig"];
-                var range = bmk.Range;
-                int pos = range.Start;
-                ThisAddIn.ReleaseCom(range);
-                ThisAddIn.ReleaseCom(bmk);
-                return pos;
+                if (bookmarks.Exists("_MailAutoSig"))
+                {
+                    var bmk = bookmarks["_MailAutoSig"];
+                    var range = bmk.Range;
+                    int pos = range.Start;
+                    ThisAddIn.ReleaseCom(range);
+                    ThisAddIn.ReleaseCom(bmk);
+                    return pos;
+                }
+                if (bookmarks.Exists("_MailOriginal"))
+                {
+                    var bmk = bookmarks["_MailOriginal"];
+                    var range = bmk.Range;
+                    int pos = range.Start;
+                    ThisAddIn.ReleaseCom(range);
+                    ThisAddIn.ReleaseCom(bmk);
+                    return pos;
+                }
             }
-            if (doc.Bookmarks.Exists("_MailOriginal"))
+            finally
             {
-                var bmk = doc.Bookmarks["_MailOriginal"];
-                var range = bmk.Range;
-                int pos = range.Start;
-                ThisAddIn.ReleaseCom(range);
-                ThisAddIn.ReleaseCom(bmk);
-                return pos;
+                ThisAddIn.ReleaseCom((object)bookmarks);
             }
             var content = doc.Content;
             int end = content.End;
@@ -432,36 +446,53 @@ namespace OutlookAI.TaskPane
 
         private string ReadSignatureText(dynamic doc)
         {
-            if (!doc.Bookmarks.Exists("_MailAutoSig"))
-                return "";
+            var bookmarks = doc.Bookmarks;
+            try
+            {
+                if (!bookmarks.Exists("_MailAutoSig"))
+                    return "";
 
-            var bmk = doc.Bookmarks["_MailAutoSig"];
-            var range = bmk.Range;
-            string text = range.Text ?? "";
-            ThisAddIn.ReleaseCom(range);
-            ThisAddIn.ReleaseCom(bmk);
+                var bmk = bookmarks["_MailAutoSig"];
+                var range = bmk.Range;
+                string text = range.Text ?? "";
+                ThisAddIn.ReleaseCom(range);
+                ThisAddIn.ReleaseCom(bmk);
 
-            return text.TrimEnd('\r', '\n');
+                return text.TrimEnd('\r', '\n');
+            }
+            finally
+            {
+                ThisAddIn.ReleaseCom((object)bookmarks);
+            }
         }
 
         private string ReadThreadText(dynamic doc)
         {
-            if (!doc.Bookmarks.Exists("_MailOriginal"))
-                return "";
+            var bookmarks = doc.Bookmarks;
+            try
+            {
+                if (!bookmarks.Exists("_MailOriginal"))
+                    return "";
 
-            var bmk = doc.Bookmarks["_MailOriginal"];
-            var range = bmk.Range;
-            string text = range.Text ?? "";
-            ThisAddIn.ReleaseCom(range);
-            ThisAddIn.ReleaseCom(bmk);
+                var bmk = bookmarks["_MailOriginal"];
+                var range = bmk.Range;
+                string text = range.Text ?? "";
+                ThisAddIn.ReleaseCom(range);
+                ThisAddIn.ReleaseCom(bmk);
 
-            return text.TrimEnd('\r', '\n');
+                return text.TrimEnd('\r', '\n');
+            }
+            finally
+            {
+                ThisAddIn.ReleaseCom((object)bookmarks);
+            }
         }
 
         private bool WriteDraftToDocument(string newDraftText, object capturedDoc = null)
         {
             object doc = capturedDoc;
             bool ownDoc = false;
+            dynamic bookmarks = null;
             try
             {
                 if (doc == null)
@@ -476,7 +507,8 @@ namespace OutlookAI.TaskPane
                 }
 
                 dynamic wordDoc = doc;
-                wordDoc.Bookmarks.ShowHidden = true;
+                bookmarks = wordDoc.Bookmarks;
+                bookmarks.ShowHidden = true;
                 DebugLog("WriteDraft BEFORE", wordDoc);
 
                 string boundaryBookmark = null;
@@ -485,14 +517,14 @@ namespace OutlookAI.TaskPane
                 ThisAddIn.ReleaseCom(contentRange);
                 int origBmkEnd = -1;
 
-                if (wordDoc.Bookmarks.Exists("_MailAutoSig"))
+                if (bookmarks.Exists("_MailAutoSig"))
                     boundaryBookmark = "_MailAutoSig";
-                else if (wordDoc.Bookmarks.Exists("_MailOriginal"))
+                else if (bookmarks.Exists("_MailOriginal"))
                     boundaryBookmark = "_MailOriginal";
 
                 if (boundaryBookmark != null)
                 {
-                    var bmk = wordDoc.Bookmarks[boundaryBookmark];
+                    var bmk = bookmarks[boundaryBookmark];
                     var bmkRange = bmk.Range;
                     draftEnd = bmkRange.Start;
                     origBmkEnd = bmkRange.End;
@@ -516,7 +548,7 @@ namespace OutlookAI.TaskPane
                         int newBmkEnd = origBmkEnd + (newDraftEnd - draftEnd);
                         if (newBmkEnd < newDraftEnd) newBmkEnd = newDraftEnd;
                         var restoreRange = wordDoc.Range(newDraftEnd, newBmkEnd);
-                        wordDoc.Bookmarks.Add(boundaryBookmark, restoreRange);
+                        bookmarks.Add(boundaryBookmark, restoreRange);
                         ThisAddIn.ReleaseCom(restoreRange);
                     }
                 }
@@ -525,7 +557,7 @@ namespace OutlookAI.TaskPane
                     // We deleted the boundary bookmark up front; if the write/recreate failed,
                     // restore it so the signature/thread marker (and the context it anchors)
                     // isn't silently lost. Re-throw so the normal error handling still runs.
-                    if (boundaryBookmark != null && origBmkEnd >= 0 && !wordDoc.Bookmarks.Exists(boundaryBookmark))
+                    if (boundaryBookmark != null && origBmkEnd >= 0 && !bookmarks.Exists(boundaryBookmark))
                     {
                         try
                         {
@@ -533,7 +565,7 @@ namespace OutlookAI.TaskPane
                             int re = textReplaced ? origBmkEnd + (newDraftEnd - draftEnd) : origBmkEnd;
                             if (re < rs) re = rs;
                             var restore = wordDoc.Range(rs, re);
-                            wordDoc.Bookmarks.Add(boundaryBookmark, restore);
+                            bookmarks.Add(boundaryBookmark, restore);
                             ThisAddIn.ReleaseCom(restore);
                         }
                         catch { }
@@ -558,6 +590,7 @@ namespace OutlookAI.TaskPane
             }
             finally
             {
+                ThisAddIn.ReleaseCom((object)bookmarks);
                 if (ownDoc) ThisAddIn.ReleaseCom(doc);
             }
         }
@@ -628,12 +661,29 @@ namespace OutlookAI.TaskPane
             catch (InvalidOperationException) { }
         }
 
+        private void OnThemeChanged(object sender, EventArgs e)
+        {
+            // ThemeService may raise this on a non-UI (SystemEvents) thread. Fire-and-forget
+            // marshal via BeginInvoke so a busy UI thread can't stall the SystemEvents thread.
+            if (_disposed || this.IsDisposed || !this.IsHandleCreated)
+                return;
+            try { this.BeginInvoke((Action)ApplyTheme); }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+        }
+
         private void ApplyTheme()
         {
-            if (!ThemeService.IsDarkMode)
-                return;
-
+            // Two-way: apply the current ThemeService palette (dark or light) so the pane
+            // tracks a runtime theme switch. The Designer binds BackColor/lblTitle/lblVersion
+            // to ThemeService once at construction, so they must be re-applied here too.
+            this.BackColor = ThemeService.Background;
             this.ForeColor = ThemeService.Text;
+            lblTitle.ForeColor = ThemeService.Accent;
+            lblVersion.ForeColor = ThemeService.SecondaryText;
+            lnkUpdateError.LinkColor = ThemeService.LinkError;
+            if (lblStatus.Visible)
+                lblStatus.ForeColor = _lastStatusError ? ThemeService.StatusError : ThemeService.StatusSuccess;
 
             foreach (var grp in new[] { grpQuickActions, grpInstruction })
             {
@@ -656,10 +706,20 @@ namespace OutlookAI.TaskPane
             {
                 if (ctrl is Button btn)
                 {
-                    btn.FlatStyle = FlatStyle.Flat;
-                    btn.FlatAppearance.BorderColor = ThemeService.Border;
-                    btn.BackColor = ThemeService.ButtonFace;
-                    btn.ForeColor = ThemeService.ButtonText;
+                    if (ThemeService.IsDarkMode)
+                    {
+                        btn.FlatStyle = FlatStyle.Flat;
+                        btn.FlatAppearance.BorderColor = ThemeService.Border;
+                        btn.BackColor = ThemeService.ButtonFace;
+                        btn.ForeColor = ThemeService.ButtonText;
+                    }
+                    else
+                    {
+                        // Restore the native visual-styled light appearance (Designer default).
+                        btn.FlatStyle = FlatStyle.Standard;
+                        btn.UseVisualStyleBackColor = true;
+                        btn.ForeColor = ThemeService.ButtonText;
+                    }
                 }
                 if (ctrl.HasChildren)
                     ApplyThemeToButtons(ctrl);
@@ -670,6 +730,7 @@ namespace OutlookAI.TaskPane
         {
             lblStatus.Text = message;
             lblStatus.ForeColor = isError ? ThemeService.StatusError : ThemeService.StatusSuccess;
+            _lastStatusError = isError;
             lblStatus.Visible = true;
         }
 
@@ -690,6 +751,7 @@ namespace OutlookAI.TaskPane
         partial void DisposeCustomResources()
         {
             _disposed = true;
+            ThemeService.ThemeChanged -= OnThemeChanged;
             _versionTimer?.Stop();
             _versionTimer?.Dispose();
             _toolTip?.Dispose();

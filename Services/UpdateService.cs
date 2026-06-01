@@ -24,12 +24,9 @@ namespace OutlookAI.Services
         private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(10);
         private static readonly HttpClient _httpClient = CreateHttpClient();
 
-        private const int MaxUpdateFailures = 3;
-
         private static volatile string _etag;
         private static Timer _timer;
         private static Process _updateProcess;
-        private static int _updateFailures;
         private static int _checking;
 
         private static volatile string _lastChecked;
@@ -75,6 +72,14 @@ namespace OutlookAI.Services
 
         private static async Task CheckForUpdateAsync()
         {
+            // Developer/from-source builds carry the 99.99.99.0 placeholder (CI stamps the real
+            // version at release). Never auto-update such a build, and skip the network check.
+            if (Assembly.GetExecutingAssembly().GetName().Version.Major == 99)
+            {
+                Status = "developer build";
+                return;
+            }
+
             if (Interlocked.CompareExchange(ref _checking, 1, 0) != 0)
                 return;
             string tempPath = null;
@@ -142,21 +147,15 @@ namespace OutlookAI.Services
                     return;
                 }
 
-                // Skip if an update process is still running
-                if (_updateProcess != null && !_updateProcess.HasExited)
-                    return;
-
-                // If a previous update process exited without the version changing,
-                // it failed. Count failures and stop retrying after the limit.
-                if (_updateProcess != null && _updateProcess.HasExited)
+                // Skip while an update process is still waiting to install (Outlook open).
+                // If a previous one already exited, dispose it and allow a fresh attempt —
+                // we retry on every check/restart with no cross-restart state.
+                if (_updateProcess != null)
                 {
-                    _updateFailures++;
-                    _updateProcess = null;
-                    if (_updateFailures >= MaxUpdateFailures)
-                    {
-                        LastError = $"Update failed {MaxUpdateFailures} times, not retrying";
+                    if (!_updateProcess.HasExited)
                         return;
-                    }
+                    _updateProcess.Dispose();
+                    _updateProcess = null;
                 }
 
                 Status = $"downloading v{remoteVersion}\u2026";
@@ -230,8 +229,9 @@ namespace OutlookAI.Services
                 }
 
                 // Spawn a hidden process that waits for Outlook to exit,
-                // then runs the installer. -Wait keeps the process alive until
-                // the installer finishes, so we can detect completion/failure.
+                // then runs the installer. -Wait keeps this launcher alive until
+                // the installer finishes, so the guard above won't spawn another
+                // while one is still pending.
                 var installerArgs = "/SILENT /SP- /NOCANCEL /NORESTART /NORESTARTAPPLICATIONS";
                 var safePath = tempPath.Replace("'", "''");
                 var script = $"Get-Process outlook -ErrorAction SilentlyContinue | Wait-Process; Start-Sleep -Seconds 2; if (-not (Test-Path 'HKCU:\\Software\\Microsoft\\Office\\Outlook\\Addins\\OutlookAI')) {{ exit }}; Start-Process '{safePath}' -ArgumentList '{installerArgs}' -Wait";

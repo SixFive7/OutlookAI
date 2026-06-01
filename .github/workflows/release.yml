@@ -77,6 +77,10 @@ jobs:
 
           Write-Host "Version: $current -> $newBase (bump: $bump)"
 
+          # Pull the latest branch tip BEFORE counting commits, so the baked commit-count
+          # (and thus the version/tag/installer) matches the commit we push after building.
+          # No local commits exist yet, so this is a fast-forward, not a real rebase.
+          git pull --rebase
           # Compute full version
           $count = git rev-list --count HEAD
           # Add 1 to account for the stamp commit we'll make
@@ -163,7 +167,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add CHANGELOG.md
           git checkout -- Properties/AssemblyInfo.cs
-          git diff --staged --quiet && echo "No changes to commit" || (git commit -m "Release v${{ steps.version.outputs.FULL_VERSION }}" && git pull --rebase && git push)
+          # No post-build rebase: the version/tag/artifact were computed from the tip we
+          # pulled earlier, so we push that exact commit. If master advanced during the
+          # build, this push is rejected and the job fails (the release step is skipped) -
+          # safer than rebasing and shipping a version that no longer matches HEAD.
+          git diff --staged --quiet && echo "No changes to commit" || (git commit -m "Release v${{ steps.version.outputs.FULL_VERSION }}" && git push)
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

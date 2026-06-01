@@ -103,7 +103,7 @@ The add-in checks for updates automatically:
 - Uses ETags for conditional requests to minimize API rate limiting
 - When a new version is found, downloads the installer to a temp directory
 - Installs silently when Outlook closes — no manual download or re-installation needed
-- Stops retrying after 3 consecutive failures (resets on Outlook restart)
+- Retries on the next check and on each Outlook restart if an update doesn't complete (no retry limit; only one installer is launched at a time)
 - The version label at the bottom of the task pane shows update status: "up to date", "downloading v2.x.x…", or "v2.x.x ready — installs on close"
 - Click the "update error" link (if visible) to see error details
 
@@ -369,7 +369,6 @@ Click the "update error" link at the bottom of the task pane to see the full err
 - No internet connection
 - GitHub API rate limiting (the add-in uses ETags to minimize this)
 - Firewall blocking `api.github.com`
-- "Update failed 3 times, not retrying" — the auto-updater gave up after repeated failures. Restart Outlook to try again, or download the latest installer manually from [GitHub Releases](../../releases/latest).
 </details>
 
 ---
