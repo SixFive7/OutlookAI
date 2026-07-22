@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v2.3.4.145 - 2026-07-22
+
 - Fix: AI error responses (such as hitting the turn limit) are no longer written into your draft as if they were the reply — you now get a clear message instead.
 - Fix: the assistant no longer gets stuck with its buttons disabled if the email window is closed while a request is in progress.
 - Fix: a momentary "couldn't access the email editor" no longer causes your next action to silently blank the draft.
