@@ -429,3 +429,8 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# v3 planning documents — local-only, never commit: they contain machine-specific
+# and personal data and this repo is public (see v3.MD section 0.5.1 S6 / D16)
+v3.MD
+Docs/v3-probes/
