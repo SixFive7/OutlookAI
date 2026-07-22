@@ -23,10 +23,17 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3
 
+      - name: Generate temporary signing certificate
+        shell: pwsh
+        # VSTO requires ClickOnce manifest signing to be enabled AND the cert present in
+        # the store; it cannot be disabled. Use a throwaway self-signed cert so this gate
+        # validates the full build without needing the real signing secret.
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=OutlookAI CI Build" -CertStoreLocation Cert:\CurrentUser\My
+          "SIGN_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+
       - name: Build
-        # Compile-only gate: disable ClickOnce/Office manifest signing so this check
-        # doesn't need the signing certificate (the release workflow still signs).
-        run: msbuild OutlookAI.csproj /p:Configuration=Release /p:SignManifests=false /p:DefineConstants="VSTO40%3BTRACE"
+        run: msbuild OutlookAI.csproj /p:Configuration=Release /p:ManifestCertificateThumbprint=${{ env.SIGN_THUMBPRINT }} /p:DefineConstants="VSTO40%3BTRACE"
 
   dependency-review:
     # Flags known-vulnerable or disallowed-license dependencies introduced by a PR.
