@@ -13,7 +13,10 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    # windows-latest migrated to a VS 2026 image that dropped the VSTO tooling
+    # (Microsoft.VisualStudio.Tools.Applications.Hosting) the ClickOnce signing task needs.
+    # Pin to the VS 2022 image, which still ships it.
+    runs-on: windows-2022
 
     steps:
       - uses: actions/checkout@v6
