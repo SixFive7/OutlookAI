@@ -14,7 +14,7 @@ Rules:
 
 ## Build and Release
 
-- **Build** runs automatically on every push to master (`.github/workflows/build.yml`). It only compiles — no releases, no tags, no changelog changes.
+- **Build** runs automatically on every pull request (`.github/workflows/build.yml`), and can be triggered on demand. It only compiles — no releases, no tags, no changelog changes. On pull requests it also runs a dependency review.
 - **Release** is triggered on demand (`.github/workflows/release.yml`) via `gh workflow run release`. It extracts the Unreleased changelog section, builds, creates an installer, publishes a GitHub Release, and stamps the changelog.
 - The release workflow **fails if the Unreleased section is empty** — you must have release notes before creating a release.
 - Version is derived from the latest GitHub release tag (base version) + commit count. No hardcoded version in the repo.
