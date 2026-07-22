@@ -24,7 +24,9 @@ jobs:
         uses: microsoft/setup-msbuild@v3
 
       - name: Build
-        run: msbuild OutlookAI.csproj /p:Configuration=Release /p:DefineConstants="VSTO40%3BTRACE"
+        # Compile-only gate: disable ClickOnce/Office manifest signing so this check
+        # doesn't need the signing certificate (the release workflow still signs).
+        run: msbuild OutlookAI.csproj /p:Configuration=Release /p:SignManifests=false /p:DefineConstants="VSTO40%3BTRACE"
 
   dependency-review:
     # Flags known-vulnerable or disallowed-license dependencies introduced by a PR.
