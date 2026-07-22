@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Multi-target (v3.MD D18 v2 / R10): net10.0-windows is consumed by the MCP server
+      host today; net48 is CI-gated from day one so the v3.1 event host (most likely
+      the existing VSTO add-in, .NET Framework 4.8) can reference Core without rewrite.
+    -->
+    <TargetFrameworks>net48;net10.0-windows</TargetFrameworks>
+    <RootNamespace>OutlookAI.Core</RootNamespace>
+    <!--
+      Implicit usings are disabled: the default set includes System.Net.Http, which is
+      not referenced by default on net48 and would break that target.
+    -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Description>Host-neutral domain logic for OutlookAI v3 (index search, EntryID codec, COM gateway, models, audit). No MCP types, no console assumptions, no per-session state (v3.MD section 0.5.2).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Lets `dotnet build` compile the net48 target without a Visual Studio install (CI + local). -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>
