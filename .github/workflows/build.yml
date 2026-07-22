@@ -33,7 +33,7 @@ jobs:
           "SIGN_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
 
       - name: Build
-        run: msbuild OutlookAI.csproj /p:Configuration=Release /p:ManifestCertificateThumbprint=${{ env.SIGN_THUMBPRINT }} /p:DefineConstants="VSTO40%3BTRACE"
+        run: msbuild OutlookAI.csproj /p:Configuration=Release /p:TreatWarningsAsErrors=true /p:ManifestCertificateThumbprint=${{ env.SIGN_THUMBPRINT }} /p:DefineConstants="VSTO40%3BTRACE"
 
   dependency-review:
     # Flags known-vulnerable or disallowed-license dependencies introduced by a PR.

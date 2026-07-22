@@ -132,6 +132,16 @@ jobs:
           $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My
           Remove-Item $pfxPath
           Write-Host "Imported certificate: $($cert.Thumbprint)"
+          # Fail if the signing cert has expired; warn as it approaches expiry.
+          $daysLeft = [int]($cert.NotAfter - (Get-Date)).TotalDays
+          if ($daysLeft -lt 0) {
+            Write-Error "::error::Signing certificate EXPIRED on $($cert.NotAfter). Renew before releasing."
+            exit 1
+          } elseif ($daysLeft -lt 30) {
+            Write-Warning "::warning::Signing certificate expires in $daysLeft days (on $($cert.NotAfter))."
+          } else {
+            Write-Host "Signing certificate valid for $daysLeft more days (expires $($cert.NotAfter))."
+          }
 
       - name: Build and Publish
         run: >

@@ -1,0 +1,12 @@
+# Normalize line endings: store as LF, check out as CRLF on Windows.
+* text=auto eol=crlf
+
+# Treat these as binary (never normalize or diff as text).
+*.png binary
+*.jpg binary
+*.ico binary
+*.pfx binary
+*.cer binary
+*.snk binary
+*.exe binary
+*.dll binary

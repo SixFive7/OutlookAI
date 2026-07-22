@@ -1,0 +1,53 @@
+name: CodeQL
+
+# Static security analysis of the C# add-in. Advanced setup (this committed workflow)
+# is used instead of default setup so CodeQL can build the VSTO/msbuild project on a
+# Windows runner for full-fidelity results.
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: '23 5 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (C#)
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: csharp
+          build-mode: manual
+
+      - name: Generate temporary signing certificate
+        shell: pwsh
+        # VSTO requires manifest signing; use a throwaway self-signed cert so no real secret is needed.
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=OutlookAI CI Build" -CertStoreLocation Cert:\CurrentUser\My
+          "SIGN_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+
+      - name: Build
+        run: msbuild OutlookAI.csproj /t:Rebuild /p:Configuration=Release /p:ManifestCertificateThumbprint=${{ env.SIGN_THUMBPRINT }} /p:DefineConstants="VSTO40%3BTRACE"
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:csharp"
