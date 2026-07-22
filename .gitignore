@@ -434,3 +434,10 @@ FodyWeavers.xsd
 # and personal data and this repo is public (see v3.MD section 0.5.1 S6 / D16)
 v3.MD
 Docs/v3-probes/
+
+# v3 McpServer live-test artifacts — never commit (public repo; safety envelope S6):
+# fixtures recorded from the live mailboxes, write-op audit logs, and UI screenshots
+# produced by live (T2/T3) test runs. Committed fixtures must be synthetic only.
+McpServer/**/live-fixtures/
+McpServer/**/audit-logs/
+McpServer/**/screenshots/
