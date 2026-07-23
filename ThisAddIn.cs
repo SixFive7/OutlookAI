@@ -129,6 +129,9 @@ namespace OutlookAI
 
         private void ThisAddIn_Shutdown(object sender, EventArgs e)
         {
+            try { SettingsDialog.CloseIfOpen(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("Settings close on shutdown: " + ex.Message); }
+
             UpdateService.Stop();
             ThemeService.StopWatching();
             ClaudeService.Shutdown();
@@ -465,6 +468,18 @@ namespace OutlookAI
         {
             _ribbon = new Ribbon();
             return _ribbon;
+        }
+
+        // Exposes a small automation object on COMAddIn.Object so out-of-process callers
+        // (unattended verification, future tooling) can open/close the settings dialog and
+        // read tuning state without driving the ribbon UI.
+        private AddInAutomation _automation;
+
+        protected override object RequestComAddInAutomationService()
+        {
+            if (_automation == null)
+                _automation = new AddInAutomation();
+            return _automation;
         }
 
         #region VSTO generated code

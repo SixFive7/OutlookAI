@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<customUI xmlns="http://schemas.microsoft.com/office/2009/07/customui" onLoad="OnRibbonLoad">
+	<ribbon>
+		<tabs>
+			<tab idMso="TabMail">
+				<group id="AIGroupSettings" label="OutlookAI">
+					<button id="btnAISettings"
+							label="Settings"
+							size="normal"
+							onAction="OnOpenSettings"
+							supertip="Open OutlookAI Settings: Outlook search, caching, and mailbox-size tuning managed by OutlookAI."
+							imageMso="PropertySheet" />
+				</group>
+			</tab>
+			<tab idMso="TabNewMailMessage">
+				<group id="AIGroupCompose" label="AI Assistant">
+					<toggleButton id="btnAICompose"
+							label="AI Assistant"
+							size="large"
+							onAction="OnAIAssistantToggle"
+							getPressed="GetAIAssistantPressed"
+							supertip="Toggle the AI Writing Assistant sidebar."
+							imageMso="SmartArtInsert" />
+				</group>
+			</tab>
+		</tabs>
+		<contextualTabs>
+			<tabSet idMso="TabComposeTools">
+				<tab idMso="TabMessage">
+					<group id="AIGroupInline" label="AI Assistant">
+						<toggleButton id="btnAIInline"
+								label="AI Assistant"
+								size="large"
+								onAction="OnAIAssistantToggle"
+								getPressed="GetAIAssistantPressed"
+								supertip="Toggle the AI Writing Assistant sidebar."
+								imageMso="SmartArtInsert" />
+					</group>
+				</tab>
+			</tabSet>
+		</contextualTabs>
+	</ribbon>
+</customUI>
