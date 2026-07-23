@@ -2122,6 +2122,256 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
+        /// Sendable-state snapshot for the high-friction send flow (Phase 5, v3.MD D4):
+        /// opens the item, requires it to be a mail item, and captures subject, Sent
+        /// flag, recipients, plain-text body (content-hash input) and the account whose
+        /// delivery store contains it. Read-only - nothing is modified.
+        /// </summary>
+        public ComSendableDraftState? TryGetSendableDraftState(string entryIdHex, string? storeId, out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(entryIdHex))
+            {
+                throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
+            }
+
+            string? capturedError = null;
+            ComSendableDraftState? result = _runner.Run<ComSendableDraftState?>(() =>
+            {
+                dynamic ns = _namespace!;
+                object? item = null;
+                object? account = null;
+                try
+                {
+                    item = storeId != null
+                        ? ns.GetItemFromID(entryIdHex, storeId)
+                        : ns.GetItemFromID(entryIdHex);
+
+                    if (!IsMailItem(item!))
+                    {
+                        capturedError = "NotAMailItem";
+                        return null;
+                    }
+
+                    ComDraftInfo info = SnapshotDraft(item!);
+                    bool isSent = true; // fail CLOSED: unknown state is treated as not sendable
+                    try
+                    {
+                        isSent = (bool)((dynamic)item!).Sent;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+
+                    string? body = TryGetString(() => (string?)((dynamic)item!).Body);
+
+                    string? accountSmtp = null;
+                    if (info.StoreId != null || info.StoreDisplayName != null)
+                    {
+                        account = FindAccountByDeliveryStore(info.StoreId, info.StoreDisplayName);
+                        if (account != null)
+                        {
+                            accountSmtp = TryGetString(() => (string?)((dynamic)account!).SmtpAddress);
+                        }
+                    }
+
+                    return new ComSendableDraftState(
+                        info.EntryId,
+                        info.StoreId,
+                        info.StoreDisplayName,
+                        info.ParentFolderName,
+                        info.Subject,
+                        isSent,
+                        body,
+                        accountSmtp,
+                        info.Recipients);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(account);
+                    Release(item);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// Executes the CONFIRMED send of a saved draft (Phase 5, v3.MD D4/L5) as ONE
+        /// STA operation so nothing can change between the checks and <c>Send()</c>:
+        /// re-opens the draft, re-verifies it is unsent mail, RECOMPUTES the content
+        /// hash against <paramref name="expectedContentHash"/> (token binding covers the
+        /// validate-to-send gap), resolves the sending account FROM THE DRAFT'S OWN
+        /// STORE (never from caller input - the send can never touch another account),
+        /// pins it via the PROPERTYPUTREF accessor and HARD-VERIFIES the getter readback
+        /// in-session (Phase-4 footgun - abort on mismatch), applies the optional
+        /// SentOnBehalfOfName, and only then calls <c>Send()</c>. Every refusal happens
+        /// BEFORE transport; a failure of the Send call itself is reported as
+        /// "SendCallFailed:..." (state then unknown - the mail may sit in the Outbox).
+        /// </summary>
+        public ComSendResult? TrySendDraft(
+            string entryIdHex,
+            string? storeId,
+            string expectedContentHash,
+            string? sentOnBehalfOfName,
+            out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(entryIdHex))
+            {
+                throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
+            }
+
+            if (string.IsNullOrWhiteSpace(expectedContentHash))
+            {
+                throw new ArgumentException("Expected content hash must not be blank.", nameof(expectedContentHash));
+            }
+
+            string? capturedError = null;
+            ComSendResult? result = _runner.Run<ComSendResult?>(() =>
+            {
+                dynamic ns = _namespace!;
+                object? item = null;
+                object? account = null;
+                try
+                {
+                    item = storeId != null
+                        ? ns.GetItemFromID(entryIdHex, storeId)
+                        : ns.GetItemFromID(entryIdHex);
+
+                    if (!IsMailItem(item!))
+                    {
+                        capturedError = "NotAMailItem";
+                        return null;
+                    }
+
+                    bool isSent = true;
+                    try
+                    {
+                        isSent = (bool)((dynamic)item!).Sent;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+
+                    if (isSent)
+                    {
+                        capturedError = "AlreadySent";
+                        return null;
+                    }
+
+                    ComDraftInfo info = SnapshotDraft(item!);
+                    string? body = TryGetString(() => (string?)((dynamic)item!).Body);
+                    string currentHash = SendContentHash.Compute(info.Subject, info.Recipients, body, sentOnBehalfOfName);
+                    if (!string.Equals(currentHash, expectedContentHash, StringComparison.Ordinal))
+                    {
+                        capturedError = "ContentChangedSinceToken";
+                        return null;
+                    }
+
+                    // Identity comes EXCLUSIVELY from the draft's own store - the
+                    // account delivering into it (what the UI would send from).
+                    account = FindAccountByDeliveryStore(info.StoreId, info.StoreDisplayName);
+                    if (account == null)
+                    {
+                        capturedError = "NoSendingAccountForStore";
+                        return null;
+                    }
+
+                    string? accountSmtp = TryGetString(() => (string?)((dynamic)account!).SmtpAddress);
+                    if (string.IsNullOrWhiteSpace(accountSmtp))
+                    {
+                        capturedError = "NoSendingAccountForStore";
+                        return null;
+                    }
+
+                    // ⚠ Phase-4 footgun: SendUsingAccount is PROPERTYPUTREF - use the
+                    // explicit putref accessor, then HARD-VERIFY by in-session getter
+                    // readback. A mismatch means the DEFAULT account would send: abort.
+                    SetSendUsingAccount(item!, account);
+                    string? readback = null;
+                    object? pinned = null;
+                    try
+                    {
+                        pinned = ((dynamic)item!).SendUsingAccount;
+                        if (pinned != null)
+                        {
+                            readback = TryGetString(() => (string?)((dynamic)pinned!).SmtpAddress);
+                        }
+                    }
+                    finally
+                    {
+                        Release(pinned);
+                    }
+
+                    if (!string.Equals(readback, accountSmtp, StringComparison.OrdinalIgnoreCase))
+                    {
+                        capturedError = "SendIdentityVerificationFailed";
+                        return null;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(sentOnBehalfOfName))
+                    {
+                        ((dynamic)item!).SentOnBehalfOfName = sentOnBehalfOfName;
+                    }
+
+                    // Capture the outcome BEFORE Send() - the EntryID dies with it.
+                    ComSendResult sendResult = new ComSendResult(
+                        info.EntryId,
+                        info.StoreDisplayName,
+                        accountSmtp!,
+                        string.IsNullOrWhiteSpace(sentOnBehalfOfName) ? null : sentOnBehalfOfName,
+                        info.Subject,
+                        info.Recipients);
+
+                    try
+                    {
+                        ((dynamic)item!).Send();
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        capturedError = "SendCallFailed:" + DescribeComFailure(ex);
+                        return null;
+                    }
+
+                    return sendResult;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(account);
+                    Release(item);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>STA-side: true when the object reports OlObjectClass 43 (olMail).</summary>
+        private static bool IsMailItem(object itemObject)
+        {
+            try
+            {
+                return (int)((dynamic)itemObject).Class == OlMailItemClass;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
         /// ⚠ LIVE-VERIFIED FOOTGUN (Phase 4): <c>MailItem.SendUsingAccount</c> is a
         /// PROPERTYPUTREF property. A late-bound dynamic assignment
         /// (<c>mail.SendUsingAccount = account</c>) SILENTLY NO-OPS on this Outlook

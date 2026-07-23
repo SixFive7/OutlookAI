@@ -530,6 +530,113 @@ namespace OutlookAI.Core.Com
         public bool Displayed { get; }
     }
 
+    /// <summary>
+    /// Sendable-state snapshot of a mail item for the high-friction send flow (Phase 5,
+    /// v3.MD D4): where the item lives, whether it is still unsent, its recipients and
+    /// plain-text body (hash input - never logged), and the account whose delivery
+    /// store contains it (= the identity a send would use; null when no profile account
+    /// delivers into that store, e.g. delegate caches).
+    /// </summary>
+    public sealed class ComSendableDraftState
+    {
+        /// <summary>Creates the snapshot (data only).</summary>
+        public ComSendableDraftState(
+            string entryId,
+            string? storeId,
+            string? storeDisplayName,
+            string? parentFolderName,
+            string? subject,
+            bool isSent,
+            string? bodyText,
+            string? resolvedAccountSmtp,
+            IReadOnlyList<ComRecipientInfo> recipients)
+        {
+            EntryId = entryId;
+            StoreId = storeId;
+            StoreDisplayName = storeDisplayName;
+            ParentFolderName = parentFolderName;
+            Subject = subject;
+            IsSent = isSent;
+            BodyText = bodyText;
+            ResolvedAccountSmtp = resolvedAccountSmtp;
+            Recipients = recipients;
+        }
+
+        /// <summary>Real EntryID as the object model reports it.</summary>
+        public string EntryId { get; }
+
+        /// <summary>Containing store's StoreID.</summary>
+        public string? StoreId { get; }
+
+        /// <summary>Containing store display name.</summary>
+        public string? StoreDisplayName { get; }
+
+        /// <summary>Containing folder display name (localized).</summary>
+        public string? ParentFolderName { get; }
+
+        /// <summary>Subject.</summary>
+        public string? Subject { get; }
+
+        /// <summary>MailItem.Sent - true means this is NOT a sendable draft.</summary>
+        public bool IsSent { get; }
+
+        /// <summary>Plain-text body (content-hash input; kept out of every log/output).</summary>
+        public string? BodyText { get; }
+
+        /// <summary>SmtpAddress of the account delivering into this store (the send identity), or null.</summary>
+        public string? ResolvedAccountSmtp { get; }
+
+        /// <summary>To/Cc/Bcc recipients currently on the item.</summary>
+        public IReadOnlyList<ComRecipientInfo> Recipients { get; }
+    }
+
+    /// <summary>
+    /// Result of one EXECUTED send (Phase 5). All fields are captured BEFORE
+    /// <c>Send()</c> - a sent item gets a new EntryID in Sent Items, so
+    /// <see cref="EntryIdAtSend"/> stops resolving after the transport accepts it.
+    /// </summary>
+    public sealed class ComSendResult
+    {
+        /// <summary>Creates the result (data only).</summary>
+        public ComSendResult(
+            string entryIdAtSend,
+            string? storeDisplayName,
+            string accountSmtp,
+            string? sentOnBehalfOfName,
+            string? subject,
+            IReadOnlyList<ComRecipientInfo> recipients)
+        {
+            EntryIdAtSend = entryIdAtSend;
+            StoreDisplayName = storeDisplayName;
+            AccountSmtp = accountSmtp;
+            SentOnBehalfOfName = sentOnBehalfOfName;
+            Subject = subject;
+            Recipients = recipients;
+        }
+
+        /// <summary>Draft EntryID at the moment Send() was invoked (invalid afterwards).</summary>
+        public string EntryIdAtSend { get; }
+
+        /// <summary>Store the draft lived in.</summary>
+        public string? StoreDisplayName { get; }
+
+        /// <summary>
+        /// SmtpAddress the mail went out as - pinned via the PROPERTYPUTREF accessor and
+        /// getter-verified IN-SESSION immediately before Send() (Phase-4 footgun: a
+        /// dynamic assignment silently no-ops and the DEFAULT account would send).
+        /// </summary>
+        public string AccountSmtp { get; }
+
+        /// <summary>SentOnBehalfOfName applied to the outgoing mail (send-as), when requested.</summary>
+        public string? SentOnBehalfOfName { get; }
+
+        /// <summary>Subject of the sent mail.</summary>
+        public string? Subject { get; }
+
+        /// <summary>Recipients the mail went to.</summary>
+        public IReadOnlyList<ComRecipientInfo> Recipients { get; }
+    }
+
     /// <summary>Identity of a store's default folder (COM-free data).</summary>
     public sealed class ComDefaultFolderInfo
     {
