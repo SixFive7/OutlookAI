@@ -358,17 +358,21 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// ItemPathDisplay fallback mapping (v3.MD section 4): walks the store's folder
-        /// tree along <paramref name="folderPath"/>, then probes the folder with a narrow
-        /// DASL subject restriction and (when given) a ReceivedTime tolerance - an exact
-        /// probe, not a scan. Returns the first matching item snapshot.
+        /// Narrow folder probe (v3.MD section 4 fallback mapping - on this machine's
+        /// cached Exchange stores it is THE hit-mapping path, see <see cref="HitLocator"/>):
+        /// walks the store's folder tree along <paramref name="folderPath"/>, then probes
+        /// the folder with a DASL subject restriction and (when given) a ReceivedTime
+        /// tolerance - an exact probe, not a scan. An empty subject falls back to a
+        /// bounded time-only enumeration (small folders only). Returns the first matching
+        /// item snapshot carrying the item's REAL EntryID.
         /// </summary>
         public ComOpenResult? TryResolveByPath(
             string storeDisplayName,
             IReadOnlyList<string> folderPath,
             string itemSubject,
             DateTime? indexReceivedUtc,
-            out string? error)
+            out string? error,
+            int toleranceSeconds = 120)
         {
             EnsureNotDisposed();
             if (string.IsNullOrWhiteSpace(storeDisplayName))
@@ -437,8 +441,50 @@ namespace OutlookAI.Core.Com
 
                     dynamic folder = currentFolder!;
                     items = folder.Items;
+                    dynamic itemCollection = (dynamic)items!;
+
+                    if (itemSubject.Length == 0)
+                    {
+                        // No subject to restrict on: bounded time-only enumeration,
+                        // acceptable only for small folders (e.g. the tiny test-hub store).
+                        if (!indexReceivedUtc.HasValue)
+                        {
+                            capturedError = "EmptySubjectAndNoReceivedTime";
+                            return null;
+                        }
+
+                        int total = itemCollection.Count;
+                        if (total > 1000)
+                        {
+                            capturedError = "FolderTooLargeForTimeOnlyProbe";
+                            return null;
+                        }
+
+                        for (int i = 1; i <= total; i++)
+                        {
+                            object? candidate = null;
+                            try
+                            {
+                                candidate = itemCollection[i];
+                                ComOpenResult snapshot = Snapshot(candidate);
+                                if (ReceivedTimeMatches(snapshot.ReceivedTime, indexReceivedUtc.Value, toleranceSeconds)
+                                    && (snapshot.Subject == null || snapshot.Subject.Length == 0))
+                                {
+                                    return snapshot;
+                                }
+                            }
+                            finally
+                            {
+                                Release(candidate);
+                            }
+                        }
+
+                        capturedError = "NoTimeOnlyMatch";
+                        return null;
+                    }
+
                     string filter = "@SQL=\"urn:schemas:httpmail:subject\" = '" + itemSubject.Replace("'", "''") + "'";
-                    restricted = ((dynamic)items!).Restrict(filter);
+                    restricted = itemCollection.Restrict(filter);
                     dynamic restrictedItems = restricted!;
                     int count = restrictedItems.Count;
                     for (int i = 1; i <= count; i++)
@@ -448,7 +494,7 @@ namespace OutlookAI.Core.Com
                         {
                             candidate = restrictedItems[i];
                             ComOpenResult snapshot = Snapshot(candidate);
-                            if (!indexReceivedUtc.HasValue || ReceivedTimeMatches(snapshot.ReceivedTime, indexReceivedUtc.Value, toleranceSeconds: 120))
+                            if (!indexReceivedUtc.HasValue || ReceivedTimeMatches(snapshot.ReceivedTime, indexReceivedUtc.Value, toleranceSeconds))
                             {
                                 return snapshot;
                             }

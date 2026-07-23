@@ -148,11 +148,60 @@ namespace OutlookAI.Core.IndexSearch
         }
 
         /// <summary>
+        /// Targeted store-scope discovery for one account: unordered URL samples are
+        /// dominated by the big stores (a 30k sample missed the tiny idle store on this
+        /// machine), and SCOPE demands the exact store segment including the ($hash)
+        /// suffix, so small stores are found by querying mail addressed to / sent by the
+        /// account (per-column CONTAINS, index-backed, ~60 ms) and taking the store
+        /// prefix of hits whose store display name equals the address.
+        /// </summary>
+        public StoreScopeInfo? TryDiscoverStoreScopeByAddress(string smtpAddress)
+        {
+            if (string.IsNullOrWhiteSpace(smtpAddress))
+            {
+                throw new ArgumentException("Address must not be blank.", nameof(smtpAddress));
+            }
+
+            IndexQuery[] probes =
+            {
+                new IndexQuery { Kinds = KindFilter.EmailOnly, RecipientContains = smtpAddress, Top = 50 },
+                new IndexQuery { Kinds = KindFilter.EmailOnly, FromAddressContains = smtpAddress, Top = 50 },
+            };
+
+            foreach (IndexQuery probe in probes)
+            {
+                foreach (IndexHit hit in Search(probe).Hits)
+                {
+                    if (hit.StorePrefix == null
+                        || !string.Equals(hit.StoreDisplayName, smtpAddress, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    bool hasDelegates = false;
+                    try
+                    {
+                        string delegateProbe = WsSqlBuilder.BuildScopeExistenceProbe(hit.StorePrefix + "/1");
+                        hasDelegates = _client.ExecuteRows(delegateProbe, 1).Count > 0;
+                    }
+                    catch (Exception ex) when (ex is not OutOfMemoryException)
+                    {
+                        // Best-effort delegate probe.
+                    }
+
+                    return new StoreScopeInfo(hit.StorePrefix, hit.StoreDisplayName!, 1, hasDelegates);
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Discovers store scopes by sampling email item URLs and grouping their store
         /// prefixes (WS-SQL has no DISTINCT). For each discovered store, probes
         /// SCOPE='&lt;prefix&gt;/1' to detect delegate subtrees. A busy store can dominate
-        /// small samples - raise <paramref name="sampleSize"/> if an expected store is
-        /// missing (the 2000-row pull measured 552 ms in the section-5 probes).
+        /// small samples - use <see cref="TryDiscoverStoreScopeByAddress"/> for stores the
+        /// sample misses (the 2000-row pull measured 552 ms in the section-5 probes).
         /// </summary>
         public IReadOnlyList<StoreScopeInfo> DiscoverStoreScopes(int sampleSize = 2000)
         {

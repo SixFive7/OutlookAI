@@ -37,12 +37,24 @@ public sealed class WsSqlBuilderTests
     public void Build_EmailOnly_WhenAttachmentHitsExcluded()
     {
         var query = BaseQuery();
-        query.IncludeAttachmentHits = false;
+        query.Kinds = KindFilter.EmailOnly;
 
         string sql = WsSqlBuilder.Build(query);
 
         Assert.Contains("System.Kind='email'", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("System.Kind='document'", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_DocumentsOnly_ForAttachmentEntryQueries()
+    {
+        var query = BaseQuery();
+        query.Kinds = KindFilter.DocumentsOnly;
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains("System.Kind='document'", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Kind='email'", sql, StringComparison.Ordinal);
     }
 
     [Fact]

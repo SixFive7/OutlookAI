@@ -21,6 +21,23 @@ namespace OutlookAI.Core.IndexSearch
         SubjectAndBody = 1,
     }
 
+    /// <summary>System.Kind filter shape - a query is never emitted without one (v3.MD section 12).</summary>
+    public enum KindFilter
+    {
+        /// <summary>
+        /// <c>(System.Kind='email' OR System.Kind='document')</c>: messages plus indexed
+        /// attachment-content entries. The default - email-only queries miss
+        /// attachment-content hits (v3.MD section 12).
+        /// </summary>
+        EmailAndDocuments = 0,
+
+        /// <summary><c>System.Kind='email'</c>: messages only (completeness-oracle parity mode).</summary>
+        EmailOnly = 1,
+
+        /// <summary><c>System.Kind='document'</c>: attachment-content entries only (probe R1 shape).</summary>
+        DocumentsOnly = 2,
+    }
+
     /// <summary>
     /// Parameters for one SystemIndex search. Translated to Windows Search SQL by
     /// <see cref="WsSqlBuilder"/>, which enforces the v3.MD section-12 anti-pattern guards.
@@ -43,12 +60,8 @@ namespace OutlookAI.Core.IndexSearch
         /// <summary>Where <see cref="Terms"/> are matched. Default: all indexed properties.</summary>
         public TermScope TermScope { get; set; } = TermScope.AllProperties;
 
-        /// <summary>
-        /// True (default) also returns indexed attachment-content entries
-        /// (<c>System.Kind='document'</c> under the mapi scope). Email-only queries miss
-        /// attachment-content hits (v3.MD section 12).
-        /// </summary>
-        public bool IncludeAttachmentHits { get; set; } = true;
+        /// <summary>Which System.Kind values the query covers. Default: email plus documents.</summary>
+        public KindFilter Kinds { get; set; } = KindFilter.EmailAndDocuments;
 
         /// <summary>
         /// Sender filter, matched with <c>CONTAINS(System.Message.FromAddress, ...)</c>.

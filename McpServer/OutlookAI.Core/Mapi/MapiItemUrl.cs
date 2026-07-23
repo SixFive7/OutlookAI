@@ -56,7 +56,7 @@ namespace OutlookAI.Core.Mapi
         /// <summary>The SID path segment including braces, e.g. "{S-1-5-21-...}".</summary>
         public string SidSegment { get; }
 
-        /// <summary>The raw store segment, e.g. "jori@example.com($8a5cb172)".</summary>
+        /// <summary>The raw store segment, e.g. "alice@example.com($deadbeef)".</summary>
         public string StoreSegment { get; }
 
         /// <summary>Store display name with the "($hash)" suffix stripped and trimmed.</summary>

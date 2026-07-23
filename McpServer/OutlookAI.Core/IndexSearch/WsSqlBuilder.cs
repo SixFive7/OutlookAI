@@ -83,9 +83,20 @@ namespace OutlookAI.Core.IndexSearch
                 where.Add("SCOPE='" + ValidateScope(query.Scope) + "'");
             }
 
-            where.Add(query.IncludeAttachmentHits
-                ? "(System.Kind='email' OR System.Kind='document')"
-                : "System.Kind='email'");
+            switch (query.Kinds)
+            {
+                case KindFilter.EmailOnly:
+                    where.Add("System.Kind='email'");
+                    break;
+                case KindFilter.DocumentsOnly:
+                    where.Add("System.Kind='document'");
+                    break;
+                case KindFilter.EmailAndDocuments:
+                    where.Add("(System.Kind='email' OR System.Kind='document')");
+                    break;
+                default:
+                    throw new ArgumentException("Unknown KindFilter value.", nameof(query));
+            }
 
             if (query.Terms != null && query.Terms.Count > 0)
             {
@@ -252,7 +263,7 @@ namespace OutlookAI.Core.IndexSearch
                 }
 
                 bool allowed = char.IsLetterOrDigit(c)
-                    || c == ' ' || c == '@' || c == '.' || c == '_' || c == '-' || c == '\'';
+                    || c == ' ' || c == '@' || c == '.' || c == '_' || c == '-' || c == '\'' || c == '+';
                 if (!allowed)
                 {
                     throw new ArgumentException(
