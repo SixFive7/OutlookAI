@@ -571,7 +571,22 @@ namespace OutlookAI.Core.Services
                 return (saved, sizeBytes);
             });
 
-            AppendAuditLine("save_attachment path=" + path + " bytes=" + size.ToString(CultureInfo.InvariantCulture));
+            // Write-op audit is load-bearing from Phase 4: a failure surfaces (with the
+            // saved path preserved in the message) instead of being swallowed.
+            try
+            {
+                Audit.AuditLog.Append(
+                    "save_attachment",
+                    ("entryId", entryId),
+                    ("path", path),
+                    ("bytes", size.ToString(CultureInfo.InvariantCulture)));
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidOperationException(
+                    "Attachment was saved to '" + path + "' but the audit line could not be written: " + ex.Message, ex);
+            }
+
             return new SaveAttachmentOutcome
             {
                 Id = hitId,
@@ -711,7 +726,15 @@ namespace OutlookAI.Core.Services
                 return d ?? throw new InvalidOperationException("Item could not be displayed (" + (error ?? "unknown") + ").");
             });
 
-            AppendAuditLine("open_in_outlook entryId=" + displayed.EntryId);
+            // open_in_outlook is a UI action, not a data write - audit stays best-effort.
+            try
+            {
+                Audit.AuditLog.Append("open_in_outlook", ("entryId", displayed.EntryId));
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
             return new OpenInOutlookOutcome
             {
                 Id = hitId,
@@ -1381,23 +1404,6 @@ namespace OutlookAI.Core.Services
             }
 
             return true;
-        }
-
-        private static void AppendAuditLine(string message)
-        {
-            try
-            {
-                string dir = SharedStateDirectory;
-                Directory.CreateDirectory(dir);
-                string line = DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture)
-                    + " " + message + Environment.NewLine;
-                File.AppendAllText(Path.Combine(dir, "audit.log"), line);
-            }
-            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
-            {
-                // Best-effort in Phase 2 (the write-op audit becomes load-bearing with
-                // the draft/send tools in Phases 4/5).
-            }
         }
 
         private sealed class CachedHit
