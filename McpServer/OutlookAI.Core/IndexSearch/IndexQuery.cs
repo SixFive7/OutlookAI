@@ -38,6 +38,16 @@ namespace OutlookAI.Core.IndexSearch
         DocumentsOnly = 2,
     }
 
+    /// <summary>Result ordering for an index query.</summary>
+    public enum IndexOrder
+    {
+        /// <summary>ORDER BY System.Message.DateReceived DESC - the default.</summary>
+        DateReceivedDescending = 0,
+
+        /// <summary>ORDER BY System.Size DESC (Phase-2 truncation tests: find big mails).</summary>
+        SizeDescending = 1,
+    }
+
     /// <summary>
     /// Parameters for one SystemIndex search. Translated to Windows Search SQL by
     /// <see cref="WsSqlBuilder"/>, which enforces the v3.MD section-12 anti-pattern guards.
@@ -86,6 +96,16 @@ namespace OutlookAI.Core.IndexSearch
 
         /// <summary>Filter on attachment presence (System.Message.HasAttachments).</summary>
         public bool? HasAttachments { get; set; }
+
+        /// <summary>
+        /// Exact-match filter on System.Message.ConversationID (thread tool). NOTE: '='
+        /// on a non-CONTAINS column is a property scan - always combine with
+        /// <see cref="Scope"/> when the store is known, and keep Top small.
+        /// </summary>
+        public string? ConversationIdEquals { get; set; }
+
+        /// <summary>Result ordering; DateReceived DESC unless stated otherwise.</summary>
+        public IndexOrder OrderBy { get; set; } = IndexOrder.DateReceivedDescending;
 
         /// <summary>
         /// Maximum rows (SELECT TOP n). Compact-payload discipline: default 25, hard cap

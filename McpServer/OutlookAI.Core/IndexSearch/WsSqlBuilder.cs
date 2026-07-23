@@ -136,13 +136,42 @@ namespace OutlookAI.Core.IndexSearch
                 where.Add("System.Message.HasAttachments=" + (query.HasAttachments.Value ? "TRUE" : "FALSE"));
             }
 
+            if (query.ConversationIdEquals != null)
+            {
+                where.Add("System.Message.ConversationID='"
+                    + ValidateConversationId(query.ConversationIdEquals).Replace("'", "''") + "'");
+            }
+
             StringBuilder sql = new StringBuilder();
             sql.Append("SELECT TOP ").Append(query.Top.ToString(CultureInfo.InvariantCulture));
             sql.Append(' ').Append(string.Join(", ", SelectColumns));
             sql.Append(" FROM SystemIndex WHERE ");
             sql.Append(string.Join(" AND ", where));
-            sql.Append(" ORDER BY System.Message.DateReceived DESC");
+            sql.Append(query.OrderBy == IndexOrder.SizeDescending
+                ? " ORDER BY System.Size DESC"
+                : " ORDER BY System.Message.DateReceived DESC");
             return sql.ToString();
+        }
+
+        private static string ValidateConversationId(string conversationId)
+        {
+            string trimmed = conversationId.Trim();
+            if (trimmed.Length == 0 || trimmed.Length > 512)
+            {
+                throw new ArgumentException("ConversationIdEquals must be 1-512 characters.", nameof(conversationId));
+            }
+
+            foreach (char c in trimmed)
+            {
+                // Observed values are opaque id strings; reject anything that could
+                // break out of the SQL literal beyond the escaped single quote.
+                if (char.IsControl(c))
+                {
+                    throw new ArgumentException("ConversationIdEquals contains control characters.", nameof(conversationId));
+                }
+            }
+
+            return trimmed;
         }
 
         /// <summary>

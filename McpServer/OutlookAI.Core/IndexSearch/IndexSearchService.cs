@@ -147,6 +147,13 @@ namespace OutlookAI.Core.IndexSearch
             return new IndexStalenessReport(newest, DateTime.UtcNow);
         }
 
+        /// <summary>True when at least one indexed item exists under <paramref name="scope"/>.</summary>
+        public bool ScopeHasAnyItem(string scope)
+        {
+            string sql = WsSqlBuilder.BuildScopeExistenceProbe(scope);
+            return _client.ExecuteRows(sql, 1).Count > 0;
+        }
+
         /// <summary>
         /// Targeted store-scope discovery for one account: unordered URL samples are
         /// dominated by the big stores (a 30k sample missed the tiny idle store on this
