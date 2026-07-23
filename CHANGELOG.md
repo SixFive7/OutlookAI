@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add OutlookAI MCP server search surface v1: Claude can now search all locally indexed Outlook mail (all accounts, delegate mailboxes, and attachment contents) in milliseconds, with a fresh mode that also catches mail that just arrived and is not yet indexed.
+- Add mail reading tools: full message read with safe truncation, sender/recipient details, conversation (thread) view, and saving attachments to disk so the assistant can open them.
+- Add mailbox insight tools: account and store listing (delegate and online-only stores flagged), folder trees with unread counts, and an index freshness self-report with actionable advice.
+
 ## v2.3.4.145 - 2026-07-22
 
 - Fix: AI error responses (such as hitting the turn limit) are no longer written into your draft as if they were the reply — you now get a clear message instead.
