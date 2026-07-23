@@ -6,10 +6,10 @@
 				<group id="AIGroupSettings" label="OutlookAI">
 					<button id="btnAISettings"
 							label="Settings"
-							size="normal"
+							size="large"
 							onAction="OnOpenSettings"
 							supertip="Open OutlookAI Settings: Outlook search, caching, and mailbox-size tuning managed by OutlookAI."
-							imageMso="PropertySheet" />
+							imageMso="AdministrationHome" />
 				</group>
 			</tab>
 			<tab idMso="TabNewMailMessage">
