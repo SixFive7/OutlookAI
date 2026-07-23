@@ -17,6 +17,16 @@ namespace OutlookAI
 
         internal Microsoft.Office.Core.IRibbonUI RibbonUI { get; set; }
 
+        // Created on Outlook's main UI thread during startup; lets code that may run on a
+        // non-UI thread (the COMAddIn.Object automation surface — out-of-process COM calls
+        // arrive on RPC worker threads) marshal UI work onto the UI thread. Never shown.
+        private System.Windows.Forms.Control _uiMarshalControl;
+
+        internal System.Windows.Forms.Control UiMarshalControl
+        {
+            get { return _uiMarshalControl; }
+        }
+
         internal static void ReleaseCom(object obj)
         {
             if (obj != null)
@@ -99,6 +109,17 @@ namespace OutlookAI
             if (installerRunning)
                 return;
 
+            try
+            {
+                _uiMarshalControl = new System.Windows.Forms.Control();
+                var forceHandle = _uiMarshalControl.Handle; // force creation on the UI thread
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("UI marshal control: " + ex.Message);
+                _uiMarshalControl = null;
+            }
+
             ClaudeService.WarmUp();
             UpdateService.Start();
             ThemeService.StartWatching();
@@ -131,6 +152,10 @@ namespace OutlookAI
         {
             try { SettingsDialog.CloseIfOpen(); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("Settings close on shutdown: " + ex.Message); }
+
+            try { _uiMarshalControl?.Dispose(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("UI marshal dispose: " + ex.Message); }
+            _uiMarshalControl = null;
 
             UpdateService.Stop();
             ThemeService.StopWatching();

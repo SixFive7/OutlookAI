@@ -43,6 +43,9 @@ namespace OutlookAI.TaskPane
 
         internal static void ShowSettings()
         {
+            // Callers must be on the UI thread (ribbon callbacks are; the COM automation
+            // surface marshals via the add-in's UI-thread control before calling this).
+            SettingsDialog dlg = null;
             try
             {
                 if (IsOpen)
@@ -50,15 +53,19 @@ namespace OutlookAI.TaskPane
                     _open.Activate();
                     return;
                 }
-                var dlg = new SettingsDialog();
-                _open = dlg;
+                dlg = new SettingsDialog();
                 dlg.FormClosed += (s, e) => { if (ReferenceEquals(_open, dlg)) _open = null; };
                 dlg.Show();
                 dlg.Activate();
+                _open = dlg;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("ShowSettings: " + ex.Message);
+                // Never leave a half-shown zombie registered as "open".
+                if (ReferenceEquals(_open, dlg))
+                    _open = null;
+                try { dlg?.Dispose(); } catch { }
             }
         }
 

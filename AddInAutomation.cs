@@ -23,14 +23,36 @@ namespace OutlookAI
     [ClassInterface(ClassInterfaceType.None)]
     public sealed class AddInAutomation : IAddInAutomation
     {
+        // Out-of-process COM calls to a managed object arrive on RPC worker threads, NOT on
+        // Outlook's UI thread — all UI work must be marshaled via the add-in's UI-thread
+        // control or the dialog would be created without a message pump (a zombie window).
+        private static void OnUiThread(Action action)
+        {
+            var ui = Globals.ThisAddIn?.UiMarshalControl;
+            try
+            {
+                if (ui != null && !ui.IsDisposed && ui.InvokeRequired)
+                {
+                    ui.Invoke(action);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("Automation marshal: " + ex.Message);
+                return;
+            }
+            action();
+        }
+
         public void OpenSettings()
         {
-            TaskPane.SettingsDialog.ShowSettings();
+            OnUiThread(() => TaskPane.SettingsDialog.ShowSettings());
         }
 
         public void CloseSettings()
         {
-            TaskPane.SettingsDialog.CloseIfOpen();
+            OnUiThread(() => TaskPane.SettingsDialog.CloseIfOpen());
         }
 
         public bool IsSettingsOpen()
