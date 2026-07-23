@@ -89,6 +89,25 @@ namespace OutlookAI.Core.Com
         {
             // Touching the message queue forces its creation before callers may rely on it.
             NativeMethods.PeekMessage(out NativeMethods.MSG _, IntPtr.Zero, 0, 0, NativeMethods.PM_NOREMOVE);
+
+            // COM message filter (STA-only API): when Outlook is busy - e.g. its search
+            // UI is populating after Explorer.Search, or a modal state is active - it
+            // rejects incoming automation calls with RPC_E_CALL_REJECTED (0x80010001).
+            // The filter turns those into automatic retries for up to ~30 s instead of
+            // surfacing immediate failures (bit the Phase-3 live run: COM calls right
+            // after driving the search UI were rejected).
+            RetryMessageFilter? filter = null;
+            bool filterRegistered = false;
+            try
+            {
+                filter = new RetryMessageFilter();
+                filterRegistered = NativeMethods.CoRegisterMessageFilter(filter, out _) >= 0;
+            }
+            catch (Exception)
+            {
+                // A failed registration only loses retry comfort - never block the pump.
+            }
+
             _pumpReady.Set();
 
             IntPtr[] handles = { _workAvailable.SafeWaitHandle.DangerousGetHandle() };
@@ -118,6 +137,20 @@ namespace OutlookAI.Core.Com
 
             DrainWorkQueue();
             FailPendingWork();
+
+            if (filterRegistered)
+            {
+                try
+                {
+                    _ = NativeMethods.CoRegisterMessageFilter(null, out _);
+                }
+                catch (Exception)
+                {
+                    // Thread is exiting anyway.
+                }
+            }
+
+            GC.KeepAlive(filter);
         }
 
         private void PumpPendingMessages()
@@ -178,6 +211,55 @@ namespace OutlookAI.Core.Com
             _pumpReady.Dispose();
         }
 
+        /// <summary>
+        /// COM IMessageFilter (ole32) - NOT System.Windows.Forms.IMessageFilter. Governs
+        /// how rejected outgoing COM calls from this STA are retried.
+        /// </summary>
+        [ComImport]
+        [Guid("00000016-0000-0000-C000-000000000046")]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IOleMessageFilter
+        {
+            [PreserveSig]
+            int HandleInComingCall(int dwCallType, IntPtr hTaskCaller, int dwTickCount, IntPtr lpInterfaceInfo);
+
+            [PreserveSig]
+            int RetryRejectedCall(IntPtr hTaskCallee, int dwTickCount, int dwRejectType);
+
+            [PreserveSig]
+            int MessagePending(IntPtr hTaskCallee, int dwTickCount, int dwPendingType);
+        }
+
+        private sealed class RetryMessageFilter : IOleMessageFilter
+        {
+            private const int ServerCallIsHandled = 0;
+            private const int ServerCallRetryLater = 2;
+            private const int PendingMsgWaitDefProcess = 2;
+            private const int RetryAfterMs = 250;
+            private const int GiveUpAfterMs = 30_000;
+
+            public int HandleInComingCall(int dwCallType, IntPtr hTaskCaller, int dwTickCount, IntPtr lpInterfaceInfo)
+            {
+                return ServerCallIsHandled;
+            }
+
+            public int RetryRejectedCall(IntPtr hTaskCallee, int dwTickCount, int dwRejectType)
+            {
+                if (dwRejectType == ServerCallRetryLater && dwTickCount < GiveUpAfterMs)
+                {
+                    // >= 100 means "retry after this many milliseconds".
+                    return RetryAfterMs;
+                }
+
+                return -1; // give up - the call fails with the original HRESULT
+            }
+
+            public int MessagePending(IntPtr hTaskCallee, int dwTickCount, int dwPendingType)
+            {
+                return PendingMsgWaitDefProcess;
+            }
+        }
+
         private static class NativeMethods
         {
             internal const uint PM_NOREMOVE = 0x0000;
@@ -220,6 +302,9 @@ namespace OutlookAI.Core.Com
 
             [DllImport("user32.dll")]
             internal static extern IntPtr DispatchMessage([In] ref MSG lpMsg);
+
+            [DllImport("ole32.dll")]
+            internal static extern int CoRegisterMessageFilter(IOleMessageFilter? newFilter, out IOleMessageFilter? oldFilter);
         }
     }
 }

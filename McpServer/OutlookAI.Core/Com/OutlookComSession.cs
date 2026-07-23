@@ -1201,7 +1201,17 @@ namespace OutlookAI.Core.Com
                     }
 
                     ((dynamic)explorer!).CurrentFolder = folder;
-                    return SnapshotExplorer(explorer!);
+
+                    // A just-created window (headless cold start) can report an empty
+                    // CurrentFolder for a beat while it initializes - retry briefly.
+                    ComExplorerState state = SnapshotExplorer(explorer!);
+                    for (int attempt = 0; attempt < 6 && string.IsNullOrEmpty(state.CurrentFolderPath); attempt++)
+                    {
+                        Thread.Sleep(250);
+                        state = SnapshotExplorer(explorer!);
+                    }
+
+                    return state;
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
