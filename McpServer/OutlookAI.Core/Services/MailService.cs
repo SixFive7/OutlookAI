@@ -880,6 +880,194 @@ namespace OutlookAI.Core.Services
             return trimmed.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
         }
 
+        // ------------------------------------------------------------------ drafts (Phase 4, v3.MD L4/D4)
+
+        /// <summary>
+        /// Creates a new draft in <paramref name="account"/>'s Drafts folder with that
+        /// account's identity and signature (v3.MD section 3 mechanics), optionally
+        /// displayed for the user (D4 default). Never sends. Audit-logged (load-bearing).
+        /// </summary>
+        public DraftOutcome NewDraft(string account, string? to, string? cc, string? subject, string? body, bool display = true)
+        {
+            if (string.IsNullOrWhiteSpace(account))
+            {
+                throw new ArgumentException("account is required (a sending account SMTP address from list_accounts).", nameof(account));
+            }
+
+            IReadOnlyList<string> toList = Text.HtmlBodyComposer.SplitRecipients(to);
+            IReadOnlyList<string> ccList = Text.HtmlBodyComposer.SplitRecipients(cc);
+            if (toList.Count == 0)
+            {
+                throw new ArgumentException("to is required: one or more recipient addresses separated by ';' or ','.", nameof(to));
+            }
+
+            if (string.IsNullOrWhiteSpace(subject))
+            {
+                throw new ArgumentException("subject is required.", nameof(subject));
+            }
+
+            if (subject!.Length > 255)
+            {
+                throw new ArgumentException("subject is too long (max 255 characters).", nameof(subject));
+            }
+
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                throw new ArgumentException("body is required (plain text; it is placed above the signature).", nameof(body));
+            }
+
+            ComDraftCreateResult created = _gateway.Run(s =>
+            {
+                ComDraftCreateResult? r = s.TryCreateNewDraft(account, toList, ccList, subject!, body!, display, out string? error);
+                return r ?? throw new InvalidOperationException(BuildDraftError(error, account));
+            });
+
+            AuditDraft("new_draft", created, requestedAccount: account, sourceEntryId: null);
+            return ToDraftOutcome("new", created, hitId: null, sourceEntryId: null);
+        }
+
+        /// <summary>
+        /// Creates a reply (or reply-all) draft for a hit id / EntryID via COM
+        /// <c>Reply()</c>/<c>ReplyAll()</c> - threading and quoted history preserved,
+        /// agent text above the quote, saved to the source store's Drafts (D4). Never sends.
+        /// </summary>
+        public DraftOutcome ReplyDraft(string id, string? body, bool replyAll = false, bool display = true)
+        {
+            (string? hitId, string sourceEntryId, ComDraftCreateResult created) = CreateDerived(
+                id, replyAll ? ComDerivedDraftKind.ReplyAll : ComDerivedDraftKind.Reply, to: null, body, display);
+            string op = replyAll ? "replyall_draft" : "reply_draft";
+            AuditDraft(op, created, requestedAccount: null, sourceEntryId);
+            return ToDraftOutcome(replyAll ? "replyall" : "reply", created, hitId, sourceEntryId);
+        }
+
+        /// <summary>
+        /// Creates a forward draft for a hit id / EntryID via COM <c>Forward()</c> -
+        /// quoted content and attachments preserved, agent text above the quote, saved to
+        /// the source store's Drafts (D4). Never sends.
+        /// </summary>
+        public DraftOutcome ForwardDraft(string id, string? body, string? to, bool display = true)
+        {
+            IReadOnlyList<string> toList = Text.HtmlBodyComposer.SplitRecipients(to);
+            if (toList.Count == 0)
+            {
+                throw new ArgumentException("to is required for forward_draft: one or more recipient addresses separated by ';' or ','.", nameof(to));
+            }
+
+            (string? hitId, string sourceEntryId, ComDraftCreateResult created) = CreateDerived(
+                id, ComDerivedDraftKind.Forward, toList, body, display);
+            AuditDraft("forward_draft", created, requestedAccount: null, sourceEntryId);
+            return ToDraftOutcome("forward", created, hitId, sourceEntryId);
+        }
+
+        private (string? HitId, string SourceEntryId, ComDraftCreateResult Created) CreateDerived(
+            string id,
+            ComDerivedDraftKind kind,
+            IReadOnlyList<string>? to,
+            string? body,
+            bool display)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                throw new ArgumentException("id is required (a hit id from search/thread or a full EntryID).", nameof(id));
+            }
+
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                throw new ArgumentException("body is required (plain text; it is placed above the quoted mail).", nameof(body));
+            }
+
+            (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
+            IReadOnlyList<string> toList = to ?? Array.Empty<string>();
+            ComDraftCreateResult created = _gateway.Run(s =>
+            {
+                ComDraftCreateResult? r = s.TryCreateDerivedDraft(entryId, storeId, kind, toList, body!, display, out string? error);
+                if (r == null && storeId == null)
+                {
+                    // Direct EntryID without a known store: retry across stores (same
+                    // pattern as read/open_in_outlook).
+                    foreach (ComStoreDetail store in GetStoreDetails(s))
+                    {
+                        r = s.TryCreateDerivedDraft(entryId, store.StoreId, kind, toList, body!, display, out error);
+                        if (r != null)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                return r ?? throw new InvalidOperationException(
+                    "The source mail could not be opened or the draft could not be created (" + (error ?? "unknown")
+                    + "). Re-run search - the item may have moved.");
+            });
+
+            return (hitId, entryId, created);
+        }
+
+        private static string BuildDraftError(string? error, string account)
+        {
+            if (error == "AccountNotFound")
+            {
+                return "Account '" + account + "' was not found in the Outlook profile. Use list_accounts for the exact account SMTP addresses.";
+            }
+
+            if (error == "AccountHasNoDeliveryStore")
+            {
+                return "Account '" + account + "' has no delivery store; a draft cannot be filed for it.";
+            }
+
+            return "The draft could not be created (" + (error ?? "unknown") + ").";
+        }
+
+        /// <summary>
+        /// Write-op audit (LIVE and load-bearing from Phase 4): the structured line is
+        /// appended for every created draft; a failure surfaces with the draft's EntryID
+        /// preserved in the message instead of being swallowed.
+        /// </summary>
+        private static void AuditDraft(string operation, ComDraftCreateResult created, string? requestedAccount, string? sourceEntryId)
+        {
+            try
+            {
+                Audit.AuditLog.Append(
+                    operation,
+                    ("entryId", created.Draft.EntryId),
+                    ("store", created.Draft.StoreDisplayName),
+                    ("account", created.Draft.SendUsingAccountSmtp ?? requestedAccount),
+                    ("accountResolved", created.AccountResolved ? "true" : "false"),
+                    ("signatureInjected", created.SignatureInjected ? "true" : "false"),
+                    ("displayed", created.Displayed ? "true" : "false"),
+                    ("recipients", created.Draft.Recipients.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("sourceEntryId", sourceEntryId));
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidOperationException(
+                    "The draft was created (EntryID " + created.Draft.EntryId
+                    + ") but the audit line could not be written: " + ex.Message, ex);
+            }
+        }
+
+        private static DraftOutcome ToDraftOutcome(string kind, ComDraftCreateResult created, string? hitId, string? sourceEntryId)
+        {
+            return new DraftOutcome
+            {
+                Kind = kind,
+                Id = hitId,
+                SourceEntryId = sourceEntryId,
+                EntryId = created.Draft.EntryId,
+                Store = created.Draft.StoreDisplayName,
+                Folder = created.Draft.ParentFolderName,
+                Account = created.Draft.SendUsingAccountSmtp,
+                AccountResolved = created.AccountResolved,
+                Subject = created.Draft.Subject,
+                SignatureInjected = created.SignatureInjected,
+                Displayed = created.Displayed,
+                ConversationId = created.Draft.ConversationId,
+                Recipients = created.Draft.Recipients
+                    .Select(r => new RecipientView { Kind = r.Kind, Name = r.Name, Address = r.Address })
+                    .ToList(),
+            };
+        }
+
         // ------------------------------------------------------------------ index_status
 
         /// <summary>Staleness + availability self-report (R7/D19). Never starts Outlook.</summary>

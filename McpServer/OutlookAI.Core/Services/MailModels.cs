@@ -500,6 +500,49 @@ namespace OutlookAI.Core.Services
         public bool Displayed { get; set; }
     }
 
+    /// <summary>Draft-tool outcome (v3.MD L4/D4): the draft is SAVED, never sent.</summary>
+    public sealed class DraftOutcome
+    {
+        /// <summary>"new", "reply", "replyall" or "forward".</summary>
+        public string Kind { get; set; } = "new";
+
+        /// <summary>The hit id the source mail was referenced by (derived drafts, when one was used).</summary>
+        public string? Id { get; set; }
+
+        /// <summary>EntryID of the source mail (derived drafts).</summary>
+        public string? SourceEntryId { get; set; }
+
+        /// <summary>REAL EntryID of the saved draft (usable with read/open_in_outlook).</summary>
+        public string EntryId { get; set; } = string.Empty;
+
+        /// <summary>Store the draft was saved in.</summary>
+        public string? Store { get; set; }
+
+        /// <summary>Drafts folder name (localized).</summary>
+        public string? Folder { get; set; }
+
+        /// <summary>SmtpAddress the draft will send as (SendUsingAccount).</summary>
+        public string? Account { get; set; }
+
+        /// <summary>True when SendUsingAccount was pinned from a matched Account object.</summary>
+        public bool AccountResolved { get; set; }
+
+        /// <summary>Draft subject (RE:/FW: prefixes included for derived drafts).</summary>
+        public string? Subject { get; set; }
+
+        /// <summary>True when Outlook injected the account's signature into the body.</summary>
+        public bool SignatureInjected { get; set; }
+
+        /// <summary>True when the draft was opened in an Outlook window for the user (D4 default).</summary>
+        public bool Displayed { get; set; }
+
+        /// <summary>Conversation id (derived drafts thread with their source).</summary>
+        public string? ConversationId { get; set; }
+
+        /// <summary>Recipients currently on the draft.</summary>
+        public IReadOnlyList<RecipientView>? Recipients { get; set; }
+    }
+
     /// <summary>show_search_results outcome (v3.MD L3).</summary>
     public sealed class ShowSearchResultsOutcome
     {
