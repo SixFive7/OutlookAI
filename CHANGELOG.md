@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Remove a superseded OutlookAI signing certificate from your Trusted Publishers store during install and update — its private key was briefly exposed publicly, so it should no longer be trusted. Current releases are signed with a different, unaffected certificate.
+
 ## v2.3.4.145 - 2026-07-22
 
 - Fix: AI error responses (such as hitting the turn limit) are no longer written into your draft as if they were the reply — you now get a clear message instead.

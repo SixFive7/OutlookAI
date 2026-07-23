@@ -35,6 +35,17 @@ jobs:
       - name: Build
         run: msbuild OutlookAI.csproj /p:Configuration=Release /p:TreatWarningsAsErrors=true /p:ManifestCertificateThumbprint=${{ env.SIGN_THUMBPRINT }} /p:DefineConstants="VSTO40%3BTRACE"
 
+      - name: Validate installer script
+        shell: pwsh
+        # Compile installer.iss so a script error is caught here instead of mid-release.
+        # Also confirms iscc is present on the runner image (the installer step relies on
+        # it being preinstalled). [Files] needs publish\ to exist; a placeholder suffices
+        # for a syntax check.
+        run: |
+          New-Item -ItemType Directory -Force publish | Out-Null
+          Set-Content publish\placeholder.txt "placeholder"
+          iscc /DMyAppVersion=0.0.0.1 /O"$env:RUNNER_TEMP\issout" installer.iss
+
   dependency-review:
     # Flags known-vulnerable or disallowed-license dependencies introduced by a PR.
     if: github.event_name == 'pull_request'
