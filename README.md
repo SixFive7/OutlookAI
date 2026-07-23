@@ -2,7 +2,7 @@
 
 > **Inspired by [OutlookAI by kirklandsig](https://github.com/kirklandsig/OutlookAI)** — originally created and released under the MIT License.
 
-An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add-in. Uses the Claude Code CLI as its AI backend with the Claude Opus 4.6 model, letting you use your existing Claude Pro or Max subscription — no separate API key or per-token billing required.
+An AI-powered email assistant for Microsoft Outlook: a VSTO add-in with an AI writing sidebar for composing mail, plus a local [MCP server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) that lets AI agents like Claude Code search, read, and draft mail in your mailboxes — fast, local, and cloud-independent. The sidebar uses the Claude Code CLI as its AI backend with the Claude Opus 4.6 model, letting you use your existing Claude Pro or Max subscription — no separate API key or per-token billing required.
 
 <p align="center">
   <img src="Docs/screenshot-light.png" alt="OutlookAI light mode" width="48%" />
@@ -18,9 +18,11 @@ An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add
   - [Instruction-Based Drafting and Editing](#instruction-based-drafting-and-editing)
   - [Context Awareness](#context-awareness)
   - [Iterative Refinement](#iterative-refinement)
+  - [Outlook Tuning and Settings](#outlook-tuning-and-settings)
   - [Dark Mode](#dark-mode)
   - [Automatic Updates](#automatic-updates)
   - [Debug Mode](#debug-mode)
+- [MCP Server (Mail Search, Reading, and Drafting for AI Agents)](#mcp-server-mail-search-reading-and-drafting-for-ai-agents)
 - [Limitations](#limitations)
 - [Requirements](#requirements)
 - [Getting Started](#getting-started)
@@ -85,6 +87,18 @@ When using **Edit current draft**, each AI interaction is recorded in an edit hi
 
 Each step builds on the last, with full context of the conversation.
 
+### Outlook Tuning and Settings
+
+OutlookAI keeps a proven Outlook configuration applied automatically:
+
+- **Fast local search** — registry settings that route Outlook's search to the local Windows Search index (no server round-trips, no 250-result display cap)
+- **Full mailbox caching** — Cached Exchange Mode sync slider set to All (shared folders included), so search covers the whole mailbox
+- **OST headroom** — raised local cache size limits so a fully cached mailbox never silently stalls syncing
+
+The tuning service reconciles these on every Outlook start, writes only actual differences, respects (and flags) values enforced by organizational group policy, and tells you when a change still needs an Outlook restart.
+
+An **OutlookAI Settings** button on the main Mail ribbon opens a small dialog (light/dark theme aware) where each tuning group can be toggled on or off and the current effective values are shown. Turning a group off stops managing it and leaves your Outlook settings as they are; uninstalling never reverts your Outlook configuration.
+
 ### Dark Mode
 
 The task pane automatically matches your Outlook theme:
@@ -117,18 +131,47 @@ For troubleshooting, click the version label at the bottom of the task pane 7 ti
 
 ---
 
+## MCP Server (Mail Search, Reading, and Drafting for AI Agents)
+
+Alongside the compose sidebar, OutlookAI includes a local **MCP (Model Context Protocol) server** that gives AI agents — Claude Code, or any MCP-capable client — safe, fast access to your mail. It runs entirely on your machine: mail is searched through the local Windows Search index and read through Outlook itself, with no cloud mail API and no data leaving your computer.
+
+What an agent can do with it:
+
+| Capability | Tools |
+|---|---|
+| **Search** all cached mailboxes (including delegate/shared mailboxes and attachment contents) in milliseconds; a `fresh` mode also catches mail that arrived seconds ago, and an `exhaustive` mode scans folders directly when the index is stale | `search`, `thread`, `index_status` |
+| **Read** any mail in full (safe truncation, sender/recipient details, conversation view) and save attachments to disk so the agent can open them | `read`, `save_attachment`, `list_accounts`, `list_folders` |
+| **Show you things** — open a mail on your screen, jump Outlook to a folder, or run a query in Outlook's own search box so you see the result list | `open_in_outlook`, `goto_folder`, `show_search_results` |
+| **Draft for you** — new mail, reply, reply-all, forward: the draft opens on screen with the right account identity, that account's signature, and the agent's text above the quote, ready for *you* to review and press Send | `new_draft`, `reply_draft`, `replyall_draft`, `forward_draft` |
+| **Send only with friction** — automatic sending requires an explicit two-step confirmation with a one-time token bound to the exact draft content; the sending account is hard-verified before transport and every step is audit-logged | `send` |
+| **Self-diagnose** — Outlook/index/service state, audit-log writability, tuning state | `health` |
+
+Safety properties: the server has **no delete, move, or modify tools** for existing mail; every draft/save/send operation writes an audit line to `%LOCALAPPDATA%\OutlookAI\audit.log`; payloads are compact and truncation-flagged so agents iterate with cheap targeted queries instead of bulk-reading your mailbox. The server never closes or restarts Outlook (it can start it when needed).
+
+**Registration** — the server speaks MCP over stdio. Register it user-globally for Claude Code:
+
+```
+claude mcp add --scope user outlookai <path-to>\OutlookAI.McpServer.exe
+```
+
+**Development-build note** — the MCP server currently ships from source: build it with the .NET 10 SDK (`dotnet build McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj -c Release`) and register the built exe. Installer/auto-updater integration for the server is planned; the add-in installer does not package it yet.
+
+Developer documentation (architecture, test tiers, contributor facts): [`McpServer/README.md`](McpServer/README.md).
+
+---
+
 ## Limitations
 
-OutlookAI is focused on email composition assistance. The following are **not** supported:
+The compose sidebar is focused on email composition assistance. The following are **not** supported there:
 
 - **No model selection** — Hard-coded to Claude Opus 4.6. There is no UI to choose a different model.
 - **No request cancellation** — Once an action is submitted, it runs until completion or times out after 2 minutes. There is no cancel button.
-- **No settings or configuration UI** — No preferences panel. All behavior is built-in.
+- **No AI preferences UI** — The [Settings dialog](#outlook-tuning-and-settings) covers Outlook tuning only; the AI behavior itself is built-in.
 - **No preview before applying** — AI results are written directly into the email draft. There is no intermediate preview/accept/reject step.
 - **No undo** — Standard Ctrl+Z in the Outlook editor may work for simple cases, but there is no dedicated undo for AI operations.
 - **No saved prompts or templates** — Instructions must be typed each time.
-- **No reading or summarizing received emails** — The assistant only works in compose mode (new, reply, forward). It cannot process emails you are reading.
-- **No attachment awareness** — The AI does not see or reference email attachments.
+- **No reading or summarizing received emails in the sidebar** — The sidebar only works in compose mode (new, reply, forward). Reading, searching, and summarizing received mail is what the [MCP server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) provides, through an agent like Claude Code.
+- **No attachment awareness in the sidebar** — The sidebar AI does not see email attachments (agents can read them via the MCP server's `save_attachment`).
 - **No HTML or rich-text formatting control** — The AI returns plain text. Formatting is handled by Outlook's editor.
 - **No Outlook for Mac, Outlook on the web, or new Outlook** — Only classic desktop Outlook (2016, 2019, 2021, 2024) on Windows is supported.
 - **No keyboard shortcuts** — All actions require clicking buttons in the task pane.

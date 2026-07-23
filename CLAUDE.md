@@ -14,7 +14,7 @@ Rules:
 
 ## Build and Release
 
-- **Build** runs automatically on every push to master (`.github/workflows/build.yml`). It only compiles — no releases, no tags, no changelog changes.
+- **Build** runs automatically on every pull request (`.github/workflows/build.yml`), and can be triggered on demand. It only compiles — no releases, no tags, no changelog changes. On pull requests it also runs a dependency review.
 - **Release** is triggered on demand (`.github/workflows/release.yml`) via `gh workflow run release`. It extracts the Unreleased changelog section, builds, creates an installer, publishes a GitHub Release, and stamps the changelog.
 - The release workflow **fails if the Unreleased section is empty** — you must have release notes before creating a release.
 - Version is derived from the latest GitHub release tag (base version) + commit count. No hardcoded version in the repo.
@@ -27,3 +27,9 @@ Rules:
   2. Run: `gh workflow run release -f version_bump=X.X.X` with the user's chosen bump value.
   3. Monitor with `gh run watch`.
 - After a release, pull the stamped changelog commit before continuing work: `git pull --rebase`.
+
+## MCP Server (`McpServer/`)
+
+- `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which only contains the VSTO add-in (MSBuild-only).
+- Their CI is `.github/workflows/mcpserver.yml` (windows runner, dotnet only; runs `dotnet test --filter "Category!=Live"`). Tests marked `Category=Live` need the real Windows Search index plus Outlook and only run on a configured dev machine.
+- Developer documentation: `McpServer/README.md`.
