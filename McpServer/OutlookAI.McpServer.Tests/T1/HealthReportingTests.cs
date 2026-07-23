@@ -109,6 +109,21 @@ public sealed class HealthReportingTests
         _ = HealthReporting.TryIsProcessRunning("SearchIndexer");
         _ = HealthReporting.TryGetOutlookVersion();
 
+        // SF-3 headless probe (soak fix 2026-07-23): null exactly when no OUTLOOK.EXE
+        // exists. Sampled before AND after to keep the assert race-free on a machine
+        // where Outlook starts/stops mid-suite.
+        bool outlookBefore = HealthReporting.TryIsProcessRunning("OUTLOOK") == true;
+        bool? headless = HealthReporting.TryGetOutlookHeadless();
+        bool outlookAfter = HealthReporting.TryIsProcessRunning("OUTLOOK") == true;
+        if (!outlookBefore && !outlookAfter)
+        {
+            Assert.Null(headless);
+        }
+        else if (outlookBefore && outlookAfter)
+        {
+            Assert.NotNull(headless);
+        }
+
         string probeDir = Path.Combine(Path.GetTempPath(), "outlookai-health-probe-" + Guid.NewGuid().ToString("N"));
         try
         {

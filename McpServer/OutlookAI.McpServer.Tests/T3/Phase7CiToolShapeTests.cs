@@ -48,8 +48,24 @@ public sealed class Phase7CiToolShapeTests
         Assert.True(status is "ok" or "degraded", $"unexpected status '{status}'");
 
         JsonElement outlook = report.GetProperty("outlook");
-        Assert.True(outlook.GetProperty("running").ValueKind is JsonValueKind.True or JsonValueKind.False);
+        bool running = outlook.GetProperty("running").GetBoolean();
         Assert.True(outlook.GetProperty("installerMutexHeld").ValueKind is JsonValueKind.True or JsonValueKind.False);
+
+        // SF-1/SF-3 invariants (soak fix 2026-07-23): comConnected is PROBED liveness -
+        // it can never be true while Outlook is not running; headless is only reported
+        // for a running Outlook (nulls are omitted from payloads).
+        bool comConnected = outlook.GetProperty("comConnected").GetBoolean();
+        bool hasHeadless = outlook.TryGetProperty("headless", out JsonElement headless);
+        if (!running)
+        {
+            Assert.False(comConnected, "comConnected=true while Outlook is not running (SF-1 regression)");
+            Assert.False(hasHeadless && headless.ValueKind is not JsonValueKind.Null,
+                "headless must be omitted when Outlook is not running");
+        }
+        else if (hasHeadless)
+        {
+            Assert.True(headless.ValueKind is JsonValueKind.True or JsonValueKind.False);
+        }
 
         JsonElement index = report.GetProperty("index");
         Assert.False(string.IsNullOrWhiteSpace(index.GetProperty("provider").GetString()));
