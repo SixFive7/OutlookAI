@@ -23,6 +23,7 @@ An AI-powered email assistant for Microsoft Outlook: a VSTO add-in with an AI wr
   - [Automatic Updates](#automatic-updates)
   - [Debug Mode](#debug-mode)
 - [MCP Server (Mail Search, Reading, and Drafting for AI Agents)](#mcp-server-mail-search-reading-and-drafting-for-ai-agents)
+  - [Outlook Lifetime and the Tray Icon](#outlook-lifetime-and-the-tray-icon)
 - [Limitations](#limitations)
 - [Requirements](#requirements)
 - [Getting Started](#getting-started)
@@ -157,6 +158,21 @@ claude mcp add --scope user outlookai <path-to>\OutlookAI.McpServer.exe
 **Development-build note** — the MCP server currently ships from source: build it with the .NET 10 SDK (`dotnet build McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj -c Release`) and register the built exe. Installer/auto-updater integration for the server is planned; the add-in installer does not package it yet.
 
 Developer documentation (architecture, test tiers, contributor facts): [`McpServer/README.md`](McpServer/README.md).
+
+### Outlook Lifetime and the Tray Icon
+
+When an agent needs Outlook and it is not running, the server starts it **headless**: no window appears — just an Outlook icon in the system tray whose tooltip reads *"Another program is using Outlook. To disconnect programs and exit Outlook, click the Outlook icon and then click Exit Now."* This is normal Outlook behavior for a programmatically started instance, and it is by design the server's preferred state: a headless Outlook syncs mail and feeds the Windows Search index like a normal one, without being in your way.
+
+How the lifetime behaves (measured on a current classic Outlook build):
+
+- **While any agent session is connected**, the headless Outlook keeps running. Server processes are per-agent-session and release their connection when the session ends.
+- **After the last connection is released**, a headless Outlook keeps running for roughly **10-12 minutes** and then exits on its own. The tray tooltip may still show the "another program" message during that grace period even though nothing is connected anymore.
+- **Want a normal Outlook?** Just launch Outlook the usual way — the *same* headless process promotes itself to a full windowed session within a couple of seconds (watch the taskbar rather than the tray). No conflict, nothing to close first.
+- **Closing the window** (yours or a promoted one) exits Outlook within seconds — even while agent sessions are still connected. Outlook has deliberately not let external programs keep it alive after a user closes it since Outlook 2007 SP2. The server simply reconnects — and restarts Outlook headless — the next time an agent needs mail access.
+- **Exit Now** on the tray icon force-disconnects clients and exits the headless Outlook immediately; agents likewise reconnect on demand later.
+- The server itself **never closes or restarts Outlook** under any circumstances.
+
+One rule for other automation on the machine: do not drive `Application.Quit()` while agent sessions are attached — Outlook then tears down and parks indefinitely, waiting for the attached clients (that is what the tray tooltip is warning about). The parked state resolves itself a few seconds after the attached sessions release (for agent sessions: when they end). Prefer closing Outlook's window, or stop the agent sessions first.
 
 ---
 

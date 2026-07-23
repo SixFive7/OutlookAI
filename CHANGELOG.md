@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fix the assistant server keeping a closed Outlook "connected": it now watches the Outlook process and releases every held connection the moment Outlook exits (user close, crash, or logoff), so a dead Outlook is never held open by stale references and the next mail request starts Outlook fresh without errors.
+- Fix the health report claiming a connection to an Outlook that already exited: connectivity is now actively verified at report time (health and index_status), never inferred from a stale held session.
+- Add a "headless" indicator to the health report: it now tells you whether Outlook is running invisibly in the background (tray icon only) or as a normal window.
+- Improve draft results right after a cold Outlook start: the reported store identity no longer comes back empty when Outlook has only just started.
+- Guarantee background operation: only the explicit show-me tools (open a mail, jump to a folder, show search results) and draft windows ever open Outlook UI - every other assistant operation now provably leaves Outlook window-less, verified by tests.
+- Document Outlook's lifetime around the assistant in the README: headless background start, the tray icon meaning, the ~10-12 minute self-exit after the last agent disconnects, promoting to a normal Outlook by just launching it, and what closing the window does.
 - Add a health check tool: one call reports Outlook state and installed version, mail store reachability, search-index freshness, Windows Search service state, audit-log writability, and the current Outlook tuning state - without ever starting Outlook.
 - Improve assistant payload discipline: search and conversation results now say explicitly when the requested cap cut the list (with guidance to raise it or narrow the query), and very long recipient or attachment lists are capped with clear has-more markers while operations keep using the full lists.
 - Add an OutlookAI Settings dialog: a large button in the OutlookAI group on Outlook's main Mail ribbon (carrying the same icon as the AI Assistant) opens a settings window (matching your Office light or dark theme) where each tuning group can be switched on or off, the current effective values are shown, and a clear indicator tells you when an Outlook restart is still needed. Turning a group off stops managing it and leaves your Outlook settings as they are.
