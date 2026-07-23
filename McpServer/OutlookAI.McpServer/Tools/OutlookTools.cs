@@ -187,6 +187,60 @@ public static class OutlookTools
         return Guard(() => ServerRuntime.Service.ShowSearchResults(query, scope, store, folder));
     }
 
+    [McpServerTool(Name = "new_draft")]
+    [Description("Create a NEW email draft for the user - saved into the chosen account's Drafts folder with that account's "
+        + "identity and signature, and opened on screen (default) so the user can review, edit and send it themselves. "
+        + "NOTHING IS SENT by this tool. Body is plain text (line breaks preserved) and is placed above the signature.")]
+    public static string NewDraft(
+        [Description("Sending account SMTP address (see list_accounts) - determines the From identity, the Drafts folder and the signature.")]
+        string account,
+        [Description("To recipient address(es), separated by ';' or ','.")] string to,
+        [Description("Subject line.")] string subject,
+        [Description("Plain-text body. Placed ABOVE the account's signature.")] string body,
+        [Description("Cc recipient address(es), separated by ';' or ','. Optional.")] string? cc = null,
+        [Description("Open the draft in an Outlook window for the user (default true). Pass false only when the user asked not to see it.")]
+        bool display = true)
+    {
+        return Guard(() => ServerRuntime.Service.NewDraft(account, to, cc, subject, body, display));
+    }
+
+    [McpServerTool(Name = "reply_draft")]
+    [Description("Create a REPLY draft to a mail (hit id from search/thread, or EntryID) via Outlook's own Reply - "
+        + "threading and the quoted original are preserved and the right account's signature is applied; your text goes above the quote. "
+        + "The draft is saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT.")]
+    public static string ReplyDraft(
+        [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
+        [Description("Plain-text reply body. Placed ABOVE the quoted original.")] string body,
+        [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true)
+    {
+        return Guard(() => ServerRuntime.Service.ReplyDraft(id, body, replyAll: false, display));
+    }
+
+    [McpServerTool(Name = "replyall_draft")]
+    [Description("Create a REPLY-ALL draft to a mail (hit id or EntryID) via Outlook's own ReplyAll - all original recipients kept, "
+        + "threading and quoted history preserved, correct signature applied, your text above the quote. "
+        + "Saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT.")]
+    public static string ReplyAllDraft(
+        [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
+        [Description("Plain-text reply body. Placed ABOVE the quoted original.")] string body,
+        [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true)
+    {
+        return Guard(() => ServerRuntime.Service.ReplyDraft(id, body, replyAll: true, display));
+    }
+
+    [McpServerTool(Name = "forward_draft")]
+    [Description("Create a FORWARD draft of a mail (hit id or EntryID) via Outlook's own Forward - quoted content and attachments "
+        + "carried over, correct signature applied, your text above the quote. "
+        + "Saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT.")]
+    public static string ForwardDraft(
+        [Description("Hit id (e.g. h12) or full EntryID hex of the mail to forward.")] string id,
+        [Description("Plain-text body. Placed ABOVE the forwarded mail.")] string body,
+        [Description("To recipient address(es), separated by ';' or ','.")] string to,
+        [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true)
+    {
+        return Guard(() => ServerRuntime.Service.ForwardDraft(id, body, to, display));
+    }
+
     private static string Guard<T>(Func<T> operation)
     {
         try

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add email drafting tools: the assistant can now prepare a new mail, reply, reply-all, or forward for you - the draft opens on screen with the right account identity, that account's own signature, and the assistant's text above the quoted conversation, ready for you to review and send yourself (nothing is ever sent automatically).
+- Add a structured audit log: every draft the assistant creates and every attachment it saves is recorded locally under %LOCALAPPDATA%\OutlookAI.
+
 - Add show-me tools: the assistant can now open a mail in an Outlook window for you, jump your Outlook to any folder, and run a search in Outlook's own search box so you see the result list on screen (works even if Outlook was not running).
 - Add exhaustive search mode: a folder- or date-bounded scan straight through Outlook that bypasses the search index, for when the index is stale or correctness matters more than speed; searches now also advise when the index is stale enough to warrant it.
 - Add OutlookAI MCP server search surface v1: Claude can now search all locally indexed Outlook mail (all accounts, delegate mailboxes, and attachment contents) in milliseconds, with a fresh mode that also catches mail that just arrived and is not yet indexed.
