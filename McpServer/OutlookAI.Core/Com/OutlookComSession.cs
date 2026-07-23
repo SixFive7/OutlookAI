@@ -1813,7 +1813,7 @@ namespace OutlookAI.Core.Com
                     // Identity FIRST: the Account OBJECT, before anything else touches
                     // the item (v3.MD section 3 - omitting it silently uses the default
                     // account; a string would not bind).
-                    draft.SendUsingAccount = account;
+                    SetSendUsingAccount(mail!, account);
 
                     (bool signatureInjected, long textBefore, long textAfter, string htmlAfter) =
                         TouchInspectorForSignature((object)draft);
@@ -1826,6 +1826,11 @@ namespace OutlookAI.Core.Com
                     AddRecipients(draft, ccRecipients, 2);
                     draft.Save();
 
+                    // The GetInspector touch left a HIDDEN Inspector alive inside
+                    // Outlook (it shows up in Application.Inspectors - Phase-4 live
+                    // finding). Close it now that the draft is saved; Display() below
+                    // opens a fresh visible one for the final item when requested.
+                    CloseHiddenInspector(mail!);
                     mail = RelocateToFolderIfNeeded(mail!, draftsFolder!, out bool moved, out string? initialFolder);
                     if (display)
                     {
@@ -1952,7 +1957,7 @@ namespace OutlookAI.Core.Com
                         account = FindAccountByDeliveryStore(sourceStoreIdActual, sourceStoreName);
                         if (account != null)
                         {
-                            draft.SendUsingAccount = account;
+                            SetSendUsingAccount(mail!, account);
                             accountResolved = true;
                         }
                     }
@@ -1969,6 +1974,10 @@ namespace OutlookAI.Core.Com
                     }
 
                     draft.Save();
+
+                    // Same hidden-Inspector cleanup as the new-draft path (the
+                    // GetInspector signature touch materializes one inside Outlook).
+                    CloseHiddenInspector(mail!);
 
                     bool moved = false;
                     string? initialFolder = null;
@@ -2113,6 +2122,35 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
+        /// ⚠ LIVE-VERIFIED FOOTGUN (Phase 4): <c>MailItem.SendUsingAccount</c> is a
+        /// PROPERTYPUTREF property. A late-bound dynamic assignment
+        /// (<c>mail.SendUsingAccount = account</c>) SILENTLY NO-OPS on this Outlook
+        /// build - no exception, the getter stays null and the DEFAULT account would
+        /// send. The putref accessor must be invoked explicitly. A failure here throws
+        /// (identity is load-bearing); inner COM errors are unwrapped so the standard
+        /// IsComCallFailure handling applies.
+        /// </summary>
+        private static void SetSendUsingAccount(object mailObject, object accountObject)
+        {
+            try
+            {
+                mailObject.GetType().InvokeMember(
+                    "SendUsingAccount",
+                    System.Reflection.BindingFlags.PutRefDispProperty
+                        | System.Reflection.BindingFlags.Public
+                        | System.Reflection.BindingFlags.Instance,
+                    null,
+                    mailObject,
+                    new[] { accountObject },
+                    CultureInfo.InvariantCulture);
+            }
+            catch (System.Reflection.TargetInvocationException ex) when (ex.InnerException != null)
+            {
+                throw ex.InnerException;
+            }
+        }
+
+        /// <summary>
         /// STA-side signature injection (v3.MD section 3): with SendUsingAccount already
         /// pinned, touching GetInspector makes Outlook inject that account's signature
         /// exactly as if the user opened the compose window. Detection is TEXT-based
@@ -2142,6 +2180,32 @@ namespace OutlookAI.Core.Com
             long textBefore = CountNonWhitespaceText(htmlBefore);
             long textAfter = CountNonWhitespaceText(htmlAfter);
             return (textAfter > textBefore, textBefore, textAfter, htmlAfter);
+        }
+
+        /// <summary>
+        /// STA-side: closes the hidden Inspector the GetInspector signature touch left
+        /// behind (olDiscard - the item is already saved, nothing is lost). Without
+        /// this, a display:false draft still surfaces in Application.Inspectors.
+        /// </summary>
+        private static void CloseHiddenInspector(object mailObject)
+        {
+            object? inspector = null;
+            try
+            {
+                inspector = ((dynamic)mailObject).GetInspector;
+                if (inspector != null)
+                {
+                    ((dynamic)inspector).Close(1); // 1 = olDiscard
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                // No inspector to close - fine.
+            }
+            finally
+            {
+                Release(inspector);
+            }
         }
 
         private static long CountNonWhitespaceText(string html)

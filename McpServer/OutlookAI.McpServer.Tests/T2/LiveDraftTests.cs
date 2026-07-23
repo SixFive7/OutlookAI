@@ -150,9 +150,10 @@ public sealed class LiveDraftTests
                 CleanupDraft(Hub, draftId);
             }
 
-            // Seed copies (Inbox + Sent) + purge pass over Deleted Items.
-            int deleted = LiveOutlookTestMailer.DeleteTaggedArtifacts(Hub, Marker);
-            _output.WriteLine($"cleanup: taggedArtifactsDeleted={deleted}");
+            // Seed copies (Inbox + Sent) can MATERIALIZE AFTER a one-shot cleanup
+            // (self-send delivery lag, Phase-4 live finding) - loop until stable zero.
+            int deleted = LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(Hub, Marker);
+            _output.WriteLine($"cleanup: taggedArtifactsDeleted={deleted} (stable zero)");
         }
 
         foreach (string draftId in draftIds)

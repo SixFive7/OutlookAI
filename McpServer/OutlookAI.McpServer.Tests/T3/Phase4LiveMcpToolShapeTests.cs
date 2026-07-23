@@ -127,12 +127,14 @@ public sealed class Phase4LiveMcpToolShapeTests
         }
         finally
         {
+            // Self-send copies can arrive AFTER a one-shot cleanup (delivery lag,
+            // Phase-4 live finding) - loop delete+count until stable zero.
             int deleted = 0;
             for (int attempt = 0; attempt < 3; attempt++)
             {
                 try
                 {
-                    deleted = LiveOutlookTestMailer.DeleteTaggedArtifacts(Hub, Marker);
+                    deleted = LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(Hub, Marker);
                     break;
                 }
                 catch (Exception) when (attempt < 2)
@@ -141,7 +143,7 @@ public sealed class Phase4LiveMcpToolShapeTests
                 }
             }
 
-            _output.WriteLine($"cleanup: taggedArtifactsDeleted={deleted}");
+            _output.WriteLine($"cleanup: taggedArtifactsDeleted={deleted} (stable zero)");
         }
 
         Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));

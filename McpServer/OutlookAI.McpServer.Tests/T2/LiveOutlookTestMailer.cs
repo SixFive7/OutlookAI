@@ -85,9 +85,39 @@ public static class LiveOutlookTestMailer
                     }
 
                     // D20/v3.MD section 3: SendUsingAccount takes the Account OBJECT and
-                    // must be set BEFORE Send - omitting it silently uses the default
-                    // account, which would violate the telefonie-only grant.
-                    mail.SendUsingAccount = sendingAccount;
+                    // must be set BEFORE Send. ⚠ Phase-4 live finding: it is a
+                    // PROPERTYPUTREF property - a plain dynamic assignment SILENTLY
+                    // NO-OPS (the Phase-2/3 seeds actually went out from the DEFAULT
+                    // account because of this). Invoke the putref accessor explicitly,
+                    // then HARD-VERIFY the identity before sending: a mismatch aborts
+                    // the send instead of violating the hub-only grant.
+                    ((object)mail).GetType().InvokeMember(
+                        "SendUsingAccount",
+                        System.Reflection.BindingFlags.PutRefDispProperty
+                            | System.Reflection.BindingFlags.Public
+                            | System.Reflection.BindingFlags.Instance,
+                        null,
+                        (object)mail,
+                        new[] { sendingAccount });
+
+                    string? effectiveSender = null;
+                    dynamic? sendUsing = null;
+                    try
+                    {
+                        sendUsing = mail.SendUsingAccount;
+                        effectiveSender = sendUsing != null ? (string?)sendUsing.SmtpAddress : null;
+                    }
+                    finally
+                    {
+                        Release(sendUsing);
+                    }
+
+                    if (!string.Equals(effectiveSender, smtpAddress, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException(
+                            "SendUsingAccount did not stick (would send from the default account) - refusing to send (D20).");
+                    }
+
                     mail.Send();
                 }
                 finally
@@ -155,6 +185,48 @@ public static class LiveOutlookTestMailer
                 Release(app);
             }
         });
+    }
+
+    /// <summary>
+    /// Cleanup for artifacts of a SELF-SEND round trip (D20): the Inbox and Sent
+    /// copies of a just-sent mail materialize asynchronously and can arrive AFTER a
+    /// one-shot cleanup pass (live-observed: an Inbox copy appeared after delete +
+    /// count both reported zero). Loops delete+count until the count stays zero for
+    /// <paramref name="stableFor"/>, throwing when <paramref name="window"/> expires.
+    /// Returns the total number of artifacts deleted.
+    /// </summary>
+    public static int DeleteTaggedArtifactsUntilStableZero(
+        string storeDisplayName,
+        string uniqueMarker,
+        TimeSpan? window = null,
+        TimeSpan? stableFor = null)
+    {
+        TimeSpan totalWindow = window ?? TimeSpan.FromSeconds(120);
+        TimeSpan requiredStable = stableFor ?? TimeSpan.FromSeconds(10);
+        DateTime deadline = DateTime.UtcNow + totalWindow;
+        DateTime? zeroSince = null;
+        int totalDeleted = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            int remaining = CountTaggedArtifacts(storeDisplayName, uniqueMarker);
+            if (remaining > 0)
+            {
+                totalDeleted += DeleteTaggedArtifacts(storeDisplayName, uniqueMarker);
+                zeroSince = null;
+                continue;
+            }
+
+            zeroSince ??= DateTime.UtcNow;
+            if (DateTime.UtcNow - zeroSince.Value >= requiredStable)
+            {
+                return totalDeleted;
+            }
+
+            Thread.Sleep(2000);
+        }
+
+        throw new TimeoutException(
+            "Tagged artifacts kept (re)appearing for the whole cleanup window - manual check required (S3).");
     }
 
     /// <summary>
