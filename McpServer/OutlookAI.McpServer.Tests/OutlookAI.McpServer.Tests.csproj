@@ -32,6 +32,12 @@
       <_Parameter1>McpServerExePath</_Parameter1>
       <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\OutlookAI.McpServer\bin\$(Configuration)\net10.0-windows\OutlookAI.McpServer.exe'))</_Parameter2>
     </AssemblyAttribute>
+    <!-- Test project directory, so T2 live tests can locate the gitignored
+         live-fixtures/ folder (machine-local settings; never committed - v3.MD S6). -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TestProjectDir</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 
 </Project>
