@@ -241,11 +241,38 @@ public static class OutlookTools
         return Guard(() => ServerRuntime.Service.ForwardDraft(id, body, to, display));
     }
 
+    [McpServerTool(Name = "send")]
+    [Description("ACTUALLY SENDS an email - the ONLY tool that sends anything. DO NOT USE THIS BY DEFAULT: the standard OutlookAI "
+        + "workflow is new_draft/reply_draft/replyall_draft/forward_draft, which save a draft and open it for the USER to review "
+        + "and press Send themselves. Use send ONLY when the user EXPLICITLY asked for automatic sending, or you are certain "
+        + "beyond doubt that is what they want; when in doubt, create a draft instead. Deliberately high-friction, two-step: "
+        + "a call WITHOUT confirm_token NEVER sends - it returns a warning plus a single-use confirm_token bound to that exact "
+        + "draft and its current content. Re-confirm with the user, then call send again WITH the token. Tokens expire after "
+        + "~2 minutes, work exactly once, and are invalidated by any change to the draft. The From identity is always the "
+        + "account owning the draft's store, hard-verified immediately before transport (mismatch aborts - this tool can never "
+        + "send from a different account). Every step is audit-logged.")]
+    public static string Send(
+        [Description("The draft to send: the entryId returned by a draft tool (preferred) or a hit id of a saved, UNSENT draft.")]
+        string id,
+        [Description("One-time confirmation token from the previous send call for this draft. OMIT on the first call.")]
+        string? confirm_token = null,
+        [Description("Optional Exchange send-on-behalf-of SMTP address (requires server-side permission). Must be identical in both calls.")]
+        string? sent_on_behalf_of = null)
+    {
+        return Guard(() => ServerRuntime.Service.Send(id, confirm_token, sent_on_behalf_of));
+    }
+
     private static string Guard<T>(Func<T> operation)
     {
         try
         {
             return JsonSerializer.Serialize(operation(), Json);
+        }
+        catch (SendRefusedException ex)
+        {
+            return Error("SendRefused", ex.Message,
+                "Nothing was sent. If automatic sending is still explicitly wanted and the draft is unchanged, request a fresh "
+                + "token by calling send without confirm_token and re-confirm with the user.");
         }
         catch (OutlookUnavailableException ex)
         {

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a deliberately high-friction send tool: the assistant can send a saved draft only via a two-step confirmation (a one-time token bound to that exact draft and its current content, expiring after two minutes and voided by any draft change), with the sending account hard-verified before transport and every step audit-logged; drafting for you to review and send yourself remains the default path.
 - Add email drafting tools: the assistant can now prepare a new mail, reply, reply-all, or forward for you - the draft opens on screen with the right account identity, that account's own signature, and the assistant's text above the quoted conversation, ready for you to review and send yourself (nothing is ever sent automatically).
 - Add a structured audit log: every draft the assistant creates and every attachment it saves is recorded locally under %LOCALAPPDATA%\OutlookAI.
 
