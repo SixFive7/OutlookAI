@@ -97,6 +97,11 @@ namespace OutlookAI.Core.Com
         private object? _application;
         private object? _namespace;
         private bool _disposed;
+        private Process? _watchedProcess;
+        private OutlookQuitSink? _quitSink;
+        private OutlookQuitSinkRegistration? _quitSinkRegistration;
+        private Action<OutlookComSession>? _onOutlookGone;
+        private int _outlookGoneSignaled;
 
         private OutlookComSession(PumpedStaRunner runner, bool startedOutlook)
         {
@@ -106,6 +111,12 @@ namespace OutlookAI.Core.Com
 
         /// <summary>True when connecting had to launch a new OUTLOOK.EXE process.</summary>
         public bool StartedOutlook { get; }
+
+        /// <summary>PID of the OUTLOOK.EXE this session watches (null when the probe failed).</summary>
+        public int? OutlookProcessId { get; private set; }
+
+        /// <summary>True when the Application Quit event sink is advised (SF-2 proactive release path).</summary>
+        public bool QuitSinkActive { get; private set; }
 
         /// <summary>True when an OUTLOOK.EXE process exists for this session's user.</summary>
         public static bool IsOutlookProcessRunning()
@@ -158,7 +169,7 @@ namespace OutlookAI.Core.Com
         /// <paramref name="allowStartingOutlook"/>=false refuses instead). Never restarts
         /// or closes an existing instance.
         /// </summary>
-        public static OutlookComSession Connect(bool allowStartingOutlook = true)
+        public static OutlookComSession Connect(bool allowStartingOutlook = true, Action<OutlookComSession>? onOutlookGone = null)
         {
             bool wasRunning = IsOutlookProcessRunning();
             if (!wasRunning)
@@ -177,6 +188,7 @@ namespace OutlookAI.Core.Com
 
             PumpedStaRunner runner = new PumpedStaRunner("OutlookAI.ComGateway.Sta");
             OutlookComSession session = new OutlookComSession(runner, startedOutlook: !wasRunning);
+            session._onOutlookGone = onOutlookGone;
             try
             {
                 runner.Run(() =>
@@ -197,7 +209,29 @@ namespace OutlookAI.Core.Com
                     catch (COMException)
                     {
                     }
+
+                    // SF-2, part 1 - DEFENSE-IN-DEPTH: advise the Application Quit sink on
+                    // the pumped STA (section 0.5.2). Probe-measured 2026-07-23: on this
+                    // build the event does NOT fire for a programmatic Quit from another
+                    // client (Outlook parks instead) - the process-exit watcher below is
+                    // the load-bearing signal; the sink covers any path that does raise
+                    // the event, at near-zero cost. Best-effort either way.
+                    try
+                    {
+                        session._quitSink = new OutlookQuitSink(session.SignalOutlookGone);
+                        session._quitSinkRegistration = OutlookQuitSink.TryAdvise(session._application, session._quitSink);
+                        session.QuitSinkActive = session._quitSinkRegistration != null;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        session.QuitSinkActive = false;
+                    }
                 });
+
+                // SF-2 fix, part 2: watch the OUTLOOK.EXE process itself (crash / hard
+                // exit path - no Quit event fires then). Outlook is single-instance per
+                // session, so the first process by name is THE instance we attached to.
+                session.WireProcessExitWatch();
                 return session;
             }
             catch
@@ -205,6 +239,75 @@ namespace OutlookAI.Core.Com
                 session.Dispose();
                 throw;
             }
+        }
+
+        private void WireProcessExitWatch()
+        {
+            try
+            {
+                Process[] processes = Process.GetProcessesByName("OUTLOOK");
+                for (int i = 1; i < processes.Length; i++)
+                {
+                    processes[i].Dispose();
+                }
+
+                if (processes.Length == 0)
+                {
+                    return;
+                }
+
+                _watchedProcess = processes[0];
+                OutlookProcessId = _watchedProcess.Id;
+                _watchedProcess.EnableRaisingEvents = true;
+                _watchedProcess.Exited += OnWatchedProcessExited;
+                if (_watchedProcess.HasExited)
+                {
+                    // Died between attach and wiring - Exited may already have fired
+                    // before the handler was added; signal explicitly (idempotent).
+                    SignalOutlookGone();
+                }
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                // Watching is an SF-2 hardening layer; the per-call liveness ping in
+                // ComGateway.GetOrConnect still covers a silent death.
+            }
+        }
+
+        private void OnWatchedProcessExited(object? sender, EventArgs e)
+        {
+            SignalOutlookGone();
+        }
+
+        /// <summary>
+        /// Signals (once) that the attached Outlook is quitting or gone. Runs the
+        /// gateway-provided callback on a worker thread; the callback disposes this
+        /// session, which releases all COM refs on the STA.
+        /// </summary>
+        private void SignalOutlookGone()
+        {
+            if (System.Threading.Interlocked.Exchange(ref _outlookGoneSignaled, 1) != 0)
+            {
+                return;
+            }
+
+            Action<OutlookComSession>? callback = _onOutlookGone;
+            if (callback == null)
+            {
+                return;
+            }
+
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    callback(this);
+                }
+                catch (Exception)
+                {
+                    // Detach-on-death must never take the host down.
+                }
+            });
         }
 
         /// <summary>Lists the stores of the active profile.</summary>
@@ -4112,8 +4215,11 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// Releases COM references and stops the STA thread. Never quits Outlook - if this
-        /// session started it, it stays running (index updates resume with it, D17).
+        /// Releases COM references and stops the STA thread. Never quits Outlook - if
+        /// this session started it headless, Outlook keeps running (index updates with
+        /// it, D17) and, measured 2026-07-23, exits on its own ~11.5 minutes after the
+        /// LAST client releases; a release also unsticks (~6 s) an Outlook parked by a
+        /// quit-while-attached (SF-2).
         /// </summary>
         public void Dispose()
         {
@@ -4123,10 +4229,30 @@ namespace OutlookAI.Core.Com
             }
 
             _disposed = true;
+            Process? watched = _watchedProcess;
+            _watchedProcess = null;
+            if (watched != null)
+            {
+                try
+                {
+                    watched.Exited -= OnWatchedProcessExited;
+                    watched.EnableRaisingEvents = false;
+                }
+                catch (Exception)
+                {
+                    // Teardown of a possibly-dead process handle.
+                }
+
+                watched.Dispose();
+            }
+
             try
             {
                 _runner.Run(() =>
                 {
+                    _quitSinkRegistration?.Unadvise();
+                    _quitSinkRegistration = null;
+                    _quitSink = null;
                     Release(_namespace);
                     Release(_application);
                     _namespace = null;
