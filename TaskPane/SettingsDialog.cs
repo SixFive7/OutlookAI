@@ -94,7 +94,7 @@ namespace OutlookAI.TaskPane
             MinimizeBox = false;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(470, 532);
+            ClientSize = new Size(470, 573);
 
             int margin = 12;
             int innerWidth = ClientSize.Width - 2 * margin;
@@ -122,7 +122,7 @@ namespace OutlookAI.TaskPane
                 Name = "grpSearch",
                 Text = "Search",
                 Location = new Point(margin, 74),
-                Size = new Size(innerWidth, 110),
+                Size = new Size(innerWidth, 124),
             };
             chkSearch = new CheckBox
             {
@@ -135,7 +135,7 @@ namespace OutlookAI.TaskPane
             {
                 Name = "lblSearchValues",
                 Location = new Point(10, 42),
-                Size = new Size(innerWidth - 20, 60),
+                Size = new Size(innerWidth - 20, 74),
             };
             grpSearch.Controls.Add(chkSearch);
             grpSearch.Controls.Add(lblSearchValues);
@@ -145,8 +145,8 @@ namespace OutlookAI.TaskPane
             {
                 Name = "grpCaching",
                 Text = "Full caching (sync slider = All)",
-                Location = new Point(margin, 190),
-                Size = new Size(innerWidth, 155),
+                Location = new Point(margin, 204),
+                Size = new Size(innerWidth, 175),
             };
             chkCaching = new CheckBox
             {
@@ -159,7 +159,7 @@ namespace OutlookAI.TaskPane
             {
                 Name = "lblCachingValues",
                 Location = new Point(10, 42),
-                Size = new Size(innerWidth - 20, 105),
+                Size = new Size(innerWidth - 20, 125),
             };
             grpCaching.Controls.Add(chkCaching);
             grpCaching.Controls.Add(lblCachingValues);
@@ -169,8 +169,8 @@ namespace OutlookAI.TaskPane
             {
                 Name = "grpOst",
                 Text = "OST size headroom",
-                Location = new Point(margin, 351),
-                Size = new Size(innerWidth, 80),
+                Location = new Point(margin, 385),
+                Size = new Size(innerWidth, 90),
             };
             chkOst = new CheckBox
             {
@@ -183,7 +183,7 @@ namespace OutlookAI.TaskPane
             {
                 Name = "lblOstValues",
                 Location = new Point(10, 42),
-                Size = new Size(innerWidth - 20, 30),
+                Size = new Size(innerWidth - 20, 40),
             };
             grpOst.Controls.Add(chkOst);
             grpOst.Controls.Add(lblOstValues);
@@ -192,7 +192,7 @@ namespace OutlookAI.TaskPane
             {
                 Name = "lblRestart",
                 Text = "Restart Outlook to apply pending changes.",
-                Location = new Point(margin, 437),
+                Location = new Point(margin, 483),
                 Size = new Size(innerWidth, 18),
                 Visible = false,
             };
@@ -200,7 +200,7 @@ namespace OutlookAI.TaskPane
             lblGpo = new Label
             {
                 Name = "lblGpo",
-                Location = new Point(margin, 457),
+                Location = new Point(margin, 503),
                 Size = new Size(innerWidth, 30),
                 Visible = false,
             };
@@ -209,14 +209,14 @@ namespace OutlookAI.TaskPane
             {
                 Name = "btnApply",
                 Text = "Apply now",
-                Location = new Point(ClientSize.Width - margin - 170, 494),
+                Location = new Point(ClientSize.Width - margin - 170, 537),
                 Size = new Size(84, 26),
             };
             btnClose = new Button
             {
                 Name = "btnClose",
                 Text = "Close",
-                Location = new Point(ClientSize.Width - margin - 80, 494),
+                Location = new Point(ClientSize.Width - margin - 80, 537),
                 Size = new Size(80, 26),
             };
 
