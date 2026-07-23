@@ -1728,6 +1728,720 @@ namespace OutlookAI.Core.Com
                 : ex.GetType().Name;
         }
 
+        // ------------------------------------------------------------------ drafts (Phase 4, v3.MD L4/D4)
+
+        /// <summary>
+        /// new_draft backbone (v3.MD sections 3/8 L4). Creates the mail DIRECTLY in the
+        /// sending account's Drafts folder (Items.Add - a plain CreateItem would save
+        /// into the DEFAULT store's Drafts), pins <c>SendUsingAccount</c> from the
+        /// Account OBJECT first, then touches <c>GetInspector</c> so Outlook injects
+        /// that account's signature, and sets HTMLBody exactly once with the agent text
+        /// ABOVE the signature. Saves to Drafts; <paramref name="display"/> additionally
+        /// opens the draft in an Inspector for the user (D4 default behavior).
+        /// </summary>
+        public ComDraftCreateResult? TryCreateNewDraft(
+            string accountSmtpAddress,
+            IReadOnlyList<string> toRecipients,
+            IReadOnlyList<string> ccRecipients,
+            string subject,
+            string bodyText,
+            bool display,
+            out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(accountSmtpAddress))
+            {
+                throw new ArgumentException("Account SMTP address must not be blank.", nameof(accountSmtpAddress));
+            }
+
+            if (toRecipients == null)
+            {
+                throw new ArgumentNullException(nameof(toRecipients));
+            }
+
+            if (ccRecipients == null)
+            {
+                throw new ArgumentNullException(nameof(ccRecipients));
+            }
+
+            if (subject == null)
+            {
+                throw new ArgumentNullException(nameof(subject));
+            }
+
+            if (bodyText == null)
+            {
+                throw new ArgumentNullException(nameof(bodyText));
+            }
+
+            string? capturedError = null;
+            ComDraftCreateResult? result = _runner.Run<ComDraftCreateResult?>(() =>
+            {
+                object? account = null;
+                object? deliveryStore = null;
+                object? draftsFolder = null;
+                object? items = null;
+                object? mail = null;
+                try
+                {
+                    account = FindAccountBySmtp(accountSmtpAddress);
+                    if (account == null)
+                    {
+                        capturedError = "AccountNotFound";
+                        return null;
+                    }
+
+                    try
+                    {
+                        deliveryStore = ((dynamic)account).DeliveryStore;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+
+                    if (deliveryStore == null)
+                    {
+                        capturedError = "AccountHasNoDeliveryStore";
+                        return null;
+                    }
+
+                    draftsFolder = ((dynamic)deliveryStore).GetDefaultFolder(16); // olFolderDrafts
+                    items = ((dynamic)draftsFolder!).Items;
+                    mail = ((dynamic)items!).Add(0); // olMailItem
+                    dynamic draft = mail!;
+
+                    // Identity FIRST: the Account OBJECT, before anything else touches
+                    // the item (v3.MD section 3 - omitting it silently uses the default
+                    // account; a string would not bind).
+                    draft.SendUsingAccount = account;
+
+                    (bool signatureInjected, long textBefore, long textAfter, string htmlAfter) =
+                        TouchInspectorForSignature((object)draft);
+
+                    string fragment = OutlookAI.Core.Text.HtmlBodyComposer.ToHtmlFragment(bodyText);
+                    draft.HTMLBody = OutlookAI.Core.Text.HtmlBodyComposer.InsertAtBodyTop(
+                        htmlAfter.Length > 0 ? htmlAfter : null, fragment);
+                    draft.Subject = subject;
+                    AddRecipients(draft, toRecipients, 1);
+                    AddRecipients(draft, ccRecipients, 2);
+                    draft.Save();
+
+                    mail = RelocateToFolderIfNeeded(mail!, draftsFolder!, out bool moved, out string? initialFolder);
+                    if (display)
+                    {
+                        ((dynamic)mail!).Display();
+                    }
+
+                    ComDraftInfo info = SnapshotDraft(mail!);
+                    return new ComDraftCreateResult(
+                        info,
+                        accountResolved: true,
+                        signatureInjected,
+                        textBefore,
+                        textAfter,
+                        moved,
+                        initialFolder,
+                        display);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(mail);
+                    Release(items);
+                    Release(draftsFolder);
+                    Release(deliveryStore);
+                    Release(account);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// reply_draft/replyall_draft/forward_draft backbone: derives the draft ONLY via
+        /// COM <c>Reply()</c>/<c>ReplyAll()</c>/<c>Forward()</c> (threading + quoted
+        /// history - v3.MD section 12: never rebuild replies with CreateItem), pins
+        /// <c>SendUsingAccount</c> from the Account whose delivery store contains the
+        /// source mail BEFORE the <c>GetInspector</c> signature touch, prepends the
+        /// agent text ABOVE the quoted block, saves into that store's Drafts (moving the
+        /// item there when Outlook saved it elsewhere) and optionally displays it (D4).
+        /// </summary>
+        public ComDraftCreateResult? TryCreateDerivedDraft(
+            string sourceEntryIdHex,
+            string? sourceStoreId,
+            ComDerivedDraftKind kind,
+            IReadOnlyList<string> toRecipients,
+            string bodyText,
+            bool display,
+            out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(sourceEntryIdHex))
+            {
+                throw new ArgumentException("Source EntryID must not be blank.", nameof(sourceEntryIdHex));
+            }
+
+            if (toRecipients == null)
+            {
+                throw new ArgumentNullException(nameof(toRecipients));
+            }
+
+            if (bodyText == null)
+            {
+                throw new ArgumentNullException(nameof(bodyText));
+            }
+
+            string? capturedError = null;
+            ComDraftCreateResult? result = _runner.Run<ComDraftCreateResult?>(() =>
+            {
+                dynamic ns = _namespace!;
+                object? source = null;
+                object? sourceParent = null;
+                object? sourceStore = null;
+                object? account = null;
+                object? draftsFolder = null;
+                object? mail = null;
+                try
+                {
+                    source = sourceStoreId != null
+                        ? ns.GetItemFromID(sourceEntryIdHex, sourceStoreId)
+                        : ns.GetItemFromID(sourceEntryIdHex);
+
+                    // The store the source mail lives in drives both the sending
+                    // account and the Drafts folder the draft must land in.
+                    string? sourceStoreIdActual = null;
+                    try
+                    {
+                        sourceParent = ((dynamic)source!).Parent;
+                        if (sourceParent != null)
+                        {
+                            sourceStore = ((dynamic)sourceParent).Store;
+                            if (sourceStore != null)
+                            {
+                                sourceStoreIdActual = TryGetString(() => (string?)((dynamic)sourceStore!).StoreID);
+                            }
+                        }
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+
+                    dynamic sourceItem = source!;
+                    mail = kind switch
+                    {
+                        ComDerivedDraftKind.Reply => sourceItem.Reply(),
+                        ComDerivedDraftKind.ReplyAll => sourceItem.ReplyAll(),
+                        ComDerivedDraftKind.Forward => sourceItem.Forward(),
+                        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+                    };
+                    dynamic draft = mail!;
+
+                    // Identity: the account delivering into the source store (what the
+                    // UI would send from). Delegate-store mail has no matching account -
+                    // recorded, SendUsingAccount left for Outlook to resolve.
+                    bool accountResolved = false;
+                    if (sourceStoreIdActual != null)
+                    {
+                        account = FindAccountByDeliveryStoreId(sourceStoreIdActual);
+                        if (account != null)
+                        {
+                            draft.SendUsingAccount = account;
+                            accountResolved = true;
+                        }
+                    }
+
+                    (bool signatureInjected, long textBefore, long textAfter, string htmlAfter) =
+                        TouchInspectorForSignature((object)draft);
+
+                    string fragment = OutlookAI.Core.Text.HtmlBodyComposer.ToHtmlFragment(bodyText);
+                    draft.HTMLBody = OutlookAI.Core.Text.HtmlBodyComposer.InsertAtBodyTop(
+                        htmlAfter.Length > 0 ? htmlAfter : null, fragment);
+                    if (kind == ComDerivedDraftKind.Forward)
+                    {
+                        AddRecipients(draft, toRecipients, 1);
+                    }
+
+                    draft.Save();
+
+                    bool moved = false;
+                    string? initialFolder = null;
+                    if (sourceStore != null)
+                    {
+                        try
+                        {
+                            draftsFolder = ((dynamic)sourceStore).GetDefaultFolder(16); // olFolderDrafts
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            // Store without a Drafts folder (some delegate caches) - the
+                            // draft stays where Outlook saved it.
+                        }
+                    }
+
+                    if (draftsFolder != null)
+                    {
+                        mail = RelocateToFolderIfNeeded(mail!, draftsFolder, out moved, out initialFolder);
+                    }
+
+                    if (display)
+                    {
+                        ((dynamic)mail!).Display();
+                    }
+
+                    ComDraftInfo info = SnapshotDraft(mail!);
+                    return new ComDraftCreateResult(
+                        info,
+                        accountResolved,
+                        signatureInjected,
+                        textBefore,
+                        textAfter,
+                        moved,
+                        initialFolder,
+                        display);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(mail);
+                    Release(draftsFolder);
+                    Release(account);
+                    Release(sourceStore);
+                    Release(sourceParent);
+                    Release(source);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// Re-opens a mail by EntryID and snapshots its identity/threading state
+        /// (SendUsingAccount, parent folder, ConversationIndex) - the draft tests verify
+        /// PERSISTED state through this instead of trusting the creation-time snapshot.
+        /// </summary>
+        public ComDraftInfo? TryGetMailInfo(string entryIdHex, string? storeId, out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(entryIdHex))
+            {
+                throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
+            }
+
+            string? capturedError = null;
+            ComDraftInfo? result = _runner.Run<ComDraftInfo?>(() =>
+            {
+                dynamic ns = _namespace!;
+                object? itemObject = null;
+                try
+                {
+                    itemObject = storeId != null
+                        ? ns.GetItemFromID(entryIdHex, storeId)
+                        : ns.GetItemFromID(entryIdHex);
+                    return SnapshotDraft(itemObject!);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(itemObject);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// Identity of a store's default folder (6 = Inbox, 16 = Drafts, ...): EntryID +
+        /// localized name. The draft tests compare a draft's parent folder EntryID
+        /// against this instead of asserting locale-dependent folder names.
+        /// </summary>
+        public ComDefaultFolderInfo? TryGetDefaultFolderInfo(string storeDisplayName, int olDefaultFolderId, out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(storeDisplayName))
+            {
+                throw new ArgumentException("Store display name must not be blank.", nameof(storeDisplayName));
+            }
+
+            string? capturedError = null;
+            ComDefaultFolderInfo? result = _runner.Run<ComDefaultFolderInfo?>(() =>
+            {
+                dynamic? store = FindStoreByDisplayName(storeDisplayName);
+                if (store == null)
+                {
+                    capturedError = "StoreNotFound";
+                    return null;
+                }
+
+                object? folder = null;
+                try
+                {
+                    folder = store.GetDefaultFolder(olDefaultFolderId);
+                    dynamic f = folder!;
+                    return new ComDefaultFolderInfo((string)f.EntryID, (string)f.Name);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(folder);
+                    Release(store);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// STA-side signature injection (v3.MD section 3): with SendUsingAccount already
+        /// pinned, touching GetInspector makes Outlook inject that account's signature
+        /// exactly as if the user opened the compose window. Detection is TEXT-based
+        /// (HTML template expansion without a signature adds markup but no text).
+        /// Returns the post-touch HTML for composition.
+        /// </summary>
+        private static (bool SignatureInjected, long TextBefore, long TextAfter, string HtmlAfter) TouchInspectorForSignature(object draftObject)
+        {
+            dynamic draft = draftObject;
+            string htmlBefore = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
+            object? inspector = null;
+            try
+            {
+                inspector = draft.GetInspector;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                // No inspector available - signature stays uninjected; recorded via the
+                // unchanged text length.
+            }
+            finally
+            {
+                Release(inspector);
+            }
+
+            string htmlAfter = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
+            long textBefore = CountNonWhitespaceText(htmlBefore);
+            long textAfter = CountNonWhitespaceText(htmlAfter);
+            return (textAfter > textBefore, textBefore, textAfter, htmlAfter);
+        }
+
+        private static long CountNonWhitespaceText(string html)
+        {
+            if (html.Length == 0)
+            {
+                return 0;
+            }
+
+            string text = OutlookAI.Core.Text.HtmlToText.Convert(html);
+            long count = 0;
+            foreach (char c in text)
+            {
+                if (!char.IsWhiteSpace(c))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        /// <summary>STA-side: adds typed recipients (1 = To, 2 = Cc) and resolves them best-effort.</summary>
+        private static void AddRecipients(dynamic mail, IReadOnlyList<string> addresses, int type)
+        {
+            if (addresses.Count == 0)
+            {
+                return;
+            }
+
+            object? recipients = null;
+            try
+            {
+                recipients = mail.Recipients;
+                dynamic collection = (dynamic)recipients!;
+                foreach (string address in addresses)
+                {
+                    object? recipient = null;
+                    try
+                    {
+                        recipient = collection.Add(address);
+                        ((dynamic)recipient!).Type = type;
+                    }
+                    finally
+                    {
+                        Release(recipient);
+                    }
+                }
+
+                try
+                {
+                    collection.ResolveAll();
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    // Unresolved recipients are legal on drafts; the user resolves on send.
+                }
+            }
+            finally
+            {
+                Release(recipients);
+            }
+        }
+
+        /// <summary>
+        /// STA-side: when the saved item's parent folder differs from
+        /// <paramref name="targetFolder"/>, moves it there (EntryIDs CHANGE on move -
+        /// v3.MD section 12; callers snapshot AFTER this). Returns the item to use from
+        /// now on (the moved RCW when a move happened) and releases the stale one.
+        /// </summary>
+        private static object RelocateToFolderIfNeeded(object mailObject, object targetFolder, out bool moved, out string? initialFolderName)
+        {
+            moved = false;
+            initialFolderName = null;
+            object? parent = null;
+            try
+            {
+                parent = ((dynamic)mailObject).Parent;
+                string? parentEntryId = null;
+                if (parent != null)
+                {
+                    initialFolderName = TryGetString(() => (string?)((dynamic)parent).Name);
+                    parentEntryId = TryGetString(() => (string?)((dynamic)parent).EntryID);
+                }
+
+                string? targetEntryId = TryGetString(() => (string?)((dynamic)targetFolder).EntryID);
+                if (parentEntryId != null && targetEntryId != null
+                    && string.Equals(parentEntryId, targetEntryId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return mailObject;
+                }
+
+                object movedItem = ((dynamic)mailObject).Move(targetFolder);
+                Release(mailObject);
+                moved = true;
+                return movedItem;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                // Move unavailable - keep the item where Outlook saved it (recorded via
+                // the initial folder name).
+                return mailObject;
+            }
+            finally
+            {
+                Release(parent);
+            }
+        }
+
+        /// <summary>STA-side identity/threading snapshot of a mail item.</summary>
+        private ComDraftInfo SnapshotDraft(object itemObject)
+        {
+            dynamic item = itemObject;
+            string entryId = (string)item.EntryID;
+            string? subject = TryGetString(() => (string?)item.Subject);
+            string? conversationIndex = TryGetString(() => (string?)item.ConversationIndex);
+            string? conversationId = TryGetString(() => (string?)item.ConversationID);
+
+            string? sendUsingSmtp = null;
+            object? sendUsingAccount = null;
+            try
+            {
+                sendUsingAccount = item.SendUsingAccount;
+                if (sendUsingAccount != null)
+                {
+                    sendUsingSmtp = TryGetString(() => (string?)((dynamic)sendUsingAccount!).SmtpAddress);
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+            finally
+            {
+                Release(sendUsingAccount);
+            }
+
+            string? folderName = null;
+            string? folderEntryId = null;
+            string? storeName = null;
+            string? storeId = null;
+            object? parent = null;
+            object? parentStore = null;
+            try
+            {
+                parent = item.Parent;
+                if (parent != null)
+                {
+                    folderName = TryGetString(() => (string?)((dynamic)parent).Name);
+                    folderEntryId = TryGetString(() => (string?)((dynamic)parent).EntryID);
+                    parentStore = ((dynamic)parent).Store;
+                    if (parentStore != null)
+                    {
+                        storeName = TryGetString(() => (string?)((dynamic)parentStore).DisplayName);
+                        storeId = TryGetString(() => (string?)((dynamic)parentStore).StoreID);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+            finally
+            {
+                Release(parentStore);
+                Release(parent);
+            }
+
+            List<ComRecipientInfo> recipients = new List<ComRecipientInfo>();
+            object? recipientsObject = null;
+            try
+            {
+                recipientsObject = item.Recipients;
+                dynamic collection = (dynamic)recipientsObject!;
+                int count = collection.Count;
+                for (int i = 1; i <= count; i++)
+                {
+                    object? recipient = null;
+                    try
+                    {
+                        recipient = collection[i];
+                        dynamic r = (dynamic)recipient!;
+                        int type = 1;
+                        try
+                        {
+                            type = (int)r.Type;
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                        }
+
+                        string kind = type == 2 ? "cc" : type == 3 ? "bcc" : "to";
+                        string? name = TryGetString(() => (string?)r.Name);
+                        string? address = TryGetPropertyString(r, "http://schemas.microsoft.com/mapi/proptag/0x39FE001F")
+                            ?? TryGetString(() => (string?)r.Address);
+                        recipients.Add(new ComRecipientInfo(kind, name, address));
+                    }
+                    finally
+                    {
+                        Release(recipient);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+            finally
+            {
+                Release(recipientsObject);
+            }
+
+            return new ComDraftInfo(
+                entryId,
+                storeName,
+                storeId,
+                folderName,
+                folderEntryId,
+                subject,
+                sendUsingSmtp,
+                conversationIndex,
+                conversationId,
+                recipients);
+        }
+
+        /// <summary>STA-side: the profile account with the given SmtpAddress (caller releases), or null.</summary>
+        private object? FindAccountBySmtp(string smtpAddress)
+        {
+            dynamic ns = _namespace!;
+            object? session = null;
+            object? accounts = null;
+            try
+            {
+                session = ns.Session;
+                accounts = ((dynamic)session!).Accounts;
+                dynamic collection = (dynamic)accounts!;
+                int count = collection.Count;
+                for (int i = 1; i <= count; i++)
+                {
+                    object? account = collection[i];
+                    string? smtp = TryGetString(() => (string?)((dynamic)account!).SmtpAddress);
+                    if (smtp != null && string.Equals(smtp, smtpAddress, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return account;
+                    }
+
+                    Release(account);
+                }
+
+                return null;
+            }
+            finally
+            {
+                Release(accounts);
+                Release(session);
+            }
+        }
+
+        /// <summary>STA-side: the account whose DeliveryStore has the given StoreID (caller releases), or null.</summary>
+        private object? FindAccountByDeliveryStoreId(string storeId)
+        {
+            dynamic ns = _namespace!;
+            object? session = null;
+            object? accounts = null;
+            try
+            {
+                session = ns.Session;
+                accounts = ((dynamic)session!).Accounts;
+                dynamic collection = (dynamic)accounts!;
+                int count = collection.Count;
+                for (int i = 1; i <= count; i++)
+                {
+                    object? account = collection[i];
+                    object? deliveryStore = null;
+                    try
+                    {
+                        deliveryStore = ((dynamic)account!).DeliveryStore;
+                        string? deliveryStoreId = deliveryStore != null
+                            ? TryGetString(() => (string?)((dynamic)deliveryStore!).StoreID)
+                            : null;
+                        if (deliveryStoreId != null && string.Equals(deliveryStoreId, storeId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return account;
+                        }
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                    finally
+                    {
+                        Release(deliveryStore);
+                    }
+
+                    Release(account);
+                }
+
+                return null;
+            }
+            finally
+            {
+                Release(accounts);
+                Release(session);
+            }
+        }
+
         // ------------------------------------------------------------------ exhaustive scan (Phase 3, v3.MD D19)
 
         /// <summary>

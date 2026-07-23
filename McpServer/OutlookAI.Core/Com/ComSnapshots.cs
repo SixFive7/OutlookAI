@@ -401,6 +401,152 @@ namespace OutlookAI.Core.Com
         public bool TimedOut { get; }
     }
 
+    /// <summary>How a derived draft is created from its source mail (v3.MD section 3: threading ONLY via these).</summary>
+    public enum ComDerivedDraftKind
+    {
+        /// <summary>MailItem.Reply() - answer the sender.</summary>
+        Reply = 0,
+
+        /// <summary>MailItem.ReplyAll() - answer sender + all recipients.</summary>
+        ReplyAll = 1,
+
+        /// <summary>MailItem.Forward() - forward to new recipients.</summary>
+        Forward = 2,
+    }
+
+    /// <summary>
+    /// Identity/threading snapshot of a mail item (COM-free data): where it lives, the
+    /// account it would send as, and its conversation linkage. Used for draft results
+    /// and for re-open verification of drafts.
+    /// </summary>
+    public sealed class ComDraftInfo
+    {
+        /// <summary>Creates a draft-info snapshot (data only).</summary>
+        public ComDraftInfo(
+            string entryId,
+            string? storeDisplayName,
+            string? storeId,
+            string? parentFolderName,
+            string? parentFolderEntryId,
+            string? subject,
+            string? sendUsingAccountSmtp,
+            string? conversationIndex,
+            string? conversationId,
+            IReadOnlyList<ComRecipientInfo> recipients)
+        {
+            EntryId = entryId;
+            StoreDisplayName = storeDisplayName;
+            StoreId = storeId;
+            ParentFolderName = parentFolderName;
+            ParentFolderEntryId = parentFolderEntryId;
+            Subject = subject;
+            SendUsingAccountSmtp = sendUsingAccountSmtp;
+            ConversationIndex = conversationIndex;
+            ConversationId = conversationId;
+            Recipients = recipients;
+        }
+
+        /// <summary>Real (object-model) EntryID hex string (changes when the item is moved).</summary>
+        public string EntryId { get; }
+
+        /// <summary>Containing store display name.</summary>
+        public string? StoreDisplayName { get; }
+
+        /// <summary>Containing store's StoreID.</summary>
+        public string? StoreId { get; }
+
+        /// <summary>Containing folder display name (localized, e.g. Drafts/Concepten).</summary>
+        public string? ParentFolderName { get; }
+
+        /// <summary>Containing folder EntryID (compare against a store's default Drafts folder).</summary>
+        public string? ParentFolderEntryId { get; }
+
+        /// <summary>Subject (RE:/FW: prefixes included for derived drafts).</summary>
+        public string? Subject { get; }
+
+        /// <summary>SmtpAddress of MailItem.SendUsingAccount (null when Outlook reports none).</summary>
+        public string? SendUsingAccountSmtp { get; }
+
+        /// <summary>PR_CONVERSATION_INDEX as the hex string the object model reports; a reply's index EXTENDS its parent's.</summary>
+        public string? ConversationIndex { get; }
+
+        /// <summary>Outlook ConversationID.</summary>
+        public string? ConversationId { get; }
+
+        /// <summary>To/Cc/Bcc recipients currently on the item.</summary>
+        public IReadOnlyList<ComRecipientInfo> Recipients { get; }
+    }
+
+    /// <summary>Result of one draft-creation operation (COM-free data).</summary>
+    public sealed class ComDraftCreateResult
+    {
+        /// <summary>Creates a draft-creation result.</summary>
+        public ComDraftCreateResult(
+            ComDraftInfo draft,
+            bool accountResolved,
+            bool signatureInjected,
+            long bodyTextCharsBeforeSignature,
+            long bodyTextCharsAfterSignature,
+            bool movedToDrafts,
+            string? initialSaveFolderName,
+            bool displayed)
+        {
+            Draft = draft;
+            AccountResolved = accountResolved;
+            SignatureInjected = signatureInjected;
+            BodyTextCharsBeforeSignature = bodyTextCharsBeforeSignature;
+            BodyTextCharsAfterSignature = bodyTextCharsAfterSignature;
+            MovedToDrafts = movedToDrafts;
+            InitialSaveFolderName = initialSaveFolderName;
+            Displayed = displayed;
+        }
+
+        /// <summary>The created draft (EntryID is final - post-move when a move happened).</summary>
+        public ComDraftInfo Draft { get; }
+
+        /// <summary>True when SendUsingAccount was pinned from a matched Account OBJECT (v3.MD section 3).</summary>
+        public bool AccountResolved { get; }
+
+        /// <summary>
+        /// True when touching GetInspector grew the body's TEXT content - i.e. Outlook
+        /// injected the account's signature (text-based: template HTML expansion without
+        /// a signature adds markup but no text).
+        /// </summary>
+        public bool SignatureInjected { get; }
+
+        /// <summary>Non-whitespace body text chars before the GetInspector touch.</summary>
+        public long BodyTextCharsBeforeSignature { get; }
+
+        /// <summary>Non-whitespace body text chars after the GetInspector touch.</summary>
+        public long BodyTextCharsAfterSignature { get; }
+
+        /// <summary>True when Save() landed the draft elsewhere and it was moved to the target Drafts folder.</summary>
+        public bool MovedToDrafts { get; }
+
+        /// <summary>Folder name Save() initially landed in (fact-finding; equals the final folder when no move happened).</summary>
+        public string? InitialSaveFolderName { get; }
+
+        /// <summary>True when the draft was opened in an Inspector window (D4 default).</summary>
+        public bool Displayed { get; }
+    }
+
+    /// <summary>Identity of a store's default folder (COM-free data).</summary>
+    public sealed class ComDefaultFolderInfo
+    {
+        /// <summary>Creates a default-folder snapshot.</summary>
+        public ComDefaultFolderInfo(string entryId, string name)
+        {
+            EntryId = entryId;
+            Name = name;
+        }
+
+        /// <summary>Folder EntryID.</summary>
+        public string EntryId { get; }
+
+        /// <summary>Folder display name (localized).</summary>
+        public string Name { get; }
+    }
+
     /// <summary>Result of one gap sweep (COM-free data).</summary>
     public sealed class ComSweepResult
     {
