@@ -397,6 +397,9 @@ namespace OutlookAI.Core.Services
         /// <summary>Whether OUTLOOK.EXE is running.</summary>
         public bool OutlookRunning { get; set; }
 
+        /// <summary>True when this server holds a COM session that Outlook ANSWERED just now (probed liveness, SF-1).</summary>
+        public bool ComConnected { get; set; }
+
         /// <summary>True while the add-in installer holds the OutlookAISetup mutex (D17: retry later).</summary>
         public bool InstallerMutexHeld { get; set; }
 
@@ -640,13 +643,20 @@ namespace OutlookAI.Core.Services
         /// <summary>Whether OUTLOOK.EXE is running for this user.</summary>
         public bool Running { get; set; }
 
+        /// <summary>
+        /// True when the running Outlook is headless (no window, tray icon only - the
+        /// D17 autostart state; launch Outlook normally to promote it to a windowed
+        /// session). False when a window exists; null when Outlook is not running.
+        /// </summary>
+        public bool? Headless { get; set; }
+
         /// <summary>Installed classic-Outlook build (OUTLOOK.EXE file version; null when not found).</summary>
         public string? Version { get; set; }
 
         /// <summary>True while the add-in installer holds the OutlookAISetup mutex (D17: COM tools retry later).</summary>
         public bool InstallerMutexHeld { get; set; }
 
-        /// <summary>True when this server process currently holds an open COM session.</summary>
+        /// <summary>True when this server holds a COM session that Outlook ANSWERED just now (probed liveness, SF-1).</summary>
         public bool ComConnected { get; set; }
 
         /// <summary>Store count reachable over COM (null when Outlook is not running - health never starts it).</summary>

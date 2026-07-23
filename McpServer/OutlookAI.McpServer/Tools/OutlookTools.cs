@@ -137,10 +137,12 @@ public static class OutlookTools
     }
 
     [McpServerTool(Name = "health")]
-    [Description("Compact health check of everything this server depends on: Outlook running + installed version, store "
-        + "reachability, index freshness, Windows Search (WSearch) service state, audit-log writability, OutlookAI tuning "
-        + "state, and the add-in installer mutex. Read-only - attaches to Outlook only when it is already running, never "
-        + "starts it. status=ok means all dependencies are available; otherwise problems lists each degradation.")]
+    [Description("Compact health check of everything this server depends on: Outlook running + installed version, whether it "
+        + "runs headless (no window, tray icon only - the autostart state; a normal Outlook launch promotes it), probed COM "
+        + "session liveness (comConnected), store reachability, index freshness, Windows Search (WSearch) service state, "
+        + "audit-log writability, OutlookAI tuning state, and the add-in installer mutex. Read-only - attaches to Outlook "
+        + "only when it is already running, never starts it. status=ok means all dependencies are available; otherwise "
+        + "problems lists each degradation.")]
     public static string Health()
     {
         return Guard(() => ServerRuntime.Service.Health());

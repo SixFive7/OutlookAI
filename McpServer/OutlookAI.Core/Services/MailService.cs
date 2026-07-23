@@ -1534,6 +1534,7 @@ namespace OutlookAI.Core.Services
             {
                 Provider = provider,
                 OutlookRunning = outlookRunning,
+                ComConnected = _gateway.ProbeConnected(),
                 InstallerMutexHeld = mutexHeld,
                 NewestIndexedUtc = newest,
                 IndexAgeMinutes = ageMinutes,
@@ -1628,9 +1629,14 @@ namespace OutlookAI.Core.Services
                 Outlook = new OutlookHealthView
                 {
                     Running = outlookRunning,
+                    // Headless probe AFTER the store attach above: window presence is
+                    // re-read here so a just-promoted Outlook reports false (SF-3).
+                    Headless = outlookRunning ? HealthReporting.TryGetOutlookHeadless() : null,
                     Version = HealthReporting.TryGetOutlookVersion(),
                     InstallerMutexHeld = mutexHeld,
-                    ComConnected = _gateway.IsConnected,
+                    // PROBED liveness (SF-1 fix): never report a dead held session as
+                    // connected; the probe also releases a dead session's refs.
+                    ComConnected = _gateway.ProbeConnected(),
                     StoresReachable = storesReachable,
                     Stores = storeNames,
                 },

@@ -135,6 +135,40 @@ namespace OutlookAI.Core.Services
             }
         }
 
+        /// <summary>
+        /// Whether the running OUTLOOK.EXE is HEADLESS - no main window, tray icon only
+        /// (SF-3: the D17 autostart state; empirically mapped 2026-07-23). Null when
+        /// Outlook is not running or the probe failed; false when a window exists (a
+        /// user session, or a headless one promoted by a normal launch).
+        /// </summary>
+        public static bool? TryGetOutlookHeadless()
+        {
+            try
+            {
+                Process[] processes = Process.GetProcessesByName("OUTLOOK");
+                try
+                {
+                    if (processes.Length == 0)
+                    {
+                        return null;
+                    }
+
+                    return processes[0].MainWindowHandle == IntPtr.Zero;
+                }
+                finally
+                {
+                    foreach (Process process in processes)
+                    {
+                        process.Dispose();
+                    }
+                }
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                return null;
+            }
+        }
+
         /// <summary>Registry DWORD (boxed int) to bool: nonzero true, zero false, anything else null.</summary>
         private static bool? AsBool(object? value)
         {
