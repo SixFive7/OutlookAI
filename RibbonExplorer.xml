@@ -9,7 +9,7 @@
 							size="large"
 							onAction="OnOpenSettings"
 							supertip="Open OutlookAI Settings: Outlook search, caching, and mailbox-size tuning managed by OutlookAI."
-							imageMso="AdministrationHome" />
+							imageMso="SmartArtInsert" />
 				</group>
 			</tab>
 			<tab idMso="TabNewMailMessage">
