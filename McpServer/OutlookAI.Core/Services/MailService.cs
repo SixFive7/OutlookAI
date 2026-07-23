@@ -29,6 +29,8 @@ namespace OutlookAI.Core.Services
         private const int AttachmentLocateToleranceSeconds = 120;
         private const int DedupeToleranceSeconds = 15;
         private const int SweepPerFolderCap = 200;
+        private const int ExhaustiveTimeBudgetMs = 120_000;
+        private const double VeryStaleAdviceMinutes = 720; // 12 h - suggest mode=exhaustive
         private static readonly TimeSpan SweepSafetyMargin = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan EmptyIndexSweepWindow = TimeSpan.FromDays(7);
 
@@ -94,6 +96,11 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("folder requires store.", nameof(request));
             }
 
+            if (request.Mode == SearchMode.Exhaustive)
+            {
+                return RunExhaustive(request, terms, top);
+            }
+
             string? scope = null;
             if (request.Store != null)
             {
@@ -137,7 +144,7 @@ namespace OutlookAI.Core.Services
                     advice.Add("Freshness sweep unavailable (" + sweep.Error + "); results are index-only and may miss the last "
                         + DescribeAge(staleness) + " of mail. " + (ComGateway.IsInstallerMutexHeld()
                             ? "An add-in update is in progress - retry shortly (D17)."
-                            : "Retry later or check index_status."));
+                            : "Retry later, check index_status, or use mode=exhaustive with store + folder/after bounds for an index-free COM search."));
                 }
             }
             else
@@ -152,6 +159,13 @@ namespace OutlookAI.Core.Services
                     advice.Add("Newest indexed mail is " + ageMinutes.ToString("F0", CultureInfo.InvariantCulture)
                         + " minutes old; use mode=fresh to also catch not-yet-indexed mail.");
                 }
+            }
+
+            double staleMinutes = staleness.Age?.TotalMinutes ?? 0;
+            if (staleMinutes > VeryStaleAdviceMinutes)
+            {
+                advice.Add("The index is very stale (" + (staleMinutes / 60).ToString("F0", CultureInfo.InvariantCulture)
+                    + " h behind). For correctness-critical queries use mode=exhaustive (bounded COM scan, store + folder/after required) - it bypasses the index entirely.");
             }
 
             summaries.Sort((a, b) => DateTime.Compare(b.ReceivedUtc ?? DateTime.MinValue, a.ReceivedUtc ?? DateTime.MinValue));
@@ -287,6 +301,146 @@ namespace OutlookAI.Core.Services
             }
 
             return info;
+        }
+
+        // ------------------------------------------------------------------ exhaustive (Phase 3, D19)
+
+        /// <summary>
+        /// mode=exhaustive: folder/date-bounded COM scan that bypasses the index
+        /// entirely (ci_phrasematch DASL when Store.IsInstantSearchEnabled, LIKE
+        /// fallback). Bounding rules: store is required, plus a folder or an 'after'
+        /// date - an unbounded scan of a multi-GB store would be the multi-minute
+        /// anti-pattern this project exists to avoid (v3.MD section 0.6 Phase 3).
+        /// </summary>
+        private SearchOutcome RunExhaustive(SearchRequest request, IReadOnlyList<string> terms, int top)
+        {
+            if (string.IsNullOrWhiteSpace(request.Store))
+            {
+                throw new ArgumentException(
+                    "mode=exhaustive requires 'store' (a display name from list_accounts) - it scans Outlook folders directly instead of the index.",
+                    nameof(request));
+            }
+
+            if (request.Folder == null && !request.AfterUtc.HasValue)
+            {
+                throw new ArgumentException(
+                    "mode=exhaustive requires a bound: pass 'folder' (scan one folder) and/or 'after' (date-bounded store scan). Unbounded store scans take minutes - use mode=fast/fresh for those.",
+                    nameof(request));
+            }
+
+            if (request.To != null)
+            {
+                throw new ArgumentException(
+                    "'to' filtering is not supported in mode=exhaustive (scanned items carry no recipient list). Use mode=fast/fresh or filter after read.",
+                    nameof(request));
+            }
+
+            if (request.AttachmentHitsOnly)
+            {
+                throw new ArgumentException(
+                    "Attachment-content matching requires the index; mode=exhaustive scans mail subject/body only.",
+                    nameof(request));
+            }
+
+            IReadOnlyList<string>? folderSegments = ParseFolderSegments(request.Folder);
+
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            ComExhaustiveResult scan = _gateway.Run(s => s.ExhaustiveScan(
+                request.Store!,
+                folderSegments,
+                terms,
+                request.AfterUtc,
+                request.BeforeUtc,
+                maxItems: top,
+                timeBudgetMs: ExhaustiveTimeBudgetMs));
+            stopwatch.Stop();
+
+            List<HitSummary> summaries = new List<HitSummary>();
+            foreach (ComMailBrief item in scan.Items)
+            {
+                if (request.From != null
+                    && !(Contains(item.SenderAddress, request.From) || Contains(item.SenderName, request.From)))
+                {
+                    continue;
+                }
+
+                if (request.UnreadOnly == true && item.IsRead != false)
+                {
+                    continue;
+                }
+
+                if (request.HasAttachments.HasValue && item.HasAttachments != request.HasAttachments.Value)
+                {
+                    continue;
+                }
+
+                summaries.Add(RegisterLiveHit(item, snippetChars: 0, source: "exhaustive"));
+            }
+
+            summaries.Sort((a, b) => DateTime.Compare(b.ReceivedUtc ?? DateTime.MinValue, a.ReceivedUtc ?? DateTime.MinValue));
+            if (summaries.Count > top)
+            {
+                summaries.RemoveRange(top, summaries.Count - top);
+            }
+
+            List<string> advice = new List<string>();
+            if (!scan.InstantSearchEnabled || scan.Engine.IndexOf("like", StringComparison.Ordinal) >= 0)
+            {
+                advice.Add("Term matching used LIKE (substring semantics" + (scan.InstantSearchEnabled
+                    ? "; ci_phrasematch was rejected here" : "; Instant Search is disabled for this store") + ") - slower and broader than index word matching.");
+            }
+
+            if (scan.Truncated)
+            {
+                advice.Add("Result cap (" + top.ToString(CultureInfo.InvariantCulture)
+                    + ") stopped the scan - results may be incomplete. Narrow the folder/date bounds or raise top.");
+            }
+
+            if (scan.TimedOut)
+            {
+                advice.Add("The " + (ExhaustiveTimeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
+                    + " s time budget stopped the scan - results are partial. Narrow the folder/date bounds.");
+            }
+
+            // Staleness is best-effort context here: exhaustive works even when the
+            // SystemIndex is unreachable (that is one of its jobs).
+            DateTime? newestIndexed = null;
+            double? ageMinutes = null;
+            try
+            {
+                IndexStalenessReport staleness = _index.Value.GetStaleness();
+                newestIndexed = staleness.NewestIndexedReceivedUtc;
+                ageMinutes = staleness.Age?.TotalMinutes;
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                advice.Add("SystemIndex is unreachable (" + ex.GetType().Name + ") - exhaustive results are unaffected (COM-only path).");
+            }
+
+            return new SearchOutcome
+            {
+                Mode = "exhaustive",
+                Hits = summaries,
+                IndexElapsedMs = 0,
+                Sweep = null,
+                Exhaustive = new ExhaustiveInfo
+                {
+                    Engine = scan.Engine,
+                    InstantSearchEnabled = scan.InstantSearchEnabled,
+                    FoldersScanned = scan.FoldersScanned,
+                    FoldersSkipped = scan.FoldersSkipped,
+                    Truncated = scan.Truncated,
+                    TimedOut = scan.TimedOut,
+                    ElapsedMs = stopwatch.ElapsedMilliseconds,
+                },
+                Staleness = new StalenessInfo
+                {
+                    NewestIndexedUtc = newestIndexed,
+                    AgeMinutes = ageMinutes,
+                    OutlookRunning = ComGateway.IsOutlookRunning(),
+                },
+                Advice = advice.Count > 0 ? advice : null,
+            };
         }
 
         // ------------------------------------------------------------------ read
@@ -525,6 +679,184 @@ namespace OutlookAI.Core.Services
             };
         }
 
+        // ------------------------------------------------------------------ show-me (Phase 3, v3.MD L3)
+
+        /// <summary>
+        /// Opens a mail in a visible Outlook Inspector window (MailItem.Display) so the
+        /// user can see it. Accepts a hit id or a raw EntryID like read does.
+        /// </summary>
+        public OpenInOutlookOutcome OpenInOutlook(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                throw new ArgumentException("id is required.", nameof(id));
+            }
+
+            (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
+            ComOpenResult displayed = _gateway.Run(s =>
+            {
+                ComOpenResult? d = s.TryDisplayItem(entryId, storeId, out string? error);
+                if (d == null && storeId == null)
+                {
+                    foreach (ComStoreDetail store in GetStoreDetails(s))
+                    {
+                        d = s.TryDisplayItem(entryId, store.StoreId, out error);
+                        if (d != null)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                return d ?? throw new InvalidOperationException("Item could not be displayed (" + (error ?? "unknown") + ").");
+            });
+
+            AppendAuditLine("open_in_outlook entryId=" + displayed.EntryId);
+            return new OpenInOutlookOutcome
+            {
+                Id = hitId,
+                EntryId = displayed.EntryId,
+                Subject = displayed.Subject,
+                Displayed = true,
+            };
+        }
+
+        /// <summary>
+        /// Navigates the Outlook window to a folder (ActiveExplorer().CurrentFolder).
+        /// Omitting the folder goes to the store's Inbox (root when it has none). Creates
+        /// and shows an Explorer when Outlook runs headless.
+        /// </summary>
+        public GotoFolderOutcome GotoFolder(string store, string? folder = null)
+        {
+            if (string.IsNullOrWhiteSpace(store))
+            {
+                throw new ArgumentException("store is required (a display name from list_accounts).", nameof(store));
+            }
+
+            IReadOnlyList<string>? segments = ParseFolderSegments(folder);
+            ComExplorerState state = _gateway.Run(s =>
+            {
+                ComExplorerState? result = s.TryGotoFolder(store, segments, out string? error);
+                return result ?? throw new InvalidOperationException(BuildNavigationError(error, store, folder));
+            });
+
+            return new GotoFolderOutcome
+            {
+                Store = store,
+                Folder = folder,
+                ExplorerFolderPath = state.CurrentFolderPath,
+                ExplorerCaption = state.Caption,
+                Displayed = true,
+            };
+        }
+
+        /// <summary>
+        /// Drives Outlook's real search UI (Explorer.Search) so the user sees the result
+        /// list. Optional store/folder navigate the window there first, which is what
+        /// the current_folder/subfolders scopes apply to.
+        /// </summary>
+        public ShowSearchResultsOutcome ShowSearchResults(string query, string scope = "current_folder", string? store = null, string? folder = null)
+        {
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                throw new ArgumentException("query is required.", nameof(query));
+            }
+
+            if (query.Length > 256)
+            {
+                throw new ArgumentException("query is too long for the Outlook search box (max 256 chars).", nameof(query));
+            }
+
+            foreach (char c in query)
+            {
+                if (char.IsControl(c))
+                {
+                    throw new ArgumentException("query must not contain control characters.", nameof(query));
+                }
+            }
+
+            if (folder != null && store == null)
+            {
+                throw new ArgumentException("folder requires store.", nameof(folder));
+            }
+
+            int olScope = MapSearchScope(scope);
+            IReadOnlyList<string>? segments = ParseFolderSegments(folder);
+            ComExplorerState state = _gateway.Run(s =>
+            {
+                ComExplorerState? result = s.TryShowSearchResults(query, olScope, store, segments, out string? error);
+                return result ?? throw new InvalidOperationException(BuildNavigationError(error, store, folder));
+            });
+
+            return new ShowSearchResultsOutcome
+            {
+                Query = query,
+                Scope = NormalizeScopeName(scope),
+                ExplorerFolderPath = state.CurrentFolderPath,
+                ExplorerCaption = state.Caption,
+                Displayed = true,
+            };
+        }
+
+        /// <summary>
+        /// Maps the tool-facing scope name to the OlSearchScope enum value
+        /// (feature-tested live in Phase 3: all four values accepted on this Outlook
+        /// build - see v3.MD section 0.8 Phase-3 facts).
+        /// </summary>
+        public static int MapSearchScope(string scope)
+        {
+            switch (NormalizeScopeName(scope))
+            {
+                case "current_folder":
+                    return 0; // olSearchScopeCurrentFolder
+                case "all_folders":
+                    return 1; // olSearchScopeAllFolders (current store's mail folders)
+                case "all_outlook":
+                    return 2; // olSearchScopeAllOutlookItems (every store)
+                case "subfolders":
+                    return 3; // olSearchScopeSubfolders (current folder + children)
+                default:
+                    throw new ArgumentException(
+                        "scope must be one of current_folder | subfolders | all_folders | all_outlook.", nameof(scope));
+            }
+        }
+
+        private static string NormalizeScopeName(string scope)
+        {
+            return (scope ?? string.Empty).Trim().ToLowerInvariant();
+        }
+
+        private static string BuildNavigationError(string? error, string? store, string? folder)
+        {
+            if (error == "StoreNotFound")
+            {
+                return "Store '" + store + "' was not found in Outlook. Use list_accounts for store display names.";
+            }
+
+            if (error == "FolderNotFound")
+            {
+                return "Folder '" + folder + "' was not found in store '" + store + "'. Use list_folders for store-relative paths.";
+            }
+
+            return "Outlook could not show the requested view (" + (error ?? "unknown") + ").";
+        }
+
+        private static IReadOnlyList<string>? ParseFolderSegments(string? folder)
+        {
+            if (folder == null)
+            {
+                return null;
+            }
+
+            string trimmed = folder.Trim().Trim('/');
+            if (trimmed.Length == 0)
+            {
+                return null;
+            }
+
+            return trimmed.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+        }
+
         // ------------------------------------------------------------------ index_status
 
         /// <summary>Staleness + availability self-report (R7/D19). Never starts Outlook.</summary>
@@ -746,7 +1078,7 @@ namespace OutlookAI.Core.Services
                 Live = item,
                 LocatedEntryId = item.EntryId,
                 LocatedStoreId = item.StoreId,
-                LocatedVia = source == "live" ? "sweep" : "conversation",
+                LocatedVia = source == "live" ? "sweep" : source == "exhaustive" ? "exhaustive" : "conversation",
             };
 
             string? snippet = null;

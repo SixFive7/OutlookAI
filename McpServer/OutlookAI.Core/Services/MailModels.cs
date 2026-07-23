@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace OutlookAI.Core.Services
 {
-    /// <summary>Search freshness mode (v3.MD D19). Exhaustive arrives in Phase 3.</summary>
+    /// <summary>Search freshness mode (v3.MD D19).</summary>
     public enum SearchMode
     {
         /// <summary>Index only (8-60 ms; works with Outlook closed, results may be stale).</summary>
@@ -11,6 +11,13 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Index + COM gap-sweep of items newer than the newest-indexed timestamp. The default.</summary>
         Fresh = 1,
+
+        /// <summary>
+        /// Folder/date-bounded COM scan that BYPASSES the index (correctness beats
+        /// speed; also works when the SystemIndex is broken). Requires a store plus a
+        /// bound (folder or after date) to avoid multi-minute scans.
+        /// </summary>
+        Exhaustive = 2,
     }
 
     /// <summary>Parameters for one search call (mirrors the MCP tool arguments).</summary>
@@ -142,6 +149,31 @@ namespace OutlookAI.Core.Services
         public string? Error { get; set; }
     }
 
+    /// <summary>Exhaustive-scan diagnostics attached to mode=exhaustive results.</summary>
+    public sealed class ExhaustiveInfo
+    {
+        /// <summary>Term engine used: "ci_phrasematch" (index-backed DASL), "like" (substring scan), or "ci_phrasematch+like".</summary>
+        public string Engine { get; set; } = string.Empty;
+
+        /// <summary>Store.IsInstantSearchEnabled as reported by Outlook (the ci_* gate).</summary>
+        public bool InstantSearchEnabled { get; set; }
+
+        /// <summary>Mail folders the scan filtered.</summary>
+        public int FoldersScanned { get; set; }
+
+        /// <summary>Folders where the filter failed under both engines.</summary>
+        public int FoldersSkipped { get; set; }
+
+        /// <summary>True when the result cap stopped the scan (results may be incomplete).</summary>
+        public bool Truncated { get; set; }
+
+        /// <summary>True when the time budget stopped the scan (results may be incomplete).</summary>
+        public bool TimedOut { get; set; }
+
+        /// <summary>Scan wall-clock cost.</summary>
+        public long ElapsedMs { get; set; }
+    }
+
     /// <summary>Index staleness snapshot attached to search results.</summary>
     public sealed class StalenessInfo
     {
@@ -158,19 +190,22 @@ namespace OutlookAI.Core.Services
     /// <summary>Search outcome (search tool payload).</summary>
     public sealed class SearchOutcome
     {
-        /// <summary>Mode that ran ("fast"/"fresh").</summary>
+        /// <summary>Mode that ran ("fast"/"fresh"/"exhaustive").</summary>
         public string Mode { get; set; } = "fresh";
 
         /// <summary>Merged hits, newest first.</summary>
         public IReadOnlyList<HitSummary> Hits { get; set; } = Array.Empty<HitSummary>();
 
-        /// <summary>Index query wall-clock cost.</summary>
+        /// <summary>Index query wall-clock cost (0 in exhaustive mode - the index is bypassed).</summary>
         public long IndexElapsedMs { get; set; }
 
         /// <summary>Sweep diagnostics (fresh mode only).</summary>
         public SweepInfo? Sweep { get; set; }
 
-        /// <summary>Staleness self-report (R7/D19).</summary>
+        /// <summary>Exhaustive-scan diagnostics (exhaustive mode only).</summary>
+        public ExhaustiveInfo? Exhaustive { get; set; }
+
+        /// <summary>Staleness self-report (R7/D19). Best-effort in exhaustive mode.</summary>
         public StalenessInfo Staleness { get; set; } = new StalenessInfo();
 
         /// <summary>Agent-facing advice when results may be incomplete.</summary>
@@ -428,5 +463,59 @@ namespace OutlookAI.Core.Services
 
         /// <summary>True when the folder cap cut the listing.</summary>
         public bool Truncated { get; set; }
+    }
+
+    /// <summary>open_in_outlook outcome (v3.MD L3).</summary>
+    public sealed class OpenInOutlookOutcome
+    {
+        /// <summary>The hit id used (when one was).</summary>
+        public string? Id { get; set; }
+
+        /// <summary>REAL EntryID of the item now shown in an Outlook Inspector window.</summary>
+        public string EntryId { get; set; } = string.Empty;
+
+        /// <summary>Subject of the displayed item.</summary>
+        public string? Subject { get; set; }
+
+        /// <summary>Always true on success - the item is on screen.</summary>
+        public bool Displayed { get; set; }
+    }
+
+    /// <summary>goto_folder outcome (v3.MD L3).</summary>
+    public sealed class GotoFolderOutcome
+    {
+        /// <summary>Store display name navigated to.</summary>
+        public string Store { get; set; } = string.Empty;
+
+        /// <summary>Store-relative folder path requested (null = the store's Inbox/root).</summary>
+        public string? Folder { get; set; }
+
+        /// <summary>ActiveExplorer().CurrentFolder.FolderPath after navigation (\\Store\Folder\...).</summary>
+        public string? ExplorerFolderPath { get; set; }
+
+        /// <summary>Explorer window caption after navigation.</summary>
+        public string? ExplorerCaption { get; set; }
+
+        /// <summary>Always true on success - the folder is on screen.</summary>
+        public bool Displayed { get; set; }
+    }
+
+    /// <summary>show_search_results outcome (v3.MD L3).</summary>
+    public sealed class ShowSearchResultsOutcome
+    {
+        /// <summary>The query now in Outlook's search box.</summary>
+        public string Query { get; set; } = string.Empty;
+
+        /// <summary>Scope the search ran with ("current_folder"/"subfolders"/"all_folders"/"all_outlook").</summary>
+        public string Scope { get; set; } = string.Empty;
+
+        /// <summary>ActiveExplorer().CurrentFolder.FolderPath right after Search (the UI may swap to a results view asynchronously).</summary>
+        public string? ExplorerFolderPath { get; set; }
+
+        /// <summary>Explorer window caption right after Search.</summary>
+        public string? ExplorerCaption { get; set; }
+
+        /// <summary>Always true on success - the search UI is on screen and populating.</summary>
+        public bool Displayed { get; set; }
     }
 }
