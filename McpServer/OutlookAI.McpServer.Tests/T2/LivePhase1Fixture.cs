@@ -20,6 +20,9 @@ public sealed class LiveTestSettings
     /// <summary>Display names of the three primary account stores.</summary>
     public List<string> ExpectedStoreDisplayNames { get; set; } = new();
 
+    /// <summary>Display names of the delegate/shared-mailbox cache stores (Phase-2 list_accounts exactness).</summary>
+    public List<string> ExpectedDelegateStoreDisplayNames { get; set; } = new();
+
     /// <summary>The section-5 probe term (generic word; proven to hit on this machine).</summary>
     public string ProbeTerm { get; set; } = string.Empty;
 
