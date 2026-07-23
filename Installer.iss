@@ -44,6 +44,9 @@ Root: HKCU; Subkey: "Software\Microsoft\Office\17.0\Outlook\Resiliency\DoNotDisa
 
 [UninstallRun]
 Filename: "certutil"; Parameters: "-user -delstore TrustedPublisher OutlookAI"; Flags: runhidden
+; Belt and braces: also remove the superseded certificate explicitly by thumbprint, in
+; case the subject match above does not catch it.
+Filename: "certutil"; Parameters: "-user -delstore TrustedPublisher E205060633DD7062D4F90033130542948A69D068"; Flags: runhidden
 
 [Code]
 function IsVstoInstalled: Boolean;
@@ -175,6 +178,19 @@ begin
   end;
 end;
 
+// An earlier OutlookAI signing certificate had its private key exposed publicly, so it
+// must no longer be trusted. Delete it by THUMBPRINT, never by subject: it shares
+// CN=OutlookAI with the current certificate, so a subject match would also remove the
+// one just installed above. Best effort - on most machines it was never present, and a
+// "not found" result is the normal case, so all failures are ignored silently.
+procedure RemoveCompromisedCertificate;
+var
+  ResultCode: Integer;
+  Executed: Boolean;
+begin
+  Executed := Exec('certutil', '-user -delstore TrustedPublisher E205060633DD7062D4F90033130542948A69D068', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure DownloadAndInstallNetFramework;
 var
   TempPath: string;
@@ -235,5 +251,8 @@ begin
     end;
 
     InstallCertificate;
+    // Runs on every install and every silent auto-update, so machines that still trust
+    // the exposed certificate are cleaned up as they update.
+    RemoveCompromisedCertificate;
   end;
 end;
