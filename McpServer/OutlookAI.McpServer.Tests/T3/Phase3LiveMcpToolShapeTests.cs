@@ -51,7 +51,23 @@ public sealed class Phase3LiveMcpToolShapeTests
         });
         JsonElement hits = search.GetProperty("hits");
         Assert.True(hits.GetArrayLength() >= 1, "no hub hits for open_in_outlook");
-        string hitId = hits[0].GetProperty("id").GetString()!;
+
+        // Skip test artifacts: deleted tagged items keep their index rows alive
+        // (IncludeDeletedItems=1, Phase-2 fact 9) and cannot be opened - when the
+        // Phase-4 draft tests run earlier in the same suite, such a row can be the
+        // newest hub hit.
+        string? hitId = null;
+        foreach (JsonElement hit in hits.EnumerateArray())
+        {
+            string? subject = hit.TryGetProperty("subject", out JsonElement subjectProp) ? subjectProp.GetString() : null;
+            if (subject == null || subject.IndexOf("[OutlookAI-McpTest]", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                hitId = hit.GetProperty("id").GetString();
+                break;
+            }
+        }
+
+        Assert.True(hitId != null, "no non-artifact hub hits for open_in_outlook");
 
         JsonElement opened = await client.CallToolAsync("open_in_outlook", new { id = hitId });
         Assert.True(opened.GetProperty("displayed").GetBoolean());

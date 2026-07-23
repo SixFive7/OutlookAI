@@ -1036,6 +1036,8 @@ namespace OutlookAI.Core.Services
                     ("signatureInjected", created.SignatureInjected ? "true" : "false"),
                     ("displayed", created.Displayed ? "true" : "false"),
                     ("recipients", created.Draft.Recipients.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("movedToDrafts", created.MovedToDrafts ? "true" : "false"),
+                    ("initialFolder", created.InitialSaveFolderName),
                     ("sourceEntryId", sourceEntryId));
             }
             catch (InvalidOperationException ex)
