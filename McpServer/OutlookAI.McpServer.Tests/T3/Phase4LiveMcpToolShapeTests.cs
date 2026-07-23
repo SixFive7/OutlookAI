@@ -152,6 +152,14 @@ public sealed class Phase4LiveMcpToolShapeTests
 
     private string AssertDraftShape(JsonElement outcome, string expectedKind)
     {
+        if (!outcome.TryGetProperty("kind", out _))
+        {
+            // Domain error payload instead of a draft outcome - surface WHAT the server
+            // said (test-artifact content only, S4-safe) instead of a bare
+            // KeyNotFoundException (live-bitten: a reply against a ~1 s-old seed).
+            Assert.Fail($"{expectedKind}: tool returned no draft outcome: {outcome.GetRawText()}");
+        }
+
         Assert.Equal(expectedKind, outcome.GetProperty("kind").GetString());
         string entryId = outcome.GetProperty("entryId").GetString()!;
         Assert.True(entryId.Length >= 48, "draft outcome must carry the real EntryID");

@@ -668,6 +668,62 @@ namespace OutlookAI.Core.Com
             return result;
         }
 
+        /// <summary>
+        /// Total item count across every store's Outbox (the S7 quit-when-safe count -
+        /// graceful tooling and the lifecycle tests refuse to close/quit Outlook while
+        /// anything is pending). Stores without an Outbox (delegate caches) are skipped;
+        /// returns -1 when the walk itself failed (callers treat unknown as unsafe).
+        /// </summary>
+        public int CountOutboxItems()
+        {
+            EnsureNotDisposed();
+            return _runner.Run(() =>
+            {
+                dynamic ns = _namespace!;
+                object? stores = null;
+                try
+                {
+                    stores = (object)ns.Stores;
+                    dynamic list = (dynamic)stores!;
+                    int count = list.Count;
+                    int total = 0;
+                    for (int i = 1; i <= count; i++)
+                    {
+                        object? store = null;
+                        object? outbox = null;
+                        object? items = null;
+                        try
+                        {
+                            store = list[i];
+                            outbox = ((dynamic)store!).GetDefaultFolder(4); // olFolderOutbox
+                            items = ((dynamic)outbox!).Items;
+                            total += (int)((dynamic)items!).Count;
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            // Store without an Outbox (delegate cache) - fine.
+                        }
+                        finally
+                        {
+                            Release(items);
+                            Release(outbox);
+                            Release(store);
+                        }
+                    }
+
+                    return total;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    return -1;
+                }
+                finally
+                {
+                    Release(stores);
+                }
+            });
+        }
+
         /// <summary>Current MAPI profile name - doubles as the liveness ping for <see cref="ComGateway"/>.</summary>
         public string GetProfileName()
         {

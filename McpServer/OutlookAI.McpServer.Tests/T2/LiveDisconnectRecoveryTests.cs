@@ -25,8 +25,11 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// is a documented protocol rule (release/stop server sessions BEFORE driving Quit),
 /// deliberately not reproduced here because inducing the park would wedge the suite.
 ///
-/// Safety: only a window-LESS Outlook is promoted (a pre-existing window means a user
-/// session - skip); only the window this test itself created is closed; never kill.
+/// Safety: pre-existing windows (normally the show-me tests' parked hub Explorer -
+/// this collection runs last) are closed gracefully ONLY under the S7 quit-when-safe
+/// counts (user idle >= 3 min, zero open Inspectors, every Outbox empty) - otherwise
+/// the test skips; never kill. Side benefit: a full-suite run now ENDS with Outlook
+/// headless (D33) instead of leaving the show-me Explorer open.
 /// </summary>
 [Collection("LiveLifecycle")]
 [Trait("Category", "Live")]
@@ -60,17 +63,54 @@ public sealed class LiveDisconnectRecoveryTests
         HealthOutcome before = service.Health();
         Assert.True(before.Outlook.Running);
         Assert.True(before.Outlook.ComConnected, "probed comConnected must be true with a live session");
-        if (before.Outlook.Headless != true)
-        {
-            _output.WriteLine("SKIP: Outlook has a visible window (user session) - this test only drives its own window.");
-            return;
-        }
 
+        // Guard chain (S7 v2 graceful protocol + user protection): pre-existing visible
+        // windows are usually the show-me tests' parked hub-store Explorer (Phase-3
+        // fact 3 - every full-suite run leaves one; this collection runs last). Those
+        // may be closed gracefully ONLY when the user is not recently active, no
+        // Inspector (potential compose) window is open, and every Outbox is empty.
         IReadOnlyList<IntPtr> baselineWindows = WindowProbe.VisibleOutlookWindows();
-        if (baselineWindows.Count != 0)
+        if (baselineWindows.Count > 0)
         {
-            _output.WriteLine($"SKIP: {baselineWindows.Count} visible Outlook window(s) already exist.");
-            return;
+            double idleSeconds = WindowProbe.UserIdleSeconds();
+            if (idleSeconds < 180)
+            {
+                _output.WriteLine($"SKIP: Outlook windows exist and the user was active {idleSeconds:F0} s ago - not closing anything.");
+                return;
+            }
+
+            IReadOnlyList<ComInspectorInfo> inspectors = independentGateway.Run(s => s.GetOpenInspectors());
+            if (inspectors.Count > 0)
+            {
+                _output.WriteLine($"SKIP: {inspectors.Count} open Inspector window(s) (possible unsent compose) - not closing anything.");
+                return;
+            }
+
+            int outboxItems = independentGateway.Run(s => s.CountOutboxItems());
+            if (outboxItems != 0)
+            {
+                _output.WriteLine($"SKIP: {outboxItems} Outbox item(s) (or count unavailable) - not closing anything.");
+                return;
+            }
+
+            _output.WriteLine($"closing {baselineWindows.Count} parked Explorer window(s) gracefully (idle {idleSeconds:F0} s, no inspectors, outbox empty)");
+            foreach (IntPtr hwnd in baselineWindows)
+            {
+                WindowProbe.PostClose(hwnd);
+            }
+
+            bool preExited = PollUntil(() => Process.GetProcessesByName("OUTLOOK").Length == 0, TimeSpan.FromSeconds(120));
+            Assert.True(preExited, "Outlook did not exit within 120 s of closing its parked windows (safety counts were clean)");
+            _output.WriteLine("windowed Outlook exited after graceful close; re-autostarting headless for the scenario");
+
+            // Fresh headless Outlook for the actual scenario (D17 autostart).
+            _ = independentGateway.Run(s => s.GetStores().Count);
+            baselineWindows = WindowProbe.VisibleOutlookWindows();
+            if (baselineWindows.Count != 0)
+            {
+                _output.WriteLine("SKIP: a window appeared during re-autostart (user activity?) - stopping here.");
+                return;
+            }
         }
 
         // Promote with ONE window of our own via the sanctioned goto surface (hub store).
@@ -206,9 +246,35 @@ public sealed class LiveDisconnectRecoveryTests
             _ = NativeMethods.PostMessage(hwnd, WmClose, IntPtr.Zero, IntPtr.Zero);
         }
 
+        /// <summary>Seconds since the interactive user's last keyboard/mouse input.</summary>
+        internal static double UserIdleSeconds()
+        {
+            NativeMethods.LASTINPUTINFO info = new()
+            {
+                cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.LASTINPUTINFO>(),
+            };
+            if (!NativeMethods.GetLastInputInfo(ref info))
+            {
+                return 0; // Unknown - treat as "user just active" (the conservative direction).
+            }
+
+            return (Environment.TickCount - (int)info.dwTime) / 1000.0;
+        }
+
         private static class NativeMethods
         {
             internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+            [StructLayout(LayoutKind.Sequential)]
+            internal struct LASTINPUTINFO
+            {
+                internal uint cbSize;
+                internal uint dwTime;
+            }
+
+            [DllImport("user32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            internal static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
 
             [DllImport("user32.dll")]
             [return: MarshalAs(UnmanagedType.Bool)]
