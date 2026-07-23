@@ -543,6 +543,56 @@ namespace OutlookAI.Core.Services
         public IReadOnlyList<RecipientView>? Recipients { get; set; }
     }
 
+    /// <summary>
+    /// send-tool outcome (v3.MD L5/D4 - high-friction two-step flow). Status
+    /// "confirmation_required": NOTHING was sent; a one-time confirm token was issued.
+    /// Status "sent": the mail went out with the verified identity reported here.
+    /// </summary>
+    public sealed class SendOutcome
+    {
+        /// <summary>"confirmation_required" (step 1 - nothing sent) or "sent" (step 2 - transport accepted).</summary>
+        public string Status { get; set; } = "confirmation_required";
+
+        /// <summary>True only when the mail was actually handed to the transport.</summary>
+        public bool Sent { get; set; }
+
+        /// <summary>Strong policy warning (step 1): confirm with the user before using the token.</summary>
+        public string? Warning { get; set; }
+
+        /// <summary>One-time token for the confirming send call (step 1 only).</summary>
+        public string? ConfirmToken { get; set; }
+
+        /// <summary>Seconds until the token expires (step 1 only).</summary>
+        public double? TokenExpiresInSeconds { get; set; }
+
+        /// <summary>The hit id the draft was referenced by (when one was used).</summary>
+        public string? Id { get; set; }
+
+        /// <summary>Draft EntryID this flow operated on (invalid after a successful send - sent items get a new EntryID).</summary>
+        public string EntryId { get; set; } = string.Empty;
+
+        /// <summary>Store the draft lives/lived in.</summary>
+        public string? Store { get; set; }
+
+        /// <summary>Folder the draft was in when the token was issued (step 1 only).</summary>
+        public string? Folder { get; set; }
+
+        /// <summary>SmtpAddress of the sending identity - always the account owning the draft's store.</summary>
+        public string? Account { get; set; }
+
+        /// <summary>True when the SendUsingAccount getter readback matched right before Send() (step 2).</summary>
+        public bool? AccountVerified { get; set; }
+
+        /// <summary>SentOnBehalfOfName applied to the outgoing mail, when requested.</summary>
+        public string? SentOnBehalfOf { get; set; }
+
+        /// <summary>Draft subject (so the model can restate to the user WHAT would be / was sent).</summary>
+        public string? Subject { get; set; }
+
+        /// <summary>Recipients the mail would go / went to (confirm these with the user in step 1).</summary>
+        public IReadOnlyList<RecipientView>? Recipients { get; set; }
+    }
+
     /// <summary>show_search_results outcome (v3.MD L3).</summary>
     public sealed class ShowSearchResultsOutcome
     {

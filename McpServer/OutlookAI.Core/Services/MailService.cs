@@ -36,6 +36,7 @@ namespace OutlookAI.Core.Services
 
         private readonly Lazy<IndexSearchService> _index;
         private readonly ComGateway _gateway;
+        private readonly SendConfirmationTokens _sendTokens;
         private readonly ConcurrentDictionary<string, CachedHit> _hits =
             new ConcurrentDictionary<string, CachedHit>(StringComparer.Ordinal);
         private readonly object _catalogLock = new object();
@@ -47,8 +48,18 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Creates the service; both the index client and the COM session attach lazily.</summary>
         public MailService(ComGateway gateway)
+            : this(gateway, null)
+        {
+        }
+
+        /// <summary>
+        /// Creates the service with an explicit send-confirmation token store (tests
+        /// inject short-TTL stores; production uses the 120 s default).
+        /// </summary>
+        public MailService(ComGateway gateway, SendConfirmationTokens? sendTokens)
         {
             _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
+            _sendTokens = sendTokens ?? new SendConfirmationTokens();
             _index = new Lazy<IndexSearchService>(
                 () => IndexSearchService.CreateDefault(out _providerReport),
                 System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
@@ -1068,6 +1079,261 @@ namespace OutlookAI.Core.Services
                     .Select(r => new RecipientView { Kind = r.Kind, Name = r.Name, Address = r.Address })
                     .ToList(),
             };
+        }
+
+        // ------------------------------------------------------------------ send (Phase 5, v3.MD L5/D4)
+
+        /// <summary>
+        /// High-friction two-step send (D4). WITHOUT a valid <paramref name="confirmToken"/>
+        /// nothing is sent: the call returns a warning plus a one-time token bound to the
+        /// draft's EntryID and current content hash. WITH the token (single-use, short
+        /// TTL, invalidated by any draft change) the send executes: identity is resolved
+        /// from the draft's own store, pinned via the Phase-4 putref path and getter-
+        /// verified in-session immediately before <c>Send()</c> - a mismatch aborts.
+        /// Every step (token issued / send / refusal) writes an audit line; refusals
+        /// throw <see cref="SendRefusedException"/>.
+        /// </summary>
+        public SendOutcome Send(string id, string? confirmToken = null, string? sentOnBehalfOf = null)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                throw new ArgumentException(
+                    "id is required (the draft EntryID returned by a draft tool, or a hit id of a saved unsent draft).", nameof(id));
+            }
+
+            sentOnBehalfOf = string.IsNullOrWhiteSpace(sentOnBehalfOf) ? null : sentOnBehalfOf!.Trim();
+
+            (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
+
+            // Snapshot the draft's sendable state (across-store retry for direct
+            // EntryIDs, same pattern as read/reply).
+            ComSendableDraftState state = _gateway.Run(s =>
+            {
+                string? error = null;
+                ComSendableDraftState? st = s.TryGetSendableDraftState(entryId, storeId, out error);
+                if (st == null && storeId == null)
+                {
+                    foreach (ComStoreDetail store in GetStoreDetails(s))
+                    {
+                        st = s.TryGetSendableDraftState(entryId, store.StoreId, out error);
+                        if (st != null)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                return st ?? throw new InvalidOperationException(
+                    "The draft could not be opened (" + (error ?? "unknown")
+                    + "). It may have been deleted, moved, or already sent - re-check with read or re-run search.");
+            });
+
+            if (state.IsSent)
+            {
+                throw RefuseSend("not_an_unsent_draft", state.EntryId, state.StoreDisplayName, state.ResolvedAccountSmtp,
+                    "This item has already been sent (or is not a saved draft). Only saved, unsent drafts can be sent.");
+            }
+
+            if (state.ResolvedAccountSmtp == null)
+            {
+                throw RefuseSend("no_sending_account", state.EntryId, state.StoreDisplayName, null,
+                    "No profile account delivers into the store holding this draft ('" + (state.StoreDisplayName ?? "unknown")
+                    + "'), so a verified send identity cannot be established. Move the draft creation to one of the accounts from list_accounts.");
+            }
+
+            string contentHash = SendContentHash.Compute(state.Subject, state.Recipients, state.BodyText, sentOnBehalfOf);
+
+            if (string.IsNullOrWhiteSpace(confirmToken))
+            {
+                return IssueSendToken(state, contentHash, hitId, sentOnBehalfOf);
+            }
+
+            SendTokenDecision decision = _sendTokens.Consume(confirmToken!.Trim(), state.EntryId, contentHash);
+            if (decision != SendTokenDecision.Valid)
+            {
+                throw RefuseSend(DescribeTokenDecision(decision), state.EntryId, state.StoreDisplayName, state.ResolvedAccountSmtp,
+                    BuildTokenRefusalMessage(decision));
+            }
+
+            // Confirmed: execute as ONE STA operation (re-verify content INSIDE, pin +
+            // hard-verify identity, then Send) - v3.MD section 12 Phase-4/5 rules.
+            string? sendError = null;
+            ComSendResult? sent = _gateway.Run(s => s.TrySendDraft(state.EntryId, state.StoreId, contentHash, sentOnBehalfOf, out sendError));
+            if (sent == null)
+            {
+                throw MapSendFailure(sendError, state);
+            }
+
+            AuditSend(sent, hitId);
+            return new SendOutcome
+            {
+                Status = "sent",
+                Sent = true,
+                Id = hitId,
+                EntryId = sent.EntryIdAtSend,
+                Store = sent.StoreDisplayName,
+                Account = sent.AccountSmtp,
+                AccountVerified = true,
+                SentOnBehalfOf = sent.SentOnBehalfOfName,
+                Subject = sent.Subject,
+                Recipients = ToRecipientViews(sent.Recipients),
+            };
+        }
+
+        private SendOutcome IssueSendToken(ComSendableDraftState state, string contentHash, string? hitId, string? sentOnBehalfOf)
+        {
+            string token = _sendTokens.Issue(state.EntryId, contentHash);
+            double ttlSeconds = _sendTokens.TimeToLive.TotalSeconds;
+            try
+            {
+                Audit.AuditLog.Append(
+                    "send_token_issued",
+                    ("entryId", state.EntryId),
+                    ("store", state.StoreDisplayName),
+                    ("account", state.ResolvedAccountSmtp),
+                    ("recipients", state.Recipients.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("expiresInSeconds", ttlSeconds.ToString("F0", CultureInfo.InvariantCulture)),
+                    ("onBehalfOf", sentOnBehalfOf),
+                    ("token", token));
+            }
+            catch (InvalidOperationException ex)
+            {
+                // No token without its audit line (D4 discipline).
+                _sendTokens.Invalidate(token);
+                throw new InvalidOperationException(
+                    "The send confirmation token could not be audit-logged and was NOT issued: " + ex.Message, ex);
+            }
+
+            return new SendOutcome
+            {
+                Status = "confirmation_required",
+                Sent = false,
+                Warning = "NOT SENT (step 1 of 2). Automatic sending is a high-friction opt-in action; the default OutlookAI "
+                    + "workflow is drafting and letting the user press Send themselves. Re-confirm with the user that THIS draft "
+                    + "(check subject and recipients below) should be sent automatically. Only if that is explicitly wanted, call "
+                    + "send again with confirm_token within " + ttlSeconds.ToString("F0", CultureInfo.InvariantCulture)
+                    + " seconds. The token works exactly once, is bound to this draft and its current content, and becomes invalid "
+                    + "if the draft changes.",
+                ConfirmToken = token,
+                TokenExpiresInSeconds = ttlSeconds,
+                Id = hitId,
+                EntryId = state.EntryId,
+                Store = state.StoreDisplayName,
+                Folder = state.ParentFolderName,
+                Account = state.ResolvedAccountSmtp,
+                SentOnBehalfOf = sentOnBehalfOf,
+                Subject = state.Subject,
+                Recipients = ToRecipientViews(state.Recipients),
+            };
+        }
+
+        /// <summary>Audit-logs a refusal and builds the exception (nothing was sent).</summary>
+        private static SendRefusedException RefuseSend(string reason, string? entryId, string? store, string? account, string message)
+        {
+            Audit.AuditLog.Append(
+                "send_refused",
+                ("entryId", entryId),
+                ("store", store),
+                ("account", account),
+                ("reason", reason));
+            return new SendRefusedException(reason, message);
+        }
+
+        private static string DescribeTokenDecision(SendTokenDecision decision)
+        {
+            return decision switch
+            {
+                SendTokenDecision.Expired => "token_expired",
+                SendTokenDecision.DraftMismatch => "token_draft_mismatch",
+                SendTokenDecision.ContentChanged => "draft_changed",
+                _ => "unknown_or_used_token",
+            };
+        }
+
+        private static string BuildTokenRefusalMessage(SendTokenDecision decision)
+        {
+            return decision switch
+            {
+                SendTokenDecision.Expired =>
+                    "The confirm_token has expired (tokens are short-lived by design). Nothing was sent.",
+                SendTokenDecision.DraftMismatch =>
+                    "The confirm_token was issued for a DIFFERENT draft and has now been invalidated. Nothing was sent.",
+                SendTokenDecision.ContentChanged =>
+                    "The draft changed after the confirm_token was issued, so the token is no longer valid. Nothing was sent - review the current draft first.",
+                _ =>
+                    "The confirm_token is unknown, already used, or from a previous server session (tokens work exactly once). Nothing was sent.",
+            };
+        }
+
+        private static Exception MapSendFailure(string? sendError, ComSendableDraftState state)
+        {
+            string entryId = state.EntryId;
+            string? store = state.StoreDisplayName;
+            string? account = state.ResolvedAccountSmtp;
+            if (sendError == "ContentChangedSinceToken")
+            {
+                return RefuseSend("draft_changed", entryId, store, account,
+                    "The draft changed between token validation and the send, so the send was aborted. Nothing was sent.");
+            }
+
+            if (sendError == "AlreadySent" || sendError == "NotAMailItem")
+            {
+                return RefuseSend("not_an_unsent_draft", entryId, store, account,
+                    "The item is no longer a saved, unsent draft. Nothing was sent.");
+            }
+
+            if (sendError == "NoSendingAccountForStore")
+            {
+                return RefuseSend("no_sending_account", entryId, store, null,
+                    "No profile account delivers into the draft's store, so a verified send identity cannot be established. Nothing was sent.");
+            }
+
+            if (sendError == "SendIdentityVerificationFailed")
+            {
+                return RefuseSend("identity_verification_failed", entryId, store, account,
+                    "The sending identity could not be verified on the draft (SendUsingAccount readback mismatch) - the send was "
+                    + "aborted to avoid sending from the wrong account. Nothing was sent.");
+            }
+
+            if (sendError != null && sendError.StartsWith("SendCallFailed:", StringComparison.Ordinal))
+            {
+                return new InvalidOperationException(
+                    "Outlook's Send call failed (" + sendError.Substring("SendCallFailed:".Length)
+                    + "). The mail MAY be sitting in the Outbox - verify before retrying.");
+            }
+
+            return new InvalidOperationException(
+                "The draft could not be re-opened for sending (" + (sendError ?? "unknown") + "). Nothing was sent.");
+        }
+
+        /// <summary>Send audit (load-bearing, D4): a failure surfaces with the send already executed.</summary>
+        private static void AuditSend(ComSendResult sent, string? hitId)
+        {
+            try
+            {
+                Audit.AuditLog.Append(
+                    "send",
+                    ("entryId", sent.EntryIdAtSend),
+                    ("store", sent.StoreDisplayName),
+                    ("account", sent.AccountSmtp),
+                    ("accountVerified", "true"),
+                    ("recipients", sent.Recipients.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("onBehalfOf", sent.SentOnBehalfOfName),
+                    ("hitId", hitId));
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidOperationException(
+                    "The mail WAS SENT (draft EntryID " + sent.EntryIdAtSend
+                    + ") but the audit line could not be written: " + ex.Message, ex);
+            }
+        }
+
+        private static IReadOnlyList<RecipientView> ToRecipientViews(IReadOnlyList<ComRecipientInfo> recipients)
+        {
+            return recipients
+                .Select(r => new RecipientView { Kind = r.Kind, Name = r.Name, Address = r.Address })
+                .ToList();
         }
 
         // ------------------------------------------------------------------ index_status
