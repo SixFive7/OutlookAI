@@ -44,7 +44,8 @@ public static class OutlookTools
         + "mode=fast is index-only and works with Outlook closed (results can lag - check staleness); "
         + "mode=exhaustive bypasses the index with a bounded COM folder scan (requires store + folder and/or after; slower - "
         + "use when the index is stale/broken or correctness beats speed; whole-word term matching on subject+body). "
-        + "Returns compact hits with an 'id' for read/save_attachment/thread/open_in_outlook.")]
+        + "Returns compact hits with an 'id' for read/save_attachment/thread/open_in_outlook; truncated=true means more "
+        + "matches exist beyond 'top'.")]
     public static string Search(
         [Description("Free-text terms, whitespace-separated, ANDed. Letters/digits plus @.-_'+ only; trailing * for prefix. Omit to filter by sender/date only.")]
         string? query = null,
@@ -93,7 +94,8 @@ public static class OutlookTools
 
     [McpServerTool(Name = "thread")]
     [Description("Fetch the full conversation for a hit: pass conversation_id (from a search hit) and/or id (hit id or EntryID). "
-        + "Uses the index first; falls back to Outlook's conversation graph via COM when the index has no rows. Members are oldest-first.")]
+        + "Uses the index first; falls back to Outlook's conversation graph via COM when the index has no rows. Members are oldest-first; "
+        + "truncated=true means the conversation has more members than 'top'.")]
     public static string Thread(
         [Description("ConversationId from a search hit or read result.")] string? conversation_id = null,
         [Description("Hit id (e.g. h12) or EntryID whose conversation to fetch (enables the COM fallback).")] string? id = null,
@@ -109,7 +111,7 @@ public static class OutlookTools
         + "Needs Outlook (starts it if allowed). First read of an index hit locates the item (up to a few seconds); repeats are cached.")]
     public static string Read(
         [Description("Hit id (e.g. h12) or full EntryID hex.")] string id,
-        [Description("Body cap in characters (default 20000; 0 = metadata only). bodyTruncated+bodyTotalChars flag cuts.")] int max_body_chars = 20000,
+        [Description("Body cap in characters (default 20000; 0 = metadata only). bodyTruncated+bodyTotalChars flag cuts.")] int max_body_chars = MailService.BodyCharsDefault,
         [Description("Include raw transport headers (capped at 8 KB). Default false.")] bool include_headers = false)
     {
         return Guard(() => ServerRuntime.Service.Read(id, max_body_chars, include_headers));
@@ -132,6 +134,16 @@ public static class OutlookTools
     public static string IndexStatus()
     {
         return Guard(() => ServerRuntime.Service.IndexStatus());
+    }
+
+    [McpServerTool(Name = "health")]
+    [Description("Compact health check of everything this server depends on: Outlook running + installed version, store "
+        + "reachability, index freshness, Windows Search (WSearch) service state, audit-log writability, OutlookAI tuning "
+        + "state, and the add-in installer mutex. Read-only - attaches to Outlook only when it is already running, never "
+        + "starts it. status=ok means all dependencies are available; otherwise problems lists each degradation.")]
+    public static string Health()
+    {
+        return Guard(() => ServerRuntime.Service.Health());
     }
 
     [McpServerTool(Name = "list_accounts")]

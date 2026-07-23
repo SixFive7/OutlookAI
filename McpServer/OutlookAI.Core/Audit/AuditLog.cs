@@ -98,6 +98,34 @@ namespace OutlookAI.Core.Audit
         }
 
         /// <summary>
+        /// Probes whether an audit line COULD be appended under
+        /// <paramref name="directory"/> without writing anything: creates the directory
+        /// when missing and opens (creating if absent) the log file for append with the
+        /// same sharing the writers use, then closes it. Content-free error reason on
+        /// failure (S4). Used by the health tool - write ops fail-closed without audit.
+        /// </summary>
+        public static bool TryProbeWritable(string directory, out string? error)
+        {
+            try
+            {
+                Directory.CreateDirectory(directory);
+                string path = Path.Combine(directory, "audit.log");
+                using (new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                {
+                }
+
+                error = null;
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException
+                || ex is NotSupportedException || ex is ArgumentException)
+            {
+                error = ex.GetType().Name;
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Formats one audit line (pure logic, T1-tested). The operation name must be a
         /// simple token; field values are quoted and escaped, null values omitted.
         /// </summary>

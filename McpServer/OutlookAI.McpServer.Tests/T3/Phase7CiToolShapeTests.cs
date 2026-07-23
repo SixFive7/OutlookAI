@@ -1,0 +1,84 @@
+using System.Text.Json;
+using Xunit;
+
+namespace OutlookAI.McpServer.Tests.T3;
+
+/// <summary>
+/// T3 CI-safe slice of the Phase-7 hardening surface: the health tool is advertised
+/// and CALLABLE over real stdio MCP on any machine - health never starts Outlook and
+/// degrades (status=degraded + problems) instead of throwing, so a CI runner without
+/// Outlook/mail stores still gets a well-formed report. Also pins the has-more wording
+/// on the search/thread tool descriptions (section 12 payload contract on the wire).
+/// </summary>
+public sealed class Phase7CiToolShapeTests
+{
+    [Fact]
+    public async Task ToolsList_AdvertisesHealth_AsReadOnly()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement list = await client.RoundTripAsync("tools/list", new { });
+        JsonElement? healthTool = null;
+        foreach (JsonElement tool in list.GetProperty("result").GetProperty("tools").EnumerateArray())
+        {
+            if (tool.GetProperty("name").GetString() == "health")
+            {
+                healthTool = tool;
+                break;
+            }
+        }
+
+        Assert.True(healthTool != null, "the health tool must be advertised");
+        string description = healthTool!.Value.GetProperty("description").GetString()!;
+        Assert.Contains("never", description, StringComparison.OrdinalIgnoreCase); // never starts Outlook
+        Assert.Contains("Outlook", description, StringComparison.Ordinal);
+        Assert.Contains("index", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("audit", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("tuning", description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Health_OnAnyMachine_ReturnsWellFormedReport()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement report = await client.CallToolAsync("health", new { });
+
+        string status = report.GetProperty("status").GetString()!;
+        Assert.True(status is "ok" or "degraded", $"unexpected status '{status}'");
+
+        JsonElement outlook = report.GetProperty("outlook");
+        Assert.True(outlook.GetProperty("running").ValueKind is JsonValueKind.True or JsonValueKind.False);
+        Assert.True(outlook.GetProperty("installerMutexHeld").ValueKind is JsonValueKind.True or JsonValueKind.False);
+
+        JsonElement index = report.GetProperty("index");
+        Assert.False(string.IsNullOrWhiteSpace(index.GetProperty("provider").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(index.GetProperty("wSearchStartMode").GetString()));
+
+        JsonElement audit = report.GetProperty("audit");
+        Assert.False(string.IsNullOrWhiteSpace(audit.GetProperty("path").GetString()));
+        Assert.True(audit.GetProperty("writable").ValueKind is JsonValueKind.True or JsonValueKind.False);
+
+        JsonElement tuning = report.GetProperty("tuning");
+        Assert.True(tuning.GetProperty("managed").ValueKind is JsonValueKind.True or JsonValueKind.False);
+
+        // Degraded reports must SAY why (compact problem lines - section 12).
+        if (status == "degraded")
+        {
+            Assert.True(report.GetProperty("problems").GetArrayLength() > 0);
+        }
+    }
+
+    [Fact]
+    public async Task SearchAndThread_Descriptions_CarryHasMoreContract()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement list = await client.RoundTripAsync("tools/list", new { });
+        var descriptions = list.GetProperty("result").GetProperty("tools").EnumerateArray()
+            .ToDictionary(t => t.GetProperty("name").GetString()!, t => t.GetProperty("description").GetString()!);
+
+        Assert.Contains("truncated", descriptions["search"], StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("truncated", descriptions["thread"], StringComparison.OrdinalIgnoreCase);
+    }
+}

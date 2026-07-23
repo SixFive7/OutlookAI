@@ -34,6 +34,59 @@ namespace OutlookAI.Core.Services
         private static readonly TimeSpan SweepSafetyMargin = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan EmptyIndexSweepWindow = TimeSpan.FromDays(7);
 
+        // ------------------------------------------------------------ payload caps
+        // Section 12 compact-payload discipline, reviewed in Phase 7: every list a tool
+        // can return is capped, every cap has a has-more/truncated indicator, and the
+        // values are public constants so T1 tests pin them against accidental creep.
+
+        /// <summary>Hard cap on search hits per call (tool default <see cref="SearchTopDefault"/>).</summary>
+        public const int SearchTopCap = 100;
+
+        /// <summary>Default search hit count - small on purpose: iterate instead.</summary>
+        public const int SearchTopDefault = 25;
+
+        /// <summary>Hard cap on per-hit snippet length.</summary>
+        public const int SnippetCharsCap = 1000;
+
+        /// <summary>Default per-hit snippet length.</summary>
+        public const int SnippetCharsDefault = 200;
+
+        /// <summary>Hard cap on thread members per call.</summary>
+        public const int ThreadTopCap = 200;
+
+        /// <summary>Default thread member count.</summary>
+        public const int ThreadTopDefault = 50;
+
+        /// <summary>Hard cap on read body characters.</summary>
+        public const int BodyCharsCap = 500_000;
+
+        /// <summary>Default read body cap.</summary>
+        public const int BodyCharsDefault = 20_000;
+
+        /// <summary>Minimum header cap (headers are opt-in).</summary>
+        public const int HeaderCharsMin = 256;
+
+        /// <summary>Hard cap on returned transport headers.</summary>
+        public const int HeaderCharsCap = 65_536;
+
+        /// <summary>Default header cap (8 KB).</summary>
+        public const int HeaderCharsDefault = 8_192;
+
+        /// <summary>Cap on recipients listed in read/draft/send payloads (flagged; operations always use ALL recipients).</summary>
+        public const int RecipientsCap = 100;
+
+        /// <summary>Cap on attachments listed in read payloads (flagged; higher indexes stay saveable).</summary>
+        public const int AttachmentsCap = 100;
+
+        /// <summary>Hard cap on folders per list_folders call.</summary>
+        public const int FoldersCap = 1000;
+
+        /// <summary>Default folder cap for list_folders.</summary>
+        public const int FoldersDefault = 300;
+
+        /// <summary>Maximum list_folders tree depth.</summary>
+        public const int FolderDepthCap = 6;
+
         private readonly Lazy<IndexSearchService> _index;
         private readonly ComGateway _gateway;
         private readonly SendConfirmationTokens _sendTokens;
@@ -99,8 +152,8 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentNullException(nameof(request));
             }
 
-            int top = Clamp(request.Top, 1, 100);
-            int snippetChars = Clamp(request.SnippetChars, 0, 1000);
+            int top = Clamp(request.Top, 1, SearchTopCap);
+            int snippetChars = Clamp(request.SnippetChars, 0, SnippetCharsCap);
             IReadOnlyList<string> terms = SplitTerms(request.Query);
             if (request.Folder != null && request.Store == null)
             {
@@ -132,16 +185,24 @@ namespace OutlookAI.Core.Services
                 IsRead = request.UnreadOnly == true ? false : (bool?)null,
                 HasAttachments = request.HasAttachments,
                 OrderBy = request.OrderBySizeDescending ? IndexOrder.SizeDescending : IndexOrder.DateReceivedDescending,
-                Top = top,
+                // Over-fetch by ONE row: a full page then means "more matches EXIST",
+                // making the truncated flag definite (section 12 has-more discipline).
+                Top = top + 1,
             };
 
             IndexSearchResult indexResult = _index.Value.Search(query);
             IndexStalenessReport staleness = _index.Value.GetStaleness();
             bool outlookRunning = ComGateway.IsOutlookRunning();
 
-            List<HitSummary> summaries = new List<HitSummary>(indexResult.Hits.Count);
+            bool truncated = indexResult.Hits.Count > top;
+            List<HitSummary> summaries = new List<HitSummary>(Math.Min(indexResult.Hits.Count, top));
             foreach (IndexHit hit in indexResult.Hits)
             {
+                if (summaries.Count >= top)
+                {
+                    break; // The over-fetched row is evidence, not a result.
+                }
+
                 summaries.Add(RegisterIndexHit(hit, snippetChars));
             }
 
@@ -183,12 +244,21 @@ namespace OutlookAI.Core.Services
             if (summaries.Count > top)
             {
                 summaries.RemoveRange(top, summaries.Count - top);
+                truncated = true;
+            }
+
+            if (truncated)
+            {
+                advice.Add("Result list capped at " + top.ToString(CultureInfo.InvariantCulture)
+                    + " (top); more matches exist - raise top (max " + SearchTopCap.ToString(CultureInfo.InvariantCulture)
+                    + ") or narrow with store/folder/from/after filters.");
             }
 
             return new SearchOutcome
             {
                 Mode = request.Mode == SearchMode.Fresh ? "fresh" : "fast",
                 Hits = summaries,
+                Truncated = truncated,
                 IndexElapsedMs = indexResult.ElapsedMilliseconds,
                 Sweep = sweep,
                 Staleness = new StalenessInfo
@@ -432,6 +502,7 @@ namespace OutlookAI.Core.Services
             {
                 Mode = "exhaustive",
                 Hits = summaries,
+                Truncated = scan.Truncated,
                 IndexElapsedMs = 0,
                 Sweep = null,
                 Exhaustive = new ExhaustiveInfo
@@ -461,15 +532,15 @@ namespace OutlookAI.Core.Services
         /// string. Index hits are located lazily (HitLocator) and the located EntryID is
         /// cached for the rest of the process lifetime.
         /// </summary>
-        public ReadOutcome Read(string id, int maxBodyChars = 20000, bool includeHeaders = false, int maxHeaderChars = 8192)
+        public ReadOutcome Read(string id, int maxBodyChars = BodyCharsDefault, bool includeHeaders = false, int maxHeaderChars = HeaderCharsDefault)
         {
             if (string.IsNullOrWhiteSpace(id))
             {
                 throw new ArgumentException("id is required.", nameof(id));
             }
 
-            maxBodyChars = Clamp(maxBodyChars, 0, 500000);
-            maxHeaderChars = Clamp(maxHeaderChars, 256, 65536);
+            maxBodyChars = Clamp(maxBodyChars, 0, BodyCharsCap);
+            maxHeaderChars = Clamp(maxHeaderChars, HeaderCharsMin, HeaderCharsCap);
 
             (string entryId, string? storeId, string? locatedVia, long locateMs, string? hitId) = ResolveToEntryId(id);
             ComItemDetail detail = _gateway.Run(s =>
@@ -502,12 +573,8 @@ namespace OutlookAI.Core.Services
                 }
             }
 
-            List<RecipientView> recipients = detail.Recipients
-                .Select(r => new RecipientView { Kind = r.Kind, Name = r.Name, Address = r.Address })
-                .ToList();
-            List<AttachmentView> attachments = detail.Attachments
-                .Select(a => new AttachmentView { Index = a.Index, FileName = a.FileName, SizeBytes = a.SizeBytes })
-                .ToList();
+            IReadOnlyList<RecipientView> recipients = CapRecipients(detail.Recipients, out int recipientTotal, out bool recipientsTruncated);
+            IReadOnlyList<AttachmentView> attachments = CapAttachments(detail.Attachments, out int attachmentTotal, out bool attachmentsTruncated);
 
             return new ReadOutcome
             {
@@ -521,6 +588,8 @@ namespace OutlookAI.Core.Services
                 ReceivedUtc = ToUtc(detail.ReceivedTime),
                 SentUtc = ToUtc(detail.SentTime),
                 Recipients = recipients,
+                RecipientsTruncated = recipientsTruncated ? true : (bool?)null,
+                RecipientsTotal = recipientsTruncated ? recipientTotal : (int?)null,
                 Body = detail.Body,
                 BodyTotalChars = detail.BodyTotalChars,
                 BodyTruncated = detail.BodyTotalChars > detail.Body.Length,
@@ -532,6 +601,8 @@ namespace OutlookAI.Core.Services
                 Headers = headers,
                 HeadersTruncated = headersTruncated,
                 Attachments = attachments,
+                AttachmentsTruncated = attachmentsTruncated ? true : (bool?)null,
+                AttachmentsTotal = attachmentsTruncated ? attachmentTotal : (int?)null,
                 LocatedVia = locatedVia,
                 LocateMs = locateMs > 0 ? locateMs : (long?)null,
             };
@@ -615,9 +686,9 @@ namespace OutlookAI.Core.Services
         /// Resolves a conversation: index ConversationID query first (scoped when the
         /// store is known), COM Conversation walk as fallback (v3.MD section 0.6 Phase 2).
         /// </summary>
-        public ThreadOutcome Thread(string? conversationId, string? id, string? store, int top = 50)
+        public ThreadOutcome Thread(string? conversationId, string? id, string? store, int top = ThreadTopDefault)
         {
-            top = Clamp(top, 1, 200);
+            top = Clamp(top, 1, ThreadTopCap);
             if (conversationId == null && id == null)
             {
                 throw new ArgumentException("Provide conversation_id (from a hit) or id (a hit id / EntryID).");
@@ -655,12 +726,14 @@ namespace OutlookAI.Core.Services
                     Scope = scope,
                     Kinds = KindFilter.EmailOnly,
                     ConversationIdEquals = conversationId,
-                    Top = top,
+                    Top = top + 1, // Over-fetch by one: definite has-more flag.
                 });
                 if (result.Hits.Count > 0)
                 {
+                    bool indexTruncated = result.Hits.Count > top;
                     List<HitSummary> hits = result.Hits
-                        .Select(h => RegisterIndexHit(h, snippetChars: 200))
+                        .Take(top)
+                        .Select(h => RegisterIndexHit(h, snippetChars: SnippetCharsDefault))
                         .OrderBy(h => h.ReceivedUtc ?? DateTime.MinValue)
                         .ToList();
                     stopwatch.Stop();
@@ -669,6 +742,7 @@ namespace OutlookAI.Core.Services
                         ConversationId = conversationId,
                         Source = "index",
                         Hits = hits,
+                        Truncated = indexTruncated,
                         ElapsedMs = stopwatch.ElapsedMilliseconds,
                     };
                 }
@@ -686,21 +760,27 @@ namespace OutlookAI.Core.Services
                 };
             }
 
-            // COM fallback: walk the Outlook Conversation of the referenced item.
+            // COM fallback: walk the Outlook Conversation of the referenced item
+            // (over-fetch by one, same has-more contract as the index path).
             (string entryId, string? storeId, string? _, long _, string? _) = ResolveToEntryId(id);
             IReadOnlyList<ComMailBrief> briefs = _gateway.Run(s =>
             {
-                IReadOnlyList<ComMailBrief>? items = s.TryGetConversationItems(entryId, storeId, top, out string? error);
+                IReadOnlyList<ComMailBrief>? items = s.TryGetConversationItems(entryId, storeId, top + 1, out string? error);
                 return items ?? throw new InvalidOperationException("Conversation walk failed (" + (error ?? "unknown") + ").");
             });
 
-            List<HitSummary> comHits = briefs.Select(b => RegisterLiveHit(b, snippetChars: 0, source: "com")).ToList();
+            bool comTruncated = briefs.Count > top;
+            List<HitSummary> comHits = briefs
+                .Take(top)
+                .Select(b => RegisterLiveHit(b, snippetChars: 0, source: "com"))
+                .ToList();
             stopwatch.Stop();
             return new ThreadOutcome
             {
                 ConversationId = conversationId,
                 Source = "com",
                 Hits = comHits,
+                Truncated = comTruncated,
                 ElapsedMs = stopwatch.ElapsedMilliseconds,
             };
         }
@@ -1061,6 +1141,7 @@ namespace OutlookAI.Core.Services
 
         private static DraftOutcome ToDraftOutcome(string kind, ComDraftCreateResult created, string? hitId, string? sourceEntryId)
         {
+            IReadOnlyList<RecipientView> recipients = CapRecipients(created.Draft.Recipients, out int total, out bool truncated);
             return new DraftOutcome
             {
                 Kind = kind,
@@ -1075,9 +1156,9 @@ namespace OutlookAI.Core.Services
                 SignatureInjected = created.SignatureInjected,
                 Displayed = created.Displayed,
                 ConversationId = created.Draft.ConversationId,
-                Recipients = created.Draft.Recipients
-                    .Select(r => new RecipientView { Kind = r.Kind, Name = r.Name, Address = r.Address })
-                    .ToList(),
+                Recipients = recipients,
+                RecipientsTruncated = truncated ? true : (bool?)null,
+                RecipientsTotal = truncated ? total : (int?)null,
             };
         }
 
@@ -1165,6 +1246,7 @@ namespace OutlookAI.Core.Services
             }
 
             AuditSend(sent, hitId);
+            IReadOnlyList<RecipientView> sentRecipients = CapRecipients(sent.Recipients, out int sentTotal, out bool sentTruncated);
             return new SendOutcome
             {
                 Status = "sent",
@@ -1176,7 +1258,9 @@ namespace OutlookAI.Core.Services
                 AccountVerified = true,
                 SentOnBehalfOf = sent.SentOnBehalfOfName,
                 Subject = sent.Subject,
-                Recipients = ToRecipientViews(sent.Recipients),
+                Recipients = sentRecipients,
+                RecipientsTruncated = sentTruncated ? true : (bool?)null,
+                RecipientsTotal = sentTruncated ? sentTotal : (int?)null,
             };
         }
 
@@ -1223,7 +1307,9 @@ namespace OutlookAI.Core.Services
                 Account = state.ResolvedAccountSmtp,
                 SentOnBehalfOf = sentOnBehalfOf,
                 Subject = state.Subject,
-                Recipients = ToRecipientViews(state.Recipients),
+                Recipients = CapRecipients(state.Recipients, out int total, out bool truncated),
+                RecipientsTruncated = truncated ? true : (bool?)null,
+                RecipientsTotal = truncated ? total : (int?)null,
             };
         }
 
@@ -1329,10 +1415,46 @@ namespace OutlookAI.Core.Services
             }
         }
 
-        private static IReadOnlyList<RecipientView> ToRecipientViews(IReadOnlyList<ComRecipientInfo> recipients)
+        /// <summary>
+        /// Maps recipients into the payload view capped at <see cref="RecipientsCap"/>
+        /// (section 12: caps with has-more indicators). Pure and public for T1 pinning.
+        /// The CAP is presentation-only - operations (send hash, identity checks,
+        /// transport) always use the full COM-side list.
+        /// </summary>
+        public static IReadOnlyList<RecipientView> CapRecipients(
+            IReadOnlyList<ComRecipientInfo> recipients, out int total, out bool truncated)
         {
+            if (recipients == null)
+            {
+                throw new ArgumentNullException(nameof(recipients));
+            }
+
+            total = recipients.Count;
+            truncated = total > RecipientsCap;
             return recipients
+                .Take(truncated ? RecipientsCap : total)
                 .Select(r => new RecipientView { Kind = r.Kind, Name = r.Name, Address = r.Address })
+                .ToList();
+        }
+
+        /// <summary>
+        /// Maps attachments into the payload view capped at <see cref="AttachmentsCap"/>.
+        /// Original 1-based indexes are preserved, so attachments beyond the cap remain
+        /// saveable via save_attachment even though they are not listed.
+        /// </summary>
+        public static IReadOnlyList<AttachmentView> CapAttachments(
+            IReadOnlyList<ComAttachmentInfo> attachments, out int total, out bool truncated)
+        {
+            if (attachments == null)
+            {
+                throw new ArgumentNullException(nameof(attachments));
+            }
+
+            total = attachments.Count;
+            truncated = total > AttachmentsCap;
+            return attachments
+                .Take(truncated ? AttachmentsCap : total)
+                .Select(a => new AttachmentView { Index = a.Index, FileName = a.FileName, SizeBytes = a.SizeBytes })
                 .ToList();
         }
 
@@ -1420,6 +1542,116 @@ namespace OutlookAI.Core.Services
             };
         }
 
+        // ------------------------------------------------------------------ health (Phase 7)
+
+        /// <summary>
+        /// Compact server + environment self-check (Phase 7): Outlook process/version,
+        /// store reachability, index freshness, WSearch service state, audit-log
+        /// writability, tuning state (registry read - decoupled from the add-in) and the
+        /// OutlookAISetup installer-mutex state. Read-only: COM is touched only while
+        /// Outlook is ALREADY running (attach - same pattern as index_status), so this
+        /// never starts Outlook. Always returns a report; problems degrade the status
+        /// instead of throwing.
+        /// </summary>
+        public HealthOutcome Health()
+        {
+            bool outlookRunning = ComGateway.IsOutlookRunning();
+            bool mutexHeld = ComGateway.IsInstallerMutexHeld();
+            List<string> problems = new List<string>();
+
+            // Outlook + stores (attach-only while running; never a cold start).
+            int? storesReachable = null;
+            List<string>? storeNames = null;
+            if (outlookRunning)
+            {
+                try
+                {
+                    IReadOnlyList<ComStoreDetail> stores = _gateway.Run(GetStoreDetails);
+                    storesReachable = stores.Count;
+                    storeNames = stores.Select(s => s.DisplayName).ToList();
+                    if (stores.Count == 0)
+                    {
+                        problems.Add("Outlook is running but reports no stores.");
+                    }
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    problems.Add("Outlook is running but the COM attach failed (" + ex.GetType().Name + ").");
+                }
+            }
+
+            if (mutexHeld)
+            {
+                problems.Add("The add-in installer mutex (OutlookAISetup) is held - COM tools return retry-later until the update finishes.");
+            }
+
+            // Index freshness + WSearch service state.
+            string provider;
+            DateTime? newestIndexed = null;
+            double? ageMinutes = null;
+            try
+            {
+                IndexSearchService index = _index.Value;
+                provider = index.Provider.ToString();
+                IndexStalenessReport staleness = index.GetStaleness();
+                newestIndexed = staleness.NewestIndexedReceivedUtc;
+                ageMinutes = staleness.Age?.TotalMinutes;
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                provider = "unavailable: " + ex.GetType().Name;
+                problems.Add("The SystemIndex is unreachable - index-backed search cannot run.");
+            }
+
+            int? wsearchStart = HealthReporting.TryReadWSearchStartValue();
+            bool? indexerRunning = HealthReporting.TryIsProcessRunning("SearchIndexer");
+            if (wsearchStart == 4)
+            {
+                problems.Add("The Windows Search service (WSearch) is disabled - the index cannot advance.");
+            }
+            else if (indexerRunning == false)
+            {
+                problems.Add("SearchIndexer.exe is not running - index updates are paused until the WSearch service runs.");
+            }
+
+            // Audit log writability (write tools fail-closed without it).
+            bool auditWritable = Audit.AuditLog.TryProbeWritable(Audit.AuditLog.DefaultDirectory, out string? auditError);
+            if (!auditWritable)
+            {
+                problems.Add("The audit log is not writable (" + (auditError ?? "unknown") + ") - draft/save/send operations will fail.");
+            }
+
+            return new HealthOutcome
+            {
+                Status = problems.Count == 0 ? "ok" : "degraded",
+                Problems = problems.Count > 0 ? problems : null,
+                Outlook = new OutlookHealthView
+                {
+                    Running = outlookRunning,
+                    Version = HealthReporting.TryGetOutlookVersion(),
+                    InstallerMutexHeld = mutexHeld,
+                    ComConnected = _gateway.IsConnected,
+                    StoresReachable = storesReachable,
+                    Stores = storeNames,
+                },
+                Index = new IndexHealthView
+                {
+                    Provider = provider,
+                    NewestIndexedUtc = newestIndexed,
+                    AgeMinutes = ageMinutes,
+                    WSearchStartMode = HealthReporting.DescribeServiceStartMode(wsearchStart),
+                    IndexerProcessRunning = indexerRunning,
+                },
+                Audit = new AuditHealthView
+                {
+                    Path = Audit.AuditLog.DefaultLogPath,
+                    Writable = auditWritable,
+                    Error = auditError,
+                },
+                Tuning = HealthReporting.ReadTuningStateFromRegistry(),
+            };
+        }
+
         // ------------------------------------------------------------------ list_accounts / list_folders
 
         /// <summary>Accounts + all stores with delegate and local-searchability flags (D22/D25).</summary>
@@ -1486,10 +1718,10 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>Folder trees (list_folders), depth- and count-capped.</summary>
-        public FoldersOutcome ListFolders(string? store = null, int depth = 2, int maxFolders = 300)
+        public FoldersOutcome ListFolders(string? store = null, int depth = 2, int maxFolders = FoldersDefault)
         {
-            depth = Clamp(depth, 1, 6);
-            maxFolders = Clamp(maxFolders, 1, 1000);
+            depth = Clamp(depth, 1, FolderDepthCap);
+            maxFolders = Clamp(maxFolders, 1, FoldersCap);
             IReadOnlyList<ComFolderInfo> folders = _gateway.Run(s => s.ListFolders(store, depth, maxFolders));
 
             List<StoreFoldersView> byStore = folders

@@ -62,11 +62,11 @@ namespace OutlookAI.Core.Services
         /// <summary>Order results by size instead of date (big-mail discovery; index path only).</summary>
         public bool OrderBySizeDescending { get; set; }
 
-        /// <summary>Maximum hits returned (compact payloads: default 25, cap 100).</summary>
-        public int Top { get; set; } = 25;
+        /// <summary>Maximum hits returned (compact payloads - T1-pinned caps in <see cref="MailService"/>).</summary>
+        public int Top { get; set; } = MailService.SearchTopDefault;
 
         /// <summary>Snippet length per hit (0 disables snippets).</summary>
-        public int SnippetChars { get; set; } = 200;
+        public int SnippetChars { get; set; } = MailService.SnippetCharsDefault;
     }
 
     /// <summary>One agent-facing hit: compact triage payload (v3.MD sections 8/12).</summary>
@@ -196,6 +196,13 @@ namespace OutlookAI.Core.Services
         /// <summary>Merged hits, newest first.</summary>
         public IReadOnlyList<HitSummary> Hits { get; set; } = Array.Empty<HitSummary>();
 
+        /// <summary>
+        /// True when the 'top' cap cut the result list - more matches EXIST (section 12
+        /// has-more discipline: raise top or narrow the query). Determined by
+        /// over-fetching one row past the cap, so true is definite, not a guess.
+        /// </summary>
+        public bool Truncated { get; set; }
+
         /// <summary>Index query wall-clock cost (0 in exhaustive mode - the index is bypassed).</summary>
         public long IndexElapsedMs { get; set; }
 
@@ -268,8 +275,14 @@ namespace OutlookAI.Core.Services
         /// <summary>Sent timestamp, UTC.</summary>
         public DateTime? SentUtc { get; set; }
 
-        /// <summary>To/Cc/Bcc recipients.</summary>
+        /// <summary>To/Cc/Bcc recipients (capped - check RecipientsTruncated).</summary>
         public IReadOnlyList<RecipientView> Recipients { get; set; } = Array.Empty<RecipientView>();
+
+        /// <summary>True when Recipients was capped at the payload limit (present only then).</summary>
+        public bool? RecipientsTruncated { get; set; }
+
+        /// <summary>Real recipient count before capping (present only when capped).</summary>
+        public int? RecipientsTotal { get; set; }
 
         /// <summary>Plain-text body (possibly truncated - check BodyTruncated).</summary>
         public string Body { get; set; } = string.Empty;
@@ -301,8 +314,18 @@ namespace OutlookAI.Core.Services
         /// <summary>True when Headers was cut at the cap.</summary>
         public bool? HeadersTruncated { get; set; }
 
-        /// <summary>Attachments (save via save_attachment with the same id + index).</summary>
+        /// <summary>
+        /// Attachments (save via save_attachment with the same id + index). Capped -
+        /// check AttachmentsTruncated; indexes beyond the cap remain saveable, they are
+        /// just not listed.
+        /// </summary>
         public IReadOnlyList<AttachmentView> Attachments { get; set; } = Array.Empty<AttachmentView>();
+
+        /// <summary>True when Attachments was capped at the payload limit (present only then).</summary>
+        public bool? AttachmentsTruncated { get; set; }
+
+        /// <summary>Real attachment count before capping (present only when capped).</summary>
+        public int? AttachmentsTotal { get; set; }
 
         /// <summary>How the hit was located ("cached", "urlSegments", "itemPathDisplay", "directEntryId").</summary>
         public string? LocatedVia { get; set; }
@@ -344,6 +367,12 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Thread members, oldest first.</summary>
         public IReadOnlyList<HitSummary> Hits { get; set; } = Array.Empty<HitSummary>();
+
+        /// <summary>
+        /// True when the 'top' cap cut the member list - the conversation HAS more
+        /// members (over-fetch-by-one, same contract as search.truncated).
+        /// </summary>
+        public bool Truncated { get; set; }
 
         /// <summary>Wall-clock cost of the thread lookup.</summary>
         public long ElapsedMs { get; set; }
@@ -539,8 +568,14 @@ namespace OutlookAI.Core.Services
         /// <summary>Conversation id (derived drafts thread with their source).</summary>
         public string? ConversationId { get; set; }
 
-        /// <summary>Recipients currently on the draft.</summary>
+        /// <summary>Recipients currently on the draft (capped - check RecipientsTruncated).</summary>
         public IReadOnlyList<RecipientView>? Recipients { get; set; }
+
+        /// <summary>True when Recipients was capped at the payload limit (present only then).</summary>
+        public bool? RecipientsTruncated { get; set; }
+
+        /// <summary>Real recipient count before capping (present only when capped).</summary>
+        public int? RecipientsTotal { get; set; }
     }
 
     /// <summary>
@@ -589,8 +624,122 @@ namespace OutlookAI.Core.Services
         /// <summary>Draft subject (so the model can restate to the user WHAT would be / was sent).</summary>
         public string? Subject { get; set; }
 
-        /// <summary>Recipients the mail would go / went to (confirm these with the user in step 1).</summary>
+        /// <summary>Recipients the mail would go / went to (confirm these with the user in step 1; capped - check RecipientsTruncated).</summary>
         public IReadOnlyList<RecipientView>? Recipients { get; set; }
+
+        /// <summary>True when Recipients was capped at the payload limit (present only then; the mail still goes to ALL recipients).</summary>
+        public bool? RecipientsTruncated { get; set; }
+
+        /// <summary>Real recipient count before capping (present only when capped).</summary>
+        public int? RecipientsTotal { get; set; }
+    }
+
+    /// <summary>Outlook block of the health report (Phase 7).</summary>
+    public sealed class OutlookHealthView
+    {
+        /// <summary>Whether OUTLOOK.EXE is running for this user.</summary>
+        public bool Running { get; set; }
+
+        /// <summary>Installed classic-Outlook build (OUTLOOK.EXE file version; null when not found).</summary>
+        public string? Version { get; set; }
+
+        /// <summary>True while the add-in installer holds the OutlookAISetup mutex (D17: COM tools retry later).</summary>
+        public bool InstallerMutexHeld { get; set; }
+
+        /// <summary>True when this server process currently holds an open COM session.</summary>
+        public bool ComConnected { get; set; }
+
+        /// <summary>Store count reachable over COM (null when Outlook is not running - health never starts it).</summary>
+        public int? StoresReachable { get; set; }
+
+        /// <summary>Reachable store display names.</summary>
+        public IReadOnlyList<string>? Stores { get; set; }
+    }
+
+    /// <summary>Index block of the health report (Phase 7).</summary>
+    public sealed class IndexHealthView
+    {
+        /// <summary>Active index provider ("OleDb"/"AdodbCom") or "unavailable: ..." when unreachable.</summary>
+        public string Provider { get; set; } = string.Empty;
+
+        /// <summary>Newest indexed mail timestamp across all stores (UTC).</summary>
+        public DateTime? NewestIndexedUtc { get; set; }
+
+        /// <summary>Age of the newest indexed mail in minutes.</summary>
+        public double? AgeMinutes { get; set; }
+
+        /// <summary>WSearch service start mode from the registry: automatic|manual|disabled|unknown.</summary>
+        public string WSearchStartMode { get; set; } = "unknown";
+
+        /// <summary>Whether SearchIndexer.exe is running (null when the probe failed).</summary>
+        public bool? IndexerProcessRunning { get; set; }
+    }
+
+    /// <summary>Audit-log block of the health report (Phase 7).</summary>
+    public sealed class AuditHealthView
+    {
+        /// <summary>Audit log file path.</summary>
+        public string Path { get; set; } = string.Empty;
+
+        /// <summary>Whether an append handle could be opened (write ops fail-closed without it).</summary>
+        public bool Writable { get; set; }
+
+        /// <summary>Content-free failure reason when not writable.</summary>
+        public string? Error { get; set; }
+    }
+
+    /// <summary>
+    /// Tuning block of the health report (Phase 7): read straight from the
+    /// HKCU\Software\OutlookAI\Tuning registry state the add-in maintains - the server
+    /// stays decoupled from add-in code (R12/section 0.5.3).
+    /// </summary>
+    public sealed class TuningHealthView
+    {
+        /// <summary>True when the add-in's tuning state exists in the registry (add-in installed and initialized).</summary>
+        public bool Managed { get; set; }
+
+        /// <summary>Master toggle.</summary>
+        public bool? Enabled { get; set; }
+
+        /// <summary>Search-registry group toggle (D22 keys).</summary>
+        public bool? SearchEnabled { get; set; }
+
+        /// <summary>Full-caching group toggle (D25 keys).</summary>
+        public bool? CachingEnabled { get; set; }
+
+        /// <summary>OST-headroom group toggle (D25 caps).</summary>
+        public bool? OstEnabled { get; set; }
+
+        /// <summary>True when a tuning change still needs an Outlook restart to take effect.</summary>
+        public bool? RestartNeeded { get; set; }
+
+        /// <summary>Group-policy conflicts the reconciler backed off from (';'-joined; null when none).</summary>
+        public string? PolicyConflicts { get; set; }
+
+        /// <summary>Last reconcile timestamp (ISO 8601) as recorded by the add-in.</summary>
+        public string? LastReconcileUtc { get; set; }
+    }
+
+    /// <summary>health tool outcome (Phase 7): compact self-check of everything the server depends on.</summary>
+    public sealed class HealthOutcome
+    {
+        /// <summary>"ok" when everything the server needs is available, else "degraded" (see Problems).</summary>
+        public string Status { get; set; } = "ok";
+
+        /// <summary>What is degraded, one compact line each (present only when Status != ok).</summary>
+        public IReadOnlyList<string>? Problems { get; set; }
+
+        /// <summary>Outlook process/COM state.</summary>
+        public OutlookHealthView Outlook { get; set; } = new OutlookHealthView();
+
+        /// <summary>SystemIndex + WSearch state.</summary>
+        public IndexHealthView Index { get; set; } = new IndexHealthView();
+
+        /// <summary>Audit log writability (write tools fail-closed without it).</summary>
+        public AuditHealthView Audit { get; set; } = new AuditHealthView();
+
+        /// <summary>Outlook tuning state summary (registry read).</summary>
+        public TuningHealthView Tuning { get; set; } = new TuningHealthView();
     }
 
     /// <summary>show_search_results outcome (v3.MD L3).</summary>
