@@ -19,6 +19,17 @@
   <ItemGroup>
     <!-- Lets `dotnet build` compile the net48 target without a Visual Studio install (CI + local). -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <!--
+      SystemIndex access: OLE DB over Search.CollatorDSO (v3.MD section 4). Windows-only
+      at runtime; the package carries a net462 asset for the net48 target. Pinned in the
+      10.0.x family alongside Microsoft.Extensions.Hosting (v3.MD D31 companion pins).
+    -->
+    <PackageReference Include="System.Data.OleDb" Version="10.0.10" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <!-- dynamic (late-bound Outlook/ADODB COM) needs the C# runtime binder on .NET Framework. -->
+    <Reference Include="Microsoft.CSharp" />
   </ItemGroup>
 
 </Project>
