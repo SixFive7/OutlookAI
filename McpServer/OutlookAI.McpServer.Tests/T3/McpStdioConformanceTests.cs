@@ -65,7 +65,8 @@ public sealed class McpStdioConformanceTests
             // 2. initialized notification (no response expected).
             await SendAsync(server, new { jsonrpc = "2.0", method = "notifications/initialized" }, cts.Token);
 
-            // 3. tools/list - the echo scaffold plus the Phase-2 L1/L2 and Phase-3 L3 surfaces.
+            // 3. tools/list - the echo scaffold plus the Phase-2 L1/L2, Phase-3 L3 and
+            // Phase-4 L4 surfaces.
             JsonElement list = await RoundTripAsync(server, id: 2, method: "tools/list", parameters: new { }, cts.Token);
             var names = list.GetProperty("result").GetProperty("tools").EnumerateArray()
                 .Select(t => t.GetProperty("name").GetString())
@@ -75,6 +76,7 @@ public sealed class McpStdioConformanceTests
                      {
                          "search", "thread", "read", "save_attachment", "index_status", "list_accounts", "list_folders",
                          "open_in_outlook", "goto_folder", "show_search_results",
+                         "new_draft", "reply_draft", "replyall_draft", "forward_draft",
                      })
             {
                 Assert.Contains(expected, names);

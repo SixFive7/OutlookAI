@@ -87,8 +87,12 @@ namespace OutlookAI.Core.Audit
                     "Audit line could not be written to '" + path + "' after " +
                     WriteRetries.ToString(CultureInfo.InvariantCulture) + " attempts.", lastIo);
             }
-            catch (Exception ex) when (ex is UnauthorizedAccessException || ex is NotSupportedException || ex is ArgumentException)
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException
+                || ex is NotSupportedException || ex is ArgumentException)
             {
+                // E.g. the directory path is blocked by a same-named file. The retry
+                // loop's own give-up exception above is already an
+                // InvalidOperationException and passes through untouched.
                 throw new InvalidOperationException("Audit line could not be written to '" + path + "'.", ex);
             }
         }
