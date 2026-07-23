@@ -303,6 +303,77 @@ public static class LiveOutlookTestMailer
     }
 
     /// <summary>
+    /// Appends text to the BODY of one draft this run created (Phase-5 negative test:
+    /// a modified draft must invalidate its send confirm-token). Refuses unless the
+    /// item's subject carries BOTH the tag and <paramref name="uniqueMarker"/> (S3
+    /// double-match - only artifacts of this run are ever touched) and the item is
+    /// still unsent. Saves the draft after the change.
+    /// </summary>
+    public static void AppendToDraftBody(string storeDisplayName, string entryIdHex, string uniqueMarker, string textToAppend)
+    {
+        if (string.IsNullOrWhiteSpace(entryIdHex))
+        {
+            throw new ArgumentException("EntryID required.", nameof(entryIdHex));
+        }
+
+        if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
+        {
+            throw new ArgumentException("Marker too weak for a safe modify filter (S3).", nameof(uniqueMarker));
+        }
+
+        RunSta<object?>(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? item = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for draft modification.");
+                item = ns.GetItemFromID(entryIdHex, (string)store.StoreID);
+
+                string? subject = null;
+                try
+                {
+                    subject = (string?)item.Subject;
+                }
+                catch (COMException)
+                {
+                }
+
+                if (subject == null
+                    || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                    || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Refusing to modify: the item's subject does not carry both the test tag and this run's marker (S3).");
+                }
+
+                if ((bool)item.Sent)
+                {
+                    throw new InvalidOperationException("Refusing to modify: the item is not an unsent draft.");
+                }
+
+                item.Body = (string)item.Body + textToAppend;
+                item.Save();
+                return null;
+            }
+            finally
+            {
+                Release(item);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
     /// Counts items whose subject contains <paramref name="subjectFragment"/> across
     /// the store's default folders (default set: Drafts, Inbox, Sent Items, Deleted
     /// Items) - the post-suite artifact sweep (S3). Read-only; output is a count
