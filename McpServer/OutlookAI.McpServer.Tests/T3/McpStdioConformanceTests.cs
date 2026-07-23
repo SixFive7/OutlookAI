@@ -65,12 +65,19 @@ public sealed class McpStdioConformanceTests
             // 2. initialized notification (no response expected).
             await SendAsync(server, new { jsonrpc = "2.0", method = "notifications/initialized" }, cts.Token);
 
-            // 3. tools/list - must contain the scaffold echo tool.
+            // 3. tools/list - the echo scaffold plus the full Phase-2 L1/L2 surface.
             JsonElement list = await RoundTripAsync(server, id: 2, method: "tools/list", parameters: new { }, cts.Token);
             var names = list.GetProperty("result").GetProperty("tools").EnumerateArray()
                 .Select(t => t.GetProperty("name").GetString())
                 .ToList();
             Assert.Contains("echo", names);
+            foreach (string expected in new[]
+                     {
+                         "search", "thread", "read", "save_attachment", "index_status", "list_accounts", "list_folders",
+                     })
+            {
+                Assert.Contains(expected, names);
+            }
 
             // 4. tools/call echo - round-trips through OutlookAI.Core.
             JsonElement call = await RoundTripAsync(server, id: 3, method: "tools/call", parameters: new

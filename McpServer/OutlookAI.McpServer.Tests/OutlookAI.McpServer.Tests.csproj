@@ -25,6 +25,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Sequential collections: live tests share one Outlook and time COM operations;
+         parallel collections would also let the fresh-mode send race the oracle walk. -->
+    <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Absolute path to the built server exe, baked in at build time so the T3
          conformance test can spawn it regardless of the test host's working directory.
          The ProjectReference above guarantees the exe is built first. -->
