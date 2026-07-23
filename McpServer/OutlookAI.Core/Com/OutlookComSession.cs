@@ -1908,6 +1908,13 @@ namespace OutlookAI.Core.Com
                         return null;
                     }
 
+                    // Deterministic store identity for the outcome snapshot: on a FRESH
+                    // (just-started) Outlook the saved item's Parent.Store probe can
+                    // transiently fail (live-observed in the soak-fix batch) - the
+                    // store we created the draft in is authoritative either way.
+                    string? deliveryStoreName = TryGetString(() => (string?)((dynamic)deliveryStore!).DisplayName);
+                    string? deliveryStoreId = TryGetString(() => (string?)((dynamic)deliveryStore!).StoreID);
+
                     draftsFolder = ((dynamic)deliveryStore).GetDefaultFolder(16); // olFolderDrafts
                     items = ((dynamic)draftsFolder!).Items;
                     mail = ((dynamic)items!).Add(0); // olMailItem
@@ -1940,7 +1947,7 @@ namespace OutlookAI.Core.Com
                         ((dynamic)mail!).Display();
                     }
 
-                    ComDraftInfo info = SnapshotDraft(mail!);
+                    ComDraftInfo info = SnapshotDraft(mail!, deliveryStoreName, deliveryStoreId);
                     return new ComDraftCreateResult(
                         info,
                         accountResolved: true,
@@ -2107,7 +2114,7 @@ namespace OutlookAI.Core.Com
                         ((dynamic)mail!).Display();
                     }
 
-                    ComDraftInfo info = SnapshotDraft(mail!);
+                    ComDraftInfo info = SnapshotDraft(mail!, sourceStoreName, sourceStoreIdActual);
                     return new ComDraftCreateResult(
                         info,
                         accountResolved,
@@ -2669,7 +2676,7 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>STA-side identity/threading snapshot of a mail item.</summary>
-        private ComDraftInfo SnapshotDraft(object itemObject)
+        private ComDraftInfo SnapshotDraft(object itemObject, string? fallbackStoreName = null, string? fallbackStoreId = null)
         {
             dynamic item = itemObject;
             string entryId = (string)item.EntryID;
@@ -2724,6 +2731,13 @@ namespace OutlookAI.Core.Com
                 Release(parentStore);
                 Release(parent);
             }
+
+            // Fresh-Outlook robustness (soak-fix batch): the Parent/Store probe above is
+            // best-effort and can transiently fail right after a cold start - fall back
+            // to the caller-known store identity so DraftOutcome.Store stays
+            // deterministic.
+            storeName ??= fallbackStoreName;
+            storeId ??= fallbackStoreId;
 
             List<ComRecipientInfo> recipients = new List<ComRecipientInfo>();
             object? recipientsObject = null;
