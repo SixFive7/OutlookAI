@@ -260,6 +260,13 @@ public sealed class LiveDecodeVerifyTests
         return false;
     }
 
+    /// <summary>
+    /// Index rows of transient Phase-2 test artifacts (self-sent, tag-matched, deleted
+    /// after assert per S3) can outlive the item; sampling them would fail the locate.
+    /// </summary>
+    private static bool IsTransientTestArtifact(IndexHit hit)
+        => hit.Subject != null && hit.Subject.Contains("[OutlookAI-McpTest]", StringComparison.Ordinal);
+
     private List<IndexHit> SampleHitsAcrossStores()
     {
         // Recent mail per store (non-empty subjects keep the folder probe narrow); the
@@ -285,7 +292,8 @@ public sealed class LiveDecodeVerifyTests
                     break;
                 }
 
-                if (hit.EntryIdHex != null && !string.IsNullOrEmpty(hit.Subject) && seen.Add(hit.EntryIdHex))
+                if (hit.EntryIdHex != null && !string.IsNullOrEmpty(hit.Subject)
+                    && !IsTransientTestArtifact(hit) && seen.Add(hit.EntryIdHex))
                 {
                     samples.Add(hit);
                 }
@@ -308,7 +316,8 @@ public sealed class LiveDecodeVerifyTests
                     break;
                 }
 
-                if (hit.EntryIdHex != null && !string.IsNullOrEmpty(hit.Subject) && seen.Add(hit.EntryIdHex))
+                if (hit.EntryIdHex != null && !string.IsNullOrEmpty(hit.Subject)
+                    && !IsTransientTestArtifact(hit) && seen.Add(hit.EntryIdHex))
                 {
                     samples.Add(hit);
                 }

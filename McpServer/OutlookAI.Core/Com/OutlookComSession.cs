@@ -356,7 +356,7 @@ namespace OutlookAI.Core.Com
                         {
                             next = folders[segment];
                         }
-                        catch (COMException)
+                        catch (Exception ex) when (IsComCallFailure(ex))
                         {
                             capturedError = "FolderNotFound";
                             return null;
@@ -967,7 +967,7 @@ namespace OutlookAI.Core.Com
                                     SweepFolder(ns, folder!, storeName, storeId, folderKind, sinceUtc, perFolderCap, includeBodies, items);
                                     swept++;
                                 }
-                                catch (COMException)
+                                catch (Exception ex) when (IsComCallFailure(ex))
                                 {
                                     // Store without that default folder (some delegate caches) - skip.
                                     skipped++;
@@ -1120,9 +1120,22 @@ namespace OutlookAI.Core.Com
                 dynamic t = (dynamic)table!;
                 try
                 {
+                    // Sort needs the property present as a column; late-bound COM maps
+                    // E_INVALIDARG to ArgumentException, hence the broad catch.
+                    object? columns = null;
+                    try
+                    {
+                        columns = t.Columns;
+                        ((dynamic)columns!).Add("urn:schemas:httpmail:datereceived");
+                    }
+                    finally
+                    {
+                        Release(columns);
+                    }
+
                     t.Sort("urn:schemas:httpmail:datereceived", true);
                 }
-                catch (COMException)
+                catch (Exception ex) when (IsComCallFailure(ex))
                 {
                     // Unsorted sweep still works; the cap just cuts arbitrarily.
                 }
@@ -1151,7 +1164,7 @@ namespace OutlookAI.Core.Com
                         {
                             member = ns.GetItemFromID(entryId, storeId);
                         }
-                        catch (COMException)
+                        catch (Exception ex) when (IsComCallFailure(ex))
                         {
                             continue;
                         }
@@ -1166,7 +1179,7 @@ namespace OutlookAI.Core.Com
                     }
                 }
             }
-            catch (COMException)
+            catch (Exception ex) when (IsComCallFailure(ex))
             {
                 // GetTable/filter unsupported on this folder - counted as swept with zero rows.
             }
@@ -1729,13 +1742,10 @@ namespace OutlookAI.Core.Com
 
                 return null;
             }
-            catch (COMException)
+            catch (Exception ex) when (IsComCallFailure(ex))
             {
-                // GetTable unsupported / filter rejected here - the caller falls back.
-                return null;
-            }
-            catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
-            {
+                // GetTable unsupported / filter rejected here (late-bound COM maps
+                // E_INVALIDARG to ArgumentException) - the caller falls back.
                 return null;
             }
             finally
@@ -1743,6 +1753,20 @@ namespace OutlookAI.Core.Com
                 Release(table);
                 Release(storeObject);
             }
+        }
+
+        /// <summary>
+        /// Late-bound COM failures do not always surface as COMException: the dynamic
+        /// binder maps E_INVALIDARG to ArgumentException, E_POINTER to
+        /// ArgumentNullException, and binding problems to RuntimeBinderException. Optional
+        /// COM paths must treat all of these as "that call did not work here".
+        /// </summary>
+        private static bool IsComCallFailure(Exception ex)
+        {
+            return ex is COMException
+                || ex is ArgumentException
+                || ex is InvalidCastException
+                || ex is Microsoft.CSharp.RuntimeBinder.RuntimeBinderException;
         }
 
         private static int FindTableColumn(dynamic table, string columnName)
@@ -1773,7 +1797,7 @@ namespace OutlookAI.Core.Com
 
                 return -1;
             }
-            catch (COMException)
+            catch (Exception ex) when (IsComCallFailure(ex))
             {
                 return -1;
             }

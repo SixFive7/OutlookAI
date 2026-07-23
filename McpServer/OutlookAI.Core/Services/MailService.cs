@@ -21,7 +21,12 @@ namespace OutlookAI.Core.Services
     /// </summary>
     public sealed class MailService : IDisposable
     {
-        private const int LocateToleranceSeconds = 120;
+        // Live-verified (Phase 1: 25/25 within 5 s; Phase-2 run 1): a wide tolerance
+        // lets a same-subject sibling mail within the window win the folder probe, so
+        // email hits use a tight 5 s. Attachment (document) rows keep a wide window -
+        // their DateReceived equals the parent's only approximately.
+        private const int EmailLocateToleranceSeconds = 5;
+        private const int AttachmentLocateToleranceSeconds = 120;
         private const int DedupeToleranceSeconds = 15;
         private const int SweepPerFolderCap = 200;
         private static readonly TimeSpan SweepSafetyMargin = TimeSpan.FromMinutes(10);
@@ -215,10 +220,16 @@ namespace OutlookAI.Core.Services
                 info.Error = ex.Message;
                 return info;
             }
-            catch (System.Runtime.InteropServices.COMException ex)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
+                // The sweep is an enhancement over index results - any failure degrades
+                // to index-only with a content-free error (S4) instead of failing the
+                // whole search. Late-bound COM maps some HRESULTs to plain .NET
+                // exception types (e.g. E_INVALIDARG -> ArgumentException).
                 info.Performed = false;
-                info.Error = string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", ex.HResult);
+                info.Error = ex is System.Runtime.InteropServices.COMException com
+                    ? string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", com.HResult)
+                    : ex.GetType().Name;
                 return info;
             }
 
@@ -535,6 +546,22 @@ namespace OutlookAI.Core.Services
                 newest = report.NewestIndexedReceivedUtc;
                 ageMinutes = report.Age?.TotalMinutes;
 
+                // The unordered discovery sample misses tiny idle stores (Phase-1 fact
+                // 5); when Outlook is already running, its store list closes the gap via
+                // targeted per-address discovery. Never STARTS Outlook here (D17:
+                // index_status is an index-only tool).
+                if (outlookRunning)
+                {
+                    try
+                    {
+                        EnsureCatalogCoverageFromCom();
+                    }
+                    catch (Exception ex) when (ex is not OutOfMemoryException)
+                    {
+                        // Best-effort enrichment only.
+                    }
+                }
+
                 perStore = new List<StoreStaleness>();
                 foreach (StoreScopeInfo scopeInfo in GetCatalog())
                 {
@@ -602,12 +629,12 @@ namespace OutlookAI.Core.Services
             List<StoreView> storeViews = new List<StoreView>(stores.Count);
             foreach (ComStoreDetail store in stores)
             {
-                bool onlineOnly = store.IsCachedExchange == false && store.ExchangeStoreType != 3;
-                bool isDelegate = !onlineOnly
-                    && store.IsCachedExchange == true
-                    && store.ExchangeStoreType != 2
-                    && store.ExchangeStoreType != 3
-                    && !deliveryStores.Contains(store.DisplayName);
+                // Live-verified on this machine (Phase 2): delegate caches report
+                // OlExchangeStoreType 1 (olExchangeDelegateMailbox) and, despite being
+                // locally cached AND indexed, IsCachedExchange=false - so index
+                // presence, not the cached flag, is the searchability ground truth
+                // (D22/D25). Non-default account mailboxes report type 4.
+                bool isDelegate = store.ExchangeStoreType == 1 && !deliveryStores.Contains(store.DisplayName);
 
                 bool? inLocalIndex = null;
                 try
@@ -618,6 +645,10 @@ namespace OutlookAI.Core.Services
                 {
                     // Index unavailable - flag unknown.
                 }
+
+                bool onlineOnly = inLocalIndex.HasValue
+                    ? !inLocalIndex.Value
+                    : store.IsCachedExchange == false && store.ExchangeStoreType != 1 && store.ExchangeStoreType != 3;
 
                 storeViews.Add(new StoreView
                 {
@@ -751,14 +782,18 @@ namespace OutlookAI.Core.Services
             {
                 if (cached.LocatedEntryId != null)
                 {
-                    return (cached.LocatedEntryId, cached.LocatedStoreId, cached.LocatedVia ?? "cached", 0, id);
+                    // Live hits and previously located hits resolve without any COM
+                    // probing; report how THIS call resolved (LocatedVia keeps the
+                    // original tier internally).
+                    return (cached.LocatedEntryId, cached.LocatedStoreId, "cached", 0, id);
                 }
 
                 // Lazy locate (Phase-1: avg ~2 s per hit - cache the result).
                 IndexHit hit = cached.IndexHit
                     ?? throw new InvalidOperationException("Hit cache entry is unlocatable.");
+                int tolerance = hit.IsAttachmentHit ? AttachmentLocateToleranceSeconds : EmailLocateToleranceSeconds;
                 Stopwatch stopwatch = Stopwatch.StartNew();
-                HitLocationResult location = _gateway.Run(s => HitLocator.Locate(s, hit, LocateToleranceSeconds));
+                HitLocationResult location = _gateway.Run(s => HitLocator.Locate(s, hit, tolerance));
                 stopwatch.Stop();
                 if (location.Tier == HitLocationTier.Failed || location.Located == null)
                 {
@@ -788,6 +823,31 @@ namespace OutlookAI.Core.Services
 
             throw new ArgumentException(
                 "Unknown id '" + id + "'. Pass a hit id from a previous search/thread call in this session, or a full EntryID hex string.");
+        }
+
+        private void EnsureCatalogCoverageFromCom()
+        {
+            IReadOnlyList<ComStoreDetail> stores = _gateway.Run(GetStoreDetails);
+            foreach (ComStoreDetail store in stores)
+            {
+                if (store.DisplayName.IndexOf('@') < 0)
+                {
+                    continue;
+                }
+
+                bool known = GetCatalog().Any(s =>
+                    string.Equals(s.StoreDisplayName, store.DisplayName, StringComparison.OrdinalIgnoreCase));
+                if (known)
+                {
+                    continue;
+                }
+
+                StoreScopeInfo? targeted = _index.Value.TryDiscoverStoreScopeByAddress(store.DisplayName);
+                if (targeted != null)
+                {
+                    InvalidateCatalog(targeted);
+                }
+            }
         }
 
         private bool ProbeStoreInIndex(string displayName, bool isDelegate)

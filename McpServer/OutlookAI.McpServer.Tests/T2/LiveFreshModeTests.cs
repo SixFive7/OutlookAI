@@ -49,11 +49,12 @@ public sealed class LiveFreshModeTests
             _output.WriteLine($"sent at {sentAtUtc:O}");
 
             Stopwatch overall = Stopwatch.StartNew();
-            HitSummary? firstFind = null;
-            long firstFindMs = -1;
-            string? firstFindSource = null;
-            DateTime? stalenessAtFirstFind = null;
-            List<HitSummary> bothCopies = new();
+            HitSummary? inboxFind = null;
+            long inboxFindMs = -1;
+            string? inboxFindSource = null;
+            DateTime? stalenessAtInboxFind = null;
+            bool sentCopySeen = false;
+            int lastLoggedMatches = -1;
 
             while (overall.Elapsed < ArrivalTimeout)
             {
@@ -69,27 +70,30 @@ public sealed class LiveFreshModeTests
                     .Where(h => h.Subject != null && h.Subject.Contains(marker, StringComparison.OrdinalIgnoreCase))
                     .ToList();
 
-                if (matches.Count > 0 && firstFind == null)
+                if (matches.Count != lastLoggedMatches)
                 {
-                    firstFind = matches[0];
-                    firstFindMs = overall.ElapsedMilliseconds;
-                    firstFindSource = matches[0].Source;
-                    stalenessAtFirstFind = outcome.Staleness.NewestIndexedUtc;
-                    _output.WriteLine($"first find after {firstFindMs} ms: source={firstFindSource} folderKind={matches[0].FolderKind} "
-                        + $"sweepPerformed={outcome.Sweep?.Performed} sweepMs={outcome.Sweep?.ElapsedMs} indexNewest={outcome.Staleness.NewestIndexedUtc:O}");
+                    lastLoggedMatches = matches.Count;
+                    _output.WriteLine($"t+{overall.ElapsedMilliseconds}ms matches={matches.Count} "
+                        + $"[{string.Join("; ", matches.Select(m => $"{m.Source}/{m.FolderKind ?? m.Folder}"))}] "
+                        + $"sweep: performed={outcome.Sweep?.Performed} folders={outcome.Sweep?.FoldersSwept}/{outcome.Sweep?.FoldersSkipped} "
+                        + $"seen={outcome.Sweep?.ItemsSeen} dups={outcome.Sweep?.Duplicates} err={outcome.Sweep?.Error ?? "-"} "
+                        + $"gapStart={outcome.Sweep?.GapStartUtc:HH:mm:ss} indexNewest={outcome.Staleness.NewestIndexedUtc:HH:mm:ss}");
                 }
 
-                // The SENT copy is visible immediately; the INBOX copy proves arrival.
-                bothCopies = matches
-                    .GroupBy(m => (m.Folder ?? string.Empty) + "|" + (m.FolderKind ?? string.Empty), StringComparer.OrdinalIgnoreCase)
-                    .Select(g => g.First())
-                    .ToList();
-                bool inboxSeen = bothCopies.Any(m =>
+                sentCopySeen |= matches.Any(m =>
+                    string.Equals(m.FolderKind, "sent", StringComparison.OrdinalIgnoreCase));
+
+                // ACCEPTANCE (doc row): the ARRIVED (inbox) copy is findable within
+                // seconds, even before the index catches up.
+                HitSummary? inboxMatch = matches.FirstOrDefault(m =>
                     string.Equals(m.FolderKind, "inbox", StringComparison.OrdinalIgnoreCase)
-                    || (m.Source == "index" && m.FolderKind == null && !string.Equals(m.FolderKind, "sent", StringComparison.OrdinalIgnoreCase)
-                        && bothCopies.Count >= 2));
-                if (firstFind != null && inboxSeen && bothCopies.Count >= 2)
+                    || (m.Source == "index" && !ContainsSentishFolder(m.Folder)));
+                if (inboxMatch != null && inboxFind == null)
                 {
+                    inboxFind = inboxMatch;
+                    inboxFindMs = overall.ElapsedMilliseconds;
+                    inboxFindSource = inboxMatch.Source;
+                    stalenessAtInboxFind = outcome.Staleness.NewestIndexedUtc;
                     break;
                 }
 
@@ -97,25 +101,20 @@ public sealed class LiveFreshModeTests
             }
 
             overall.Stop();
-            Assert.NotNull(firstFind);
-            _output.WriteLine($"copies seen: {bothCopies.Count} after {overall.ElapsedMilliseconds} ms "
-                + $"({string.Join(", ", bothCopies.Select(c => c.FolderKind ?? "index:" + (c.Folder ?? "?")))})");
+            Assert.NotNull(inboxFind);
+            _output.WriteLine($"inbox copy found after {inboxFindMs} ms: source={inboxFindSource} "
+                + $"indexNewestAtFind={stalenessAtInboxFind:O} sentCopySeen={sentCopySeen}");
 
-            // The fresh-mode claim: found via the LIVE sweep before indexing, or - if the
-            // index genuinely raced ahead - the index frontier must already cover the send.
-            bool sweptLive = firstFindSource == "live";
-            bool indexCaughtUp = stalenessAtFirstFind.HasValue && stalenessAtFirstFind.Value >= sentAtUtc.AddSeconds(-30);
+            // The fresh-mode claim: the arrival was served by the LIVE sweep before
+            // indexing, or - if the index genuinely raced ahead - its frontier must
+            // already cover the send instant.
+            bool sweptLive = inboxFindSource == "live";
+            bool indexCaughtUp = stalenessAtInboxFind.HasValue && stalenessAtInboxFind.Value >= sentAtUtc;
             Assert.True(sweptLive || indexCaughtUp,
-                $"hit came from '{firstFindSource}' while index frontier {stalenessAtFirstFind:O} predates the send {sentAtUtc:O}");
-            _output.WriteLine($"fresh-mode proof: sweptLive={sweptLive} indexCaughtUp={indexCaughtUp} firstFindMs={firstFindMs}");
+                $"hit came from '{inboxFindSource}' while index frontier {stalenessAtInboxFind:O} predates the send {sentAtUtc:O}");
+            _output.WriteLine($"fresh-mode proof: sweptLive={sweptLive} indexCaughtUp={indexCaughtUp} inboxFindMs={inboxFindMs}");
 
-            // Arrival: an inbox-side copy must exist within the timeout.
-            HitSummary inboxCopy = bothCopies.FirstOrDefault(m =>
-                    string.Equals(m.FolderKind, "inbox", StringComparison.OrdinalIgnoreCase))
-                ?? bothCopies.FirstOrDefault(m => m.FolderKind == null)
-                ?? bothCopies[0];
-            Assert.True(bothCopies.Count >= 2 || string.Equals(inboxCopy.FolderKind, "inbox", StringComparison.OrdinalIgnoreCase),
-                "expected the inbox copy (arrival) plus the sent copy within the timeout");
+            HitSummary inboxCopy = inboxFind!;
 
             // Round trip continues: read the arrived mail, save its attachment, grep it.
             ReadOutcome read = _fixture.Service.Read(inboxCopy.Id, maxBodyChars: 5000);
@@ -151,6 +150,18 @@ public sealed class LiveFreshModeTests
                 Assert.True(deleted >= 2, $"expected to delete both self-send copies, deleted {deleted}");
             }
         }
+    }
+
+    private static bool ContainsSentishFolder(string? folder)
+    {
+        if (folder == null)
+        {
+            return false;
+        }
+
+        // Localized sent-folder names in this profile's languages.
+        return folder.Contains("Sent", StringComparison.OrdinalIgnoreCase)
+            || folder.Contains("Verzonden", StringComparison.OrdinalIgnoreCase);
     }
 
     private int TryCleanup(string hub, string marker)
