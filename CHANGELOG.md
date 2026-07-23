@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add show-me tools: the assistant can now open a mail in an Outlook window for you, jump your Outlook to any folder, and run a search in Outlook's own search box so you see the result list on screen (works even if Outlook was not running).
+- Add exhaustive search mode: a folder- or date-bounded scan straight through Outlook that bypasses the search index, for when the index is stale or correctness matters more than speed; searches now also advise when the index is stale enough to warrant it.
 - Add OutlookAI MCP server search surface v1: Claude can now search all locally indexed Outlook mail (all accounts, delegate mailboxes, and attachment contents) in milliseconds, with a fresh mode that also catches mail that just arrived and is not yet indexed.
 - Add mail reading tools: full message read with safe truncation, sender/recipient details, conversation (thread) view, and saving attachments to disk so the assistant can open them.
 - Add mailbox insight tools: account and store listing (delegate and online-only stores flagged), folder trees with unread counts, and an index freshness self-report with actionable advice.

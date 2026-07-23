@@ -41,13 +41,15 @@ public static class OutlookTools
     [Description("Search all locally indexed Outlook mail (3 accounts + delegate stores), including attachment contents. "
         + "Sub-second and cheap: iterate freely with refined terms. Terms in 'query' are ANDed; append * for prefix match. "
         + "mode=fresh (default) also COM-sweeps mail newer than the index frontier so just-arrived mail is found (may start Outlook); "
-        + "mode=fast is index-only and works with Outlook closed (results can lag - check staleness). "
-        + "Returns compact hits with an 'id' for read/save_attachment/thread. exhaustive mode arrives in a later phase.")]
+        + "mode=fast is index-only and works with Outlook closed (results can lag - check staleness); "
+        + "mode=exhaustive bypasses the index with a bounded COM folder scan (requires store + folder and/or after; slower - "
+        + "use when the index is stale/broken or correctness beats speed; whole-word term matching on subject+body). "
+        + "Returns compact hits with an 'id' for read/save_attachment/thread/open_in_outlook.")]
     public static string Search(
         [Description("Free-text terms, whitespace-separated, ANDed. Letters/digits plus @.-_'+ only; trailing * for prefix. Omit to filter by sender/date only.")]
         string? query = null,
-        [Description("fast | fresh (default fresh).")] string mode = "fresh",
-        [Description("Store display name to search in (see list_accounts). Omit for all stores.")] string? store = null,
+        [Description("fast | fresh | exhaustive (default fresh).")] string mode = "fresh",
+        [Description("Store display name to search in (see list_accounts). Omit for all stores (required for mode=exhaustive).")] string? store = null,
         [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Requires store.")] string? folder = null,
         [Description("Sender filter: address or name fragment (index-backed).")] string? from = null,
         [Description("Recipient (To/Cc) filter: address fragment (index-backed).")] string? to = null,
@@ -65,9 +67,8 @@ public static class OutlookTools
             {
                 "fast" => SearchMode.Fast,
                 "fresh" => SearchMode.Fresh,
-                "exhaustive" => throw new ArgumentException(
-                    "mode 'exhaustive' (bounded COM scan) ships in Phase 3 - use 'fast' or 'fresh'."),
-                _ => throw new ArgumentException("mode must be 'fast' or 'fresh'."),
+                "exhaustive" => SearchMode.Exhaustive,
+                _ => throw new ArgumentException("mode must be 'fast', 'fresh' or 'exhaustive'."),
             };
 
             SearchRequest request = new()
@@ -150,6 +151,40 @@ public static class OutlookTools
         [Description("Tree depth 1-6 (default 2).")] int depth = 2)
     {
         return Guard(() => ServerRuntime.Service.ListFolders(store, depth));
+    }
+
+    [McpServerTool(Name = "open_in_outlook")]
+    [Description("Show the user a mail: opens it in a visible Outlook message window (starts Outlook if needed). "
+        + "Use when the user asks to see a mail, or to hand a found mail over for human reading/action. "
+        + "Pass a hit id from search/thread or a full EntryID. The window stays open for the user - do not try to close it.")]
+    public static string OpenInOutlook(
+        [Description("Hit id (e.g. h12) or full EntryID hex of the mail to display.")] string id)
+    {
+        return Guard(() => ServerRuntime.Service.OpenInOutlook(id));
+    }
+
+    [McpServerTool(Name = "goto_folder")]
+    [Description("Navigate the user's Outlook window to a folder (like clicking it in the folder pane). "
+        + "Starts Outlook and opens a window if none is visible. Omit 'folder' for the store's Inbox.")]
+    public static string GotoFolder(
+        [Description("Store display name (see list_accounts).")] string store,
+        [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Omit for Inbox.")] string? folder = null)
+    {
+        return Guard(() => ServerRuntime.Service.GotoFolder(store, folder));
+    }
+
+    [McpServerTool(Name = "show_search_results")]
+    [Description("Show the user a result list by driving Outlook's real search UI (the search box fills in and results appear on screen). "
+        + "Use this to SHOW findings - for your own searching use the search tool instead. "
+        + "query supports Outlook search syntax (free text plus e.g. from:name, hasattachments:yes). "
+        + "Optional store/folder navigate the window there first; scope controls the search breadth from that folder.")]
+    public static string ShowSearchResults(
+        [Description("Search text for the Outlook search box (free text and Outlook query syntax).")] string query,
+        [Description("current_folder (default) | subfolders | all_folders (current store) | all_outlook (all stores).")] string scope = "current_folder",
+        [Description("Store display name to navigate to first (see list_accounts).")] string? store = null,
+        [Description("Store-relative folder path to navigate to first. Requires store.")] string? folder = null)
+    {
+        return Guard(() => ServerRuntime.Service.ShowSearchResults(query, scope, store, folder));
     }
 
     private static string Guard<T>(Func<T> operation)
