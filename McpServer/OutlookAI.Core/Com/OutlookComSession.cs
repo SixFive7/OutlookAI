@@ -1915,6 +1915,7 @@ namespace OutlookAI.Core.Com
                     // The store the source mail lives in drives both the sending
                     // account and the Drafts folder the draft must land in.
                     string? sourceStoreIdActual = null;
+                    string? sourceStoreName = null;
                     try
                     {
                         sourceParent = ((dynamic)source!).Parent;
@@ -1924,6 +1925,7 @@ namespace OutlookAI.Core.Com
                             if (sourceStore != null)
                             {
                                 sourceStoreIdActual = TryGetString(() => (string?)((dynamic)sourceStore!).StoreID);
+                                sourceStoreName = TryGetString(() => (string?)((dynamic)sourceStore!).DisplayName);
                             }
                         }
                     }
@@ -1945,9 +1947,9 @@ namespace OutlookAI.Core.Com
                     // UI would send from). Delegate-store mail has no matching account -
                     // recorded, SendUsingAccount left for Outlook to resolve.
                     bool accountResolved = false;
-                    if (sourceStoreIdActual != null)
+                    if (sourceStoreIdActual != null || sourceStoreName != null)
                     {
-                        account = FindAccountByDeliveryStoreId(sourceStoreIdActual);
+                        account = FindAccountByDeliveryStore(sourceStoreIdActual, sourceStoreName);
                         if (account != null)
                         {
                             draft.SendUsingAccount = account;
@@ -2395,8 +2397,12 @@ namespace OutlookAI.Core.Com
             }
         }
 
-        /// <summary>STA-side: the account whose DeliveryStore has the given StoreID (caller releases), or null.</summary>
-        private object? FindAccountByDeliveryStoreId(string storeId)
+        /// <summary>
+        /// STA-side: the account whose DeliveryStore matches the given StoreID or (as a
+        /// robustness fallback - store EntryID wrappings can differ between retrieval
+        /// paths) the given store display name. Caller releases; null when no match.
+        /// </summary>
+        private object? FindAccountByDeliveryStore(string? storeId, string? storeDisplayName)
         {
             dynamic ns = _namespace!;
             object? session = null;
@@ -2414,12 +2420,18 @@ namespace OutlookAI.Core.Com
                     try
                     {
                         deliveryStore = ((dynamic)account!).DeliveryStore;
-                        string? deliveryStoreId = deliveryStore != null
-                            ? TryGetString(() => (string?)((dynamic)deliveryStore!).StoreID)
-                            : null;
-                        if (deliveryStoreId != null && string.Equals(deliveryStoreId, storeId, StringComparison.OrdinalIgnoreCase))
+                        if (deliveryStore != null)
                         {
-                            return account;
+                            string? deliveryStoreId = TryGetString(() => (string?)((dynamic)deliveryStore!).StoreID);
+                            string? deliveryStoreName = TryGetString(() => (string?)((dynamic)deliveryStore!).DisplayName);
+                            bool idMatch = storeId != null && deliveryStoreId != null
+                                && string.Equals(deliveryStoreId, storeId, StringComparison.OrdinalIgnoreCase);
+                            bool nameMatch = storeDisplayName != null && deliveryStoreName != null
+                                && string.Equals(deliveryStoreName, storeDisplayName, StringComparison.OrdinalIgnoreCase);
+                            if (idMatch || nameMatch)
+                            {
+                                return account;
+                            }
                         }
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))

@@ -108,10 +108,10 @@ public static class LiveOutlookTestMailer
     }
 
     /// <summary>
-    /// Deletes every item in the store's Inbox, Sent Items and Deleted Items whose
-    /// subject contains BOTH the tag and <paramref name="uniqueMarker"/> (S3: only
-    /// artifacts this run created). Two passes: Delete() moves to Deleted Items, the
-    /// second pass on folder 3 removes them for good. Returns the total deleted.
+    /// Deletes every item in the store's Drafts, Inbox, Sent Items and Deleted Items
+    /// whose subject contains BOTH the tag and <paramref name="uniqueMarker"/> (S3:
+    /// only artifacts this run created). Two passes: Delete() moves to Deleted Items,
+    /// the second pass on folder 3 removes them for good. Returns the total deleted.
     /// </summary>
     public static int DeleteTaggedArtifacts(string storeDisplayName, string uniqueMarker)
     {
@@ -130,38 +130,13 @@ public static class LiveOutlookTestMailer
             {
                 ns = app.GetNamespace("MAPI");
                 stores = ns.Stores;
-                dynamic? store = null;
-                int storeCount = stores.Count;
-                for (int i = 1; i <= storeCount; i++)
-                {
-                    dynamic candidate = stores[i];
-                    string? name = null;
-                    try
-                    {
-                        name = (string?)candidate.DisplayName;
-                    }
-                    catch (COMException)
-                    {
-                    }
-
-                    if (string.Equals(name, storeDisplayName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        store = candidate;
-                        break;
-                    }
-
-                    Release(candidate);
-                }
-
-                if (store == null)
-                {
-                    throw new InvalidOperationException("Test-hub store not found for cleanup.");
-                }
-
+                dynamic? store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Test-hub store not found for cleanup.");
                 try
                 {
-                    // 6 = Inbox, 5 = Sent Items, 3 = Deleted Items (second pass).
-                    foreach (int folderId in new[] { 6, 5, 3 })
+                    // 16 = Drafts (Phase 4), 6 = Inbox, 5 = Sent Items, 3 = Deleted
+                    // Items (second pass).
+                    foreach (int folderId in new[] { 16, 6, 5, 3 })
                     {
                         deleted += DeleteMatchingInFolder(store, folderId, uniqueMarker);
                     }
@@ -180,6 +155,211 @@ public static class LiveOutlookTestMailer
                 Release(app);
             }
         });
+    }
+
+    /// <summary>
+    /// Deletes ONE item by EntryID from the given store, refusing unless its subject
+    /// carries BOTH the tag and <paramref name="uniqueMarker"/> (the S3 double-match:
+    /// created-this-run id AND tag). Delete() moves it to the store's Deleted Items;
+    /// call <see cref="DeleteTaggedArtifacts"/> (or rely on the caller's final cleanup)
+    /// for the purge pass. Returns true when the item was found and deleted.
+    /// </summary>
+    public static bool DeleteItemByEntryId(string storeDisplayName, string entryIdHex, string uniqueMarker)
+    {
+        if (string.IsNullOrWhiteSpace(entryIdHex))
+        {
+            throw new ArgumentException("EntryID required.", nameof(entryIdHex));
+        }
+
+        if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
+        {
+            throw new ArgumentException("Marker too weak for a safe delete filter (S3).", nameof(uniqueMarker));
+        }
+
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? item = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for EntryID delete.");
+                string storeId = (string)store.StoreID;
+                try
+                {
+                    item = ns.GetItemFromID(entryIdHex, storeId);
+                }
+                catch (COMException)
+                {
+                    return false; // already gone
+                }
+
+                string? subject = null;
+                try
+                {
+                    subject = (string?)item.Subject;
+                }
+                catch (COMException)
+                {
+                }
+
+                if (subject == null
+                    || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                    || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Refusing to delete: the item's subject does not carry both the test tag and this run's marker (S3).");
+                }
+
+                item.Delete();
+                return true;
+            }
+            finally
+            {
+                Release(item);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Counts items whose subject contains <paramref name="subjectFragment"/> across
+    /// the store's default folders (default set: Drafts, Inbox, Sent Items, Deleted
+    /// Items) - the post-suite artifact sweep (S3). Read-only; output is a count
+    /// (content-free, S4). Uses Folder.GetTable with a DASL LIKE restriction, falling
+    /// back to Items.Restrict; throws when a folder cannot be counted at all.
+    /// </summary>
+    public static int CountTaggedArtifacts(string storeDisplayName, string subjectFragment, int[]? folderIds = null)
+    {
+        if (string.IsNullOrWhiteSpace(subjectFragment) || subjectFragment.Length < 8)
+        {
+            throw new ArgumentException("Fragment too weak for a meaningful sweep.", nameof(subjectFragment));
+        }
+
+        if (subjectFragment.Contains('\'', StringComparison.Ordinal) || subjectFragment.Contains('%', StringComparison.Ordinal))
+        {
+            throw new ArgumentException("Fragment must not contain quote/wildcard characters.", nameof(subjectFragment));
+        }
+
+        int[] folders = folderIds ?? new[] { 16, 6, 5, 3 };
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            int total = 0;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for artifact sweep.");
+                foreach (int folderId in folders)
+                {
+                    total += CountMatchingInFolder(store, folderId, subjectFragment);
+                }
+
+                return total;
+            }
+            finally
+            {
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    private static int CountMatchingInFolder(dynamic store, int folderId, string subjectFragment)
+    {
+        dynamic? folder = null;
+        dynamic? table = null;
+        dynamic? items = null;
+        dynamic? restricted = null;
+        string filter = "@SQL=\"urn:schemas:httpmail:subject\" LIKE '%" + subjectFragment + "%'";
+        try
+        {
+            try
+            {
+                folder = store.GetDefaultFolder(folderId);
+            }
+            catch (COMException)
+            {
+                return 0; // store without that default folder
+            }
+
+            try
+            {
+                table = folder.GetTable(filter);
+                int count = 0;
+                while (!(bool)table.EndOfTable)
+                {
+                    dynamic? row = null;
+                    try
+                    {
+                        row = table.GetNextRow();
+                        count++;
+                    }
+                    finally
+                    {
+                        Release(row);
+                    }
+                }
+
+                return count;
+            }
+            catch (Exception ex) when (OutlookAI.Core.Com.OutlookComSession.IsComCallFailure(ex))
+            {
+                // Fall back to Items.Restrict below.
+            }
+
+            items = folder.Items;
+            restricted = items.Restrict(filter);
+            return (int)restricted.Count;
+        }
+        finally
+        {
+            Release(restricted);
+            Release(items);
+            Release(table);
+            Release(folder);
+        }
+    }
+
+    private static dynamic? FindStore(dynamic stores, string storeDisplayName)
+    {
+        int storeCount = stores.Count;
+        for (int i = 1; i <= storeCount; i++)
+        {
+            dynamic candidate = stores[i];
+            string? name = null;
+            try
+            {
+                name = (string?)candidate.DisplayName;
+            }
+            catch (COMException)
+            {
+            }
+
+            if (string.Equals(name, storeDisplayName, StringComparison.OrdinalIgnoreCase))
+            {
+                return candidate;
+            }
+
+            Release(candidate);
+        }
+
+        return null;
     }
 
     private static int DeleteMatchingInFolder(dynamic store, int folderId, string uniqueMarker)

@@ -64,6 +64,98 @@ internal static class ScreenCapture
         return path;
     }
 
+    /// <summary>
+    /// Captures the visible Outlook window whose caption CONTAINS
+    /// <paramref name="captionFragment"/> (Inspector windows share Outlook's window
+    /// class with Explorers, so the Phase-4 draft screenshot targets the compose window
+    /// by its unique tagged subject). Throws when no such window is on screen.
+    /// </summary>
+    public static string CaptureOutlookWindowByCaptionFragment(string captionFragment, string targetDirectory, string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(captionFragment))
+        {
+            throw new ArgumentException("Caption fragment required.", nameof(captionFragment));
+        }
+
+        IntPtr window = FindOutlookWindowByCaptionFragment(captionFragment);
+        if (window == IntPtr.Zero)
+        {
+            throw new InvalidOperationException("No visible Outlook window with the requested caption fragment found.");
+        }
+
+        NativeMethods.SetForegroundWindow(window);
+        Thread.Sleep(500); // repaint after the z-order change
+
+        NativeMethods.RECT rect;
+        int hr = NativeMethods.DwmGetWindowAttribute(
+            window, NativeMethods.DWMWA_EXTENDED_FRAME_BOUNDS, out rect, System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.RECT>());
+        if (hr != 0 && !NativeMethods.GetWindowRect(window, out rect))
+        {
+            throw new InvalidOperationException("GetWindowRect failed for the Outlook window.");
+        }
+
+        int width = rect.Right - rect.Left;
+        int height = rect.Bottom - rect.Top;
+        if (width <= 0 || height <= 0)
+        {
+            throw new InvalidOperationException($"Outlook window has an empty rectangle ({width}x{height}).");
+        }
+
+        Directory.CreateDirectory(targetDirectory);
+        string path = Path.Combine(targetDirectory, fileName);
+        using (Bitmap bitmap = new(width, height))
+        {
+            using (Graphics graphics = Graphics.FromImage(bitmap))
+            {
+                graphics.CopyFromScreen(rect.Left, rect.Top, 0, 0, new Size(width, height));
+            }
+
+            bitmap.Save(path, ImageFormat.Png);
+        }
+
+        return path;
+    }
+
+    /// <summary>
+    /// True when any VISIBLE Outlook-class window's caption contains the fragment -
+    /// the never-displayed assert for the identity drafts (Q-it2-3a).
+    /// </summary>
+    public static bool AnyVisibleOutlookWindowWithCaptionFragment(string captionFragment)
+    {
+        return FindOutlookWindowByCaptionFragment(captionFragment) != IntPtr.Zero;
+    }
+
+    private static IntPtr FindOutlookWindowByCaptionFragment(string captionFragment)
+    {
+        IntPtr found = IntPtr.Zero;
+        NativeMethods.EnumWindows((hwnd, _) =>
+        {
+            if (!NativeMethods.IsWindowVisible(hwnd))
+            {
+                return true;
+            }
+
+            var className = new System.Text.StringBuilder(64);
+            _ = NativeMethods.GetClassNameW(hwnd, className, className.Capacity);
+            if (!string.Equals(className.ToString(), OutlookExplorerWindowClass, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            var caption = new System.Text.StringBuilder(512);
+            _ = NativeMethods.GetWindowTextW(hwnd, caption, caption.Capacity);
+            if (caption.ToString().IndexOf(captionFragment, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                found = hwnd;
+                return false;
+            }
+
+            return true;
+        }, IntPtr.Zero);
+
+        return found;
+    }
+
     private static IntPtr FindOutlookWindow(string? caption)
     {
         if (!string.IsNullOrEmpty(caption))
@@ -143,6 +235,9 @@ internal static class ScreenCapture
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         internal static extern int GetClassNameW(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        internal static extern int GetWindowTextW(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
 
         internal const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
 
