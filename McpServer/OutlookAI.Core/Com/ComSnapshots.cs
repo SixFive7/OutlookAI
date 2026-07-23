@@ -311,6 +311,96 @@ namespace OutlookAI.Core.Com
         public string? Body { get; }
     }
 
+    /// <summary>State snapshot of the active Outlook Explorer window (COM-free data).</summary>
+    public sealed class ComExplorerState
+    {
+        /// <summary>Creates an explorer state snapshot.</summary>
+        public ComExplorerState(string? caption, string? currentFolderPath, string? currentFolderName, int? windowState)
+        {
+            Caption = caption;
+            CurrentFolderPath = currentFolderPath;
+            CurrentFolderName = currentFolderName;
+            WindowState = windowState;
+        }
+
+        /// <summary>Explorer window caption (also the Win32 window title).</summary>
+        public string? Caption { get; }
+
+        /// <summary>Absolute FolderPath of the current folder (\\Store\Folder\...).</summary>
+        public string? CurrentFolderPath { get; }
+
+        /// <summary>Display name of the current folder.</summary>
+        public string? CurrentFolderName { get; }
+
+        /// <summary>OlWindowState (0 maximized, 1 minimized, 2 normal) when readable.</summary>
+        public int? WindowState { get; }
+    }
+
+    /// <summary>One open Inspector window (COM-free data).</summary>
+    public sealed class ComInspectorInfo
+    {
+        /// <summary>Creates an inspector snapshot.</summary>
+        public ComInspectorInfo(string? entryId, string? subject, int? itemClass)
+        {
+            EntryId = entryId;
+            Subject = subject;
+            ItemClass = itemClass;
+        }
+
+        /// <summary>EntryID of the item shown in the Inspector (null for unsaved items).</summary>
+        public string? EntryId { get; }
+
+        /// <summary>Subject of the shown item.</summary>
+        public string? Subject { get; }
+
+        /// <summary>OlObjectClass of the shown item (43 = olMail).</summary>
+        public int? ItemClass { get; }
+    }
+
+    /// <summary>Result of one exhaustive folder/date-bounded COM scan (COM-free data).</summary>
+    public sealed class ComExhaustiveResult
+    {
+        /// <summary>Creates an exhaustive scan result.</summary>
+        public ComExhaustiveResult(
+            IReadOnlyList<ComMailBrief> items,
+            int foldersScanned,
+            int foldersSkipped,
+            string engine,
+            bool instantSearchEnabled,
+            bool truncated,
+            bool timedOut)
+        {
+            Items = items;
+            FoldersScanned = foldersScanned;
+            FoldersSkipped = foldersSkipped;
+            Engine = engine;
+            InstantSearchEnabled = instantSearchEnabled;
+            Truncated = truncated;
+            TimedOut = timedOut;
+        }
+
+        /// <summary>Matched mail items with their REAL EntryIDs.</summary>
+        public IReadOnlyList<ComMailBrief> Items { get; }
+
+        /// <summary>Folders the scan filtered (mail folders in scope).</summary>
+        public int FoldersScanned { get; }
+
+        /// <summary>Folders where both filter engines failed.</summary>
+        public int FoldersSkipped { get; }
+
+        /// <summary>"ci_phrasematch", "like", or "ci_phrasematch+like" (per-folder downgrades).</summary>
+        public string Engine { get; }
+
+        /// <summary>Store.IsInstantSearchEnabled as reported by Outlook.</summary>
+        public bool InstantSearchEnabled { get; }
+
+        /// <summary>True when the result cap cut the scan short.</summary>
+        public bool Truncated { get; }
+
+        /// <summary>True when the time budget cut the scan short.</summary>
+        public bool TimedOut { get; }
+    }
+
     /// <summary>Result of one gap sweep (COM-free data).</summary>
     public sealed class ComSweepResult
     {

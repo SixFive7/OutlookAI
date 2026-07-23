@@ -324,50 +324,16 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             ComOpenResult? result = _runner.Run<ComOpenResult?>(() =>
             {
-                object? root = null;
                 object? currentFolder = null;
                 object? items = null;
                 object? restricted = null;
                 try
                 {
-                    dynamic? store = FindStoreByDisplayName(storeDisplayName);
-                    if (store == null)
+                    currentFolder = WalkToFolder(storeDisplayName, folderPath, out string? walkError);
+                    if (currentFolder == null)
                     {
-                        capturedError = "StoreNotFound";
+                        capturedError = walkError;
                         return null;
-                    }
-
-                    try
-                    {
-                        root = store.GetRootFolder();
-                    }
-                    finally
-                    {
-                        Release(store);
-                    }
-
-                    currentFolder = root;
-                    root = null;
-                    foreach (string segment in folderPath)
-                    {
-                        dynamic folders = ((dynamic)currentFolder!).Folders;
-                        object? next = null;
-                        try
-                        {
-                            next = folders[segment];
-                        }
-                        catch (Exception ex) when (IsComCallFailure(ex))
-                        {
-                            capturedError = "FolderNotFound";
-                            return null;
-                        }
-                        finally
-                        {
-                            Release(folders);
-                        }
-
-                        Release(currentFolder);
-                        currentFolder = next;
                     }
 
                     dynamic folder = currentFolder!;
@@ -476,12 +442,67 @@ namespace OutlookAI.Core.Com
                     Release(restricted);
                     Release(items);
                     Release(currentFolder);
-                    Release(root);
                 }
             });
 
             error = capturedError;
             return result;
+        }
+
+        /// <summary>
+        /// STA-side folder resolution: walks a store's folder tree along the given
+        /// store-relative path segments. Returns the folder RCW (CALLER must Release) or
+        /// null with a content-free error. An empty path returns the store root folder.
+        /// </summary>
+        private object? WalkToFolder(string storeDisplayName, IReadOnlyList<string> folderPath, out string? error)
+        {
+            error = null;
+            dynamic? store = FindStoreByDisplayName(storeDisplayName);
+            if (store == null)
+            {
+                error = "StoreNotFound";
+                return null;
+            }
+
+            object? currentFolder;
+            try
+            {
+                currentFolder = store.GetRootFolder();
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                error = "RootFolderUnavailable";
+                return null;
+            }
+            finally
+            {
+                Release(store);
+            }
+
+            foreach (string segment in folderPath)
+            {
+                object? next = null;
+                dynamic folders = ((dynamic)currentFolder!).Folders;
+                try
+                {
+                    next = folders[segment];
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    error = "FolderNotFound";
+                    Release(currentFolder);
+                    return null;
+                }
+                finally
+                {
+                    Release(folders);
+                }
+
+                Release(currentFolder);
+                currentFolder = next;
+            }
+
+            return currentFolder;
         }
 
         /// <summary>
@@ -1095,6 +1116,933 @@ namespace OutlookAI.Core.Com
 
             error = capturedError;
             return result;
+        }
+
+        // ------------------------------------------------------------------ show-me (Phase 3, v3.MD L3)
+
+        /// <summary>
+        /// open_in_outlook backbone: opens the item by REAL EntryID and calls
+        /// MailItem.Display() so it appears in an Inspector window on screen. Works with
+        /// or without an Explorer window (a headless COM-started Outlook can still show
+        /// Inspectors). Returns the displayed item's snapshot, or null with a
+        /// content-free error (S4).
+        /// </summary>
+        public ComOpenResult? TryDisplayItem(string entryIdHex, string? storeId, out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(entryIdHex))
+            {
+                throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
+            }
+
+            string? capturedError = null;
+            ComOpenResult? result = _runner.Run<ComOpenResult?>(() =>
+            {
+                dynamic ns = _namespace!;
+                object? itemObject = null;
+                try
+                {
+                    itemObject = storeId != null
+                        ? ns.GetItemFromID(entryIdHex, storeId)
+                        : ns.GetItemFromID(entryIdHex);
+                    ComOpenResult snapshot = Snapshot(itemObject);
+                    ((dynamic)itemObject!).Display();
+                    return snapshot;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(itemObject);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// goto_folder backbone: resolves the store-relative folder path (empty path:
+        /// the store's Inbox, falling back to its root folder), makes sure a VISIBLE
+        /// Explorer window exists (created + shown when Outlook runs headless, D17/D30),
+        /// sets ActiveExplorer().CurrentFolder to it and returns the resulting explorer
+        /// state for verification.
+        /// </summary>
+        public ComExplorerState? TryGotoFolder(string storeDisplayName, IReadOnlyList<string>? folderPath, out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(storeDisplayName))
+            {
+                throw new ArgumentException("Store display name must not be blank.", nameof(storeDisplayName));
+            }
+
+            string? capturedError = null;
+            ComExplorerState? result = _runner.Run<ComExplorerState?>(() =>
+            {
+                object? folder = null;
+                object? explorer = null;
+                try
+                {
+                    folder = ResolveNavigationFolder(storeDisplayName, folderPath, out string? folderError);
+                    if (folder == null)
+                    {
+                        capturedError = folderError;
+                        return null;
+                    }
+
+                    explorer = EnsureVisibleExplorer(folder, out string? explorerError);
+                    if (explorer == null)
+                    {
+                        capturedError = explorerError;
+                        return null;
+                    }
+
+                    ((dynamic)explorer!).CurrentFolder = folder;
+                    return SnapshotExplorer(explorer!);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(explorer);
+                    Release(folder);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// show_search_results backbone: optionally navigates to a store/folder first
+        /// (so current-folder scopes apply there), then drives Outlook's real search UI
+        /// via Explorer.Search(query, olSearchScope). olSearchScope values are
+        /// feature-tested live in Phase 3 (v3.MD risk register) - an unsupported value
+        /// surfaces as a content-free error here. Returns the explorer state after the
+        /// call (the search itself populates asynchronously in the UI).
+        /// </summary>
+        public ComExplorerState? TryShowSearchResults(
+            string query,
+            int olSearchScope,
+            string? storeDisplayName,
+            IReadOnlyList<string>? folderPath,
+            out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                throw new ArgumentException("Query must not be blank.", nameof(query));
+            }
+
+            string? capturedError = null;
+            ComExplorerState? result = _runner.Run<ComExplorerState?>(() =>
+            {
+                object? folder = null;
+                object? explorer = null;
+                try
+                {
+                    if (storeDisplayName != null)
+                    {
+                        folder = ResolveNavigationFolder(storeDisplayName, folderPath, out string? folderError);
+                        if (folder == null)
+                        {
+                            capturedError = folderError;
+                            return null;
+                        }
+                    }
+
+                    explorer = EnsureVisibleExplorer(folder, out string? explorerError);
+                    if (explorer == null)
+                    {
+                        capturedError = explorerError;
+                        return null;
+                    }
+
+                    dynamic e = explorer!;
+                    if (folder != null)
+                    {
+                        e.CurrentFolder = folder;
+                    }
+
+                    e.Search(query, olSearchScope);
+                    return SnapshotExplorer(explorer!);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(explorer);
+                    Release(folder);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>Exits an active Explorer search (test cleanup / leaving the UI tidy).</summary>
+        public bool TryClearSearch(out string? error)
+        {
+            EnsureNotDisposed();
+            string? capturedError = null;
+            bool result = _runner.Run(() =>
+            {
+                object? explorer = null;
+                try
+                {
+                    explorer = ((dynamic)_application!).ActiveExplorer();
+                    if (explorer == null)
+                    {
+                        capturedError = "NoActiveExplorer";
+                        return false;
+                    }
+
+                    ((dynamic)explorer).ClearSearch();
+                    return true;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return false;
+                }
+                finally
+                {
+                    Release(explorer);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>Snapshot of the active Explorer window, or null when none exists.</summary>
+        public ComExplorerState? TryGetActiveExplorerState(out string? error)
+        {
+            EnsureNotDisposed();
+            string? capturedError = null;
+            ComExplorerState? result = _runner.Run<ComExplorerState?>(() =>
+            {
+                object? explorer = null;
+                try
+                {
+                    explorer = ((dynamic)_application!).ActiveExplorer();
+                    if (explorer == null)
+                    {
+                        capturedError = "NoActiveExplorer";
+                        return null;
+                    }
+
+                    return SnapshotExplorer(explorer);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(explorer);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>Lists open Inspector windows with the shown item's EntryID (test verification).</summary>
+        public IReadOnlyList<ComInspectorInfo> GetOpenInspectors()
+        {
+            EnsureNotDisposed();
+            return _runner.Run(() =>
+            {
+                List<ComInspectorInfo> result = new List<ComInspectorInfo>();
+                object? inspectors = null;
+                try
+                {
+                    inspectors = ((dynamic)_application!).Inspectors;
+                    dynamic collection = (dynamic)inspectors!;
+                    int count = collection.Count;
+                    for (int i = 1; i <= count; i++)
+                    {
+                        object? inspector = null;
+                        object? item = null;
+                        try
+                        {
+                            inspector = collection[i];
+                            item = ((dynamic)inspector!).CurrentItem;
+                            dynamic current = (dynamic)item!;
+                            string? entryId = TryGetString(() => (string?)current.EntryID);
+                            string? subject = TryGetString(() => (string?)current.Subject);
+                            int? itemClass = null;
+                            try
+                            {
+                                itemClass = (int)current.Class;
+                            }
+                            catch (Exception ex) when (IsComCallFailure(ex))
+                            {
+                            }
+
+                            result.Add(new ComInspectorInfo(entryId, subject, itemClass));
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            // Inspector without a readable item - skip.
+                        }
+                        finally
+                        {
+                            Release(item);
+                            Release(inspector);
+                        }
+                    }
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    // No Inspectors collection - empty list.
+                }
+                finally
+                {
+                    Release(inspectors);
+                }
+
+                return (IReadOnlyList<ComInspectorInfo>)result;
+            });
+        }
+
+        /// <summary>
+        /// Closes the Inspector showing the given EntryID (tests close only windows they
+        /// opened themselves - closing a window is NOT an Outlook restart, S7).
+        /// olDiscard is used so nothing is saved/prompted.
+        /// </summary>
+        public bool TryCloseInspectorByEntryId(string entryIdHex, out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(entryIdHex))
+            {
+                throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
+            }
+
+            string? capturedError = null;
+            bool result = _runner.Run(() =>
+            {
+                object? inspectors = null;
+                try
+                {
+                    inspectors = ((dynamic)_application!).Inspectors;
+                    dynamic collection = (dynamic)inspectors!;
+                    int count = collection.Count;
+                    for (int i = 1; i <= count; i++)
+                    {
+                        object? inspector = null;
+                        object? item = null;
+                        try
+                        {
+                            inspector = collection[i];
+                            item = ((dynamic)inspector!).CurrentItem;
+                            string? entryId = TryGetString(() => (string?)((dynamic)item!).EntryID);
+                            if (entryId != null && string.Equals(entryId, entryIdHex, StringComparison.OrdinalIgnoreCase))
+                            {
+                                ((dynamic)inspector!).Close(1); // 1 = olDiscard
+                                return true;
+                            }
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            // Unreadable inspector - keep looking.
+                        }
+                        finally
+                        {
+                            Release(item);
+                            Release(inspector);
+                        }
+                    }
+
+                    capturedError = "InspectorNotFound";
+                    return false;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return false;
+                }
+                finally
+                {
+                    Release(inspectors);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>Reads an Explorer pane's visibility (OlPane: 4 = navigation pane, 5 = to-do bar).</summary>
+        public bool? TryGetExplorerPaneVisible(int pane, out string? error)
+        {
+            EnsureNotDisposed();
+            string? capturedError = null;
+            bool? result = _runner.Run<bool?>(() =>
+            {
+                object? explorer = null;
+                try
+                {
+                    explorer = ((dynamic)_application!).ActiveExplorer();
+                    if (explorer == null)
+                    {
+                        capturedError = "NoActiveExplorer";
+                        return null;
+                    }
+
+                    return (bool)((dynamic)explorer).IsPaneVisible(pane);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(explorer);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// Shows/hides an Explorer pane (screenshot hygiene: the S5 screenshot hides the
+        /// navigation pane so no other store's folder names are captured; restored after).
+        /// </summary>
+        public bool TrySetExplorerPaneVisible(int pane, bool visible, out string? error)
+        {
+            EnsureNotDisposed();
+            string? capturedError = null;
+            bool result = _runner.Run(() =>
+            {
+                object? explorer = null;
+                try
+                {
+                    explorer = ((dynamic)_application!).ActiveExplorer();
+                    if (explorer == null)
+                    {
+                        capturedError = "NoActiveExplorer";
+                        return false;
+                    }
+
+                    ((dynamic)explorer).ShowPane(pane, visible);
+                    return true;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return false;
+                }
+                finally
+                {
+                    Release(explorer);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// STA-side: resolves the navigation target for goto/show tools. Empty path =
+        /// the store's Inbox when it has one (delegate caches may not), else the store
+        /// root. Returns a folder RCW (CALLER must Release) or null + error.
+        /// </summary>
+        private object? ResolveNavigationFolder(string storeDisplayName, IReadOnlyList<string>? folderPath, out string? error)
+        {
+            if (folderPath != null && folderPath.Count > 0)
+            {
+                return WalkToFolder(storeDisplayName, folderPath, out error);
+            }
+
+            error = null;
+            dynamic? store = FindStoreByDisplayName(storeDisplayName);
+            if (store == null)
+            {
+                error = "StoreNotFound";
+                return null;
+            }
+
+            try
+            {
+                try
+                {
+                    return store.GetDefaultFolder(6); // olFolderInbox
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    // Store without an Inbox (some delegate caches) - fall back to root.
+                }
+
+                try
+                {
+                    return store.GetRootFolder();
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    error = "RootFolderUnavailable";
+                    return null;
+                }
+            }
+            finally
+            {
+                Release(store);
+            }
+        }
+
+        /// <summary>
+        /// STA-side: returns the active Explorer, creating and displaying one (on
+        /// <paramref name="preferredFolder"/>, else the default Inbox) when Outlook runs
+        /// headless. The window is un-minimized and activated so show-me results are
+        /// actually on screen. Returns an Explorer RCW (CALLER must Release) or null.
+        /// </summary>
+        private object? EnsureVisibleExplorer(object? preferredFolder, out string? error)
+        {
+            error = null;
+            dynamic app = _application!;
+            object? explorer = null;
+            try
+            {
+                explorer = app.ActiveExplorer();
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+
+            if (explorer == null)
+            {
+                object? defaultFolder = null;
+                object? explorers = null;
+                try
+                {
+                    object? folderToShow = preferredFolder;
+                    if (folderToShow == null)
+                    {
+                        defaultFolder = ((dynamic)_namespace!).GetDefaultFolder(6);
+                        folderToShow = defaultFolder;
+                    }
+
+                    explorers = app.Explorers;
+                    explorer = ((dynamic)explorers!).Add(folderToShow, 0); // 0 = olFolderDisplayNormal
+                    ((dynamic)explorer!).Display();
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    error = DescribeComFailure(ex);
+                    Release(explorer);
+                    return null;
+                }
+                finally
+                {
+                    Release(explorers);
+                    Release(defaultFolder);
+                }
+            }
+
+            dynamic e = explorer!;
+            try
+            {
+                if ((int)e.WindowState == 1) // olMinimized
+                {
+                    e.WindowState = 2; // olNormalWindow
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+
+            try
+            {
+                e.Activate();
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+
+            return explorer;
+        }
+
+        /// <summary>STA-side: snapshots an Explorer's caption/current folder/window state.</summary>
+        private static ComExplorerState SnapshotExplorer(object explorerObject)
+        {
+            dynamic explorer = explorerObject;
+            string? caption = TryGetString(() => (string?)explorer.Caption);
+            int? windowState = null;
+            try
+            {
+                windowState = (int)explorer.WindowState;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+
+            string? folderPath = null;
+            string? folderName = null;
+            object? current = null;
+            try
+            {
+                current = explorer.CurrentFolder;
+                if (current != null)
+                {
+                    folderPath = TryGetString(() => (string?)((dynamic)current).FolderPath);
+                    folderName = TryGetString(() => (string?)((dynamic)current).Name);
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+            finally
+            {
+                Release(current);
+            }
+
+            return new ComExplorerState(caption, folderPath, folderName, windowState);
+        }
+
+        private static string DescribeComFailure(Exception ex)
+        {
+            return ex is COMException com
+                ? string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", com.HResult)
+                : ex.GetType().Name;
+        }
+
+        // ------------------------------------------------------------------ exhaustive scan (Phase 3, v3.MD D19)
+
+        /// <summary>
+        /// Exhaustive folder/date-bounded COM scan (search mode=exhaustive): filters each
+        /// mail folder in scope with a DASL restriction via Folder.GetTable -
+        /// ci_phrasematch when Store.IsInstantSearchEnabled (feature-detected, per-folder
+        /// LIKE downgrade on failure; v3.MD section 12: ci_* is valid in Restrict/GetTable
+        /// only), plain LIKE otherwise. Matches are opened for authoritative snapshots
+        /// carrying REAL EntryIDs. Scope = one folder (path given) or every folder of the
+        /// store. Bounded by <paramref name="maxItems"/> and <paramref name="timeBudgetMs"/>.
+        /// </summary>
+        public ComExhaustiveResult ExhaustiveScan(
+            string storeDisplayName,
+            IReadOnlyList<string>? folderPath,
+            IReadOnlyList<string>? terms,
+            DateTime? sinceUtc,
+            DateTime? beforeUtc,
+            int maxItems,
+            int timeBudgetMs)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(storeDisplayName))
+            {
+                throw new ArgumentException("Store display name must not be blank.", nameof(storeDisplayName));
+            }
+
+            if (maxItems < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(maxItems));
+            }
+
+            if (timeBudgetMs < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(timeBudgetMs));
+            }
+
+            return _runner.Run(() =>
+            {
+                dynamic? store = FindStoreByDisplayName(storeDisplayName);
+                if (store == null)
+                {
+                    throw new InvalidOperationException(
+                        "Store '" + storeDisplayName + "' was not found in Outlook. Use list_accounts for store names.");
+                }
+
+                string storeId;
+                bool instantSearch = false;
+                object? scanRoot = null;
+                try
+                {
+                    storeId = (string)store.StoreID;
+                    try
+                    {
+                        instantSearch = (bool)store.IsInstantSearchEnabled;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        // Property unavailable - treat as no instant search (LIKE engine).
+                    }
+
+                    if (folderPath == null || folderPath.Count == 0)
+                    {
+                        scanRoot = store.GetRootFolder();
+                    }
+                }
+                finally
+                {
+                    Release(store);
+                }
+
+                if (scanRoot == null)
+                {
+                    scanRoot = WalkToFolder(storeDisplayName, folderPath!, out string? walkError);
+                    if (scanRoot == null)
+                    {
+                        throw new InvalidOperationException(
+                            "Folder '" + string.Join("/", folderPath!) + "' was not found in store '" + storeDisplayName
+                            + "' (" + (walkError ?? "unknown") + "). Use list_folders for paths.");
+                    }
+                }
+
+                ExhaustiveScanState state = new ExhaustiveScanState(maxItems, TimeSpan.FromMilliseconds(timeBudgetMs))
+                {
+                    CiFilter = instantSearch
+                        ? ExhaustiveDaslFilter.Build(terms, sinceUtc, beforeUtc, ExhaustiveEngine.CiPhraseMatch)
+                        : null,
+                    LikeFilter = ExhaustiveDaslFilter.Build(terms, sinceUtc, beforeUtc, ExhaustiveEngine.Like),
+                };
+
+                try
+                {
+                    bool recurse = folderPath == null || folderPath.Count == 0;
+                    ScanFolderTree(_namespace!, scanRoot, storeDisplayName, storeId, recurse, state);
+                }
+                finally
+                {
+                    Release(scanRoot);
+                }
+
+                string engine = state.UsedCi && state.UsedLike
+                    ? "ci_phrasematch+like"
+                    : state.UsedCi ? "ci_phrasematch" : "like";
+                return new ComExhaustiveResult(
+                    state.Items,
+                    state.FoldersScanned,
+                    state.FoldersSkipped,
+                    engine,
+                    instantSearch,
+                    state.Truncated,
+                    state.TimedOut);
+            });
+        }
+
+        private void ScanFolderTree(
+            dynamic ns,
+            object folderObject,
+            string storeName,
+            string storeId,
+            bool recurse,
+            ExhaustiveScanState state)
+        {
+            if (state.ShouldStop)
+            {
+                return;
+            }
+
+            dynamic folder = folderObject;
+
+            // Only mail folders are filtered (DefaultItemType 0 = olMailItem); other
+            // folder types still get their subtrees visited (a calendar folder can hold
+            // mail subfolders).
+            int defaultItemType = -1;
+            try
+            {
+                defaultItemType = (int)folder.DefaultItemType;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+
+            if (defaultItemType == 0)
+            {
+                ScanSingleFolder(ns, folderObject, storeName, storeId, state);
+            }
+
+            if (!recurse || state.ShouldStop)
+            {
+                return;
+            }
+
+            object? subFolders = null;
+            try
+            {
+                subFolders = folder.Folders;
+                dynamic folderCollection = (dynamic)subFolders!;
+                int count = folderCollection.Count;
+                for (int i = 1; i <= count && !state.ShouldStop; i++)
+                {
+                    object? child = null;
+                    try
+                    {
+                        child = folderCollection[i];
+                        ScanFolderTree(ns, child!, storeName, storeId, true, state);
+                    }
+                    finally
+                    {
+                        Release(child);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                // No enumerable subfolders.
+            }
+            finally
+            {
+                Release(subFolders);
+            }
+        }
+
+        private void ScanSingleFolder(dynamic ns, object folderObject, string storeName, string storeId, ExhaustiveScanState state)
+        {
+            dynamic folder = folderObject;
+            string? folderName = TryGetString(() => (string?)folder.Name);
+
+            string filter = state.CiFilter != null && !state.CiBroken ? state.CiFilter : state.LikeFilter;
+            bool triedCi = ReferenceEquals(filter, state.CiFilter);
+
+            object? table = null;
+            try
+            {
+                try
+                {
+                    table = folder.GetTable(filter);
+                }
+                catch (Exception ex) when (triedCi && IsComCallFailure(ex))
+                {
+                    // ci_phrasematch rejected here - downgrade this and all later folders
+                    // to LIKE (feature-detect rule, v3.MD section 12).
+                    state.CiBroken = true;
+                    triedCi = false;
+                    filter = state.LikeFilter;
+                    table = folder.GetTable(filter);
+                }
+
+                if (triedCi)
+                {
+                    state.UsedCi = true;
+                }
+                else
+                {
+                    state.UsedLike = true;
+                }
+
+                dynamic t = (dynamic)table!;
+                int entryIdIndex = FindTableColumn(t, "EntryID");
+                if (entryIdIndex < 0)
+                {
+                    state.FoldersSkipped++;
+                    return;
+                }
+
+                state.FoldersScanned++;
+                while (!(bool)t.EndOfTable && !state.ShouldStop)
+                {
+                    if (state.Clock.Elapsed > state.Budget)
+                    {
+                        state.TimedOut = true;
+                        return;
+                    }
+
+                    object? row = null;
+                    object? member = null;
+                    try
+                    {
+                        row = t.GetNextRow();
+                        object[] values = (object[])((dynamic)row!).GetValues();
+                        if (entryIdIndex >= values.Length || values[entryIdIndex] is not string entryId || entryId.Length == 0)
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            member = ns.GetItemFromID(entryId, storeId);
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            continue;
+                        }
+
+                        int itemClass;
+                        try
+                        {
+                            itemClass = (int)((dynamic)member!).Class;
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            continue;
+                        }
+
+                        if (itemClass != OlMailItemClass)
+                        {
+                            continue;
+                        }
+
+                        state.Items.Add(SnapshotBrief(ns, member!, null, folderName, false, storeName, storeId));
+                        if (state.Items.Count >= state.MaxItems)
+                        {
+                            state.Truncated = true;
+                        }
+                    }
+                    finally
+                    {
+                        Release(member);
+                        Release(row);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                state.FoldersSkipped++;
+            }
+            finally
+            {
+                Release(table);
+            }
+        }
+
+        private sealed class ExhaustiveScanState
+        {
+            internal ExhaustiveScanState(int maxItems, TimeSpan budget)
+            {
+                MaxItems = maxItems;
+                Budget = budget;
+                Clock = Stopwatch.StartNew();
+            }
+
+            internal List<ComMailBrief> Items { get; } = new List<ComMailBrief>();
+
+            internal int MaxItems { get; }
+
+            internal TimeSpan Budget { get; }
+
+            internal Stopwatch Clock { get; }
+
+            internal string? CiFilter { get; set; }
+
+            internal string LikeFilter { get; set; } = string.Empty;
+
+            internal int FoldersScanned { get; set; }
+
+            internal int FoldersSkipped { get; set; }
+
+            internal bool UsedCi { get; set; }
+
+            internal bool UsedLike { get; set; }
+
+            internal bool CiBroken { get; set; }
+
+            internal bool Truncated { get; set; }
+
+            internal bool TimedOut { get; set; }
+
+            internal bool ShouldStop => Truncated || TimedOut;
         }
 
         private void SweepFolder(
@@ -1759,9 +2707,10 @@ namespace OutlookAI.Core.Com
         /// Late-bound COM failures do not always surface as COMException: the dynamic
         /// binder maps E_INVALIDARG to ArgumentException, E_POINTER to
         /// ArgumentNullException, and binding problems to RuntimeBinderException. Optional
-        /// COM paths must treat all of these as "that call did not work here".
+        /// COM paths must treat all of these as "that call did not work here". Public:
+        /// every caller with an optional COM path (Phase 2 fact 2) uses this same test.
         /// </summary>
-        private static bool IsComCallFailure(Exception ex)
+        public static bool IsComCallFailure(Exception ex)
         {
             return ex is COMException
                 || ex is ArgumentException
