@@ -103,6 +103,12 @@ namespace OutlookAI
             UpdateService.Start();
             ThemeService.StartWatching();
 
+            // Keep the user's Outlook tuning (search / caching / OST headroom) applied.
+            // Registry-only, idempotent, and never throws out of its public surface, but
+            // guard anyway: tuning must never be able to break add-in startup.
+            try { OutlookTuningService.ReconcileOnStartup(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("Tuning reconcile: " + ex.Message); }
+
             _inspectors = this.Application.Inspectors;
             _inspectors.NewInspector += Inspectors_NewInspector;
 
