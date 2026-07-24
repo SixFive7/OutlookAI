@@ -58,7 +58,7 @@ public sealed class LiveFreshModeTests
 
             while (overall.Elapsed < ArrivalTimeout)
             {
-                // D34: the sweep cache would blind rapid re-polls for its ~20 s TTL by
+                // D34: the sweep cache would blind rapid re-polls for its ~10 s TTL by
                 // design - this test measures RAW sweep arrival latency, so it clears
                 // the cache before each poll (dedicated cache behavior test:
                 // LiveSweepCacheTests).

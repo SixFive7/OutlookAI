@@ -5,7 +5,7 @@ using Xunit;
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
-/// D34 sweep-cache logic (pure, no COM): the ~20 s TTL constant is PINNED (product
+/// D34 sweep-cache logic (pure, no COM): the ~10 s TTL constant is PINNED (product
 /// contract - the accepted staleness window for rapid-fire searches), and the reuse
 /// rules are covered: fresh entry reuse, TTL expiry, frontier-advance invalidation,
 /// store-scope compatibility (all-stores serves store-scoped, never the reverse),
@@ -17,11 +17,12 @@ public sealed class SweepCacheTests
     private static readonly DateTime Now = new(2026, 7, 24, 12, 0, 0, DateTimeKind.Utc);
 
     [Fact]
-    public void TimeToLive_IsPinnedAtTwentySeconds()
+    public void TimeToLive_IsPinnedAtTenSeconds()
     {
         // D34 product constant: rapid-fire iterative searches reuse one sweep for at
-        // most this long. Changing it is a decision, not a refactor.
-        Assert.Equal(TimeSpan.FromSeconds(20), SweepCache.DefaultTimeToLive);
+        // most this long. Changing it is a decision, not a refactor (20 s -> 10 s
+        // per user order, 2026-07-24).
+        Assert.Equal(TimeSpan.FromSeconds(10), SweepCache.DefaultTimeToLive);
     }
 
     [Fact]
@@ -30,7 +31,7 @@ public sealed class SweepCacheTests
         SweepCache cache = new();
         cache.Store(Frontier, store: null, MakeResult(3), elapsedMs: 120, Now);
 
-        bool hit = cache.TryGet(Frontier, store: null, Now.AddSeconds(19), out SweepCache.CachedSweep? cached);
+        bool hit = cache.TryGet(Frontier, store: null, Now.AddSeconds(9), out SweepCache.CachedSweep? cached);
 
         Assert.True(hit);
         Assert.NotNull(cached);

@@ -11,7 +11,7 @@ namespace OutlookAI.Core.Services
     /// would otherwise pay a COM sweep per call. Entries are keyed on the sweep window
     /// base (the index frontier minus the safety margin) plus the store scope, so a
     /// cached sweep is reused only while the frontier has not advanced, and expire
-    /// after <see cref="DefaultTimeToLive"/> (~20 s, T1-pinned). Swept items are pure
+    /// after <see cref="DefaultTimeToLive"/> (~10 s, T1-pinned). Swept items are pure
     /// data snapshots (no COM refs), safe to hold. Pure logic - no COM, no clock reads
     /// (callers pass UTC now), fully unit-testable.
     /// </summary>
@@ -22,7 +22,7 @@ namespace OutlookAI.Core.Services
         /// this window a brand-new arrival can be invisible to repeat searches; a first
         /// search after idle always sweeps live). Pinned by a T1 test.
         /// </summary>
-        public static readonly TimeSpan DefaultTimeToLive = TimeSpan.FromSeconds(20);
+        public static readonly TimeSpan DefaultTimeToLive = TimeSpan.FromSeconds(10);
 
         private readonly object _lock = new object();
         private readonly TimeSpan _timeToLive;

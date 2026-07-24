@@ -13,7 +13,7 @@ namespace OutlookAI.Core.Services
 {
     /// <summary>
     /// Host-neutral orchestrator behind the MCP L1/L2 tools (v3.MD section 0.5): index
-    /// search + always-on COM gap-sweep merge (D19/D34 - the sweep is cached ~20 s and
+    /// search + always-on COM gap-sweep merge (D19/D34 - the sweep is cached ~10 s and
     /// degrades gracefully to index-only results when COM is unavailable), lazy hit
     /// location with caching (Phase-1 guidance: locate cost avg ~2 s - never locate
     /// eagerly, always cache), EntryID-based reads, attachment saving, thread lookup,
@@ -149,7 +149,7 @@ namespace OutlookAI.Core.Services
 
         /// <summary>
         /// Runs one search (v3.MD section 8 L1, D34): index query + freshness gap-sweep
-        /// merged and deduped - the sweep is always on, served from a ~20 s cache for
+        /// merged and deduped - the sweep is always on, served from a ~10 s cache for
         /// rapid-fire iteration, and degrades to index-only results (with advice) when
         /// it cannot run. exhaustive:true switches to the bounded index-bypassing COM scan.
         /// </summary>
@@ -281,7 +281,7 @@ namespace OutlookAI.Core.Services
         /// <summary>
         /// Drops the cached freshness sweep so the next search sweeps live. Test and
         /// diagnostic use (arrival-latency measurements); agents never need it - the
-        /// cache self-invalidates on frontier advance or after its ~20 s TTL (D34).
+        /// cache self-invalidates on frontier advance or after its ~10 s TTL (D34).
         /// </summary>
         public void ClearSweepCache()
         {
@@ -320,7 +320,7 @@ namespace OutlookAI.Core.Services
             }
 
             // D34 sweep cache: rapid-fire iterative searches reuse one sweep for up to
-            // ~20 s (keyed on the frontier-derived window base + store scope), so
+            // ~10 s (keyed on the frontier-derived window base + store scope), so
             // repeat calls run at index speed. Bodies are always fetched by cacheable
             // sweeps, so a term-less sweep can serve later termed searches too. A
             // cached all-stores sweep serves store-scoped requests via the client-side

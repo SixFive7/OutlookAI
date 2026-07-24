@@ -45,7 +45,7 @@ public sealed class Phase4LiveMcpToolShapeTests
             await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(TimeSpan.FromMinutes(8));
 
             // Find the seed over stdio: the always-on freshness sweep (D34) catches
-            // not-yet-indexed arrivals. The ~20 s sweep cache can delay visibility of
+            // not-yet-indexed arrivals. The ~10 s sweep cache can delay visibility of
             // an arrival by up to its TTL during rapid polling - the 180 s deadline
             // absorbs that by design.
             string? hitId = null;

@@ -41,7 +41,7 @@ public static class OutlookTools
     [Description("Search all locally indexed Outlook mail (3 accounts + delegate stores), including attachment contents. "
         + "Sub-second and cheap: iterate freely with refined terms. Terms in 'query' are ANDed; append * for prefix match. "
         + "Results are always FRESH: the index is merged with a COM sweep of mail newer than the index frontier, so "
-        + "just-arrived mail is found (the sweep may autostart Outlook headless; it is cached ~20 s, so rapid follow-up "
+        + "just-arrived mail is found (the sweep may autostart Outlook headless; it is cached ~10 s, so rapid follow-up "
         + "searches run at index speed). When the sweep cannot run (e.g. during an add-in update), index results are "
         + "returned anyway with a freshness warning in 'advice' - a search never fails for that reason. "
         + "exhaustive=true instead bypasses the index with a bounded COM folder scan (requires store + folder and/or after; "

@@ -185,7 +185,7 @@ public sealed class LiveDisconnectRecoveryTests
                 }
                 else
                 {
-                    service.ClearSweepCache(); // A <20 s-old cached sweep would mask the degradation path.
+                    service.ClearSweepCache(); // A <10 s-old cached sweep would mask the degradation path.
                     SearchOutcome degraded = service.Search(new SearchRequest
                     {
                         Query = "oaimcpDegradationProbe" + _fixture.RunMarker,
