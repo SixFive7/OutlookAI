@@ -83,6 +83,10 @@ claude mcp add --scope user outlookai <absolute-path-to>\McpServer\OutlookAI.Mcp
 
 One server process is spawned per agent session and exits on stdin EOF. Hit ids (`h1`, `h2`, …) and send-confirmation tokens are per-process; a restart invalidates them (the error text tells the agent to re-search). During development/soak the registration points at build output; installer/updater integration is a later productization step.
 
+### Server instructions (MCP `initialize`)
+
+`ServerMetadata.Instructions` is returned as the `instructions` field of the MCP `initialize` result. Claude Code injects it verbatim into every session's context at start (a "# MCP Server Instructions" section) — including sessions where tool search defers the tool schemas to name-only — so the agent knows the mail capability exists before any tool is loaded. Keep it short (it is a passive per-session cost; Claude Code truncates at 2 KB) and keyword-rich (tool search matches against it). T3 pins the exact wire string; T1 pins the length budget, the discovery keywords, and that no test canary ever ships.
+
 ## Load-bearing facts (learned in Phases 1–6; the code comments reference these)
 
 1. **Decoded 24-byte index EntryIDs are NOT openable on cached-Exchange stores** — `GetItemFromID` returns 0x80040107 for every store of this shape. The index URL's value is the store UID + folder segments + timestamp; `HitLocator` maps a hit to the real (~70-byte) EntryID by walking to the folder and probing via `Folder.GetTable` with a DASL subject + received-time window (5 s tolerance for mail, 120 s for attachment rows), tiering down to `Items.Restrict`. Located EntryIDs are cached per process; reads average well under 100 ms.
