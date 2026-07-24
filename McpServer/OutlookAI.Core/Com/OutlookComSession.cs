@@ -1950,6 +1950,10 @@ namespace OutlookAI.Core.Com
                         return null;
                     }
 
+                    // Captured NOW: the pinned identity for the outcome snapshot when
+                    // the post-save SendUsingAccount readback degrades (see SnapshotDraft).
+                    string? pinnedAccountSmtp = TryGetString(() => (string?)((dynamic)account!).SmtpAddress);
+
                     try
                     {
                         deliveryStore = ((dynamic)account).DeliveryStore;
@@ -1972,6 +1976,12 @@ namespace OutlookAI.Core.Com
                     string? deliveryStoreId = TryGetString(() => (string?)((dynamic)deliveryStore!).StoreID);
 
                     draftsFolder = ((dynamic)deliveryStore).GetDefaultFolder(16); // olFolderDrafts
+
+                    // Captured NOW (COM is demonstrably answering) as the deterministic
+                    // folder identity for the outcome snapshot - see SnapshotDraft.
+                    string? draftsFolderName = TryGetString(() => (string?)((dynamic)draftsFolder!).Name);
+                    string? draftsFolderEntryId = TryGetString(() => (string?)((dynamic)draftsFolder!).EntryID);
+
                     items = ((dynamic)draftsFolder!).Items;
                     mail = ((dynamic)items!).Add(0); // olMailItem
                     dynamic draft = mail!;
@@ -1997,13 +2007,23 @@ namespace OutlookAI.Core.Com
                     // finding). Close it now that the draft is saved; Display() below
                     // opens a fresh visible one for the final item when requested.
                     CloseHiddenInspector(mail!);
-                    mail = RelocateToFolderIfNeeded(mail!, draftsFolder!, out bool moved, out string? initialFolder);
+                    mail = RelocateToFolderIfNeeded(mail!, draftsFolder!, out bool moved, out string? initialFolder, out bool inDraftsFolder);
                     if (display)
                     {
                         ((dynamic)mail!).Display();
                     }
 
-                    ComDraftInfo info = SnapshotDraft(mail!, deliveryStoreName, deliveryStoreId);
+                    string? folderFallbackName = inDraftsFolder ? draftsFolderName : null;
+                    string? folderFallbackId = inDraftsFolder ? draftsFolderEntryId : null;
+                    ComDraftInfo info = SnapshotDraft(
+                        mail!,
+                        deliveryStoreName,
+                        deliveryStoreId,
+                        folderFallbackName,
+                        folderFallbackId,
+                        pinnedAccountSmtp);
+                    info = ResnapshotIfRecipientsEmpty(
+                        info, deliveryStoreName, deliveryStoreId, folderFallbackName, folderFallbackId, pinnedAccountSmtp);
                     return new ComDraftCreateResult(
                         info,
                         accountResolved: true,
@@ -2118,6 +2138,7 @@ namespace OutlookAI.Core.Com
                     // UI would send from). Delegate-store mail has no matching account -
                     // recorded, SendUsingAccount left for Outlook to resolve.
                     bool accountResolved = false;
+                    string? pinnedAccountSmtp = null;
                     if (sourceStoreIdActual != null || sourceStoreName != null)
                     {
                         account = FindAccountByDeliveryStore(sourceStoreIdActual, sourceStoreName);
@@ -2125,6 +2146,10 @@ namespace OutlookAI.Core.Com
                         {
                             SetSendUsingAccount(mail!, account);
                             accountResolved = true;
+
+                            // Captured NOW: the pinned identity for the outcome snapshot
+                            // when the post-save readback degrades (see SnapshotDraft).
+                            pinnedAccountSmtp = TryGetString(() => (string?)((dynamic)account!).SmtpAddress);
                         }
                     }
 
@@ -2147,6 +2172,9 @@ namespace OutlookAI.Core.Com
 
                     bool moved = false;
                     string? initialFolder = null;
+                    bool inDraftsFolder = false;
+                    string? draftsFolderName = null;
+                    string? draftsFolderEntryId = null;
                     if (sourceStore != null)
                     {
                         try
@@ -2162,7 +2190,11 @@ namespace OutlookAI.Core.Com
 
                     if (draftsFolder != null)
                     {
-                        mail = RelocateToFolderIfNeeded(mail!, draftsFolder, out moved, out initialFolder);
+                        // Captured NOW (COM is demonstrably answering) as the
+                        // deterministic folder identity for the outcome snapshot.
+                        draftsFolderName = TryGetString(() => (string?)((dynamic)draftsFolder).Name);
+                        draftsFolderEntryId = TryGetString(() => (string?)((dynamic)draftsFolder).EntryID);
+                        mail = RelocateToFolderIfNeeded(mail!, draftsFolder, out moved, out initialFolder, out inDraftsFolder);
                     }
 
                     if (display)
@@ -2170,7 +2202,18 @@ namespace OutlookAI.Core.Com
                         ((dynamic)mail!).Display();
                     }
 
-                    ComDraftInfo info = SnapshotDraft(mail!, sourceStoreName, sourceStoreIdActual);
+                    string? folderFallbackName = inDraftsFolder ? draftsFolderName : null;
+                    string? folderFallbackId = inDraftsFolder ? draftsFolderEntryId : null;
+                    string? smtpFallback = accountResolved ? pinnedAccountSmtp : null;
+                    ComDraftInfo info = SnapshotDraft(
+                        mail!,
+                        sourceStoreName,
+                        sourceStoreIdActual,
+                        folderFallbackName,
+                        folderFallbackId,
+                        smtpFallback);
+                    info = ResnapshotIfRecipientsEmpty(
+                        info, sourceStoreName, sourceStoreIdActual, folderFallbackName, folderFallbackId, smtpFallback);
                     return new ComDraftCreateResult(
                         info,
                         accountResolved,
@@ -2692,10 +2735,11 @@ namespace OutlookAI.Core.Com
         /// v3.MD section 12; callers snapshot AFTER this). Returns the item to use from
         /// now on (the moved RCW when a move happened) and releases the stale one.
         /// </summary>
-        private static object RelocateToFolderIfNeeded(object mailObject, object targetFolder, out bool moved, out string? initialFolderName)
+        private static object RelocateToFolderIfNeeded(object mailObject, object targetFolder, out bool moved, out string? initialFolderName, out bool inTargetFolder)
         {
             moved = false;
             initialFolderName = null;
+            inTargetFolder = false;
             object? parent = null;
             try
             {
@@ -2711,18 +2755,20 @@ namespace OutlookAI.Core.Com
                 if (parentEntryId != null && targetEntryId != null
                     && string.Equals(parentEntryId, targetEntryId, StringComparison.OrdinalIgnoreCase))
                 {
+                    inTargetFolder = true;
                     return mailObject;
                 }
 
                 object movedItem = ((dynamic)mailObject).Move(targetFolder);
                 Release(mailObject);
                 moved = true;
+                inTargetFolder = true;
                 return movedItem;
             }
             catch (Exception ex) when (IsComCallFailure(ex))
             {
                 // Move unavailable - keep the item where Outlook saved it (recorded via
-                // the initial folder name).
+                // the initial folder name); placement in the target stays unconfirmed.
                 return mailObject;
             }
             finally
@@ -2731,8 +2777,57 @@ namespace OutlookAI.Core.Com
             }
         }
 
+        /// <summary>Delay before the one-shot recipient re-snapshot of a fresh draft (degraded-instance window, soak 2026-07-24).</summary>
+        private const int RecipientResnapshotDelayMs = 1500;
+
+        /// <summary>
+        /// Creation-flow guard (soak 2026-07-24): every draft-creation flow carries at
+        /// least one recipient by construction (reply/replyall derive them from the
+        /// source, new/forward have a validated To) - a creation snapshot reading ZERO
+        /// recipients is the degraded read shape observed while Outlook is booting or
+        /// reconciling its stores (the item header answers while object-returning
+        /// probes come back empty; the saved draft itself is correct). Remedy, bounded
+        /// to one attempt: wait briefly, re-open the item FRESH by EntryID (a new COM
+        /// proxy, not the possibly-degraded creation reference) and re-snapshot; the
+        /// original snapshot is kept when the retry does not improve on it.
+        /// </summary>
+        private ComDraftInfo ResnapshotIfRecipientsEmpty(
+            ComDraftInfo info,
+            string? fallbackStoreName,
+            string? fallbackStoreId,
+            string? fallbackFolderName,
+            string? fallbackFolderEntryId,
+            string? fallbackSendUsingSmtp)
+        {
+            if (info.Recipients.Count > 0)
+            {
+                return info;
+            }
+
+            Thread.Sleep(RecipientResnapshotDelayMs);
+            dynamic ns = _namespace!;
+            object? reopened = null;
+            try
+            {
+                reopened = info.StoreId != null
+                    ? ns.GetItemFromID(info.EntryId, info.StoreId)
+                    : ns.GetItemFromID(info.EntryId);
+                ComDraftInfo retry = SnapshotDraft(
+                    reopened!, fallbackStoreName, fallbackStoreId, fallbackFolderName, fallbackFolderEntryId, fallbackSendUsingSmtp);
+                return retry.Recipients.Count > 0 ? retry : info;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return info;
+            }
+            finally
+            {
+                Release(reopened);
+            }
+        }
+
         /// <summary>STA-side identity/threading snapshot of a mail item.</summary>
-        private ComDraftInfo SnapshotDraft(object itemObject, string? fallbackStoreName = null, string? fallbackStoreId = null)
+        private ComDraftInfo SnapshotDraft(object itemObject, string? fallbackStoreName = null, string? fallbackStoreId = null, string? fallbackFolderName = null, string? fallbackFolderEntryId = null, string? fallbackSendUsingSmtp = null)
         {
             dynamic item = itemObject;
             string entryId = (string)item.EntryID;
@@ -2788,12 +2883,18 @@ namespace OutlookAI.Core.Com
                 Release(parent);
             }
 
-            // Fresh-Outlook robustness (soak-fix batch): the Parent/Store probe above is
-            // best-effort and can transiently fail right after a cold start - fall back
-            // to the caller-known store identity so DraftOutcome.Store stays
-            // deterministic.
+            // Fresh/busy-Outlook robustness (soak-fix batch): the Parent/Store probe
+            // above is best-effort and can transiently fail right after a cold start or
+            // while the UI is busy (live-observed: the relocate step confirmed the item
+            // in Drafts and milliseconds later this Parent probe answered null) - fall
+            // back to the caller-known store AND folder identity so DraftOutcome.Store/
+            // .Folder stay deterministic. Folder fallbacks are passed only when the
+            // caller CONFIRMED placement in that folder (RelocateToFolderIfNeeded).
             storeName ??= fallbackStoreName;
             storeId ??= fallbackStoreId;
+            folderName ??= fallbackFolderName;
+            folderEntryId ??= fallbackFolderEntryId;
+            sendUsingSmtp ??= fallbackSendUsingSmtp; // Only passed when the caller PINNED the identity.
 
             List<ComRecipientInfo> recipients = new List<ComRecipientInfo>();
             object? recipientsObject = null;
@@ -3935,9 +4036,17 @@ namespace OutlookAI.Core.Com
         /// </summary>
         public static bool IsComCallFailure(Exception ex)
         {
+            // MissingMemberException: the dynamic COM binder's shape for a failed
+            // GetIDsOfNames ("Could not get dispatch ID for X") - live-observed with
+            // 0x800706BA (RPC_S_SERVER_UNAVAILABLE) when Outlook exited mid-call
+            // (soak, 2026-07-24). InvalidComObjectException: a detached RCW - what a
+            // released-by-the-exit-watcher reference throws when used mid-flight
+            // (ComGateway already treats it as a disconnect shape).
             return ex is COMException
                 || ex is ArgumentException
                 || ex is InvalidCastException
+                || ex is MissingMemberException
+                || ex is InvalidComObjectException
                 || ex is Microsoft.CSharp.RuntimeBinder.RuntimeBinderException;
         }
 
