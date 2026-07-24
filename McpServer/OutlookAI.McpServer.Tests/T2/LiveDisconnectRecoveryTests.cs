@@ -169,6 +169,52 @@ public sealed class LiveDisconnectRecoveryTests
         Assert.False(after.Outlook.ComConnected, "comConnected reported a dead session as connected (SF-1 regression)");
         Assert.Null(after.Outlook.Headless);
 
+        // (3b) D34 graceful-degradation proof: with Outlook stopped AND the
+        // OutlookAISetup installer mutex held (acquired by this test - the D17
+        // autostart guard), a search must still SUCCEED with index results, carry the
+        // mutex reason in the sweep error + freshness advice, and must NOT start
+        // Outlook. The staleness block must report the post-sweep reality
+        // (outlookRunning=false - the D34 snapshot fix).
+        using (var installerMutex = new System.Threading.Mutex(initiallyOwned: true, "OutlookAISetup", out bool createdNew))
+        {
+            try
+            {
+                if (!createdNew)
+                {
+                    _output.WriteLine("SKIP(3b): a real OutlookAISetup mutex already exists (installer running?) - not simulating.");
+                }
+                else
+                {
+                    service.ClearSweepCache(); // A <20 s-old cached sweep would mask the degradation path.
+                    SearchOutcome degraded = service.Search(new SearchRequest
+                    {
+                        Query = "oaimcpDegradationProbe" + _fixture.RunMarker,
+                        Store = _fixture.Hub,
+                        Top = 5,
+                        SnippetChars = 0,
+                    });
+
+                    Assert.NotNull(degraded.Sweep);
+                    Assert.False(degraded.Sweep!.Performed, "the sweep must degrade while the installer mutex is held");
+                    Assert.NotNull(degraded.Sweep.Error);
+                    Assert.Contains("mutex", degraded.Sweep.Error!, StringComparison.OrdinalIgnoreCase);
+                    Assert.NotNull(degraded.Advice);
+                    Assert.Contains(degraded.Advice!, a => a.Contains("Freshness sweep unavailable", StringComparison.OrdinalIgnoreCase));
+                    Assert.Contains(degraded.Advice!, a => a.Contains("add-in update", StringComparison.OrdinalIgnoreCase));
+                    Assert.False(degraded.Staleness.OutlookRunning, "staleness must reflect post-sweep reality (D34)");
+                    Assert.Empty(Process.GetProcessesByName("OUTLOOK"));
+                    _output.WriteLine("degradation proven: search returned index results with mutex-reason advice, no autostart");
+                }
+            }
+            finally
+            {
+                if (createdNew)
+                {
+                    installerMutex.ReleaseMutex();
+                }
+            }
+        }
+
         // (4) Recovery: the next COM-needing call reattaches via D17 autostart - headless (D33).
         AccountsOutcome reattached = service.ListAccounts();
         Assert.True(reattached.Accounts.Count > 0);
