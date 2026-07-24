@@ -61,6 +61,10 @@ public sealed class McpStdioConformanceTests
             Assert.False(string.IsNullOrWhiteSpace(initResult.GetProperty("serverInfo").GetProperty("name").GetString()));
             Assert.True(initResult.GetProperty("capabilities").TryGetProperty("tools", out _),
                 "Server must advertise the tools capability.");
+            // D36 (soak fix 6): the initialize result must carry the server instructions
+            // EXACTLY as authored - Claude Code injects the field passively into every
+            // session at start, even when the tool roster is deferred by tool search.
+            Assert.Equal(ServerMetadata.Instructions, initResult.GetProperty("instructions").GetString());
 
             // 2. initialized notification (no response expected).
             await SendAsync(server, new { jsonrpc = "2.0", method = "notifications/initialized" }, cts.Token);
