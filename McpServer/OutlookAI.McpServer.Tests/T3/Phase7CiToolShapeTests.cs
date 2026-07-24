@@ -78,6 +78,13 @@ public sealed class Phase7CiToolShapeTests
         JsonElement tuning = report.GetProperty("tuning");
         Assert.True(tuning.GetProperty("managed").ValueKind is JsonValueKind.True or JsonValueKind.False);
 
+        // D35: the tuning block always carries the EFFECTIVE UI search backend (live
+        // registry read, policy hive authoritative) - even on machines where the add-in
+        // never ran (CI runners report the Outlook default, server-assisted).
+        string? uiSearchBackend = tuning.GetProperty("uiSearchBackend").GetString();
+        Assert.True(uiSearchBackend is "local" or "server-assisted",
+            $"unexpected tuning.uiSearchBackend '{uiSearchBackend}'");
+
         // Degraded reports must SAY why (compact problem lines - section 12).
         if (status == "degraded")
         {

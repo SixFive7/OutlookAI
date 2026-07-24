@@ -56,6 +56,29 @@ public sealed class Phase3CiToolShapeTests
     }
 
     [Fact]
+    public async Task ShowSearchResults_Description_AdvertisesTheServerAssistedAdvice()
+    {
+        // D35: agents must know the tool can carry a divergence note so they relay it.
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement list = await client.RoundTripAsync("tools/list", new { });
+        string? description = null;
+        foreach (JsonElement tool in list.GetProperty("result").GetProperty("tools").EnumerateArray())
+        {
+            if (tool.GetProperty("name").GetString() == "show_search_results")
+            {
+                description = tool.GetProperty("description").GetString();
+                break;
+            }
+        }
+
+        Assert.NotNull(description);
+        Assert.Contains("server-assisted", description!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("advice", description!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("diverge", description!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Search_ExhaustiveWithStoreButNoBound_ReturnsStructuredErrorJson()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();

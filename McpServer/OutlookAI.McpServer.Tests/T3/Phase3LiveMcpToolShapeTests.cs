@@ -107,6 +107,30 @@ public sealed class Phase3LiveMcpToolShapeTests
         await Task.Delay(500);
         session.TryClearSearch(out _);
 
+        // --- D35 cross-assert over the SAME wire: the show_search_results advice must
+        // exactly track health's effective tuning.uiSearchBackend (machine-agnostic:
+        // whichever state the machine is in, advice presence has to match it; the
+        // both-states flip proof is T2 LiveUiSearchBackendTests).
+        JsonElement health = await client.CallToolAsync("health", new { });
+        string? backend = health.GetProperty("tuning").GetProperty("uiSearchBackend").GetString();
+        bool hasAdvice = shown.TryGetProperty("advice", out JsonElement advice)
+            && advice.ValueKind == JsonValueKind.Array
+            && advice.GetArrayLength() > 0;
+        if (backend == "server-assisted")
+        {
+            Assert.True(hasAdvice, "server-assisted UI search must put the divergence advice on show_search_results");
+            string note = advice.EnumerateArray().First().GetString()!;
+            Assert.Contains("RECOMMENDED", note, StringComparison.Ordinal);
+            Assert.Contains("server-assisted", note, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Equal("local", backend);
+            Assert.False(hasAdvice, "local UI search must not carry the server-assisted advice");
+        }
+
+        _output.WriteLine($"show_search_results advice tracks uiSearchBackend={backend}: advicePresent={hasAdvice}");
+
         // --- search exhaustive=true: golden shape (engine block, source, no sweep, no
         // mode field - D34).
         JsonElement exhaustive = await client.CallToolAsync("search", new
