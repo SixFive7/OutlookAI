@@ -34,13 +34,13 @@ public sealed class Phase2CiToolShapeTests
     }
 
     [Fact]
-    public async Task Search_ExhaustiveMode_WithoutStore_ReturnsBoundingError()
+    public async Task Search_Exhaustive_WithoutStore_ReturnsBoundingError()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
-        // Since Phase 3, exhaustive is a real mode - its bounding rules (store +
-        // folder/after) are validated before any COM/index access, so this stays CI-safe.
-        JsonElement result = await client.CallToolAsync("search", new { query = "anything", mode = "exhaustive" });
+        // Exhaustive bounding rules (store + folder/after) are validated before any
+        // COM/index access, so this stays CI-safe (D34: exhaustive is a boolean flag).
+        JsonElement result = await client.CallToolAsync("search", new { query = "anything", exhaustive = true });
 
         JsonElement error = result.GetProperty("error");
         Assert.Equal("InvalidArgument", error.GetProperty("type").GetString());

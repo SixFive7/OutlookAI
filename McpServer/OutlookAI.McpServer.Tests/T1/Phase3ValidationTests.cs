@@ -25,7 +25,7 @@ public sealed class Phase3ValidationTests : IDisposable
     {
         ArgumentException ex = Assert.Throws<ArgumentException>(() => _service.Search(new SearchRequest
         {
-            Mode = SearchMode.Exhaustive,
+            Exhaustive = true,
             Query = "anything",
         }));
         Assert.Contains("store", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -36,7 +36,7 @@ public sealed class Phase3ValidationTests : IDisposable
     {
         ArgumentException ex = Assert.Throws<ArgumentException>(() => _service.Search(new SearchRequest
         {
-            Mode = SearchMode.Exhaustive,
+            Exhaustive = true,
             Query = "anything",
             Store = "someone@example.com",
         }));
@@ -48,7 +48,7 @@ public sealed class Phase3ValidationTests : IDisposable
     {
         Assert.Throws<ArgumentException>(() => _service.Search(new SearchRequest
         {
-            Mode = SearchMode.Exhaustive,
+            Exhaustive = true,
             Store = "someone@example.com",
             Folder = "Inbox",
             To = "someone",
@@ -60,7 +60,7 @@ public sealed class Phase3ValidationTests : IDisposable
     {
         Assert.Throws<ArgumentException>(() => _service.Search(new SearchRequest
         {
-            Mode = SearchMode.Exhaustive,
+            Exhaustive = true,
             Store = "someone@example.com",
             Folder = "Inbox",
             AttachmentHitsOnly = true,

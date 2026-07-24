@@ -2944,7 +2944,7 @@ namespace OutlookAI.Core.Com
         // ------------------------------------------------------------------ exhaustive scan (Phase 3, v3.MD D19)
 
         /// <summary>
-        /// Exhaustive folder/date-bounded COM scan (search mode=exhaustive): filters each
+        /// Exhaustive folder/date-bounded COM scan (search exhaustive:true): filters each
         /// mail folder in scope with a DASL restriction via Folder.GetTable -
         /// ci_phrasematch when Store.IsInstantSearchEnabled (feature-detected, per-folder
         /// LIKE downgrade on failure; v3.MD section 12: ci_* is valid in Restrict/GetTable

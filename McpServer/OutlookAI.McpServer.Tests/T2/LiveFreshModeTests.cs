@@ -58,11 +58,15 @@ public sealed class LiveFreshModeTests
 
             while (overall.Elapsed < ArrivalTimeout)
             {
+                // D34: the sweep cache would blind rapid re-polls for its ~20 s TTL by
+                // design - this test measures RAW sweep arrival latency, so it clears
+                // the cache before each poll (dedicated cache behavior test:
+                // LiveSweepCacheTests).
+                _fixture.Service.ClearSweepCache();
                 SearchOutcome outcome = _fixture.Service.Search(new SearchRequest
                 {
                     Query = marker,
                     Store = hub,
-                    Mode = SearchMode.Fresh,
                     Top = 10,
                 });
 

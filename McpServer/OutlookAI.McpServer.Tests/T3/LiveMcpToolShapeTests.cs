@@ -28,36 +28,53 @@ public sealed class LiveMcpToolShapeTests
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(TimeSpan.FromMinutes(6));
 
-        // --- search (fast): hits with ids, staleness block, timings.
-        JsonElement fast = await client.CallToolAsync("search", new
+        // --- search: hits with ids, staleness block, sweep diagnostics (D34: always
+        // fresh - no mode field on the wire in either direction).
+        JsonElement search = await client.CallToolAsync("search", new
         {
             query = _settings.ProbeTerm,
-            mode = "fast",
             top = 10,
         });
-        JsonElement hits = fast.GetProperty("hits");
+        JsonElement hits = search.GetProperty("hits");
         Assert.True(hits.GetArrayLength() >= 1, "probe term must hit");
-        JsonElement firstHit = hits[0];
-        string hitId = firstHit.GetProperty("id").GetString()!;
+        Assert.False(search.TryGetProperty("mode", out _), "search results must not carry a mode field (D34)");
+        JsonElement firstIndexHit = hits.EnumerateArray()
+            .First(h => h.GetProperty("source").GetString() == "index");
+        string hitId = firstIndexHit.GetProperty("id").GetString()!;
         Assert.Matches("^h[0-9]+$", hitId);
-        Assert.Equal("index", firstHit.GetProperty("source").GetString());
-        Assert.False(string.IsNullOrEmpty(firstHit.GetProperty("store").GetString()));
-        Assert.True(fast.GetProperty("indexElapsedMs").GetInt64() >= 0);
-        Assert.True(fast.GetProperty("staleness").TryGetProperty("outlookRunning", out _));
-        _output.WriteLine($"search fast: hits={hits.GetArrayLength()} indexMs={fast.GetProperty("indexElapsedMs").GetInt64()}");
-
-        // --- search (fresh): sweep diagnostics present and performed.
-        JsonElement fresh = await client.CallToolAsync("search", new
-        {
-            query = _settings.ProbeTerm,
-            mode = "fresh",
-            store = _settings.TestHubStoreDisplayName,
-            top = 5,
-        });
-        JsonElement sweep = fresh.GetProperty("sweep");
+        Assert.False(string.IsNullOrEmpty(firstIndexHit.GetProperty("store").GetString()));
+        Assert.True(search.GetProperty("indexElapsedMs").GetInt64() >= 0);
+        Assert.True(search.GetProperty("staleness").TryGetProperty("outlookRunning", out _));
+        JsonElement sweep = search.GetProperty("sweep");
         Assert.True(sweep.GetProperty("performed").GetBoolean(), "gap sweep must run live");
         Assert.True(sweep.GetProperty("foldersSwept").GetInt32() >= 1);
-        _output.WriteLine($"search fresh: sweepMs={sweep.GetProperty("elapsedMs").GetInt64()} folders={sweep.GetProperty("foldersSwept").GetInt32()}");
+        _output.WriteLine($"search: hits={hits.GetArrayLength()} indexMs={search.GetProperty("indexElapsedMs").GetInt64()} "
+            + $"sweepMs={sweep.GetProperty("elapsedMs").GetInt64()} folders={sweep.GetProperty("foldersSwept").GetInt32()}");
+
+        // --- search again (store-scoped, rapid): the D34 sweep cache serves the sweep.
+        // A frontier advance between the two calls (new mail indexed on this live
+        // machine) legitimately invalidates the cache, so retry the rapid pair.
+        bool cachedProven = false;
+        for (int attempt = 0; attempt < 3 && !cachedProven; attempt++)
+        {
+            _ = await client.CallToolAsync("search", new { query = _settings.ProbeTerm, top = 5 });
+            JsonElement cachedSearch = await client.CallToolAsync("search", new
+            {
+                query = _settings.ProbeTerm,
+                store = _settings.TestHubStoreDisplayName,
+                top = 5,
+            });
+            JsonElement cachedSweep = cachedSearch.GetProperty("sweep");
+            Assert.True(cachedSweep.GetProperty("performed").GetBoolean());
+            cachedProven = cachedSweep.TryGetProperty("cached", out JsonElement cachedFlag) && cachedFlag.GetBoolean();
+            if (cachedProven)
+            {
+                _output.WriteLine($"search (cached sweep, attempt {attempt + 1}): "
+                    + $"cacheAgeSeconds={cachedSweep.GetProperty("cacheAgeSeconds").GetDouble()}");
+            }
+        }
+
+        Assert.True(cachedProven, "a rapid follow-up search must be served from the sweep cache (D34)");
 
         // --- read: full golden shape on the first fast hit.
         JsonElement read = await client.CallToolAsync("read", new { id = hitId, max_body_chars = 1500 });
@@ -72,8 +89,8 @@ public sealed class LiveMcpToolShapeTests
         _output.WriteLine($"read: locatedVia={read.GetProperty("locatedVia").GetString()} bodyChars={read.GetProperty("bodyTotalChars").GetInt64()}");
 
         // --- thread: via the hit's conversation id (or the COM fallback via id).
-        object threadArgs = firstHit.TryGetProperty("conversationId", out JsonElement conv)
-            ? new { conversation_id = conv.GetString(), id = hitId, store = firstHit.GetProperty("store").GetString() }
+        object threadArgs = firstIndexHit.TryGetProperty("conversationId", out JsonElement conv)
+            ? new { conversation_id = conv.GetString(), id = hitId, store = firstIndexHit.GetProperty("store").GetString() }
             : new { id = hitId };
         JsonElement thread = await client.CallToolAsync("thread", threadArgs);
         Assert.True(thread.GetProperty("hits").GetArrayLength() >= 1);
@@ -84,7 +101,6 @@ public sealed class LiveMcpToolShapeTests
         // --- save_attachment: find a mail with attachments, save the first one.
         JsonElement withAttachments = await client.CallToolAsync("search", new
         {
-            mode = "fast",
             has_attachments = true,
             include_attachment_hits = false,
             top = 8,

@@ -44,7 +44,10 @@ public sealed class Phase4LiveMcpToolShapeTests
 
             await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(TimeSpan.FromMinutes(8));
 
-            // Find the seed over stdio: mode=fresh sweeps not-yet-indexed arrivals.
+            // Find the seed over stdio: the always-on freshness sweep (D34) catches
+            // not-yet-indexed arrivals. The ~20 s sweep cache can delay visibility of
+            // an arrival by up to its TTL during rapid polling - the 180 s deadline
+            // absorbs that by design.
             string? hitId = null;
             DateTime deadline = DateTime.UtcNow.AddSeconds(180);
             while (hitId == null && DateTime.UtcNow < deadline)
@@ -52,7 +55,6 @@ public sealed class Phase4LiveMcpToolShapeTests
                 JsonElement search = await client.CallToolAsync("search", new
                 {
                     query = Marker,
-                    mode = "fresh",
                     store = Hub,
                     include_attachment_hits = false,
                     top = 25,

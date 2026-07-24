@@ -35,7 +35,7 @@ public sealed class LiveMailServiceTests
         {
             SearchOutcome outcome = Service.Search(new SearchRequest
             {
-                Mode = SearchMode.Fast,
+                IndexOnly = true,
                 Store = store,
                 IncludeAttachmentHits = false,
                 Top = 8,
@@ -49,7 +49,7 @@ public sealed class LiveMailServiceTests
         {
             SearchOutcome extra = Service.Search(new SearchRequest
             {
-                Mode = SearchMode.Fast,
+                IndexOnly = true,
                 Store = _fixture.Settings.ExpectedStoreDisplayNames[0],
                 IncludeAttachmentHits = false,
                 Top = 30,
@@ -106,7 +106,7 @@ public sealed class LiveMailServiceTests
             {
                 candidates = Service.Search(new SearchRequest
                 {
-                    Mode = SearchMode.Fast,
+                    IndexOnly = true,
                     Store = store,
                     IncludeAttachmentHits = false,
                     OrderBySizeDescending = true,
@@ -121,7 +121,7 @@ public sealed class LiveMailServiceTests
                 _output.WriteLine($"size ordering failed ({ex.GetType().Name}); falling back to client-side size filter");
                 candidates = Service.Search(new SearchRequest
                 {
-                    Mode = SearchMode.Fast,
+                    IndexOnly = true,
                     Store = store,
                     IncludeAttachmentHits = false,
                     HasAttachments = false,
@@ -161,7 +161,7 @@ public sealed class LiveMailServiceTests
         {
             SearchOutcome outcome = Service.Search(new SearchRequest
             {
-                Mode = SearchMode.Fast,
+                IndexOnly = true,
                 Query = _fixture.Settings.ProbeTerm,
                 Store = store,
                 AttachmentHitsOnly = true,
@@ -277,7 +277,7 @@ public sealed class LiveMailServiceTests
         {
             seed = Service.Search(new SearchRequest
             {
-                Mode = SearchMode.Fast,
+                IndexOnly = true,
                 Store = store,
                 IncludeAttachmentHits = false,
                 Top = 20,

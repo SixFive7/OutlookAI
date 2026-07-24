@@ -40,17 +40,20 @@ public static class OutlookTools
     [McpServerTool(Name = "search")]
     [Description("Search all locally indexed Outlook mail (3 accounts + delegate stores), including attachment contents. "
         + "Sub-second and cheap: iterate freely with refined terms. Terms in 'query' are ANDed; append * for prefix match. "
-        + "mode=fresh (default) also COM-sweeps mail newer than the index frontier so just-arrived mail is found (may start Outlook); "
-        + "mode=fast is index-only and works with Outlook closed (results can lag - check staleness); "
-        + "mode=exhaustive bypasses the index with a bounded COM folder scan (requires store + folder and/or after; slower - "
-        + "use when the index is stale/broken or correctness beats speed; whole-word term matching on subject+body). "
+        + "Results are always FRESH: the index is merged with a COM sweep of mail newer than the index frontier, so "
+        + "just-arrived mail is found (the sweep may autostart Outlook headless; it is cached ~20 s, so rapid follow-up "
+        + "searches run at index speed). When the sweep cannot run (e.g. during an add-in update), index results are "
+        + "returned anyway with a freshness warning in 'advice' - a search never fails for that reason. "
+        + "exhaustive=true instead bypasses the index with a bounded COM folder scan (requires store + folder and/or after; "
+        + "slower - use when the index is stale/broken or correctness beats speed; whole-word term matching on subject+body). "
         + "Returns compact hits with an 'id' for read/save_attachment/thread/open_in_outlook; truncated=true means more "
         + "matches exist beyond 'top'.")]
     public static string Search(
         [Description("Free-text terms, whitespace-separated, ANDed. Letters/digits plus @.-_'+ only; trailing * for prefix. Omit to filter by sender/date only.")]
         string? query = null,
-        [Description("fast | fresh | exhaustive (default fresh).")] string mode = "fresh",
-        [Description("Store display name to search in (see list_accounts). Omit for all stores (required for mode=exhaustive).")] string? store = null,
+        [Description("true = bounded index-bypassing COM scan (requires store + folder and/or after). Default false: index + freshness sweep.")]
+        bool exhaustive = false,
+        [Description("Store display name to search in (see list_accounts). Omit for all stores (required when exhaustive=true).")] string? store = null,
         [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Requires store.")] string? folder = null,
         [Description("Sender filter: address or name fragment (index-backed).")] string? from = null,
         [Description("Recipient (To/Cc) filter: address fragment (index-backed).")] string? to = null,
@@ -64,18 +67,10 @@ public static class OutlookTools
     {
         return Guard(() =>
         {
-            SearchMode parsedMode = mode.ToLowerInvariant() switch
-            {
-                "fast" => SearchMode.Fast,
-                "fresh" => SearchMode.Fresh,
-                "exhaustive" => SearchMode.Exhaustive,
-                _ => throw new ArgumentException("mode must be 'fast', 'fresh' or 'exhaustive'."),
-            };
-
             SearchRequest request = new()
             {
                 Query = query,
-                Mode = parsedMode,
+                Exhaustive = exhaustive,
                 Store = store,
                 Folder = folder,
                 From = from,
@@ -130,7 +125,8 @@ public static class OutlookTools
 
     [McpServerTool(Name = "index_status")]
     [Description("Freshness self-report: newest indexed mail vs clock (global and per store), whether Outlook is running "
-        + "(the index only advances while it runs), and advice on when to use search mode=fresh. Never starts Outlook.")]
+        + "(the index only advances while it runs), and freshness advice. search covers any index gap automatically with "
+        + "its COM sweep; this tool only reports. Never starts Outlook.")]
     public static string IndexStatus()
     {
         return Guard(() => ServerRuntime.Service.IndexStatus());
@@ -291,7 +287,8 @@ public static class OutlookTools
         catch (OutlookUnavailableException ex)
         {
             return Error("OutlookUnavailable", ex.Message,
-                "Retry after the add-in update finishes, or use search mode=fast / index_status meanwhile.");
+                "Retry after the add-in update finishes. search still works meanwhile (index results with a freshness "
+                + "warning), as does index_status.");
         }
         catch (ArgumentException ex)
         {

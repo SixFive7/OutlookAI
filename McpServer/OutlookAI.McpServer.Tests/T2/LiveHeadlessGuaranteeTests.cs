@@ -51,9 +51,8 @@ public sealed class LiveHeadlessGuaranteeTests
         AssertNoNewWindow(baseline, "index_status", () => service.IndexStatus());
         AssertNoNewWindow(baseline, "health", () => service.Health());
 
-        SearchOutcome search = AssertNoNewWindow(baseline, "search fresh (hub-scoped)", () => service.Search(new SearchRequest
+        SearchOutcome search = AssertNoNewWindow(baseline, "search (hub-scoped, always-fresh)", () => service.Search(new SearchRequest
         {
-            Mode = SearchMode.Fresh,
             Store = hub,
             Top = 3,
             SnippetChars = 0,

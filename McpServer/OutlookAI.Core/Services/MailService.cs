@@ -13,11 +13,13 @@ namespace OutlookAI.Core.Services
 {
     /// <summary>
     /// Host-neutral orchestrator behind the MCP L1/L2 tools (v3.MD section 0.5): index
-    /// search (fast) + COM gap-sweep merge (fresh, D19), lazy hit location with caching
-    /// (Phase-1 guidance: locate cost avg ~2 s - never locate eagerly, always cache),
-    /// EntryID-based reads, attachment saving, thread lookup, account/folder listing and
-    /// staleness self-reporting. No MCP types, no console assumptions; per-process hit
-    /// cache only (a server process lives for one agent session).
+    /// search + always-on COM gap-sweep merge (D19/D34 - the sweep is cached ~20 s and
+    /// degrades gracefully to index-only results when COM is unavailable), lazy hit
+    /// location with caching (Phase-1 guidance: locate cost avg ~2 s - never locate
+    /// eagerly, always cache), EntryID-based reads, attachment saving, thread lookup,
+    /// account/folder listing and staleness self-reporting. No MCP types, no console
+    /// assumptions; per-process hit cache only (a server process lives for one agent
+    /// session).
     /// </summary>
     public sealed class MailService : IDisposable
     {
@@ -30,7 +32,7 @@ namespace OutlookAI.Core.Services
         private const int DedupeToleranceSeconds = 15;
         private const int SweepPerFolderCap = 200;
         private const int ExhaustiveTimeBudgetMs = 120_000;
-        private const double VeryStaleAdviceMinutes = 720; // 12 h - suggest mode=exhaustive
+        private const double VeryStaleAdviceMinutes = 720; // 12 h - suggest exhaustive:true
         private static readonly TimeSpan SweepSafetyMargin = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan EmptyIndexSweepWindow = TimeSpan.FromDays(7);
 
@@ -90,6 +92,7 @@ namespace OutlookAI.Core.Services
         private readonly Lazy<IndexSearchService> _index;
         private readonly ComGateway _gateway;
         private readonly SendConfirmationTokens _sendTokens;
+        private readonly SweepCache _sweepCache = new SweepCache();
         private readonly ConcurrentDictionary<string, CachedHit> _hits =
             new ConcurrentDictionary<string, CachedHit>(StringComparer.Ordinal);
         private readonly object _catalogLock = new object();
@@ -144,7 +147,12 @@ namespace OutlookAI.Core.Services
 
         // ------------------------------------------------------------------ search
 
-        /// <summary>Runs one search (v3.MD section 8 L1). Fast = index only; fresh adds the COM gap sweep.</summary>
+        /// <summary>
+        /// Runs one search (v3.MD section 8 L1, D34): index query + freshness gap-sweep
+        /// merged and deduped - the sweep is always on, served from a ~20 s cache for
+        /// rapid-fire iteration, and degrades to index-only results (with advice) when
+        /// it cannot run. exhaustive:true switches to the bounded index-bypassing COM scan.
+        /// </summary>
         public SearchOutcome Search(SearchRequest request)
         {
             if (request == null)
@@ -160,7 +168,7 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("folder requires store.", nameof(request));
             }
 
-            if (request.Mode == SearchMode.Exhaustive)
+            if (request.Exhaustive)
             {
                 return RunExhaustive(request, terms, top);
             }
@@ -192,7 +200,6 @@ namespace OutlookAI.Core.Services
 
             IndexSearchResult indexResult = _index.Value.Search(query);
             IndexStalenessReport staleness = _index.Value.GetStaleness();
-            bool outlookRunning = ComGateway.IsOutlookRunning();
 
             bool truncated = indexResult.Hits.Count > top;
             List<HitSummary> summaries = new List<HitSummary>(Math.Min(indexResult.Hits.Count, top));
@@ -208,36 +215,37 @@ namespace OutlookAI.Core.Services
 
             SweepInfo? sweep = null;
             List<string> advice = new List<string>();
-            if (request.Mode == SearchMode.Fresh)
+            if (!request.IndexOnly)
             {
                 sweep = RunGapSweep(request, terms, staleness, indexResult.Hits, summaries, snippetChars);
-                if (sweep.Error != null)
+                if (sweep.Error == "RecipientFilterNotSweepable")
                 {
-                    advice.Add("Freshness sweep unavailable (" + sweep.Error + "); results are index-only and may miss the last "
+                    advice.Add("Freshness sweep skipped: recipient ('to') filters cannot be matched by the sweep, so results are "
+                        + "index-only and may lag the last " + DescribeAge(staleness) + " of mail.");
+                }
+                else if (sweep.Error != null)
+                {
+                    advice.Add("Freshness sweep unavailable (" + sweep.Error + "); results are index-only and may lag the last "
                         + DescribeAge(staleness) + " of mail. " + (ComGateway.IsInstallerMutexHeld()
                             ? "An add-in update is in progress - retry shortly (D17)."
-                            : "Retry later, check index_status, or use mode=exhaustive with store + folder/after bounds for an index-free COM search."));
+                            : "Retry later, check index_status, or search again with exhaustive:true plus store + folder/after bounds for an index-free COM search."));
                 }
             }
-            else
+
+            // Snapshot AFTER the sweep: the sweep may have just autostarted Outlook
+            // (D17) and the staleness block must reflect that reality, not the
+            // pre-autostart state (D34 self-consistency fix).
+            bool outlookRunning = ComGateway.IsOutlookRunning();
+            if (!outlookRunning && (sweep == null || (!sweep.Performed && sweep.Error == null)))
             {
-                double ageMinutes = staleness.Age?.TotalMinutes ?? 0;
-                if (!outlookRunning)
-                {
-                    advice.Add("Outlook is not running, so the index is frozen; mode=fresh sweeps recent mail via COM (it may start Outlook).");
-                }
-                else if (ageMinutes > 30)
-                {
-                    advice.Add("Newest indexed mail is " + ageMinutes.ToString("F0", CultureInfo.InvariantCulture)
-                        + " minutes old; use mode=fresh to also catch not-yet-indexed mail.");
-                }
+                advice.Add("Outlook is not running, so the index is frozen; recent mail may be missing until Outlook runs again.");
             }
 
             double staleMinutes = staleness.Age?.TotalMinutes ?? 0;
             if (staleMinutes > VeryStaleAdviceMinutes)
             {
                 advice.Add("The index is very stale (" + (staleMinutes / 60).ToString("F0", CultureInfo.InvariantCulture)
-                    + " h behind). For correctness-critical queries use mode=exhaustive (bounded COM scan, store + folder/after required) - it bypasses the index entirely.");
+                    + " h behind). For correctness-critical queries search again with exhaustive:true (bounded COM scan, store + folder/after required) - it bypasses the index entirely.");
             }
 
             summaries.Sort((a, b) => DateTime.Compare(b.ReceivedUtc ?? DateTime.MinValue, a.ReceivedUtc ?? DateTime.MinValue));
@@ -256,7 +264,6 @@ namespace OutlookAI.Core.Services
 
             return new SearchOutcome
             {
-                Mode = request.Mode == SearchMode.Fresh ? "fresh" : "fast",
                 Hits = summaries,
                 Truncated = truncated,
                 IndexElapsedMs = indexResult.ElapsedMilliseconds,
@@ -271,6 +278,16 @@ namespace OutlookAI.Core.Services
             };
         }
 
+        /// <summary>
+        /// Drops the cached freshness sweep so the next search sweeps live. Test and
+        /// diagnostic use (arrival-latency measurements); agents never need it - the
+        /// cache self-invalidates on frontier advance or after its ~20 s TTL (D34).
+        /// </summary>
+        public void ClearSweepCache()
+        {
+            _sweepCache.Clear();
+        }
+
         private SweepInfo RunGapSweep(
             SearchRequest request,
             IReadOnlyList<string> terms,
@@ -280,7 +297,8 @@ namespace OutlookAI.Core.Services
             int snippetChars)
         {
             SweepInfo info = new SweepInfo();
-            DateTime gapStart = (staleness.NewestIndexedReceivedUtc ?? DateTime.UtcNow - EmptyIndexSweepWindow) - SweepSafetyMargin;
+            DateTime baseGapStart = (staleness.NewestIndexedReceivedUtc ?? DateTime.UtcNow - EmptyIndexSweepWindow) - SweepSafetyMargin;
+            DateTime gapStart = baseGapStart;
             if (request.AfterUtc.HasValue && request.AfterUtc.Value > gapStart)
             {
                 gapStart = request.AfterUtc.Value;
@@ -301,43 +319,78 @@ namespace OutlookAI.Core.Services
                 return info;
             }
 
-            Stopwatch stopwatch = Stopwatch.StartNew();
-            ComSweepResult sweepResult;
-            try
+            // D34 sweep cache: rapid-fire iterative searches reuse one sweep for up to
+            // ~20 s (keyed on the frontier-derived window base + store scope), so
+            // repeat calls run at index speed. Bodies are always fetched by cacheable
+            // sweeps, so a term-less sweep can serve later termed searches too. A
+            // cached all-stores sweep serves store-scoped requests via the client-side
+            // store filter below; item-level After/Before filters also apply below, so
+            // a wider cached window never over-returns.
+            DateTime nowUtc = DateTime.UtcNow;
+            IReadOnlyList<ComMailBrief> sweptItems;
+            if (_sweepCache.TryGet(baseGapStart, request.Store, nowUtc, out SweepCache.CachedSweep? cachedSweep) && cachedSweep != null)
             {
-                bool needBodies = terms.Count > 0;
-                sweepResult = _gateway.Run(s => s.SweepDefaultFoldersNewerThan(
-                    gapStart, SweepPerFolderCap, needBodies, request.Store));
+                info.Performed = true;
+                info.Cached = true;
+                info.CacheAgeSeconds = Math.Round((nowUtc - cachedSweep.FetchedAtUtc).TotalSeconds, 1);
+                info.ElapsedMs = 0;
+                info.FoldersSwept = cachedSweep.Result.FoldersSwept;
+                info.FoldersSkipped = cachedSweep.Result.FoldersSkipped;
+                sweptItems = cachedSweep.Result.Items;
             }
-            catch (OutlookUnavailableException ex)
+            else
             {
-                info.Performed = false;
-                info.Error = ex.Message;
-                return info;
-            }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
-            {
-                // The sweep is an enhancement over index results - any failure degrades
-                // to index-only with a content-free error (S4) instead of failing the
-                // whole search. Late-bound COM maps some HRESULTs to plain .NET
-                // exception types (e.g. E_INVALIDARG -> ArgumentException).
-                info.Performed = false;
-                info.Error = ex is System.Runtime.InteropServices.COMException com
-                    ? string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", com.HResult)
-                    : ex.GetType().Name;
-                return info;
-            }
+                Stopwatch stopwatch = Stopwatch.StartNew();
+                ComSweepResult sweepResult;
+                try
+                {
+                    sweepResult = _gateway.Run(s => s.SweepDefaultFoldersNewerThan(
+                        gapStart, SweepPerFolderCap, includeBodies: true, request.Store));
+                }
+                catch (OutlookUnavailableException ex)
+                {
+                    info.Performed = false;
+                    info.Error = ex.Message;
+                    return info;
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    // The sweep is an enhancement over index results - any failure degrades
+                    // to index-only with a content-free error (S4) instead of failing the
+                    // whole search. Late-bound COM maps some HRESULTs to plain .NET
+                    // exception types (e.g. E_INVALIDARG -> ArgumentException).
+                    info.Performed = false;
+                    info.Error = ex is System.Runtime.InteropServices.COMException com
+                        ? string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", com.HResult)
+                        : ex.GetType().Name;
+                    return info;
+                }
 
-            stopwatch.Stop();
-            info.Performed = true;
-            info.ElapsedMs = stopwatch.ElapsedMilliseconds;
-            info.FoldersSwept = sweepResult.FoldersSwept;
-            info.FoldersSkipped = sweepResult.FoldersSkipped;
-            info.ItemsSeen = sweepResult.Items.Count;
+                stopwatch.Stop();
+                info.Performed = true;
+                info.ElapsedMs = stopwatch.ElapsedMilliseconds;
+                info.FoldersSwept = sweepResult.FoldersSwept;
+                info.FoldersSkipped = sweepResult.FoldersSkipped;
+                sweptItems = sweepResult.Items;
+
+                // Only unclamped windows are cacheable: an After-narrowed sweep must
+                // not poison wider follow-up searches.
+                if (gapStart == baseGapStart)
+                {
+                    _sweepCache.Store(baseGapStart, request.Store, sweepResult, info.ElapsedMs, nowUtc);
+                }
+            }
 
             List<ComMailBrief> filtered = new List<ComMailBrief>();
-            foreach (ComMailBrief item in sweepResult.Items)
+            foreach (ComMailBrief item in sweptItems)
             {
+                if (request.Store != null
+                    && !string.Equals(item.StoreDisplayName, request.Store, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue; // Cached all-stores sweep serving a store-scoped request.
+                }
+
+                info.ItemsSeen++;
                 if (!FreshMerge.MatchesTerms(item, terms))
                 {
                     continue;
@@ -387,7 +440,7 @@ namespace OutlookAI.Core.Services
         // ------------------------------------------------------------------ exhaustive (Phase 3, D19)
 
         /// <summary>
-        /// mode=exhaustive: folder/date-bounded COM scan that bypasses the index
+        /// exhaustive:true - folder/date-bounded COM scan that bypasses the index
         /// entirely (ci_phrasematch DASL when Store.IsInstantSearchEnabled, LIKE
         /// fallback). Bounding rules: store is required, plus a folder or an 'after'
         /// date - an unbounded scan of a multi-GB store would be the multi-minute
@@ -398,28 +451,28 @@ namespace OutlookAI.Core.Services
             if (string.IsNullOrWhiteSpace(request.Store))
             {
                 throw new ArgumentException(
-                    "mode=exhaustive requires 'store' (a display name from list_accounts) - it scans Outlook folders directly instead of the index.",
+                    "An exhaustive search requires 'store' (a display name from list_accounts) - it scans Outlook folders directly instead of the index.",
                     nameof(request));
             }
 
             if (request.Folder == null && !request.AfterUtc.HasValue)
             {
                 throw new ArgumentException(
-                    "mode=exhaustive requires a bound: pass 'folder' (scan one folder) and/or 'after' (date-bounded store scan). Unbounded store scans take minutes - use mode=fast/fresh for those.",
+                    "An exhaustive search requires a bound: pass 'folder' (scan one folder) and/or 'after' (date-bounded store scan). Unbounded store scans take minutes - use a normal (indexed) search for those.",
                     nameof(request));
             }
 
             if (request.To != null)
             {
                 throw new ArgumentException(
-                    "'to' filtering is not supported in mode=exhaustive (scanned items carry no recipient list). Use mode=fast/fresh or filter after read.",
+                    "'to' filtering is not supported in an exhaustive search (scanned items carry no recipient list). Use a normal (indexed) search or filter after read.",
                     nameof(request));
             }
 
             if (request.AttachmentHitsOnly)
             {
                 throw new ArgumentException(
-                    "Attachment-content matching requires the index; mode=exhaustive scans mail subject/body only.",
+                    "Attachment-content matching requires the index; an exhaustive search scans mail subject/body only.",
                     nameof(request));
             }
 
@@ -500,7 +553,6 @@ namespace OutlookAI.Core.Services
 
             return new SearchOutcome
             {
-                Mode = "exhaustive",
                 Hits = summaries,
                 Truncated = scan.Truncated,
                 IndexElapsedMs = 0,
@@ -1514,20 +1566,22 @@ namespace OutlookAI.Core.Services
 
             if (!outlookRunning)
             {
-                advice.Add("Outlook is not running: the index stops advancing and fresh-mode sweeps will start Outlook (D17)"
-                    + (mutexHeld ? " - but an add-in update is in progress, so COM tools will ask you to retry later." : "."));
+                advice.Add("Outlook is not running: the index stops advancing and search's freshness sweep will start Outlook (D17)"
+                    + (mutexHeld
+                        ? " - but an add-in update is in progress, so the sweep degrades to index-only results until it finishes."
+                        : "."));
             }
             else if (ageMinutes.HasValue && ageMinutes.Value > 30)
             {
                 advice.Add("Newest indexed mail is " + ageMinutes.Value.ToString("F0", CultureInfo.InvariantCulture)
-                    + " minutes old. Use search mode=fresh for anything newer.");
+                    + " minutes old. search covers the gap automatically with its freshness sweep.");
             }
 
             if (advice.Count == 0)
             {
                 advice.Add("Index is current" + (ageMinutes.HasValue
                     ? " (newest mail " + ageMinutes.Value.ToString("F1", CultureInfo.InvariantCulture) + " min ago)"
-                    : string.Empty) + "; fast mode is safe.");
+                    : string.Empty) + "; searches run at index speed.");
             }
 
             return new IndexStatusOutcome

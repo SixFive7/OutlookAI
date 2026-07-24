@@ -3,31 +3,26 @@ using System.Collections.Generic;
 
 namespace OutlookAI.Core.Services
 {
-    /// <summary>Search freshness mode (v3.MD D19).</summary>
-    public enum SearchMode
-    {
-        /// <summary>Index only (8-60 ms; works with Outlook closed, results may be stale).</summary>
-        Fast = 0,
-
-        /// <summary>Index + COM gap-sweep of items newer than the newest-indexed timestamp. The default.</summary>
-        Fresh = 1,
-
-        /// <summary>
-        /// Folder/date-bounded COM scan that BYPASSES the index (correctness beats
-        /// speed; also works when the SystemIndex is broken). Requires a store plus a
-        /// bound (folder or after date) to avoid multi-minute scans.
-        /// </summary>
-        Exhaustive = 2,
-    }
-
     /// <summary>Parameters for one search call (mirrors the MCP tool arguments).</summary>
     public sealed class SearchRequest
     {
         /// <summary>Free-text query; whitespace-separated terms are ANDed. Optional.</summary>
         public string? Query { get; set; }
 
-        /// <summary>Freshness mode. Default fresh (D19).</summary>
-        public SearchMode Mode { get; set; } = SearchMode.Fresh;
+        /// <summary>
+        /// True = folder/date-bounded COM scan that BYPASSES the index (correctness
+        /// beats speed; also works when the SystemIndex is broken). Requires a store
+        /// plus a bound (folder or after date) to avoid multi-minute scans. False
+        /// (default) = index search + freshness gap-sweep, merged and deduped (D19/D34).
+        /// </summary>
+        public bool Exhaustive { get; set; }
+
+        /// <summary>
+        /// Test/diagnostic escape hatch: skip the freshness gap-sweep and return index
+        /// results only. NOT exposed on the MCP tool - since D34 the sweep is always on
+        /// for agents (with graceful degradation when it cannot run).
+        /// </summary>
+        public bool IndexOnly { get; set; }
 
         /// <summary>Store display name to scope to (as returned by list_accounts).</summary>
         public string? Store { get; set; }
@@ -75,7 +70,7 @@ namespace OutlookAI.Core.Services
         /// <summary>Opaque hit id for read/save_attachment/thread ("h1", "h2", ...). Cached per server process.</summary>
         public string Id { get; set; } = string.Empty;
 
-        /// <summary>"index" (SystemIndex row) or "live" (COM gap-sweep result, D19 fresh mode).</summary>
+        /// <summary>"index" (SystemIndex row), "live" (freshness gap-sweep result, D19) or "exhaustive" (COM scan).</summary>
         public string Source { get; set; } = "index";
 
         /// <summary>Subject.</summary>
@@ -121,11 +116,21 @@ namespace OutlookAI.Core.Services
         public string? ConversationId { get; set; }
     }
 
-    /// <summary>Gap-sweep diagnostics attached to fresh-mode results.</summary>
+    /// <summary>Freshness gap-sweep diagnostics attached to (non-exhaustive) search results.</summary>
     public sealed class SweepInfo
     {
         /// <summary>Whether the sweep ran (false: COM unavailable - see Error).</summary>
         public bool Performed { get; set; }
+
+        /// <summary>
+        /// True when this result was served from the short-lived sweep cache (D34) - no
+        /// COM call was made; the swept data is at most <see cref="SweepCache.DefaultTimeToLive"/>
+        /// old. Omitted (null) when the sweep ran live.
+        /// </summary>
+        public bool? Cached { get; set; }
+
+        /// <summary>Age of the cached sweep data in seconds (present only when Cached=true).</summary>
+        public double? CacheAgeSeconds { get; set; }
 
         /// <summary>Sweep window start (UTC).</summary>
         public DateTime? GapStartUtc { get; set; }
@@ -149,7 +154,7 @@ namespace OutlookAI.Core.Services
         public string? Error { get; set; }
     }
 
-    /// <summary>Exhaustive-scan diagnostics attached to mode=exhaustive results.</summary>
+    /// <summary>Exhaustive-scan diagnostics attached to exhaustive:true results.</summary>
     public sealed class ExhaustiveInfo
     {
         /// <summary>Term engine used: "ci_phrasematch" (index-backed DASL), "like" (substring scan), or "ci_phrasematch+like".</summary>
@@ -183,16 +188,17 @@ namespace OutlookAI.Core.Services
         /// <summary>Age of the newest indexed mail in minutes.</summary>
         public double? AgeMinutes { get; set; }
 
-        /// <summary>Whether OUTLOOK.EXE is running (the index only advances while it runs).</summary>
+        /// <summary>
+        /// Whether OUTLOOK.EXE is running (the index only advances while it runs).
+        /// Snapshot taken AFTER the freshness sweep/scan, so an Outlook the sweep just
+        /// autostarted reports true (D34 self-consistency fix).
+        /// </summary>
         public bool OutlookRunning { get; set; }
     }
 
     /// <summary>Search outcome (search tool payload).</summary>
     public sealed class SearchOutcome
     {
-        /// <summary>Mode that ran ("fast"/"fresh"/"exhaustive").</summary>
-        public string Mode { get; set; } = "fresh";
-
         /// <summary>Merged hits, newest first.</summary>
         public IReadOnlyList<HitSummary> Hits { get; set; } = Array.Empty<HitSummary>();
 
@@ -203,16 +209,16 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public bool Truncated { get; set; }
 
-        /// <summary>Index query wall-clock cost (0 in exhaustive mode - the index is bypassed).</summary>
+        /// <summary>Index query wall-clock cost (0 for exhaustive searches - the index is bypassed).</summary>
         public long IndexElapsedMs { get; set; }
 
-        /// <summary>Sweep diagnostics (fresh mode only).</summary>
+        /// <summary>Freshness-sweep diagnostics (absent on exhaustive searches).</summary>
         public SweepInfo? Sweep { get; set; }
 
-        /// <summary>Exhaustive-scan diagnostics (exhaustive mode only).</summary>
+        /// <summary>Exhaustive-scan diagnostics (exhaustive searches only).</summary>
         public ExhaustiveInfo? Exhaustive { get; set; }
 
-        /// <summary>Staleness self-report (R7/D19). Best-effort in exhaustive mode.</summary>
+        /// <summary>Staleness self-report (R7/D19). Best-effort on exhaustive searches.</summary>
         public StalenessInfo Staleness { get; set; } = new StalenessInfo();
 
         /// <summary>Agent-facing advice when results may be incomplete.</summary>

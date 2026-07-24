@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace OutlookAI.McpServer.Tests.T2;
 
 /// <summary>
-/// Phase-3 T2 live acceptance for mode=exhaustive (v3.MD section 0.6): for control
+/// Phase-3 T2 live acceptance for exhaustive search (v3.MD section 0.6, D34 boolean): for control
 /// queries on the test-hub store, the COM scan (index path bypassed by construction:
 /// exhaustive never queries the SystemIndex for hits and its results carry real
 /// EntryIDs from birth) must return the same known-answer set as the index. Identity
@@ -98,7 +98,7 @@ public sealed class LiveExhaustiveSearchTests
         Stopwatch exhaustiveClock = Stopwatch.StartNew();
         SearchOutcome outcome = Service.Search(new SearchRequest
         {
-            Mode = SearchMode.Exhaustive,
+            Exhaustive = true,
             Store = Hub,
             Query = term,
             AfterUtc = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc),
@@ -106,10 +106,9 @@ public sealed class LiveExhaustiveSearchTests
         });
         exhaustiveClock.Stop();
 
-        Assert.Equal("exhaustive", outcome.Mode);
         Assert.Equal(0, outcome.IndexElapsedMs); // structural: the index path is bypassed
         Assert.Null(outcome.Sweep);
-        Assert.NotNull(outcome.Exhaustive);
+        Assert.NotNull(outcome.Exhaustive); // D34: the exhaustive block IS the mode marker
         Assert.False(outcome.Exhaustive!.Truncated, "hub scan must not hit the result cap");
         Assert.False(outcome.Exhaustive.TimedOut, "hub scan must not hit the time budget");
         Assert.All(outcome.Hits, h => Assert.Equal("exhaustive", h.Source));
@@ -159,14 +158,14 @@ public sealed class LiveExhaustiveSearchTests
 
         SearchOutcome outcome = Service.Search(new SearchRequest
         {
-            Mode = SearchMode.Exhaustive,
+            Exhaustive = true,
             Store = Hub,
             Folder = folderPath,
             Query = term,
             Top = 100,
         });
 
-        Assert.Equal("exhaustive", outcome.Mode);
+        Assert.NotNull(outcome.Exhaustive);
         var actual = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (HitSummary hit in outcome.Hits.Where(h => !HubCorpus.IsTestArtifact(h.Subject)))
         {

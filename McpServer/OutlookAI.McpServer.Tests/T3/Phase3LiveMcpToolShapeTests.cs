@@ -8,7 +8,7 @@ namespace OutlookAI.McpServer.Tests.T3;
 
 /// <summary>
 /// T3 live acceptance for the Phase-3 tools (v3.MD section 0.6): open_in_outlook,
-/// goto_folder, show_search_results and search mode=exhaustive called over REAL stdio
+/// goto_folder, show_search_results and exhaustive search called over REAL stdio
 /// MCP against the built server exe with golden-shape asserts. All UI targets the
 /// test-hub store (S2/S5). The test uses its own COM session to verify/close windows
 /// the server opened on its behalf (closing test-caused windows is allowed, S7) and to
@@ -44,7 +44,6 @@ public sealed class Phase3LiveMcpToolShapeTests
         // --- open_in_outlook: search a hub hit, display it, verify + close the Inspector.
         JsonElement search = await client.CallToolAsync("search", new
         {
-            mode = "fast",
             store = hub,
             include_attachment_hits = false,
             top = 10,
@@ -108,16 +107,17 @@ public sealed class Phase3LiveMcpToolShapeTests
         await Task.Delay(500);
         session.TryClearSearch(out _);
 
-        // --- search mode=exhaustive: golden shape (engine block, source, no sweep).
+        // --- search exhaustive=true: golden shape (engine block, source, no sweep, no
+        // mode field - D34).
         JsonElement exhaustive = await client.CallToolAsync("search", new
         {
             query = _settings.ProbeTerm,
-            mode = "exhaustive",
+            exhaustive = true,
             store = hub,
             after = "2000-01-01",
             top = 50,
         });
-        Assert.Equal("exhaustive", exhaustive.GetProperty("mode").GetString());
+        Assert.False(exhaustive.TryGetProperty("mode", out _), "search results must not carry a mode field (D34)");
         JsonElement info = exhaustive.GetProperty("exhaustive");
         Assert.False(string.IsNullOrEmpty(info.GetProperty("engine").GetString()));
         Assert.True(info.GetProperty("foldersScanned").GetInt32() >= 1);

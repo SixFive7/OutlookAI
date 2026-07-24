@@ -49,7 +49,10 @@ public sealed class PayloadDisciplineTests
 
         Assert.Equal(MailService.SearchTopDefault, request.Top);
         Assert.Equal(MailService.SnippetCharsDefault, request.SnippetChars);
-        Assert.Equal(SearchMode.Fresh, request.Mode);
+        // D34: fresh is THE behavior - no mode field exists; exhaustive is an opt-in
+        // boolean and IndexOnly is a Core-only test escape hatch, both off by default.
+        Assert.False(request.Exhaustive);
+        Assert.False(request.IndexOnly);
         Assert.True(request.IncludeAttachmentHits);
     }
 

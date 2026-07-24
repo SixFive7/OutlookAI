@@ -194,7 +194,6 @@ public sealed class Phase5LiveMcpToolShapeTests
             JsonElement search = await client.CallToolAsync("search", new
             {
                 query = Marker,
-                mode = "fresh",
                 store = Hub,
                 include_attachment_hits = false,
                 top = 25,

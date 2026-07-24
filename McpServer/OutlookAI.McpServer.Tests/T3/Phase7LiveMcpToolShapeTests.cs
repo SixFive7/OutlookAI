@@ -7,9 +7,9 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// <summary>
 /// Phase-7 live wire proof over real stdio MCP: the search has-more contract
 /// (truncated=true is DEFINITE - over-fetch-by-one) demonstrated on the real index
-/// against the tiny test-hub store, both directions. mode=fast keeps the calls
-/// index-only (no Outlook dependency, hits carry no business content - S4: only
-/// counts/flags asserted).
+/// against the tiny test-hub store, both directions (D34: searches are always fresh;
+/// the idle hub yields no sweep additions, so the truncation math is index-driven.
+/// S4: only counts/flags asserted).
 /// </summary>
 [Trait("Category", "Live")]
 public sealed class Phase7LiveMcpToolShapeTests
@@ -24,7 +24,6 @@ public sealed class Phase7LiveMcpToolShapeTests
         // top=1 must cut the list and say so.
         JsonElement capped = await client.CallToolAsync("search", new
         {
-            mode = "fast",
             store = settings.TestHubStoreDisplayName,
             top = 1,
         });
@@ -40,7 +39,6 @@ public sealed class Phase7LiveMcpToolShapeTests
         // top=100 fits the whole hub corpus: no truncation.
         JsonElement uncapped = await client.CallToolAsync("search", new
         {
-            mode = "fast",
             store = settings.TestHubStoreDisplayName,
             top = 100,
         });

@@ -87,7 +87,7 @@ public sealed class LiveShowMeTests
         // mail read; the hub grant S2 covers it, but why touch state needlessly).
         List<HitSummary> hits = Service.Search(new SearchRequest
         {
-            Mode = SearchMode.Fast,
+            IndexOnly = true,
             Store = Hub,
             IncludeAttachmentHits = false,
             Top = 20,

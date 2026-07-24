@@ -63,7 +63,7 @@ public sealed class Phase3CiToolShapeTests
         JsonElement result = await client.CallToolAsync("search", new
         {
             query = "anything",
-            mode = "exhaustive",
+            exhaustive = true,
             store = "someone@example.com",
         });
 
@@ -79,7 +79,7 @@ public sealed class Phase3CiToolShapeTests
 
         JsonElement result = await client.CallToolAsync("search", new
         {
-            mode = "exhaustive",
+            exhaustive = true,
             store = "someone@example.com",
             folder = "Inbox",
             to = "someone",
