@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Simplify mail search to one always-fresh tool: the fast/fresh mode choice is gone - every search now automatically includes mail that arrived seconds ago. The freshness sweep is cached for about 20 seconds so rapid repeated searches stay instant, and when the sweep cannot run (for example during an add-in update) the search still returns index results with a clear freshness warning instead of failing. The exhaustive folder scan is now a simple true/false option on the same search tool.
+- Fix search results contradicting themselves right after an automatic Outlook start: the "Outlook running" indicator now reflects the state after the freshness sweep, not before it.
 - Fix the assistant server keeping a closed Outlook "connected": it now watches the Outlook process and releases every held connection the moment Outlook exits (user close, crash, or logoff), so a dead Outlook is never held open by stale references and the next mail request starts Outlook fresh without errors.
 - Fix the health report claiming a connection to an Outlook that already exited: connectivity is now actively verified at report time (health and index_status), never inferred from a stale held session.
 - Add a "headless" indicator to the health report: it now tells you whether Outlook is running invisibly in the background (tray icon only) or as a normal window.

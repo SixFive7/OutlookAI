@@ -140,7 +140,7 @@ What an agent can do with it:
 
 | Capability | Tools |
 |---|---|
-| **Search** all cached mailboxes (including delegate/shared mailboxes and attachment contents) in milliseconds; a `fresh` mode also catches mail that arrived seconds ago, and an `exhaustive` mode scans folders directly when the index is stale | `search`, `thread`, `index_status` |
+| **Search** all cached mailboxes (including delegate/shared mailboxes and attachment contents) in milliseconds; results always include mail that arrived seconds ago (a built-in freshness sweep, cached briefly so repeated searches stay instant), and an `exhaustive` option scans folders directly when the index is stale | `search`, `thread`, `index_status` |
 | **Read** any mail in full (safe truncation, sender/recipient details, conversation view) and save attachments to disk so the agent can open them | `read`, `save_attachment`, `list_accounts`, `list_folders` |
 | **Show you things** — open a mail on your screen, jump Outlook to a folder, or run a query in Outlook's own search box so you see the result list | `open_in_outlook`, `goto_folder`, `show_search_results` |
 | **Draft for you** — new mail, reply, reply-all, forward: the draft opens on screen with the right account identity, that account's signature, and the agent's text above the quote, ready for *you* to review and press Send | `new_draft`, `reply_draft`, `replyall_draft`, `forward_draft` |
