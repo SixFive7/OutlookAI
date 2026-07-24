@@ -26,6 +26,7 @@ namespace OutlookAI.TaskPane
         private readonly GroupBox grpOst;
         private readonly Label lblHeader;
         private readonly Label lblSearchValues;
+        private readonly Label lblSearchWarning;
         private readonly Label lblCachingValues;
         private readonly Label lblOstValues;
         private readonly Label lblRestart;
@@ -94,7 +95,7 @@ namespace OutlookAI.TaskPane
             MinimizeBox = false;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(470, 573);
+            ClientSize = new Size(470, 607);
 
             int margin = 12;
             int innerWidth = ClientSize.Width - 2 * margin;
@@ -122,7 +123,7 @@ namespace OutlookAI.TaskPane
                 Name = "grpSearch",
                 Text = "Search",
                 Location = new Point(margin, 74),
-                Size = new Size(innerWidth, 124),
+                Size = new Size(innerWidth, 158),
             };
             chkSearch = new CheckBox
             {
@@ -137,15 +138,24 @@ namespace OutlookAI.TaskPane
                 Location = new Point(10, 42),
                 Size = new Size(innerWidth - 20, 74),
             };
+            lblSearchWarning = new Label
+            {
+                Name = "lblSearchWarning",
+                Text = "Turning this off restores Outlook's online search: slower, capped results, and " +
+                       "'show me' results may no longer match what the agent finds.",
+                Location = new Point(10, 120),
+                Size = new Size(innerWidth - 20, 32),
+            };
             grpSearch.Controls.Add(chkSearch);
             grpSearch.Controls.Add(lblSearchValues);
+            grpSearch.Controls.Add(lblSearchWarning);
 
             // --- Full caching group ---
             grpCaching = new GroupBox
             {
                 Name = "grpCaching",
                 Text = "Full caching (sync slider = All)",
-                Location = new Point(margin, 204),
+                Location = new Point(margin, 238),
                 Size = new Size(innerWidth, 175),
             };
             chkCaching = new CheckBox
@@ -169,7 +179,7 @@ namespace OutlookAI.TaskPane
             {
                 Name = "grpOst",
                 Text = "OST size headroom",
-                Location = new Point(margin, 385),
+                Location = new Point(margin, 419),
                 Size = new Size(innerWidth, 90),
             };
             chkOst = new CheckBox
@@ -192,7 +202,7 @@ namespace OutlookAI.TaskPane
             {
                 Name = "lblRestart",
                 Text = "Restart Outlook to apply pending changes.",
-                Location = new Point(margin, 483),
+                Location = new Point(margin, 517),
                 Size = new Size(innerWidth, 18),
                 Visible = false,
             };
@@ -200,7 +210,7 @@ namespace OutlookAI.TaskPane
             lblGpo = new Label
             {
                 Name = "lblGpo",
-                Location = new Point(margin, 503),
+                Location = new Point(margin, 537),
                 Size = new Size(innerWidth, 30),
                 Visible = false,
             };
@@ -209,14 +219,14 @@ namespace OutlookAI.TaskPane
             {
                 Name = "btnApply",
                 Text = "Apply now",
-                Location = new Point(ClientSize.Width - margin - 170, 537),
+                Location = new Point(ClientSize.Width - margin - 170, 571),
                 Size = new Size(84, 26),
             };
             btnClose = new Button
             {
                 Name = "btnClose",
                 Text = "Close",
-                Location = new Point(ClientSize.Width - margin - 80, 537),
+                Location = new Point(ClientSize.Width - margin - 80, 571),
                 Size = new Size(80, 26),
             };
 
@@ -366,6 +376,7 @@ namespace OutlookAI.TaskPane
             ForeColor = ThemeService.Text;
 
             lblHeader.ForeColor = ThemeService.SecondaryText;
+            lblSearchWarning.ForeColor = ThemeService.SecondaryText;
             lblRestart.ForeColor = ThemeService.StatusError;
             lblGpo.ForeColor = ThemeService.SecondaryText;
 

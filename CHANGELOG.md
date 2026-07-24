@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a clear warning when Outlook's search runs online (server-assisted): showing search results in Outlook now tells the agent that the on-screen list may differ from what the agent itself finds (online results are capped and ranked differently) and recommends switching local search back on, and the health report now states which search backend Outlook's own search box is actually using ("local" or "server-assisted").
+- Add a caution line to the Search group in OutlookAI Settings explaining what turning local search tuning off means: slower online search, capped results, and "show me" results that may no longer match what the agent finds.
 - Simplify mail search to one always-fresh tool: the fast/fresh mode choice is gone - every search now automatically includes mail that arrived seconds ago. The freshness sweep is cached for about 10 seconds so rapid repeated searches stay instant, and when the sweep cannot run (for example during an add-in update) the search still returns index results with a clear freshness warning instead of failing. The exhaustive folder scan is now a simple true/false option on the same search tool.
 - Fix search results contradicting themselves right after an automatic Outlook start: the "Outlook running" indicator now reflects the state after the freshness sweep, not before it.
 - Fix the assistant server keeping a closed Outlook "connected": it now watches the Outlook process and releases every held connection the moment Outlook exits (user close, crash, or logoff), so a dead Outlook is never held open by stale references and the next mail request starts Outlook fresh without errors.
