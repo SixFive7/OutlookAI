@@ -19,6 +19,18 @@ namespace OutlookAI.Core.Services
         /// <summary>Registry path of the add-in's tuning state (mirrors OutlookTuningService.TuningKeyPath).</summary>
         public const string TuningKeyPath = @"Software\OutlookAI\Tuning";
 
+        /// <summary>User-hive Outlook search key carrying DisableServerAssistedSearch (D22; the tuning Search group writes here).</summary>
+        public const string OutlookSearchUserKeyPath = @"Software\Microsoft\Office\16.0\Outlook\Search";
+
+        /// <summary>Policy-hive Outlook search key - authoritative over the user hive when its value exists (ADMX-managed).</summary>
+        public const string OutlookSearchPolicyKeyPath = @"Software\Policies\Microsoft\Office\16.0\Outlook\Search";
+
+        /// <summary>uiSearchBackend value: Outlook UI search queries the local SystemIndex - the same corpus agent search uses.</summary>
+        public const string UiSearchBackendLocal = "local";
+
+        /// <summary>uiSearchBackend value: Outlook UI search goes through the Exchange service search (server-capped, differently ranked - may diverge from agent search).</summary>
+        public const string UiSearchBackendServerAssisted = "server-assisted";
+
         private const string WSearchServiceKeyPath = @"SYSTEM\CurrentControlSet\Services\WSearch";
         private const string OutlookAppPathKeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE";
 
@@ -74,24 +86,70 @@ namespace OutlookAI.Core.Services
             };
         }
 
-        /// <summary>Reads the tuning summary from the live HKCU registry state.</summary>
+        /// <summary>
+        /// Reads the tuning summary from the live HKCU registry state. Also stamps the
+        /// EFFECTIVE UI search backend - a live-registry fact independent of desired
+        /// state, reported even when the add-in never initialized tuning here.
+        /// </summary>
         public static TuningHealthView ReadTuningStateFromRegistry()
         {
+            TuningHealthView view;
             try
             {
                 using (RegistryKey? key = Registry.CurrentUser.OpenSubKey(TuningKeyPath, writable: false))
                 {
-                    if (key == null)
-                    {
-                        return new TuningHealthView { Managed = false };
-                    }
-
-                    return ReadTuningState(name => key.GetValue(name));
+                    view = key == null
+                        ? new TuningHealthView { Managed = false }
+                        : ReadTuningState(name => key.GetValue(name));
                 }
             }
             catch (Exception ex) when (!(ex is OutOfMemoryException))
             {
-                return new TuningHealthView { Managed = false };
+                view = new TuningHealthView { Managed = false };
+            }
+
+            view.UiSearchBackend = ReadUiSearchBackendFromRegistry();
+            return view;
+        }
+
+        /// <summary>
+        /// Maps the DisableServerAssistedSearch DWORDs to the effective UI search backend
+        /// (pure, T1-pinned). The policy-hive value is authoritative when present; with
+        /// neither hive set (or an explicit 0) Outlook uses its server-assisted default.
+        /// </summary>
+        public static string DescribeUiSearchBackend(int? policyValue, int? userValue)
+        {
+            int effective = (policyValue ?? userValue) ?? 0;
+            return effective != 0 ? UiSearchBackendLocal : UiSearchBackendServerAssisted;
+        }
+
+        /// <summary>
+        /// EFFECTIVE Outlook UI search backend from the live registry (D22 coupling made
+        /// visible, D35): "local" when DisableServerAssistedSearch is in force - Outlook's
+        /// search box then queries the same SystemIndex corpus agent search uses -
+        /// "server-assisted" when the value is absent/0 (UI results server-capped and
+        /// differently ranked, so they can diverge from agent search). Never throws.
+        /// </summary>
+        public static string ReadUiSearchBackendFromRegistry()
+        {
+            return DescribeUiSearchBackend(
+                TryReadCurrentUserDword(OutlookSearchPolicyKeyPath, "DisableServerAssistedSearch"),
+                TryReadCurrentUserDword(OutlookSearchUserKeyPath, "DisableServerAssistedSearch"));
+        }
+
+        /// <summary>HKCU DWORD read that treats absent keys/values/non-DWORD data and failures as null.</summary>
+        private static int? TryReadCurrentUserDword(string keyPath, string valueName)
+        {
+            try
+            {
+                using (RegistryKey? key = Registry.CurrentUser.OpenSubKey(keyPath, writable: false))
+                {
+                    return key?.GetValue(valueName) as int?;
+                }
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                return null;
             }
         }
 

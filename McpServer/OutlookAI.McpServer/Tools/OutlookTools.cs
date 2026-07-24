@@ -187,7 +187,9 @@ public static class OutlookTools
     [Description("Show the user a result list by driving Outlook's real search UI (the search box fills in and results appear on screen). "
         + "Use this to SHOW findings - for your own searching use the search tool instead. "
         + "query supports Outlook search syntax (free text plus e.g. from:name, hasattachments:yes). "
-        + "Optional store/folder navigate the window there first; scope controls the search breadth from that folder.")]
+        + "Optional store/folder navigate the window there first; scope controls the search breadth from that folder. "
+        + "When Outlook's UI search runs server-assisted (local search tuning off), the result carries an 'advice' note that "
+        + "the displayed list may diverge from agent search results - relay it to the user.")]
     public static string ShowSearchResults(
         [Description("Search text for the Outlook search box (free text and Outlook query syntax).")] string query,
         [Description("current_folder (default) | subfolders | all_folders (current store) | all_outlook (all stores).")] string scope = "current_folder",

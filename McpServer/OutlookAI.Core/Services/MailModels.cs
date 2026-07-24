@@ -734,6 +734,16 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Last reconcile timestamp (ISO 8601) as recorded by the add-in.</summary>
         public string? LastReconcileUtc { get; set; }
+
+        /// <summary>
+        /// EFFECTIVE Outlook UI search backend, read from the live registry - NOT from
+        /// desired state (D22/D35): "local" (DisableServerAssistedSearch in force; the
+        /// Outlook search box queries the same SystemIndex corpus agent search uses) or
+        /// "server-assisted" (value absent/0; UI results are server-capped and
+        /// differently ranked, so they can diverge from agent search). The policy hive
+        /// wins over the user hive when both carry the value.
+        /// </summary>
+        public string? UiSearchBackend { get; set; }
     }
 
     /// <summary>health tool outcome (Phase 7): compact self-check of everything the server depends on.</summary>
@@ -775,5 +785,11 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Always true on success - the search UI is on screen and populating.</summary>
         public bool Displayed { get; set; }
+
+        /// <summary>
+        /// Agent-facing advice (present when the displayed results may not match agent
+        /// search - e.g. the Outlook UI search backend is server-assisted, D22/D35).
+        /// </summary>
+        public IReadOnlyList<string>? Advice { get; set; }
     }
 }

@@ -89,6 +89,18 @@ namespace OutlookAI.Core.Services
         /// <summary>Maximum list_folders tree depth.</summary>
         public const int FolderDepthCap = 6;
 
+        /// <summary>
+        /// Advice appended to show_search_results whenever the EFFECTIVE registry state
+        /// says Outlook's UI search is server-assisted (DisableServerAssistedSearch
+        /// absent/0 - D22 coupling made self-documenting, D35). Deliberately strong: it
+        /// must convey BOTH the divergence and the recommendation, because the agent's
+        /// own search stays local/uncapped while the user-visible list silently differs.
+        /// </summary>
+        public const string ServerAssistedUiSearchAdvice =
+            "Outlook UI search is currently server-assisted: the displayed results may differ from agent search results "
+            + "(server-capped and differently ranked). Disabling server-assisted search is RECOMMENDED for consistent, "
+            + "uncapped, fully local search - enable the Search tuning group in OutlookAI Settings.";
+
         private readonly Lazy<IndexSearchService> _index;
         private readonly ComGateway _gateway;
         private readonly SendConfirmationTokens _sendTokens;
@@ -919,7 +931,9 @@ namespace OutlookAI.Core.Services
         /// <summary>
         /// Drives Outlook's real search UI (Explorer.Search) so the user sees the result
         /// list. Optional store/folder navigate the window there first, which is what
-        /// the current_folder/subfolders scopes apply to.
+        /// the current_folder/subfolders scopes apply to. When the effective registry
+        /// state says the UI search backend is server-assisted (D22/D35), the outcome
+        /// carries advice that the displayed list may diverge from agent search.
         /// </summary>
         public ShowSearchResultsOutcome ShowSearchResults(string query, string scope = "current_folder", string? store = null, string? folder = null)
         {
@@ -954,6 +968,15 @@ namespace OutlookAI.Core.Services
                 return result ?? throw new InvalidOperationException(BuildNavigationError(error, store, folder));
             });
 
+            // Effective registry state, re-read per call (policy hive authoritative):
+            // with server-assisted UI search active, what the user now SEES is capped +
+            // ranked by Exchange and can silently diverge from agent search (D22/D35).
+            List<string>? advice = null;
+            if (HealthReporting.ReadUiSearchBackendFromRegistry() == HealthReporting.UiSearchBackendServerAssisted)
+            {
+                advice = new List<string> { ServerAssistedUiSearchAdvice };
+            }
+
             return new ShowSearchResultsOutcome
             {
                 Query = query,
@@ -961,6 +984,7 @@ namespace OutlookAI.Core.Services
                 ExplorerFolderPath = state.CurrentFolderPath,
                 ExplorerCaption = state.Caption,
                 Displayed = true,
+                Advice = advice,
             };
         }
 
