@@ -48,7 +48,7 @@ An AI-powered email assistant for Microsoft Outlook: a VSTO add-in with an AI wr
 
 ### Quick Actions
 
-Six one-click buttons to transform your email draft instantly:
+One-click buttons to transform your email draft instantly:
 
 | Button | What it does |
 |---|---|
@@ -58,6 +58,7 @@ Six one-click buttons to transform your email draft instantly:
 | **Lengthen** | Expand with more detail, context, or explanation. Keeps the same tone and intent. |
 | **Formal** | Rewrite in a more formal, professional tone. Keeps the same content and meaning. |
 | **Friendly** | Rewrite in a warmer, more conversational tone. Keeps the same content and meaning. |
+| **Select the best signature** | The AI looks at your draft, the quoted thread, and the recipients, picks the most fitting of your installed Outlook signatures (for example by matching the language), and applies it. Your draft text and the quoted conversation stay untouched. With a single installed signature it is applied directly without an AI call; the button is available only when at least one signature exists. |
 
 ### Instruction-Based Drafting and Editing
 
@@ -144,10 +145,11 @@ What an agent can do with it:
 | **Read** any mail in full (long bodies page in windows without re-reading from the start; sender/recipient details, conversation view) and save attachments to disk so the agent can open them | `read`, `save_attachment`, `list_accounts`, `list_folders` |
 | **Show you things** — open a mail on your screen, jump Outlook to a folder, or run a query in Outlook's own search box so you see the result list | `open_in_outlook`, `goto_folder`, `show_search_results` |
 | **Draft for you** — new mail, reply, reply-all, forward: the draft opens on screen with the right account identity, that account's signature (or a specific signature the agent picks to match the message, e.g. by language), and the agent's text above the quote, ready for *you* to review and press Send | `new_draft`, `reply_draft`, `replyall_draft`, `forward_draft`, `list_signatures` |
+| **Manage signatures** — create, update, or delete an Outlook signature (all three formats written, missing ones derived) and optionally set it as an account's default; before any update or delete the previous files are automatically backed up under `%LOCALAPPDATA%\OutlookAI\signature-backups` and the backup path is returned | `manage_signature` |
 | **Send only with friction** — automatic sending requires an explicit two-step confirmation with a one-time token bound to the exact draft content; the sending account is hard-verified before transport and every step is audit-logged | `send` |
 | **Self-diagnose** — one call reports Outlook/index/service state, index freshness per store, audit-log writability, and tuning state | `outlook_health` |
 
-Safety properties: the server has **no delete, move, or modify tools** for existing mail; every draft/save/send operation writes an audit line to `%LOCALAPPDATA%\OutlookAI\audit.log`; payloads are compact and truncation-flagged so agents iterate with cheap targeted queries instead of bulk-reading your mailbox. The server never closes or restarts Outlook (it can start it when needed).
+Safety properties: the server has **no delete, move, or modify tools** for existing mail; signature management is the one destructive-capable surface and it always backs up the previous signature files before changing or deleting anything; every draft/save/send/signature operation writes an audit line to `%LOCALAPPDATA%\OutlookAI\audit.log`; payloads are compact and truncation-flagged so agents iterate with cheap targeted queries instead of bulk-reading your mailbox. The server never closes or restarts Outlook (it can start it when needed).
 
 **Registration** — the server speaks MCP over stdio. Register it user-globally for Claude Code:
 
