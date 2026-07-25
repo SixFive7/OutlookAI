@@ -140,12 +140,12 @@ What an agent can do with it:
 
 | Capability | Tools |
 |---|---|
-| **Search** all cached mailboxes (including delegate/shared mailboxes and attachment contents) in milliseconds; results always include mail that arrived seconds ago (a built-in freshness sweep, cached briefly so repeated searches stay instant), and an `exhaustive` option scans folders directly when the index is stale | `search`, `thread`, `index_status` |
-| **Read** any mail in full (safe truncation, sender/recipient details, conversation view) and save attachments to disk so the agent can open them | `read`, `save_attachment`, `list_accounts`, `list_folders` |
+| **Search** all cached mailboxes (including delegate/shared mailboxes and attachment contents) in milliseconds; results always include mail that arrived seconds ago (a built-in freshness sweep, cached briefly so repeated searches stay instant), and an `exhaustive` option scans folders directly when the index is stale | `search`, `thread` |
+| **Read** any mail in full (long bodies page in windows without re-reading from the start; sender/recipient details, conversation view) and save attachments to disk so the agent can open them | `read`, `save_attachment`, `list_accounts`, `list_folders` |
 | **Show you things** — open a mail on your screen, jump Outlook to a folder, or run a query in Outlook's own search box so you see the result list | `open_in_outlook`, `goto_folder`, `show_search_results` |
-| **Draft for you** — new mail, reply, reply-all, forward: the draft opens on screen with the right account identity, that account's signature, and the agent's text above the quote, ready for *you* to review and press Send | `new_draft`, `reply_draft`, `replyall_draft`, `forward_draft` |
+| **Draft for you** — new mail, reply, reply-all, forward: the draft opens on screen with the right account identity, that account's signature (or a specific signature the agent picks to match the message, e.g. by language), and the agent's text above the quote, ready for *you* to review and press Send | `new_draft`, `reply_draft`, `replyall_draft`, `forward_draft`, `list_signatures` |
 | **Send only with friction** — automatic sending requires an explicit two-step confirmation with a one-time token bound to the exact draft content; the sending account is hard-verified before transport and every step is audit-logged | `send` |
-| **Self-diagnose** — Outlook/index/service state, audit-log writability, tuning state | `health` |
+| **Self-diagnose** — one call reports Outlook/index/service state, index freshness per store, audit-log writability, and tuning state | `outlook_health` |
 
 Safety properties: the server has **no delete, move, or modify tools** for existing mail; every draft/save/send operation writes an audit line to `%LOCALAPPDATA%\OutlookAI\audit.log`; payloads are compact and truncation-flagged so agents iterate with cheap targeted queries instead of bulk-reading your mailbox. The server never closes or restarts Outlook (it can start it when needed).
 
