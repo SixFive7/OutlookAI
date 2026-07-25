@@ -33,3 +33,15 @@ Rules:
 - `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which only contains the VSTO add-in (MSBuild-only).
 - Their CI is `.github/workflows/mcpserver.yml` (windows runner, dotnet only; runs `dotnet test --filter "Category!=Live"`). Tests marked `Category=Live` need the real Windows Search index plus Outlook and only run on a configured dev machine.
 - Developer documentation: `McpServer/README.md`.
+
+## Live Test Safety (MANDATORY — these tests touch REAL mailboxes)
+
+`Category=Live` tests run against the developer's **real production Outlook profile**: real mail accounts plus delegate/shared mailboxes **to which the profile has full write access**. Treat every live run as an operation on production data. A past incident mass-deleted real mail (fully recovered) because an agent improvised a cleanup script — these rules exist so that never repeats:
+
+1. **Mailbox writes only in the designated test-hub store** (configured in the gitignored `McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json`). All other accounts and ALL delegate/shared mailboxes are read-only for tests — no exceptions. Logs never print other stores' subjects or bodies.
+2. **Every test-created item carries the `[OutlookAI-McpTest]` subject tag**, and mailbox deletions happen **exclusively through the test suite's C# cleanup helpers** (created-this-run EntryID allowlist + ordinal tag match, both required).
+3. **NEVER delete or modify mailbox items with ad-hoc scripts** — no PowerShell, no raw COM one-liners, and above all never wildcard matching: PowerShell's `-like "*[tag]*"` treats `[...]` as a character class and once matched (and deleted) real mail. If cleanup is needed beyond the helpers, extend the helpers with tests — do not improvise.
+4. **Signatures are user data.** Tests may only create/update/delete signatures prefixed `OutlookAI-McpTest-`; the `SignatureDirectorySnapshot` guard (SHA-256 before/after) must run and the suite must leave the user's real signatures bit-identical. `manage_signature` tests restore any registry defaults they touch.
+5. **Outlook lifecycle:** never `taskkill` OUTLOOK.EXE. Graceful `Application.Quit()` only when no unsent compose windows are open and the Outbox is empty — and release your COM references BEFORE quitting (quitting while refs are held zombifies the process). Prefer leaving Outlook headless.
+6. **Run live tests only via the suite** (`dotnet test <Tests csproj> --filter "Category=Live"`); its fixtures enforce the snapshots, allowlists, and post-run zero-artifact sweeps. Never perform mailbox operations outside it during testing.
+7. If a gitignored `v3.MD` exists at the repo root, read its §0 safety envelope before any live-test or mailbox-touching work — it is the authoritative, more detailed contract.
