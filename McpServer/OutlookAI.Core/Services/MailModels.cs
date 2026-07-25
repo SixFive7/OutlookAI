@@ -485,6 +485,37 @@ namespace OutlookAI.Core.Services
         public string? Note { get; set; }
     }
 
+    /// <summary>manage_signature outcome (soak fix D38).</summary>
+    public sealed class ManageSignatureOutcome
+    {
+        /// <summary>Executed action: create | update | delete.</summary>
+        public string Action { get; set; } = string.Empty;
+
+        /// <summary>Signature name operated on.</summary>
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>Absolute paths of the rendition files written (create/update: .htm + .txt + .rtf).</summary>
+        public IReadOnlyList<string>? FilesWritten { get; set; }
+
+        /// <summary>Absolute paths removed by delete (files and the _files resource directory).</summary>
+        public IReadOnlyList<string>? FilesDeleted { get; set; }
+
+        /// <summary>Backup directory holding the previous file set (always present for update/delete).</summary>
+        public string? BackupPath { get; set; }
+
+        /// <summary>Account whose default assignment was recorded (set_default_for).</summary>
+        public string? DefaultSetForAccount { get; set; }
+
+        /// <summary>Scope recorded for that account: new | reply | both.</summary>
+        public string? DefaultSetScope { get; set; }
+
+        /// <summary>Accounts whose dangling default assignments were cleared by a delete.</summary>
+        public IReadOnlyList<string>? DefaultsClearedForAccounts { get; set; }
+
+        /// <summary>Operational guidance (e.g. Outlook restart pickup of default changes).</summary>
+        public string? Advice { get; set; }
+    }
+
     /// <summary>Folder view for list_folders.</summary>
     public sealed class FolderView
     {

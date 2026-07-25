@@ -155,7 +155,7 @@ public static class OutlookTools
     [McpServerTool(Name = "list_folders")]
     [Description("List the FULL folder tree(s) with item/unread counts. Folder paths feed the search tool's 'folder' argument. "
         + "Traversal order is stable: stores sorted by display name, then depth-first with sibling folders sorted by name. "
-        + "One call returns up to 500 folders (virtually always the whole tree); truncated=true means more exist - "
+        + "One call returns up to 1000 folders (virtually always the whole tree); truncated=true means more exist - "
         + "continue with offset=nextOffset to page the remainder in the same stable order.")]
     public static string ListFolders(
         [Description("Store display name (see list_accounts). Omit for all stores.")] string? store = null,
@@ -173,6 +173,47 @@ public static class OutlookTools
     public static string ListSignatures()
     {
         return Guard(() => ServerRuntime.Service.ListSignatures());
+    }
+
+    [McpServerTool(Name = "manage_signature")]
+    [Description("Create, update or DELETE an Outlook email signature by writing its file set (.htm + .txt + .rtf) in the "
+        + "Signatures folder. DESTRUCTIVE: 'delete' permanently removes the signature and 'update' replaces its content - "
+        + "before either, the previous files are automatically backed up under %LOCALAPPDATA%\\OutlookAI\\signature-backups "
+        + "and the backup path is returned as backupPath; double-check the name (see list_signatures) before deleting. "
+        + "For create/update supply body_text and/or body_html - the missing renditions are derived. Deleting a signature "
+        + "also clears per-account default assignments that referenced it. Optional set_default_for records the signature "
+        + "as an account's default (new mail, replies, or both) in the Outlook profile; Outlook picks that up at its next "
+        + "start. Never starts or touches Outlook itself; every operation is audit-logged.")]
+    public static string ManageSignature(
+        [Description("'create' | 'update' | 'delete'.")] string action,
+        [Description("Signature name (as shown by list_signatures and Outlook's signature pickers).")] string name,
+        [Description("Plain-text signature body (create/update). When omitted it is derived from body_html.")]
+        string? body_text = null,
+        [Description("HTML signature body (create/update), fragment or full document. When omitted it is derived from body_text.")]
+        string? body_html = null,
+        [Description("Optionally record the signature as an account default: {\"account\": SMTP address from list_accounts, "
+            + "\"scope\": \"new\"|\"reply\"|\"both\"}. Not allowed with delete.")]
+        SetDefaultForArg? set_default_for = null)
+    {
+        return Guard(() => ServerRuntime.Service.ManageSignature(new ManageSignatureRequest
+        {
+            Action = action,
+            Name = name,
+            BodyText = body_text,
+            BodyHtml = body_html,
+            DefaultForAccount = set_default_for?.Account,
+            DefaultForScope = set_default_for?.Scope,
+        }));
+    }
+
+    /// <summary>manage_signature's set_default_for argument object.</summary>
+    public sealed class SetDefaultForArg
+    {
+        /// <summary>Account SMTP address (see list_accounts).</summary>
+        public string? Account { get; set; }
+
+        /// <summary>Which default(s) to record: "new" | "reply" | "both".</summary>
+        public string? Scope { get; set; }
     }
 
     [McpServerTool(Name = "open_in_outlook")]

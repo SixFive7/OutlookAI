@@ -82,9 +82,10 @@ namespace OutlookAI.Core.Services
 
         /// <summary>
         /// Folders per list_folders page (section 12 discipline bound; real profiles fit
-        /// in one page - offset paging exists for the pathological rest).
+        /// in one page - offset paging exists for the pathological rest). Raised
+        /// 500 -> 1000 (soak fix D38, user-ordered).
         /// </summary>
-        public const int FoldersPerCallCap = 500;
+        public const int FoldersPerCallCap = 1000;
 
         /// <summary>Absolute guard on the underlying COM folder walk (pathological stores).</summary>
         public const int FolderWalkAbsoluteCap = 10_000;
@@ -1912,6 +1913,43 @@ namespace OutlookAI.Core.Services
                 Accounts = accountViews,
                 Note = note,
             };
+        }
+
+        /// <summary>
+        /// Signature management (manage_signature - soak fix D38): create/update/delete
+        /// the signature file set under %APPDATA%\Microsoft\Signatures with the
+        /// ALWAYS-ON pre-modification backup and optional per-account default
+        /// assignment. Pure filesystem + registry - no COM, never starts Outlook. The
+        /// audit line is load-bearing: a write that cannot be audited surfaces the
+        /// failure (with the outcome preserved in the message) instead of hiding it.
+        /// </summary>
+        public ManageSignatureOutcome ManageSignature(ManageSignatureRequest request)
+        {
+            ManageSignatureOutcome outcome = SignatureManager.Manage(request);
+            try
+            {
+                Audit.AuditLog.Append(
+                    "manage_signature",
+                    ("action", outcome.Action),
+                    ("name", outcome.Name),
+                    ("filesWritten", outcome.FilesWritten?.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("filesDeleted", outcome.FilesDeleted?.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("backupPath", outcome.BackupPath),
+                    ("defaultAccount", outcome.DefaultSetForAccount),
+                    ("defaultScope", outcome.DefaultSetScope),
+                    ("defaultsCleared", outcome.DefaultsClearedForAccounts != null
+                        ? string.Join(";", outcome.DefaultsClearedForAccounts)
+                        : null));
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidOperationException(
+                    "The signature operation succeeded (" + outcome.Action + " '" + outcome.Name + "'"
+                    + (outcome.BackupPath != null ? ", backup at " + outcome.BackupPath : string.Empty)
+                    + ") but the audit line could not be written: " + ex.Message, ex);
+            }
+
+            return outcome;
         }
 
         /// <summary>
