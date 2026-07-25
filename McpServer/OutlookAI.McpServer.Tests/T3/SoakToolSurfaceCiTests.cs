@@ -4,28 +4,30 @@ using Xunit;
 namespace OutlookAI.McpServer.Tests.T3;
 
 /// <summary>
-/// Soak fix D37 wire pins (user-ordered tool-surface refinement, 2026-07-24): the
-/// tool count is EXACTLY 16 (echo/index_status/health deleted, outlook_health +
-/// list_signatures added), list_folders lost its depth knob and gained stable offset
-/// paging, read gained body_offset paging, thread explains its two lookup keys, and
-/// the draft tools carry the optional signature parameter with the pick-the-best-
-/// signature steering hint. CI-safe: schema/description pins via tools/list plus
-/// pre-COM validation calls.
+/// Soak fix D37/D38 wire pins (user-ordered tool-surface refinements): the tool count
+/// is EXACTLY 17 (D37: echo/index_status/health deleted, outlook_health +
+/// list_signatures added; D38: manage_signature added), list_folders lost its depth
+/// knob and gained stable offset paging (page 1000 since D38), read gained
+/// body_offset paging, thread explains its two lookup keys, the draft tools carry the
+/// optional signature parameter with the pick-the-best-signature steering hint, and
+/// manage_signature carries the destructive-action warning + automatic-backup
+/// contract. CI-safe: schema/description pins via tools/list plus pre-COM/pre-write
+/// validation calls.
 /// </summary>
 public sealed class SoakToolSurfaceCiTests
 {
-    /// <summary>The 16 advertised tools after D37 (exact - a change here is a reviewed surface decision).</summary>
+    /// <summary>The 17 advertised tools after D38 (exact - a change here is a reviewed surface decision).</summary>
     private static readonly string[] ExpectedTools =
     [
         "search", "thread", "read", "save_attachment",
-        "list_accounts", "list_folders", "list_signatures",
+        "list_accounts", "list_folders", "list_signatures", "manage_signature",
         "open_in_outlook", "goto_folder", "show_search_results",
         "new_draft", "reply_draft", "replyall_draft", "forward_draft",
         "send", "outlook_health",
     ];
 
     [Fact]
-    public async Task ToolCount_IsExactlySixteen_WithTheExpectedRoster()
+    public async Task ToolCount_IsExactlySeventeen_WithTheExpectedRoster()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
@@ -36,7 +38,7 @@ public sealed class SoakToolSurfaceCiTests
             .ToArray();
 
         Assert.Equal(ExpectedTools.OrderBy(n => n, StringComparer.Ordinal).ToArray(), names);
-        Assert.Equal(16, names.Length);
+        Assert.Equal(17, names.Length);
     }
 
     [Fact]
@@ -158,6 +160,119 @@ public sealed class SoakToolSurfaceCiTests
         JsonElement error = result.GetProperty("error");
         Assert.Equal("InvalidArgument", error.GetProperty("type").GetString());
         Assert.Contains("signature", error.GetProperty("message").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ManageSignature_Description_CarriesDestructiveWarning_AndBackupContract()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement tool = await GetToolAsync(client, "manage_signature");
+        string description = tool.GetProperty("description").GetString()!;
+
+        // D38 (user-ordered): the tool description must carry the destructive-action
+        // warning for delete AND mention the automatic backup with its returned path.
+        Assert.Contains("DESTRUCTIVE", description, StringComparison.Ordinal);
+        Assert.Contains("delete", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("backed up", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("backupPath", description, StringComparison.Ordinal);
+        Assert.Contains("audit", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("set_default_for", description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ManageSignature_Schema_RequiresActionAndName_WithObjectShapedDefaults()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement tool = await GetToolAsync(client, "manage_signature");
+        JsonElement schema = tool.GetProperty("inputSchema");
+        JsonElement properties = schema.GetProperty("properties");
+
+        Assert.True(properties.TryGetProperty("action", out _));
+        Assert.True(properties.TryGetProperty("name", out _));
+        Assert.True(properties.TryGetProperty("body_text", out _));
+        Assert.True(properties.TryGetProperty("body_html", out _));
+        Assert.True(properties.TryGetProperty("set_default_for", out JsonElement setDefault),
+            "manage_signature must expose the set_default_for object");
+
+        // The {account, scope} shape must be advertised (object with both keys).
+        JsonElement setDefaultProps = setDefault.GetProperty("properties");
+        Assert.True(setDefaultProps.TryGetProperty("account", out _));
+        Assert.True(setDefaultProps.TryGetProperty("scope", out _));
+
+        var required = schema.GetProperty("required").EnumerateArray().Select(r => r.GetString()).ToArray();
+        Assert.Contains("action", required);
+        Assert.Contains("name", required);
+        Assert.DoesNotContain("body_text", required);
+        Assert.DoesNotContain("set_default_for", required);
+    }
+
+    [Theory]
+    [InlineData("destroy")]
+    [InlineData("")]
+    public async Task ManageSignature_UnknownAction_IsRejectedBeforeAnyWork(string action)
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement result = await client.CallToolAsync("manage_signature", new { action, name = "X" });
+
+        JsonElement error = result.GetProperty("error");
+        Assert.Equal("InvalidArgument", error.GetProperty("type").GetString());
+        Assert.Contains("create", error.GetProperty("message").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ManageSignature_DeleteUnknownName_IsRejected_WithoutTouchingAnything()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement result = await client.CallToolAsync("manage_signature", new
+        {
+            action = "delete",
+            name = "OutlookAI-NoSuchSignature-424242",
+        });
+
+        JsonElement error = result.GetProperty("error");
+        Assert.Equal("InvalidArgument", error.GetProperty("type").GetString());
+        Assert.Contains("not found", error.GetProperty("message").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ManageSignature_InvalidDefaultScope_IsRejectedBeforeAnyWork()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        // Default-assignment validation (D38): a bad scope fails BEFORE any file or
+        // registry work - even the (nonexistent) signature is never created.
+        JsonElement result = await client.CallToolAsync("manage_signature", new
+        {
+            action = "create",
+            name = "OutlookAI-NoSuchSignature-424242",
+            body_text = "x",
+            set_default_for = new { account = "someone@example.com", scope = "everything" },
+        });
+
+        JsonElement error = result.GetProperty("error");
+        Assert.Equal("InvalidArgument", error.GetProperty("type").GetString());
+        Assert.Contains("scope", error.GetProperty("message").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ManageSignature_DeleteWithDefaultAssignment_IsRejected()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement result = await client.CallToolAsync("manage_signature", new
+        {
+            action = "delete",
+            name = "OutlookAI-NoSuchSignature-424242",
+            set_default_for = new { account = "someone@example.com", scope = "new" },
+        });
+
+        JsonElement error = result.GetProperty("error");
+        Assert.Equal("InvalidArgument", error.GetProperty("type").GetString());
+        Assert.Contains("delete", error.GetProperty("message").GetString(), StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<JsonElement> GetToolAsync(McpStdioClient client, string name)

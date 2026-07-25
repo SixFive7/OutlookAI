@@ -27,7 +27,15 @@ public sealed class LivePhase4Fixture : IDisposable
         _verifySession = new Lazy<OutlookComSession>(
             () => OutlookComSession.Connect(allowStartingOutlook: true),
             LazyThreadSafetyMode.ExecutionAndPublication);
+
+        // D38 guard: this collection contains signature-touching tests
+        // (LiveSignatureTests), so the real signatures get the same snapshot
+        // protection as the manage_signature suite - no snapshot, no suite.
+        SignatureSnapshot = SignatureDirectorySnapshot.Capture();
     }
+
+    /// <summary>Pre-suite Signatures-directory snapshot (D38: real signatures must stay bit-identical).</summary>
+    public SignatureDirectorySnapshot SignatureSnapshot { get; }
 
     public LiveTestSettings Settings { get; }
 
@@ -92,6 +100,11 @@ public sealed class LivePhase4Fixture : IDisposable
         }
 
         Service.Dispose();
+
+        // D38 guard: after everything (including the belt cleanup) the user's real
+        // signatures must be bit-identical - only OutlookAI-McpTest-* entries may
+        // have come and gone. Throws (failing the run) otherwise.
+        SignatureSnapshot.VerifyRealSignaturesUntouched();
     }
 }
 

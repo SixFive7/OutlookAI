@@ -36,8 +36,9 @@ public sealed class PayloadDisciplineTests
         Assert.Equal(100, MailService.RecipientsCap);
         Assert.Equal(100, MailService.AttachmentsCap);
 
-        // Folder listing bounds (soak fix D37: full tree, offset-paged - no depth knob).
-        Assert.Equal(500, MailService.FoldersPerCallCap);
+        // Folder listing bounds (soak fix D37: full tree, offset-paged - no depth knob;
+        // D38 raised the per-call page 500 -> 1000).
+        Assert.Equal(1000, MailService.FoldersPerCallCap);
         Assert.Equal(10_000, MailService.FolderWalkAbsoluteCap);
 
         // Read body paging (soak fix D37: window served from the per-process body cache).

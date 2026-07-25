@@ -78,7 +78,7 @@ public sealed class McpStdioConformanceTests
             foreach (string expected in new[]
                      {
                          "search", "thread", "read", "save_attachment", "list_accounts", "list_folders", "list_signatures",
-                         "open_in_outlook", "goto_folder", "show_search_results",
+                         "manage_signature", "open_in_outlook", "goto_folder", "show_search_results",
                          "new_draft", "reply_draft", "replyall_draft", "forward_draft",
                          "send", "outlook_health",
                      })
