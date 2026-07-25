@@ -28,6 +28,7 @@ namespace OutlookAI.TaskPane
             this.btnLengthen = new System.Windows.Forms.Button();
             this.btnFormal = new System.Windows.Forms.Button();
             this.btnFriendly = new System.Windows.Forms.Button();
+            this.btnSelectSignature = new System.Windows.Forms.Button();
             this.grpInstruction = new System.Windows.Forms.GroupBox();
             this.txtPrompt = new System.Windows.Forms.TextBox();
             this.btnDraft = new System.Windows.Forms.Button();
@@ -57,10 +58,11 @@ namespace OutlookAI.TaskPane
             this.grpQuickActions.Controls.Add(this.btnLengthen);
             this.grpQuickActions.Controls.Add(this.btnFormal);
             this.grpQuickActions.Controls.Add(this.btnFriendly);
+            this.grpQuickActions.Controls.Add(this.btnSelectSignature);
             this.grpQuickActions.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
             this.grpQuickActions.Location = new System.Drawing.Point(10, 40);
             this.grpQuickActions.Name = "grpQuickActions";
-            this.grpQuickActions.Size = new System.Drawing.Size(240, 95);
+            this.grpQuickActions.Size = new System.Drawing.Size(240, 122);
             this.grpQuickActions.TabIndex = 0;
             this.grpQuickActions.TabStop = false;
             this.grpQuickActions.Text = "Quick Actions (Edit Current Email)";
@@ -113,6 +115,15 @@ namespace OutlookAI.TaskPane
             this.btnFriendly.UseVisualStyleBackColor = true;
             this.btnFriendly.Click += new System.EventHandler(this.btnFriendly_Click);
 
+            // btnSelectSignature
+            this.btnSelectSignature.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+            this.btnSelectSignature.Font = new System.Drawing.Font("Segoe UI", 8F);
+            this.btnSelectSignature.Location = new System.Drawing.Point(10, 88);
+            this.btnSelectSignature.Size = new System.Drawing.Size(220, 26);
+            this.btnSelectSignature.Text = "Select the best signature";
+            this.btnSelectSignature.UseVisualStyleBackColor = true;
+            this.btnSelectSignature.Click += new System.EventHandler(this.btnSelectSignature_Click);
+
             // grpInstruction
             this.grpInstruction.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
             this.grpInstruction.Controls.Add(this.txtPrompt);
@@ -120,7 +131,7 @@ namespace OutlookAI.TaskPane
             this.grpInstruction.Controls.Add(this.btnEditDraft);
             this.grpInstruction.Controls.Add(this.btnEditSelection);
             this.grpInstruction.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
-            this.grpInstruction.Location = new System.Drawing.Point(10, 140);
+            this.grpInstruction.Location = new System.Drawing.Point(10, 167);
             this.grpInstruction.Name = "grpInstruction";
             this.grpInstruction.Size = new System.Drawing.Size(240, 170);
             this.grpInstruction.TabIndex = 1;
@@ -166,7 +177,7 @@ namespace OutlookAI.TaskPane
             this.lblStatus.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
             this.lblStatus.AutoEllipsis = true;
             this.lblStatus.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.lblStatus.Location = new System.Drawing.Point(10, 315);
+            this.lblStatus.Location = new System.Drawing.Point(10, 342);
             this.lblStatus.Name = "lblStatus";
             this.lblStatus.Size = new System.Drawing.Size(240, 32);
             this.lblStatus.Visible = false;
@@ -221,6 +232,7 @@ namespace OutlookAI.TaskPane
         private System.Windows.Forms.Button btnLengthen;
         private System.Windows.Forms.Button btnFormal;
         private System.Windows.Forms.Button btnFriendly;
+        private System.Windows.Forms.Button btnSelectSignature;
         private System.Windows.Forms.GroupBox grpInstruction;
         private System.Windows.Forms.TextBox txtPrompt;
         private System.Windows.Forms.Button btnDraft;
