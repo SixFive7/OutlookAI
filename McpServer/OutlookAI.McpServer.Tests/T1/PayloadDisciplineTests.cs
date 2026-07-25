@@ -36,10 +36,90 @@ public sealed class PayloadDisciplineTests
         Assert.Equal(100, MailService.RecipientsCap);
         Assert.Equal(100, MailService.AttachmentsCap);
 
-        // Folder listing bounds (no unbounded folder walks).
-        Assert.Equal(1000, MailService.FoldersCap);
-        Assert.Equal(300, MailService.FoldersDefault);
-        Assert.Equal(6, MailService.FolderDepthCap);
+        // Folder listing bounds (soak fix D37: full tree, offset-paged - no depth knob).
+        Assert.Equal(500, MailService.FoldersPerCallCap);
+        Assert.Equal(10_000, MailService.FolderWalkAbsoluteCap);
+
+        // Read body paging (soak fix D37: window served from the per-process body cache).
+        Assert.Equal(8, BodyCache.MaxEntries);
+        Assert.Equal(8_000_000, BodyCache.MaxTotalChars);
+        Assert.Equal(TimeSpan.FromMinutes(15), BodyCache.TimeToLive);
+    }
+
+    [Fact]
+    public void PageFolders_UnderCap_SinglePage_WithTotal()
+    {
+        var walk = MakeFolders(7);
+
+        FoldersOutcome outcome = MailService.PageFolders(walk, offset: 0);
+
+        Assert.Equal(7, outcome.FolderTotal);
+        Assert.False(outcome.Truncated);
+        Assert.Null(outcome.NextOffset);
+        Assert.Null(outcome.Offset);
+        Assert.Equal(7, outcome.Stores.Sum(s => s.Folders.Count));
+    }
+
+    [Fact]
+    public void PageFolders_OverCap_TruncatesWithNextOffset()
+    {
+        var walk = MakeFolders(MailService.FoldersPerCallCap + 3);
+
+        FoldersOutcome first = MailService.PageFolders(walk, offset: 0);
+        Assert.Equal(MailService.FoldersPerCallCap, first.Stores.Sum(s => s.Folders.Count));
+        Assert.True(first.Truncated);
+        Assert.Equal(MailService.FoldersPerCallCap, first.NextOffset);
+        Assert.Equal(walk.Count, first.FolderTotal);
+
+        FoldersOutcome second = MailService.PageFolders(walk, offset: first.NextOffset!.Value);
+        Assert.Equal(3, second.Stores.Sum(s => s.Folders.Count));
+        Assert.False(second.Truncated);
+        Assert.Null(second.NextOffset);
+        Assert.Equal(first.NextOffset, second.Offset);
+
+        // The two pages tile the walk exactly - no folder lost or repeated.
+        var pagedPaths = first.Stores.SelectMany(s => s.Folders).Select(f => f.Path)
+            .Concat(second.Stores.SelectMany(s => s.Folders).Select(f => f.Path))
+            .ToList();
+        Assert.Equal(walk.Select(f => f.Path), pagedPaths);
+    }
+
+    [Fact]
+    public void PageFolders_OffsetBeyondEnd_ReturnsEmptyNotTruncated()
+    {
+        var walk = MakeFolders(5);
+
+        FoldersOutcome outcome = MailService.PageFolders(walk, offset: 99);
+
+        Assert.Empty(outcome.Stores);
+        Assert.Equal(5, outcome.FolderTotal);
+        Assert.False(outcome.Truncated);
+        Assert.Null(outcome.NextOffset);
+        Assert.Equal(99, outcome.Offset);
+    }
+
+    [Fact]
+    public void PageFolders_NegativeOffset_IsClampedToZero()
+    {
+        var walk = MakeFolders(2);
+
+        FoldersOutcome outcome = MailService.PageFolders(walk, offset: -5);
+
+        Assert.Equal(2, outcome.Stores.Sum(s => s.Folders.Count));
+        Assert.Null(outcome.Offset);
+    }
+
+    private static List<ComFolderInfo> MakeFolders(int count)
+    {
+        var list = new List<ComFolderInfo>(count);
+        for (int i = 1; i <= count; i++)
+        {
+            // Two stores to prove grouping survives page slicing.
+            string store = i <= count / 2 ? "Store A" : "Store B";
+            list.Add(new ComFolderInfo(store, $"F{i:D5}", $"F{i:D5}", i, 0, 0));
+        }
+
+        return list;
     }
 
     [Fact]

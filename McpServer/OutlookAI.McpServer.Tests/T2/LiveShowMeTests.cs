@@ -40,10 +40,12 @@ public sealed class LiveShowMeTests
     [Fact]
     public void GotoFolder_HubFolder_ActiveExplorerCurrentFolderMatches()
     {
-        // Locale-proof target: a real folder path reported by list_folders.
-        FoldersOutcome folders = Service.ListFolders(Hub, depth: 1);
+        // Locale-proof target: a real TOP-LEVEL folder path reported by list_folders
+        // (the listing now always returns the full tree - filter to depth 1).
+        FoldersOutcome folders = Service.ListFolders(Hub);
         StoreFoldersView store = Assert.Single(folders.Stores);
-        FolderView target = store.Folders.FirstOrDefault(f => (f.Items ?? 0) > 0) ?? store.Folders[0];
+        FolderView target = store.Folders.FirstOrDefault(f => !f.Path.Contains('/') && (f.Items ?? 0) > 0)
+            ?? store.Folders.First(f => !f.Path.Contains('/'));
         string expectedPath = "\\\\" + Hub + "\\" + target.Path.Replace('/', '\\');
 
         GotoFolderOutcome outcome = Service.GotoFolder(Hub, target.Path);

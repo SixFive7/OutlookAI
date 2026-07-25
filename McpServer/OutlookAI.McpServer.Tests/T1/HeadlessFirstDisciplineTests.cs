@@ -26,7 +26,7 @@ public sealed class HeadlessFirstDisciplineTests
 
     /// <summary>Tools that must NEVER cause an Outlook window, in any argument combination.</summary>
     private static readonly IReadOnlyList<string> HeadlessSafeTools =
-        ["echo", "search", "thread", "read", "save_attachment", "index_status", "health", "list_accounts", "list_folders", "send"];
+        ["search", "thread", "read", "save_attachment", "outlook_health", "list_accounts", "list_folders", "list_signatures", "send"];
 
     private static Dictionary<string, MethodInfo> DiscoverAdvertisedTools()
     {

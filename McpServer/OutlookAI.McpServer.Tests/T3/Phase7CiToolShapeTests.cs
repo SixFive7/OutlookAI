@@ -4,8 +4,8 @@ using Xunit;
 namespace OutlookAI.McpServer.Tests.T3;
 
 /// <summary>
-/// T3 CI-safe slice of the Phase-7 hardening surface: the health tool is advertised
-/// and CALLABLE over real stdio MCP on any machine - health never starts Outlook and
+/// T3 CI-safe slice of the Phase-7 hardening surface: the outlook_health tool is advertised
+/// and CALLABLE over real stdio MCP on any machine - outlook_health never starts Outlook and
 /// degrades (status=degraded + problems) instead of throwing, so a CI runner without
 /// Outlook/mail stores still gets a well-formed report. Also pins the has-more wording
 /// on the search/thread tool descriptions (section 12 payload contract on the wire).
@@ -13,7 +13,7 @@ namespace OutlookAI.McpServer.Tests.T3;
 public sealed class Phase7CiToolShapeTests
 {
     [Fact]
-    public async Task ToolsList_AdvertisesHealth_AsReadOnly()
+    public async Task ToolsList_AdvertisesOutlookHealth_AsReadOnly()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
@@ -21,14 +21,14 @@ public sealed class Phase7CiToolShapeTests
         JsonElement? healthTool = null;
         foreach (JsonElement tool in list.GetProperty("result").GetProperty("tools").EnumerateArray())
         {
-            if (tool.GetProperty("name").GetString() == "health")
+            if (tool.GetProperty("name").GetString() == "outlook_health")
             {
                 healthTool = tool;
                 break;
             }
         }
 
-        Assert.True(healthTool != null, "the health tool must be advertised");
+        Assert.True(healthTool != null, "the outlook_health tool must be advertised");
         string description = healthTool!.Value.GetProperty("description").GetString()!;
         Assert.Contains("never", description, StringComparison.OrdinalIgnoreCase); // never starts Outlook
         Assert.Contains("Outlook", description, StringComparison.Ordinal);
@@ -38,11 +38,11 @@ public sealed class Phase7CiToolShapeTests
     }
 
     [Fact]
-    public async Task Health_OnAnyMachine_ReturnsWellFormedReport()
+    public async Task OutlookHealth_OnAnyMachine_ReturnsWellFormedReport()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
-        JsonElement report = await client.CallToolAsync("health", new { });
+        JsonElement report = await client.CallToolAsync("outlook_health", new { });
 
         string status = report.GetProperty("status").GetString()!;
         Assert.True(status is "ok" or "degraded", $"unexpected status '{status}'");

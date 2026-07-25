@@ -111,7 +111,7 @@ public sealed class Phase3LiveMcpToolShapeTests
         // exactly track health's effective tuning.uiSearchBackend (machine-agnostic:
         // whichever state the machine is in, advice presence has to match it; the
         // both-states flip proof is T2 LiveUiSearchBackendTests).
-        JsonElement health = await client.CallToolAsync("health", new { });
+        JsonElement health = await client.CallToolAsync("outlook_health", new { });
         string? backend = health.GetProperty("tuning").GetProperty("uiSearchBackend").GetString();
         bool hasAdvice = shown.TryGetProperty("advice", out JsonElement advice)
             && advice.ValueKind == JsonValueKind.Array

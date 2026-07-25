@@ -23,7 +23,7 @@ public sealed class McpStdioConformanceTests
         ?? throw new InvalidOperationException("AssemblyMetadata 'McpServerExePath' is missing.");
 
     [Fact]
-    public async Task Handshake_ListsTools_And_CallsEcho()
+    public async Task Handshake_ListsTools_And_CallsOutlookHealth()
     {
         string exePath = ServerExePath;
         Assert.True(File.Exists(exePath), $"Server exe not found at '{exePath}' - build OutlookAI.McpServer first.");
@@ -69,44 +69,51 @@ public sealed class McpStdioConformanceTests
             // 2. initialized notification (no response expected).
             await SendAsync(server, new { jsonrpc = "2.0", method = "notifications/initialized" }, cts.Token);
 
-            // 3. tools/list - the echo scaffold plus the Phase-2 L1/L2, Phase-3 L3 and
-            // Phase-4 L4 surfaces.
+            // 3. tools/list - the full L1-L5 surface plus the merged diagnostics tool
+            // (echo/index_status/health were deleted in soak fix D37).
             JsonElement list = await RoundTripAsync(server, id: 2, method: "tools/list", parameters: new { }, cts.Token);
             var names = list.GetProperty("result").GetProperty("tools").EnumerateArray()
                 .Select(t => t.GetProperty("name").GetString())
                 .ToList();
-            Assert.Contains("echo", names);
             foreach (string expected in new[]
                      {
-                         "search", "thread", "read", "save_attachment", "index_status", "list_accounts", "list_folders",
+                         "search", "thread", "read", "save_attachment", "list_accounts", "list_folders", "list_signatures",
                          "open_in_outlook", "goto_folder", "show_search_results",
                          "new_draft", "reply_draft", "replyall_draft", "forward_draft",
+                         "send", "outlook_health",
                      })
             {
                 Assert.Contains(expected, names);
             }
 
-            // 4. tools/call echo - round-trips through OutlookAI.Core.
+            foreach (string deleted in new[] { "echo", "index_status", "health" })
+            {
+                Assert.DoesNotContain(deleted, names);
+            }
+
+            // 4. tools/call outlook_health - the smoke call (echo's old role; callable
+            // on any machine because health degrades instead of throwing, and it proves
+            // the server -> OutlookAI.Core chain since the report is built in Core).
             JsonElement call = await RoundTripAsync(server, id: 3, method: "tools/call", parameters: new
             {
-                name = "echo",
-                arguments = new { message = "T3 ping" },
+                name = "outlook_health",
+                arguments = new { },
             }, cts.Token);
             JsonElement callResult = call.GetProperty("result");
             if (callResult.TryGetProperty("isError", out JsonElement isError))
             {
-                Assert.False(isError.ValueKind == JsonValueKind.True, "echo tool call reported isError=true.");
+                Assert.False(isError.ValueKind == JsonValueKind.True, "outlook_health tool call reported isError=true.");
             }
 
             string? text = callResult.GetProperty("content").EnumerateArray()
                 .First(c => c.GetProperty("type").GetString() == "text")
                 .GetProperty("text").GetString();
             Assert.NotNull(text);
-            Assert.Contains("T3 ping", text, StringComparison.Ordinal);
-            // Core envelope present => the server -> OutlookAI.Core call chain is live.
-            Assert.Contains("OutlookAI.Core echo: ", text, StringComparison.Ordinal);
-            // The host must have loaded Core's net10 target (net48 exists for the v3.1 add-in host).
-            Assert.Contains(".NETCoreApp,Version=v10.0", text, StringComparison.Ordinal);
+            using (JsonDocument healthDoc = JsonDocument.Parse(text!))
+            {
+                string? status = healthDoc.RootElement.GetProperty("status").GetString();
+                Assert.True(status is "ok" or "degraded", $"unexpected outlook_health status '{status}'");
+            }
 
             // 5. Closing stdin must terminate the server - agent sessions must not leak processes.
             server.StandardInput.Close();

@@ -9,7 +9,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// Phase-2 T2 live acceptance (v3.MD section 0.6): search-to-read round-trips on real
 /// hits across all three stores, truncation flags on a >100 KB mail, attachment save
 /// from an index document hit, exact list_accounts (3 accounts + delegates distinct +
-/// online-only flags), list_folders, thread on both paths, and index_status. Logging is
+/// online-only flags), list_folders, thread on both paths, and outlook_health. Logging is
 /// content-free for business stores (S4): counts, ids, timings, booleans only.
 /// </summary>
 [Collection("LivePhase2")]
@@ -92,6 +92,74 @@ public sealed class LiveMailServiceTests
         Assert.Equal("cached", again.LocatedVia);
         _output.WriteLine($"cached re-read ms: {cached.ElapsedMilliseconds}");
         Assert.True(cached.ElapsedMilliseconds < 2000, "cached re-read should be fast");
+    }
+
+    [Fact]
+    public void Read_BodyOffsetPaging_TilesTheBody_FromTheCachedExtraction()
+    {
+        // A real mail with a body long enough to window (>= 120 chars).
+        ReadOutcome? full = null;
+        foreach (string store in _fixture.Settings.ExpectedStoreDisplayNames)
+        {
+            SearchOutcome outcome = Service.Search(new SearchRequest
+            {
+                IndexOnly = true,
+                Store = store,
+                IncludeAttachmentHits = false,
+                Top = 15,
+            });
+            foreach (HitSummary hit in outcome.Hits.Where(h => !string.IsNullOrEmpty(h.Subject)))
+            {
+                ReadOutcome candidate;
+                try
+                {
+                    candidate = Service.Read(hit.Id, maxBodyChars: 2000);
+                }
+                catch (InvalidOperationException)
+                {
+                    continue; // residual index row - skip
+                }
+
+                if (candidate.BodyTotalChars >= 120)
+                {
+                    full = candidate;
+                    break;
+                }
+            }
+
+            if (full != null)
+            {
+                break;
+            }
+        }
+
+        Assert.True(full != null, "no mail with a >=120-char body found in the sampled hits");
+        string reference = full!.Body.Substring(0, 100);
+
+        // Window 1 (offset 0): first 50 chars, more flagged, offset omitted.
+        ReadOutcome window1 = Service.Read(full.EntryId, maxBodyChars: 50);
+        Assert.Equal(reference.Substring(0, 50), window1.Body);
+        Assert.Null(window1.BodyOffset);
+        Assert.True(window1.BodyTruncated);
+        Assert.Equal(full.BodyTotalChars, window1.BodyTotalChars);
+
+        // Window 2 (continuation): served from the cached extraction, tiles exactly.
+        ReadOutcome window2 = Service.Read(full.EntryId, maxBodyChars: 50, includeHeaders: false, maxHeaderChars: MailService.HeaderCharsDefault, bodyOffset: 50);
+        Assert.Equal(50, window2.BodyOffset);
+        Assert.Equal(reference.Substring(50, 50), window2.Body);
+        Assert.Equal(full.BodyTotalChars, window2.BodyTotalChars);
+        Assert.Equal(window2.BodyTruncated, full.BodyTotalChars > 100);
+
+        // The two windows tile the reference prefix with no seam.
+        Assert.Equal(reference, window1.Body + window2.Body);
+
+        // Offset beyond the end: empty window, nothing more.
+        ReadOutcome beyond = Service.Read(full.EntryId, maxBodyChars: 50, includeHeaders: false, maxHeaderChars: MailService.HeaderCharsDefault, bodyOffset: (int)full.BodyTotalChars + 10);
+        Assert.Equal(string.Empty, beyond.Body);
+        Assert.False(beyond.BodyTruncated);
+        Assert.Equal((int?)full.BodyTotalChars, beyond.BodyOffset);
+
+        _output.WriteLine($"body paging: total={full.BodyTotalChars} tiling ok, beyond-end ok");
     }
 
     [Fact]
@@ -257,15 +325,36 @@ public sealed class LiveMailServiceTests
     }
 
     [Fact]
-    public void ListFolders_TestHub_ReturnsTreeWithCounts()
+    public void ListFolders_TestHub_FullTree_StableOrder_And_OffsetPaging()
     {
-        FoldersOutcome outcome = Service.ListFolders(_fixture.Settings.TestHubStoreDisplayName, depth: 3);
+        FoldersOutcome outcome = Service.ListFolders(_fixture.Settings.TestHubStoreDisplayName);
 
         StoreFoldersView store = Assert.Single(outcome.Stores);
         Assert.True(store.Folders.Count >= 3, "test hub should expose at least a few folders");
         Assert.All(store.Folders, f => Assert.False(string.IsNullOrWhiteSpace(f.Path)));
         Assert.Contains(store.Folders, f => f.Items.HasValue);
-        _output.WriteLine($"folders={store.Folders.Count} withCounts={store.Folders.Count(f => f.Items.HasValue)} truncated={outcome.Truncated}");
+        Assert.Equal(store.Folders.Count, outcome.FolderTotal);
+        Assert.False(outcome.Truncated, "the tiny hub store must fit in one page");
+        Assert.Null(outcome.NextOffset);
+        Assert.Null(outcome.Offset);
+
+        // Stable traversal: a repeat call returns the identical flattened order, and
+        // offset=1 returns exactly the same order minus the first folder (live paging
+        // proof without needing a >cap store).
+        FoldersOutcome repeat = Service.ListFolders(_fixture.Settings.TestHubStoreDisplayName);
+        Assert.Equal(
+            store.Folders.Select(f => f.Path),
+            Assert.Single(repeat.Stores).Folders.Select(f => f.Path));
+
+        FoldersOutcome page1 = Service.ListFolders(_fixture.Settings.TestHubStoreDisplayName, offset: 1);
+        Assert.Equal(1, page1.Offset);
+        Assert.Equal(outcome.FolderTotal, page1.FolderTotal);
+        Assert.Equal(
+            store.Folders.Skip(1).Select(f => f.Path),
+            Assert.Single(page1.Stores).Folders.Select(f => f.Path));
+
+        _output.WriteLine($"folders={store.Folders.Count} withCounts={store.Folders.Count(f => f.Items.HasValue)} "
+            + $"total={outcome.FolderTotal} offsetPagingConsistent=true");
     }
 
     [Fact]
@@ -309,18 +398,19 @@ public sealed class LiveMailServiceTests
     }
 
     [Fact]
-    public void IndexStatus_Live_ReportsProviderStalenessAndStores()
+    public void OutlookHealth_Live_ReportsProviderStalenessAndPerStoreRows()
     {
-        IndexStatusOutcome status = Service.IndexStatus();
+        HealthOutcome status = Service.Health();
 
-        Assert.True(status.Provider is "OleDb" or "AdodbCom", $"unexpected provider: {status.Provider}");
-        Assert.NotNull(status.NewestIndexedUtc);
-        Assert.True(status.IndexAgeMinutes >= 0);
-        Assert.NotNull(status.PerStore);
-        Assert.True(status.PerStore!.Count >= 3, "per-store staleness must cover at least the 3 account stores");
-        Assert.NotEmpty(status.Advice);
-        _output.WriteLine($"provider={status.Provider} outlookRunning={status.OutlookRunning} "
-            + $"ageMin={status.IndexAgeMinutes:F1} perStore={status.PerStore.Count}");
+        Assert.True(status.Index.Provider is "OleDb" or "AdodbCom", $"unexpected provider: {status.Index.Provider}");
+        Assert.NotNull(status.Index.NewestIndexedUtc);
+        Assert.True(status.Index.AgeMinutes >= 0);
+        Assert.NotNull(status.Index.PerStore);
+        Assert.True(status.Index.PerStore!.Count >= 3, "per-store staleness must cover at least the 3 account stores");
+        Assert.NotNull(status.Advice);
+        Assert.NotEmpty(status.Advice!);
+        _output.WriteLine($"provider={status.Index.Provider} outlookRunning={status.Outlook.Running} "
+            + $"ageMin={status.Index.AgeMinutes:F1} perStore={status.Index.PerStore.Count}");
     }
 
     private static void TryDelete(string path)

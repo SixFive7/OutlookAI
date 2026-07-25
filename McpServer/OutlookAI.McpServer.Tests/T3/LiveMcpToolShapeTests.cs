@@ -152,13 +152,15 @@ public sealed class LiveMcpToolShapeTests
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(TimeSpan.FromMinutes(6));
 
-        // --- index_status.
-        JsonElement status = await client.CallToolAsync("index_status", new { });
-        Assert.True(status.GetProperty("provider").GetString() is "OleDb" or "AdodbCom");
-        Assert.True(status.TryGetProperty("newestIndexedUtc", out _));
-        Assert.True(status.GetProperty("perStore").GetArrayLength() >= 3);
+        // --- outlook_health (the merged diagnostics tool, D37): index freshness block
+        // with the per-store frontier rows and advice the old index_status carried.
+        JsonElement status = await client.CallToolAsync("outlook_health", new { });
+        JsonElement index = status.GetProperty("index");
+        Assert.True(index.GetProperty("provider").GetString() is "OleDb" or "AdodbCom");
+        Assert.True(index.TryGetProperty("newestIndexedUtc", out _));
+        Assert.True(index.GetProperty("perStore").GetArrayLength() >= 3);
         Assert.True(status.GetProperty("advice").GetArrayLength() >= 1);
-        _output.WriteLine($"index_status: perStore={status.GetProperty("perStore").GetArrayLength()}");
+        _output.WriteLine($"outlook_health: perStore={index.GetProperty("perStore").GetArrayLength()}");
 
         // --- list_accounts: 3 accounts, delegates distinct, flags present.
         JsonElement accounts = await client.CallToolAsync("list_accounts", new { });
@@ -180,16 +182,29 @@ public sealed class LiveMcpToolShapeTests
         _output.WriteLine($"list_accounts: stores={stores.GetArrayLength()} delegates={delegates}");
         Assert.Equal(_settings.ExpectedDelegateStoreDisplayNames.Count, delegates);
 
-        // --- list_folders scoped to the test hub.
+        // --- list_folders scoped to the test hub (full tree, one page).
         JsonElement folders = await client.CallToolAsync("list_folders", new
         {
             store = _settings.TestHubStoreDisplayName,
-            depth = 2,
         });
         JsonElement storeFolders = folders.GetProperty("stores")[0].GetProperty("folders");
         Assert.True(storeFolders.GetArrayLength() >= 1);
         Assert.False(string.IsNullOrEmpty(storeFolders[0].GetProperty("path").GetString()));
-        _output.WriteLine($"list_folders: folders={storeFolders.GetArrayLength()}");
+        Assert.Equal(JsonValueKind.False, folders.GetProperty("truncated").ValueKind);
+        Assert.True(folders.GetProperty("folderTotal").GetInt32() >= storeFolders.GetArrayLength());
+        _output.WriteLine($"list_folders: folders={storeFolders.GetArrayLength()} total={folders.GetProperty("folderTotal").GetInt32()}");
+
+        // Offset paging over the wire: offset=1 = the same stable order minus the first folder.
+        JsonElement page1 = await client.CallToolAsync("list_folders", new
+        {
+            store = _settings.TestHubStoreDisplayName,
+            offset = 1,
+        });
+        Assert.Equal(1, page1.GetProperty("offset").GetInt32());
+        Assert.Equal(
+            storeFolders[1].GetProperty("path").GetString(),
+            page1.GetProperty("stores")[0].GetProperty("folders")[0].GetProperty("path").GetString());
+        _output.WriteLine("list_folders offset paging: wire-consistent");
 
         Assert.True(await client.CloseAndAwaitExitAsync(TimeSpan.FromSeconds(30)), "server must exit on stdin close");
     }

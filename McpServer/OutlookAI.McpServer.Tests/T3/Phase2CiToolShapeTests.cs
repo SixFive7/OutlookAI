@@ -48,19 +48,25 @@ public sealed class Phase2CiToolShapeTests
     }
 
     [Fact]
-    public async Task IndexStatus_ReturnsShape_WithOrWithoutAnIndex()
+    public async Task OutlookHealth_CarriesTheFreshnessBlock_WithOrWithoutAnIndex()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
-        JsonElement result = await client.CallToolAsync("index_status", new { });
+        JsonElement result = await client.CallToolAsync("outlook_health", new { });
 
-        // Environment-tolerant: on CI the SystemIndex is unreachable and provider
-        // reports 'unavailable: ...'; on a dev machine it reports OleDb/AdodbCom.
-        Assert.False(string.IsNullOrWhiteSpace(result.GetProperty("provider").GetString()));
-        Assert.True(result.TryGetProperty("outlookRunning", out JsonElement outlookRunning));
-        Assert.True(outlookRunning.ValueKind is JsonValueKind.True or JsonValueKind.False);
-        Assert.True(result.TryGetProperty("installerMutexHeld", out _));
-        Assert.True(result.GetProperty("advice").GetArrayLength() >= 1);
+        // The merged index_status content (D37): environment-tolerant - on CI the
+        // SystemIndex is unreachable and provider reports 'unavailable: ...' (advice is
+        // then optional); on a dev machine it reports OleDb/AdodbCom plus advice.
+        JsonElement index = result.GetProperty("index");
+        string provider = index.GetProperty("provider").GetString()!;
+        Assert.False(string.IsNullOrWhiteSpace(provider));
+        JsonElement outlook = result.GetProperty("outlook");
+        Assert.True(outlook.GetProperty("running").ValueKind is JsonValueKind.True or JsonValueKind.False);
+        Assert.True(outlook.TryGetProperty("installerMutexHeld", out _));
+        if (!provider.StartsWith("unavailable", StringComparison.Ordinal))
+        {
+            Assert.True(result.GetProperty("advice").GetArrayLength() >= 1);
+        }
     }
 
     [Fact]

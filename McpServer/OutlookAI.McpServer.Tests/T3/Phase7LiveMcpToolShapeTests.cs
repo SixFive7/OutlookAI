@@ -54,7 +54,7 @@ public sealed class Phase7LiveMcpToolShapeTests
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
-        JsonElement report = await client.CallToolAsync("health", new { });
+        JsonElement report = await client.CallToolAsync("outlook_health", new { });
 
         // Machine facts that hold regardless of Outlook's running state at this point
         // in the suite: classic Outlook installed (16.x), WSearch automatic, audit

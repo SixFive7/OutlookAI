@@ -47,9 +47,9 @@ public sealed class LiveHeadlessGuaranteeTests
         _output.WriteLine($"baseline visible Outlook windows: {baseline}");
 
         AssertNoNewWindow(baseline, "list_accounts (repeat)", () => service.ListAccounts());
-        AssertNoNewWindow(baseline, "list_folders", () => service.ListFolders(hub, depth: 2, maxFolders: 50));
-        AssertNoNewWindow(baseline, "index_status", () => service.IndexStatus());
-        AssertNoNewWindow(baseline, "health", () => service.Health());
+        AssertNoNewWindow(baseline, "list_folders", () => service.ListFolders(hub));
+        AssertNoNewWindow(baseline, "outlook_health", () => service.Health());
+        AssertNoNewWindow(baseline, "list_signatures", () => service.ListSignatures());
 
         SearchOutcome search = AssertNoNewWindow(baseline, "search (hub-scoped, always-fresh)", () => service.Search(new SearchRequest
         {
