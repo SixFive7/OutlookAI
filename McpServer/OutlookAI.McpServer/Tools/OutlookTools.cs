@@ -23,10 +23,11 @@ internal static class ServerRuntime
 }
 
 /// <summary>
-/// MCP tool surface v1 (v3.MD section 0.5 L1+L2): search, thread, read,
-/// save_attachment, index_status, list_accounts, list_folders. Payloads are compact
-/// JSON (camelCase, nulls omitted - section 12 discipline); domain failures come back
-/// as an {"error": ...} object instead of protocol faults so agents can react.
+/// The MCP tool surface (v3.MD section 0.5): search/thread/read/save_attachment,
+/// list_accounts/list_folders/list_signatures, the show-me tools, the draft tools,
+/// send, and outlook_health. Payloads are compact JSON (camelCase, nulls omitted -
+/// section 12 discipline); domain failures come back as an {"error": ...} object
+/// instead of protocol faults so agents can react.
 /// </summary>
 [McpServerToolType]
 public static class OutlookTools
@@ -88,12 +89,14 @@ public static class OutlookTools
     }
 
     [McpServerTool(Name = "thread")]
-    [Description("Fetch the full conversation for a hit: pass conversation_id (from a search hit) and/or id (hit id or EntryID). "
-        + "Uses the index first; falls back to Outlook's conversation graph via COM when the index has no rows. Members are oldest-first; "
-        + "truncated=true means the conversation has more members than 'top'.")]
+    [Description("Fetch the full conversation of a mail. Two complementary lookup keys - pass BOTH when available: "
+        + "conversation_id is the fast path (a free index lookup; every search hit already carries it, no locate cost), "
+        + "and id anchors the COM fallback that walks Outlook's conversation graph when the index has no rows for the "
+        + "conversation - COM cannot look up a conversation by id string, it needs a concrete mail item to start from. "
+        + "Members are oldest-first; truncated=true means the conversation has more members than 'top'.")]
     public static string Thread(
-        [Description("ConversationId from a search hit or read result.")] string? conversation_id = null,
-        [Description("Hit id (e.g. h12) or EntryID whose conversation to fetch (enables the COM fallback).")] string? id = null,
+        [Description("ConversationId from a search hit or read result - the fast index path. Pass when you have it.")] string? conversation_id = null,
+        [Description("Hit id (e.g. h12) or EntryID of any mail in the conversation - anchors the COM conversation-graph fallback (used when the index has no rows).")] string? id = null,
         [Description("Store display name to scope the index lookup (faster).")] string? store = null,
         [Description("Max thread members (default 50).")] int top = 50)
     {
@@ -103,13 +106,16 @@ public static class OutlookTools
     [McpServerTool(Name = "read")]
     [Description("Read one mail in full by hit id (from search/thread) or EntryID: plain-text body with truncation flags and true total size, "
         + "sender/recipients with SMTP addresses, attachment list, conversation id. For an attachment-content hit this opens the PARENT mail. "
+        + "Long bodies page cheaply: when bodyTruncated=true, call again with body_offset = bodyOffset + body.length to CONTINUE reading - "
+        + "the next window is served from the already-extracted body, not re-read from the start. "
         + "Needs Outlook (starts it if allowed). First read of an index hit locates the item (up to a few seconds); repeats are cached.")]
     public static string Read(
         [Description("Hit id (e.g. h12) or full EntryID hex.")] string id,
-        [Description("Body cap in characters (default 20000; 0 = metadata only). bodyTruncated+bodyTotalChars flag cuts.")] int max_body_chars = MailService.BodyCharsDefault,
-        [Description("Include raw transport headers (capped at 8 KB). Default false.")] bool include_headers = false)
+        [Description("Body window size in characters (default 20000; 0 = metadata only). bodyTruncated=true means more body exists beyond the window; bodyTotalChars is the full size.")] int max_body_chars = MailService.BodyCharsDefault,
+        [Description("Include raw transport headers (capped at 8 KB). Default false.")] bool include_headers = false,
+        [Description("Start of the body window in characters (default 0). Use the previous read's bodyOffset + body.length to continue a long body.")] int body_offset = 0)
     {
-        return Guard(() => ServerRuntime.Service.Read(id, max_body_chars, include_headers));
+        return Guard(() => ServerRuntime.Service.Read(id, max_body_chars, include_headers, MailService.HeaderCharsDefault, body_offset));
     }
 
     [McpServerTool(Name = "save_attachment")]
@@ -123,23 +129,16 @@ public static class OutlookTools
         return Guard(() => ServerRuntime.Service.SaveAttachment(id, attachment_index, target_dir));
     }
 
-    [McpServerTool(Name = "index_status")]
-    [Description("Freshness self-report: newest indexed mail vs clock (global and per store), whether Outlook is running "
-        + "(the index only advances while it runs), and freshness advice. search covers any index gap automatically with "
-        + "its COM sweep; this tool only reports. Never starts Outlook.")]
-    public static string IndexStatus()
-    {
-        return Guard(() => ServerRuntime.Service.IndexStatus());
-    }
-
-    [McpServerTool(Name = "health")]
-    [Description("Compact health check of everything this server depends on: Outlook running + installed version, whether it "
+    [McpServerTool(Name = "outlook_health")]
+    [Description("One-call Outlook + mail-server health and freshness report: Outlook running + installed version, whether it "
         + "runs headless (no window, tray icon only - the autostart state; a normal Outlook launch promotes it), probed COM "
-        + "session liveness (comConnected), store reachability, index freshness, Windows Search (WSearch) service state, "
-        + "audit-log writability, OutlookAI tuning state, and the add-in installer mutex. Read-only - attaches to Outlook "
-        + "only when it is already running, never starts it. status=ok means all dependencies are available; otherwise "
-        + "problems lists each degradation.")]
-    public static string Health()
+        + "session liveness (comConnected), store reachability, index freshness (newest indexed mail vs clock, globally AND "
+        + "per store - the index only advances while Outlook runs), Windows Search (WSearch) service state, audit-log "
+        + "writability, OutlookAI tuning state (incl. the effective UI search backend), and the add-in installer mutex. "
+        + "Read-only - attaches to Outlook only when it is already running, NEVER starts it. status=ok means all "
+        + "dependencies are available; problems lists each degradation; advice carries freshness guidance (search covers "
+        + "any index gap automatically with its COM sweep - this tool only reports).")]
+    public static string OutlookHealth()
     {
         return Guard(() => ServerRuntime.Service.Health());
     }
@@ -154,13 +153,26 @@ public static class OutlookTools
     }
 
     [McpServerTool(Name = "list_folders")]
-    [Description("List folder trees with item/unread counts. Folder paths feed the search tool's 'folder' argument. "
-        + "Depth-capped for compact output; raise depth for deeper trees.")]
+    [Description("List the FULL folder tree(s) with item/unread counts. Folder paths feed the search tool's 'folder' argument. "
+        + "Traversal order is stable: stores sorted by display name, then depth-first with sibling folders sorted by name. "
+        + "One call returns up to 500 folders (virtually always the whole tree); truncated=true means more exist - "
+        + "continue with offset=nextOffset to page the remainder in the same stable order.")]
     public static string ListFolders(
         [Description("Store display name (see list_accounts). Omit for all stores.")] string? store = null,
-        [Description("Tree depth 1-6 (default 2).")] int depth = 2)
+        [Description("Folders to skip in the stable traversal (default 0). Use the previous result's nextOffset to continue a truncated listing.")] int offset = 0)
     {
-        return Guard(() => ServerRuntime.Service.ListFolders(store, depth));
+        return Guard(() => ServerRuntime.Service.ListFolders(store, offset));
+    }
+
+    [McpServerTool(Name = "list_signatures")]
+    [Description("List the installed Outlook email signatures: each name plus a short plain-text excerpt (use the excerpt to "
+        + "detect a signature's language and purpose), and per-account default assignments where the profile registry records "
+        + "them (missing = unknown, e.g. no signature configured or roaming-managed - never guessed). Use this to pick the "
+        + "BEST signature for a draft via the draft tools' 'signature' parameter - e.g. match the language of the "
+        + "recipient/thread. Read-only, never starts Outlook.")]
+    public static string ListSignatures()
+    {
+        return Guard(() => ServerRuntime.Service.ListSignatures());
     }
 
     [McpServerTool(Name = "open_in_outlook")]
@@ -211,9 +223,13 @@ public static class OutlookTools
         [Description("Plain-text body. Placed ABOVE the account's signature.")] string body,
         [Description("Cc recipient address(es), separated by ';' or ','. Optional.")] string? cc = null,
         [Description("Open the draft in an Outlook window for the user (default true). Pass false only when the user asked not to see it.")]
-        bool display = true)
+        bool display = true,
+        [Description("Signature name to apply instead of the account default (see list_signatures). Pick the BEST one for this "
+            + "message - e.g. match the recipient's/thread's language using the excerpts; with a single signature the choice is "
+            + "trivial. Omit for the account's default signature.")]
+        string? signature = null)
     {
-        return Guard(() => ServerRuntime.Service.NewDraft(account, to, cc, subject, body, display));
+        return Guard(() => ServerRuntime.Service.NewDraft(account, to, cc, subject, body, display, signature));
     }
 
     [McpServerTool(Name = "reply_draft")]
@@ -223,9 +239,12 @@ public static class OutlookTools
     public static string ReplyDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
         [Description("Plain-text reply body. Placed ABOVE the quoted original.")] string body,
-        [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true)
+        [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true,
+        [Description("Signature name to apply instead of the account default (see list_signatures). Pick the BEST one for this "
+            + "reply - e.g. match the thread's language; with a single signature the choice is trivial. Omit for the default.")]
+        string? signature = null)
     {
-        return Guard(() => ServerRuntime.Service.ReplyDraft(id, body, replyAll: false, display));
+        return Guard(() => ServerRuntime.Service.ReplyDraft(id, body, replyAll: false, display, signature));
     }
 
     [McpServerTool(Name = "replyall_draft")]
@@ -235,9 +254,12 @@ public static class OutlookTools
     public static string ReplyAllDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
         [Description("Plain-text reply body. Placed ABOVE the quoted original.")] string body,
-        [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true)
+        [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true,
+        [Description("Signature name to apply instead of the account default (see list_signatures). Pick the BEST one for this "
+            + "reply - e.g. match the thread's language; with a single signature the choice is trivial. Omit for the default.")]
+        string? signature = null)
     {
-        return Guard(() => ServerRuntime.Service.ReplyDraft(id, body, replyAll: true, display));
+        return Guard(() => ServerRuntime.Service.ReplyDraft(id, body, replyAll: true, display, signature));
     }
 
     [McpServerTool(Name = "forward_draft")]
@@ -248,9 +270,12 @@ public static class OutlookTools
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to forward.")] string id,
         [Description("Plain-text body. Placed ABOVE the forwarded mail.")] string body,
         [Description("To recipient address(es), separated by ';' or ','.")] string to,
-        [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true)
+        [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true,
+        [Description("Signature name to apply instead of the account default (see list_signatures). Pick the BEST one for this "
+            + "message - e.g. match the new recipient's language; with a single signature the choice is trivial. Omit for the default.")]
+        string? signature = null)
     {
-        return Guard(() => ServerRuntime.Service.ForwardDraft(id, body, to, display));
+        return Guard(() => ServerRuntime.Service.ForwardDraft(id, body, to, display, signature));
     }
 
     [McpServerTool(Name = "send")]
@@ -290,7 +315,7 @@ public static class OutlookTools
         {
             return Error("OutlookUnavailable", ex.Message,
                 "Retry after the add-in update finishes. search still works meanwhile (index results with a freshness "
-                + "warning), as does index_status.");
+                + "warning), as does outlook_health.");
         }
         catch (ArgumentException ex)
         {
@@ -301,7 +326,7 @@ public static class OutlookTools
             return Error(
                 "ComFailure",
                 string.Format(CultureInfo.InvariantCulture, "{0} 0x{1:X8}", ex.GetType().Name, ex.HResult),
-                "Outlook rejected the operation; check index_status and retry.");
+                "Outlook rejected the operation; check outlook_health and retry.");
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {

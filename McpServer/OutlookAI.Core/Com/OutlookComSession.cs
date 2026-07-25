@@ -749,23 +749,20 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// Full read of one item by its REAL EntryID (v3.MD section 8 L2): plain-text
-        /// body (HTML converted when Outlook has no text rendering), capped at
-        /// <paramref name="maxBodyChars"/> with the true total reported, recipients with
-        /// SMTP addresses, attachment list, and transport headers on request. Returns
-        /// null with a content-free error description on failure (S4).
+        /// Full read of one item by its REAL EntryID (v3.MD section 8 L2): the COMPLETE
+        /// plain-text body (HTML converted when Outlook has no text rendering; windowing
+        /// happens in MailService against its body cache - soak fix D37), recipients
+        /// with SMTP addresses, attachment list, and transport headers on request.
+        /// <paramref name="includeBody"/>=false skips the body transfer entirely (the
+        /// caller already holds a cached extraction). Returns null with a content-free
+        /// error description on failure (S4).
         /// </summary>
-        public ComItemDetail? TryReadItem(string entryIdHex, string? storeId, bool includeHeaders, int maxBodyChars, out string? error)
+        public ComItemDetail? TryReadItem(string entryIdHex, string? storeId, bool includeHeaders, bool includeBody, out string? error)
         {
             EnsureNotDisposed();
             if (string.IsNullOrWhiteSpace(entryIdHex))
             {
                 throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
-            }
-
-            if (maxBodyChars < 0)
-            {
-                throw new ArgumentOutOfRangeException(nameof(maxBodyChars));
             }
 
             string? capturedError = null;
@@ -778,7 +775,7 @@ namespace OutlookAI.Core.Com
                     itemObject = storeId != null
                         ? ns.GetItemFromID(entryIdHex, storeId)
                         : ns.GetItemFromID(entryIdHex);
-                    return SnapshotDetail(itemObject!, includeHeaders, maxBodyChars);
+                    return SnapshotDetail(itemObject!, includeHeaders, includeBody);
                 }
                 catch (COMException ex)
                 {
@@ -1010,21 +1007,20 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// Folder tree listing (list_folders): store-relative paths with item/unread
-        /// counts (PR_CONTENT_COUNT / PR_CONTENT_UNREAD), depth- and count-capped for
-        /// compact payloads (v3.MD section 12).
+        /// Folder tree listing (list_folders): the FULL tree of every requested store in
+        /// a STABLE traversal order - stores sorted by display name, then depth-first
+        /// with siblings sorted by folder name (case-insensitive ordinal) - so an offset
+        /// into the flattened list pages deterministically across calls. Paths carry
+        /// item/unread counts (PR_CONTENT_COUNT / PR_CONTENT_UNREAD). Bounded only by
+        /// <paramref name="absoluteWalkCap"/> (a pathological-store guard, v3.MD
+        /// section 12) - the per-call page bound lives in MailService.
         /// </summary>
-        public IReadOnlyList<ComFolderInfo> ListFolders(string? storeDisplayName, int maxDepth, int maxFolders)
+        public IReadOnlyList<ComFolderInfo> ListFolders(string? storeDisplayName, int absoluteWalkCap)
         {
             EnsureNotDisposed();
-            if (maxDepth < 1)
+            if (absoluteWalkCap < 1)
             {
-                throw new ArgumentOutOfRangeException(nameof(maxDepth));
-            }
-
-            if (maxFolders < 1)
-            {
-                throw new ArgumentOutOfRangeException(nameof(maxFolders));
+                throw new ArgumentOutOfRangeException(nameof(absoluteWalkCap));
             }
 
             return _runner.Run(() =>
@@ -1032,41 +1028,57 @@ namespace OutlookAI.Core.Com
                 dynamic ns = _namespace!;
                 List<ComFolderInfo> result = new List<ComFolderInfo>();
                 dynamic stores = ns.Stores;
+                List<(string Name, int Index)> storeOrder = new List<(string, int)>();
                 try
                 {
                     int count = stores.Count;
-                    for (int i = 1; i <= count && result.Count < maxFolders; i++)
+                    for (int i = 1; i <= count; i++)
                     {
-                        dynamic store = stores[i];
+                        object? probe = null;
+                        try
+                        {
+                            probe = stores[i];
+                            string name = (string)((dynamic)probe!).DisplayName;
+                            if (storeDisplayName == null
+                                || string.Equals(name, storeDisplayName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                storeOrder.Add((name, i));
+                            }
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                        }
+                        finally
+                        {
+                            Release(probe);
+                        }
+                    }
+
+                    // Stable order leg 1: stores by display name (ties broken by
+                    // profile position so equal names still page deterministically).
+                    storeOrder.Sort((a, b) =>
+                    {
+                        int byName = string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+                        return byName != 0 ? byName : a.Index.CompareTo(b.Index);
+                    });
+
+                    foreach ((string name, int index) in storeOrder)
+                    {
+                        if (result.Count >= absoluteWalkCap)
+                        {
+                            break;
+                        }
+
+                        object? store = null;
                         object? root = null;
                         try
                         {
-                            string name;
-                            try
-                            {
-                                name = (string)store.DisplayName;
-                            }
-                            catch (COMException)
-                            {
-                                continue;
-                            }
-
-                            if (storeDisplayName != null
-                                && !string.Equals(name, storeDisplayName, StringComparison.OrdinalIgnoreCase))
-                            {
-                                continue;
-                            }
-
-                            try
-                            {
-                                root = store.GetRootFolder();
-                            }
-                            catch (COMException)
-                            {
-                                continue;
-                            }
-
-                            CollectFolders(root!, name, string.Empty, 1, maxDepth, maxFolders, result);
+                            store = stores[index];
+                            root = ((dynamic)store!).GetRootFolder();
+                            CollectFolders(root!, name, string.Empty, 1, absoluteWalkCap, result);
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
                         }
                         finally
                         {
@@ -1905,6 +1917,7 @@ namespace OutlookAI.Core.Com
             string subject,
             string bodyText,
             bool display,
+            ComSignatureOverride? signatureOverride,
             out string? error)
         {
             EnsureNotDisposed();
@@ -1991,12 +2004,8 @@ namespace OutlookAI.Core.Com
                     // account; a string would not bind).
                     SetSendUsingAccount(mail!, account);
 
-                    (bool signatureInjected, long textBefore, long textAfter, string htmlAfter) =
-                        TouchInspectorForSignature((object)draft);
-
-                    string fragment = OutlookAI.Core.Text.HtmlBodyComposer.ToHtmlFragment(bodyText);
-                    draft.HTMLBody = OutlookAI.Core.Text.HtmlBodyComposer.InsertAtBodyTop(
-                        htmlAfter.Length > 0 ? htmlAfter : null, fragment);
+                    (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError) =
+                        ComposeDraft((object)draft, bodyText, signatureOverride);
                     draft.Subject = subject;
                     AddRecipients(draft, toRecipients, 1);
                     AddRecipients(draft, ccRecipients, 2);
@@ -2004,8 +2013,10 @@ namespace OutlookAI.Core.Com
 
                     // The GetInspector touch left a HIDDEN Inspector alive inside
                     // Outlook (it shows up in Application.Inspectors - Phase-4 live
-                    // finding). Close it now that the draft is saved; Display() below
-                    // opens a fresh visible one for the final item when requested.
+                    // finding). Close it now that the draft is saved (the override
+                    // path already flushed its Word edits via Close(olSave) inside
+                    // ComposeDraft); Display() below opens a fresh visible one for the
+                    // final item when requested.
                     CloseHiddenInspector(mail!);
                     mail = RelocateToFolderIfNeeded(mail!, draftsFolder!, out bool moved, out string? initialFolder, out bool inDraftsFolder);
                     if (display)
@@ -2032,7 +2043,10 @@ namespace OutlookAI.Core.Com
                         textAfter,
                         moved,
                         initialFolder,
-                        display);
+                        display,
+                        signatureOverride?.Name,
+                        overrideApplied,
+                        overrideError);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -2069,6 +2083,7 @@ namespace OutlookAI.Core.Com
             IReadOnlyList<string> toRecipients,
             string bodyText,
             bool display,
+            ComSignatureOverride? signatureOverride,
             out string? error)
         {
             EnsureNotDisposed();
@@ -2153,12 +2168,8 @@ namespace OutlookAI.Core.Com
                         }
                     }
 
-                    (bool signatureInjected, long textBefore, long textAfter, string htmlAfter) =
-                        TouchInspectorForSignature((object)draft);
-
-                    string fragment = OutlookAI.Core.Text.HtmlBodyComposer.ToHtmlFragment(bodyText);
-                    draft.HTMLBody = OutlookAI.Core.Text.HtmlBodyComposer.InsertAtBodyTop(
-                        htmlAfter.Length > 0 ? htmlAfter : null, fragment);
+                    (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError) =
+                        ComposeDraft((object)draft, bodyText, signatureOverride);
                     if (kind == ComDerivedDraftKind.Forward)
                     {
                         AddRecipients(draft, toRecipients, 1);
@@ -2167,7 +2178,8 @@ namespace OutlookAI.Core.Com
                     draft.Save();
 
                     // Same hidden-Inspector cleanup as the new-draft path (the
-                    // GetInspector signature touch materializes one inside Outlook).
+                    // GetInspector signature touch materializes one inside Outlook; the
+                    // override path already flushed via Close(olSave) in ComposeDraft).
                     CloseHiddenInspector(mail!);
 
                     bool moved = false;
@@ -2222,7 +2234,10 @@ namespace OutlookAI.Core.Com
                         textAfter,
                         moved,
                         initialFolder,
-                        display);
+                        display,
+                        signatureOverride?.Name,
+                        overrideApplied,
+                        overrideError);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -2642,11 +2657,405 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// STA-side: closes the hidden Inspector the GetInspector signature touch left
-        /// behind (olDiscard - the item is already saved, nothing is lost). Without
-        /// this, a display:false draft still surfaces in Application.Inspectors.
+        /// STA-side body composition shared by both draft creators. Default path (no
+        /// override): the proven GetInspector signature touch + single HTMLBody
+        /// assignment with the agent text ABOVE the injected signature/quote. Override
+        /// path: the whole compose happens inside Word through ONE HELD Inspector -
+        /// signature bookmark dance, body insert at the top, then
+        /// <c>Inspector.Close(olSave)</c> on that same inspector. PROBED on this
+        /// machine (D37): Word-document edits NEVER reach the item via
+        /// <c>item.Save()</c>; only Close(olSave) on the inspector that hosted the
+        /// edits flushes them (an item.Save() BETWEEN the edits and the close re-renders
+        /// the document from the item and silently wipes them, and a close via a
+        /// re-acquired inspector reference loses them too). If ANY override step fails,
+        /// the composition falls back to the default HTML path (whose input still
+        /// carries the default signature), so a draft is never lost or left body-less;
+        /// the failure is reported content-free.
         /// </summary>
-        private static void CloseHiddenInspector(object mailObject)
+        private static (bool SignatureInjected, long TextBefore, long TextAfter, bool OverrideApplied, string? OverrideError) ComposeDraft(
+            object draftObject,
+            string bodyText,
+            ComSignatureOverride? signatureOverride)
+        {
+            if (signatureOverride == null)
+            {
+                (bool injected, long before, long after, string htmlAfter) = TouchInspectorForSignature(draftObject);
+                dynamic draft = draftObject;
+                string fragment = OutlookAI.Core.Text.HtmlBodyComposer.ToHtmlFragment(bodyText);
+                draft.HTMLBody = OutlookAI.Core.Text.HtmlBodyComposer.InsertAtBodyTop(
+                    htmlAfter.Length > 0 ? htmlAfter : null, fragment);
+                return (injected, before, after, false, null);
+            }
+
+            return ComposeWithSignatureOverride(draftObject, bodyText, signatureOverride);
+        }
+
+        /// <summary>
+        /// Signature-override compose (soak fix D37, mechanism decision: WordEditor
+        /// _MailAutoSig bookmark dance via the hidden GetInspector - the add-in's proven
+        /// pattern, and what Outlook's own Insert&gt;Signature switcher does). One held
+        /// Inspector hosts everything: the injected default-signature region (the
+        /// _MailAutoSig bookmark) is deleted and the chosen signature FILE inserted in
+        /// its place with Word's InsertFile (Word handles HTML conversion, styles and
+        /// resources natively), the bookmark is recreated over the new content so
+        /// Outlook keeps treating the region as THE signature, the agent body text goes
+        /// to the document top, and Close(olSave) flushes the document into the item.
+        /// Without a default signature the insertion lands directly above the quoted
+        /// original (_MailOriginal) or at the document end. The quote region is never
+        /// touched (threading/quoted-content contract).
+        /// </summary>
+        private static (bool SignatureInjected, long TextBefore, long TextAfter, bool OverrideApplied, string? OverrideError) ComposeWithSignatureOverride(
+            object draftObject,
+            string bodyText,
+            ComSignatureOverride signatureOverride)
+        {
+            dynamic draft = draftObject;
+            string htmlBefore = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
+            long textBefore = CountNonWhitespaceText(htmlBefore);
+            string htmlAfter = htmlBefore;
+            long textAfter = textBefore;
+            bool injected = false;
+            bool applied = false;
+            string? error = null;
+
+            object? inspector = null;
+            object? document = null;
+            try
+            {
+                if (!File.Exists(signatureOverride.FilePath))
+                {
+                    error = "SignatureFileMissing";
+                }
+
+                if (error == null)
+                {
+                    try
+                    {
+                        inspector = draft.GetInspector;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+
+                    if (inspector == null)
+                    {
+                        error = "NoInspector";
+                    }
+                }
+
+                if (error == null)
+                {
+                    // Default-injection observation, exactly like the default path.
+                    htmlAfter = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
+                    textAfter = CountNonWhitespaceText(htmlAfter);
+                    injected = textAfter > textBefore;
+
+                    try
+                    {
+                        document = ((dynamic)inspector!).WordEditor;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+
+                    if (document == null)
+                    {
+                        error = "NoWordEditor";
+                    }
+                }
+
+                if (error == null)
+                {
+                    (bool sigOk, string? sigError) = ApplySignatureToDocument(document!, signatureOverride.FilePath);
+                    error = sigOk ? null : sigError ?? "SignatureInsertFailed";
+                }
+
+                if (error == null)
+                {
+                    (bool bodyOk, string? bodyError) = InsertBodyTextAtDocumentTop(document!, bodyText);
+                    error = bodyOk ? null : bodyError ?? "BodyInsertFailed";
+                }
+
+                if (error == null)
+                {
+                    // The load-bearing flush (probe-proven): olSave on the SAME held
+                    // inspector commits the Word edits into the item.
+                    try
+                    {
+                        ((dynamic)inspector!).Close(0); // olSave
+                        applied = true;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        error = DescribeComFailure(ex);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                error = DescribeComFailure(ex);
+            }
+            finally
+            {
+                Release(document);
+                Release(inspector);
+            }
+
+            if (!applied)
+            {
+                // Fallback = the default composition. Its input HTML still contains the
+                // injected default signature, and the wholesale HTMLBody assignment
+                // re-renders the Word document - discarding any partial override edits.
+                string html = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
+                if (html.Length == 0)
+                {
+                    html = htmlAfter;
+                }
+
+                string fragment = OutlookAI.Core.Text.HtmlBodyComposer.ToHtmlFragment(bodyText);
+                draft.HTMLBody = OutlookAI.Core.Text.HtmlBodyComposer.InsertAtBodyTop(
+                    html.Length > 0 ? html : null, fragment);
+            }
+
+            return (injected, textBefore, textAfter, applied, error);
+        }
+
+        /// <summary>
+        /// The bookmark dance itself, on an already-acquired Word document: replace the
+        /// _MailAutoSig region (or insert above _MailOriginal / at document end when no
+        /// signature region exists) with the signature file's content and recreate the
+        /// _MailAutoSig bookmark over it.
+        /// </summary>
+        private static (bool Applied, string? Error) ApplySignatureToDocument(object documentObject, string signatureFilePath)
+        {
+            dynamic doc = documentObject;
+            object? bookmarks = null;
+            try
+            {
+                bookmarks = doc.Bookmarks;
+                dynamic bm = (dynamic)bookmarks!;
+
+                // _MailAutoSig/_MailOriginal are HIDDEN bookmarks - invisible to
+                // Exists() unless ShowHidden is on (add-in AITaskPane pattern).
+                bm.ShowHidden = true;
+
+                int insertAt;
+                if ((bool)bm.Exists("_MailAutoSig"))
+                {
+                    // Replace: drop the marker, then the signature content itself.
+                    object? sigBookmark = null;
+                    object? sigRange = null;
+                    try
+                    {
+                        sigBookmark = bm.Item("_MailAutoSig");
+                        sigRange = ((dynamic)sigBookmark!).Range;
+                        insertAt = (int)((dynamic)sigRange!).Start;
+                        ((dynamic)sigBookmark).Delete();
+                        ((dynamic)sigRange).Delete();
+                    }
+                    finally
+                    {
+                        Release(sigRange);
+                        Release(sigBookmark);
+                    }
+                }
+                else if ((bool)bm.Exists("_MailOriginal"))
+                {
+                    // No default signature (e.g. account without one): insert directly
+                    // ABOVE the quoted original.
+                    object? origBookmark = null;
+                    object? origRange = null;
+                    try
+                    {
+                        origBookmark = bm.Item("_MailOriginal");
+                        origRange = ((dynamic)origBookmark!).Range;
+                        insertAt = (int)((dynamic)origRange!).Start;
+                    }
+                    finally
+                    {
+                        Release(origRange);
+                        Release(origBookmark);
+                    }
+                }
+                else
+                {
+                    // Plain new draft: end of document (before the final paragraph mark).
+                    object? content = null;
+                    try
+                    {
+                        content = doc.Content;
+                        insertAt = Math.Max(0, (int)((dynamic)content!).End - 1);
+                    }
+                    finally
+                    {
+                        Release(content);
+                    }
+                }
+
+                int endBefore = GetDocumentEnd(doc);
+                object? insertRange = null;
+                try
+                {
+                    insertRange = doc.Range(insertAt, insertAt);
+                    ((dynamic)insertRange!).InsertFile(signatureFilePath, Type.Missing, false, false, false);
+                }
+                finally
+                {
+                    Release(insertRange);
+                }
+
+                int endAfter = GetDocumentEnd(doc);
+                int newEnd = insertAt + Math.Max(0, endAfter - endBefore);
+
+                // Recreate the marker over the inserted content so Outlook (and the
+                // add-in's draft/signature/quote split) keep working on this draft.
+                object? newRange = null;
+                try
+                {
+                    newRange = doc.Range(insertAt, newEnd);
+                    bm.Add("_MailAutoSig", newRange);
+                }
+                finally
+                {
+                    Release(newRange);
+                }
+
+                return endAfter > endBefore ? (true, null) : (false, "InsertFileAddedNothing");
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return (false, DescribeComFailure(ex));
+            }
+            finally
+            {
+                Release(bookmarks);
+            }
+        }
+
+        /// <summary>
+        /// Inserts the agent's plain-text body at the TOP of an already-acquired Word
+        /// document (override path - the default path composes via HTMLBody instead).
+        /// Line breaks become soft line breaks (vertical tab), matching the default
+        /// path's &lt;br&gt; behavior; one paragraph mark separates the body from the
+        /// signature/quote below.
+        /// </summary>
+        private static (bool Inserted, string? Error) InsertBodyTextAtDocumentTop(object documentObject, string bodyText)
+        {
+            object? range = null;
+            try
+            {
+                string normalized = bodyText.Replace("\r\n", "\n").Replace('\n', '\v');
+                range = ((dynamic)documentObject).Range(0, 0);
+                ((dynamic)range!).Text = normalized + "\r";
+                return (true, null);
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return (false, DescribeComFailure(ex));
+            }
+            finally
+            {
+                Release(range);
+            }
+        }
+
+        private static int GetDocumentEnd(dynamic doc)
+        {
+            object? content = null;
+            try
+            {
+                content = doc.Content;
+                return (int)((dynamic)content!).End;
+            }
+            finally
+            {
+                Release(content);
+            }
+        }
+
+        /// <summary>
+        /// Test-support surface (live signature tests): applies a signature override to
+        /// an EXISTING saved draft - re-opens it, runs the same held-inspector bookmark
+        /// dance the creators use (this time against the PREVIOUSLY applied signature's
+        /// bookmark, i.e. the replace branch), flushes via Close(olSave) on that same
+        /// inspector, then saves the item.
+        /// </summary>
+        public bool TryApplySignatureOverrideToDraft(string entryIdHex, string? storeId, string signatureFilePath, out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(entryIdHex))
+            {
+                throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
+            }
+
+            string? capturedError = null;
+            bool applied = _runner.Run(() =>
+            {
+                dynamic ns = _namespace!;
+                object? itemObject = null;
+                object? inspector = null;
+                object? document = null;
+                try
+                {
+                    itemObject = storeId != null
+                        ? ns.GetItemFromID(entryIdHex, storeId)
+                        : ns.GetItemFromID(entryIdHex);
+
+                    if (!File.Exists(signatureFilePath))
+                    {
+                        capturedError = "SignatureFileMissing";
+                        return false;
+                    }
+
+                    inspector = ((dynamic)itemObject!).GetInspector;
+                    document = inspector != null ? ((dynamic)inspector).WordEditor : null;
+                    if (document == null)
+                    {
+                        capturedError = "NoWordEditor";
+                        return false;
+                    }
+
+                    (bool ok, string? overrideError) = ApplySignatureToDocument(document, signatureFilePath);
+                    capturedError = overrideError;
+                    if (!ok)
+                    {
+                        return false;
+                    }
+
+                    // Probe-proven flush order: Close(olSave) on the held inspector
+                    // FIRST, then item.Save().
+                    ((dynamic)inspector!).Close(0);
+                    ((dynamic)itemObject!).Save();
+                    return true;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return false;
+                }
+                finally
+                {
+                    Release(document);
+                    Release(inspector);
+                    Release(itemObject);
+                }
+            });
+
+            error = capturedError;
+            return applied;
+        }
+
+        /// <summary>
+        /// STA-side: closes the hidden Inspector the GetInspector signature touch left
+        /// behind. Without this, a display:false draft still surfaces in
+        /// Application.Inspectors. <paramref name="saveWordEdits"/> decides the close
+        /// mode - PROBED on this machine (D37): Word-document edits (the signature
+        /// override path) do NOT reach the item via <c>item.Save()</c>; only
+        /// <c>Inspector.Close(olSave)</c> flushes them, while <c>olDiscard</c> throws
+        /// them away permanently. Default path (no Word edits): olDiscard - the item is
+        /// already saved, nothing is lost.
+        /// </summary>
+        private static void CloseHiddenInspector(object mailObject, bool saveWordEdits = false)
         {
             object? inspector = null;
             try
@@ -2654,7 +3063,7 @@ namespace OutlookAI.Core.Com
                 inspector = ((dynamic)mailObject).GetInspector;
                 if (inspector != null)
                 {
-                    ((dynamic)inspector).Close(1); // 1 = olDiscard
+                    ((dynamic)inspector).Close(saveWordEdits ? 0 : 1); // 0 = olSave, 1 = olDiscard
                 }
             }
             catch (Exception ex) when (IsComCallFailure(ex))
@@ -3571,7 +3980,7 @@ namespace OutlookAI.Core.Com
                 body);
         }
 
-        private ComItemDetail SnapshotDetail(object itemObject, bool includeHeaders, int maxBodyChars)
+        private ComItemDetail SnapshotDetail(object itemObject, bool includeHeaders, bool includeBody)
         {
             dynamic item = itemObject;
             string entryId = (string)item.EntryID;
@@ -3619,30 +4028,31 @@ namespace OutlookAI.Core.Com
             }
 
             // Body: Outlook maintains .Body as the plain-text rendering of HTML/RTF
-            // mail; fall back to converting .HTMLBody ourselves when it is empty.
+            // mail; fall back to converting .HTMLBody ourselves when it is empty. The
+            // FULL body is returned (windowing + caching live in MailService, D37);
+            // includeBody=false skips the transfer for cache-served continuation reads.
             string body = string.Empty;
             string bodyOrigin = "none";
-            string? nativeBody = TryGetString(() => (string?)item.Body);
-            if (!string.IsNullOrEmpty(nativeBody))
+            if (includeBody)
             {
-                body = nativeBody!;
-                bodyOrigin = "text";
-            }
-            else
-            {
-                string? html = TryGetString(() => (string?)item.HTMLBody);
-                if (!string.IsNullOrEmpty(html))
+                string? nativeBody = TryGetString(() => (string?)item.Body);
+                if (!string.IsNullOrEmpty(nativeBody))
                 {
-                    body = OutlookAI.Core.Text.HtmlToText.Convert(html);
-                    bodyOrigin = "html-converted";
+                    body = nativeBody!;
+                    bodyOrigin = "text";
+                }
+                else
+                {
+                    string? html = TryGetString(() => (string?)item.HTMLBody);
+                    if (!string.IsNullOrEmpty(html))
+                    {
+                        body = OutlookAI.Core.Text.HtmlToText.Convert(html);
+                        bodyOrigin = "html-converted";
+                    }
                 }
             }
 
             long bodyTotal = body.Length;
-            if (body.Length > maxBodyChars)
-            {
-                body = body.Substring(0, maxBodyChars);
-            }
 
             // Recipients with SMTP resolution (PR_SMTP_ADDRESS via PropertyAccessor).
             List<ComRecipientInfo> recipients = new List<ComRecipientInfo>();
@@ -3792,15 +4202,22 @@ namespace OutlookAI.Core.Com
                 headers);
         }
 
+        /// <summary>Recursion guard for the full-tree folder walk (real trees are a handful of levels).</summary>
+        private const int FolderWalkDepthGuard = 64;
+
         private void CollectFolders(
             object folderObject,
             string storeDisplayName,
             string parentPath,
             int depth,
-            int maxDepth,
-            int maxFolders,
+            int absoluteWalkCap,
             List<ComFolderInfo> result)
         {
+            if (depth > FolderWalkDepthGuard)
+            {
+                return;
+            }
+
             dynamic folder = folderObject;
             object? subFolders = null;
             try
@@ -3808,9 +4225,38 @@ namespace OutlookAI.Core.Com
                 subFolders = folder.Folders;
                 dynamic folderCollection = (dynamic)subFolders!;
                 int count = folderCollection.Count;
+
+                // Stable order leg 2: siblings sorted by name (case-insensitive
+                // ordinal; collection position breaks ties) so the flattened
+                // depth-first list - and with it any offset paging - is deterministic
+                // regardless of the provider's enumeration order.
+                List<(string Name, int Index)> order = new List<(string, int)>(count);
                 for (int i = 1; i <= count; i++)
                 {
-                    if (result.Count >= maxFolders)
+                    object? probe = null;
+                    try
+                    {
+                        probe = folderCollection[i];
+                        order.Add(((string)((dynamic)probe!).Name, i));
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                    finally
+                    {
+                        Release(probe);
+                    }
+                }
+
+                order.Sort((a, b) =>
+                {
+                    int byName = string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+                    return byName != 0 ? byName : a.Index.CompareTo(b.Index);
+                });
+
+                foreach ((string name, int index) in order)
+                {
+                    if (result.Count >= absoluteWalkCap)
                     {
                         return;
                     }
@@ -3818,18 +4264,8 @@ namespace OutlookAI.Core.Com
                     object? child = null;
                     try
                     {
-                        child = folderCollection[i];
+                        child = folderCollection[index];
                         dynamic c = (dynamic)child!;
-                        string name;
-                        try
-                        {
-                            name = (string)c.Name;
-                        }
-                        catch (COMException)
-                        {
-                            continue;
-                        }
-
                         string path = parentPath.Length == 0 ? name : parentPath + "/" + name;
                         long? itemCount = TryGetPropertyLong(c, "http://schemas.microsoft.com/mapi/proptag/0x36020003");
                         long? unread = TryGetPropertyLong(c, "http://schemas.microsoft.com/mapi/proptag/0x36030003");
@@ -3849,10 +4285,13 @@ namespace OutlookAI.Core.Com
                         }
 
                         result.Add(new ComFolderInfo(storeDisplayName, path, name, itemCount, unread, childCount));
-                        if (depth < maxDepth && childCount > 0)
+                        if (childCount > 0)
                         {
-                            CollectFolders(child, storeDisplayName, path, depth + 1, maxDepth, maxFolders, result);
+                            CollectFolders(child, storeDisplayName, path, depth + 1, absoluteWalkCap, result);
                         }
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
                     }
                     finally
                     {

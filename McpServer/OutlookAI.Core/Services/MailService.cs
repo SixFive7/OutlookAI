@@ -80,14 +80,14 @@ namespace OutlookAI.Core.Services
         /// <summary>Cap on attachments listed in read payloads (flagged; higher indexes stay saveable).</summary>
         public const int AttachmentsCap = 100;
 
-        /// <summary>Hard cap on folders per list_folders call.</summary>
-        public const int FoldersCap = 1000;
+        /// <summary>
+        /// Folders per list_folders page (section 12 discipline bound; real profiles fit
+        /// in one page - offset paging exists for the pathological rest).
+        /// </summary>
+        public const int FoldersPerCallCap = 500;
 
-        /// <summary>Default folder cap for list_folders.</summary>
-        public const int FoldersDefault = 300;
-
-        /// <summary>Maximum list_folders tree depth.</summary>
-        public const int FolderDepthCap = 6;
+        /// <summary>Absolute guard on the underlying COM folder walk (pathological stores).</summary>
+        public const int FolderWalkAbsoluteCap = 10_000;
 
         /// <summary>
         /// Advice appended to show_search_results whenever the EFFECTIVE registry state
@@ -105,6 +105,7 @@ namespace OutlookAI.Core.Services
         private readonly ComGateway _gateway;
         private readonly SendConfirmationTokens _sendTokens;
         private readonly SweepCache _sweepCache = new SweepCache();
+        private readonly BodyCache _bodies = new BodyCache();
         private readonly ConcurrentDictionary<string, CachedHit> _hits =
             new ConcurrentDictionary<string, CachedHit>(StringComparer.Ordinal);
         private readonly object _catalogLock = new object();
@@ -240,7 +241,7 @@ namespace OutlookAI.Core.Services
                     advice.Add("Freshness sweep unavailable (" + sweep.Error + "); results are index-only and may lag the last "
                         + DescribeAge(staleness) + " of mail. " + (ComGateway.IsInstallerMutexHeld()
                             ? "An add-in update is in progress - retry shortly (D17)."
-                            : "Retry later, check index_status, or search again with exhaustive:true plus store + folder/after bounds for an index-free COM search."));
+                            : "Retry later, check outlook_health, or search again with exhaustive:true plus store + folder/after bounds for an index-free COM search."));
                 }
             }
 
@@ -596,7 +597,7 @@ namespace OutlookAI.Core.Services
         /// string. Index hits are located lazily (HitLocator) and the located EntryID is
         /// cached for the rest of the process lifetime.
         /// </summary>
-        public ReadOutcome Read(string id, int maxBodyChars = BodyCharsDefault, bool includeHeaders = false, int maxHeaderChars = HeaderCharsDefault)
+        public ReadOutcome Read(string id, int maxBodyChars = BodyCharsDefault, bool includeHeaders = false, int maxHeaderChars = HeaderCharsDefault, int bodyOffset = 0)
         {
             if (string.IsNullOrWhiteSpace(id))
             {
@@ -605,17 +606,30 @@ namespace OutlookAI.Core.Services
 
             maxBodyChars = Clamp(maxBodyChars, 0, BodyCharsCap);
             maxHeaderChars = Clamp(maxHeaderChars, HeaderCharsMin, HeaderCharsCap);
+            if (bodyOffset < 0)
+            {
+                bodyOffset = 0;
+            }
 
             (string entryId, string? storeId, string? locatedVia, long locateMs, string? hitId) = ResolveToEntryId(id);
+
+            // True body paging (D37): a continuation read (body_offset > 0) is served
+            // from the cached one-time extraction - the body is NOT re-transferred over
+            // COM. An offset-0 read always extracts fresh and refreshes the cache, so
+            // plain re-reads keep their always-fresh semantics.
+            string cachedBody = string.Empty;
+            string cachedOrigin = "none";
+            bool haveCachedBody = bodyOffset > 0 && _bodies.TryGet(entryId, out cachedBody, out cachedOrigin);
+
             ComItemDetail detail = _gateway.Run(s =>
             {
-                ComItemDetail? d = s.TryReadItem(entryId, storeId, includeHeaders, maxBodyChars, out string? error);
+                ComItemDetail? d = s.TryReadItem(entryId, storeId, includeHeaders, includeBody: !haveCachedBody, out string? error);
                 if (d == null && storeId == null)
                 {
                     // Direct EntryID without a known store: retry across stores.
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
-                        d = s.TryReadItem(entryId, store.StoreId, includeHeaders, maxBodyChars, out error);
+                        d = s.TryReadItem(entryId, store.StoreId, includeHeaders, includeBody: !haveCachedBody, out error);
                         if (d != null)
                         {
                             break;
@@ -625,6 +639,26 @@ namespace OutlookAI.Core.Services
 
                 return d ?? throw new InvalidOperationException("Item could not be opened (" + (error ?? "unknown") + ").");
             });
+
+            string fullBody;
+            string bodyOrigin;
+            if (haveCachedBody)
+            {
+                fullBody = cachedBody;
+                bodyOrigin = cachedOrigin;
+            }
+            else
+            {
+                fullBody = detail.Body;
+                bodyOrigin = detail.BodyOrigin;
+                _bodies.Put(detail.EntryId, fullBody, bodyOrigin);
+                if (!string.Equals(detail.EntryId, entryId, StringComparison.OrdinalIgnoreCase))
+                {
+                    _bodies.Put(entryId, fullBody, bodyOrigin);
+                }
+            }
+
+            (int windowStart, string window, bool moreBeyondWindow) = ComputeBodyWindow(fullBody, bodyOffset, maxBodyChars);
 
             string? headers = detail.Headers;
             bool? headersTruncated = null;
@@ -654,10 +688,11 @@ namespace OutlookAI.Core.Services
                 Recipients = recipients,
                 RecipientsTruncated = recipientsTruncated ? true : (bool?)null,
                 RecipientsTotal = recipientsTruncated ? recipientTotal : (int?)null,
-                Body = detail.Body,
-                BodyTotalChars = detail.BodyTotalChars,
-                BodyTruncated = detail.BodyTotalChars > detail.Body.Length,
-                BodyOrigin = detail.BodyOrigin,
+                Body = window,
+                BodyOffset = windowStart > 0 || bodyOffset > 0 ? Math.Max(windowStart, 0) : (int?)null,
+                BodyTotalChars = fullBody.Length,
+                BodyTruncated = moreBeyondWindow,
+                BodyOrigin = bodyOrigin,
                 SizeBytes = detail.SizeBytes,
                 IsRead = detail.IsRead,
                 ConversationId = detail.ConversationId,
@@ -1054,7 +1089,7 @@ namespace OutlookAI.Core.Services
         /// account's identity and signature (v3.MD section 3 mechanics), optionally
         /// displayed for the user (D4 default). Never sends. Audit-logged (load-bearing).
         /// </summary>
-        public DraftOutcome NewDraft(string account, string? to, string? cc, string? subject, string? body, bool display = true)
+        public DraftOutcome NewDraft(string account, string? to, string? cc, string? subject, string? body, bool display = true, string? signature = null)
         {
             if (string.IsNullOrWhiteSpace(account))
             {
@@ -1083,9 +1118,10 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("body is required (plain text; it is placed above the signature).", nameof(body));
             }
 
+            ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature);
             ComDraftCreateResult created = _gateway.Run(s =>
             {
-                ComDraftCreateResult? r = s.TryCreateNewDraft(account, toList, ccList, subject!, body!, display, out string? error);
+                ComDraftCreateResult? r = s.TryCreateNewDraft(account, toList, ccList, subject!, body!, display, signatureOverride, out string? error);
                 return r ?? throw new InvalidOperationException(BuildDraftError(error, account));
             });
 
@@ -1098,10 +1134,10 @@ namespace OutlookAI.Core.Services
         /// <c>Reply()</c>/<c>ReplyAll()</c> - threading and quoted history preserved,
         /// agent text above the quote, saved to the source store's Drafts (D4). Never sends.
         /// </summary>
-        public DraftOutcome ReplyDraft(string id, string? body, bool replyAll = false, bool display = true)
+        public DraftOutcome ReplyDraft(string id, string? body, bool replyAll = false, bool display = true, string? signature = null)
         {
             (string? hitId, string sourceEntryId, ComDraftCreateResult created) = CreateDerived(
-                id, replyAll ? ComDerivedDraftKind.ReplyAll : ComDerivedDraftKind.Reply, to: null, body, display);
+                id, replyAll ? ComDerivedDraftKind.ReplyAll : ComDerivedDraftKind.Reply, to: null, body, display, signature);
             string op = replyAll ? "replyall_draft" : "reply_draft";
             AuditDraft(op, created, requestedAccount: null, sourceEntryId);
             return ToDraftOutcome(replyAll ? "replyall" : "reply", created, hitId, sourceEntryId);
@@ -1112,7 +1148,7 @@ namespace OutlookAI.Core.Services
         /// quoted content and attachments preserved, agent text above the quote, saved to
         /// the source store's Drafts (D4). Never sends.
         /// </summary>
-        public DraftOutcome ForwardDraft(string id, string? body, string? to, bool display = true)
+        public DraftOutcome ForwardDraft(string id, string? body, string? to, bool display = true, string? signature = null)
         {
             IReadOnlyList<string> toList = Text.HtmlBodyComposer.SplitRecipients(to);
             if (toList.Count == 0)
@@ -1121,7 +1157,7 @@ namespace OutlookAI.Core.Services
             }
 
             (string? hitId, string sourceEntryId, ComDraftCreateResult created) = CreateDerived(
-                id, ComDerivedDraftKind.Forward, toList, body, display);
+                id, ComDerivedDraftKind.Forward, toList, body, display, signature);
             AuditDraft("forward_draft", created, requestedAccount: null, sourceEntryId);
             return ToDraftOutcome("forward", created, hitId, sourceEntryId);
         }
@@ -1131,7 +1167,8 @@ namespace OutlookAI.Core.Services
             ComDerivedDraftKind kind,
             IReadOnlyList<string>? to,
             string? body,
-            bool display)
+            bool display,
+            string? signature)
         {
             if (string.IsNullOrWhiteSpace(id))
             {
@@ -1143,18 +1180,19 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("body is required (plain text; it is placed above the quoted mail).", nameof(body));
             }
 
+            ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature);
             (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
             IReadOnlyList<string> toList = to ?? Array.Empty<string>();
             ComDraftCreateResult created = _gateway.Run(s =>
             {
-                ComDraftCreateResult? r = s.TryCreateDerivedDraft(entryId, storeId, kind, toList, body!, display, out string? error);
+                ComDraftCreateResult? r = s.TryCreateDerivedDraft(entryId, storeId, kind, toList, body!, display, signatureOverride, out string? error);
                 if (r == null && storeId == null)
                 {
                     // Direct EntryID without a known store: retry across stores (same
                     // pattern as read/open_in_outlook).
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
-                        r = s.TryCreateDerivedDraft(entryId, store.StoreId, kind, toList, body!, display, out error);
+                        r = s.TryCreateDerivedDraft(entryId, store.StoreId, kind, toList, body!, display, signatureOverride, out error);
                         if (r != null)
                         {
                             break;
@@ -1168,6 +1206,35 @@ namespace OutlookAI.Core.Services
             });
 
             return (hitId, entryId, created);
+        }
+
+        /// <summary>
+        /// Validates and resolves the optional draft-tool signature name BEFORE any COM
+        /// work: null stays null (account default), an unknown name is rejected with
+        /// the available names listed (agent self-correction), a known one becomes the
+        /// COM override request carrying the preferred file (.htm - Word converts and
+        /// embeds natively).
+        /// </summary>
+        private static ComSignatureOverride? ResolveSignatureOverride(string? signature)
+        {
+            if (string.IsNullOrWhiteSpace(signature))
+            {
+                return null;
+            }
+
+            SignatureInfo? resolved = SignatureCatalog.TryResolve(signature!);
+            if (resolved?.PreferredFilePath == null)
+            {
+                IReadOnlyList<SignatureInfo> available = SignatureCatalog.ListSignatures();
+                throw new ArgumentException(
+                    "signature '" + signature!.Trim() + "' was not found"
+                    + (available.Count > 0
+                        ? ". Available signatures: " + string.Join(", ", available.Select(s => s.Name)) + ". Use list_signatures for details."
+                        : " - no signatures are installed (see list_signatures)."),
+                    nameof(signature));
+            }
+
+            return new ComSignatureOverride(resolved.Name, resolved.PreferredFilePath!);
         }
 
         private static string BuildDraftError(string? error, string account)
@@ -1201,6 +1268,8 @@ namespace OutlookAI.Core.Services
                     ("account", created.Draft.SendUsingAccountSmtp ?? requestedAccount),
                     ("accountResolved", created.AccountResolved ? "true" : "false"),
                     ("signatureInjected", created.SignatureInjected ? "true" : "false"),
+                    ("signature", created.SignatureOverrideName),
+                    ("signatureApplied", created.SignatureOverrideName != null ? (created.SignatureOverrideApplied ? "true" : "false") : null),
                     ("displayed", created.Displayed ? "true" : "false"),
                     ("recipients", created.Draft.Recipients.Count.ToString(CultureInfo.InvariantCulture)),
                     ("movedToDrafts", created.MovedToDrafts ? "true" : "false"),
@@ -1230,6 +1299,9 @@ namespace OutlookAI.Core.Services
                 AccountResolved = created.AccountResolved,
                 Subject = created.Draft.Subject,
                 SignatureInjected = created.SignatureInjected,
+                Signature = created.SignatureOverrideName,
+                SignatureApplied = created.SignatureOverrideName != null ? created.SignatureOverrideApplied : (bool?)null,
+                SignatureError = created.SignatureOverrideName != null ? created.SignatureOverrideError : null,
                 Displayed = created.Displayed,
                 ConversationId = created.Draft.ConversationId,
                 Recipients = recipients,
@@ -1518,6 +1590,36 @@ namespace OutlookAI.Core.Services
         /// Original 1-based indexes are preserved, so attachments beyond the cap remain
         /// saveable via save_attachment even though they are not listed.
         /// </summary>
+        /// <summary>
+        /// Pure body-window math for read's body_offset paging (public for T1): returns
+        /// the effective window start (the requested offset clamped to the body length),
+        /// the window text of at most <paramref name="maxChars"/> characters, and
+        /// whether more body exists BEYOND the window (the bodyTruncated contract - text
+        /// before the window was skipped on request and does not count as truncation).
+        /// </summary>
+        public static (int Start, string Window, bool MoreBeyondWindow) ComputeBodyWindow(string fullBody, int offset, int maxChars)
+        {
+            if (fullBody == null)
+            {
+                throw new ArgumentNullException(nameof(fullBody));
+            }
+
+            if (offset < 0)
+            {
+                offset = 0;
+            }
+
+            if (maxChars < 0)
+            {
+                maxChars = 0;
+            }
+
+            int start = Math.Min(offset, fullBody.Length);
+            int length = Math.Min(maxChars, fullBody.Length - start);
+            string window = length > 0 ? fullBody.Substring(start, length) : string.Empty;
+            return (start, window, start + length < fullBody.Length);
+        }
+
         public static IReadOnlyList<AttachmentView> CapAttachments(
             IReadOnlyList<ComAttachmentInfo> attachments, out int total, out bool truncated)
         {
@@ -1534,103 +1636,18 @@ namespace OutlookAI.Core.Services
                 .ToList();
         }
 
-        // ------------------------------------------------------------------ index_status
-
-        /// <summary>Staleness + availability self-report (R7/D19). Never starts Outlook.</summary>
-        public IndexStatusOutcome IndexStatus()
-        {
-            bool outlookRunning = ComGateway.IsOutlookRunning();
-            bool mutexHeld = ComGateway.IsInstallerMutexHeld();
-            List<string> advice = new List<string>();
-
-            string provider;
-            DateTime? newest = null;
-            double? ageMinutes = null;
-            List<StoreStaleness>? perStore = null;
-            try
-            {
-                IndexSearchService index = _index.Value;
-                provider = index.Provider.ToString();
-                IndexStalenessReport report = index.GetStaleness();
-                newest = report.NewestIndexedReceivedUtc;
-                ageMinutes = report.Age?.TotalMinutes;
-
-                // The unordered discovery sample misses tiny idle stores (Phase-1 fact
-                // 5); when Outlook is already running, its store list closes the gap via
-                // targeted per-address discovery. Never STARTS Outlook here (D17:
-                // index_status is an index-only tool).
-                if (outlookRunning)
-                {
-                    try
-                    {
-                        EnsureCatalogCoverageFromCom();
-                    }
-                    catch (Exception ex) when (ex is not OutOfMemoryException)
-                    {
-                        // Best-effort enrichment only.
-                    }
-                }
-
-                perStore = new List<StoreStaleness>();
-                foreach (StoreScopeInfo scopeInfo in GetCatalog())
-                {
-                    IndexStalenessReport scoped = index.GetStaleness(scopeInfo.StorePrefix);
-                    perStore.Add(new StoreStaleness
-                    {
-                        Store = scopeInfo.StoreDisplayName,
-                        NewestIndexedUtc = scoped.NewestIndexedReceivedUtc,
-                    });
-                }
-            }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
-            {
-                provider = "unavailable: " + ex.GetType().Name;
-                advice.Add("The SystemIndex is not reachable; search cannot run on this machine state.");
-            }
-
-            if (!outlookRunning)
-            {
-                advice.Add("Outlook is not running: the index stops advancing and search's freshness sweep will start Outlook (D17)"
-                    + (mutexHeld
-                        ? " - but an add-in update is in progress, so the sweep degrades to index-only results until it finishes."
-                        : "."));
-            }
-            else if (ageMinutes.HasValue && ageMinutes.Value > 30)
-            {
-                advice.Add("Newest indexed mail is " + ageMinutes.Value.ToString("F0", CultureInfo.InvariantCulture)
-                    + " minutes old. search covers the gap automatically with its freshness sweep.");
-            }
-
-            if (advice.Count == 0)
-            {
-                advice.Add("Index is current" + (ageMinutes.HasValue
-                    ? " (newest mail " + ageMinutes.Value.ToString("F1", CultureInfo.InvariantCulture) + " min ago)"
-                    : string.Empty) + "; searches run at index speed.");
-            }
-
-            return new IndexStatusOutcome
-            {
-                Provider = provider,
-                OutlookRunning = outlookRunning,
-                ComConnected = _gateway.ProbeConnected(),
-                InstallerMutexHeld = mutexHeld,
-                NewestIndexedUtc = newest,
-                IndexAgeMinutes = ageMinutes,
-                PerStore = perStore,
-                Advice = advice,
-            };
-        }
-
-        // ------------------------------------------------------------------ health (Phase 7)
+        // ------------------------------------------------------------------ outlook_health (Phase 7; merged with index_status in soak fix D37)
 
         /// <summary>
-        /// Compact server + environment self-check (Phase 7): Outlook process/version,
-        /// store reachability, index freshness, WSearch service state, audit-log
-        /// writability, tuning state (registry read - decoupled from the add-in) and the
-        /// OutlookAISetup installer-mutex state. Read-only: COM is touched only while
-        /// Outlook is ALREADY running (attach - same pattern as index_status), so this
-        /// never starts Outlook. Always returns a report; problems degrade the status
-        /// instead of throwing.
+        /// Compact server + environment self-check behind the <c>outlook_health</c> tool
+        /// (Phase 7, merged with the former index_status in soak fix D37): Outlook
+        /// process/version/headless, probed COM liveness, store reachability, index
+        /// freshness GLOBAL AND PER STORE with actionable freshness advice, WSearch
+        /// service state, audit-log writability, tuning state (registry read - decoupled
+        /// from the add-in) and the OutlookAISetup installer-mutex state. Read-only: COM
+        /// is touched only while Outlook is ALREADY running (attach), so this never
+        /// starts Outlook. Always returns a report; problems degrade the status instead
+        /// of throwing.
         /// </summary>
         public HealthOutcome Health()
         {
@@ -1664,10 +1681,13 @@ namespace OutlookAI.Core.Services
                 problems.Add("The add-in installer mutex (OutlookAISetup) is held - COM tools return retry-later until the update finishes.");
             }
 
-            // Index freshness + WSearch service state.
+            // Index freshness (global + per store) + WSearch service state + advice
+            // (the former index_status content, merged in soak fix D37).
+            List<string> advice = new List<string>();
             string provider;
             DateTime? newestIndexed = null;
             double? ageMinutes = null;
+            List<StoreStaleness>? perStore = null;
             try
             {
                 IndexSearchService index = _index.Value;
@@ -1675,11 +1695,57 @@ namespace OutlookAI.Core.Services
                 IndexStalenessReport staleness = index.GetStaleness();
                 newestIndexed = staleness.NewestIndexedReceivedUtc;
                 ageMinutes = staleness.Age?.TotalMinutes;
+
+                // The unordered discovery sample misses tiny idle stores (Phase-1 fact
+                // 5); when Outlook is already running, its store list closes the gap via
+                // targeted per-address discovery. Never STARTS Outlook here.
+                if (outlookRunning)
+                {
+                    try
+                    {
+                        EnsureCatalogCoverageFromCom();
+                    }
+                    catch (Exception ex) when (ex is not OutOfMemoryException)
+                    {
+                        // Best-effort enrichment only.
+                    }
+                }
+
+                perStore = new List<StoreStaleness>();
+                foreach (StoreScopeInfo scopeInfo in GetCatalog())
+                {
+                    IndexStalenessReport scoped = index.GetStaleness(scopeInfo.StorePrefix);
+                    perStore.Add(new StoreStaleness
+                    {
+                        Store = scopeInfo.StoreDisplayName,
+                        NewestIndexedUtc = scoped.NewestIndexedReceivedUtc,
+                    });
+                }
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 provider = "unavailable: " + ex.GetType().Name;
                 problems.Add("The SystemIndex is unreachable - index-backed search cannot run.");
+            }
+
+            if (!outlookRunning)
+            {
+                advice.Add("Outlook is not running: the index stops advancing and search's freshness sweep will start Outlook"
+                    + (mutexHeld
+                        ? " - but an add-in update is in progress, so the sweep degrades to index-only results until it finishes."
+                        : "."));
+            }
+            else if (ageMinutes.HasValue && ageMinutes.Value > 30)
+            {
+                advice.Add("Newest indexed mail is " + ageMinutes.Value.ToString("F0", CultureInfo.InvariantCulture)
+                    + " minutes old. search covers the gap automatically with its freshness sweep.");
+            }
+
+            if (advice.Count == 0 && !provider.StartsWith("unavailable", StringComparison.Ordinal))
+            {
+                advice.Add("Index is current" + (ageMinutes.HasValue
+                    ? " (newest mail " + ageMinutes.Value.ToString("F1", CultureInfo.InvariantCulture) + " min ago)"
+                    : string.Empty) + "; searches run at index speed.");
             }
 
             int? wsearchStart = HealthReporting.TryReadWSearchStartValue();
@@ -1723,9 +1789,11 @@ namespace OutlookAI.Core.Services
                     Provider = provider,
                     NewestIndexedUtc = newestIndexed,
                     AgeMinutes = ageMinutes,
+                    PerStore = perStore,
                     WSearchStartMode = HealthReporting.DescribeServiceStartMode(wsearchStart),
                     IndexerProcessRunning = indexerRunning,
                 },
+                Advice = advice.Count > 0 ? advice : null,
                 Audit = new AuditHealthView
                 {
                     Path = Audit.AuditLog.DefaultLogPath,
@@ -1801,14 +1869,93 @@ namespace OutlookAI.Core.Services
             };
         }
 
-        /// <summary>Folder trees (list_folders), depth- and count-capped.</summary>
-        public FoldersOutcome ListFolders(string? store = null, int depth = 2, int maxFolders = FoldersDefault)
+        /// <summary>
+        /// Signature landscape (list_signatures - soak fix D37, R5 steering): installed
+        /// signatures with plain-text excerpts (language/purpose detection) plus the
+        /// registry-determined per-account default assignments. Pure filesystem +
+        /// registry - no COM, never starts Outlook. Assignments degrade to unknown
+        /// (absent fields + note) when the registry does not carry them - never guessed.
+        /// </summary>
+        public SignaturesOutcome ListSignatures()
         {
-            depth = Clamp(depth, 1, FolderDepthCap);
-            maxFolders = Clamp(maxFolders, 1, FoldersCap);
-            IReadOnlyList<ComFolderInfo> folders = _gateway.Run(s => s.ListFolders(store, depth, maxFolders));
+            IReadOnlyList<SignatureInfo> signatures = SignatureCatalog.ListSignatures();
+            IReadOnlyList<SignatureAssignment> assignments = SignatureCatalog.ReadAccountAssignments();
 
-            List<StoreFoldersView> byStore = folders
+            List<SignatureView> signatureViews = signatures
+                .Select(s => new SignatureView { Name = s.Name, Excerpt = s.Excerpt })
+                .ToList();
+
+            List<SignatureAccountView>? accountViews = assignments.Count > 0
+                ? assignments.Select(a => new SignatureAccountView
+                {
+                    Account = a.Account,
+                    NewMessage = a.NewMessageSignature,
+                    ReplyForward = a.ReplyForwardSignature,
+                }).ToList()
+                : null;
+
+            string? note = null;
+            if (assignments.Count == 0)
+            {
+                note = "Per-account default assignments could not be read from the profile registry - defaults are unknown "
+                    + "(they may be roaming-managed). Omitting the signature parameter still applies whatever default Outlook uses.";
+            }
+            else if (assignments.Any(a => a.NewMessageSignature == null && a.ReplyForwardSignature == null))
+            {
+                note = "Accounts without listed assignments have no registry-recorded default - unknown (possibly no signature, "
+                    + "possibly roaming-managed). Omitting the signature parameter applies whatever default Outlook uses.";
+            }
+
+            return new SignaturesOutcome
+            {
+                Signatures = signatureViews,
+                Accounts = accountViews,
+                Note = note,
+            };
+        }
+
+        /// <summary>
+        /// FULL folder trees (list_folders) in the stable traversal order (stores by
+        /// display name, then depth-first with siblings by name), paged by
+        /// <paramref name="offset"/> into windows of <see cref="FoldersPerCallCap"/>.
+        /// Real profiles fit in one page; the bound is section 12 discipline.
+        /// </summary>
+        public FoldersOutcome ListFolders(string? store = null, int offset = 0)
+        {
+            if (offset < 0)
+            {
+                offset = 0;
+            }
+
+            IReadOnlyList<ComFolderInfo> folders = _gateway.Run(s => s.ListFolders(store, FolderWalkAbsoluteCap));
+            return PageFolders(folders, offset);
+        }
+
+        /// <summary>
+        /// Pure paging step of list_folders (public for T1): slices the stable-order
+        /// flattened walk at [offset, offset + <see cref="FoldersPerCallCap"/>) and
+        /// derives the has-more contract (truncated + nextOffset + total).
+        /// </summary>
+        public static FoldersOutcome PageFolders(IReadOnlyList<ComFolderInfo> folders, int offset)
+        {
+            if (folders == null)
+            {
+                throw new ArgumentNullException(nameof(folders));
+            }
+
+            if (offset < 0)
+            {
+                offset = 0;
+            }
+
+            int end = (int)Math.Min((long)offset + FoldersPerCallCap, folders.Count);
+            List<ComFolderInfo> page = new List<ComFolderInfo>(Math.Max(0, end - offset));
+            for (int i = offset; i < end; i++)
+            {
+                page.Add(folders[i]);
+            }
+
+            List<StoreFoldersView> byStore = page
                 .GroupBy(f => f.StoreDisplayName, StringComparer.OrdinalIgnoreCase)
                 .Select(g => new StoreFoldersView
                 {
@@ -1822,10 +1969,14 @@ namespace OutlookAI.Core.Services
                 })
                 .ToList();
 
+            bool truncated = end < folders.Count;
             return new FoldersOutcome
             {
                 Stores = byStore,
-                Truncated = folders.Count >= maxFolders,
+                FolderTotal = folders.Count,
+                Offset = offset > 0 ? offset : (int?)null,
+                Truncated = truncated,
+                NextOffset = truncated ? end : (int?)null,
             };
         }
 

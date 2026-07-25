@@ -290,13 +290,20 @@ namespace OutlookAI.Core.Services
         /// <summary>Real recipient count before capping (present only when capped).</summary>
         public int? RecipientsTotal { get; set; }
 
-        /// <summary>Plain-text body (possibly truncated - check BodyTruncated).</summary>
+        /// <summary>Plain-text body window [bodyOffset, bodyOffset + max_body_chars) of the full body.</summary>
         public string Body { get; set; } = string.Empty;
 
-        /// <summary>Full body length in characters before truncation.</summary>
+        /// <summary>
+        /// Effective start of the returned body window within the full body (omitted
+        /// when 0, i.e. the body starts at its beginning). Continue reading with
+        /// body_offset = bodyOffset + body.length while bodyTruncated.
+        /// </summary>
+        public int? BodyOffset { get; set; }
+
+        /// <summary>Full body length in characters (all windows).</summary>
         public long BodyTotalChars { get; set; }
 
-        /// <summary>True when Body was cut at max_body_chars.</summary>
+        /// <summary>True when more body exists BEYOND the returned window.</summary>
         public bool BodyTruncated { get; set; }
 
         /// <summary>"text" (Outlook's own plain-text rendering), "html-converted", or "none".</summary>
@@ -384,7 +391,7 @@ namespace OutlookAI.Core.Services
         public long ElapsedMs { get; set; }
     }
 
-    /// <summary>Per-store staleness row for index_status.</summary>
+    /// <summary>Per-store index-freshness row of the outlook_health report.</summary>
     public sealed class StoreStaleness
     {
         /// <summary>Store display name.</summary>
@@ -392,34 +399,6 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Newest indexed DateReceived under that store's scope (UTC).</summary>
         public DateTime? NewestIndexedUtc { get; set; }
-    }
-
-    /// <summary>index_status outcome.</summary>
-    public sealed class IndexStatusOutcome
-    {
-        /// <summary>Active index query provider ("OleDb"/"AdodbCom") or "unavailable".</summary>
-        public string Provider { get; set; } = string.Empty;
-
-        /// <summary>Whether OUTLOOK.EXE is running.</summary>
-        public bool OutlookRunning { get; set; }
-
-        /// <summary>True when this server holds a COM session that Outlook ANSWERED just now (probed liveness, SF-1).</summary>
-        public bool ComConnected { get; set; }
-
-        /// <summary>True while the add-in installer holds the OutlookAISetup mutex (D17: retry later).</summary>
-        public bool InstallerMutexHeld { get; set; }
-
-        /// <summary>Newest indexed mail timestamp across all stores (UTC).</summary>
-        public DateTime? NewestIndexedUtc { get; set; }
-
-        /// <summary>Age of the newest indexed mail in minutes.</summary>
-        public double? IndexAgeMinutes { get; set; }
-
-        /// <summary>Per-store newest-indexed timestamps.</summary>
-        public IReadOnlyList<StoreStaleness>? PerStore { get; set; }
-
-        /// <summary>Actionable freshness advice.</summary>
-        public IReadOnlyList<string> Advice { get; set; } = Array.Empty<string>();
     }
 
     /// <summary>Account view for list_accounts.</summary>
@@ -470,6 +449,42 @@ namespace OutlookAI.Core.Services
         public IReadOnlyList<StoreView> Stores { get; set; } = Array.Empty<StoreView>();
     }
 
+    /// <summary>One installed signature for list_signatures.</summary>
+    public sealed class SignatureView
+    {
+        /// <summary>Signature name - the draft tools' 'signature' argument.</summary>
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>Short plain-text excerpt (first lines) - use it to detect each signature's language/purpose.</summary>
+        public string? Excerpt { get; set; }
+    }
+
+    /// <summary>Registry-determined default-signature assignment of one account (list_signatures).</summary>
+    public sealed class SignatureAccountView
+    {
+        /// <summary>Account SMTP address.</summary>
+        public string Account { get; set; } = string.Empty;
+
+        /// <summary>Default signature for new messages (absent = unknown, never guessed).</summary>
+        public string? NewMessage { get; set; }
+
+        /// <summary>Default signature for replies/forwards (absent = unknown).</summary>
+        public string? ReplyForward { get; set; }
+    }
+
+    /// <summary>list_signatures outcome.</summary>
+    public sealed class SignaturesOutcome
+    {
+        /// <summary>Installed signatures (name + excerpt), name-sorted.</summary>
+        public IReadOnlyList<SignatureView> Signatures { get; set; } = Array.Empty<SignatureView>();
+
+        /// <summary>Per-account default assignments as far as the registry records them (absent when unreadable).</summary>
+        public IReadOnlyList<SignatureAccountView>? Accounts { get; set; }
+
+        /// <summary>Explains unknown defaults when assignments are missing (degrade-gracefully contract).</summary>
+        public string? Note { get; set; }
+    }
+
     /// <summary>Folder view for list_folders.</summary>
     public sealed class FolderView
     {
@@ -489,18 +504,27 @@ namespace OutlookAI.Core.Services
         /// <summary>Store display name.</summary>
         public string Store { get; set; } = string.Empty;
 
-        /// <summary>Folders up to the requested depth.</summary>
+        /// <summary>This page's folders of the store (full tree, stable traversal order).</summary>
         public IReadOnlyList<FolderView> Folders { get; set; } = Array.Empty<FolderView>();
     }
 
-    /// <summary>list_folders outcome.</summary>
+    /// <summary>list_folders outcome (full tree, offset-paged in stable traversal order).</summary>
     public sealed class FoldersOutcome
     {
-        /// <summary>Folder trees per store.</summary>
+        /// <summary>Folder trees per store (this page).</summary>
         public IReadOnlyList<StoreFoldersView> Stores { get; set; } = Array.Empty<StoreFoldersView>();
 
-        /// <summary>True when the folder cap cut the listing.</summary>
+        /// <summary>Total folders in the full traversal (all pages).</summary>
+        public int FolderTotal { get; set; }
+
+        /// <summary>Echo of a non-zero requested offset (omitted for the first page).</summary>
+        public int? Offset { get; set; }
+
+        /// <summary>True when more folders exist beyond this page - continue with offset=nextOffset.</summary>
         public bool Truncated { get; set; }
+
+        /// <summary>The offset that continues the listing (present only when truncated).</summary>
+        public int? NextOffset { get; set; }
     }
 
     /// <summary>open_in_outlook outcome (v3.MD L3).</summary>
@@ -568,8 +592,17 @@ namespace OutlookAI.Core.Services
         /// <summary>Draft subject (RE:/FW: prefixes included for derived drafts).</summary>
         public string? Subject { get; set; }
 
-        /// <summary>True when Outlook injected the account's signature into the body.</summary>
+        /// <summary>True when Outlook injected the account's DEFAULT signature into the body.</summary>
         public bool SignatureInjected { get; set; }
+
+        /// <summary>The signature name requested via the 'signature' parameter (absent when the account default was used).</summary>
+        public string? Signature { get; set; }
+
+        /// <summary>Whether the requested signature override was applied (absent when none was requested; false = the default-signature draft stands).</summary>
+        public bool? SignatureApplied { get; set; }
+
+        /// <summary>Content-free reason when a requested override failed (the draft is still valid, with the default signature).</summary>
+        public string? SignatureError { get; set; }
 
         /// <summary>True when the draft was opened in an Outlook window for the user (D4 default).</summary>
         public bool Displayed { get; set; }
@@ -672,7 +705,7 @@ namespace OutlookAI.Core.Services
         public IReadOnlyList<string>? Stores { get; set; }
     }
 
-    /// <summary>Index block of the health report (Phase 7).</summary>
+    /// <summary>Index block of the outlook_health report (Phase 7; per-store rows merged from index_status in D37).</summary>
     public sealed class IndexHealthView
     {
         /// <summary>Active index provider ("OleDb"/"AdodbCom") or "unavailable: ..." when unreachable.</summary>
@@ -683,6 +716,9 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Age of the newest indexed mail in minutes.</summary>
         public double? AgeMinutes { get; set; }
+
+        /// <summary>Per-store newest-indexed timestamps (absent when the index is unreachable).</summary>
+        public IReadOnlyList<StoreStaleness>? PerStore { get; set; }
 
         /// <summary>WSearch service start mode from the registry: automatic|manual|disabled|unknown.</summary>
         public string WSearchStartMode { get; set; } = "unknown";
@@ -746,7 +782,10 @@ namespace OutlookAI.Core.Services
         public string? UiSearchBackend { get; set; }
     }
 
-    /// <summary>health tool outcome (Phase 7): compact self-check of everything the server depends on.</summary>
+    /// <summary>
+    /// outlook_health tool outcome (Phase 7; index_status merged in D37): compact
+    /// self-check of everything the server depends on plus the index freshness report.
+    /// </summary>
     public sealed class HealthOutcome
     {
         /// <summary>"ok" when everything the server needs is available, else "degraded" (see Problems).</summary>
@@ -758,7 +797,7 @@ namespace OutlookAI.Core.Services
         /// <summary>Outlook process/COM state.</summary>
         public OutlookHealthView Outlook { get; set; } = new OutlookHealthView();
 
-        /// <summary>SystemIndex + WSearch state.</summary>
+        /// <summary>SystemIndex + WSearch state (incl. per-store freshness).</summary>
         public IndexHealthView Index { get; set; } = new IndexHealthView();
 
         /// <summary>Audit log writability (write tools fail-closed without it).</summary>
@@ -766,6 +805,9 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Outlook tuning state summary (registry read).</summary>
         public TuningHealthView Tuning { get; set; } = new TuningHealthView();
+
+        /// <summary>Actionable freshness advice (distinct from Problems: guidance, not degradation).</summary>
+        public IReadOnlyList<string>? Advice { get; set; }
     }
 
     /// <summary>show_search_results outcome (v3.MD L3).</summary>

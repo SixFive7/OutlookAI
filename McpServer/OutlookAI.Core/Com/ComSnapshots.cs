@@ -477,6 +477,27 @@ namespace OutlookAI.Core.Com
         public IReadOnlyList<ComRecipientInfo> Recipients { get; }
     }
 
+    /// <summary>
+    /// Signature-override request for the draft creators (soak fix D37, R5 steering):
+    /// replace the account-default signature with the named one via the WordEditor
+    /// _MailAutoSig bookmark dance (the add-in's proven pattern).
+    /// </summary>
+    public sealed class ComSignatureOverride
+    {
+        /// <summary>Creates an override request.</summary>
+        public ComSignatureOverride(string name, string filePath)
+        {
+            Name = name;
+            FilePath = filePath;
+        }
+
+        /// <summary>Signature name (for reporting/audit).</summary>
+        public string Name { get; }
+
+        /// <summary>Signature file to insert (.htm preferred - Word converts and embeds its images natively).</summary>
+        public string FilePath { get; }
+    }
+
     /// <summary>Result of one draft-creation operation (COM-free data).</summary>
     public sealed class ComDraftCreateResult
     {
@@ -489,7 +510,10 @@ namespace OutlookAI.Core.Com
             long bodyTextCharsAfterSignature,
             bool movedToDrafts,
             string? initialSaveFolderName,
-            bool displayed)
+            bool displayed,
+            string? signatureOverrideName = null,
+            bool signatureOverrideApplied = false,
+            string? signatureOverrideError = null)
         {
             Draft = draft;
             AccountResolved = accountResolved;
@@ -499,6 +523,9 @@ namespace OutlookAI.Core.Com
             MovedToDrafts = movedToDrafts;
             InitialSaveFolderName = initialSaveFolderName;
             Displayed = displayed;
+            SignatureOverrideName = signatureOverrideName;
+            SignatureOverrideApplied = signatureOverrideApplied;
+            SignatureOverrideError = signatureOverrideError;
         }
 
         /// <summary>The created draft (EntryID is final - post-move when a move happened).</summary>
@@ -528,6 +555,15 @@ namespace OutlookAI.Core.Com
 
         /// <summary>True when the draft was opened in an Inspector window (D4 default).</summary>
         public bool Displayed { get; }
+
+        /// <summary>Signature name the caller asked to apply instead of the default (null = no override requested).</summary>
+        public string? SignatureOverrideName { get; }
+
+        /// <summary>True when the override was applied (Word bookmark dance completed; on false the default-signature draft stands).</summary>
+        public bool SignatureOverrideApplied { get; }
+
+        /// <summary>Content-free failure reason when a requested override could not be applied.</summary>
+        public string? SignatureOverrideError { get; }
     }
 
     /// <summary>
