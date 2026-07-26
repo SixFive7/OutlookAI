@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
+using OutlookAI.Core.IndexSearch;
+
 namespace OutlookAI.Core.Com
 {
     /// <summary>Term-matching engine for the exhaustive COM scan (v3.MD D19/section 12).</summary>
@@ -28,10 +30,12 @@ namespace OutlookAI.Core.Com
     /// scan (v3.MD section 0.6 Phase 3). Pure logic, unit-tested in T1. Shapes follow the
     /// section-12 rules: ci_* only in Restrict/GetTable, date literals UTC invariant
     /// "MM/dd/yyyy HH:mm:ss", single quotes escaped by doubling. Terms are ANDed; each
-    /// term matches subject OR body. A trailing '*' marks a prefix stem and is matched via
-    /// LIKE substring in BOTH engines (ci_phrasematch is whole-word and would miss the
-    /// stem's continuations). Every filter carries an IPM.Note message-class clause so
-    /// only mail items are enumerated.
+    /// term matches subject OR body by default, narrowable to one of them via
+    /// <see cref="TermScope"/> (D40 - the same three scopes the index tier offers).
+    /// A trailing '*' marks a prefix stem and is matched via LIKE substring in BOTH
+    /// engines (ci_phrasematch is whole-word and would miss the stem's continuations).
+    /// Every filter carries an IPM.Note message-class clause so only mail items are
+    /// enumerated.
     /// </summary>
     public static class ExhaustiveDaslFilter
     {
@@ -50,7 +54,8 @@ namespace OutlookAI.Core.Com
             IReadOnlyList<string>? terms,
             DateTime? sinceUtc,
             DateTime? beforeUtc,
-            ExhaustiveEngine engine)
+            ExhaustiveEngine engine,
+            TermScope termScope = TermScopes.Default)
         {
             if (sinceUtc.HasValue && beforeUtc.HasValue && sinceUtc.Value >= beforeUtc.Value)
             {
@@ -76,7 +81,10 @@ namespace OutlookAI.Core.Com
             {
                 for (int i = 0; i < terms.Count; i++)
                 {
-                    clauses.Add(BuildTermClause(ValidateTerm(terms[i], "terms[" + i.ToString(CultureInfo.InvariantCulture) + "]"), engine));
+                    clauses.Add(BuildTermClause(
+                        ValidateTerm(terms[i], "terms[" + i.ToString(CultureInfo.InvariantCulture) + "]"),
+                        engine,
+                        termScope));
                 }
             }
 
@@ -94,19 +102,37 @@ namespace OutlookAI.Core.Com
             return sql.ToString();
         }
 
-        private static string BuildTermClause(string term, ExhaustiveEngine engine)
+        private static string BuildTermClause(string term, ExhaustiveEngine engine, TermScope termScope)
         {
             bool prefixStem = term.EndsWith("*", StringComparison.Ordinal);
             string value = prefixStem ? term.Substring(0, term.Length - 1) : term;
 
+            string subjectClause;
+            string bodyClause;
             if (prefixStem || engine == ExhaustiveEngine.Like)
             {
-                string like = "'%" + EscapeLikeValue(value) + "%'";
-                return SubjectProp + " like " + like + " OR " + BodyProp + " like " + like;
+                string like = " like '%" + EscapeLikeValue(value) + "%'";
+                subjectClause = SubjectProp + like;
+                bodyClause = BodyProp + like;
+            }
+            else
+            {
+                string match = " ci_phrasematch '" + EscapeDaslValue(value) + "'";
+                subjectClause = SubjectProp + match;
+                bodyClause = BodyProp + match;
             }
 
-            string quoted = "'" + EscapeDaslValue(value) + "'";
-            return SubjectProp + " ci_phrasematch " + quoted + " OR " + BodyProp + " ci_phrasematch " + quoted;
+            switch (termScope)
+            {
+                case TermScope.SubjectAndBody:
+                    return subjectClause + " OR " + bodyClause;
+                case TermScope.SubjectOnly:
+                    return subjectClause;
+                case TermScope.BodyOnly:
+                    return bodyClause;
+                default:
+                    throw new ArgumentException("Unknown TermScope value.", nameof(termScope));
+            }
         }
 
         /// <summary>

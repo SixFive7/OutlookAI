@@ -29,8 +29,159 @@ public sealed class WsSqlBuilderTests
         Assert.Contains(" FROM SystemIndex WHERE ", sql, StringComparison.Ordinal);
         Assert.Contains($"SCOPE='{SyntheticScope}'", sql, StringComparison.Ordinal);
         Assert.Contains("(System.Kind='email' OR System.Kind='document')", sql, StringComparison.Ordinal);
-        Assert.Contains("CONTAINS('\"factuur\"')", sql, StringComparison.Ordinal);
+        Assert.Contains(
+            "(CONTAINS(System.Subject, '\"factuur\"') OR CONTAINS(System.Search.Contents, '\"factuur\"'))",
+            sql,
+            StringComparison.Ordinal);
         Assert.EndsWith(" ORDER BY System.Message.DateReceived DESC", sql, StringComparison.Ordinal);
+    }
+
+    // --------------------------------------------- term scopes (D40 / SF-6, user 2026-07-26)
+
+    [Fact]
+    public void Build_DefaultTermScope_IsSubjectAndBody()
+    {
+        Assert.Equal(TermScope.SubjectAndBody, new IndexQuery().TermScope);
+        Assert.Equal(TermScope.SubjectAndBody, TermScopes.Default);
+    }
+
+    [Fact]
+    public void Build_NeverEmitsUnqualifiedContains_Sf6RecallBug()
+    {
+        // SF-6 (measured 2026-07-26): a bare CONTAINS('term') searches
+        // System.Search.Contents alone - the contents stream carries no subject text, so
+        // mail whose term appears only in the subject was invisible (~3.4% of items
+        // store-wide; the 138-item HAProxy alert population was the discovery case).
+        // Every term predicate must name its column(s).
+        foreach (TermScope scope in new[] { TermScope.SubjectAndBody, TermScope.SubjectOnly, TermScope.BodyOnly })
+        {
+            var query = BaseQuery();
+            query.TermScope = scope;
+            query.Terms = new[] { "factuur", "betaling" };
+
+            string sql = WsSqlBuilder.Build(query);
+
+            Assert.DoesNotContain("CONTAINS('", sql, StringComparison.Ordinal);
+            Assert.Contains("CONTAINS(System.", sql, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void Build_SubjectOnlyTermScope_QueriesSubjectColumnAlone()
+    {
+        var query = BaseQuery();
+        query.TermScope = TermScope.SubjectOnly;
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains("CONTAINS(System.Subject, '\"factuur\"')", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Search.Contents", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_BodyOnlyTermScope_QueriesContentsColumnAlone()
+    {
+        var query = BaseQuery();
+        query.TermScope = TermScope.BodyOnly;
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains("CONTAINS(System.Search.Contents, '\"factuur\"')", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("CONTAINS(System.Subject", sql, StringComparison.Ordinal);
+
+        // Contents stays query-only - never in the SELECT list (section 12).
+        int selectEnd = sql.IndexOf(" FROM SystemIndex", StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Search.Contents", sql.Substring(0, selectEnd), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_MultipleTerms_AreAndedInsideEachColumn()
+    {
+        var query = BaseQuery();
+        query.Terms = new[] { "factuur", "betaling" };
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains(
+            "(CONTAINS(System.Subject, '\"factuur\" AND \"betaling\"') "
+            + "OR CONTAINS(System.Search.Contents, '\"factuur\" AND \"betaling\"'))",
+            sql,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_PrefixStar_SurvivesInBothColumns()
+    {
+        var query = BaseQuery();
+        query.Terms = new[] { "factu*" };
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains("CONTAINS(System.Subject, '\"factu*\"')", sql, StringComparison.Ordinal);
+        Assert.Contains("CONTAINS(System.Search.Contents, '\"factu*\"')", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_EscapesSingleQuotesInBothColumns()
+    {
+        var query = BaseQuery();
+        query.Terms = new[] { "o'brien" };
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains("CONTAINS(System.Subject, '\"o''brien\"')", sql, StringComparison.Ordinal);
+        Assert.Contains("CONTAINS(System.Search.Contents, '\"o''brien\"')", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_RejectsUnknownTermScope()
+    {
+        var query = BaseQuery();
+        query.TermScope = (TermScope)99;
+
+        Assert.Throws<ArgumentException>(() => WsSqlBuilder.Build(query));
+    }
+
+    [Theory]
+    [InlineData(null, TermScope.SubjectAndBody)]
+    [InlineData("", TermScope.SubjectAndBody)]
+    [InlineData("   ", TermScope.SubjectAndBody)]
+    [InlineData("subject_and_body", TermScope.SubjectAndBody)]
+    [InlineData(" Subject_And_Body ", TermScope.SubjectAndBody)]
+    [InlineData("subject", TermScope.SubjectOnly)]
+    [InlineData("SUBJECT", TermScope.SubjectOnly)]
+    [InlineData("subject_only", TermScope.SubjectOnly)]
+    [InlineData("body", TermScope.BodyOnly)]
+    [InlineData("Body", TermScope.BodyOnly)]
+    [InlineData("body_only", TermScope.BodyOnly)]
+    public void TermScopes_Parse_AcceptsWireNamesAndDefaultsWhenOmitted(string? value, TermScope expected)
+    {
+        Assert.Equal(expected, TermScopes.Parse(value));
+    }
+
+    [Theory]
+    [InlineData("all")]
+    [InlineData("sender")]
+    [InlineData("all_properties")]
+    [InlineData("subject and body")]
+    public void TermScopes_Parse_RejectsUnknownValuesWithTheValidOnesNamed(string value)
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => TermScopes.Parse(value));
+
+        foreach (string wireName in TermScopes.WireNames)
+        {
+            Assert.Contains(wireName, ex.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void TermScopes_WireNames_RoundTrip()
+    {
+        Assert.Equal(new[] { "subject_and_body", "subject", "body" }, TermScopes.WireNames);
+        foreach (string wireName in TermScopes.WireNames)
+        {
+            Assert.Equal(wireName, TermScopes.ToWireName(TermScopes.Parse(wireName)));
+        }
     }
 
     [Fact]
@@ -61,12 +212,19 @@ public sealed class WsSqlBuilderTests
     public void Build_NeverSelectsForbiddenColumns()
     {
         string sql = WsSqlBuilder.Build(BaseQuery());
+        string selectList = sql.Substring(0, sql.IndexOf(" FROM SystemIndex", StringComparison.Ordinal));
 
         foreach (string forbidden in WsSqlBuilder.ForbiddenSelectColumns)
         {
-            Assert.DoesNotContain(forbidden, sql, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(forbidden, selectList, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(forbidden, WsSqlBuilder.SelectColumns, StringComparer.OrdinalIgnoreCase);
         }
+
+        // MessageId and Search.EntryID are unusable anywhere (0x80040E55 / not a MAPI id);
+        // Search.Contents is the one forbidden SELECT column that IS a legal CONTAINS
+        // target - and since D40 the default term predicate queries it by name.
+        Assert.DoesNotContain("System.Message.MessageId", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("System.Search.EntryID", sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -114,7 +272,11 @@ public sealed class WsSqlBuilderTests
         string sql = WsSqlBuilder.Build(query);
 
         Assert.StartsWith("SELECT TOP 100 ", sql, StringComparison.Ordinal);
-        Assert.Contains("CONTAINS('\"factuur\" AND \"betaling\"')", sql, StringComparison.Ordinal);
+        Assert.Contains(
+            "(CONTAINS(System.Subject, '\"factuur\" AND \"betaling\"') "
+            + "OR CONTAINS(System.Search.Contents, '\"factuur\" AND \"betaling\"'))",
+            sql,
+            StringComparison.Ordinal);
         Assert.Contains("CONTAINS(System.Message.FromAddress, '\"billing@example.com\"')", sql, StringComparison.Ordinal);
         Assert.Contains("CONTAINS(System.Message.ToAddress, '\"alice@example.com\"')", sql, StringComparison.Ordinal);
         Assert.Contains("CONTAINS(System.Message.CcAddress, '\"alice@example.com\"')", sql, StringComparison.Ordinal);
@@ -136,28 +298,6 @@ public sealed class WsSqlBuilderTests
         // Contents may be queried but never selected.
         int selectEnd = sql.IndexOf(" FROM SystemIndex", StringComparison.Ordinal);
         Assert.DoesNotContain("System.Search.Contents", sql.Substring(0, selectEnd), StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void Build_EscapesSingleQuotesInTerms()
-    {
-        var query = BaseQuery();
-        query.Terms = new[] { "o'brien" };
-
-        string sql = WsSqlBuilder.Build(query);
-
-        Assert.Contains("CONTAINS('\"o''brien\"')", sql, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Build_AllowsTrailingStarPrefixMatch()
-    {
-        var query = BaseQuery();
-        query.Terms = new[] { "factu*" };
-
-        string sql = WsSqlBuilder.Build(query);
-
-        Assert.Contains("CONTAINS('\"factu*\"')", sql, StringComparison.Ordinal);
     }
 
     [Theory]

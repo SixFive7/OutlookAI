@@ -53,45 +53,100 @@ public sealed class FreshMergeTests
 
     // ---------------------------------------------------------------- MatchesTerms
 
+    private const TermScope Default = TermScopes.Default;
+
     [Fact]
     public void MatchesTerms_NullOrEmpty_MatchesEverything()
     {
-        Assert.True(FreshMerge.MatchesTerms(Brief(), null));
-        Assert.True(FreshMerge.MatchesTerms(Brief(), Array.Empty<string>()));
+        Assert.True(FreshMerge.MatchesTerms(Brief(), null, Default));
+        Assert.True(FreshMerge.MatchesTerms(Brief(), Array.Empty<string>(), Default));
     }
 
     [Fact]
     public void MatchesTerms_AndSemantics_AllTermsMustHit()
     {
         ComMailBrief item = Brief(subject: "Invoice for April", body: "total 100 euro");
-        Assert.True(FreshMerge.MatchesTerms(item, new[] { "invoice", "euro" }));
-        Assert.False(FreshMerge.MatchesTerms(item, new[] { "invoice", "missingterm" }));
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "invoice", "euro" }, Default));
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "invoice", "missingterm" }, Default));
     }
 
     [Fact]
-    public void MatchesTerms_CaseInsensitive_AcrossSubjectBodySender()
+    public void MatchesTerms_CaseInsensitive_AcrossSubjectAndBody()
     {
-        ComMailBrief item = Brief(subject: "hello", body: "WORLD", senderName: "Charlie", senderAddress: "c@example.com");
-        Assert.True(FreshMerge.MatchesTerms(item, new[] { "HELLO" }));
-        Assert.True(FreshMerge.MatchesTerms(item, new[] { "world" }));
-        Assert.True(FreshMerge.MatchesTerms(item, new[] { "charlie" }));
-        Assert.True(FreshMerge.MatchesTerms(item, new[] { "c@example.com" }));
+        ComMailBrief item = Brief(subject: "hello", body: "WORLD");
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "HELLO" }, Default));
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "world" }, Default));
+    }
+
+    [Fact]
+    public void MatchesTerms_SenderIsNotATermScope_MatchingSenderAloneDoesNotHit()
+    {
+        // D40/SF-6 tier alignment: the index tier never matched senders by term, so the
+        // sweep must not either - otherwise a hit would vanish once the frontier passed
+        // the item. Sender matching is the 'from' filter's job (applied by MailService).
+        ComMailBrief item = Brief(
+            subject: "hello", body: "world", senderName: "Charlie", senderAddress: "c@example.com");
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "charlie" }, Default));
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "c@example.com" }, Default));
     }
 
     [Fact]
     public void MatchesTerms_PrefixStar_MatchesStem()
     {
         ComMailBrief item = Brief(subject: "factuur 2026-001");
-        Assert.True(FreshMerge.MatchesTerms(item, new[] { "fact*" }));
-        Assert.False(FreshMerge.MatchesTerms(item, new[] { "xyz*" }));
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "fact*" }, Default));
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "xyz*" }, Default));
     }
 
     [Fact]
     public void MatchesTerms_NoBody_StillMatchesOnSubject()
     {
         ComMailBrief item = Brief(subject: "Order confirmation", body: null);
-        Assert.True(FreshMerge.MatchesTerms(item, new[] { "order" }));
-        Assert.False(FreshMerge.MatchesTerms(item, new[] { "invoice" }));
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "order" }, Default));
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "invoice" }, Default));
+    }
+
+    // ------------------------------------------------- term scopes (D40, user 2026-07-26)
+
+    [Fact]
+    public void MatchesTerms_SubjectOnlyScope_IgnoresBody()
+    {
+        ComMailBrief item = Brief(subject: "alert prefix", body: "requeued backend");
+
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "alert" }, TermScope.SubjectOnly));
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "requeued" }, TermScope.SubjectOnly));
+    }
+
+    [Fact]
+    public void MatchesTerms_BodyOnlyScope_IgnoresSubject()
+    {
+        ComMailBrief item = Brief(subject: "alert prefix", body: "requeued backend");
+
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "requeued" }, TermScope.BodyOnly));
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "alert" }, TermScope.BodyOnly));
+    }
+
+    [Fact]
+    public void MatchesTerms_DefaultScope_FindsSubjectOnlyAndBodyOnlyTerms()
+    {
+        // The SF-6 shape in miniature: a term that lives only in the subject must be
+        // found by the default scope (that is the whole point of the fix).
+        ComMailBrief item = Brief(subject: "alert prefix", body: "requeued backend");
+
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "alert" }, Default));
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "requeued" }, Default));
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "alert", "requeued" }, Default));
+    }
+
+    [Fact]
+    public void MatchesTerms_ScopesHonorPrefixStems()
+    {
+        ComMailBrief item = Brief(subject: "factuur 2026-001", body: "betaling ontvangen");
+
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "fact*" }, TermScope.SubjectOnly));
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "fact*" }, TermScope.BodyOnly));
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "betal*" }, TermScope.BodyOnly));
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "betal*" }, TermScope.SubjectOnly));
     }
 
     // ---------------------------------------------------------------- IsDuplicate

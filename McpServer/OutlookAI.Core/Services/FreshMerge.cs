@@ -17,11 +17,18 @@ namespace OutlookAI.Core.Services
         /// <summary>
         /// Applies the search terms (ANDed; a trailing '*' marks a prefix stem and is
         /// matched as a case-insensitive substring, slightly over-matching the index's
-        /// word-prefix semantics - the acceptable direction for a freshness sweep).
-        /// Matched over subject + body + sender name/address, approximating the index's
-        /// all-properties CONTAINS.
+        /// word-prefix semantics - the acceptable direction for a freshness sweep) within
+        /// <paramref name="termScope"/>.
+        /// <para>
+        /// Tier alignment (D40/SF-6): the scopes mean the same thing here as in the index
+        /// tier - subject, body, or either - so a hit does not appear and then vanish once
+        /// the index frontier passes the item. Sender name/address used to be matched here
+        /// as well ("approximating the index's all-properties CONTAINS" - a belief SF-6
+        /// disproved); it no longer is, because the index tier never matched senders by
+        /// term. Sender matching is the <c>from</c> filter's job in every tier.
+        /// </para>
         /// </summary>
-        public static bool MatchesTerms(ComMailBrief item, IReadOnlyList<string>? terms)
+        public static bool MatchesTerms(ComMailBrief item, IReadOnlyList<string>? terms, TermScope termScope)
         {
             if (item == null)
             {
@@ -33,6 +40,9 @@ namespace OutlookAI.Core.Services
                 return true;
             }
 
+            bool matchSubject = termScope != TermScope.BodyOnly;
+            bool matchBody = termScope != TermScope.SubjectOnly;
+
             foreach (string term in terms)
             {
                 string stem = term.EndsWith("*", StringComparison.Ordinal)
@@ -43,10 +53,8 @@ namespace OutlookAI.Core.Services
                     continue;
                 }
 
-                bool found = ContainsIgnoreCase(item.Subject, stem)
-                    || ContainsIgnoreCase(item.Body, stem)
-                    || ContainsIgnoreCase(item.SenderName, stem)
-                    || ContainsIgnoreCase(item.SenderAddress, stem);
+                bool found = (matchSubject && ContainsIgnoreCase(item.Subject, stem))
+                    || (matchBody && ContainsIgnoreCase(item.Body, stem));
                 if (!found)
                 {
                     return false;

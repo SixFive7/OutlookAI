@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 
+using OutlookAI.Core.IndexSearch;
+
 namespace OutlookAI.Core.Services
 {
     /// <summary>Parameters for one search call (mirrors the MCP tool arguments).</summary>
@@ -8,6 +10,14 @@ namespace OutlookAI.Core.Services
     {
         /// <summary>Free-text query; whitespace-separated terms are ANDed. Optional.</summary>
         public string? Query { get; set; }
+
+        /// <summary>
+        /// Which properties <see cref="Query"/> terms must appear in: subject OR
+        /// body/attachment content (default), subject only, or body only. Honored
+        /// identically by all three tiers - index, freshness sweep and exhaustive scan
+        /// (D40/SF-6). Sender matching is never a term scope; that is <see cref="From"/>.
+        /// </summary>
+        public TermScope TermScope { get; set; } = TermScopes.Default;
 
         /// <summary>
         /// True = folder/date-bounded COM scan that BYPASSES the index (correctness

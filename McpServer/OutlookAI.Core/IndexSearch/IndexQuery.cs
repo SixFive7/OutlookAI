@@ -3,22 +3,110 @@ using System.Collections.Generic;
 
 namespace OutlookAI.Core.IndexSearch
 {
-    /// <summary>Where free-text terms are matched (v3.MD sections 4/5 + Phase-1 probes).</summary>
+    /// <summary>
+    /// Where free-text terms are matched (v3.MD sections 4/5, Phase-1 probes, D40/SF-6).
+    /// <para>
+    /// SF-6 (measured 2026-07-26): a bare <c>CONTAINS('term')</c> is NOT an all-properties
+    /// match - Windows Search documents the unqualified CONTAINS predicate as searching
+    /// <c>System.Search.Contents</c> alone ("the body of the document"), and the contents
+    /// stream carries no subject text. Mail whose term appears only in the subject was
+    /// therefore invisible to the term predicate (~3.4% of items store-wide). The bare
+    /// shape is gone; every scope below names its column(s) explicitly.
+    /// </para>
+    /// </summary>
     public enum TermScope
     {
         /// <summary>
-        /// Bare <c>CONTAINS('...')</c>: matches every full-text-indexed property - body
-        /// content, subject, sender/recipient names and addresses, attachment names. The
-        /// product default: broadest recall per iteration.
+        /// <c>(CONTAINS(System.Subject, ...) OR CONTAINS(System.Search.Contents, ...))</c>:
+        /// subject OR body/attachment content. THE DEFAULT (user order 2026-07-26) and the
+        /// completeness oracle's parity shape, where ground truth is computed from
+        /// Subject/Body via COM.
         /// </summary>
-        AllProperties = 0,
+        SubjectAndBody = 0,
 
         /// <summary>
-        /// <c>(CONTAINS(System.Subject, ...) OR CONTAINS(System.Search.Contents, ...))</c>:
-        /// subject + body content only. Exact-parity mode used by the completeness oracle,
-        /// where ground truth is computed from Subject/Body via COM.
+        /// <c>CONTAINS(System.Subject, ...)</c>: subject line only - useful when a term is
+        /// noisy in body text (quoted threads, footers, signatures).
         /// </summary>
-        SubjectAndBody = 1,
+        SubjectOnly = 1,
+
+        /// <summary>
+        /// <c>CONTAINS(System.Search.Contents, ...)</c>: body + attachment content only -
+        /// useful when a term is noisy in subjects (alert prefixes, ticket tags).
+        /// </summary>
+        BodyOnly = 2,
+    }
+
+    /// <summary>
+    /// Wire names for <see cref="TermScope"/> and the host-neutral parser behind the
+    /// <c>term_scope</c> tool argument (v3.MD section 0.5.2: Core carries no MCP types).
+    /// </summary>
+    public static class TermScopes
+    {
+        /// <summary>Wire name of <see cref="TermScope.SubjectAndBody"/> - the default.</summary>
+        public const string SubjectAndBodyName = "subject_and_body";
+
+        /// <summary>Wire name of <see cref="TermScope.SubjectOnly"/>.</summary>
+        public const string SubjectName = "subject";
+
+        /// <summary>Wire name of <see cref="TermScope.BodyOnly"/>.</summary>
+        public const string BodyName = "body";
+
+        /// <summary>The scope used when the argument is omitted.</summary>
+        public const TermScope Default = TermScope.SubjectAndBody;
+
+        /// <summary>The three accepted wire values, in schema order.</summary>
+        public static readonly IReadOnlyList<string> WireNames = new[]
+        {
+            SubjectAndBodyName, SubjectName, BodyName,
+        };
+
+        /// <summary>
+        /// Parses a <c>term_scope</c> argument. Null/blank yields <see cref="Default"/>;
+        /// matching is case- and whitespace-insensitive and tolerates the two obvious
+        /// near-misses (<c>subject_only</c>/<c>body_only</c>) rather than failing a whole
+        /// tool call over a naming guess. Anything else throws with the valid values.
+        /// </summary>
+        public static TermScope Parse(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return Default;
+            }
+
+            switch (value!.Trim().ToLowerInvariant())
+            {
+                case SubjectAndBodyName:
+                    return TermScope.SubjectAndBody;
+                case SubjectName:
+                case "subject_only":
+                    return TermScope.SubjectOnly;
+                case BodyName:
+                case "body_only":
+                    return TermScope.BodyOnly;
+                default:
+                    throw new ArgumentException(
+                        "term_scope must be one of: " + string.Join(", ", WireNames)
+                        + " (default " + SubjectAndBodyName + " = the term must appear in the subject or in the body/attachment content).",
+                        nameof(value));
+            }
+        }
+
+        /// <summary>Wire name of a scope (inverse of <see cref="Parse"/>).</summary>
+        public static string ToWireName(TermScope scope)
+        {
+            switch (scope)
+            {
+                case TermScope.SubjectAndBody:
+                    return SubjectAndBodyName;
+                case TermScope.SubjectOnly:
+                    return SubjectName;
+                case TermScope.BodyOnly:
+                    return BodyName;
+                default:
+                    throw new ArgumentException("Unknown TermScope value.", nameof(scope));
+            }
+        }
     }
 
     /// <summary>System.Kind filter shape - a query is never emitted without one (v3.MD section 12).</summary>
@@ -67,8 +155,8 @@ namespace OutlookAI.Core.IndexSearch
         /// <summary>Free-text terms, ANDed. Each may end in '*' for prefix matching.</summary>
         public IReadOnlyList<string>? Terms { get; set; }
 
-        /// <summary>Where <see cref="Terms"/> are matched. Default: all indexed properties.</summary>
-        public TermScope TermScope { get; set; } = TermScope.AllProperties;
+        /// <summary>Where <see cref="Terms"/> are matched. Default: subject OR body/attachment content (D40/SF-6).</summary>
+        public TermScope TermScope { get; set; } = TermScopes.Default;
 
         /// <summary>Which System.Kind values the query covers. Default: email plus documents.</summary>
         public KindFilter Kinds { get; set; } = KindFilter.EmailAndDocuments;

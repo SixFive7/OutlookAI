@@ -13,6 +13,11 @@ namespace OutlookAI.Core.IndexSearch
     /// <item>Never selects System.Message.MessageId (0x80040E55 in combined queries),
     /// System.Search.Contents (query-only) or System.Search.EntryID (not the MAPI id).</item>
     /// <item>Rejects bare '*' terms (CONTAINS('*') = 0x80041605).</item>
+    /// <item>Term predicates always NAME their column(s): a bare CONTAINS('term') searches
+    /// System.Search.Contents alone (documented CONTAINS-predicate semantics), which
+    /// carries no subject text - the SF-6 recall bug. Default shape is the
+    /// Subject-OR-Contents pair; measured cost over the bare shape is ~0-2 ms on
+    /// agent-sized (TOP 26 + ORDER BY) queries.</item>
     /// <item>Kind filter is 'email' or '(email OR document)' - never unfiltered.</item>
     /// <item>No aggregates, no JOINs (unsupported in WS-SQL).</item>
     /// <item>Sender/recipient filters use per-column CONTAINS - Phase-1 probes measured
@@ -54,6 +59,12 @@ namespace OutlookAI.Core.IndexSearch
 
         private const int MaxTop = 5000;
         private const int MaxTermLength = 128;
+
+        /// <summary>Subject column of the term predicate (query-only for CONTAINS, selectable).</summary>
+        private const string SubjectColumn = "System.Subject";
+
+        /// <summary>Body/attachment-content stream. Query-only - never appears in a SELECT list.</summary>
+        private const string ContentsColumn = "System.Search.Contents";
 
         /// <summary>Builds the search statement for <paramref name="query"/>.</summary>
         public static string Build(IndexQuery query)
@@ -214,12 +225,16 @@ namespace OutlookAI.Core.IndexSearch
             }
 
             string condition = string.Join(" AND ", quoted);
+            string subject = "CONTAINS(" + SubjectColumn + ", '" + condition + "')";
+            string contents = "CONTAINS(" + ContentsColumn + ", '" + condition + "')";
             switch (termScope)
             {
                 case TermScope.SubjectAndBody:
-                    return "(CONTAINS(System.Subject, '" + condition + "') OR CONTAINS(System.Search.Contents, '" + condition + "'))";
-                case TermScope.AllProperties:
-                    return "CONTAINS('" + condition + "')";
+                    return "(" + subject + " OR " + contents + ")";
+                case TermScope.SubjectOnly:
+                    return subject;
+                case TermScope.BodyOnly:
+                    return contents;
                 default:
                     throw new ArgumentException("Unknown TermScope value.", nameof(termScope));
             }
