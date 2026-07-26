@@ -192,7 +192,7 @@ public sealed class LiveSignatureTests
         DateTime deadline = DateTime.UtcNow.AddSeconds(180);
         while (DateTime.UtcNow < deadline)
         {
-            ComSweepResult sweep = _fixture.VerifySession.SweepDefaultFoldersNewerThan(
+            ComSweepResult sweep = _fixture.VerifySession.SweepFoldersNewerThan(
                 sentUtc.AddMinutes(-2), perFolderCap: 100, includeBodies: false, onlyStoreDisplayName: Hub);
             ComMailBrief? hit = sweep.Items.FirstOrDefault(i =>
                 i.FolderKind == "inbox" && string.Equals(i.Subject, seedSubject, StringComparison.Ordinal));

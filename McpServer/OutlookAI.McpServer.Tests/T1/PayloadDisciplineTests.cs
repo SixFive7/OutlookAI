@@ -45,6 +45,27 @@ public sealed class PayloadDisciplineTests
         Assert.Equal(8, BodyCache.MaxEntries);
         Assert.Equal(8_000_000, BodyCache.MaxTotalChars);
         Assert.Equal(TimeSpan.FromMinutes(15), BodyCache.TimeToLive);
+
+        // Freshness-sweep coverage reporting (soak fix 13): the folder list is a
+        // legibility aid for narrow scopes, not a payload every search carries.
+        Assert.Equal(12, MailService.SweptFolderListCap);
+        Assert.Equal(40, OutlookComSession.MaxScopedSweepFolders);
+    }
+
+    [Fact]
+    public void SweepCoverage_DefaultFolderSet_IsPinnedAndSelfDescribing()
+    {
+        // The default set is the freshness contract of every non-folder-scoped search
+        // (soak fix 13): the four folders mail lands in without user action. Widening
+        // it is a decision (cost: ~10 ms per folder per store), not a refactor - and
+        // the scope string agents read must keep naming exactly these folders.
+        Assert.Equal(
+            new[] { "inbox", "sent", "deleted", "junk" },
+            OutlookComSession.DefaultSweepFolderKinds);
+
+        Assert.Equal(
+            "default folders (Inbox, Sent Items, Deleted Items, Junk Email)",
+            MailService.DefaultSweepScopeDescription);
     }
 
     [Fact]

@@ -9,11 +9,18 @@ namespace OutlookAI.Core.Services
     /// Short-lived cache for freshness gap-sweep results (D34): since the sweep is
     /// ALWAYS on (the fast/fresh mode split was dropped), rapid-fire iterative searches
     /// would otherwise pay a COM sweep per call. Entries are keyed on the sweep window
-    /// base (the index frontier minus the safety margin) plus the store scope, so a
-    /// cached sweep is reused only while the frontier has not advanced, and expire
-    /// after <see cref="DefaultTimeToLive"/> (~10 s, T1-pinned). Swept items are pure
-    /// data snapshots (no COM refs), safe to hold. Pure logic - no COM, no clock reads
-    /// (callers pass UTC now), fully unit-testable.
+    /// base (the index frontier minus the safety margin) plus the store scope plus the
+    /// SWEPT FOLDER SET, so a cached sweep is reused only while the frontier has not
+    /// advanced and only for a request whose coverage it actually satisfies; entries
+    /// expire after <see cref="DefaultTimeToLive"/> (~10 s, T1-pinned). Swept items are
+    /// pure data snapshots (no COM refs), safe to hold. Pure logic - no COM, no clock
+    /// reads (callers pass UTC now), fully unit-testable.
+    /// <para>
+    /// The folder set is part of the key because the sweep follows the search scope
+    /// (soak fix 13): a folder-scoped sweep covers ONE folder subtree, so serving it to
+    /// a store-wide query would answer from a fraction of the coverage - a silent recall
+    /// bug in the opposite direction from the one that fix repaired.
+    /// </para>
     /// </summary>
     public sealed class SweepCache
     {
@@ -45,11 +52,18 @@ namespace OutlookAI.Core.Services
         public sealed class CachedSweep
         {
             /// <summary>Creates a cached sweep record.</summary>
-            public CachedSweep(ComSweepResult result, DateTime baseGapStartUtc, string? store, DateTime fetchedAtUtc, long elapsedMs)
+            public CachedSweep(
+                ComSweepResult result,
+                DateTime baseGapStartUtc,
+                string? store,
+                string? folder,
+                DateTime fetchedAtUtc,
+                long elapsedMs)
             {
                 Result = result ?? throw new ArgumentNullException(nameof(result));
                 BaseGapStartUtc = baseGapStartUtc;
                 Store = store;
+                Folder = folder;
                 FetchedAtUtc = fetchedAtUtc;
                 ElapsedMs = elapsedMs;
             }
@@ -63,6 +77,12 @@ namespace OutlookAI.Core.Services
             /// <summary>Store the sweep was scoped to (null = all stores).</summary>
             public string? Store { get; }
 
+            /// <summary>
+            /// Folder subtree the sweep was scoped to (null = the default folder set of
+            /// every store in scope). Part of the cache key - see the class remarks.
+            /// </summary>
+            public string? Folder { get; }
+
             /// <summary>When the sweep ran (UTC).</summary>
             public DateTime FetchedAtUtc { get; }
 
@@ -73,23 +93,26 @@ namespace OutlookAI.Core.Services
         /// <summary>
         /// Looks up a reusable sweep for a request. Reuse requires: entry younger than
         /// the TTL, the SAME window base (a frontier advance invalidates - the index
-        /// ingested something, so re-sweeping keeps the cache honest), and a compatible
-        /// store scope: the exact store entry, or the all-stores entry (whose items the
-        /// caller filters down by store display name).
+        /// ingested something, so re-sweeping keeps the cache honest), the SAME folder
+        /// scope, and a compatible store scope: the exact store entry, or the all-stores
+        /// entry (whose items the caller filters down by store display name - sound only
+        /// because every store gets the identical default folder set).
         /// </summary>
-        public bool TryGet(DateTime baseGapStartUtc, string? store, DateTime nowUtc, out CachedSweep? cached)
+        public bool TryGet(DateTime baseGapStartUtc, string? store, string? folder, DateTime nowUtc, out CachedSweep? cached)
         {
             lock (_lock)
             {
                 Prune(nowUtc);
-                if (TryGetUsable(KeyFor(store), baseGapStartUtc, nowUtc, out cached))
+                if (TryGetUsable(KeyFor(store, folder), baseGapStartUtc, nowUtc, out cached))
                 {
                     return true;
                 }
 
                 // A store-scoped request can be served from an all-stores sweep (the
-                // caller filters items by store); never the other way around.
-                if (store != null && TryGetUsable(KeyFor(null), baseGapStartUtc, nowUtc, out cached))
+                // caller filters items by store); never the other way around, and never
+                // across folder scopes - a folder-scoped sweep covers one subtree only.
+                if (store != null && folder == null
+                    && TryGetUsable(KeyFor(null, null), baseGapStartUtc, nowUtc, out cached))
                 {
                     return true;
                 }
@@ -100,7 +123,13 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>Records a completed live sweep (overwrites the scope's previous entry).</summary>
-        public void Store(DateTime baseGapStartUtc, string? store, ComSweepResult result, long elapsedMs, DateTime nowUtc)
+        public void Store(
+            DateTime baseGapStartUtc,
+            string? store,
+            string? folder,
+            ComSweepResult result,
+            long elapsedMs,
+            DateTime nowUtc)
         {
             if (result == null)
             {
@@ -115,7 +144,7 @@ namespace OutlookAI.Core.Services
             lock (_lock)
             {
                 Prune(nowUtc);
-                _entries[KeyFor(store)] = new CachedSweep(result, baseGapStartUtc, store, nowUtc, elapsedMs);
+                _entries[KeyFor(store, folder)] = new CachedSweep(result, baseGapStartUtc, store, folder, nowUtc, elapsedMs);
             }
         }
 
@@ -128,9 +157,15 @@ namespace OutlookAI.Core.Services
             }
         }
 
-        private static string KeyFor(string? store)
+        /// <summary>
+        /// Cache key: store scope + folder scope. The unit separator cannot occur in a
+        /// store display name or a folder path, so the two parts can never blur into
+        /// each other (a store literally named "x/y" must not collide with store "x",
+        /// folder "y").
+        /// </summary>
+        private static string KeyFor(string? store, string? folder)
         {
-            return store ?? string.Empty;
+            return (store ?? string.Empty) + "\u001F" + (folder ?? string.Empty);
         }
 
         private bool TryGetUsable(string key, DateTime baseGapStartUtc, DateTime nowUtc, out CachedSweep? cached)

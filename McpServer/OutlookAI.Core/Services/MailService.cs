@@ -32,6 +32,21 @@ namespace OutlookAI.Core.Services
         private const int DedupeToleranceSeconds = 15;
         private const int SweepPerFolderCap = 200;
         private const int ExhaustiveTimeBudgetMs = 120_000;
+
+        /// <summary>
+        /// What a non-folder-scoped sweep covers, echoed in the sweep block so an agent
+        /// can see its freshness coverage (soak fix 13). Kept in sync with
+        /// <see cref="OutlookComSession.DefaultSweepFolderKinds"/>.
+        /// </summary>
+        public const string DefaultSweepScopeDescription =
+            "default folders (Inbox, Sent Items, Deleted Items, Junk Email)";
+
+        /// <summary>
+        /// Above this many swept folders the sweep block reports the count only - the
+        /// list exists to make a narrow scope legible, not to bloat every payload
+        /// (section-12 compact-payload discipline).
+        /// </summary>
+        public const int SweptFolderListCap = 12;
         private const double VeryStaleAdviceMinutes = 720; // 12 h - suggest exhaustive:true
         private static readonly TimeSpan SweepSafetyMargin = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan EmptyIndexSweepWindow = TimeSpan.FromDays(7);
@@ -245,6 +260,16 @@ namespace OutlookAI.Core.Services
                             ? "An add-in update is in progress - retry shortly (D17)."
                             : "Retry later, check outlook_health, or search again with exhaustive:true plus store + folder/after bounds for an index-free COM search."));
                 }
+                else if (sweep.Performed && sweep.FoldersSwept == 0 && request.Folder != null)
+                {
+                    // The folder-scoped sweep could not resolve the folder through COM
+                    // (renamed, gone, or not a mail folder): index results still stand,
+                    // but this query has no freshness coverage - say so rather than
+                    // implying the last few minutes were checked.
+                    advice.Add("Freshness sweep covered no folder: '" + request.Folder
+                        + "' could not be opened in Outlook, so results for it are index-only and may lag the last "
+                        + DescribeAge(staleness) + " of mail. Check the path with list_folders.");
+                }
             }
 
             // Snapshot AFTER the sweep: the sweep may have just autostarted Outlook
@@ -334,16 +359,29 @@ namespace OutlookAI.Core.Services
                 return info;
             }
 
+            // The sweep follows the SEARCH scope (soak fix 13): a folder-scoped search
+            // sweeps exactly that folder subtree (the index tier's SCOPE= is recursive,
+            // so the sweep is too), anything else sweeps the arrival-path default
+            // folders of the store(s) in scope. Before the fix every search swept
+            // Inbox + Sent Items only, so mail a server-side rule filed elsewhere on
+            // arrival was invisible until the index caught up.
+            IReadOnlyList<string>? sweepFolderPath = ParseFolderSegments(request.Folder);
+            string? folderKey = sweepFolderPath == null ? null : string.Join("/", sweepFolderPath);
+            info.Scope = folderKey == null ? DefaultSweepScopeDescription : "folder";
+
             // D34 sweep cache: rapid-fire iterative searches reuse one sweep for up to
-            // ~10 s (keyed on the frontier-derived window base + store scope), so
-            // repeat calls run at index speed. Bodies are always fetched by cacheable
-            // sweeps, so a term-less sweep can serve later termed searches too. A
-            // cached all-stores sweep serves store-scoped requests via the client-side
-            // store filter below; item-level After/Before filters also apply below, so
-            // a wider cached window never over-returns.
+            // ~10 s (keyed on the frontier-derived window base + store scope + folder
+            // scope), so repeat calls run at index speed. Bodies are always fetched by
+            // cacheable sweeps, so a term-less sweep can serve later termed searches
+            // too. A cached all-stores sweep serves store-scoped requests via the
+            // client-side store filter below (same folder set in every store); a
+            // folder-scoped sweep only ever serves that same folder scope. Item-level
+            // After/Before filters also apply below, so a wider cached window never
+            // over-returns.
             DateTime nowUtc = DateTime.UtcNow;
             IReadOnlyList<ComMailBrief> sweptItems;
-            if (_sweepCache.TryGet(baseGapStart, request.Store, nowUtc, out SweepCache.CachedSweep? cachedSweep) && cachedSweep != null)
+            if (_sweepCache.TryGet(baseGapStart, request.Store, folderKey, nowUtc, out SweepCache.CachedSweep? cachedSweep)
+                && cachedSweep != null)
             {
                 info.Performed = true;
                 info.Cached = true;
@@ -351,6 +389,7 @@ namespace OutlookAI.Core.Services
                 info.ElapsedMs = 0;
                 info.FoldersSwept = cachedSweep.Result.FoldersSwept;
                 info.FoldersSkipped = cachedSweep.Result.FoldersSkipped;
+                info.Folders = DescribeSweptFolders(cachedSweep.Result, request.Store);
                 sweptItems = cachedSweep.Result.Items;
             }
             else
@@ -359,8 +398,8 @@ namespace OutlookAI.Core.Services
                 ComSweepResult sweepResult;
                 try
                 {
-                    sweepResult = _gateway.Run(s => s.SweepDefaultFoldersNewerThan(
-                        gapStart, SweepPerFolderCap, includeBodies: true, request.Store));
+                    sweepResult = _gateway.Run(s => s.SweepFoldersNewerThan(
+                        gapStart, SweepPerFolderCap, includeBodies: true, request.Store, sweepFolderPath));
                 }
                 catch (OutlookUnavailableException ex)
                 {
@@ -386,13 +425,14 @@ namespace OutlookAI.Core.Services
                 info.ElapsedMs = stopwatch.ElapsedMilliseconds;
                 info.FoldersSwept = sweepResult.FoldersSwept;
                 info.FoldersSkipped = sweepResult.FoldersSkipped;
+                info.Folders = DescribeSweptFolders(sweepResult, request.Store);
                 sweptItems = sweepResult.Items;
 
                 // Only unclamped windows are cacheable: an After-narrowed sweep must
                 // not poison wider follow-up searches.
                 if (gapStart == baseGapStart)
                 {
-                    _sweepCache.Store(baseGapStart, request.Store, sweepResult, info.ElapsedMs, nowUtc);
+                    _sweepCache.Store(baseGapStart, request.Store, folderKey, sweepResult, info.ElapsedMs, nowUtc);
                 }
             }
 
@@ -1067,6 +1107,38 @@ namespace OutlookAI.Core.Services
             }
 
             return "Outlook could not show the requested view (" + (error ?? "unknown") + ").";
+        }
+
+        /// <summary>
+        /// The swept-folder list for the sweep block: the folders the sweep actually
+        /// covered, narrowed to the requested store when a cached all-stores sweep is
+        /// serving a store-scoped request, and dropped entirely once the list is too
+        /// long to be worth carrying (the count and scope still describe it).
+        /// </summary>
+        private static IReadOnlyList<string>? DescribeSweptFolders(ComSweepResult result, string? store)
+        {
+            if (result.SweptFolders.Count == 0)
+            {
+                return null;
+            }
+
+            List<string> folders = new List<string>(result.SweptFolders.Count);
+            foreach (string entry in result.SweptFolders)
+            {
+                if (store != null)
+                {
+                    int separator = entry.IndexOf('/');
+                    if (separator < 0
+                        || !string.Equals(entry.Substring(0, separator), store, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                }
+
+                folders.Add(entry);
+            }
+
+            return folders.Count == 0 || folders.Count > SweptFolderListCap ? null : folders;
         }
 
         private static IReadOnlyList<string>? ParseFolderSegments(string? folder)

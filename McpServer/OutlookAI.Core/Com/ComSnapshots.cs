@@ -774,20 +774,31 @@ namespace OutlookAI.Core.Com
     public sealed class ComSweepResult
     {
         /// <summary>Creates a sweep result.</summary>
-        public ComSweepResult(IReadOnlyList<ComMailBrief> items, int foldersSwept, int foldersSkipped)
+        public ComSweepResult(
+            IReadOnlyList<ComMailBrief> items,
+            int foldersSwept,
+            int foldersSkipped,
+            IReadOnlyList<string>? sweptFolders = null)
         {
             Items = items;
             FoldersSwept = foldersSwept;
             FoldersSkipped = foldersSkipped;
+            SweptFolders = sweptFolders ?? Array.Empty<string>();
         }
 
         /// <summary>Items received/sent at or after the sweep start.</summary>
         public IReadOnlyList<ComMailBrief> Items { get; }
 
-        /// <summary>Default folders that were swept.</summary>
+        /// <summary>Folders that were swept.</summary>
         public int FoldersSwept { get; }
 
-        /// <summary>Default folders that could not be resolved or enumerated.</summary>
+        /// <summary>Folders that could not be resolved or enumerated (or fell past the folder cap).</summary>
         public int FoldersSkipped { get; }
+
+        /// <summary>
+        /// The swept folders as <c>store/store-relative path</c>, so a caller can report
+        /// exactly what the freshness sweep covered (soak fix 13).
+        /// </summary>
+        public IReadOnlyList<string> SweptFolders { get; }
     }
 }

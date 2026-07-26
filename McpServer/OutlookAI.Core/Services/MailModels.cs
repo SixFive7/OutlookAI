@@ -145,10 +145,26 @@ namespace OutlookAI.Core.Services
         /// <summary>Sweep window start (UTC).</summary>
         public DateTime? GapStartUtc { get; set; }
 
-        /// <summary>Default folders swept.</summary>
+        /// <summary>
+        /// What the sweep covered, following the search scope (soak fix 13):
+        /// <c>"folder"</c> = the searched folder and its subfolders;
+        /// <c>"default folders (Inbox, Sent Items, Deleted Items, Junk Email)"</c> =
+        /// those folders in the searched store, or in every store when the search is
+        /// not store-scoped. Lets an agent see the freshness coverage of its query.
+        /// </summary>
+        public string? Scope { get; set; }
+
+        /// <summary>Folders swept.</summary>
         public int FoldersSwept { get; set; }
 
-        /// <summary>Default folders skipped (unresolvable).</summary>
+        /// <summary>
+        /// The swept folders as <c>store/folder path</c>, listed while the set is small
+        /// enough to be useful (omitted for a wide all-stores sweep - the count and
+        /// <see cref="Scope"/> describe those).
+        /// </summary>
+        public IReadOnlyList<string>? Folders { get; set; }
+
+        /// <summary>Folders skipped (unresolvable, or past the folder cap of a scoped sweep).</summary>
         public int FoldersSkipped { get; set; }
 
         /// <summary>Items in the window before term filtering.</summary>

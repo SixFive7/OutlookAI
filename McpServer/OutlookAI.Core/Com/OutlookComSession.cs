@@ -1099,17 +1099,66 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// Fresh-mode gap sweep (v3.MD D19): enumerates each store's Inbox and Sent
-        /// Items for items received/sent at or after <paramref name="sinceUtc"/>. Items
-        /// are opened for authoritative properties and carry their REAL EntryIDs; bodies
-        /// are fetched only when the caller needs term matching. Bounded by
-        /// <paramref name="perFolderCap"/> per folder.
+        /// Default folders a store-wide (or all-stores) sweep covers: the four folders
+        /// mail can LAND in without any user action - Inbox (delivery), Sent Items
+        /// (dispatch), Deleted Items (server-side delete/sweep rules - the live
+        /// discovery case) and Junk Email (spam filter). Anything else a rule files
+        /// into is reachable by scoping the search to that folder (soak fix 13).
+        /// <para>
+        /// Deliberately NOT the whole folder tree: measured on this machine a full walk
+        /// costs ~10 ms per folder and these stores carry 41-46 folders each, i.e.
+        /// seconds per search. These four cost 135 ms across all 5 stores (86 ms for
+        /// the pre-fix Inbox+Sent pair).
+        /// </para>
+        /// <para>
+        /// The set is identical for every store, which is what lets a cached all-stores
+        /// sweep serve a store-scoped request (SweepCache): both cover the same folders
+        /// per store.
+        /// </para>
         /// </summary>
-        public ComSweepResult SweepDefaultFoldersNewerThan(
+        public static readonly IReadOnlyList<string> DefaultSweepFolderKinds = new[]
+        {
+            "inbox", "sent", "deleted", "junk",
+        };
+
+        /// <summary>
+        /// Folder cap for a folder-scoped sweep's subtree walk. Bounds the cost of
+        /// scoping a search to a folder with a large subtree (~10 ms per folder).
+        /// </summary>
+        public const int MaxScopedSweepFolders = 40;
+
+        // 6 = olFolderInbox, 5 = olFolderSentMail, 3 = olFolderDeletedItems, 23 = olFolderJunk.
+        private static readonly (int FolderId, string Kind)[] DefaultSweepFolders =
+        {
+            (6, "inbox"), (5, "sent"), (3, "deleted"), (23, "junk"),
+        };
+
+        /// <summary>
+        /// Fresh-mode gap sweep (v3.MD D19): enumerates the folders a search covers for
+        /// items received/sent at or after <paramref name="sinceUtc"/>. Items are opened
+        /// for authoritative properties and carry their REAL EntryIDs; bodies are fetched
+        /// only when the caller needs term matching. Bounded by
+        /// <paramref name="perFolderCap"/> per folder.
+        /// <para>
+        /// Scope follows the SEARCH scope (soak fix 13): with
+        /// <paramref name="folderPath"/> set (which requires
+        /// <paramref name="onlyStoreDisplayName"/>) the sweep covers exactly that folder
+        /// AND its subfolders - the index tier's SCOPE= predicate is recursive, so the
+        /// sweep must be too or a folder-scoped search would keep missing fresh mail.
+        /// Without a folder path it covers <see cref="DefaultSweepFolderKinds"/> in every
+        /// store (or in the named store).
+        /// </para>
+        /// <para>
+        /// Never throws for a missing folder/store: an unresolvable scope is reported as
+        /// a skipped folder so search degrades gracefully (D34) instead of failing.
+        /// </para>
+        /// </summary>
+        public ComSweepResult SweepFoldersNewerThan(
             DateTime sinceUtc,
             int perFolderCap,
             bool includeBodies,
-            string? onlyStoreDisplayName)
+            string? onlyStoreDisplayName,
+            IReadOnlyList<string>? folderPath = null)
         {
             EnsureNotDisposed();
             if (perFolderCap < 1)
@@ -1117,12 +1166,28 @@ namespace OutlookAI.Core.Com
                 throw new ArgumentOutOfRangeException(nameof(perFolderCap));
             }
 
+            if (folderPath != null && folderPath.Count > 0 && onlyStoreDisplayName == null)
+            {
+                throw new ArgumentException(
+                    "A folder-scoped sweep needs the store the folder lives in.",
+                    nameof(onlyStoreDisplayName));
+            }
+
             return _runner.Run(() =>
             {
                 dynamic ns = _namespace!;
                 List<ComMailBrief> items = new List<ComMailBrief>();
-                int swept = 0;
+                List<string> sweptFolders = new List<string>();
                 int skipped = 0;
+
+                if (folderPath != null && folderPath.Count > 0)
+                {
+                    SweepScopedFolder(
+                        ns, onlyStoreDisplayName!, folderPath, sinceUtc, perFolderCap, includeBodies,
+                        items, sweptFolders, ref skipped);
+                    return new ComSweepResult(items, sweptFolders.Count, skipped, sweptFolders);
+                }
+
                 dynamic stores = ns.Stores;
                 try
                 {
@@ -1141,7 +1206,7 @@ namespace OutlookAI.Core.Com
                             }
                             catch (COMException)
                             {
-                                skipped += 2;
+                                skipped += DefaultSweepFolders.Length;
                                 continue;
                             }
 
@@ -1151,15 +1216,14 @@ namespace OutlookAI.Core.Com
                                 continue;
                             }
 
-                            // 6 = olFolderInbox, 5 = olFolderSentMail.
-                            foreach ((int folderId, string folderKind) in new[] { (6, "inbox"), (5, "sent") })
+                            foreach ((int folderId, string folderKind) in DefaultSweepFolders)
                             {
                                 object? folder = null;
                                 try
                                 {
                                     folder = store.GetDefaultFolder(folderId);
                                     SweepFolder(ns, folder!, storeName, storeId, folderKind, sinceUtc, perFolderCap, includeBodies, items);
-                                    swept++;
+                                    sweptFolders.Add(DescribeSweptFolder(storeName, folder!, folderKind));
                                 }
                                 catch (Exception ex) when (IsComCallFailure(ex))
                                 {
@@ -1183,8 +1247,145 @@ namespace OutlookAI.Core.Com
                     Release(stores);
                 }
 
-                return new ComSweepResult(items, swept, skipped);
+                return new ComSweepResult(items, sweptFolders.Count, skipped, sweptFolders);
             });
+        }
+
+        /// <summary>
+        /// STA-side folder-scoped sweep: walks to the requested folder and sweeps it plus
+        /// its subfolders (bounded by <see cref="MaxScopedSweepFolders"/>). Mirrors the
+        /// exhaustive scan's tree rule - only mail folders (DefaultItemType 0) are swept,
+        /// but non-mail folders still get their subtrees visited.
+        /// </summary>
+        private void SweepScopedFolder(
+            dynamic ns,
+            string storeDisplayName,
+            IReadOnlyList<string> folderPath,
+            DateTime sinceUtc,
+            int perFolderCap,
+            bool includeBodies,
+            List<ComMailBrief> items,
+            List<string> sweptFolders,
+            ref int skipped)
+        {
+            string? storeId = null;
+            dynamic? store = FindStoreByDisplayName(storeDisplayName);
+            if (store != null)
+            {
+                try
+                {
+                    storeId = (string)store.StoreID;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                }
+                finally
+                {
+                    Release(store);
+                }
+            }
+
+            if (storeId == null)
+            {
+                skipped++;
+                return;
+            }
+
+            object? root = WalkToFolder(storeDisplayName, folderPath, out string? walkError);
+            if (root == null)
+            {
+                // Folder gone/renamed: the index tier still answers, so this degrades to
+                // "one folder could not be swept" rather than failing the search.
+                skipped++;
+                return;
+            }
+
+            try
+            {
+                SweepFolderTree(
+                    ns, root, storeDisplayName, storeId, string.Join("/", folderPath),
+                    sinceUtc, perFolderCap, includeBodies, items, sweptFolders, ref skipped);
+            }
+            finally
+            {
+                Release(root);
+            }
+        }
+
+        private void SweepFolderTree(
+            dynamic ns,
+            object folderObject,
+            string storeName,
+            string storeId,
+            string relativePath,
+            DateTime sinceUtc,
+            int perFolderCap,
+            bool includeBodies,
+            List<ComMailBrief> items,
+            List<string> sweptFolders,
+            ref int skipped)
+        {
+            if (sweptFolders.Count >= MaxScopedSweepFolders)
+            {
+                skipped++;
+                return;
+            }
+
+            dynamic folder = folderObject;
+
+            int defaultItemType = -1;
+            try
+            {
+                defaultItemType = (int)folder.DefaultItemType;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+
+            if (defaultItemType == 0)
+            {
+                SweepFolder(ns, folderObject, storeName, storeId, null, sinceUtc, perFolderCap, includeBodies, items);
+                sweptFolders.Add(storeName + "/" + relativePath);
+            }
+
+            object? subFolders = null;
+            try
+            {
+                subFolders = folder.Folders;
+                dynamic folderCollection = (dynamic)subFolders!;
+                int count = folderCollection.Count;
+                for (int i = 1; i <= count; i++)
+                {
+                    object? child = null;
+                    try
+                    {
+                        child = folderCollection[i];
+                        object childFolder = child!;
+                        string childName = TryGetString(() => (string?)((dynamic)childFolder).Name) ?? "?";
+                        SweepFolderTree(
+                            ns, childFolder, storeName, storeId, relativePath + "/" + childName,
+                            sinceUtc, perFolderCap, includeBodies, items, sweptFolders, ref skipped);
+                    }
+                    finally
+                    {
+                        Release(child);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                // No enumerable subfolders.
+            }
+            finally
+            {
+                Release(subFolders);
+            }
+        }
+
+        private static string DescribeSweptFolder(string storeName, object folderObject, string fallbackKind)
+        {
+            string? name = TryGetString(() => (string?)((dynamic)folderObject).Name);
+            return storeName + "/" + (string.IsNullOrEmpty(name) ? fallbackKind : name!);
         }
 
         /// <summary>
