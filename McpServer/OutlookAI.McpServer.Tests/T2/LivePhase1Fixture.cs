@@ -26,6 +26,9 @@ public sealed class LiveTestSettings
     /// <summary>The section-5 probe term (generic word; proven to hit on this machine).</summary>
     public string ProbeTerm { get; set; } = string.Empty;
 
+    /// <summary>The SF-6 / D40 recall-regression population (see <see cref="SubjectOnlyProbeSettings"/>).</summary>
+    public SubjectOnlyProbeSettings? SubjectOnlyProbe { get; set; }
+
     /// <summary>Loads the settings file or throws with setup instructions.</summary>
     public static LiveTestSettings Load()
     {
@@ -56,8 +59,42 @@ public sealed class LiveTestSettings
             throw new InvalidOperationException("Live-test settings file is incomplete.");
         }
 
+        if (settings.SubjectOnlyProbe == null
+            || string.IsNullOrWhiteSpace(settings.SubjectOnlyProbe.StoreDisplayName)
+            || string.IsNullOrWhiteSpace(settings.SubjectOnlyProbe.FolderPath)
+            || string.IsNullOrWhiteSpace(settings.SubjectOnlyProbe.SubjectTerm)
+            || string.IsNullOrWhiteSpace(settings.SubjectOnlyProbe.SenderFragment))
+        {
+            throw new InvalidOperationException(
+                "Live-test settings are missing the 'subjectOnlyProbe' block (storeDisplayName, folderPath, "
+                + "subjectTerm, senderFragment) required by the D40/SF-6 recall regression.");
+        }
+
         return settings;
     }
+}
+
+/// <summary>
+/// Coordinates of the SF-6 discovery-case population: a real, stable mail population in
+/// a business store whose probe term appears in the SUBJECT (and sender address) but NOT
+/// in the body stream - exactly the shape the pre-D40 unqualified
+/// <c>CONTAINS('term')</c> predicate could never match. Kept in the gitignored settings
+/// file because the store/folder/term triple identifies real mailbox content (S6/D13);
+/// the tests only ever print counts and timings (S4).
+/// </summary>
+public sealed class SubjectOnlyProbeSettings
+{
+    /// <summary>Store display name holding the population.</summary>
+    public string StoreDisplayName { get; set; } = string.Empty;
+
+    /// <summary>Store-relative folder path holding the population.</summary>
+    public string FolderPath { get; set; } = string.Empty;
+
+    /// <summary>A term present in every member's subject and in no member's body.</summary>
+    public string SubjectTerm { get; set; } = string.Empty;
+
+    /// <summary>Sender-address fragment selecting exactly the same population (the independent expectation).</summary>
+    public string SenderFragment { get; set; } = string.Empty;
 }
 
 /// <summary>
