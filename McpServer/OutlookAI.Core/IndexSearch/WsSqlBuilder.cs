@@ -18,6 +18,9 @@ namespace OutlookAI.Core.IndexSearch
     /// carries no subject text - the SF-6 recall bug. Default shape is the
     /// Subject-OR-Contents pair; measured cost over the bare shape is ~0-2 ms on
     /// agent-sized (TOP 26 + ORDER BY) queries.</item>
+    /// <item>Multi-term queries AND ACROSS the columns (one pair per term), never inside
+    /// one column - the in-column shape missed mail with one term in the subject and
+    /// another in the body (soak fix 13).</item>
     /// <item>Kind filter is 'email' or '(email OR document)' - never unfiltered.</item>
     /// <item>No aggregates, no JOINs (unsupported in WS-SQL).</item>
     /// <item>Sender/recipient filters use per-column CONTAINS - Phase-1 probes measured
@@ -216,6 +219,17 @@ namespace OutlookAI.Core.IndexSearch
             return "SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE SCOPE='" + ValidateScope(scope) + "'";
         }
 
+        /// <summary>
+        /// Term predicate. Multi-term queries AND across the WHOLE matched text, not
+        /// inside one column: each term gets its own Subject-OR-Contents pair and the
+        /// pairs are ANDed, so mail carrying one term in the subject and another in the
+        /// body matches (the pair-per-column shape
+        /// <c>CONTAINS(Subject,'"a" AND "b"') OR CONTAINS(Contents,'"a" AND "b"')</c>
+        /// silently missed exactly those - soak fix 13). Narrowed scopes stay
+        /// single-column, where an in-column AND is equivalent and cheaper.
+        /// Measured cost of the per-term pairs on this machine (warm best-of-3,
+        /// agent-sized TOP 26 + ORDER BY): +0-2 ms over the old shape at 1-3 terms.
+        /// </summary>
         private static string BuildTermsPredicate(IReadOnlyList<string> terms, SearchIn searchIn)
         {
             List<string> quoted = new List<string>(terms.Count);
@@ -224,17 +238,21 @@ namespace OutlookAI.Core.IndexSearch
                 quoted.Add(QuotedContainsValue(ValidateTerm(terms[i], "Terms[" + i.ToString(CultureInfo.InvariantCulture) + "]")));
             }
 
-            string condition = string.Join(" AND ", quoted);
-            string subject = "CONTAINS(" + SubjectColumn + ", '" + condition + "')";
-            string contents = "CONTAINS(" + ContentsColumn + ", '" + condition + "')";
             switch (searchIn)
             {
                 case SearchIn.SubjectAndBody:
-                    return "(" + subject + " OR " + contents + ")";
+                    List<string> pairs = new List<string>(quoted.Count);
+                    foreach (string term in quoted)
+                    {
+                        pairs.Add("(CONTAINS(" + SubjectColumn + ", '" + term + "') OR CONTAINS("
+                            + ContentsColumn + ", '" + term + "'))");
+                    }
+
+                    return string.Join(" AND ", pairs);
                 case SearchIn.SubjectOnly:
-                    return subject;
+                    return "CONTAINS(" + SubjectColumn + ", '" + string.Join(" AND ", quoted) + "')";
                 case SearchIn.BodyOnly:
-                    return contents;
+                    return "CONTAINS(" + ContentsColumn + ", '" + string.Join(" AND ", quoted) + "')";
                 default:
                     throw new ArgumentException("Unknown SearchIn value.", nameof(searchIn));
             }

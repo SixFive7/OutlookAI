@@ -49,6 +49,29 @@ public sealed class ExhaustiveDaslFilterTests
     }
 
     [Fact]
+    public void MultipleTerms_AndAcrossSubjectAndBody_NotInsideOneProperty()
+    {
+        // Tier parity with the index builder (soak fix 13): each term gets its own
+        // subject-OR-body clause, so a mail with one term only in the subject and the
+        // other only in the body matches. This tier already had the right shape - the
+        // pin exists so it stays that way.
+        foreach (ExhaustiveEngine engine in new[] { ExhaustiveEngine.CiPhraseMatch, ExhaustiveEngine.Like })
+        {
+            string filter = ExhaustiveDaslFilter.Build(new[] { "balans", "energie" }, null, null, engine);
+            string op = engine == ExhaustiveEngine.CiPhraseMatch ? " ci_phrasematch '" : " like '%";
+            string close = engine == ExhaustiveEngine.CiPhraseMatch ? "'" : "%'";
+
+            foreach (string term in new[] { "balans", "energie" })
+            {
+                Assert.Contains(
+                    "(" + Subject + op + term + close + " OR " + Body + op + term + close + ")",
+                    filter,
+                    StringComparison.Ordinal);
+            }
+        }
+    }
+
+    [Fact]
     public void PrefixStem_UsesLikeInBothEngines()
     {
         string ci = ExhaustiveDaslFilter.Build(new[] { "fact*" }, null, null, ExhaustiveEngine.CiPhraseMatch);

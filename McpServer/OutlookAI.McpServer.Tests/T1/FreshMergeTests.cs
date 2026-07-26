@@ -139,6 +139,22 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
+    public void MatchesTerms_AndsAcrossSubjectAndBody_NotInsideOneOfThem()
+    {
+        // Tier parity with the index builder (soak fix 13): the sweep must match mail
+        // carrying one term only in the subject and the other only in the body. This
+        // tier already ANDed per term over the whole text - the pin keeps it that way.
+        ComMailBrief item = Brief(subject: "Balans 2026", body: "verbruik energie per maand");
+
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "balans", "energie" }, Default));
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "energie", "balans" }, Default));
+
+        // Narrowing to one part must NOT find the cross-part pair.
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "balans", "energie" }, SearchIn.SubjectOnly));
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "balans", "energie" }, SearchIn.BodyOnly));
+    }
+
+    [Fact]
     public void MatchesTerms_ScopesHonorPrefixStems()
     {
         ComMailBrief item = Brief(subject: "factuur 2026-001", body: "betaling ontvangen");

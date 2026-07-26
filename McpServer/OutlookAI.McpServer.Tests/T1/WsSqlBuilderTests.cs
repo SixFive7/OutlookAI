@@ -94,19 +94,82 @@ public sealed class WsSqlBuilderTests
         Assert.DoesNotContain("System.Search.Contents", sql.Substring(0, selectEnd), StringComparison.OrdinalIgnoreCase);
     }
 
+    // ------------------------------------- cross-column AND (soak fix 13, user 2026-07-26)
+
     [Fact]
-    public void Build_MultipleTerms_AreAndedInsideEachColumn()
+    public void Build_MultipleTerms_AndAcrossTheColumns_NotInsideOne()
     {
+        // The shipped shape until soak fix 13 ANDed the terms INSIDE each column and ORed
+        // the columns, so mail with one term only in the subject and another only in the
+        // body matched nothing. Each term now gets its own Subject-OR-Contents pair.
         var query = BaseQuery();
-        query.Terms = new[] { "factuur", "betaling" };
+        query.Terms = new[] { "balans", "energie" };
 
         string sql = WsSqlBuilder.Build(query);
 
         Assert.Contains(
-            "(CONTAINS(System.Subject, '\"factuur\" AND \"betaling\"') "
-            + "OR CONTAINS(System.Search.Contents, '\"factuur\" AND \"betaling\"'))",
+            "(CONTAINS(System.Subject, '\"balans\"') OR CONTAINS(System.Search.Contents, '\"balans\"')) "
+            + "AND (CONTAINS(System.Subject, '\"energie\"') OR CONTAINS(System.Search.Contents, '\"energie\"'))",
             sql,
             StringComparison.Ordinal);
+
+        // The regressed shape must not come back.
+        Assert.DoesNotContain("\"balans\" AND \"energie\"", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_ThreeTerms_EmitOnePairPerTerm()
+    {
+        var query = BaseQuery();
+        query.Terms = new[] { "factuur", "betaling", "bedrag" };
+
+        string sql = WsSqlBuilder.Build(query);
+
+        foreach (string term in new[] { "factuur", "betaling", "bedrag" })
+        {
+            Assert.Contains(
+                "(CONTAINS(System.Subject, '\"" + term + "\"') OR CONTAINS(System.Search.Contents, '\"" + term + "\"'))",
+                sql,
+                StringComparison.Ordinal);
+        }
+
+        // Three pairs, ANDed: the term predicate contributes exactly two ' AND ' joins on
+        // top of the WHERE-level ones (scope, kind).
+        Assert.Equal(3, CountOccurrences(sql, "CONTAINS(System.Subject"));
+        Assert.Equal(3, CountOccurrences(sql, "CONTAINS(System.Search.Contents"));
+    }
+
+    [Fact]
+    public void Build_SingleTerm_ShapeUnchangedByTheCrossColumnFix()
+    {
+        string sql = WsSqlBuilder.Build(BaseQuery());
+
+        Assert.Contains(
+            "(CONTAINS(System.Subject, '\"factuur\"') OR CONTAINS(System.Search.Contents, '\"factuur\"'))",
+            sql,
+            StringComparison.Ordinal);
+        Assert.Equal(1, CountOccurrences(sql, "CONTAINS(System.Subject"));
+    }
+
+    [Fact]
+    public void Build_NarrowedSearchIn_StaysSingleColumn_WithMultipleTerms()
+    {
+        // Narrowed scopes need no OR pair: an in-column AND is equivalent and cheaper.
+        var subject = BaseQuery();
+        subject.SearchIn = SearchIn.SubjectOnly;
+        subject.Terms = new[] { "balans", "energie" };
+        string subjectSql = WsSqlBuilder.Build(subject);
+
+        Assert.Contains("CONTAINS(System.Subject, '\"balans\" AND \"energie\"')", subjectSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Search.Contents", subjectSql, StringComparison.Ordinal);
+
+        var body = BaseQuery();
+        body.SearchIn = SearchIn.BodyOnly;
+        body.Terms = new[] { "balans", "energie" };
+        string bodySql = WsSqlBuilder.Build(body);
+
+        Assert.Contains("CONTAINS(System.Search.Contents, '\"balans\" AND \"energie\"')", bodySql, StringComparison.Ordinal);
+        Assert.DoesNotContain("CONTAINS(System.Subject", bodySql, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -119,6 +182,40 @@ public sealed class WsSqlBuilderTests
 
         Assert.Contains("CONTAINS(System.Subject, '\"factu*\"')", sql, StringComparison.Ordinal);
         Assert.Contains("CONTAINS(System.Search.Contents, '\"factu*\"')", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_PrefixStar_WorksInEveryTermPosition()
+    {
+        var query = BaseQuery();
+        query.Terms = new[] { "bala*", "energie", "fact*" };
+
+        string sql = WsSqlBuilder.Build(query);
+
+        foreach (string term in new[] { "bala*", "energie", "fact*" })
+        {
+            Assert.Contains(
+                "(CONTAINS(System.Subject, '\"" + term + "\"') OR CONTAINS(System.Search.Contents, '\"" + term + "\"'))",
+                sql,
+                StringComparison.Ordinal);
+        }
+
+        // Still no bare CONTAINS('*') anywhere (section 12: 0x80041605).
+        Assert.DoesNotContain("CONTAINS('", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("'\"*\"'", sql, StringComparison.Ordinal);
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        int count = 0;
+        int index = haystack.IndexOf(needle, StringComparison.Ordinal);
+        while (index >= 0)
+        {
+            count++;
+            index = haystack.IndexOf(needle, index + needle.Length, StringComparison.Ordinal);
+        }
+
+        return count;
     }
 
     [Fact]
@@ -273,8 +370,8 @@ public sealed class WsSqlBuilderTests
 
         Assert.StartsWith("SELECT TOP 100 ", sql, StringComparison.Ordinal);
         Assert.Contains(
-            "(CONTAINS(System.Subject, '\"factuur\" AND \"betaling\"') "
-            + "OR CONTAINS(System.Search.Contents, '\"factuur\" AND \"betaling\"'))",
+            "(CONTAINS(System.Subject, '\"factuur\"') OR CONTAINS(System.Search.Contents, '\"factuur\"')) "
+            + "AND (CONTAINS(System.Subject, '\"betaling\"') OR CONTAINS(System.Search.Contents, '\"betaling\"'))",
             sql,
             StringComparison.Ordinal);
         Assert.Contains("CONTAINS(System.Message.FromAddress, '\"billing@example.com\"')", sql, StringComparison.Ordinal);
