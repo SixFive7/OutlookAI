@@ -25,6 +25,10 @@
   <ItemGroup>
     <ProjectReference Include="..\OutlookAI.Core\OutlookAI.Core.csproj" />
     <ProjectReference Include="..\OutlookAI.McpServer\OutlookAI.McpServer.csproj" />
+    <!-- Incident-7 remediation console (one-shot operator tool): referenced so its
+         decision rules stay pinned by T1 RemediationRulesTests and the project keeps
+         compiling in CI. -->
+    <ProjectReference Include="..\OutlookAI.RemediationTools\OutlookAI.RemediationTools.csproj" />
   </ItemGroup>
 
   <ItemGroup>
