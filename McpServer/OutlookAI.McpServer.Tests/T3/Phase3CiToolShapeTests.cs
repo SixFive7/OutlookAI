@@ -78,6 +78,40 @@ public sealed class Phase3CiToolShapeTests
         Assert.Contains("diverge", description!, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Soak-fix-14 pin (user order 2026-07-27): the scope argument must state that the
+    /// default (olSearchScopeCurrentFolder) excludes subfolders while the search tool's
+    /// folder scope includes them - otherwise an agent showing what it found silently
+    /// displays a narrower list than its own search returned.
+    /// </summary>
+    [Fact]
+    public async Task ShowSearchResults_ScopeDescription_StatesTheSubfolderBehavior()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement list = await client.RoundTripAsync("tools/list", new { });
+        string? scopeDescription = null;
+        foreach (JsonElement tool in list.GetProperty("result").GetProperty("tools").EnumerateArray())
+        {
+            if (tool.GetProperty("name").GetString() == "show_search_results")
+            {
+                scopeDescription = tool.GetProperty("inputSchema").GetProperty("properties")
+                    .GetProperty("scope").GetProperty("description").GetString();
+                break;
+            }
+        }
+
+        Assert.NotNull(scopeDescription);
+        Assert.Contains("no subfolders", scopeDescription!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("pass subfolders", scopeDescription!, StringComparison.OrdinalIgnoreCase);
+
+        // All four wire values stay advertised.
+        foreach (string value in new[] { "current_folder", "subfolders", "all_folders", "all_outlook" })
+        {
+            Assert.Contains(value, scopeDescription!, StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public async Task Search_ExhaustiveWithStoreButNoBound_ReturnsStructuredErrorJson()
     {

@@ -149,6 +149,9 @@ public sealed class SearchSchemaCiTests
         Assert.Contains("mail that arrived after the last index update", description, StringComparison.Ordinal);
         Assert.Contains("that folder and its subfolders", description, StringComparison.Ordinal);
         Assert.Contains("Inbox, Sent Items, Deleted Items and Junk Email", description, StringComparison.Ordinal);
+
+        // The default four are swept NON-recursively (SweepFolder, not SweepFolderTree).
+        Assert.Contains("those four folders only, not their subfolders", description, StringComparison.Ordinal);
         Assert.Contains("sweep block", description, StringComparison.Ordinal);
         Assert.Contains("headless", description, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("10 s", description, StringComparison.Ordinal);
@@ -167,9 +170,48 @@ public sealed class SearchSchemaCiTests
         Assert.Contains("truncated=true", description, StringComparison.Ordinal);
         Assert.Contains("advice", description, StringComparison.OrdinalIgnoreCase);
 
-        // Exhaustive contract: bounds + the attachment-text limitation.
+        // Exhaustive contract: bounds + the attachment-text limitation + the scope
+        // asymmetry (soak fix 14): exhaustive is NON-recursive (OutlookComSession
+        // 'recurse = folderPath is empty') while the index tier's SCOPE= is recursive,
+        // so a recursive exhaustive sweep needs one call per subfolder - or no folder
+        // at all, which scans the whole store tree.
         Assert.Contains("exhaustive=true", description, StringComparison.Ordinal);
         Assert.Contains("no attachment text", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ONLY the named folder - no subfolders", description, StringComparison.Ordinal);
+        Assert.Contains("once per subfolder", description, StringComparison.Ordinal);
+        Assert.Contains("list_folders", description, StringComparison.Ordinal);
+        Assert.Contains("omit folder to scan the whole store", description, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Soak-fix-14 pin (user order 2026-07-27): the folder ARGUMENT itself must state
+    /// the recursion asymmetry - the default (index) search covers the folder and its
+    /// subfolders, exhaustive=true scans the named folder alone.
+    /// </summary>
+    [Fact]
+    public async Task SearchFolderParameter_StatesSubfolderCoverage_AndTheExhaustiveException()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement list = await client.RoundTripAsync("tools/list", new { });
+        JsonElement? searchTool = null;
+        foreach (JsonElement tool in list.GetProperty("result").GetProperty("tools").EnumerateArray())
+        {
+            if (tool.GetProperty("name").GetString() == "search")
+            {
+                searchTool = tool;
+                break;
+            }
+        }
+
+        Assert.True(searchTool != null, "the search tool must be advertised");
+
+        string folderDescription = searchTool!.Value.GetProperty("inputSchema").GetProperty("properties")
+            .GetProperty("folder").GetProperty("description").GetString()!;
+
+        Assert.Contains("subfolders", folderDescription, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("exhaustive=true", folderDescription, StringComparison.Ordinal);
+        Assert.Contains("this folder only", folderDescription, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string DescribeJsonType(JsonElement type)

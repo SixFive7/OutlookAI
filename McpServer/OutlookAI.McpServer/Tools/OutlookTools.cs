@@ -54,8 +54,9 @@ public static class OutlookTools
         + "FRESHNESS: results always include mail that arrived after the last index update - the server sweeps it "
         + "live through Outlook (autostarting it headless when needed) and merges it in. The sweep follows your "
         + "scope: with folder set it covers that folder and its subfolders, otherwise Inbox, Sent Items, Deleted "
-        + "Items and Junk Email of the store(s) in scope - so for brand-new mail filed into some other folder, "
-        + "pass store + folder. The response's sweep block reports what was covered. The sweep is cached ~10 s, "
+        + "Items and Junk Email of the store(s) in scope (those four folders only, not their subfolders) - so for "
+        + "brand-new mail filed into any other folder, pass store + folder. "
+        + "The response's sweep block reports what was covered. The sweep is cached ~10 s, "
         + "so rapid follow-up searches run at index speed. If it cannot run, "
         + "index results are returned with a warning in advice - a search never fails for that reason.\n\n"
         + "RESULTS: each hit carries an id for read, thread, save_attachment, open_in_outlook, move_mail and "
@@ -64,8 +65,10 @@ public static class OutlookTools
         + "relay it to the user when it concerns them.\n\n"
         + "EXHAUSTIVE: exhaustive=true bypasses the index and scans folders through Outlook instead - requires "
         + "store plus folder and/or after, is far slower, and matches whole words in subject and body only (no "
-        + "attachment text). Use it when the index looks stale or wrong, or when completeness matters more than "
-        + "speed.")]
+        + "attachment text). It scans ONLY the named folder - no subfolders, unlike the default search, which "
+        + "covers that folder and its subfolders; to sweep a subtree exhaustively, call it once per subfolder "
+        + "(list_folders gives the tree), or omit folder to scan the whole store bounded by after. Use it when "
+        + "the index looks stale or wrong, or when completeness matters more than speed.")]
     public static string Search(
         [Description("Free-text terms, whitespace-separated, ANDed. Each term may match in the subject or the body (see search_in). Letters/digits plus @.-_'+ only; trailing * for prefix. Omit to filter by sender/date only.")]
         string? query = null,
@@ -75,7 +78,8 @@ public static class OutlookTools
         [Description("true = bounded index-bypassing COM scan (requires store + folder and/or after). Default false: index + freshness sweep.")]
         bool exhaustive = false,
         [Description("Store display name to search in (see list_accounts). Omit for all stores (required when exhaustive=true).")] string? store = null,
-        [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Requires store.")] string? folder = null,
+        [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Requires store. "
+            + "Includes its subfolders - except with exhaustive=true, which scans this folder only.")] string? folder = null,
         [Description("Sender filter: address or name fragment (index-backed).")] string? from = null,
         [Description("Recipient (To/Cc) filter: address fragment (index-backed).")] string? to = null,
         [Description("Only mail received at/after this instant (ISO 8601, e.g. 2026-07-01 or 2026-07-01T08:00:00Z).")] string? after = null,
@@ -305,7 +309,9 @@ public static class OutlookTools
         + "the displayed list may diverge from agent search results - relay it to the user.")]
     public static string ShowSearchResults(
         [Description("Search text for the Outlook search box (free text and Outlook query syntax).")] string query,
-        [Description("current_folder (default) | subfolders | all_folders (current store) | all_outlook (all stores).")] string scope = "current_folder",
+        [Description("current_folder (default - that folder only, no subfolders; the search tool's folder scope DOES "
+            + "include them, so pass subfolders to show the same breadth) | subfolders (that folder and its "
+            + "subfolders) | all_folders (current store) | all_outlook (all stores).")] string scope = "current_folder",
         [Description("Store display name to navigate to first (see list_accounts).")] string? store = null,
         [Description("Store-relative folder path to navigate to first. Requires store.")] string? folder = null)
     {
