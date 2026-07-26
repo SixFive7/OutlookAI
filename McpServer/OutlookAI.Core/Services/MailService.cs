@@ -1564,6 +1564,433 @@ namespace OutlookAI.Core.Services
             }
         }
 
+        // ------------------------------------------------------------------ move + archive (D39, S1 v2)
+
+        /// <summary>Maximum ids per move_mail/archive_mail call (T1-pinned).</summary>
+        public const int MoveIdsCap = 50;
+
+        /// <summary>
+        /// Standing advice attached whenever items moved (T1-pinned): the EntryID-change
+        /// and undo semantics agents must know.
+        /// </summary>
+        public const string MoveEntryIdAdvice =
+            "Moving changed each item's EntryID: use newEntryId from now on (old ids and existing index rows for these "
+            + "items are stale until the index catches up - re-run search for fresh ids). Undo any move by calling "
+            + "move_mail with newEntryId and folder = its fromFolder.";
+
+        /// <summary>
+        /// Moves 1-50 items (hit ids or EntryIDs) to a store-relative folder path,
+        /// SAME-STORE only (D39 v1): each item moves within its own store; when
+        /// <paramref name="store"/> is given, items living elsewhere fail per-item with
+        /// a cross-store error. Content-preserving and reversible - per-item results
+        /// carry old/new EntryIDs and fromFolder as the undo address; every move is
+        /// audit-logged (load-bearing: an unwritable audit log stops the batch).
+        /// Deleted Items (and subtree) and Outbox are refused as targets (S1 v2: no
+        /// delete surface).
+        /// </summary>
+        public MoveMailOutcome MoveMail(IReadOnlyList<string>? ids, string? folder, bool createFolder = false, string? store = null)
+        {
+            IReadOnlyList<string> requestIds = ValidateMoveIds(ids);
+            IReadOnlyList<string> segments = ParseFolderSegments(folder)
+                ?? throw new ArgumentException(
+                    "folder is required: the store-relative target path, e.g. 'Archive/2026' (see list_folders).", nameof(folder));
+            string? requiredStore = string.IsNullOrWhiteSpace(store) ? null : store!.Trim();
+            string targetFolderEcho = string.Join("/", segments);
+
+            List<MoveItemView> items = new List<MoveItemView>(requestIds.Count);
+            List<string> createdFolders = new List<string>();
+            bool auditBroken = false;
+            foreach (string id in requestIds)
+            {
+                if (auditBroken)
+                {
+                    items.Add(FailedItem(id, "Not attempted: the audit log is unavailable (every move must be audited)."));
+                    continue;
+                }
+
+                MoveItemView item = MoveOne(
+                    id, segments, createFolder, requiredStore, targetFolderEcho, createdFolders, out bool auditFailed);
+                auditBroken |= auditFailed;
+                items.Add(item);
+            }
+
+            int movedCount = items.Count(i => i.Ok);
+            return new MoveMailOutcome
+            {
+                Requested = requestIds.Count,
+                Moved = movedCount,
+                Failed = items.Count - movedCount,
+                TargetFolder = targetFolderEcho,
+                CreatedFolders = createdFolders.Count > 0 ? createdFolders : null,
+                Items = items,
+                Advice = movedCount > 0 ? new[] { MoveEntryIdAdvice } : null,
+            };
+        }
+
+        /// <summary>
+        /// Archives 1-50 items (hit ids or EntryIDs): moves each to ITS OWN store's
+        /// DESIGNATED Archive folder - the folder Outlook's own Archive action
+        /// (Backspace/mobile swipe/OWA) uses, resolved per store
+        /// (localization-proof, never guessed by name; see
+        /// <see cref="ArchiveFolderResolution"/>). A store without a designated
+        /// archive folder fails per-item; nothing is ever created for it. Same result,
+        /// undo and audit semantics as <see cref="MoveMail"/>.
+        /// </summary>
+        public ArchiveMailOutcome ArchiveMail(IReadOnlyList<string>? ids)
+        {
+            IReadOnlyList<string> requestIds = ValidateMoveIds(ids);
+
+            Dictionary<string, (ComArchiveFolderInfo? Info, string? Error)> archiveByStore =
+                new Dictionary<string, (ComArchiveFolderInfo?, string?)>(StringComparer.OrdinalIgnoreCase);
+            List<MoveItemView> items = new List<MoveItemView>(requestIds.Count);
+            bool auditBroken = false;
+            foreach (string id in requestIds)
+            {
+                if (auditBroken)
+                {
+                    items.Add(FailedItem(id, "Not attempted: the audit log is unavailable (every move must be audited)."));
+                    continue;
+                }
+
+                MoveItemView item = ArchiveOne(id, archiveByStore, out bool auditFailed);
+                auditBroken |= auditFailed;
+                items.Add(item);
+            }
+
+            int archivedCount = items.Count(i => i.Ok);
+            List<ArchiveFolderView> resolved = archiveByStore.Values
+                .Where(v => v.Info != null)
+                .Select(v => new ArchiveFolderView
+                {
+                    Store = v.Info!.StoreDisplayName,
+                    Folder = v.Info!.StoreRelativePath,
+                    Via = v.Info!.Via,
+                })
+                .OrderBy(v => v.Store, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            return new ArchiveMailOutcome
+            {
+                Requested = requestIds.Count,
+                Archived = archivedCount,
+                Failed = items.Count - archivedCount,
+                ArchiveFolders = resolved.Count > 0 ? resolved : null,
+                Items = items,
+                Advice = archivedCount > 0 ? new[] { MoveEntryIdAdvice } : null,
+            };
+        }
+
+        private MoveItemView ArchiveOne(
+            string id,
+            Dictionary<string, (ComArchiveFolderInfo? Info, string? Error)> archiveByStore,
+            out bool auditFailed)
+        {
+            auditFailed = false;
+            string entryId;
+            string? storeId;
+            string? hitId;
+            try
+            {
+                (entryId, storeId, _, _, hitId) = ResolveToEntryId(id);
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
+            {
+                return FailedItem(id, ex.Message);
+            }
+
+            try
+            {
+                // Learn the item's own store first (cross-store retry for bare EntryIDs),
+                // then resolve THAT store's designated archive folder (memoized per call).
+                ComDraftInfo? info = _gateway.Run(s =>
+                {
+                    ComDraftInfo? r = s.TryGetMailInfo(entryId, storeId, out string? infoError);
+                    if (r == null && storeId == null)
+                    {
+                        foreach (ComStoreDetail candidate in GetStoreDetails(s))
+                        {
+                            r = s.TryGetMailInfo(entryId, candidate.StoreId, out infoError);
+                            if (r != null)
+                            {
+                                break;
+                            }
+                        }
+                    }
+
+                    return r;
+                });
+                if (info?.StoreDisplayName == null)
+                {
+                    return FailedItem(id, "The item could not be opened. Re-run search - it may have moved (EntryIDs change on moves).");
+                }
+
+                if (!archiveByStore.TryGetValue(info.StoreDisplayName, out (ComArchiveFolderInfo? Info, string? Error) archive))
+                {
+                    archive = _gateway.Run(s =>
+                    {
+                        ComArchiveFolderInfo? resolvedInfo = s.TryResolveArchiveFolder(info.StoreDisplayName, out string? resolveError);
+                        return (resolvedInfo, resolveError);
+                    });
+                    archiveByStore[info.StoreDisplayName] = archive;
+                }
+
+                if (archive.Info == null)
+                {
+                    return FailedItem(id, DescribeArchiveResolutionFailure(info.StoreDisplayName, archive.Error));
+                }
+
+                ComArchiveFolderInfo target = archive.Info;
+                (ComMoveItemResult? moved, string? moveError) = _gateway.Run(s =>
+                {
+                    ComMoveItemResult? r = s.TryMoveItemToFolderId(entryId, info.StoreId ?? storeId, target.EntryId, target.StoreId, out string? e);
+                    return (r, e);
+                });
+                if (moved == null)
+                {
+                    return FailedItem(id, DescribeMoveFailure(moveError, target.StoreRelativePath, requestedStore: null, createFolder: false));
+                }
+
+                return CompleteMove("archive_mail", id, hitId, moved, out auditFailed);
+            }
+            catch (OutlookUnavailableException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException || OutlookComSession.IsComCallFailure(ex))
+            {
+                return FailedItem(id, ex.Message);
+            }
+        }
+
+        private MoveItemView MoveOne(
+            string id,
+            IReadOnlyList<string> segments,
+            bool createFolder,
+            string? requestedStore,
+            string targetFolderEcho,
+            List<string> createdFolders,
+            out bool auditFailed)
+        {
+            auditFailed = false;
+            string entryId;
+            string? storeId;
+            string? hitId;
+            try
+            {
+                (entryId, storeId, _, _, hitId) = ResolveToEntryId(id);
+            }
+            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
+            {
+                return FailedItem(id, ex.Message);
+            }
+
+            try
+            {
+                (ComMoveItemResult? moved, string? comError) = _gateway.Run(s =>
+                {
+                    ComMoveItemResult? r = s.TryMoveItemToPath(entryId, storeId, segments, createFolder, requestedStore, out string? e);
+                    if (r == null && storeId == null && e == "ItemNotFound")
+                    {
+                        // Direct EntryID without a known store: retry across stores
+                        // (same pattern as read/draft ops).
+                        foreach (ComStoreDetail candidate in GetStoreDetails(s))
+                        {
+                            r = s.TryMoveItemToPath(entryId, candidate.StoreId, segments, createFolder, requestedStore, out e);
+                            if (r != null || e != "ItemNotFound")
+                            {
+                                break;
+                            }
+                        }
+                    }
+
+                    return (r, e);
+                });
+
+                if (moved == null)
+                {
+                    return FailedItem(id, DescribeMoveFailure(comError, targetFolderEcho, requestedStore, createFolder));
+                }
+
+                foreach (string created in moved.CreatedFolderPaths)
+                {
+                    if (!createdFolders.Contains(created, StringComparer.OrdinalIgnoreCase))
+                    {
+                        createdFolders.Add(created);
+                    }
+                }
+
+                return CompleteMove("move_mail", id, hitId, moved, out auditFailed);
+            }
+            catch (OutlookUnavailableException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException || OutlookComSession.IsComCallFailure(ex))
+            {
+                return FailedItem(id, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Post-move bookkeeping shared by move_mail/archive_mail: writes the
+        /// load-bearing audit line (op=move_mail/archive_mail with from-&gt;to), and
+        /// refreshes the hit cache so a moved hit id keeps resolving (to the NEW
+        /// EntryID) within this session. When the audit write fails the move HAS
+        /// happened - the item result says so and carries the new EntryID, and the
+        /// caller stops the batch.
+        /// </summary>
+        private MoveItemView CompleteMove(string operation, string id, string? hitId, ComMoveItemResult moved, out bool auditFailed)
+        {
+            auditFailed = false;
+            try
+            {
+                Audit.AuditLog.Append(
+                    operation,
+                    ("entryId", moved.OldEntryId),
+                    ("newEntryId", moved.NewEntryId),
+                    ("store", moved.StoreDisplayName),
+                    ("fromFolder", moved.FromFolderPath),
+                    ("toFolder", moved.ToFolderPath),
+                    ("hitId", hitId));
+            }
+            catch (InvalidOperationException ex)
+            {
+                auditFailed = true;
+                return FailedItem(
+                    id,
+                    "The item WAS moved (newEntryId " + moved.NewEntryId + ", fromFolder '" + moved.FromFolderPath
+                    + "') but the audit line could not be written: " + ex.Message);
+            }
+
+            if (hitId != null && _hits.TryGetValue(hitId, out CachedHit? cached))
+            {
+                cached.LocatedEntryId = moved.NewEntryId;
+                cached.LocatedVia = "cached";
+            }
+
+            return new MoveItemView
+            {
+                Id = id,
+                Ok = true,
+                Store = moved.StoreDisplayName,
+                FromFolder = moved.FromFolderPath,
+                ToFolder = moved.ToFolderPath,
+                OldEntryId = moved.OldEntryId,
+                NewEntryId = moved.NewEntryId,
+            };
+        }
+
+        private static MoveItemView FailedItem(string id, string error)
+        {
+            return new MoveItemView { Id = id, Ok = false, Error = error };
+        }
+
+        /// <summary>
+        /// Validates the ids array of move_mail/archive_mail BEFORE any COM work
+        /// (1-<see cref="MoveIdsCap"/> non-blank unique entries). Pure; throws
+        /// ArgumentException with agent-actionable text.
+        /// </summary>
+        public static IReadOnlyList<string> ValidateMoveIds(IReadOnlyList<string>? ids)
+        {
+            if (ids == null || ids.Count == 0)
+            {
+                throw new ArgumentException(
+                    "ids is required: 1-" + MoveIdsCap + " hit ids (from search/thread) or EntryID hex strings.", nameof(ids));
+            }
+
+            if (ids.Count > MoveIdsCap)
+            {
+                throw new ArgumentException(
+                    "Too many ids (" + ids.Count + "): at most " + MoveIdsCap + " items per call - split the batch.", nameof(ids));
+            }
+
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            List<string> cleaned = new List<string>(ids.Count);
+            foreach (string? id in ids)
+            {
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    throw new ArgumentException("ids must not contain blank entries.", nameof(ids));
+                }
+
+                string trimmed = id!.Trim();
+                if (!seen.Add(trimmed))
+                {
+                    throw new ArgumentException(
+                        "Duplicate id '" + trimmed + "' - each item can be moved once per call.", nameof(ids));
+                }
+
+                cleaned.Add(trimmed);
+            }
+
+            return cleaned;
+        }
+
+        /// <summary>
+        /// Maps content-free COM move errors to agent-actionable per-item error text
+        /// (pure, public for T1 pinning).
+        /// </summary>
+        public static string DescribeMoveFailure(string? comError, string targetFolder, string? requestedStore, bool createFolder)
+        {
+            if (comError != null && comError.StartsWith("CrossStoreTarget:", StringComparison.Ordinal))
+            {
+                string itemStore = comError.Substring("CrossStoreTarget:".Length);
+                return "Cross-store move refused: the item lives in store '" + itemStore + "'"
+                    + (requestedStore != null ? " but the requested store is '" + requestedStore + "'" : string.Empty)
+                    + ". v1 moves are same-store only (archive semantics are same-store and EntryIDs are store-scoped) - "
+                    + "call move_mail per store, or omit 'store' to move each item within its own store.";
+            }
+
+            switch (comError)
+            {
+                case "ItemNotFound":
+                    return "The item could not be opened. Re-run search - it may have moved (EntryIDs change on moves).";
+                case "NotAMailItem":
+                    return "Only mail items can be moved by this tool.";
+                case "TargetFolderNotFound":
+                    return "Target folder '" + targetFolder + "' does not exist in the item's store"
+                        + (createFolder ? "." : " - pass create_folder=true to create it, or check list_folders.");
+                case "TargetFolderCreateFailed":
+                    return "Target folder '" + targetFolder + "' could not be created in the item's store.";
+                case "TargetNotAMailFolder":
+                    return "Target folder '" + targetFolder + "' is not a mail folder.";
+                case "TargetIsDeletedItems":
+                    return "Refused: moving to Deleted Items (or a subfolder of it) is deletion semantics - this server has no "
+                        + "delete surface. Ask the user to delete mail in Outlook themselves.";
+                case "TargetIsOutbox":
+                    return "Refused: the Outbox is not a valid move target.";
+                case "AlreadyInTargetFolder":
+                    return "The item is already in the target folder - nothing to move.";
+                case "RootFolderUnavailable":
+                    return "The item's store root could not be opened; retry when Outlook is responsive (see outlook_health).";
+                default:
+                    return "The move failed (" + (comError ?? "unknown") + "). Check outlook_health and retry.";
+            }
+        }
+
+        /// <summary>
+        /// Maps archive-resolution failures to agent-actionable per-item error text
+        /// (pure, public for T1 pinning). A store without a designated archive folder
+        /// is an ERROR - nothing is created silently.
+        /// </summary>
+        public static string DescribeArchiveResolutionFailure(string store, string? resolveError)
+        {
+            if (resolveError == "NoDesignatedArchiveFolder")
+            {
+                return "Store '" + store + "' has no designated Archive folder. Nothing was created - set one up via "
+                    + "Outlook/OWA first (the folder the Archive button uses), then retry.";
+            }
+
+            if (resolveError != null && resolveError.StartsWith("ArchiveFolderVerificationFailed", StringComparison.Ordinal))
+            {
+                return "Store '" + store + "': the resolved archive-folder candidate failed verification ("
+                    + resolveError + ") - refusing to move anything there.";
+            }
+
+            return "Store '" + store + "': the designated Archive folder could not be resolved ("
+                + (resolveError ?? "unknown") + ").";
+        }
+
         /// <summary>
         /// Maps recipients into the payload view capped at <see cref="RecipientsCap"/>
         /// (section 12: caps with has-more indicators). Pure and public for T1 pinning.

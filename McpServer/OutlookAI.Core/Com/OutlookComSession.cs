@@ -2345,6 +2345,651 @@ namespace OutlookAI.Core.Com
             return result;
         }
 
+        // ------------------------------------------------------------ move + archive (D39)
+
+        /// <summary>
+        /// Store-relative folder path from an OOM <c>Folder.FolderPath</c>
+        /// (<c>\\Store Display Name\A\B</c> becomes <c>A/B</c>, the list_folders
+        /// convention; the store root itself becomes an empty string). Pure logic,
+        /// public for T1.
+        /// </summary>
+        public static string ToStoreRelativeFolderPath(string? folderPath, string? storeDisplayName)
+        {
+            if (string.IsNullOrEmpty(folderPath))
+            {
+                return string.Empty;
+            }
+
+            string path = folderPath!;
+            if (path.StartsWith("\\\\", StringComparison.Ordinal))
+            {
+                path = path.Substring(2);
+                bool stripped = false;
+                if (!string.IsNullOrEmpty(storeDisplayName)
+                    && path.StartsWith(storeDisplayName!, StringComparison.OrdinalIgnoreCase))
+                {
+                    string remainder = path.Substring(storeDisplayName!.Length);
+
+                    // Exact-segment match only: the store name must be the WHOLE first
+                    // segment (guards against one store name being a prefix of another).
+                    if (remainder.Length == 0 || remainder[0] == '\\')
+                    {
+                        path = remainder;
+                        stripped = true;
+                    }
+                }
+
+                if (!stripped)
+                {
+                    // Unknown prefix: drop the first segment (the store) regardless.
+                    int firstSeparator = path.IndexOf('\\');
+                    path = firstSeparator < 0 ? string.Empty : path.Substring(firstSeparator);
+                }
+            }
+
+            return path.TrimStart('\\').Replace('\\', '/');
+        }
+
+        /// <summary>
+        /// Resolves a store's DESIGNATED Archive folder - the folder Outlook's own
+        /// Archive action (Backspace), mobile swipe-archive and OWA use. Resolution is
+        /// localization-proof and never guesses by name: primary =
+        /// <c>Store.GetDefaultFolder(39)</c> (undocumented but live-proven value, see
+        /// <see cref="ArchiveFolderResolution"/>), fallback = PR_IPM_ARCHIVE_ENTRYID on
+        /// the store object. The resolved folder is VERIFIED (same store, mail folder,
+        /// not one of the core default folders) before it is trusted - paranoia against
+        /// the undocumented enum meaning something else on another build. Read-only;
+        /// when a store has no designated archive folder the resolution FAILS
+        /// (content-free error) and nothing is created.
+        /// </summary>
+        public ComArchiveFolderInfo? TryResolveArchiveFolder(string storeDisplayName, out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(storeDisplayName))
+            {
+                throw new ArgumentException("Store display name must not be blank.", nameof(storeDisplayName));
+            }
+
+            string? capturedError = null;
+            ComArchiveFolderInfo? result = _runner.Run<ComArchiveFolderInfo?>(() =>
+            {
+                dynamic ns = _namespace!;
+                dynamic? store = FindStoreByDisplayName(storeDisplayName);
+                if (store == null)
+                {
+                    capturedError = "StoreNotFound";
+                    return null;
+                }
+
+                object? folder = null;
+                try
+                {
+                    string storeId = (string)store.StoreID;
+                    string via = "outlookDefaultFolder";
+                    try
+                    {
+                        folder = store.GetDefaultFolder(ArchiveFolderResolution.OlFolderArchive);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        folder = null;
+                    }
+
+                    if (folder == null)
+                    {
+                        via = "storeArchiveProperty";
+                        object? accessor = null;
+                        try
+                        {
+                            accessor = store.PropertyAccessor;
+                            object? value = ((dynamic)accessor!).GetProperty(ArchiveFolderResolution.ArchiveEntryIdPropertySchema);
+                            string? hex = ArchiveFolderResolution.TryReadEntryIdHex(value);
+                            if (hex != null)
+                            {
+                                folder = ns.GetFolderFromID(hex, storeId);
+                            }
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            folder = null;
+                        }
+                        finally
+                        {
+                            Release(accessor);
+                        }
+                    }
+
+                    if (folder == null)
+                    {
+                        capturedError = "NoDesignatedArchiveFolder";
+                        return null;
+                    }
+
+                    dynamic f = folder;
+                    string entryId = (string)f.EntryID;
+                    string? verification = VerifyArchiveCandidate(f, store, storeId, entryId);
+                    if (verification != null)
+                    {
+                        capturedError = verification;
+                        return null;
+                    }
+
+                    return new ComArchiveFolderInfo(
+                        storeDisplayName,
+                        storeId,
+                        entryId,
+                        (string)f.Name,
+                        ToStoreRelativeFolderPath((string?)f.FolderPath, storeDisplayName),
+                        via);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(folder);
+                    Release(store);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// STA-side verification of a resolved archive-folder candidate: it must live
+        /// in the SAME store, be a mail folder, and not be one of the core default
+        /// folders (Deleted Items/Outbox/Sent/Inbox/Drafts/Junk) - mis-designating any
+        /// of those as "archive" would make archive_mail silently do something else.
+        /// Returns a content-free error or null when the candidate is sound.
+        /// </summary>
+        private static string? VerifyArchiveCandidate(dynamic candidate, dynamic store, string storeId, string candidateEntryId)
+        {
+            object? candidateStore = null;
+            try
+            {
+                candidateStore = candidate.Store;
+                string? candidateStoreId = candidateStore != null ? (string?)((dynamic)candidateStore!).StoreID : null;
+                if (!string.Equals(candidateStoreId, storeId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return "ArchiveFolderVerificationFailed:store";
+                }
+
+                if ((int)candidate.DefaultItemType != 0)
+                {
+                    return "ArchiveFolderVerificationFailed:itemType";
+                }
+
+                // 3=Deleted Items 4=Outbox 5=Sent 6=Inbox 16=Drafts 23=Junk
+                foreach (int coreDefault in new[] { 3, 4, 5, 6, 16, 23 })
+                {
+                    object? defaultFolder = null;
+                    try
+                    {
+                        defaultFolder = store.GetDefaultFolder(coreDefault);
+                        if (string.Equals((string)((dynamic)defaultFolder!).EntryID, candidateEntryId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return "ArchiveFolderVerificationFailed:coreDefault";
+                        }
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                    finally
+                    {
+                        Release(defaultFolder);
+                    }
+                }
+
+                return null;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return "ArchiveFolderVerificationFailed:probe";
+            }
+            finally
+            {
+                Release(candidateStore);
+            }
+        }
+
+        /// <summary>
+        /// Moves one mail item to a folder path WITHIN ITS OWN STORE (D39 v1:
+        /// same-store only - the target is resolved inside the store the item already
+        /// lives in, so a cross-store move cannot happen by construction; when
+        /// <paramref name="requireStoreDisplayName"/> is given and the item lives
+        /// elsewhere the move is refused with <c>CrossStoreTarget:&lt;store&gt;</c>).
+        /// Missing target segments are created only when <paramref name="createMissing"/>
+        /// (mail folders, parents included). Refused targets: Deleted Items and its
+        /// subtree (deletion semantics - the server has no delete surface), the Outbox,
+        /// non-mail folders, and the item's current folder. The result carries old/new
+        /// EntryIDs (EntryIDs CHANGE on any move) and the source path as undo address.
+        /// </summary>
+        public ComMoveItemResult? TryMoveItemToPath(
+            string entryIdHex,
+            string? storeId,
+            IReadOnlyList<string> targetSegments,
+            bool createMissing,
+            string? requireStoreDisplayName,
+            out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(entryIdHex))
+            {
+                throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
+            }
+
+            if (targetSegments == null || targetSegments.Count == 0)
+            {
+                throw new ArgumentException("Target folder path must have at least one segment.", nameof(targetSegments));
+            }
+
+            string? capturedError = null;
+            ComMoveItemResult? result = _runner.Run<ComMoveItemResult?>(() =>
+            {
+                dynamic ns = _namespace!;
+                object? item = null;
+                object? parent = null;
+                object? itemStore = null;
+                object? targetFolder = null;
+                try
+                {
+                    try
+                    {
+                        item = storeId != null
+                            ? ns.GetItemFromID(entryIdHex, storeId)
+                            : ns.GetItemFromID(entryIdHex);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        capturedError = "ItemNotFound";
+                        return null;
+                    }
+
+                    if (!IsMailItem(item!))
+                    {
+                        capturedError = "NotAMailItem";
+                        return null;
+                    }
+
+                    dynamic mail = item!;
+                    parent = mail.Parent;
+                    dynamic parentFolder = parent!;
+                    string fromFolderPath = (string)parentFolder.FolderPath;
+                    string parentEntryId = (string)parentFolder.EntryID;
+                    itemStore = parentFolder.Store;
+                    dynamic ownStore = itemStore!;
+                    string ownStoreName = (string)ownStore.DisplayName;
+
+                    if (requireStoreDisplayName != null
+                        && !string.Equals(ownStoreName, requireStoreDisplayName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        capturedError = "CrossStoreTarget:" + ownStoreName;
+                        return null;
+                    }
+
+                    List<string> createdPaths = new List<string>();
+                    targetFolder = ResolveOrCreateFolder(ownStore, targetSegments, createMissing, createdPaths, out string? resolveError);
+                    if (targetFolder == null)
+                    {
+                        capturedError = resolveError;
+                        return null;
+                    }
+
+                    string? guardError = VerifyMoveTarget(ownStore, targetFolder, parentEntryId);
+                    if (guardError != null)
+                    {
+                        capturedError = guardError;
+                        return null;
+                    }
+
+                    return ExecuteMove(mail, targetFolder!, entryIdHex, ownStoreName, fromFolderPath, createdPaths);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(targetFolder);
+                    Release(itemStore);
+                    Release(parent);
+                    Release(item);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// Moves one mail item to an already-resolved folder (archive_mail: the target
+        /// is the store's designated Archive folder from
+        /// <see cref="TryResolveArchiveFolder"/>). Same-store is enforced (the item's
+        /// own store must match <paramref name="targetStoreId"/>); an item already in
+        /// the target folder is refused with <c>AlreadyInTargetFolder</c>. Result
+        /// semantics identical to <see cref="TryMoveItemToPath"/>.
+        /// </summary>
+        public ComMoveItemResult? TryMoveItemToFolderId(
+            string entryIdHex,
+            string? storeId,
+            string targetFolderEntryId,
+            string targetStoreId,
+            out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(entryIdHex))
+            {
+                throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
+            }
+
+            if (string.IsNullOrWhiteSpace(targetFolderEntryId) || string.IsNullOrWhiteSpace(targetStoreId))
+            {
+                throw new ArgumentException("Target folder identity must not be blank.", nameof(targetFolderEntryId));
+            }
+
+            string? capturedError = null;
+            ComMoveItemResult? result = _runner.Run<ComMoveItemResult?>(() =>
+            {
+                dynamic ns = _namespace!;
+                object? item = null;
+                object? parent = null;
+                object? itemStore = null;
+                object? targetFolder = null;
+                try
+                {
+                    try
+                    {
+                        item = storeId != null
+                            ? ns.GetItemFromID(entryIdHex, storeId)
+                            : ns.GetItemFromID(entryIdHex);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        capturedError = "ItemNotFound";
+                        return null;
+                    }
+
+                    if (!IsMailItem(item!))
+                    {
+                        capturedError = "NotAMailItem";
+                        return null;
+                    }
+
+                    dynamic mail = item!;
+                    parent = mail.Parent;
+                    dynamic parentFolder = parent!;
+                    string fromFolderPath = (string)parentFolder.FolderPath;
+                    string parentEntryId = (string)parentFolder.EntryID;
+                    itemStore = parentFolder.Store;
+                    dynamic ownStore = itemStore!;
+                    string ownStoreName = (string)ownStore.DisplayName;
+                    string ownStoreId = (string)ownStore.StoreID;
+
+                    if (!string.Equals(ownStoreId, targetStoreId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        capturedError = "CrossStoreTarget:" + ownStoreName;
+                        return null;
+                    }
+
+                    if (string.Equals(parentEntryId, targetFolderEntryId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        capturedError = "AlreadyInTargetFolder";
+                        return null;
+                    }
+
+                    try
+                    {
+                        targetFolder = ns.GetFolderFromID(targetFolderEntryId, targetStoreId);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        capturedError = "TargetFolderNotFound";
+                        return null;
+                    }
+
+                    return ExecuteMove(mail, targetFolder!, entryIdHex, ownStoreName, fromFolderPath, Array.Empty<string>());
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(targetFolder);
+                    Release(itemStore);
+                    Release(parent);
+                    Release(item);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// STA-side: walks <paramref name="segments"/> from the store root, creating
+        /// missing MAIL folders (Folders.Add type 6) when allowed. Returns the target
+        /// folder RCW (caller releases) or null with a content-free error; created
+        /// store-relative paths are appended to <paramref name="createdPaths"/>.
+        /// </summary>
+        private static object? ResolveOrCreateFolder(
+            dynamic store,
+            IReadOnlyList<string> segments,
+            bool createMissing,
+            List<string> createdPaths,
+            out string? error)
+        {
+            error = null;
+            object? current;
+            try
+            {
+                current = store.GetRootFolder();
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                error = "RootFolderUnavailable";
+                return null;
+            }
+
+            string pathSoFar = string.Empty;
+            foreach (string segment in segments)
+            {
+                pathSoFar = pathSoFar.Length == 0 ? segment : pathSoFar + "/" + segment;
+                object? next = null;
+                object? folders = null;
+                try
+                {
+                    folders = ((dynamic)current!).Folders;
+                    try
+                    {
+                        next = ((dynamic)folders!)[segment];
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        next = null;
+                    }
+
+                    if (next == null)
+                    {
+                        if (!createMissing)
+                        {
+                            error = "TargetFolderNotFound";
+                            Release(current);
+                            return null;
+                        }
+
+                        try
+                        {
+                            // 6 = olFolderInbox: forces an IPF.Note (mail) folder
+                            // regardless of the parent's type.
+                            next = ((dynamic)folders!).Add(segment, 6);
+                            createdPaths.Add(pathSoFar);
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            error = "TargetFolderCreateFailed";
+                            Release(current);
+                            return null;
+                        }
+                    }
+                }
+                finally
+                {
+                    Release(folders);
+                }
+
+                Release(current);
+                current = next;
+            }
+
+            return current;
+        }
+
+        /// <summary>
+        /// STA-side target guards shared by the move ops: the target must be a mail
+        /// folder, must not be (or live under) Deleted Items - moving there is deletion
+        /// semantics and the server has no delete surface (S1 v2) - must not be the
+        /// Outbox, and must differ from the item's current folder. Content-free error
+        /// or null.
+        /// </summary>
+        private static string? VerifyMoveTarget(dynamic store, object targetFolderObject, string sourceParentEntryId)
+        {
+            dynamic target = targetFolderObject;
+            string targetEntryId = (string)target.EntryID;
+            if (string.Equals(targetEntryId, sourceParentEntryId, StringComparison.OrdinalIgnoreCase))
+            {
+                return "AlreadyInTargetFolder";
+            }
+
+            try
+            {
+                if ((int)target.DefaultItemType != 0)
+                {
+                    return "TargetNotAMailFolder";
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return "TargetNotAMailFolder";
+            }
+
+            string? deletedItemsEntryId = TryGetDefaultFolderEntryId(store, 3);
+            string? outboxEntryId = TryGetDefaultFolderEntryId(store, 4);
+            if (outboxEntryId != null && string.Equals(targetEntryId, outboxEntryId, StringComparison.OrdinalIgnoreCase))
+            {
+                return "TargetIsOutbox";
+            }
+
+            if (deletedItemsEntryId != null)
+            {
+                // The target and every ancestor: a subfolder of Deleted Items is still
+                // the trash subtree.
+                object? cursor = null;
+                try
+                {
+                    string cursorEntryId = targetEntryId;
+                    dynamic current = target;
+                    for (int depth = 0; depth < FolderWalkDepthGuard; depth++)
+                    {
+                        if (string.Equals(cursorEntryId, deletedItemsEntryId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return "TargetIsDeletedItems";
+                        }
+
+                        object? up;
+                        try
+                        {
+                            up = current.Parent;
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            break;
+                        }
+
+                        Release(cursor);
+                        cursor = up;
+                        if (cursor == null)
+                        {
+                            break;
+                        }
+
+                        current = cursor;
+                        try
+                        {
+                            cursorEntryId = (string)current.EntryID;
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            break; // reached the namespace/store level
+                        }
+                    }
+                }
+                finally
+                {
+                    Release(cursor);
+                }
+            }
+
+            return null;
+        }
+
+        private static string? TryGetDefaultFolderEntryId(dynamic store, int olDefaultFolderId)
+        {
+            object? folder = null;
+            try
+            {
+                folder = store.GetDefaultFolder(olDefaultFolderId);
+                return (string)((dynamic)folder!).EntryID;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return null;
+            }
+            finally
+            {
+                Release(folder);
+            }
+        }
+
+        /// <summary>
+        /// STA-side: performs the actual <c>MailItem.Move</c> and snapshots the result.
+        /// The returned moved item carries the NEW EntryID (EntryIDs change on any
+        /// move); the original RCW is stale afterwards and released by the caller.
+        /// </summary>
+        private static ComMoveItemResult ExecuteMove(
+            dynamic mail,
+            object targetFolderObject,
+            string oldEntryId,
+            string storeDisplayName,
+            string fromFolderPath,
+            IReadOnlyList<string> createdPaths)
+        {
+            dynamic target = targetFolderObject;
+            string toFolderPath = ToStoreRelativeFolderPath((string?)target.FolderPath, storeDisplayName);
+            object? moved = null;
+            try
+            {
+                moved = mail.Move(target);
+                string newEntryId = (string)((dynamic)moved!).EntryID;
+                return new ComMoveItemResult(
+                    oldEntryId,
+                    newEntryId,
+                    storeDisplayName,
+                    ToStoreRelativeFolderPath(fromFolderPath, storeDisplayName),
+                    toFolderPath,
+                    createdPaths);
+            }
+            finally
+            {
+                Release(moved);
+            }
+        }
+
         /// <summary>
         /// Sendable-state snapshot for the high-friction send flow (Phase 5, v3.MD D4):
         /// opens the item, requires it to be a mail item, and captures subject, Sent

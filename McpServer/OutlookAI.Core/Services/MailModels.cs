@@ -865,4 +865,97 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public IReadOnlyList<string>? Advice { get; set; }
     }
+
+    /// <summary>
+    /// Per-item result of move_mail/archive_mail (D39). A move CHANGES the item's
+    /// EntryID: <c>oldEntryId</c> is stale, <c>newEntryId</c> is the current identity,
+    /// and <c>fromFolder</c> is the undo address (move back = move_mail with
+    /// newEntryId and folder=fromFolder).
+    /// </summary>
+    public sealed class MoveItemView
+    {
+        /// <summary>Echo of the input id (hit id or EntryID) this result belongs to.</summary>
+        public string Id { get; set; } = string.Empty;
+
+        /// <summary>True when the item was moved (and its audit line written).</summary>
+        public bool Ok { get; set; }
+
+        /// <summary>Failure reason (present only when not ok; nothing was moved for this item).</summary>
+        public string? Error { get; set; }
+
+        /// <summary>Store the item lives in (moves are same-store).</summary>
+        public string? Store { get; set; }
+
+        /// <summary>Store-relative path the item came FROM - the undo address.</summary>
+        public string? FromFolder { get; set; }
+
+        /// <summary>Store-relative path the item is in now.</summary>
+        public string? ToFolder { get; set; }
+
+        /// <summary>EntryID before the move (stale after a successful move).</summary>
+        public string? OldEntryId { get; set; }
+
+        /// <summary>EntryID after the move - use this for follow-up read/open_in_outlook/undo.</summary>
+        public string? NewEntryId { get; set; }
+    }
+
+    /// <summary>move_mail outcome (D39): same-store, audited, reversible moves.</summary>
+    public sealed class MoveMailOutcome
+    {
+        /// <summary>Number of ids requested.</summary>
+        public int Requested { get; set; }
+
+        /// <summary>Number of items actually moved (audited).</summary>
+        public int Moved { get; set; }
+
+        /// <summary>Number of items that failed (see each item's error).</summary>
+        public int Failed { get; set; }
+
+        /// <summary>Echo of the store-relative target folder path.</summary>
+        public string TargetFolder { get; set; } = string.Empty;
+
+        /// <summary>Store-relative paths of folders created for this call (create_folder=true), when any.</summary>
+        public IReadOnlyList<string>? CreatedFolders { get; set; }
+
+        /// <summary>Per-item results, input order.</summary>
+        public IReadOnlyList<MoveItemView> Items { get; set; } = Array.Empty<MoveItemView>();
+
+        /// <summary>Standing guidance (EntryID change/undo semantics), present when anything moved.</summary>
+        public IReadOnlyList<string>? Advice { get; set; }
+    }
+
+    /// <summary>One store's designated Archive folder as archive_mail resolved it (D39).</summary>
+    public sealed class ArchiveFolderView
+    {
+        /// <summary>Store display name.</summary>
+        public string Store { get; set; } = string.Empty;
+
+        /// <summary>Store-relative path of the designated Archive folder (localized name - e.g. Archive/Archiveren).</summary>
+        public string Folder { get; set; } = string.Empty;
+
+        /// <summary>Resolution mechanism ("outlookDefaultFolder" or "storeArchiveProperty").</summary>
+        public string Via { get; set; } = string.Empty;
+    }
+
+    /// <summary>archive_mail outcome (D39): one-click-archive semantics, audited, reversible.</summary>
+    public sealed class ArchiveMailOutcome
+    {
+        /// <summary>Number of ids requested.</summary>
+        public int Requested { get; set; }
+
+        /// <summary>Number of items archived (audited).</summary>
+        public int Archived { get; set; }
+
+        /// <summary>Number of items that failed (see each item's error).</summary>
+        public int Failed { get; set; }
+
+        /// <summary>The designated Archive folder per store involved (resolved, never guessed by name).</summary>
+        public IReadOnlyList<ArchiveFolderView>? ArchiveFolders { get; set; }
+
+        /// <summary>Per-item results, input order (toFolder = the store's Archive folder).</summary>
+        public IReadOnlyList<MoveItemView> Items { get; set; } = Array.Empty<MoveItemView>();
+
+        /// <summary>Standing guidance (EntryID change/undo semantics), present when anything moved.</summary>
+        public IReadOnlyList<string>? Advice { get; set; }
+    }
 }

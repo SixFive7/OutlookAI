@@ -24,10 +24,11 @@ internal static class ServerRuntime
 
 /// <summary>
 /// The MCP tool surface (v3.MD section 0.5): search/thread/read/save_attachment,
-/// list_accounts/list_folders/list_signatures, the show-me tools, the draft tools,
-/// send, and outlook_health. Payloads are compact JSON (camelCase, nulls omitted -
-/// section 12 discipline); domain failures come back as an {"error": ...} object
-/// instead of protocol faults so agents can react.
+/// move_mail/archive_mail (D39), list_accounts/list_folders/list_signatures,
+/// manage_signature, the show-me tools, the draft tools, send, and outlook_health.
+/// Payloads are compact JSON (camelCase, nulls omitted - section 12 discipline);
+/// domain failures come back as an {"error": ...} object instead of protocol faults
+/// so agents can react.
 /// </summary>
 [McpServerToolType]
 public static class OutlookTools
@@ -127,6 +128,45 @@ public static class OutlookTools
         [Description("Absolute target directory. Default: %LOCALAPPDATA%\\OutlookAI\\scratch\\attachments.")] string? target_dir = null)
     {
         return Guard(() => ServerRuntime.Service.SaveAttachment(id, attachment_index, target_dir));
+    }
+
+    [McpServerTool(Name = "move_mail")]
+    [Description("MOVE mail to another folder WITHIN ITS OWN account/store - refile into a project folder, or restore items "
+        + "from Deleted Items. Content-preserving, fully audited and REVERSIBLE: each result carries fromFolder plus "
+        + "oldEntryId/newEntryId, so any move can be undone by calling move_mail again with newEntryId and folder=fromFolder. "
+        + "Takes 1-50 ids (hit ids from search/thread, or EntryIDs); the target folder is a store-relative path (see "
+        + "list_folders). SAME-STORE ONLY: each item moves within the store it lives in - cross-store moves are rejected "
+        + "with a clear per-item error (run one call per store). Moving CHANGES an item's EntryID: use newEntryId afterwards; "
+        + "old hit ids/index rows go stale briefly (re-run search). Moving to Deleted Items or the Outbox is refused - this "
+        + "server cannot delete mail. Needs Outlook (starts it headless if needed); never opens windows.")]
+    public static string MoveMail(
+        [Description("1-50 hit ids (e.g. h12) or full EntryID hex strings. Each item is moved within its own store.")]
+        string[] ids,
+        [Description("Store-relative target folder path (from list_folders), e.g. 'Archive/2026' or 'Projects/Acme'.")]
+        string folder,
+        [Description("Create the target folder (including missing parents) when it does not exist. Default false.")]
+        bool create_folder = false,
+        [Description("Optional store display name (see list_accounts): when given, items living in a DIFFERENT store fail "
+            + "with a cross-store error instead of moving. Omit to move each item within its own store.")]
+        string? store = null)
+    {
+        return Guard(() => ServerRuntime.Service.MoveMail(ids, folder, create_folder, store));
+    }
+
+    [McpServerTool(Name = "archive_mail")]
+    [Description("ARCHIVE mail with Outlook's own one-click-archive semantics: each item is moved to ITS OWN account's "
+        + "DESIGNATED Archive folder - exactly the folder the Archive button (Backspace), mobile swipe-archive and Outlook "
+        + "on the web use. The folder is resolved per store from the mailbox designation (localization-proof - e.g. a Dutch "
+        + "mailbox's 'Archiveren' - never guessed by name); if a store has no designated Archive folder the item fails with "
+        + "a clear error and NOTHING is created. Takes 1-50 ids (hit ids or EntryIDs), which may span accounts - each goes "
+        + "to its own account's Archive. Content-preserving, fully audited and REVERSIBLE like move_mail: results carry "
+        + "fromFolder + oldEntryId/newEntryId (undo = move_mail with newEntryId and folder=fromFolder). Archiving changes "
+        + "EntryIDs; re-run search for fresh ids. Needs Outlook (starts it headless if needed); never opens windows.")]
+    public static string ArchiveMail(
+        [Description("1-50 hit ids (e.g. h12) or full EntryID hex strings; may span accounts.")]
+        string[] ids)
+    {
+        return Guard(() => ServerRuntime.Service.ArchiveMail(ids));
     }
 
     [McpServerTool(Name = "outlook_health")]

@@ -690,6 +690,86 @@ namespace OutlookAI.Core.Com
         public string Name { get; }
     }
 
+    /// <summary>
+    /// A store's designated Archive folder (D39) - the folder Outlook's own Archive
+    /// action (Backspace), mobile swipe-archive and OWA use. COM-free data.
+    /// </summary>
+    public sealed class ComArchiveFolderInfo
+    {
+        /// <summary>Creates an archive-folder snapshot.</summary>
+        public ComArchiveFolderInfo(string storeDisplayName, string storeId, string entryId, string name, string storeRelativePath, string via)
+        {
+            StoreDisplayName = storeDisplayName;
+            StoreId = storeId;
+            EntryId = entryId;
+            Name = name;
+            StoreRelativePath = storeRelativePath;
+            Via = via;
+        }
+
+        /// <summary>Store the archive folder belongs to.</summary>
+        public string StoreDisplayName { get; }
+
+        /// <summary>StoreID for direct folder/item opens.</summary>
+        public string StoreId { get; }
+
+        /// <summary>Archive folder EntryID.</summary>
+        public string EntryId { get; }
+
+        /// <summary>Folder display name (localized - e.g. "Archive" or "Archiveren"; resolved, never guessed).</summary>
+        public string Name { get; }
+
+        /// <summary>Store-relative folder path (list_folders convention).</summary>
+        public string StoreRelativePath { get; }
+
+        /// <summary>Resolution mechanism: "outlookDefaultFolder" (GetDefaultFolder 39) or "storeArchiveProperty" (PR_IPM_ARCHIVE_ENTRYID).</summary>
+        public string Via { get; }
+    }
+
+    /// <summary>
+    /// Result of one item move (D39). EntryIDs CHANGE on any move: <see cref="OldEntryId"/>
+    /// stops resolving, <see cref="NewEntryId"/> is the item's new identity, and
+    /// <see cref="FromFolderPath"/> is the undo address (move back = move
+    /// NewEntryId to FromFolderPath). COM-free data.
+    /// </summary>
+    public sealed class ComMoveItemResult
+    {
+        /// <summary>Creates a move result.</summary>
+        public ComMoveItemResult(
+            string oldEntryId,
+            string newEntryId,
+            string storeDisplayName,
+            string fromFolderPath,
+            string toFolderPath,
+            IReadOnlyList<string> createdFolderPaths)
+        {
+            OldEntryId = oldEntryId;
+            NewEntryId = newEntryId;
+            StoreDisplayName = storeDisplayName;
+            FromFolderPath = fromFolderPath;
+            ToFolderPath = toFolderPath;
+            CreatedFolderPaths = createdFolderPaths;
+        }
+
+        /// <summary>EntryID before the move (stale from now on).</summary>
+        public string OldEntryId { get; }
+
+        /// <summary>EntryID after the move (the item's current identity).</summary>
+        public string NewEntryId { get; }
+
+        /// <summary>Store the item lives in (moves are same-store in v1).</summary>
+        public string StoreDisplayName { get; }
+
+        /// <summary>Store-relative path of the folder the item came FROM (undo address).</summary>
+        public string FromFolderPath { get; }
+
+        /// <summary>Store-relative path of the folder the item is in now.</summary>
+        public string ToFolderPath { get; }
+
+        /// <summary>Store-relative paths of folders created for this move (create_folder=true), outermost first.</summary>
+        public IReadOnlyList<string> CreatedFolderPaths { get; }
+    }
+
     /// <summary>Result of one gap sweep (COM-free data).</summary>
     public sealed class ComSweepResult
     {
