@@ -41,29 +41,32 @@ public static class OutlookTools
     };
 
     [McpServerTool(Name = "search")]
-    [Description("Search Outlook mail across all local accounts, folders and delegate stores. "
-        + "WHAT 'query' MATCHES: its whitespace-separated terms are ANDed and looked up in the mail's SUBJECT and in its "
-        + "BODY (index searches also match attachment content) - nothing else. Sender and recipient are NOT matched by "
-        + "'query'; use from/to for those, and note a term you only saw in a subject line still matches by default. "
-        + "search_in narrows the lookup to just the subject or just the body when a term is noisy in the other. "
-        + "Append * to a term for prefix matching. "
-        + "Sub-second and cheap: iterate freely with refined terms. "
-        + "Results are always FRESH: the index is merged with a COM sweep of mail newer than the index frontier, so "
-        + "just-arrived mail is found (the sweep may autostart Outlook headless; it is cached ~10 s, so rapid follow-up "
-        + "searches run at index speed). When the sweep cannot run (e.g. during an add-in update), index results are "
-        + "returned anyway with a freshness warning in 'advice' - a search never fails for that reason. "
-        + "exhaustive=true instead bypasses the index with a bounded COM folder scan (requires store + folder and/or after; "
-        + "slower - use when the index is stale/broken or correctness beats speed; whole-word matching, honors search_in, "
-        + "but scans mail subject/body only - no attachment content). "
-        + "Returns compact hits with an 'id' for read/save_attachment/thread/open_in_outlook; truncated=true means more "
-        + "matches exist beyond 'top'.")]
+    [Description("Search locally indexed Outlook mail across all accounts, folders, and delegate mailboxes. "
+        + "Sub-second and cheap: iterate with refined terms instead of pulling large result sets.\n\n"
+        + "MATCHING: query terms are whitespace-separated and ANDed; each term matches whole words, and all terms "
+        + "must match in the same part - the subject or the body (search_in narrows to one). Body includes "
+        + "attachment text - those matches return as separate hits with isAttachmentHit=true "
+        + "(include_attachment_hits=false drops them; read on such a hit opens the parent mail). Sender and "
+        + "recipients are NOT matched by query terms - use from / to. Append * for prefix match (haproxy*). "
+        + "Allowed characters: letters, digits and @.-_'+ ; omit query entirely to filter only by "
+        + "from/to/date/flags.\n\n"
+        + "FRESHNESS: results always include mail that arrived in Inbox or Sent Items after the last index update "
+        + "- the server sweeps them live through Outlook (autostarting it headless when needed) and merges it in; "
+        + "the sweep is cached ~10 s, so rapid follow-up searches run at index speed. If the sweep cannot run, "
+        + "index results are returned with a warning in advice - a search never fails for that reason.\n\n"
+        + "RESULTS: each hit carries an id for read, thread, save_attachment, open_in_outlook, move_mail and "
+        + "archive_mail (ids are valid for this session). truncated=true means more matches exist beyond top "
+        + "(max 100) - narrow with store/folder/from/after rather than raising it. Read advice when present and "
+        + "relay it to the user when it concerns them.\n\n"
+        + "EXHAUSTIVE: exhaustive=true bypasses the index and scans folders through Outlook instead - requires "
+        + "store plus folder and/or after, is far slower, and matches whole words in subject and body only (no "
+        + "attachment text). Use it when the index looks stale or wrong, or when completeness matters more than "
+        + "speed.")]
     public static string Search(
         [Description("Free-text terms, whitespace-separated, ANDed. Matched in subject + body (see search_in). Letters/digits plus @.-_'+ only; trailing * for prefix. Omit to filter by sender/date only.")]
         string? query = null,
-        [Description("Where 'query' terms must appear: 'subject_and_body' (default - the term may be in either, "
-            + "so subject-only mail like alert/ticket prefixes is found), 'subject' (subject line only - use when the term "
-            + "is noisy in body text, e.g. quoted threads or footers), or 'body' (body/attachment content only - use when "
-            + "the term is noisy in subjects). All three search tiers honor it.")]
+        [Description("Which part of the mail the query terms must match: subject_and_body (default), subject, or "
+            + "body. Narrow it when a term is noisy in one of them.")]
         string? search_in = null,
         [Description("true = bounded index-bypassing COM scan (requires store + folder and/or after). Default false: index + freshness sweep.")]
         bool exhaustive = false,

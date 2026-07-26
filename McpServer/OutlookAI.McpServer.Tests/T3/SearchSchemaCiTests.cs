@@ -104,6 +104,63 @@ public sealed class SearchSchemaCiTests
         Assert.DoesNotContain("Search all locally indexed Outlook mail", description, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Description-rewrite pin (user order 2026-07-26): the description is a USAGE
+    /// contract - every nuance that changes behavior must be stated. Each assertion
+    /// below is a claim verified against the shipped code; changing the behavior
+    /// without changing the sentence (or vice versa) must fail here.
+    /// </summary>
+    [Fact]
+    public async Task SearchDescription_StatesEveryBehaviorChangingNuance()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement list = await client.RoundTripAsync("tools/list", new { });
+        JsonElement? searchTool = null;
+        foreach (JsonElement tool in list.GetProperty("result").GetProperty("tools").EnumerateArray())
+        {
+            if (tool.GetProperty("name").GetString() == "search")
+            {
+                searchTool = tool;
+                break;
+            }
+        }
+
+        Assert.True(searchTool != null, "the search tool must be advertised");
+        string description = searchTool!.Value.GetProperty("description").GetString()!;
+
+        // Matching contract: whole words, same-part AND (WsSqlBuilder ANDs INSIDE one
+        // column), attachment hits as separate rows, sender/recipient via from/to,
+        // prefix star and the allowed charset.
+        Assert.Contains("whole words", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("same part", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("isAttachmentHit", description, StringComparison.Ordinal);
+        Assert.Contains("include_attachment_hits", description, StringComparison.Ordinal);
+        Assert.Contains("from / to", description, StringComparison.Ordinal);
+        Assert.Contains("@.-_'+", description, StringComparison.Ordinal);
+
+        // Freshness contract (D34): always-on sweep of Inbox/Sent Items, headless
+        // autostart, ~10 s cache, graceful degradation into advice - never a failure.
+        Assert.Contains("Inbox or Sent Items", description, StringComparison.Ordinal);
+        Assert.Contains("headless", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("10 s", description, StringComparison.Ordinal);
+        Assert.Contains("never fails", description, StringComparison.OrdinalIgnoreCase);
+
+        // Results contract: the id is the currency of every follow-up tool (D39 added
+        // move_mail/archive_mail), truncation is definite, advice is for relaying.
+        foreach (string followUpTool in new[] { "read", "thread", "save_attachment", "open_in_outlook", "move_mail", "archive_mail" })
+        {
+            Assert.Contains(followUpTool, description, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("truncated=true", description, StringComparison.Ordinal);
+        Assert.Contains("advice", description, StringComparison.OrdinalIgnoreCase);
+
+        // Exhaustive contract: bounds + the attachment-text limitation.
+        Assert.Contains("exhaustive=true", description, StringComparison.Ordinal);
+        Assert.Contains("no attachment text", description, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string DescribeJsonType(JsonElement type)
     {
         if (type.ValueKind == JsonValueKind.Array)
