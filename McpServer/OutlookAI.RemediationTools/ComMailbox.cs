@@ -586,10 +586,45 @@ public static class ComMailbox
         string? type = TryGetComString(item, "SenderEmailType");
         if (string.Equals(type, "SMTP", StringComparison.OrdinalIgnoreCase))
         {
-            return TryGetComString(item, "SenderEmailAddress");
+            smtp = TryGetComString(item, "SenderEmailAddress");
+            if (!string.IsNullOrWhiteSpace(smtp))
+            {
+                return smtp;
+            }
         }
 
-        return null;
+        // EX-format senders (live-run finding on the recovered hub items): items the
+        // account itself SENT carry no PR_*_SMTP_ADDRESS and an EX-type
+        // SenderEmailAddress (/O=EXCHANGELABS/...). Resolve the canonical SMTP via
+        // the AddressEntry -> ExchangeUser chain (works offline from the cached OAB).
+        dynamic? sender = null;
+        dynamic? exchangeUser = null;
+        try
+        {
+            sender = item.Sender;
+            if (sender == null)
+            {
+                return null;
+            }
+
+            string? addressType = TryGetComString(sender, "Type");
+            if (string.Equals(addressType, "EX", StringComparison.OrdinalIgnoreCase))
+            {
+                exchangeUser = sender.GetExchangeUser();
+                return exchangeUser != null ? TryGetComString(exchangeUser, "PrimarySmtpAddress") : null;
+            }
+
+            return TryGetComString(sender, "Address");
+        }
+        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+        {
+            return null;
+        }
+        finally
+        {
+            Release(exchangeUser);
+            Release(sender);
+        }
     }
 
     private static string? TryGetMapiString(dynamic item, string schemaName)
