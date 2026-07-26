@@ -4,22 +4,23 @@ using Xunit;
 namespace OutlookAI.McpServer.Tests.T3;
 
 /// <summary>
-/// Soak fix D37/D38 wire pins (user-ordered tool-surface refinements): the tool count
-/// is EXACTLY 17 (D37: echo/index_status/health deleted, outlook_health +
-/// list_signatures added; D38: manage_signature added), list_folders lost its depth
-/// knob and gained stable offset paging (page 1000 since D38), read gained
-/// body_offset paging, thread explains its two lookup keys, the draft tools carry the
-/// optional signature parameter with the pick-the-best-signature steering hint, and
-/// manage_signature carries the destructive-action warning + automatic-backup
-/// contract. CI-safe: schema/description pins via tools/list plus pre-COM/pre-write
-/// validation calls.
+/// Soak fix D37/D38/D39 wire pins (user-ordered tool-surface refinements): the tool
+/// count is EXACTLY 19 (D37: echo/index_status/health deleted, outlook_health +
+/// list_signatures added; D38: manage_signature added; D39: move_mail + archive_mail
+/// added), list_folders lost its depth knob and gained stable offset paging (page
+/// 1000 since D38), read gained body_offset paging, thread explains its two lookup
+/// keys, the draft tools carry the optional signature parameter with the
+/// pick-the-best-signature steering hint, and manage_signature carries the
+/// destructive-action warning + automatic-backup contract. CI-safe:
+/// schema/description pins via tools/list plus pre-COM/pre-write validation calls.
 /// </summary>
 public sealed class SoakToolSurfaceCiTests
 {
-    /// <summary>The 17 advertised tools after D38 (exact - a change here is a reviewed surface decision).</summary>
+    /// <summary>The 19 advertised tools after D39 (exact - a change here is a reviewed surface decision).</summary>
     private static readonly string[] ExpectedTools =
     [
         "search", "thread", "read", "save_attachment",
+        "move_mail", "archive_mail",
         "list_accounts", "list_folders", "list_signatures", "manage_signature",
         "open_in_outlook", "goto_folder", "show_search_results",
         "new_draft", "reply_draft", "replyall_draft", "forward_draft",
@@ -27,7 +28,7 @@ public sealed class SoakToolSurfaceCiTests
     ];
 
     [Fact]
-    public async Task ToolCount_IsExactlySeventeen_WithTheExpectedRoster()
+    public async Task ToolCount_IsExactlyNineteen_WithTheExpectedRoster()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
@@ -38,7 +39,7 @@ public sealed class SoakToolSurfaceCiTests
             .ToArray();
 
         Assert.Equal(ExpectedTools.OrderBy(n => n, StringComparer.Ordinal).ToArray(), names);
-        Assert.Equal(17, names.Length);
+        Assert.Equal(19, names.Length);
     }
 
     [Fact]
