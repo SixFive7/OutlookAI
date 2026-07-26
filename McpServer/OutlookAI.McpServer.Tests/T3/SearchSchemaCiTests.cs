@@ -129,22 +129,33 @@ public sealed class SearchSchemaCiTests
         Assert.True(searchTool != null, "the search tool must be advertised");
         string description = searchTool!.Value.GetProperty("description").GetString()!;
 
-        // Matching contract: whole words, same-part AND (WsSqlBuilder ANDs INSIDE one
-        // column), attachment hits as separate rows, sender/recipient via from/to,
-        // prefix star and the allowed charset.
+        // Matching contract: whole words, terms may land in DIFFERENT parts (soak fix
+        // 13 - the builder ANDs across the columns, one pair per term), attachment hits
+        // as separate rows, sender/recipient via from/to, prefix star, allowed charset.
         Assert.Contains("whole words", description, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("same part", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("different parts", description, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("isAttachmentHit", description, StringComparison.Ordinal);
         Assert.Contains("include_attachment_hits", description, StringComparison.Ordinal);
         Assert.Contains("from / to", description, StringComparison.Ordinal);
         Assert.Contains("@.-_'+", description, StringComparison.Ordinal);
 
-        // Freshness contract (D34): always-on sweep of Inbox/Sent Items, headless
-        // autostart, ~10 s cache, graceful degradation into advice - never a failure.
-        Assert.Contains("Inbox or Sent Items", description, StringComparison.Ordinal);
+        // The retired claim must not come back: terms no longer have to share one part.
+        Assert.DoesNotContain("same part", description, StringComparison.OrdinalIgnoreCase);
+
+        // Freshness contract (D34 + soak fix 13): always-on sweep whose coverage FOLLOWS
+        // THE SCOPE (folder + subfolders, else the four arrival-path default folders),
+        // reported in the sweep block; headless autostart, ~10 s cache, graceful
+        // degradation into advice - never a failure.
+        Assert.Contains("mail that arrived after the last index update", description, StringComparison.Ordinal);
+        Assert.Contains("that folder and its subfolders", description, StringComparison.Ordinal);
+        Assert.Contains("Inbox, Sent Items, Deleted Items and Junk Email", description, StringComparison.Ordinal);
+        Assert.Contains("sweep block", description, StringComparison.Ordinal);
         Assert.Contains("headless", description, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("10 s", description, StringComparison.Ordinal);
         Assert.Contains("never fails", description, StringComparison.OrdinalIgnoreCase);
+
+        // The retired freshness claim (sweep limited to Inbox + Sent Items) is gone.
+        Assert.DoesNotContain("Inbox or Sent Items", description, StringComparison.Ordinal);
 
         // Results contract: the id is the currency of every follow-up tool (D39 added
         // move_mail/archive_mail), truncation is definite, advice is for relaying.

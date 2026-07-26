@@ -43,16 +43,20 @@ public static class OutlookTools
     [McpServerTool(Name = "search")]
     [Description("Search locally indexed Outlook mail across all accounts, folders, and delegate mailboxes. "
         + "Sub-second and cheap: iterate with refined terms instead of pulling large result sets.\n\n"
-        + "MATCHING: query terms are whitespace-separated and ANDed; each term matches whole words, and all terms "
-        + "must match in the same part - the subject or the body (search_in narrows to one). Body includes "
+        + "MATCHING: query terms are whitespace-separated and ANDed; each term matches whole words, and the terms "
+        + "may land in different parts of the mail - one in the subject, another in the body (search_in narrows "
+        + "matching to just the subject or just the body). Body includes "
         + "attachment text - those matches return as separate hits with isAttachmentHit=true "
         + "(include_attachment_hits=false drops them; read on such a hit opens the parent mail). Sender and "
         + "recipients are NOT matched by query terms - use from / to. Append * for prefix match (haproxy*). "
         + "Allowed characters: letters, digits and @.-_'+ ; omit query entirely to filter only by "
         + "from/to/date/flags.\n\n"
-        + "FRESHNESS: results always include mail that arrived in Inbox or Sent Items after the last index update "
-        + "- the server sweeps them live through Outlook (autostarting it headless when needed) and merges it in; "
-        + "the sweep is cached ~10 s, so rapid follow-up searches run at index speed. If the sweep cannot run, "
+        + "FRESHNESS: results always include mail that arrived after the last index update - the server sweeps it "
+        + "live through Outlook (autostarting it headless when needed) and merges it in. The sweep follows your "
+        + "scope: with folder set it covers that folder and its subfolders, otherwise Inbox, Sent Items, Deleted "
+        + "Items and Junk Email of the store(s) in scope - so for brand-new mail filed into some other folder, "
+        + "pass store + folder. The response's sweep block reports what was covered. The sweep is cached ~10 s, "
+        + "so rapid follow-up searches run at index speed. If it cannot run, "
         + "index results are returned with a warning in advice - a search never fails for that reason.\n\n"
         + "RESULTS: each hit carries an id for read, thread, save_attachment, open_in_outlook, move_mail and "
         + "archive_mail (ids are valid for this session). truncated=true means more matches exist beyond top "
@@ -63,7 +67,7 @@ public static class OutlookTools
         + "attachment text). Use it when the index looks stale or wrong, or when completeness matters more than "
         + "speed.")]
     public static string Search(
-        [Description("Free-text terms, whitespace-separated, ANDed. Matched in subject + body (see search_in). Letters/digits plus @.-_'+ only; trailing * for prefix. Omit to filter by sender/date only.")]
+        [Description("Free-text terms, whitespace-separated, ANDed. Each term may match in the subject or the body (see search_in). Letters/digits plus @.-_'+ only; trailing * for prefix. Omit to filter by sender/date only.")]
         string? query = null,
         [Description("Which part of the mail the query terms must match: subject_and_body (default), subject, or "
             + "body. Narrow it when a term is noisy in one of them.")]
