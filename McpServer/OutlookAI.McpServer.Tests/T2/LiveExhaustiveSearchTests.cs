@@ -78,7 +78,7 @@ public sealed class LiveExhaustiveSearchTests
             Scope = hubScope.StorePrefix,
             Kinds = KindFilter.EmailOnly,
             Terms = new[] { term },
-            TermScope = TermScope.SubjectAndBody,
+            SearchIn = SearchIn.SubjectAndBody,
             Top = 500,
         });
         indexClock.Stop();

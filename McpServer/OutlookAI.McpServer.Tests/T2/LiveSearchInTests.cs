@@ -30,14 +30,14 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection("LivePhase3")]
 [Trait("Category", "Live")]
-public sealed class LiveTermScopeTests
+public sealed class LiveSearchInTests
 {
     private const int MaxQueryMs = 2000;
 
     private readonly LivePhase3Fixture _fixture;
     private readonly ITestOutputHelper _output;
 
-    public LiveTermScopeTests(LivePhase3Fixture fixture, ITestOutputHelper output)
+    public LiveSearchInTests(LivePhase3Fixture fixture, ITestOutputHelper output)
     {
         _fixture = fixture;
         _output = output;
@@ -59,17 +59,17 @@ public sealed class LiveTermScopeTests
 
         // Independent expectation: the same population selected by sender address only -
         // a per-column CONTAINS that was never affected by the SF-6 bug (Phase-1 fact 4).
-        int expected = CountRows(index, scope, terms: null, TermScopes.Default, Probe.SenderFragment);
+        int expected = CountRows(index, scope, terms: null, SearchInValues.Default, Probe.SenderFragment);
         Assert.True(expected > 0, "the from:-derived expectation population is empty - the corpus moved");
 
-        int byDefaultScope = CountRows(index, scope, new[] { Probe.SubjectTerm }, TermScope.SubjectAndBody, from: null);
-        int bySubjectScope = CountRows(index, scope, new[] { Probe.SubjectTerm }, TermScope.SubjectOnly, from: null);
-        int byBodyScope = CountRows(index, scope, new[] { Probe.SubjectTerm }, TermScope.BodyOnly, from: null);
+        int byDefaultScope = CountRows(index, scope, new[] { Probe.SubjectTerm }, SearchIn.SubjectAndBody, from: null);
+        int bySubjectScope = CountRows(index, scope, new[] { Probe.SubjectTerm }, SearchIn.SubjectOnly, from: null);
+        int byBodyScope = CountRows(index, scope, new[] { Probe.SubjectTerm }, SearchIn.BodyOnly, from: null);
 
         _output.WriteLine($"expected(from:)={expected} default={byDefaultScope} subject={bySubjectScope} body={byBodyScope}");
 
         // THE regression: before D40 this was 0 while the mail sat right there.
-        Assert.True(byDefaultScope > 0, "default term scope found none of the subject-only population (SF-6 regression)");
+        Assert.True(byDefaultScope > 0, "default search_in scope found none of the subject-only population (SF-6 regression)");
         Assert.Equal(expected, byDefaultScope);
         Assert.Equal(byDefaultScope, bySubjectScope);
 
@@ -86,9 +86,9 @@ public sealed class LiveTermScopeTests
         string scope = ResolveProbeFolderScope(index);
         string stem = Probe.SubjectTerm.Substring(0, Probe.SubjectTerm.Length - 2) + "*";
 
-        int whole = CountRows(index, scope, new[] { Probe.SubjectTerm }, TermScope.SubjectAndBody, from: null);
-        int prefixed = CountRows(index, scope, new[] { stem }, TermScope.SubjectAndBody, from: null);
-        int prefixedSubject = CountRows(index, scope, new[] { stem }, TermScope.SubjectOnly, from: null);
+        int whole = CountRows(index, scope, new[] { Probe.SubjectTerm }, SearchIn.SubjectAndBody, from: null);
+        int prefixed = CountRows(index, scope, new[] { stem }, SearchIn.SubjectAndBody, from: null);
+        int prefixedSubject = CountRows(index, scope, new[] { stem }, SearchIn.SubjectOnly, from: null);
 
         _output.WriteLine($"whole={whole} prefix(default)={prefixed} prefix(subject)={prefixedSubject}");
         Assert.True(prefixed >= whole, "prefix matching lost hits the whole term found");
@@ -100,9 +100,9 @@ public sealed class LiveTermScopeTests
     [Fact]
     public void Sf6DiscoveryCase_ToolTier_DefaultQueryReturnsHits_BodyScopeReturnsNone()
     {
-        SearchOutcome byDefault = Service.Search(NewProbeRequest(TermScopes.Default));
-        SearchOutcome bySubject = Service.Search(NewProbeRequest(TermScope.SubjectOnly));
-        SearchOutcome byBody = Service.Search(NewProbeRequest(TermScope.BodyOnly));
+        SearchOutcome byDefault = Service.Search(NewProbeRequest(SearchInValues.Default));
+        SearchOutcome bySubject = Service.Search(NewProbeRequest(SearchIn.SubjectOnly));
+        SearchOutcome byBody = Service.Search(NewProbeRequest(SearchIn.BodyOnly));
 
         _output.WriteLine(
             $"tool tier: default={byDefault.Hits.Count}(truncated={byDefault.Truncated}, {byDefault.IndexElapsedMs} ms) "
@@ -114,11 +114,11 @@ public sealed class LiveTermScopeTests
     }
 
     [Fact]
-    public void Sf6DiscoveryCase_ExhaustiveTier_HonorsTermScope()
+    public void Sf6DiscoveryCase_ExhaustiveTier_HonorsSearchIn()
     {
-        SearchRequest subjectScoped = NewProbeRequest(TermScope.SubjectOnly);
+        SearchRequest subjectScoped = NewProbeRequest(SearchIn.SubjectOnly);
         subjectScoped.Exhaustive = true;
-        SearchRequest bodyScoped = NewProbeRequest(TermScope.BodyOnly);
+        SearchRequest bodyScoped = NewProbeRequest(SearchIn.BodyOnly);
         bodyScoped.Exhaustive = true;
 
         Stopwatch clock = Stopwatch.StartNew();
@@ -189,8 +189,8 @@ public sealed class LiveTermScopeTests
         _output.WriteLine($"derived hub terms: subjectOnly.len={subjectOnlyTerm.Length} bodyOnly.len={bodyOnlyTerm.Length}");
 
         // Default scope is the union - both terms must be found by a plain query.
-        Assert.True(CountRows(index, hub.StorePrefix, new[] { subjectOnlyTerm }, TermScope.SubjectAndBody, null, KindFilter.EmailOnly) > 0);
-        Assert.True(CountRows(index, hub.StorePrefix, new[] { bodyOnlyTerm }, TermScope.SubjectAndBody, null, KindFilter.EmailOnly) > 0);
+        Assert.True(CountRows(index, hub.StorePrefix, new[] { subjectOnlyTerm }, SearchIn.SubjectAndBody, null, KindFilter.EmailOnly) > 0);
+        Assert.True(CountRows(index, hub.StorePrefix, new[] { bodyOnlyTerm }, SearchIn.SubjectAndBody, null, KindFilter.EmailOnly) > 0);
 
         // --- tool tier (index + freshness sweep merged, D34)
         AssertToolTierSeparation(subjectOnlyTerm, expectedInSubjectScope: true);
@@ -203,9 +203,9 @@ public sealed class LiveTermScopeTests
 
     private void AssertToolTierSeparation(string term, bool expectedInSubjectScope)
     {
-        int byDefault = Service.Search(NewHubRequest(term, TermScopes.Default)).Hits.Count;
-        int bySubject = Service.Search(NewHubRequest(term, TermScope.SubjectOnly)).Hits.Count;
-        int byBody = Service.Search(NewHubRequest(term, TermScope.BodyOnly)).Hits.Count;
+        int byDefault = Service.Search(NewHubRequest(term, SearchInValues.Default)).Hits.Count;
+        int bySubject = Service.Search(NewHubRequest(term, SearchIn.SubjectOnly)).Hits.Count;
+        int byBody = Service.Search(NewHubRequest(term, SearchIn.BodyOnly)).Hits.Count;
 
         _output.WriteLine($"tool tier: default={byDefault} subject={bySubject} body={byBody} (subjectSide={expectedInSubjectScope})");
 
@@ -224,7 +224,7 @@ public sealed class LiveTermScopeTests
 
     private void AssertExhaustiveSeparation(string term, bool expectedInSubjectScope)
     {
-        SearchRequest MakeRequest(TermScope scope)
+        SearchRequest MakeRequest(SearchIn scope)
         {
             SearchRequest request = NewHubRequest(term, scope);
             request.Exhaustive = true;
@@ -232,9 +232,9 @@ public sealed class LiveTermScopeTests
             return request;
         }
 
-        SearchOutcome byDefault = Service.Search(MakeRequest(TermScopes.Default));
-        int bySubject = Service.Search(MakeRequest(TermScope.SubjectOnly)).Hits.Count;
-        int byBody = Service.Search(MakeRequest(TermScope.BodyOnly)).Hits.Count;
+        SearchOutcome byDefault = Service.Search(MakeRequest(SearchInValues.Default));
+        int bySubject = Service.Search(MakeRequest(SearchIn.SubjectOnly)).Hits.Count;
+        int byBody = Service.Search(MakeRequest(SearchIn.BodyOnly)).Hits.Count;
 
         _output.WriteLine(
             $"exhaustive tier: default={byDefault.Hits.Count} subject={bySubject} body={byBody} "
@@ -255,20 +255,20 @@ public sealed class LiveTermScopeTests
 
     // ------------------------------------------------------------------ helpers
 
-    private SearchRequest NewProbeRequest(TermScope termScope) => new()
+    private SearchRequest NewProbeRequest(SearchIn searchIn) => new()
     {
         Query = Probe.SubjectTerm,
-        TermScope = termScope,
+        SearchIn = searchIn,
         Store = Probe.StoreDisplayName,
         Folder = Probe.FolderPath,
         Top = MailService.SearchTopCap,
         SnippetChars = 0,
     };
 
-    private SearchRequest NewHubRequest(string term, TermScope termScope) => new()
+    private SearchRequest NewHubRequest(string term, SearchIn searchIn) => new()
     {
         Query = term,
-        TermScope = termScope,
+        SearchIn = searchIn,
         Store = Hub,
         IncludeAttachmentHits = false,
         Top = MailService.SearchTopCap,
@@ -294,7 +294,7 @@ public sealed class LiveTermScopeTests
         IndexSearchService index,
         string? scope,
         IReadOnlyList<string>? terms,
-        TermScope termScope,
+        SearchIn searchIn,
         string? from,
         KindFilter kinds = KindFilter.EmailAndDocuments)
     {
@@ -302,7 +302,7 @@ public sealed class LiveTermScopeTests
         {
             Scope = scope,
             Terms = terms,
-            TermScope = termScope,
+            SearchIn = searchIn,
             FromAddressContains = from,
             Kinds = kinds,
             Top = 5000,
@@ -312,7 +312,7 @@ public sealed class LiveTermScopeTests
     private static (long SubjectMs, long BodyMs, long PairMs) MeasureShapes(
         IndexSearchService index, string? scope, string term)
     {
-        long Measure(TermScope termScope)
+        long Measure(SearchIn searchIn)
         {
             // Warm the shape once, then take the best of three (the index caches nothing
             // between shapes, so a single cold sample would measure the OS, not the SQL).
@@ -324,7 +324,7 @@ public sealed class LiveTermScopeTests
                 {
                     Scope = scope,
                     Terms = new[] { term },
-                    TermScope = termScope,
+                    SearchIn = searchIn,
                     Top = MailService.SearchTopDefault + 1,
                 });
                 clock.Stop();
@@ -337,7 +337,7 @@ public sealed class LiveTermScopeTests
             return best;
         }
 
-        return (Measure(TermScope.SubjectOnly), Measure(TermScope.BodyOnly), Measure(TermScope.SubjectAndBody));
+        return (Measure(SearchIn.SubjectOnly), Measure(SearchIn.BodyOnly), Measure(SearchIn.SubjectAndBody));
     }
 
     /// <summary>
@@ -352,8 +352,8 @@ public sealed class LiveTermScopeTests
         Assert.True(candidates.Count > 0,
             subjectSide ? "no hub term occurs in a subject and in no body" : "no hub term occurs in a body and in no subject");
 
-        TermScope ownScope = subjectSide ? TermScope.SubjectOnly : TermScope.BodyOnly;
-        TermScope otherScope = subjectSide ? TermScope.BodyOnly : TermScope.SubjectOnly;
+        SearchIn ownScope = subjectSide ? SearchIn.SubjectOnly : SearchIn.BodyOnly;
+        SearchIn otherScope = subjectSide ? SearchIn.BodyOnly : SearchIn.SubjectOnly;
 
         foreach (string candidate in candidates)
         {

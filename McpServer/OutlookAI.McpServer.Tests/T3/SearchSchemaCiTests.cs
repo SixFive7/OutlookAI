@@ -44,13 +44,13 @@ public sealed class SearchSchemaCiTests
     }
 
     /// <summary>
-    /// D40 wire pin (user order 2026-07-26, SF-6 fix): the term_scope argument exists,
+    /// D40 wire pin (user order 2026-07-26, SF-6 fix): the search_in argument exists,
     /// is a string, and the tool description states plainly what 'query' matches by
     /// default - subject AND body - instead of the old "search all ... mail" overpromise
     /// that hid a body-content-only predicate.
     /// </summary>
     [Fact]
-    public async Task SearchSchema_ExposesTermScope_AndDescribesWhatQueryMatches()
+    public async Task SearchSchema_ExposesSearchIn_AndDescribesWhatQueryMatches()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
@@ -68,12 +68,16 @@ public sealed class SearchSchemaCiTests
         Assert.True(searchTool != null, "the search tool must be advertised");
         JsonElement properties = searchTool!.Value.GetProperty("inputSchema").GetProperty("properties");
 
-        Assert.True(properties.TryGetProperty("term_scope", out JsonElement termScope),
-            "the search schema must expose the 'term_scope' parameter (D40)");
-        Assert.Contains("string", DescribeJsonType(termScope.GetProperty("type")), StringComparison.Ordinal);
+        Assert.True(properties.TryGetProperty("search_in", out JsonElement searchIn),
+            "the search schema must expose the 'search_in' parameter (D40, renamed 2026-07-26)");
+        Assert.Contains("string", DescribeJsonType(searchIn.GetProperty("type")), StringComparison.Ordinal);
+
+        // The pre-rename name must be gone from the wire entirely.
+        Assert.False(properties.TryGetProperty("term_scope", out _),
+            "the search schema must not expose the old 'term_scope' name (renamed to 'search_in')");
 
         // The parameter description must name all three values and explain the default.
-        string paramDescription = termScope.GetProperty("description").GetString()!;
+        string paramDescription = searchIn.GetProperty("description").GetString()!;
         foreach (string wireName in new[] { "subject_and_body", "subject", "body" })
         {
             Assert.Contains(wireName, paramDescription, StringComparison.Ordinal);
@@ -81,12 +85,12 @@ public sealed class SearchSchemaCiTests
 
         Assert.Contains("default", paramDescription, StringComparison.OrdinalIgnoreCase);
 
-        // term_scope must be optional - omitting it is the default subject+body search.
+        // search_in must be optional - omitting it is the default subject+body search.
         if (searchTool.Value.GetProperty("inputSchema").TryGetProperty("required", out JsonElement required))
         {
             foreach (JsonElement name in required.EnumerateArray())
             {
-                Assert.NotEqual("term_scope", name.GetString());
+                Assert.NotEqual("search_in", name.GetString());
             }
         }
 
@@ -95,7 +99,8 @@ public sealed class SearchSchemaCiTests
         string description = searchTool.Value.GetProperty("description").GetString()!;
         Assert.Contains("subject", description, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("body", description, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("term_scope", description, StringComparison.Ordinal);
+        Assert.Contains("search_in", description, StringComparison.Ordinal);
+        Assert.DoesNotContain("term_scope", description, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Search all locally indexed Outlook mail", description, StringComparison.OrdinalIgnoreCase);
     }
 

@@ -111,7 +111,7 @@ namespace OutlookAI.Core.IndexSearch
 
             if (query.Terms != null && query.Terms.Count > 0)
             {
-                where.Add(BuildTermsPredicate(query.Terms, query.TermScope));
+                where.Add(BuildTermsPredicate(query.Terms, query.SearchIn));
             }
 
             if (query.FromAddressContains != null)
@@ -216,7 +216,7 @@ namespace OutlookAI.Core.IndexSearch
             return "SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE SCOPE='" + ValidateScope(scope) + "'";
         }
 
-        private static string BuildTermsPredicate(IReadOnlyList<string> terms, TermScope termScope)
+        private static string BuildTermsPredicate(IReadOnlyList<string> terms, SearchIn searchIn)
         {
             List<string> quoted = new List<string>(terms.Count);
             for (int i = 0; i < terms.Count; i++)
@@ -227,16 +227,16 @@ namespace OutlookAI.Core.IndexSearch
             string condition = string.Join(" AND ", quoted);
             string subject = "CONTAINS(" + SubjectColumn + ", '" + condition + "')";
             string contents = "CONTAINS(" + ContentsColumn + ", '" + condition + "')";
-            switch (termScope)
+            switch (searchIn)
             {
-                case TermScope.SubjectAndBody:
+                case SearchIn.SubjectAndBody:
                     return "(" + subject + " OR " + contents + ")";
-                case TermScope.SubjectOnly:
+                case SearchIn.SubjectOnly:
                     return subject;
-                case TermScope.BodyOnly:
+                case SearchIn.BodyOnly:
                     return contents;
                 default:
-                    throw new ArgumentException("Unknown TermScope value.", nameof(termScope));
+                    throw new ArgumentException("Unknown SearchIn value.", nameof(searchIn));
             }
         }
 

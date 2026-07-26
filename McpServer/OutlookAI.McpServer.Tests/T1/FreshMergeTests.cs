@@ -53,7 +53,7 @@ public sealed class FreshMergeTests
 
     // ---------------------------------------------------------------- MatchesTerms
 
-    private const TermScope Default = TermScopes.Default;
+    private const SearchIn Default = SearchInValues.Default;
 
     [Fact]
     public void MatchesTerms_NullOrEmpty_MatchesEverything()
@@ -79,7 +79,7 @@ public sealed class FreshMergeTests
     }
 
     [Fact]
-    public void MatchesTerms_SenderIsNotATermScope_MatchingSenderAloneDoesNotHit()
+    public void MatchesTerms_SenderIsNotMatchedByTerms_MatchingSenderAloneDoesNotHit()
     {
         // D40/SF-6 tier alignment: the index tier never matched senders by term, so the
         // sweep must not either - otherwise a hit would vanish once the frontier passed
@@ -106,15 +106,15 @@ public sealed class FreshMergeTests
         Assert.False(FreshMerge.MatchesTerms(item, new[] { "invoice" }, Default));
     }
 
-    // ------------------------------------------------- term scopes (D40, user 2026-07-26)
+    // ------------------------------------------------- search_in scopes (D40, user 2026-07-26)
 
     [Fact]
     public void MatchesTerms_SubjectOnlyScope_IgnoresBody()
     {
         ComMailBrief item = Brief(subject: "alert prefix", body: "requeued backend");
 
-        Assert.True(FreshMerge.MatchesTerms(item, new[] { "alert" }, TermScope.SubjectOnly));
-        Assert.False(FreshMerge.MatchesTerms(item, new[] { "requeued" }, TermScope.SubjectOnly));
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "alert" }, SearchIn.SubjectOnly));
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "requeued" }, SearchIn.SubjectOnly));
     }
 
     [Fact]
@@ -122,8 +122,8 @@ public sealed class FreshMergeTests
     {
         ComMailBrief item = Brief(subject: "alert prefix", body: "requeued backend");
 
-        Assert.True(FreshMerge.MatchesTerms(item, new[] { "requeued" }, TermScope.BodyOnly));
-        Assert.False(FreshMerge.MatchesTerms(item, new[] { "alert" }, TermScope.BodyOnly));
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "requeued" }, SearchIn.BodyOnly));
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "alert" }, SearchIn.BodyOnly));
     }
 
     [Fact]
@@ -143,10 +143,10 @@ public sealed class FreshMergeTests
     {
         ComMailBrief item = Brief(subject: "factuur 2026-001", body: "betaling ontvangen");
 
-        Assert.True(FreshMerge.MatchesTerms(item, new[] { "fact*" }, TermScope.SubjectOnly));
-        Assert.False(FreshMerge.MatchesTerms(item, new[] { "fact*" }, TermScope.BodyOnly));
-        Assert.True(FreshMerge.MatchesTerms(item, new[] { "betal*" }, TermScope.BodyOnly));
-        Assert.False(FreshMerge.MatchesTerms(item, new[] { "betal*" }, TermScope.SubjectOnly));
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "fact*" }, SearchIn.SubjectOnly));
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "fact*" }, SearchIn.BodyOnly));
+        Assert.True(FreshMerge.MatchesTerms(item, new[] { "betal*" }, SearchIn.BodyOnly));
+        Assert.False(FreshMerge.MatchesTerms(item, new[] { "betal*" }, SearchIn.SubjectOnly));
     }
 
     // ---------------------------------------------------------------- IsDuplicate

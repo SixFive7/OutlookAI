@@ -14,7 +14,7 @@ namespace OutlookAI.Core.IndexSearch
     /// shape is gone; every scope below names its column(s) explicitly.
     /// </para>
     /// </summary>
-    public enum TermScope
+    public enum SearchIn
     {
         /// <summary>
         /// <c>(CONTAINS(System.Subject, ...) OR CONTAINS(System.Search.Contents, ...))</c>:
@@ -38,22 +38,22 @@ namespace OutlookAI.Core.IndexSearch
     }
 
     /// <summary>
-    /// Wire names for <see cref="TermScope"/> and the host-neutral parser behind the
-    /// <c>term_scope</c> tool argument (v3.MD section 0.5.2: Core carries no MCP types).
+    /// Wire names for <see cref="SearchIn"/> and the host-neutral parser behind the
+    /// <c>search_in</c> tool argument (v3.MD section 0.5.2: Core carries no MCP types).
     /// </summary>
-    public static class TermScopes
+    public static class SearchInValues
     {
-        /// <summary>Wire name of <see cref="TermScope.SubjectAndBody"/> - the default.</summary>
+        /// <summary>Wire name of <see cref="SearchIn.SubjectAndBody"/> - the default.</summary>
         public const string SubjectAndBodyName = "subject_and_body";
 
-        /// <summary>Wire name of <see cref="TermScope.SubjectOnly"/>.</summary>
+        /// <summary>Wire name of <see cref="SearchIn.SubjectOnly"/>.</summary>
         public const string SubjectName = "subject";
 
-        /// <summary>Wire name of <see cref="TermScope.BodyOnly"/>.</summary>
+        /// <summary>Wire name of <see cref="SearchIn.BodyOnly"/>.</summary>
         public const string BodyName = "body";
 
         /// <summary>The scope used when the argument is omitted.</summary>
-        public const TermScope Default = TermScope.SubjectAndBody;
+        public const SearchIn Default = SearchIn.SubjectAndBody;
 
         /// <summary>The three accepted wire values, in schema order.</summary>
         public static readonly IReadOnlyList<string> WireNames = new[]
@@ -62,12 +62,12 @@ namespace OutlookAI.Core.IndexSearch
         };
 
         /// <summary>
-        /// Parses a <c>term_scope</c> argument. Null/blank yields <see cref="Default"/>;
+        /// Parses a <c>search_in</c> argument. Null/blank yields <see cref="Default"/>;
         /// matching is case- and whitespace-insensitive and tolerates the two obvious
         /// near-misses (<c>subject_only</c>/<c>body_only</c>) rather than failing a whole
         /// tool call over a naming guess. Anything else throws with the valid values.
         /// </summary>
-        public static TermScope Parse(string? value)
+        public static SearchIn Parse(string? value)
         {
             if (string.IsNullOrWhiteSpace(value))
             {
@@ -77,34 +77,34 @@ namespace OutlookAI.Core.IndexSearch
             switch (value!.Trim().ToLowerInvariant())
             {
                 case SubjectAndBodyName:
-                    return TermScope.SubjectAndBody;
+                    return SearchIn.SubjectAndBody;
                 case SubjectName:
                 case "subject_only":
-                    return TermScope.SubjectOnly;
+                    return SearchIn.SubjectOnly;
                 case BodyName:
                 case "body_only":
-                    return TermScope.BodyOnly;
+                    return SearchIn.BodyOnly;
                 default:
                     throw new ArgumentException(
-                        "term_scope must be one of: " + string.Join(", ", WireNames)
+                        "search_in must be one of: " + string.Join(", ", WireNames)
                         + " (default " + SubjectAndBodyName + " = the term must appear in the subject or in the body/attachment content).",
                         nameof(value));
             }
         }
 
         /// <summary>Wire name of a scope (inverse of <see cref="Parse"/>).</summary>
-        public static string ToWireName(TermScope scope)
+        public static string ToWireName(SearchIn scope)
         {
             switch (scope)
             {
-                case TermScope.SubjectAndBody:
+                case SearchIn.SubjectAndBody:
                     return SubjectAndBodyName;
-                case TermScope.SubjectOnly:
+                case SearchIn.SubjectOnly:
                     return SubjectName;
-                case TermScope.BodyOnly:
+                case SearchIn.BodyOnly:
                     return BodyName;
                 default:
-                    throw new ArgumentException("Unknown TermScope value.", nameof(scope));
+                    throw new ArgumentException("Unknown SearchIn value.", nameof(scope));
             }
         }
     }
@@ -156,7 +156,7 @@ namespace OutlookAI.Core.IndexSearch
         public IReadOnlyList<string>? Terms { get; set; }
 
         /// <summary>Where <see cref="Terms"/> are matched. Default: subject OR body/attachment content (D40/SF-6).</summary>
-        public TermScope TermScope { get; set; } = TermScopes.Default;
+        public SearchIn SearchIn { get; set; } = SearchInValues.Default;
 
         /// <summary>Which System.Kind values the query covers. Default: email plus documents.</summary>
         public KindFilter Kinds { get; set; } = KindFilter.EmailAndDocuments;

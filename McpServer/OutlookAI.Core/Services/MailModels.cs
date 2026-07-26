@@ -15,9 +15,9 @@ namespace OutlookAI.Core.Services
         /// Which properties <see cref="Query"/> terms must appear in: subject OR
         /// body/attachment content (default), subject only, or body only. Honored
         /// identically by all three tiers - index, freshness sweep and exhaustive scan
-        /// (D40/SF-6). Sender matching is never a term scope; that is <see cref="From"/>.
+        /// (D40/SF-6). Sender matching is never a search_in scope; that is <see cref="From"/>.
         /// </summary>
-        public TermScope TermScope { get; set; } = TermScopes.Default;
+        public SearchIn SearchIn { get; set; } = SearchInValues.Default;
 
         /// <summary>
         /// True = folder/date-bounded COM scan that BYPASSES the index (correctness

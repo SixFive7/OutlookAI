@@ -120,16 +120,16 @@ public sealed class ExhaustiveDaslFilterTests
             ExhaustiveDaslFilter.Build(new[] { term }, null, null, ExhaustiveEngine.Like));
     }
 
-    // ------------------------------------------- term scopes (D40, user 2026-07-26)
+    // ------------------------------------------- search_in scopes (D40, user 2026-07-26)
 
     [Fact]
-    public void DefaultTermScope_StaysSubjectOrBody()
+    public void DefaultSearchIn_StaysSubjectOrBody()
     {
         // The exhaustive tier already covered subject+body - that predicate asymmetry is
         // why it found the SF-6 population the index tier missed. It must not regress.
         string implicitDefault = ExhaustiveDaslFilter.Build(new[] { "factuur" }, null, null, ExhaustiveEngine.CiPhraseMatch);
         string explicitDefault = ExhaustiveDaslFilter.Build(
-            new[] { "factuur" }, null, null, ExhaustiveEngine.CiPhraseMatch, TermScope.SubjectAndBody);
+            new[] { "factuur" }, null, null, ExhaustiveEngine.CiPhraseMatch, SearchIn.SubjectAndBody);
 
         Assert.Equal(implicitDefault, explicitDefault);
         Assert.Contains(Subject + " ci_phrasematch 'factuur' OR " + Body + " ci_phrasematch 'factuur'", implicitDefault, StringComparison.Ordinal);
@@ -138,8 +138,8 @@ public sealed class ExhaustiveDaslFilterTests
     [Fact]
     public void SubjectOnlyScope_DropsTheBodyClause_BothEngines()
     {
-        string ci = ExhaustiveDaslFilter.Build(new[] { "factuur" }, null, null, ExhaustiveEngine.CiPhraseMatch, TermScope.SubjectOnly);
-        string like = ExhaustiveDaslFilter.Build(new[] { "factuur" }, null, null, ExhaustiveEngine.Like, TermScope.SubjectOnly);
+        string ci = ExhaustiveDaslFilter.Build(new[] { "factuur" }, null, null, ExhaustiveEngine.CiPhraseMatch, SearchIn.SubjectOnly);
+        string like = ExhaustiveDaslFilter.Build(new[] { "factuur" }, null, null, ExhaustiveEngine.Like, SearchIn.SubjectOnly);
 
         Assert.Contains("(" + Subject + " ci_phrasematch 'factuur')", ci, StringComparison.Ordinal);
         Assert.Contains("(" + Subject + " like '%factuur%')", like, StringComparison.Ordinal);
@@ -150,8 +150,8 @@ public sealed class ExhaustiveDaslFilterTests
     [Fact]
     public void BodyOnlyScope_DropsTheSubjectClause_BothEngines()
     {
-        string ci = ExhaustiveDaslFilter.Build(new[] { "factuur" }, null, null, ExhaustiveEngine.CiPhraseMatch, TermScope.BodyOnly);
-        string like = ExhaustiveDaslFilter.Build(new[] { "factuur" }, null, null, ExhaustiveEngine.Like, TermScope.BodyOnly);
+        string ci = ExhaustiveDaslFilter.Build(new[] { "factuur" }, null, null, ExhaustiveEngine.CiPhraseMatch, SearchIn.BodyOnly);
+        string like = ExhaustiveDaslFilter.Build(new[] { "factuur" }, null, null, ExhaustiveEngine.Like, SearchIn.BodyOnly);
 
         Assert.Contains("(" + Body + " ci_phrasematch 'factuur')", ci, StringComparison.Ordinal);
         Assert.Contains("(" + Body + " like '%factuur%')", like, StringComparison.Ordinal);
@@ -160,10 +160,10 @@ public sealed class ExhaustiveDaslFilterTests
     }
 
     [Fact]
-    public void PrefixStem_HonorsTermScope()
+    public void PrefixStem_HonorsSearchIn()
     {
-        string subjectOnly = ExhaustiveDaslFilter.Build(new[] { "fact*" }, null, null, ExhaustiveEngine.CiPhraseMatch, TermScope.SubjectOnly);
-        string bodyOnly = ExhaustiveDaslFilter.Build(new[] { "fact*" }, null, null, ExhaustiveEngine.CiPhraseMatch, TermScope.BodyOnly);
+        string subjectOnly = ExhaustiveDaslFilter.Build(new[] { "fact*" }, null, null, ExhaustiveEngine.CiPhraseMatch, SearchIn.SubjectOnly);
+        string bodyOnly = ExhaustiveDaslFilter.Build(new[] { "fact*" }, null, null, ExhaustiveEngine.CiPhraseMatch, SearchIn.BodyOnly);
 
         Assert.Equal("@SQL=(" + MessageClass + " like 'IPM.Note%') AND (" + Subject + " like '%fact%')", subjectOnly);
         Assert.Equal("@SQL=(" + MessageClass + " like 'IPM.Note%') AND (" + Body + " like '%fact%')", bodyOnly);
@@ -173,17 +173,17 @@ public sealed class ExhaustiveDaslFilterTests
     public void ScopedTerms_StillAndTogether()
     {
         string filter = ExhaustiveDaslFilter.Build(
-            new[] { "alpha", "beta" }, null, null, ExhaustiveEngine.CiPhraseMatch, TermScope.SubjectOnly);
+            new[] { "alpha", "beta" }, null, null, ExhaustiveEngine.CiPhraseMatch, SearchIn.SubjectOnly);
 
         Assert.Equal(2, CountOccurrences(filter, ") AND ("));
         Assert.Equal(2, CountOccurrences(filter, "ci_phrasematch"));
     }
 
     [Fact]
-    public void UnknownTermScope_Throws()
+    public void UnknownSearchIn_Throws()
     {
         Assert.Throws<ArgumentException>(() =>
-            ExhaustiveDaslFilter.Build(new[] { "factuur" }, null, null, ExhaustiveEngine.Like, (TermScope)99));
+            ExhaustiveDaslFilter.Build(new[] { "factuur" }, null, null, ExhaustiveEngine.Like, (SearchIn)99));
     }
 
     private static int CountOccurrences(string haystack, string needle)

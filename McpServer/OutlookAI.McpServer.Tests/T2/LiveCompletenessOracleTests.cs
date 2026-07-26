@@ -16,7 +16,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// stores - Phase-1 finding) and compared against the walked items' EntryIDs.
 ///
 /// Term-matching parity: the oracle queries subject+body columns only
-/// (TermScope.SubjectAndBody) and picks terms whose corpus occurrences are all clean
+/// (SearchIn.SubjectAndBody) and picks terms whose corpus occurrences are all clean
 /// word-boundary occurrences, mirroring the index word breaker. Drafts and other items
 /// without ReceivedTime are excluded on both sides. Only the test-hub store is ever
 /// walked (S2); logging stays within the test-hub grant: generic single-word terms,
@@ -98,7 +98,7 @@ public sealed class LiveCompletenessOracleTests
             Scope = hubScope.StorePrefix,
             Kinds = KindFilter.EmailOnly,
             Terms = new[] { term },
-            TermScope = TermScope.SubjectAndBody,
+            SearchIn = SearchIn.SubjectAndBody,
             Top = 500,
         });
 

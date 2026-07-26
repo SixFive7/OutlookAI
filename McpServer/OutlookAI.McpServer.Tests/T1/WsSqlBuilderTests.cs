@@ -36,13 +36,13 @@ public sealed class WsSqlBuilderTests
         Assert.EndsWith(" ORDER BY System.Message.DateReceived DESC", sql, StringComparison.Ordinal);
     }
 
-    // --------------------------------------------- term scopes (D40 / SF-6, user 2026-07-26)
+    // --------------------------------------------- search_in scopes (D40 / SF-6, user 2026-07-26)
 
     [Fact]
-    public void Build_DefaultTermScope_IsSubjectAndBody()
+    public void Build_DefaultSearchIn_IsSubjectAndBody()
     {
-        Assert.Equal(TermScope.SubjectAndBody, new IndexQuery().TermScope);
-        Assert.Equal(TermScope.SubjectAndBody, TermScopes.Default);
+        Assert.Equal(SearchIn.SubjectAndBody, new IndexQuery().SearchIn);
+        Assert.Equal(SearchIn.SubjectAndBody, SearchInValues.Default);
     }
 
     [Fact]
@@ -53,10 +53,10 @@ public sealed class WsSqlBuilderTests
         // mail whose term appears only in the subject was invisible (~3.4% of items
         // store-wide; the 138-item HAProxy alert population was the discovery case).
         // Every term predicate must name its column(s).
-        foreach (TermScope scope in new[] { TermScope.SubjectAndBody, TermScope.SubjectOnly, TermScope.BodyOnly })
+        foreach (SearchIn scope in new[] { SearchIn.SubjectAndBody, SearchIn.SubjectOnly, SearchIn.BodyOnly })
         {
             var query = BaseQuery();
-            query.TermScope = scope;
+            query.SearchIn = scope;
             query.Terms = new[] { "factuur", "betaling" };
 
             string sql = WsSqlBuilder.Build(query);
@@ -67,10 +67,10 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
-    public void Build_SubjectOnlyTermScope_QueriesSubjectColumnAlone()
+    public void Build_SubjectOnlySearchIn_QueriesSubjectColumnAlone()
     {
         var query = BaseQuery();
-        query.TermScope = TermScope.SubjectOnly;
+        query.SearchIn = SearchIn.SubjectOnly;
 
         string sql = WsSqlBuilder.Build(query);
 
@@ -79,10 +79,10 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
-    public void Build_BodyOnlyTermScope_QueriesContentsColumnAlone()
+    public void Build_BodyOnlySearchIn_QueriesContentsColumnAlone()
     {
         var query = BaseQuery();
-        query.TermScope = TermScope.BodyOnly;
+        query.SearchIn = SearchIn.BodyOnly;
 
         string sql = WsSqlBuilder.Build(query);
 
@@ -134,29 +134,29 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
-    public void Build_RejectsUnknownTermScope()
+    public void Build_RejectsUnknownSearchIn()
     {
         var query = BaseQuery();
-        query.TermScope = (TermScope)99;
+        query.SearchIn = (SearchIn)99;
 
         Assert.Throws<ArgumentException>(() => WsSqlBuilder.Build(query));
     }
 
     [Theory]
-    [InlineData(null, TermScope.SubjectAndBody)]
-    [InlineData("", TermScope.SubjectAndBody)]
-    [InlineData("   ", TermScope.SubjectAndBody)]
-    [InlineData("subject_and_body", TermScope.SubjectAndBody)]
-    [InlineData(" Subject_And_Body ", TermScope.SubjectAndBody)]
-    [InlineData("subject", TermScope.SubjectOnly)]
-    [InlineData("SUBJECT", TermScope.SubjectOnly)]
-    [InlineData("subject_only", TermScope.SubjectOnly)]
-    [InlineData("body", TermScope.BodyOnly)]
-    [InlineData("Body", TermScope.BodyOnly)]
-    [InlineData("body_only", TermScope.BodyOnly)]
-    public void TermScopes_Parse_AcceptsWireNamesAndDefaultsWhenOmitted(string? value, TermScope expected)
+    [InlineData(null, SearchIn.SubjectAndBody)]
+    [InlineData("", SearchIn.SubjectAndBody)]
+    [InlineData("   ", SearchIn.SubjectAndBody)]
+    [InlineData("subject_and_body", SearchIn.SubjectAndBody)]
+    [InlineData(" Subject_And_Body ", SearchIn.SubjectAndBody)]
+    [InlineData("subject", SearchIn.SubjectOnly)]
+    [InlineData("SUBJECT", SearchIn.SubjectOnly)]
+    [InlineData("subject_only", SearchIn.SubjectOnly)]
+    [InlineData("body", SearchIn.BodyOnly)]
+    [InlineData("Body", SearchIn.BodyOnly)]
+    [InlineData("body_only", SearchIn.BodyOnly)]
+    public void SearchInValues_Parse_AcceptsWireNamesAndDefaultsWhenOmitted(string? value, SearchIn expected)
     {
-        Assert.Equal(expected, TermScopes.Parse(value));
+        Assert.Equal(expected, SearchInValues.Parse(value));
     }
 
     [Theory]
@@ -164,23 +164,23 @@ public sealed class WsSqlBuilderTests
     [InlineData("sender")]
     [InlineData("all_properties")]
     [InlineData("subject and body")]
-    public void TermScopes_Parse_RejectsUnknownValuesWithTheValidOnesNamed(string value)
+    public void SearchInValues_Parse_RejectsUnknownValuesWithTheValidOnesNamed(string value)
     {
-        ArgumentException ex = Assert.Throws<ArgumentException>(() => TermScopes.Parse(value));
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => SearchInValues.Parse(value));
 
-        foreach (string wireName in TermScopes.WireNames)
+        foreach (string wireName in SearchInValues.WireNames)
         {
             Assert.Contains(wireName, ex.Message, StringComparison.Ordinal);
         }
     }
 
     [Fact]
-    public void TermScopes_WireNames_RoundTrip()
+    public void SearchInValues_WireNames_RoundTrip()
     {
-        Assert.Equal(new[] { "subject_and_body", "subject", "body" }, TermScopes.WireNames);
-        foreach (string wireName in TermScopes.WireNames)
+        Assert.Equal(new[] { "subject_and_body", "subject", "body" }, SearchInValues.WireNames);
+        foreach (string wireName in SearchInValues.WireNames)
         {
-            Assert.Equal(wireName, TermScopes.ToWireName(TermScopes.Parse(wireName)));
+            Assert.Equal(wireName, SearchInValues.ToWireName(SearchInValues.Parse(wireName)));
         }
     }
 
@@ -287,10 +287,10 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
-    public void Build_SubjectAndBodyTermScope_UsesColumnScopedContains()
+    public void Build_SubjectAndBodySearchIn_UsesColumnScopedContains()
     {
         var query = BaseQuery();
-        query.TermScope = TermScope.SubjectAndBody;
+        query.SearchIn = SearchIn.SubjectAndBody;
 
         string sql = WsSqlBuilder.Build(query);
 

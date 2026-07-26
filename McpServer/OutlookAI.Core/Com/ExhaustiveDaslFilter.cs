@@ -31,7 +31,7 @@ namespace OutlookAI.Core.Com
     /// section-12 rules: ci_* only in Restrict/GetTable, date literals UTC invariant
     /// "MM/dd/yyyy HH:mm:ss", single quotes escaped by doubling. Terms are ANDed; each
     /// term matches subject OR body by default, narrowable to one of them via
-    /// <see cref="TermScope"/> (D40 - the same three scopes the index tier offers).
+    /// <see cref="SearchIn"/> (D40 - the same three scopes the index tier offers).
     /// A trailing '*' marks a prefix stem and is matched via LIKE substring in BOTH
     /// engines (ci_phrasematch is whole-word and would miss the stem's continuations).
     /// Every filter carries an IPM.Note message-class clause so only mail items are
@@ -55,7 +55,7 @@ namespace OutlookAI.Core.Com
             DateTime? sinceUtc,
             DateTime? beforeUtc,
             ExhaustiveEngine engine,
-            TermScope termScope = TermScopes.Default)
+            SearchIn searchIn = SearchInValues.Default)
         {
             if (sinceUtc.HasValue && beforeUtc.HasValue && sinceUtc.Value >= beforeUtc.Value)
             {
@@ -84,7 +84,7 @@ namespace OutlookAI.Core.Com
                     clauses.Add(BuildTermClause(
                         ValidateTerm(terms[i], "terms[" + i.ToString(CultureInfo.InvariantCulture) + "]"),
                         engine,
-                        termScope));
+                        searchIn));
                 }
             }
 
@@ -102,7 +102,7 @@ namespace OutlookAI.Core.Com
             return sql.ToString();
         }
 
-        private static string BuildTermClause(string term, ExhaustiveEngine engine, TermScope termScope)
+        private static string BuildTermClause(string term, ExhaustiveEngine engine, SearchIn searchIn)
         {
             bool prefixStem = term.EndsWith("*", StringComparison.Ordinal);
             string value = prefixStem ? term.Substring(0, term.Length - 1) : term;
@@ -122,16 +122,16 @@ namespace OutlookAI.Core.Com
                 bodyClause = BodyProp + match;
             }
 
-            switch (termScope)
+            switch (searchIn)
             {
-                case TermScope.SubjectAndBody:
+                case SearchIn.SubjectAndBody:
                     return subjectClause + " OR " + bodyClause;
-                case TermScope.SubjectOnly:
+                case SearchIn.SubjectOnly:
                     return subjectClause;
-                case TermScope.BodyOnly:
+                case SearchIn.BodyOnly:
                     return bodyClause;
                 default:
-                    throw new ArgumentException("Unknown TermScope value.", nameof(termScope));
+                    throw new ArgumentException("Unknown SearchIn value.", nameof(searchIn));
             }
         }
 

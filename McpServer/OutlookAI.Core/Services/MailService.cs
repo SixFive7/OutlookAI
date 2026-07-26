@@ -197,7 +197,7 @@ namespace OutlookAI.Core.Services
             {
                 Scope = scope,
                 Terms = terms.Count > 0 ? terms : null,
-                TermScope = request.TermScope,
+                SearchIn = request.SearchIn,
                 Kinds = request.AttachmentHitsOnly
                     ? KindFilter.DocumentsOnly
                     : request.IncludeAttachmentHits ? KindFilter.EmailAndDocuments : KindFilter.EmailOnly,
@@ -406,7 +406,7 @@ namespace OutlookAI.Core.Services
                 }
 
                 info.ItemsSeen++;
-                if (!FreshMerge.MatchesTerms(item, terms, request.TermScope))
+                if (!FreshMerge.MatchesTerms(item, terms, request.SearchIn))
                 {
                     continue;
                 }
@@ -502,7 +502,7 @@ namespace OutlookAI.Core.Services
                 request.BeforeUtc,
                 maxItems: top,
                 timeBudgetMs: ExhaustiveTimeBudgetMs,
-                termScope: request.TermScope));
+                searchIn: request.SearchIn));
             stopwatch.Stop();
 
             List<HitSummary> summaries = new List<HitSummary>();

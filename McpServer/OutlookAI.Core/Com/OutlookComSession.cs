@@ -4108,7 +4108,7 @@ namespace OutlookAI.Core.Com
         /// only), plain LIKE otherwise. Matches are opened for authoritative snapshots
         /// carrying REAL EntryIDs. Scope = one folder (path given) or every folder of the
         /// store. Bounded by <paramref name="maxItems"/> and <paramref name="timeBudgetMs"/>.
-        /// <paramref name="termScope"/> selects which properties the terms must appear in
+        /// <paramref name="searchIn"/> selects which properties the terms must appear in
         /// (subject and/or body) - the same three scopes the index tier offers (D40).
         /// </summary>
         public ComExhaustiveResult ExhaustiveScan(
@@ -4119,7 +4119,7 @@ namespace OutlookAI.Core.Com
             DateTime? beforeUtc,
             int maxItems,
             int timeBudgetMs,
-            TermScope termScope = TermScopes.Default)
+            SearchIn searchIn = SearchInValues.Default)
         {
             EnsureNotDisposed();
             if (string.IsNullOrWhiteSpace(storeDisplayName))
@@ -4185,9 +4185,9 @@ namespace OutlookAI.Core.Com
                 ExhaustiveScanState state = new ExhaustiveScanState(maxItems, TimeSpan.FromMilliseconds(timeBudgetMs))
                 {
                     CiFilter = instantSearch
-                        ? ExhaustiveDaslFilter.Build(terms, sinceUtc, beforeUtc, ExhaustiveEngine.CiPhraseMatch, termScope)
+                        ? ExhaustiveDaslFilter.Build(terms, sinceUtc, beforeUtc, ExhaustiveEngine.CiPhraseMatch, searchIn)
                         : null,
-                    LikeFilter = ExhaustiveDaslFilter.Build(terms, sinceUtc, beforeUtc, ExhaustiveEngine.Like, termScope),
+                    LikeFilter = ExhaustiveDaslFilter.Build(terms, sinceUtc, beforeUtc, ExhaustiveEngine.Like, searchIn),
                 };
 
                 try
