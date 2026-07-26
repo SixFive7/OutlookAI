@@ -148,5 +148,8 @@ public sealed class MoveArchiveLiveMcpToolTests
             Hub, Marker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive));
         Assert.Equal(0, LiveOutlookTestMailer.CountTestFolders(Hub));
         _output.WriteLine("t3 move/archive: 0 marker artifacts, 0 test folders remain in hub");
+
+        // Belt-and-braces (D39): whole-store snapshot reconciliation after the wire run.
+        _output.WriteLine(_fixture.VerifyHubReconciled());
     }
 }

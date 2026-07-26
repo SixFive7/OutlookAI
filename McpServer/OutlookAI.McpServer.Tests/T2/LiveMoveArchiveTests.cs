@@ -198,6 +198,10 @@ public sealed class LiveMoveArchiveTests
             Hub, Marker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive));
         Assert.Equal(0, LiveOutlookTestMailer.CountTestFolders(Hub));
         _output.WriteLine("post-suite: 0 tagged artifacts (incl. Archive), 0 test folders");
+
+        // Belt-and-braces (D39): whole-store snapshot reconciliation - every hub
+        // folder's baseline-era count back at its pre-run value, zero marker strays.
+        _output.WriteLine(_fixture.VerifyHubReconciled());
     }
 
     /// <summary>
