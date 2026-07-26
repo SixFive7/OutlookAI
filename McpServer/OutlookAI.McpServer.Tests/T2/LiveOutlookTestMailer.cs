@@ -15,6 +15,20 @@ public static class LiveOutlookTestMailer
     public const string SubjectTag = "[OutlookAI-McpTest]";
 
     /// <summary>
+    /// Name prefix every TEST FOLDER must carry (D39 move tests). Folder cleanup
+    /// matches this with ordinal Contains via the tested helpers only - never shell
+    /// patterns (the 7d standing rule).
+    /// </summary>
+    public const string TestFolderNamePrefix = "OutlookAI-McpTest-Folder";
+
+    /// <summary>
+    /// Default-folder ids swept for tagged artifacts: Drafts, Inbox, Sent Items, the
+    /// designated Archive folder (39, D39 - archive_mail artifacts), Deleted Items
+    /// LAST so the second pass purges what Delete() moved there.
+    /// </summary>
+    private static readonly int[] SweepFolderIds = { 16, 6, 5, 39, 3 };
+
+    /// <summary>
     /// Sends a mail from <paramref name="smtpAddress"/> to itself (refuses to run when
     /// that account is not in the profile - the D20 grant is telefonie-to-telefonie
     /// only). Returns the UTC send timestamp.
@@ -138,10 +152,11 @@ public static class LiveOutlookTestMailer
     }
 
     /// <summary>
-    /// Deletes every item in the store's Drafts, Inbox, Sent Items and Deleted Items
-    /// whose subject contains BOTH the tag and <paramref name="uniqueMarker"/> (S3:
-    /// only artifacts this run created). Two passes: Delete() moves to Deleted Items,
-    /// the second pass on folder 3 removes them for good. Returns the total deleted.
+    /// Deletes every item in the store's Drafts, Inbox, Sent Items, designated Archive
+    /// folder (D39) and Deleted Items whose subject contains BOTH the tag and
+    /// <paramref name="uniqueMarker"/> (S3: only artifacts this run created). Two
+    /// passes: Delete() moves to Deleted Items, the final pass on folder 3 removes
+    /// them for good. Returns the total deleted.
     /// </summary>
     public static int DeleteTaggedArtifacts(string storeDisplayName, string uniqueMarker)
     {
@@ -164,9 +179,7 @@ public static class LiveOutlookTestMailer
                     ?? throw new InvalidOperationException("Test-hub store not found for cleanup.");
                 try
                 {
-                    // 16 = Drafts (Phase 4), 6 = Inbox, 5 = Sent Items, 3 = Deleted
-                    // Items (second pass).
-                    foreach (int folderId in new[] { 16, 6, 5, 3 })
+                    foreach (int folderId in SweepFolderIds)
                     {
                         deleted += DeleteMatchingInFolder(store, folderId, uniqueMarker);
                     }
@@ -375,10 +388,11 @@ public static class LiveOutlookTestMailer
 
     /// <summary>
     /// Counts items whose subject contains <paramref name="subjectFragment"/> across
-    /// the store's default folders (default set: Drafts, Inbox, Sent Items, Deleted
-    /// Items) - the post-suite artifact sweep (S3). Read-only; output is a count
-    /// (content-free, S4). Uses Folder.GetTable with a DASL LIKE restriction, falling
-    /// back to Items.Restrict; throws when a folder cannot be counted at all.
+    /// the store's default folders (default set: Drafts, Inbox, Sent Items, the
+    /// designated Archive folder, Deleted Items) - the post-suite artifact sweep (S3).
+    /// Read-only; output is a count (content-free, S4). Uses Folder.GetTable with a
+    /// DASL LIKE restriction, falling back to Items.Restrict; throws when a folder
+    /// cannot be counted at all.
     /// </summary>
     public static int CountTaggedArtifacts(string storeDisplayName, string subjectFragment, int[]? folderIds = null)
     {
@@ -392,7 +406,7 @@ public static class LiveOutlookTestMailer
             throw new ArgumentException("Fragment must not contain quote/wildcard characters.", nameof(subjectFragment));
         }
 
-        int[] folders = folderIds ?? new[] { 16, 6, 5, 3 };
+        int[] folders = folderIds ?? SweepFolderIds;
         return RunSta(() =>
         {
             dynamic app = CreateOutlookApplication();
@@ -476,6 +490,362 @@ public static class LiveOutlookTestMailer
             Release(items);
             Release(table);
             Release(folder);
+        }
+    }
+
+    /// <summary>
+    /// Read-only: counts folders anywhere in the store whose Name contains
+    /// <see cref="TestFolderNamePrefix"/> (ordinal) - the D39 post-suite
+    /// zero-test-folders assert.
+    /// </summary>
+    public static int CountTestFolders(string storeDisplayName)
+    {
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? root = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for test-folder count.");
+                root = store.GetRootFolder();
+                List<(string EntryId, string Name)> matches = new();
+                CollectTestFolders(root, matches, 0);
+                return matches.Count;
+            }
+            finally
+            {
+                Release(root);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Deletes every folder in the store whose Name contains
+    /// <see cref="TestFolderNamePrefix"/> (ordinal - the S3 discipline for folders;
+    /// items inside must all carry the subject tag, otherwise this REFUSES).
+    ///
+    /// ⚠ Sync-wedge footgun (live-probed 2026-07-26): deleting ITEMS while they sit
+    /// INSIDE a folder marks that folder "synchronizing local changes" on this
+    /// cached-Exchange store, and a folder in that state cannot be removed from
+    /// Deleted Items for the rest of the Outlook session (Folders.Remove throws the
+    /// synchronization error; only a restart clears it). Item deletions from
+    /// PERMANENT folders (Inbox, Deleted Items) never wedge anything. Therefore:
+    /// tagged contents are MOVED OUT to the Inbox first and deleted THERE, the then-
+    /// empty folder (move-history only - probe-proven removable) is soft-deleted,
+    /// and its Deleted Items copy is hard-removed via Folders.Remove. Passes repeat
+    /// until a fresh walk finds ZERO matches (verified); returns deletions performed.
+    /// </summary>
+    public static int DeleteTestFolders(string storeDisplayName)
+    {
+        int total = 0;
+        for (int pass = 0; pass < 6; pass++)
+        {
+            int actionsThisPass = RunSta(() =>
+            {
+                dynamic app = CreateOutlookApplication();
+                dynamic? ns = null;
+                dynamic? stores = null;
+                dynamic? store = null;
+                dynamic? root = null;
+                try
+                {
+                    ns = app.GetNamespace("MAPI");
+                    stores = ns.Stores;
+                    store = FindStore(stores, storeDisplayName)
+                        ?? throw new InvalidOperationException("Store not found for test-folder cleanup.");
+                    string storeId = (string)store.StoreID;
+                    root = store.GetRootFolder();
+                    List<(string EntryId, string Name)> matches = new();
+                    CollectTestFolders(root, matches, 0);
+
+                    int actions = 0;
+                    foreach ((string entryId, string name) in matches)
+                    {
+                        if (!name.Contains(TestFolderNamePrefix, StringComparison.Ordinal))
+                        {
+                            continue; // double-check the guard before any delete
+                        }
+
+                        dynamic? folder = null;
+                        dynamic? remaining = null;
+                        try
+                        {
+                            folder = ns.GetFolderFromID(entryId, storeId);
+                            EnsureFolderContainsOnlyTaggedItems(folder!);
+                            EvictTaggedItemsViaInbox(store, folder!); // no in-place deletions (wedge)
+                            remaining = folder!.Items;
+                            if ((int)remaining.Count == 0)
+                            {
+                                actions += RemoveEmptyTestFolder(store, folder!, entryId);
+                            }
+                        }
+                        catch (Exception ex) when (OutlookAI.Core.Com.OutlookComSession.IsComCallFailure(ex))
+                        {
+                            // Already gone, or a transient sync refusal - the next
+                            // pass retries against fresh state.
+                        }
+                        finally
+                        {
+                            Release(remaining);
+                            Release(folder);
+                        }
+                    }
+
+                    return actions;
+                }
+                finally
+                {
+                    Release(root);
+                    Release(store);
+                    Release(stores);
+                    Release(ns);
+                    Release(app);
+                }
+            });
+
+            total += actionsThisPass;
+            if (actionsThisPass == 0 && CountTestFolders(storeDisplayName) == 0)
+            {
+                return total; // verified clean
+            }
+
+            Thread.Sleep(1500); // let the store register moves before the next walk
+        }
+
+        if (CountTestFolders(storeDisplayName) != 0)
+        {
+            throw new InvalidOperationException(
+                "Test folders kept reappearing for the whole cleanup window - manual check required (S3).");
+        }
+
+        return total;
+    }
+
+    /// <summary>
+    /// Moves every item of a to-be-deleted test folder (already verified all-tagged)
+    /// to the Inbox and deletes it THERE - deletions recorded on a permanent folder
+    /// never wedge the test folder's own sync state (see DeleteTestFolders remarks).
+    /// Per-item tag re-check as the last line of defense.
+    /// </summary>
+    private static void EvictTaggedItemsViaInbox(dynamic store, dynamic folder)
+    {
+        dynamic? inbox = null;
+        dynamic? items = null;
+        try
+        {
+            inbox = store.GetDefaultFolder(6);
+            items = folder.Items;
+            int count = items.Count;
+            for (int i = count; i >= 1; i--)
+            {
+                dynamic? item = null;
+                dynamic? moved = null;
+                try
+                {
+                    item = items[i];
+                    string? subject = null;
+                    try
+                    {
+                        subject = (string?)item.Subject;
+                    }
+                    catch (COMException)
+                    {
+                    }
+
+                    if (subject != null && subject.Contains(SubjectTag, StringComparison.Ordinal))
+                    {
+                        moved = item.Move(inbox);
+                        moved.Delete(); // recorded on the Inbox, purged by the folder-3 sweep pass
+                    }
+                }
+                catch (COMException)
+                {
+                }
+                finally
+                {
+                    Release(moved);
+                    Release(item);
+                }
+            }
+        }
+        finally
+        {
+            Release(items);
+            Release(inbox);
+        }
+    }
+
+    /// <summary>
+    /// Removes one EMPTY test folder: under Deleted Items it is hard-removed via
+    /// Folders.Remove (index resolved by EntryID); anywhere else it is soft-deleted
+    /// (the next pass hard-removes the Deleted Items copy). Returns actions performed.
+    /// </summary>
+    private static int RemoveEmptyTestFolder(dynamic store, dynamic folder, string folderEntryId)
+    {
+        bool underDeletedItems = false;
+        dynamic? parent = null;
+        dynamic? deletedItems = null;
+        try
+        {
+            deletedItems = store.GetDefaultFolder(3);
+            string deletedItemsEntryId = (string)deletedItems.EntryID;
+            try
+            {
+                parent = folder.Parent;
+                underDeletedItems = parent != null
+                    && string.Equals((string)((dynamic)parent!).EntryID, deletedItemsEntryId, StringComparison.OrdinalIgnoreCase);
+            }
+            catch (COMException)
+            {
+            }
+
+            if (!underDeletedItems)
+            {
+                folder.Delete(); // soft: moves under Deleted Items with a NEW EntryID
+                return 1;
+            }
+
+            dynamic? siblings = null;
+            try
+            {
+                siblings = ((dynamic)parent!).Folders;
+                int count = siblings.Count;
+                for (int i = count; i >= 1; i--)
+                {
+                    dynamic? candidate = null;
+                    try
+                    {
+                        candidate = siblings[i];
+                        if (string.Equals((string)candidate.EntryID, folderEntryId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            siblings.Remove(i); // hard delete from Deleted Items
+                            return 1;
+                        }
+                    }
+                    finally
+                    {
+                        Release(candidate);
+                    }
+                }
+            }
+            finally
+            {
+                Release(siblings);
+            }
+
+            return 0;
+        }
+        finally
+        {
+            Release(deletedItems);
+            Release(parent);
+        }
+    }
+
+    private static void CollectTestFolders(dynamic folder, List<(string EntryId, string Name)> matches, int depth)
+    {
+        if (depth > 32)
+        {
+            return;
+        }
+
+        dynamic? children = null;
+        try
+        {
+            children = folder.Folders;
+            int count = children.Count;
+            for (int i = 1; i <= count; i++)
+            {
+                dynamic? child = null;
+                try
+                {
+                    child = children[i];
+                    string? name = null;
+                    try
+                    {
+                        name = (string?)child.Name;
+                    }
+                    catch (COMException)
+                    {
+                    }
+
+                    if (name != null && name.Contains(TestFolderNamePrefix, StringComparison.Ordinal))
+                    {
+                        matches.Add(((string)child.EntryID, name));
+                    }
+
+                    CollectTestFolders(child, matches, depth + 1);
+                }
+                catch (COMException)
+                {
+                }
+                finally
+                {
+                    Release(child);
+                }
+            }
+        }
+        catch (COMException)
+        {
+        }
+        finally
+        {
+            Release(children);
+        }
+    }
+
+    /// <summary>
+    /// S3 guard for folder deletion: every item inside a to-be-deleted test folder
+    /// must carry the subject tag (folders are only ever deleted with their own test
+    /// contents - anything else in there aborts the cleanup loudly).
+    /// </summary>
+    private static void EnsureFolderContainsOnlyTaggedItems(dynamic folder)
+    {
+        dynamic? items = null;
+        try
+        {
+            items = folder.Items;
+            int count = items.Count;
+            for (int i = 1; i <= count; i++)
+            {
+                dynamic? item = null;
+                try
+                {
+                    item = items[i];
+                    string? subject = null;
+                    try
+                    {
+                        subject = (string?)item.Subject;
+                    }
+                    catch (COMException)
+                    {
+                    }
+
+                    if (subject == null || !subject.Contains(SubjectTag, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            "Refusing to delete test folder: it contains an item without the test tag (S3).");
+                    }
+                }
+                finally
+                {
+                    Release(item);
+                }
+            }
+        }
+        finally
+        {
+            Release(items);
         }
     }
 
