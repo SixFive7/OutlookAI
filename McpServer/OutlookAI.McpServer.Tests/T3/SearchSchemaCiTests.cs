@@ -42,4 +42,70 @@ public sealed class SearchSchemaCiTests
         Assert.Contains("advice", description, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("mode=", description, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// D40 wire pin (user order 2026-07-26, SF-6 fix): the term_scope argument exists,
+    /// is a string, and the tool description states plainly what 'query' matches by
+    /// default - subject AND body - instead of the old "search all ... mail" overpromise
+    /// that hid a body-content-only predicate.
+    /// </summary>
+    [Fact]
+    public async Task SearchSchema_ExposesTermScope_AndDescribesWhatQueryMatches()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+
+        JsonElement list = await client.RoundTripAsync("tools/list", new { });
+        JsonElement? searchTool = null;
+        foreach (JsonElement tool in list.GetProperty("result").GetProperty("tools").EnumerateArray())
+        {
+            if (tool.GetProperty("name").GetString() == "search")
+            {
+                searchTool = tool;
+                break;
+            }
+        }
+
+        Assert.True(searchTool != null, "the search tool must be advertised");
+        JsonElement properties = searchTool!.Value.GetProperty("inputSchema").GetProperty("properties");
+
+        Assert.True(properties.TryGetProperty("term_scope", out JsonElement termScope),
+            "the search schema must expose the 'term_scope' parameter (D40)");
+        Assert.Contains("string", DescribeJsonType(termScope.GetProperty("type")), StringComparison.Ordinal);
+
+        // The parameter description must name all three values and explain the default.
+        string paramDescription = termScope.GetProperty("description").GetString()!;
+        foreach (string wireName in new[] { "subject_and_body", "subject", "body" })
+        {
+            Assert.Contains(wireName, paramDescription, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("default", paramDescription, StringComparison.OrdinalIgnoreCase);
+
+        // term_scope must be optional - omitting it is the default subject+body search.
+        if (searchTool.Value.GetProperty("inputSchema").TryGetProperty("required", out JsonElement required))
+        {
+            foreach (JsonElement name in required.EnumerateArray())
+            {
+                Assert.NotEqual("term_scope", name.GetString());
+            }
+        }
+
+        // The tool description must say what 'query' matches, and must not repeat the
+        // pre-D40 overpromise ("Search all locally indexed Outlook mail ...").
+        string description = searchTool.Value.GetProperty("description").GetString()!;
+        Assert.Contains("subject", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("body", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("term_scope", description, StringComparison.Ordinal);
+        Assert.DoesNotContain("Search all locally indexed Outlook mail", description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string DescribeJsonType(JsonElement type)
+    {
+        if (type.ValueKind == JsonValueKind.Array)
+        {
+            return string.Join(",", type.EnumerateArray().Select(t => t.GetString()));
+        }
+
+        return type.GetString() ?? string.Empty;
+    }
 }
