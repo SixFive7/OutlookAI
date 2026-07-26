@@ -91,7 +91,9 @@ public sealed class LiveFreshModeTests
                 // seconds, even before the index catches up.
                 HitSummary? inboxMatch = matches.FirstOrDefault(m =>
                     string.Equals(m.FolderKind, "inbox", StringComparison.OrdinalIgnoreCase)
-                    || (m.Source == "index" && !ContainsSentishFolder(m.Folder)));
+                    || (m.Source == "index"
+                        && !ContainsOutboundFolder(m.Folder)
+                        && !ContainsOutboundFolder(m.FolderKind)));
                 if (inboxMatch != null && inboxFind == null)
                 {
                     inboxFind = inboxMatch;
@@ -156,16 +158,21 @@ public sealed class LiveFreshModeTests
         }
     }
 
-    private static bool ContainsSentishFolder(string? folder)
+    private static bool ContainsOutboundFolder(string? folder)
     {
         if (folder == null)
         {
             return false;
         }
 
-        // Localized sent-folder names in this profile's languages.
+        // Localized OUTBOUND-folder names in this profile's languages: Sent Items AND
+        // the Outbox. A self-send can linger in the Outbox long enough for the index to
+        // pick that copy up (observed 2026-07-27); that row is the outgoing copy, never
+        // the arrival, so it must not satisfy the inbox-arrival acceptance.
         return folder.Contains("Sent", StringComparison.OrdinalIgnoreCase)
-            || folder.Contains("Verzonden", StringComparison.OrdinalIgnoreCase);
+            || folder.Contains("Verzonden", StringComparison.OrdinalIgnoreCase)
+            || folder.Contains("Outbox", StringComparison.OrdinalIgnoreCase)
+            || folder.Contains("Postvak UIT", StringComparison.OrdinalIgnoreCase);
     }
 
     private int TryCleanup(string hub, string marker)
