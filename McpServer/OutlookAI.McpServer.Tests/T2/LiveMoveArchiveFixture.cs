@@ -67,7 +67,8 @@ public sealed class LiveMoveArchiveFixture : IDisposable
 
         try
         {
-            LiveOutlookTestMailer.DeleteTaggedArtifacts(Settings.TestHubStoreDisplayName, RunMarker);
+            LiveOutlookTestMailer.DeleteTaggedArtifacts(
+                Settings.TestHubStoreDisplayName, RunMarker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
         }
         catch (Exception)
         {

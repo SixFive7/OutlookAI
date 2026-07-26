@@ -187,13 +187,15 @@ public sealed class LiveMoveArchiveTests
             }
 
             int foldersDeleted = LiveOutlookTestMailer.DeleteTestFolders(Hub);
-            LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(Hub, Marker);
+            LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(
+                Hub, Marker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
             _output.WriteLine($"cleanup: foldersDeleted={foldersDeleted}");
         }
 
         // Post-suite (S3): zero tagged artifacts anywhere in the hub sweep set - the
         // hub Archive folder included - and zero test folders anywhere in the store.
-        Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));
+        Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(
+            Hub, Marker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive));
         Assert.Equal(0, LiveOutlookTestMailer.CountTestFolders(Hub));
         _output.WriteLine("post-suite: 0 tagged artifacts (incl. Archive), 0 test folders");
     }

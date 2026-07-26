@@ -22,11 +22,21 @@ public static class LiveOutlookTestMailer
     public const string TestFolderNamePrefix = "OutlookAI-McpTest-Folder";
 
     /// <summary>
-    /// Default-folder ids swept for tagged artifacts: Drafts, Inbox, Sent Items, the
-    /// designated Archive folder (39, D39 - archive_mail artifacts), Deleted Items
-    /// LAST so the second pass purges what Delete() moved there.
+    /// Default-folder ids swept for tagged artifacts: Drafts, Inbox, Sent Items,
+    /// Deleted Items LAST so the second pass purges what Delete() moved there.
+    /// ⚠ Deliberately WITHOUT the Archive folder: business-store archives hold ~100k
+    /// items and a LIKE count over them takes minutes - adding 39 here made the
+    /// cross-account sweeps time out (live-bitten 2026-07-26). Hub-scoped D39
+    /// cleanups pass <see cref="HubSweepFolderIdsWithArchive"/> explicitly instead.
     /// </summary>
-    private static readonly int[] SweepFolderIds = { 16, 6, 5, 39, 3 };
+    private static readonly int[] SweepFolderIds = { 16, 6, 5, 3 };
+
+    /// <summary>
+    /// Sweep set for the TINY test hub only (D39): includes the designated Archive
+    /// folder (39) so archive_mail artifacts are counted and purged. Never use
+    /// against business stores (their archives are huge - see SweepFolderIds).
+    /// </summary>
+    public static readonly int[] HubSweepFolderIdsWithArchive = { 16, 6, 5, 39, 3 };
 
     /// <summary>
     /// Sends a mail from <paramref name="smtpAddress"/> to itself (refuses to run when
@@ -152,19 +162,21 @@ public static class LiveOutlookTestMailer
     }
 
     /// <summary>
-    /// Deletes every item in the store's Drafts, Inbox, Sent Items, designated Archive
-    /// folder (D39) and Deleted Items whose subject contains BOTH the tag and
-    /// <paramref name="uniqueMarker"/> (S3: only artifacts this run created). Two
+    /// Deletes every item in the store's default sweep folders (Drafts, Inbox, Sent
+    /// Items, Deleted Items - hub archive coverage via
+    /// <see cref="HubSweepFolderIdsWithArchive"/>) whose subject contains BOTH the tag
+    /// and <paramref name="uniqueMarker"/> (S3: only artifacts this run created). Two
     /// passes: Delete() moves to Deleted Items, the final pass on folder 3 removes
     /// them for good. Returns the total deleted.
     /// </summary>
-    public static int DeleteTaggedArtifacts(string storeDisplayName, string uniqueMarker)
+    public static int DeleteTaggedArtifacts(string storeDisplayName, string uniqueMarker, int[]? folderIds = null)
     {
         if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
         {
             throw new ArgumentException("Marker too weak for a safe delete filter (S3).", nameof(uniqueMarker));
         }
 
+        int[] folders = folderIds ?? SweepFolderIds;
         return RunSta(() =>
         {
             dynamic app = CreateOutlookApplication();
@@ -179,7 +191,7 @@ public static class LiveOutlookTestMailer
                     ?? throw new InvalidOperationException("Test-hub store not found for cleanup.");
                 try
                 {
-                    foreach (int folderId in SweepFolderIds)
+                    foreach (int folderId in folders)
                     {
                         deleted += DeleteMatchingInFolder(store, folderId, uniqueMarker);
                     }
@@ -212,7 +224,8 @@ public static class LiveOutlookTestMailer
         string storeDisplayName,
         string uniqueMarker,
         TimeSpan? window = null,
-        TimeSpan? stableFor = null)
+        TimeSpan? stableFor = null,
+        int[]? folderIds = null)
     {
         TimeSpan totalWindow = window ?? TimeSpan.FromSeconds(120);
         TimeSpan requiredStable = stableFor ?? TimeSpan.FromSeconds(10);
@@ -221,10 +234,10 @@ public static class LiveOutlookTestMailer
         int totalDeleted = 0;
         while (DateTime.UtcNow < deadline)
         {
-            int remaining = CountTaggedArtifacts(storeDisplayName, uniqueMarker);
+            int remaining = CountTaggedArtifacts(storeDisplayName, uniqueMarker, folderIds);
             if (remaining > 0)
             {
-                totalDeleted += DeleteTaggedArtifacts(storeDisplayName, uniqueMarker);
+                totalDeleted += DeleteTaggedArtifacts(storeDisplayName, uniqueMarker, folderIds);
                 zeroSince = null;
                 continue;
             }
@@ -388,11 +401,11 @@ public static class LiveOutlookTestMailer
 
     /// <summary>
     /// Counts items whose subject contains <paramref name="subjectFragment"/> across
-    /// the store's default folders (default set: Drafts, Inbox, Sent Items, the
-    /// designated Archive folder, Deleted Items) - the post-suite artifact sweep (S3).
-    /// Read-only; output is a count (content-free, S4). Uses Folder.GetTable with a
-    /// DASL LIKE restriction, falling back to Items.Restrict; throws when a folder
-    /// cannot be counted at all.
+    /// the store's default folders (default set: Drafts, Inbox, Sent Items, Deleted
+    /// Items; hub archive coverage via <see cref="HubSweepFolderIdsWithArchive"/>) -
+    /// the post-suite artifact sweep (S3). Read-only; output is a count
+    /// (content-free, S4). Uses Folder.GetTable with a DASL LIKE restriction, falling
+    /// back to Items.Restrict; throws when a folder cannot be counted at all.
     /// </summary>
     public static int CountTaggedArtifacts(string storeDisplayName, string subjectFragment, int[]? folderIds = null)
     {

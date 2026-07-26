@@ -26,6 +26,16 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// exist at the indexed location (deletes and cache rebuilds leave rows until the
 /// indexer garbage-collects - seen live after the Phase-6 full-caching resync). Those
 /// are logged and bounded, not forbidden; recall/precision asserts stay strict.
+///
+/// Deep-content extras (live-bitten 2026-07-26): System.Search.Contents indexes MORE
+/// than the COM plain-text subject+body - HTML-only tokens (link URLs, alt text),
+/// attachment text, address fields. A corpus-derived term can therefore match an
+/// index row whose walked item's plain text does NOT contain the term (verified live
+/// on a real mail: term absent from subject+body, present for the index). Such an
+/// extra is precision-POSITIVE for the product; the oracle tolerates it when the
+/// located item IS a walked real item whose corpus text provably lacks the term,
+/// bounded together with residual rows. Located mail items OUTSIDE the walk remain a
+/// hard failure.
 /// </summary>
 [Collection("LivePhase1")]
 [Trait("Category", "Live")]
@@ -126,9 +136,27 @@ public sealed class LiveCompletenessOracleTests
             _output.WriteLine($"  expectedOnly {id} explained by staleness (received beyond frontier)");
         }
 
-        // Located index hits absent from ground truth: only non-mail items are tolerable.
+        // Located index hits absent from the term's ground-truth SET. Two tolerable
+        // shapes: (a) the item IS in the walked corpus but its plain subject+body do
+        // not contain the term - the index matched deeper content
+        // (System.Search.Contents: HTML-only tokens, attachment text, address
+        // fields; class doc remarks) - logged and bounded below; (b) a non-mail
+        // item (outside oracle scope). A located MAIL item that is not in the walk
+        // at all remains a hard precision failure.
+        int deepContentExtras = 0;
         foreach (string id in locatedOnly)
         {
+            ComWalkedItem? walked = corpus.FirstOrDefault(i => string.Equals(i.EntryId, id, StringComparison.OrdinalIgnoreCase));
+            if (walked != null)
+            {
+                Assert.False(word.IsMatch(TextOf(walked)),
+                    $"term '{term}': located item {id} IS a plain-text corpus match but was not in the expected set - oracle bug");
+                deepContentExtras++;
+                _output.WriteLine($"  locatedOnly {id} is a walked item whose plain subject+body lack the term - "
+                    + "index matched deeper content (HTML/attachment/address fields); tolerated + bounded");
+                continue;
+            }
+
             ComOpenResult? opened = _fixture.Session.TryOpenItem(id, hubStoreId, out string? error);
             if (opened == null)
             {
@@ -159,9 +187,14 @@ public sealed class LiveCompletenessOracleTests
                 + $"error={HitLocator.Locate(_fixture.Session, residue, TimeToleranceSeconds).Error}");
         }
 
-        Assert.True(locateFailures.Count * 10 <= result.Hits.Count,
-            $"term '{term}': {locateFailures.Count} of {result.Hits.Count} index hits could not be located - "
-            + "beyond the tolerated residual-row minority (locator regression or index integrity problem?)");
+        // Tolerance: 10% of the term's hits, with a floor of ONE - a single
+        // residual/deep-content row on a low-frequency term (e.g. 1 of 3 hits) is
+        // normal store history, not an integrity signal; a real locator or index
+        // regression shows up as MANY tolerated rows and still fails here.
+        int tolerated = locateFailures.Count + deepContentExtras;
+        Assert.True(tolerated <= Math.Max(1, result.Hits.Count / 10),
+            $"term '{term}': {locateFailures.Count} residual + {deepContentExtras} deep-content rows of {result.Hits.Count} "
+            + "index hits - beyond the tolerated minority (locator regression or index integrity problem?)");
 
         Assert.True(expected.Count > 0, $"term '{term}' unexpectedly has no ground-truth matches");
     }

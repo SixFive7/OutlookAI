@@ -138,12 +138,14 @@ public sealed class MoveArchiveLiveMcpToolTests
         finally
         {
             // Folders first (contents purged into Deleted Items), then the stable-zero
-            // item sweep - same order as the T2 chain.
+            // item sweep with hub-archive coverage - same order as the T2 chain.
             LiveOutlookTestMailer.DeleteTestFolders(Hub);
-            LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(Hub, Marker);
+            LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(
+                Hub, Marker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
         }
 
-        Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));
+        Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(
+            Hub, Marker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive));
         Assert.Equal(0, LiveOutlookTestMailer.CountTestFolders(Hub));
         _output.WriteLine("t3 move/archive: 0 marker artifacts, 0 test folders remain in hub");
     }
