@@ -58,14 +58,35 @@ public sealed class LiveHeadlessGuaranteeTests
             SnippetChars = 0,
         }));
 
-        HitSummary? hit = search.Hits.FirstOrDefault();
-        if (hit != null)
+        // Any hub hit will do - but an index row can outlive the item it names (the
+        // documented test-tier interference rule: rows of deleted test artifacts survive
+        // the delete, and the hub is where every test writes). That is a locate failure,
+        // not a window-delta failure, so walk the hits until one opens.
+        ReadOutcome? read = null;
+        foreach (HitSummary candidate in search.Hits)
         {
-            ReadOutcome read = AssertNoNewWindow(baseline, "read", () => service.Read(hit.Id, maxBodyChars: 500, includeHeaders: false));
+            try
+            {
+                read = AssertNoNewWindow(
+                    baseline, "read", () => service.Read(candidate.Id, maxBodyChars: 500, includeHeaders: false));
+                break;
+            }
+            catch (InvalidOperationException ex)
+            {
+                _output.WriteLine($"hub hit not openable (stale index row), trying the next: {ex.Message}");
+            }
+        }
+
+        if (read != null)
+        {
             if (read.ConversationId != null)
             {
                 AssertNoNewWindow(baseline, "thread", () => service.Thread(read.ConversationId, id: null, store: hub, top: 5));
             }
+        }
+        else if (search.Hits.Count > 0)
+        {
+            _output.WriteLine("no hub hit resolved to a live item - read/thread delta checks skipped this run");
         }
         else
         {

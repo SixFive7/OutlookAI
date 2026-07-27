@@ -6,8 +6,7 @@ using Xunit.Abstractions;
 namespace OutlookAI.McpServer.Tests.T2;
 
 /// <summary>
-/// Live cover for delegate hits whose folder the index publishes FLAT (soak fix 16 part
-/// B2) - and for the stale-row marker that remains once they resolve.
+/// Live cover for delegate hits whose folder the index publishes FLAT (soak fix 16 part B2).
 /// <para>
 /// THE DEFECT this pins: the delegate index namespace drops every intermediate folder, so
 /// an item in the delegate's <c>Archive/SomeFolder</c> is indexed as
@@ -53,20 +52,10 @@ public sealed class LiveStaleIndexRowTests
             SnippetChars = 0,
         });
 
-        _output.WriteLine(
-            $"delegate nested probe: {outcome.Hits.Count} hit(s), "
-            + $"{outcome.Hits.Count(h => h.StaleIndexRow == true)} flagged staleIndexRow.");
-
+        _output.WriteLine($"delegate nested probe: {outcome.Hits.Count} hit(s).");
         Assert.NotEmpty(outcome.Hits);
 
-        // (1) The folder EXISTS in Outlook (nested), so nothing here may be called stale.
-        Assert.All(outcome.Hits, h => Assert.Null(h.StaleIndexRow));
-        if (outcome.Advice != null)
-        {
-            Assert.DoesNotContain(outcome.Advice, a => a.Contains("staleIndexRow", StringComparison.Ordinal));
-        }
-
-        // (2) ...and the hit OPENS - the regression this test exists for. Before the fix
+        // The hit OPENS - the regression this test exists for. Before the fix
         // this threw "FolderNotFound" for every delegate item in a subfolder.
         ReadOutcome read = _fixture.Service.Read(outcome.Hits[0].Id, maxBodyChars: 0);
         _output.WriteLine($"read locatedVia={read.LocatedVia} in {read.LocateMs} ms; folder='{read.Folder}'.");
@@ -84,23 +73,4 @@ public sealed class LiveStaleIndexRowTests
         _output.WriteLine("COM leaf matches: " + string.Join(" | ", matches.Select(m => string.Join("/", m))));
     }
 
-    [Fact]
-    public void OrdinaryHits_AreNeverFlaggedStale()
-    {
-        // The marker must be rare and right: a false positive would teach agents to ignore
-        // real mail. Probe the hub, whose folders certainly exist.
-        SearchOutcome outcome = _fixture.Service.Search(new SearchRequest
-        {
-            Store = _fixture.Settings.TestHubStoreDisplayName,
-            Top = 25,
-            SnippetChars = 0,
-        });
-
-        _output.WriteLine($"hub probe: {outcome.Hits.Count} hit(s), none may be flagged.");
-        Assert.All(outcome.Hits, h => Assert.Null(h.StaleIndexRow));
-        if (outcome.Advice != null)
-        {
-            Assert.DoesNotContain(outcome.Advice, a => a.Contains("staleIndexRow", StringComparison.Ordinal));
-        }
-    }
 }

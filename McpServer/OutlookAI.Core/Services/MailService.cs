@@ -245,8 +245,6 @@ namespace OutlookAI.Core.Services
 
             bool truncated = indexResult.Hits.Count > top;
             List<HitSummary> summaries = new List<HitSummary>(Math.Min(indexResult.Hits.Count, top));
-            List<(HitSummary Summary, IndexHit Hit)> indexPairs =
-                new List<(HitSummary, IndexHit)>(Math.Min(indexResult.Hits.Count, top));
             foreach (IndexHit hit in indexResult.Hits)
             {
                 if (summaries.Count >= top)
@@ -254,9 +252,7 @@ namespace OutlookAI.Core.Services
                     break; // The over-fetched row is evidence, not a result.
                 }
 
-                HitSummary summary = RegisterIndexHit(hit, snippetChars);
-                summaries.Add(summary);
-                indexPairs.Add((summary, hit));
+                summaries.Add(RegisterIndexHit(hit, snippetChars));
             }
 
             SweepInfo? sweep = null;
@@ -299,15 +295,6 @@ namespace OutlookAI.Core.Services
             }
 
             AddUnresolvedFolderAdvice(advice, folderScope, request, summaries.Count);
-
-            int staleRows = FlagStaleIndexRows(indexPairs);
-            if (staleRows > 0)
-            {
-                advice.Add(staleRows.ToString(CultureInfo.InvariantCulture)
-                    + " hit(s) are marked staleIndexRow: their folder no longer exists in Outlook, so reading or opening "
-                    + "them will fail and searching again returns the same rows. Skip them, or use exhaustive:true "
-                    + "(store + folder/after) for an index-free COM search.");
-            }
 
             // Snapshot AFTER the sweep: the sweep may have just autostarted Outlook
             // (D17) and the staleness block must reflect that reality, not the
@@ -3138,92 +3125,6 @@ namespace OutlookAI.Core.Services
         }
 
         // ------------------------------------------------------------------ helpers
-
-        /// <summary>
-        /// Marks index hits whose folder is gone from Outlook - the orphan-index-row class
-        /// (v3.MD block (q): ~458 such rows in one delegate store, served by search and
-        /// unopenable by anything). Deliberately conservative:
-        /// <list type="bullet">
-        /// <item>never starts or reconnects Outlook - it runs only on an ALREADY connected
-        /// session (the sweep has normally just used one), so an index-only answer is
-        /// unaffected;</item>
-        /// <item>an unknown answer (no COM folder list for that store) flags nothing -
-        /// silence beats a false "stale";</item>
-        /// <item>flagged rows are REPORTED, never dropped. The index's delegate namespace is
-        /// flat and its leaf names can diverge from COM's (Conflicten/Conflicts), so
-        /// dropping would risk recall on exactly the class of defect this soak keeps
-        /// finding. Flagging costs one bool per hit; dropping could cost mail.</item>
-        /// </list>
-        /// </summary>
-        private int FlagStaleIndexRows(IReadOnlyList<(HitSummary Summary, IndexHit Hit)> pairs)
-        {
-            // Gate on the PROCESS, not on a held session: a search that reached this point
-            // has normally just swept through COM, but a first search on a fresh service
-            // may not hold a session yet, and gating on that made the flag appear or not
-            // depending on what ran before (live-bitten). Outlook running means attaching
-            // is cheap and cannot start anything.
-            if (pairs.Count == 0 || !(ComGateway.IsOutlookRunning() || _gateway.ProbeConnected()))
-            {
-                return 0;
-            }
-
-            Dictionary<string, (HashSet<string> Paths, HashSet<string> Leaves)?> byStore =
-                new Dictionary<string, (HashSet<string>, HashSet<string>)?>(StringComparer.OrdinalIgnoreCase);
-            int flagged = 0;
-
-            foreach ((HitSummary Summary, IndexHit Hit) pair in pairs)
-            {
-                if (!HitLocator.TryMapUrlTarget(pair.Hit, out string? storeName, out IReadOnlyList<string>? folderPath)
-                    || storeName == null || folderPath == null || folderPath.Count == 0)
-                {
-                    continue;
-                }
-
-                if (!byStore.TryGetValue(storeName, out (HashSet<string> Paths, HashSet<string> Leaves)? known))
-                {
-                    known = BuildFolderPathIndex(storeName);
-                    byStore[storeName] = known;
-                }
-
-                if (known == null)
-                {
-                    continue; // Outlook could not tell us - say nothing.
-                }
-
-                // The delegate index namespace is FLAT (D42): its folder path is one leaf
-                // name, matched against every COM leaf in that store.
-                bool present = pair.Hit.StoreType == 1
-                    ? known.Value.Leaves.Contains(folderPath[folderPath.Count - 1])
-                    : known.Value.Paths.Contains(string.Join("/", folderPath));
-                if (!present)
-                {
-                    pair.Summary.StaleIndexRow = true;
-                    flagged++;
-                }
-            }
-
-            return flagged;
-        }
-
-        private (HashSet<string> Paths, HashSet<string> Leaves)? BuildFolderPathIndex(string storeDisplayName)
-        {
-            IReadOnlyList<string>? paths = TryGetFolderPaths(storeDisplayName);
-            if (paths == null)
-            {
-                return null;
-            }
-
-            HashSet<string> full = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            HashSet<string> leaves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string path in paths)
-            {
-                full.Add(path);
-                int cut = path.LastIndexOf('/');
-                leaves.Add(cut >= 0 ? path.Substring(cut + 1) : path);
-            }
-
-            return (full, leaves);
-        }
 
         private static string? DescribeHitFolder(IndexHit hit)
         {

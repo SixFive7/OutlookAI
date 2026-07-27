@@ -145,11 +145,6 @@ public sealed class SearchSchemaCiTests
         Assert.Contains("EVERY attachment type", description, StringComparison.Ordinal);
         Assert.Contains("images, embedded messages, calendar invites", description, StringComparison.Ordinal);
 
-        // ...and the orphan-index-row marker is on the wire, so an agent can skip a hit
-        // that can never be opened instead of burning a read on it.
-        Assert.Contains("staleIndexRow=true", description, StringComparison.Ordinal);
-        Assert.Contains("no longer exists in Outlook", description, StringComparison.Ordinal);
-
         // The retired claim must not come back: terms no longer have to share one part.
         Assert.DoesNotContain("same part", description, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("kind=document", description, StringComparison.OrdinalIgnoreCase);

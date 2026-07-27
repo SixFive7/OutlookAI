@@ -78,10 +78,13 @@ namespace OutlookAI.Core.Services
         /// <summary>Filter on attachment presence.</summary>
         public bool? HasAttachments { get; set; }
 
-        /// <summary>Include indexed attachment-content entries (kind=document). Default true.</summary>
+        /// <summary>
+        /// Include indexed attachment-content entries of ANY attachment type - documents,
+        /// images, embedded messages, invites, media (soak fix 16). Default true.
+        /// </summary>
         public bool IncludeAttachmentHits { get; set; } = true;
 
-        /// <summary>ONLY attachment-content entries (kind=document). Overrides <see cref="IncludeAttachmentHits"/>.</summary>
+        /// <summary>ONLY attachment-content entries, any type. Overrides <see cref="IncludeAttachmentHits"/>.</summary>
         public bool AttachmentHitsOnly { get; set; }
 
         /// <summary>Order results by size instead of date (big-mail discovery; index path only).</summary>
@@ -144,14 +147,6 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Conversation id for the thread tool.</summary>
         public string? ConversationId { get; set; }
-
-        /// <summary>
-        /// True when the folder this index row names no longer exists in Outlook - a stale
-        /// (orphan) index row: read/open/save_attachment on it cannot succeed and re-running
-        /// the search returns it again. Omitted (null) for every ordinary hit, and whenever
-        /// Outlook was not reachable to check.
-        /// </summary>
-        public bool? StaleIndexRow { get; set; }
     }
 
     /// <summary>Freshness gap-sweep diagnostics attached to (non-exhaustive) search results.</summary>
