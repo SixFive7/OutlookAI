@@ -4031,6 +4031,21 @@ namespace OutlookAI.Core.Com
                         shifted = writtenEnd;
                     }
 
+                    // Word's HTML converter may merge the last inserted paragraph with the
+                    // signature's first, leaving the document a character or two shorter
+                    // than the arithmetic predicts. An out-of-range Range() would throw and
+                    // silently demote the whole composition to the HTML fallback, so clamp.
+                    int documentEnd = GetDocumentEnd(doc);
+                    if (shifted > documentEnd)
+                    {
+                        shifted = documentEnd;
+                    }
+
+                    if (writtenEnd > shifted)
+                    {
+                        writtenEnd = shifted;
+                    }
+
                     object? restoreRange = null;
                     try
                     {
@@ -4480,8 +4495,10 @@ namespace OutlookAI.Core.Com
             byte[] bytes = new byte[hex.Length / 2];
             for (int i = 0; i < bytes.Length; i++)
             {
+                // Substring, not AsSpan: the span overload of byte.TryParse does not exist
+                // on net48, and Core's net48 target is a CI gate (R10 / D18 v2).
                 if (!byte.TryParse(
-                        hex.AsSpan(i * 2, 2),
+                        hex.Substring(i * 2, 2),
                         System.Globalization.NumberStyles.HexNumber,
                         CultureInfo.InvariantCulture,
                         out byte parsed))
