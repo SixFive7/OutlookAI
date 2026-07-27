@@ -42,17 +42,45 @@ public sealed class LiveHtmlDraftTests
 
     private string Marker => _fixture.RunMarker;
 
-    /// <summary>The formal-letter shape the field report could not produce.</summary>
+    /// <summary>
+    /// The formal-letter shape the field report could not produce. It deliberately
+    /// carries non-ASCII text and a currency symbol: the HTML reaches Word through a
+    /// temporary file, so the wrong encoding there would silently mojibake every accented
+    /// character in a Dutch or German letter.
+    /// </summary>
     private string RichLetterHtml(string token)
     {
         return "<h1>Formal notice " + token + "</h1>"
             + "<h2>Reference " + token + "</h2>"
-            + "<p>Dear Sir or Madam,</p>"
-            + "<p>We confirm the following <strong>agreed points</strong>:</p>"
-            + "<ul><li>First point " + token + "</li><li>Second point</li></ul>"
+            + "<p>Geachte mevrouw Jansen,</p>"
+            + "<p>Wij bevestigen de <strong>afspraken</strong> hieronder, geldig vóór 1 september:</p>"
+            + "<ul><li>First point " + token + "</li><li>Tweede punt – coördinatie</li></ul>"
             + "<table border=\"1\"><thead><tr><th>Item</th><th>Amount</th></tr></thead>"
-            + "<tbody><tr><td>Licence</td><td>EUR 120</td></tr></tbody></table>"
+            + "<tbody><tr><td>Licence</td><td>€ 120</td></tr></tbody></table>"
             + "<p>Details are on <a href=\"https://example.com/terms\">our terms page</a>.</p>";
+    }
+
+    /// <summary>
+    /// Non-ASCII may be stored literally or as a numeric/named entity depending on the
+    /// charset Outlook settles on - any of those means it survived; mojibake does not.
+    /// </summary>
+    private void AssertNonAsciiSurvived(string html, string label)
+    {
+        // Escapes, not literals: the assertion must not depend on how this source file
+        // happens to be decoded by the compiler.
+        string[] accentForms = ["vóór", "v&oacute;&oacute;r", "v&#243;&#243;r"];
+        string[] euroForms = ["€", "&euro;", "&#8364;"];
+
+        Assert.True(
+            accentForms.Any(f => html.IndexOf(f, StringComparison.Ordinal) >= 0),
+            label + ": accented text must survive the temp-file round trip");
+        Assert.True(
+            euroForms.Any(f => html.IndexOf(f, StringComparison.Ordinal) >= 0),
+            label + ": the euro sign must survive the temp-file round trip");
+
+        // The classic UTF-8-read-as-Windows-1252 signature.
+        Assert.DoesNotContain("Ã³", html, StringComparison.Ordinal);
+        _output.WriteLine($"[{label}]: non-ASCII preserved (no mojibake)");
     }
 
     [Fact]
@@ -98,6 +126,7 @@ public sealed class LiveHtmlDraftTests
                 || html.IndexOf("l0 level1", StringComparison.OrdinalIgnoreCase) >= 0,
                 "the bulleted list must survive as a list");
 
+            AssertNonAsciiSurvived(html, "b1-rich");
             AssertBodyAboveIntactSignature(html, token, "testhandtekening", "b1-rich");
             _output.WriteLine("B1: h1/h2/table/td/link present as markup; body above the signature region");
         }
@@ -262,6 +291,13 @@ public sealed class LiveHtmlDraftTests
             ReadOutcome tinyText = Service.Read(outcome.EntryId, maxBodyChars: 100, includeHtml: true);
             Assert.False(tinyText.BodyHtmlTruncated);
             Assert.Contains(token, tinyText.BodyHtml!, StringComparison.Ordinal);
+
+            // A continuation read serves the TEXT body from the cache without touching
+            // COM for it - the HTML must still come back rather than fall through the
+            // cache shortcut.
+            ReadOutcome paged = Service.Read(outcome.EntryId, maxBodyChars: 50, bodyOffset: 20, includeHtml: true);
+            Assert.NotNull(paged.BodyHtml);
+            Assert.Equal(full.BodyHtmlTotalChars, paged.BodyHtmlTotalChars);
 
             // Default stays off: no HTML unless it was asked for.
             ReadOutcome plain = Service.Read(outcome.EntryId);
