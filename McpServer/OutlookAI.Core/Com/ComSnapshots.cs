@@ -432,7 +432,10 @@ namespace OutlookAI.Core.Com
             string? sendUsingAccountSmtp,
             string? conversationIndex,
             string? conversationId,
-            IReadOnlyList<ComRecipientInfo> recipients)
+            IReadOnlyList<ComRecipientInfo> recipients,
+            string? conversationTopic = null,
+            int? importance = null,
+            bool readReceiptRequested = false)
         {
             EntryId = entryId;
             StoreDisplayName = storeDisplayName;
@@ -444,6 +447,9 @@ namespace OutlookAI.Core.Com
             ConversationIndex = conversationIndex;
             ConversationId = conversationId;
             Recipients = recipients;
+            ConversationTopic = conversationTopic;
+            Importance = importance;
+            ReadReceiptRequested = readReceiptRequested;
         }
 
         /// <summary>Real (object-model) EntryID hex string (changes when the item is moved).</summary>
@@ -475,6 +481,60 @@ namespace OutlookAI.Core.Com
 
         /// <summary>To/Cc/Bcc recipients currently on the item.</summary>
         public IReadOnlyList<ComRecipientInfo> Recipients { get; }
+
+        /// <summary>
+        /// PR_CONVERSATION_TOPIC (0x0070001F) - the grouping key Outlook falls back to
+        /// when a conversation cannot be resolved from the ConversationIndex GUID. Read
+        /// through the PropertyAccessor because the object model exposes it read-only.
+        /// </summary>
+        public string? ConversationTopic { get; }
+
+        /// <summary>OlImportance as reported by the item: 0 low, 1 normal, 2 high (null when unreadable).</summary>
+        public int? Importance { get; }
+
+        /// <summary>MailItem.ReadReceiptRequested.</summary>
+        public bool ReadReceiptRequested { get; }
+    }
+
+    /// <summary>
+    /// Optional cross-tool draft settings shared by all four draft creators (soak fix
+    /// batch A - A2/A3/A4). Everything here is additive: Cc/Bcc are APPENDED to whatever
+    /// Outlook already put on the item (a reply-all's recipient list is never replaced),
+    /// the subject override replaces the derived RE:/FW: subject while the original
+    /// conversation topic is carried over, and importance / read-receipt are plain item
+    /// properties.
+    /// </summary>
+    public sealed class ComDraftOptions
+    {
+        /// <summary>Creates a draft-options bundle (all parts optional).</summary>
+        public ComDraftOptions(
+            IReadOnlyList<string>? ccRecipients = null,
+            IReadOnlyList<string>? bccRecipients = null,
+            string? subjectOverride = null,
+            int? importance = null,
+            bool? requestReadReceipt = null)
+        {
+            CcRecipients = ccRecipients ?? Array.Empty<string>();
+            BccRecipients = bccRecipients ?? Array.Empty<string>();
+            SubjectOverride = subjectOverride;
+            Importance = importance;
+            RequestReadReceipt = requestReadReceipt;
+        }
+
+        /// <summary>Addresses APPENDED as Cc.</summary>
+        public IReadOnlyList<string> CcRecipients { get; }
+
+        /// <summary>Addresses APPENDED as Bcc.</summary>
+        public IReadOnlyList<string> BccRecipients { get; }
+
+        /// <summary>Replacement subject (derived drafts; null keeps Outlook's RE:/FW: subject).</summary>
+        public string? SubjectOverride { get; }
+
+        /// <summary>OlImportance: 0 low, 1 normal, 2 high (null leaves Outlook's default).</summary>
+        public int? Importance { get; }
+
+        /// <summary>Whether to request a read receipt (null leaves the account default).</summary>
+        public bool? RequestReadReceipt { get; }
     }
 
     /// <summary>
@@ -513,7 +573,10 @@ namespace OutlookAI.Core.Com
             bool displayed,
             string? signatureOverrideName = null,
             bool signatureOverrideApplied = false,
-            string? signatureOverrideError = null)
+            string? signatureOverrideError = null,
+            bool bodyPlacedViaWordEditor = false,
+            IReadOnlyList<string>? unresolvedRecipients = null,
+            bool? conversationTopicPreserved = null)
         {
             Draft = draft;
             AccountResolved = accountResolved;
@@ -526,6 +589,9 @@ namespace OutlookAI.Core.Com
             SignatureOverrideName = signatureOverrideName;
             SignatureOverrideApplied = signatureOverrideApplied;
             SignatureOverrideError = signatureOverrideError;
+            BodyPlacedViaWordEditor = bodyPlacedViaWordEditor;
+            UnresolvedRecipients = unresolvedRecipients ?? Array.Empty<string>();
+            ConversationTopicPreserved = conversationTopicPreserved;
         }
 
         /// <summary>The created draft (EntryID is final - post-move when a move happened).</summary>
@@ -564,6 +630,22 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Content-free failure reason when a requested override could not be applied.</summary>
         public string? SignatureOverrideError { get; }
+
+        /// <summary>
+        /// True when the agent body was placed through the held Inspector's WordEditor
+        /// (the _MailAutoSig anchoring the add-in has proven), false when the composition
+        /// fell back to the single wholesale HTMLBody assignment.
+        /// </summary>
+        public bool BodyPlacedViaWordEditor { get; }
+
+        /// <summary>Addresses Outlook could not resolve against the address book (never silently dropped).</summary>
+        public IReadOnlyList<string> UnresolvedRecipients { get; }
+
+        /// <summary>
+        /// Only set when the caller overrode a derived draft's subject: whether the
+        /// original conversation topic could be carried over to the draft.
+        /// </summary>
+        public bool? ConversationTopicPreserved { get; }
     }
 
     /// <summary>

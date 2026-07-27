@@ -95,6 +95,22 @@ namespace OutlookAI.Core.Com
     {
         private const int OlMailItemClass = 43;
 
+        /// <summary>
+        /// PR_CONVERSATION_TOPIC. The object model exposes ConversationTopic read-only,
+        /// so preserving a thread's grouping across a subject override goes through the
+        /// PropertyAccessor with the MAPI proptag DASL (batch A - A3).
+        /// </summary>
+        private const string ConversationTopicDasl = "http://schemas.microsoft.com/mapi/proptag/0x0070001F";
+
+        /// <summary>
+        /// PR_CONVERSATION_INDEX (PT_BINARY). LIVE-PROVEN on this build (batch A - A3):
+        /// assigning <c>MailItem.Subject</c> on a derived draft makes Outlook REGENERATE
+        /// the conversation index header, which detaches the draft from its thread. The
+        /// correct child index produced by Reply()/ReplyAll()/Forward() is captured before
+        /// the subject write and restored through the PropertyAccessor afterwards.
+        /// </summary>
+        private const string ConversationIndexDasl = "http://schemas.microsoft.com/mapi/proptag/0x00710102";
+
         private readonly PumpedStaRunner _runner;
         private object? _application;
         private object? _namespace;
@@ -2186,18 +2202,19 @@ namespace OutlookAI.Core.Com
         /// sending account's Drafts folder (Items.Add - a plain CreateItem would save
         /// into the DEFAULT store's Drafts), pins <c>SendUsingAccount</c> from the
         /// Account OBJECT first, then touches <c>GetInspector</c> so Outlook injects
-        /// that account's signature, and sets HTMLBody exactly once with the agent text
-        /// ABOVE the signature. Saves to Drafts; <paramref name="display"/> additionally
-        /// opens the draft in an Inspector for the user (D4 default behavior).
+        /// that account's NEW-MAIL signature natively, and writes the agent text ABOVE
+        /// that signature region through the SAME held Inspector's WordEditor (batch A -
+        /// A1). Saves to Drafts; <paramref name="display"/> additionally opens the draft
+        /// in an Inspector for the user (D4 default behavior).
         /// </summary>
         public ComDraftCreateResult? TryCreateNewDraft(
             string accountSmtpAddress,
             IReadOnlyList<string> toRecipients,
-            IReadOnlyList<string> ccRecipients,
             string subject,
             string bodyText,
             bool display,
             ComSignatureOverride? signatureOverride,
+            ComDraftOptions? options,
             out string? error)
         {
             EnsureNotDisposed();
@@ -2209,11 +2226,6 @@ namespace OutlookAI.Core.Com
             if (toRecipients == null)
             {
                 throw new ArgumentNullException(nameof(toRecipients));
-            }
-
-            if (ccRecipients == null)
-            {
-                throw new ArgumentNullException(nameof(ccRecipients));
             }
 
             if (subject == null)
@@ -2284,20 +2296,27 @@ namespace OutlookAI.Core.Com
                     // account; a string would not bind).
                     SetSendUsingAccount(mail!, account);
 
-                    (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError) =
+                    (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError, bool wordPlaced) =
                         ComposeDraft((object)draft, bodyText, signatureOverride);
                     draft.Subject = subject;
-                    AddRecipients(draft, toRecipients, 1);
-                    AddRecipients(draft, ccRecipients, 2);
+                    List<string> unresolved = new List<string>();
+                    AddRecipients(draft, toRecipients, 1, unresolved);
+                    AddRecipients(draft, options?.CcRecipients ?? Array.Empty<string>(), 2, unresolved);
+                    AddRecipients(draft, options?.BccRecipients ?? Array.Empty<string>(), 3, unresolved);
+                    ApplyDraftOptions(draft, options);
                     draft.Save();
 
-                    // The GetInspector touch left a HIDDEN Inspector alive inside
+                    // The GetInspector touch leaves a HIDDEN Inspector alive inside
                     // Outlook (it shows up in Application.Inspectors - Phase-4 live
-                    // finding). Close it now that the draft is saved (the override
-                    // path already flushed its Word edits via Close(olSave) inside
-                    // ComposeDraft); Display() below opens a fresh visible one for the
-                    // final item when requested.
-                    CloseHiddenInspector(mail!);
+                    // finding). The Word compose path already closed it via
+                    // Close(olSave); calling GetInspector again would only materialize a
+                    // NEW one, so only the fallback path needs the cleanup. Display()
+                    // below opens a fresh visible one for the final item when requested.
+                    if (!wordPlaced)
+                    {
+                        CloseHiddenInspector(mail!);
+                    }
+
                     mail = RelocateToFolderIfNeeded(mail!, draftsFolder!, out bool moved, out string? initialFolder, out bool inDraftsFolder);
                     if (display)
                     {
@@ -2326,7 +2345,9 @@ namespace OutlookAI.Core.Com
                         display,
                         signatureOverride?.Name,
                         overrideApplied,
-                        overrideError);
+                        overrideError,
+                        wordPlaced,
+                        unresolved);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -2364,6 +2385,7 @@ namespace OutlookAI.Core.Com
             string bodyText,
             bool display,
             ComSignatureOverride? signatureOverride,
+            ComDraftOptions? options,
             out string? error)
         {
             EnsureNotDisposed();
@@ -2448,19 +2470,53 @@ namespace OutlookAI.Core.Com
                         }
                     }
 
-                    (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError) =
+                    (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError, bool wordPlaced) =
                         ComposeDraft((object)draft, bodyText, signatureOverride);
+                    List<string> unresolved = new List<string>();
                     if (kind == ComDerivedDraftKind.Forward)
                     {
-                        AddRecipients(draft, toRecipients, 1);
+                        AddRecipients(draft, toRecipients, 1, unresolved);
+                    }
+
+                    // A2: Cc/Bcc are APPENDED - reply-all's own recipient list stands.
+                    AddRecipients(draft, options?.CcRecipients ?? Array.Empty<string>(), 2, unresolved);
+                    AddRecipients(draft, options?.BccRecipients ?? Array.Empty<string>(), 3, unresolved);
+                    ApplyDraftOptions(draft, options);
+
+                    // A3: a subject override replaces Outlook's RE:/FW: subject. Outlook
+                    // recomputes PR_CONVERSATION_TOPIC from the new subject, which is the
+                    // grouping key whenever a conversation cannot be resolved from the
+                    // ConversationIndex GUID - so the SOURCE topic is written back after
+                    // the subject write and before Save(). ConversationIndex itself is
+                    // never touched: Reply()/Forward() already produced the correct child.
+                    bool? topicPreserved = null;
+                    if (!string.IsNullOrWhiteSpace(options?.SubjectOverride))
+                    {
+                        string? sourceTopic = TryGetString(() => (string?)sourceItem.ConversationTopic)
+                            ?? TryGetPropertyString(sourceItem, ConversationTopicDasl);
+                        string? childIndex = TryGetString(() => (string?)draft.ConversationIndex);
+
+                        draft.Subject = options!.SubjectOverride;
+
+                        // Order matters: index first (it carries the GUID the desktop
+                        // groups by), topic second (the fallback grouping key).
+                        byte[]? indexBytes = HexToBytes(childIndex);
+                        bool indexRestored = indexBytes != null
+                            && TrySetPropertyBinary(draft, ConversationIndexDasl, indexBytes);
+                        bool topicRestored = !string.IsNullOrEmpty(sourceTopic)
+                            && TrySetPropertyString(draft, ConversationTopicDasl, sourceTopic!);
+                        topicPreserved = indexRestored && topicRestored;
                     }
 
                     draft.Save();
 
-                    // Same hidden-Inspector cleanup as the new-draft path (the
-                    // GetInspector signature touch materializes one inside Outlook; the
-                    // override path already flushed via Close(olSave) in ComposeDraft).
-                    CloseHiddenInspector(mail!);
+                    // Same hidden-Inspector cleanup as the new-draft path: only needed
+                    // when the composition fell back to the HTML path, because the Word
+                    // path already closed the held Inspector with Close(olSave).
+                    if (!wordPlaced)
+                    {
+                        CloseHiddenInspector(mail!);
+                    }
 
                     bool moved = false;
                     string? initialFolder = null;
@@ -2517,7 +2573,10 @@ namespace OutlookAI.Core.Com
                         display,
                         signatureOverride?.Name,
                         overrideApplied,
-                        overrideError);
+                        overrideError,
+                        wordPlaced,
+                        unresolved,
+                        topicPreserved);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -2563,6 +2622,47 @@ namespace OutlookAI.Core.Com
                         ? ns.GetItemFromID(entryIdHex, storeId)
                         : ns.GetItemFromID(entryIdHex);
                     return SnapshotDraft(itemObject!);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(itemObject);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// Test-support surface (read-only): the RAW <c>HTMLBody</c> of a mail. The
+        /// plain-text extraction the product returns collapses markup, so the
+        /// signature-placement contract (agent text above an INTACT html signature) can
+        /// only be asserted on the HTML itself.
+        /// </summary>
+        public string? TryGetHtmlBody(string entryIdHex, string? storeId, out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(entryIdHex))
+            {
+                throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
+            }
+
+            string? capturedError = null;
+            string? result = _runner.Run<string?>(() =>
+            {
+                dynamic ns = _namespace!;
+                object? itemObject = null;
+                try
+                {
+                    itemObject = storeId != null
+                        ? ns.GetItemFromID(entryIdHex, storeId)
+                        : ns.GetItemFromID(entryIdHex);
+                    return TryGetString(() => (string?)((dynamic)itemObject!).HTMLBody);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -3550,89 +3650,41 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// STA-side signature injection (v3.MD section 3): with SendUsingAccount already
-        /// pinned, touching GetInspector makes Outlook inject that account's signature
-        /// exactly as if the user opened the compose window. Detection is TEXT-based
-        /// (HTML template expansion without a signature adds markup but no text).
-        /// Returns the post-touch HTML for composition.
+        /// STA-side body composition shared by both draft creators (rewritten in soak
+        /// fix batch A - A1). BOTH paths now compose inside Word through ONE HELD
+        /// Inspector, which is what Outlook's own compose window does:
+        /// <c>GetInspector</c> makes Outlook inject the account's OWN signature natively
+        /// (new-mail or reply/forward rendition, HTML and resources intact), an optional
+        /// override swaps that region via the <c>_MailAutoSig</c> bookmark dance, the
+        /// agent body is written ABOVE the signature region with the marker deleted and
+        /// recreated around the untouched signature (the add-in's proven
+        /// <c>AITaskPane.WriteDraftToDocument</c> technique), and
+        /// <c>Inspector.Close(olSave)</c> flushes the document into the item.
+        /// <para>
+        /// The retired default path assigned <c>HTMLBody</c> once with the body spliced
+        /// in after the &lt;body&gt; tag. That is string surgery on Outlook's own markup:
+        /// it left the agent text OUTSIDE Word's WordSection1 container (so it did not
+        /// inherit the message style), and when combined with an override on an account
+        /// with no default signature it produced the A1 defect - the body ended up INSIDE
+        /// the recreated <c>_MailAutoSig</c> bookmark (live-proven: the saved HTML opened
+        /// with &lt;a name="_MailAutoSig"&gt; around the agent text), i.e. Outlook and the
+        /// add-in both considered the whole message to be the signature.
+        /// </para>
+        /// <para>
+        /// PROBED on this machine (D37, unchanged and load-bearing): Word-document edits
+        /// NEVER reach the item via <c>item.Save()</c>; only Close(olSave) on the
+        /// inspector that hosted the edits flushes them (an item.Save() BETWEEN the edits
+        /// and the close re-renders the document from the item and silently wipes them,
+        /// and a close via a re-acquired inspector reference loses them too).
+        /// </para>
+        /// If ANY step fails, the composition falls back to the previous wholesale
+        /// HTMLBody assignment (whose input still carries the injected signature), so a
+        /// draft is never lost or left body-less; the failure is reported content-free.
         /// </summary>
-        private static (bool SignatureInjected, long TextBefore, long TextAfter, string HtmlAfter) TouchInspectorForSignature(object draftObject)
-        {
-            dynamic draft = draftObject;
-            string htmlBefore = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
-            object? inspector = null;
-            try
-            {
-                inspector = draft.GetInspector;
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-                // No inspector available - signature stays uninjected; recorded via the
-                // unchanged text length.
-            }
-            finally
-            {
-                Release(inspector);
-            }
-
-            string htmlAfter = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
-            long textBefore = CountNonWhitespaceText(htmlBefore);
-            long textAfter = CountNonWhitespaceText(htmlAfter);
-            return (textAfter > textBefore, textBefore, textAfter, htmlAfter);
-        }
-
-        /// <summary>
-        /// STA-side body composition shared by both draft creators. Default path (no
-        /// override): the proven GetInspector signature touch + single HTMLBody
-        /// assignment with the agent text ABOVE the injected signature/quote. Override
-        /// path: the whole compose happens inside Word through ONE HELD Inspector -
-        /// signature bookmark dance, body insert at the top, then
-        /// <c>Inspector.Close(olSave)</c> on that same inspector. PROBED on this
-        /// machine (D37): Word-document edits NEVER reach the item via
-        /// <c>item.Save()</c>; only Close(olSave) on the inspector that hosted the
-        /// edits flushes them (an item.Save() BETWEEN the edits and the close re-renders
-        /// the document from the item and silently wipes them, and a close via a
-        /// re-acquired inspector reference loses them too). If ANY override step fails,
-        /// the composition falls back to the default HTML path (whose input still
-        /// carries the default signature), so a draft is never lost or left body-less;
-        /// the failure is reported content-free.
-        /// </summary>
-        private static (bool SignatureInjected, long TextBefore, long TextAfter, bool OverrideApplied, string? OverrideError) ComposeDraft(
+        private static (bool SignatureInjected, long TextBefore, long TextAfter, bool OverrideApplied, string? OverrideError, bool BodyPlacedViaWordEditor) ComposeDraft(
             object draftObject,
             string bodyText,
             ComSignatureOverride? signatureOverride)
-        {
-            if (signatureOverride == null)
-            {
-                (bool injected, long before, long after, string htmlAfter) = TouchInspectorForSignature(draftObject);
-                dynamic draft = draftObject;
-                string fragment = OutlookAI.Core.Text.HtmlBodyComposer.ToHtmlFragment(bodyText);
-                draft.HTMLBody = OutlookAI.Core.Text.HtmlBodyComposer.InsertAtBodyTop(
-                    htmlAfter.Length > 0 ? htmlAfter : null, fragment);
-                return (injected, before, after, false, null);
-            }
-
-            return ComposeWithSignatureOverride(draftObject, bodyText, signatureOverride);
-        }
-
-        /// <summary>
-        /// Signature-override compose (soak fix D37, mechanism decision: WordEditor
-        /// _MailAutoSig bookmark dance via the hidden GetInspector - the add-in's proven
-        /// pattern, and what Outlook's own Insert&gt;Signature switcher does). One held
-        /// Inspector hosts everything: the injected default-signature region (the
-        /// _MailAutoSig bookmark) is deleted and the chosen signature FILE inserted in
-        /// its place with Word's InsertFile (Word handles HTML conversion, styles and
-        /// resources natively), the bookmark is recreated over the new content so
-        /// Outlook keeps treating the region as THE signature, the agent body text goes
-        /// to the document top, and Close(olSave) flushes the document into the item.
-        /// Without a default signature the insertion lands directly above the quoted
-        /// original (_MailOriginal) or at the document end. The quote region is never
-        /// touched (threading/quoted-content contract).
-        /// </summary>
-        private static (bool SignatureInjected, long TextBefore, long TextAfter, bool OverrideApplied, string? OverrideError) ComposeWithSignatureOverride(
-            object draftObject,
-            string bodyText,
-            ComSignatureOverride signatureOverride)
         {
             dynamic draft = draftObject;
             string htmlBefore = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
@@ -3640,14 +3692,14 @@ namespace OutlookAI.Core.Com
             string htmlAfter = htmlBefore;
             long textAfter = textBefore;
             bool injected = false;
-            bool applied = false;
+            bool wordComposeDone = false;
             string? error = null;
 
             object? inspector = null;
             object? document = null;
             try
             {
-                if (!File.Exists(signatureOverride.FilePath))
+                if (signatureOverride != null && !File.Exists(signatureOverride.FilePath))
                 {
                     error = "SignatureFileMissing";
                 }
@@ -3662,6 +3714,13 @@ namespace OutlookAI.Core.Com
                     {
                     }
 
+                    // Signature injection is measured across the GetInspector touch
+                    // regardless of what happens next (text-based: HTML template
+                    // expansion without a signature adds markup but no text).
+                    htmlAfter = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
+                    textAfter = CountNonWhitespaceText(htmlAfter);
+                    injected = textAfter > textBefore;
+
                     if (inspector == null)
                     {
                         error = "NoInspector";
@@ -3670,11 +3729,6 @@ namespace OutlookAI.Core.Com
 
                 if (error == null)
                 {
-                    // Default-injection observation, exactly like the default path.
-                    htmlAfter = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
-                    textAfter = CountNonWhitespaceText(htmlAfter);
-                    injected = textAfter > textBefore;
-
                     try
                     {
                         document = ((dynamic)inspector!).WordEditor;
@@ -3689,7 +3743,7 @@ namespace OutlookAI.Core.Com
                     }
                 }
 
-                if (error == null)
+                if (error == null && signatureOverride != null)
                 {
                     (bool sigOk, string? sigError) = ApplySignatureToDocument(document!, signatureOverride.FilePath);
                     error = sigOk ? null : sigError ?? "SignatureInsertFailed";
@@ -3697,7 +3751,7 @@ namespace OutlookAI.Core.Com
 
                 if (error == null)
                 {
-                    (bool bodyOk, string? bodyError) = InsertBodyTextAtDocumentTop(document!, bodyText);
+                    (bool bodyOk, string? bodyError) = InsertBodyAboveSignature(document!, bodyText);
                     error = bodyOk ? null : bodyError ?? "BodyInsertFailed";
                 }
 
@@ -3708,7 +3762,7 @@ namespace OutlookAI.Core.Com
                     try
                     {
                         ((dynamic)inspector!).Close(0); // olSave
-                        applied = true;
+                        wordComposeDone = true;
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
@@ -3726,11 +3780,11 @@ namespace OutlookAI.Core.Com
                 Release(inspector);
             }
 
-            if (!applied)
+            if (!wordComposeDone)
             {
-                // Fallback = the default composition. Its input HTML still contains the
-                // injected default signature, and the wholesale HTMLBody assignment
-                // re-renders the Word document - discarding any partial override edits.
+                // Fallback = the pre-batch-A composition. Its input HTML still contains
+                // the injected signature, and the wholesale HTMLBody assignment
+                // re-renders the Word document - discarding any partial Word edits.
                 string html = TryGetString(() => (string?)draft.HTMLBody) ?? string.Empty;
                 if (html.Length == 0)
                 {
@@ -3742,7 +3796,7 @@ namespace OutlookAI.Core.Com
                     html.Length > 0 ? html : null, fragment);
             }
 
-            return (injected, textBefore, textAfter, applied, error);
+            return (injected, textBefore, textAfter, signatureOverride != null && wordComposeDone, error, wordComposeDone);
         }
 
         /// <summary>
@@ -3858,25 +3912,151 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// Inserts the agent's plain-text body at the TOP of an already-acquired Word
-        /// document (override path - the default path composes via HTMLBody instead).
-        /// Line breaks become soft line breaks (vertical tab), matching the default
-        /// path's &lt;br&gt; behavior; one paragraph mark separates the body from the
-        /// signature/quote below.
+        /// Writes the agent's plain-text body into the DRAFT region of an
+        /// already-acquired Word document - the add-in's proven
+        /// <c>AITaskPane.WriteDraftToDocument</c> technique ported to late-bound COM.
+        /// <para>
+        /// The draft region ends where the signature (<c>_MailAutoSig</c>) or, absent
+        /// that, the quoted original (<c>_MailOriginal</c>) begins; with neither marker
+        /// present the body simply goes to the document start. The boundary marker is
+        /// DELETED before the write and RECREATED over the (shifted, byte-identical)
+        /// region afterwards. That dance is load-bearing, not cosmetic: Word absorbs text
+        /// inserted at a bookmark's start INTO that bookmark, so writing straight to
+        /// Range(0,0) while <c>_MailAutoSig</c> starts at 0 made the agent body part of
+        /// the signature region (the A1 defect - live-proven on an account without a
+        /// default signature). Recreating the marker keeps Outlook's signature handling
+        /// and the add-in's draft/signature/thread split working on the draft.
+        /// </para>
+        /// Line breaks become soft line breaks (vertical tab), matching the fallback
+        /// path's &lt;br&gt; behavior; one paragraph mark separates the body from what
+        /// follows. The signature and quote regions themselves are never modified.
         /// </summary>
-        private static (bool Inserted, string? Error) InsertBodyTextAtDocumentTop(object documentObject, string bodyText)
+        private static (bool Inserted, string? Error) InsertBodyAboveSignature(object documentObject, string bodyText)
         {
-            object? range = null;
+            dynamic doc = documentObject;
+            object? bookmarks = null;
+            string? boundary = null;
+            int boundaryStart = -1;
+            int boundaryEnd = -1;
             try
             {
+                bookmarks = doc.Bookmarks;
+                dynamic bm = (dynamic)bookmarks!;
+
+                // _MailAutoSig/_MailOriginal are HIDDEN bookmarks - invisible to
+                // Exists() unless ShowHidden is on (add-in AITaskPane pattern).
+                bm.ShowHidden = true;
+
+                if ((bool)bm.Exists("_MailAutoSig"))
+                {
+                    boundary = "_MailAutoSig";
+                }
+                else if ((bool)bm.Exists("_MailOriginal"))
+                {
+                    boundary = "_MailOriginal";
+                }
+
+                if (boundary != null)
+                {
+                    object? marker = null;
+                    object? markerRange = null;
+                    try
+                    {
+                        marker = bm.Item(boundary);
+                        markerRange = ((dynamic)marker!).Range;
+                        boundaryStart = (int)((dynamic)markerRange!).Start;
+                        boundaryEnd = (int)((dynamic)markerRange).End;
+
+                        // Marker only - the signature/quote CONTENT stays untouched.
+                        ((dynamic)marker).Delete();
+                    }
+                    finally
+                    {
+                        Release(markerRange);
+                        Release(marker);
+                    }
+                }
+
+                // The DRAFT region [0, boundary) is Outlook's empty compose boilerplate on
+                // a freshly created item - it is REPLACED, exactly like the add-in's
+                // WriteDraftToDocument does, so the body starts at the top instead of
+                // below the template's blank paragraphs. A trailing empty paragraph keeps
+                // Outlook's own blank line between body and signature/quote.
+                int insertAt = boundary != null ? boundaryStart : 0;
                 string normalized = bodyText.Replace("\r\n", "\n").Replace('\n', '\v');
-                range = ((dynamic)documentObject).Range(0, 0);
-                ((dynamic)range!).Text = normalized + "\r";
+                int writtenEnd;
+                object? range = null;
+                try
+                {
+                    range = doc.Range(0, insertAt);
+                    ((dynamic)range!).Text = normalized + (boundary != null ? "\r\r" : "\r");
+                    writtenEnd = (int)((dynamic)range).End;
+                }
+                finally
+                {
+                    Release(range);
+                }
+
+                if (boundary != null)
+                {
+                    // The region moved by (new draft length - old draft length).
+                    int shifted = boundaryEnd + (writtenEnd - insertAt);
+                    if (shifted < writtenEnd)
+                    {
+                        shifted = writtenEnd;
+                    }
+
+                    object? restoreRange = null;
+                    try
+                    {
+                        restoreRange = doc.Range(writtenEnd, shifted);
+                        bm.Add(boundary, restoreRange);
+                    }
+                    finally
+                    {
+                        Release(restoreRange);
+                    }
+                }
+
                 return (true, null);
             }
             catch (Exception ex) when (IsComCallFailure(ex))
             {
+                // The marker was deleted up front; restore it over the ORIGINAL range so
+                // a failed write cannot silently strip the signature/quote anchor (the
+                // add-in does the same). The caller falls back to the HTML path, which
+                // re-renders the document from the item anyway.
+                TryRestoreBookmark(bookmarks, boundary, boundaryStart, boundaryEnd);
                 return (false, DescribeComFailure(ex));
+            }
+            finally
+            {
+                Release(bookmarks);
+            }
+        }
+
+        private static void TryRestoreBookmark(object? bookmarksObject, string? name, int start, int end)
+        {
+            if (bookmarksObject == null || name == null || start < 0 || end < start)
+            {
+                return;
+            }
+
+            object? range = null;
+            try
+            {
+                dynamic bm = (dynamic)bookmarksObject;
+                if ((bool)bm.Exists(name))
+                {
+                    return;
+                }
+
+                dynamic parentDoc = bm.Parent;
+                range = parentDoc.Range(start, end);
+                bm.Add(name, range);
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
             }
             finally
             {
@@ -4022,7 +4202,14 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>STA-side: adds typed recipients (1 = To, 2 = Cc) and resolves them best-effort.</summary>
-        private static void AddRecipients(dynamic mail, IReadOnlyList<string> addresses, int type)
+        /// <summary>
+        /// APPENDS recipients of one type to whatever is already on the item (a
+        /// reply-all's own recipient list is never replaced) and records every address
+        /// Outlook could not resolve into <paramref name="unresolved"/>. Unresolved
+        /// recipients stay ON the draft - they are legal there and the user can fix them
+        /// - but they are reported instead of silently dropped (batch A, A2).
+        /// </summary>
+        private static void AddRecipients(dynamic mail, IReadOnlyList<string> addresses, int type, ICollection<string>? unresolved = null)
         {
             if (addresses.Count == 0)
             {
@@ -4041,26 +4228,136 @@ namespace OutlookAI.Core.Com
                     {
                         recipient = collection.Add(address);
                         ((dynamic)recipient!).Type = type;
+
+                        bool resolved;
+                        try
+                        {
+                            // Per-recipient (not ResolveAll) so the verdict belongs to
+                            // THIS address and never to a pre-existing one.
+                            resolved = (bool)((dynamic)recipient).Resolve();
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            resolved = false;
+                        }
+
+                        if (!resolved)
+                        {
+                            unresolved?.Add(address);
+                        }
                     }
                     finally
                     {
                         Release(recipient);
                     }
                 }
-
-                try
-                {
-                    collection.ResolveAll();
-                }
-                catch (Exception ex) when (IsComCallFailure(ex))
-                {
-                    // Unresolved recipients are legal on drafts; the user resolves on send.
-                }
             }
             finally
             {
                 Release(recipients);
             }
+        }
+
+        /// <summary>
+        /// STA-side: applies the optional cross-tool draft properties (batch A, A4).
+        /// Both are plain item properties; a failure is swallowed content-free because
+        /// the draft itself is still valid and the outcome reports the item's ACTUAL
+        /// values read back in <see cref="SnapshotDraft"/>.
+        /// </summary>
+        private static void ApplyDraftOptions(dynamic draft, ComDraftOptions? options)
+        {
+            if (options == null)
+            {
+                return;
+            }
+
+            if (options.Importance != null)
+            {
+                try
+                {
+                    draft.Importance = options.Importance.Value;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                }
+            }
+
+            if (options.RequestReadReceipt != null)
+            {
+                try
+                {
+                    draft.ReadReceiptRequested = options.RequestReadReceipt.Value;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                }
+            }
+        }
+
+        /// <summary>
+        /// PropertyAccessor WRITE (MAPI proptag DASL). Mirrors
+        /// <see cref="TryGetPropertyString"/>'s failure handling: a store/provider that
+        /// refuses the write is reported as false, never thrown - callers degrade
+        /// gracefully and report the fact.
+        /// </summary>
+        private static bool TrySetPropertyString(dynamic comObject, string schemaName, string value)
+        {
+            return TrySetProperty(comObject, schemaName, value);
+        }
+
+        /// <summary>PropertyAccessor write of a PT_BINARY MAPI property.</summary>
+        private static bool TrySetPropertyBinary(dynamic comObject, string schemaName, byte[] value)
+        {
+            return TrySetProperty(comObject, schemaName, value);
+        }
+
+        private static bool TrySetProperty(dynamic comObject, string schemaName, object value)
+        {
+            object? accessor = null;
+            try
+            {
+                accessor = comObject.PropertyAccessor;
+                ((dynamic)accessor!).SetProperty(schemaName, value);
+                return true;
+            }
+            catch (COMException)
+            {
+                return false;
+            }
+            catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+            {
+                return false;
+            }
+            finally
+            {
+                Release(accessor);
+            }
+        }
+
+        /// <summary>Hex string (as the object model reports ConversationIndex) to bytes; null when unusable.</summary>
+        private static byte[]? HexToBytes(string? hex)
+        {
+            if (string.IsNullOrEmpty(hex) || (hex!.Length % 2) != 0)
+            {
+                return null;
+            }
+
+            byte[] bytes = new byte[hex.Length / 2];
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                if (!byte.TryParse(
+                        hex.AsSpan(i * 2, 2),
+                        System.Globalization.NumberStyles.HexNumber,
+                        CultureInfo.InvariantCulture,
+                        out byte parsed))
+                {
+                    return null;
+                }
+
+                bytes[i] = parsed;
+            }
+
+            return bytes;
         }
 
         /// <summary>
@@ -4168,6 +4465,25 @@ namespace OutlookAI.Core.Com
             string? subject = TryGetString(() => (string?)item.Subject);
             string? conversationIndex = TryGetString(() => (string?)item.ConversationIndex);
             string? conversationId = TryGetString(() => (string?)item.ConversationID);
+            string? conversationTopic = TryGetString(() => (string?)item.ConversationTopic)
+                ?? TryGetPropertyString(item, ConversationTopicDasl);
+            int? importance = null;
+            bool readReceiptRequested = false;
+            try
+            {
+                importance = (int)item.Importance;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+
+            try
+            {
+                readReceiptRequested = (bool)item.ReadReceiptRequested;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
 
             string? sendUsingSmtp = null;
             object? sendUsingAccount = null;
@@ -4283,7 +4599,10 @@ namespace OutlookAI.Core.Com
                 sendUsingSmtp,
                 conversationIndex,
                 conversationId,
-                recipients);
+                recipients,
+                conversationTopic,
+                importance,
+                readReceiptRequested);
         }
 
         /// <summary>STA-side: the profile account with the given SmtpAddress (caller releases), or null.</summary>
