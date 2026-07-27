@@ -72,8 +72,10 @@ namespace OutlookAI.Core.Com
             bool? isRead,
             string? conversationId,
             string? internetMessageId,
-            string? headers)
+            string? headers,
+            string? htmlBody = null)
         {
+            HtmlBody = htmlBody;
             EntryId = entryId;
             StoreDisplayName = storeDisplayName;
             FolderPath = folderPath;
@@ -94,6 +96,13 @@ namespace OutlookAI.Core.Com
             InternetMessageId = internetMessageId;
             Headers = headers;
         }
+
+        /// <summary>
+        /// Outlook's stored HTMLBody, transferred only when the caller asked for it
+        /// (read include_html - batch B, B2). Null otherwise: it is several times the size
+        /// of the text rendering and no other consumer needs it.
+        /// </summary>
+        public string? HtmlBody { get; }
 
         /// <summary>Real (object-model) EntryID hex string.</summary>
         public string EntryId { get; }
@@ -494,6 +503,48 @@ namespace OutlookAI.Core.Com
 
         /// <summary>MailItem.ReadReceiptRequested.</summary>
         public bool ReadReceiptRequested { get; }
+    }
+
+    /// <summary>
+    /// The agent-authored body of a draft, in exactly one of the two forms the tools
+    /// accept (soak fix batch B - B1, v3.MD D45). Plain text is the default and unchanged
+    /// path; HTML carries an ALREADY-NORMALIZED fragment (see
+    /// <c>HtmlFragmentNormalizer</c>) that is inserted as real markup into the draft
+    /// region only. Keeping the two apart in one object means the COM layer never has to
+    /// guess whether a string is prose or markup.
+    /// </summary>
+    public sealed class ComDraftBody
+    {
+        private ComDraftBody(bool isHtml, string text, string html)
+        {
+            IsHtml = isHtml;
+            Text = text;
+            Html = html;
+        }
+
+        /// <summary>Plain-text body (line breaks preserved, everything escaped on the way in).</summary>
+        public static ComDraftBody FromText(string text)
+        {
+            return new ComDraftBody(false, text ?? string.Empty, string.Empty);
+        }
+
+        /// <summary>HTML body - the fragment MUST already have passed <c>HtmlFragmentNormalizer</c>.</summary>
+        public static ComDraftBody FromHtml(string normalizedHtml)
+        {
+            return new ComDraftBody(true, string.Empty, normalizedHtml ?? string.Empty);
+        }
+
+        /// <summary>True when the body is HTML and must be inserted as markup, not as characters.</summary>
+        public bool IsHtml { get; }
+
+        /// <summary>The plain text (empty for an HTML body).</summary>
+        public string Text { get; }
+
+        /// <summary>The normalized HTML fragment (empty for a plain-text body).</summary>
+        public string Html { get; }
+
+        /// <summary>"text" or "html" - reported on the outcome and in the audit line.</summary>
+        public string FormatName => IsHtml ? "html" : "text";
     }
 
     /// <summary>

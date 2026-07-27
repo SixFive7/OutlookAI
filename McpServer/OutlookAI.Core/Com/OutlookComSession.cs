@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 
 using OutlookAI.Core.IndexSearch;
@@ -775,7 +776,7 @@ namespace OutlookAI.Core.Com
         /// caller already holds a cached extraction). Returns null with a content-free
         /// error description on failure (S4).
         /// </summary>
-        public ComItemDetail? TryReadItem(string entryIdHex, string? storeId, bool includeHeaders, bool includeBody, out string? error)
+        public ComItemDetail? TryReadItem(string entryIdHex, string? storeId, bool includeHeaders, bool includeBody, out string? error, bool includeHtml = false)
         {
             EnsureNotDisposed();
             if (string.IsNullOrWhiteSpace(entryIdHex))
@@ -793,7 +794,7 @@ namespace OutlookAI.Core.Com
                     itemObject = storeId != null
                         ? ns.GetItemFromID(entryIdHex, storeId)
                         : ns.GetItemFromID(entryIdHex);
-                    return SnapshotDetail(itemObject!, includeHeaders, includeBody);
+                    return SnapshotDetail(itemObject!, includeHeaders, includeBody, includeHtml);
                 }
                 catch (COMException ex)
                 {
@@ -2211,7 +2212,7 @@ namespace OutlookAI.Core.Com
             string accountSmtpAddress,
             IReadOnlyList<string> toRecipients,
             string subject,
-            string bodyText,
+            ComDraftBody body,
             bool display,
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
@@ -2233,9 +2234,9 @@ namespace OutlookAI.Core.Com
                 throw new ArgumentNullException(nameof(subject));
             }
 
-            if (bodyText == null)
+            if (body == null)
             {
-                throw new ArgumentNullException(nameof(bodyText));
+                throw new ArgumentNullException(nameof(body));
             }
 
             string? capturedError = null;
@@ -2297,7 +2298,7 @@ namespace OutlookAI.Core.Com
                     SetSendUsingAccount(mail!, account);
 
                     (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError, bool wordPlaced) =
-                        ComposeDraft((object)draft, bodyText, signatureOverride);
+                        ComposeDraft((object)draft, body, signatureOverride);
                     draft.Subject = subject;
                     List<string> unresolved = new List<string>();
                     AddRecipients(draft, toRecipients, 1, unresolved);
@@ -2382,7 +2383,7 @@ namespace OutlookAI.Core.Com
             string? sourceStoreId,
             ComDerivedDraftKind kind,
             IReadOnlyList<string> toRecipients,
-            string bodyText,
+            ComDraftBody body,
             bool display,
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
@@ -2399,9 +2400,9 @@ namespace OutlookAI.Core.Com
                 throw new ArgumentNullException(nameof(toRecipients));
             }
 
-            if (bodyText == null)
+            if (body == null)
             {
-                throw new ArgumentNullException(nameof(bodyText));
+                throw new ArgumentNullException(nameof(body));
             }
 
             string? capturedError = null;
@@ -2471,7 +2472,7 @@ namespace OutlookAI.Core.Com
                     }
 
                     (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError, bool wordPlaced) =
-                        ComposeDraft((object)draft, bodyText, signatureOverride);
+                        ComposeDraft((object)draft, body, signatureOverride);
                     List<string> unresolved = new List<string>();
                     if (kind == ComDerivedDraftKind.Forward)
                     {
@@ -3683,7 +3684,7 @@ namespace OutlookAI.Core.Com
         /// </summary>
         private static (bool SignatureInjected, long TextBefore, long TextAfter, bool OverrideApplied, string? OverrideError, bool BodyPlacedViaWordEditor) ComposeDraft(
             object draftObject,
-            string bodyText,
+            ComDraftBody body,
             ComSignatureOverride? signatureOverride)
         {
             dynamic draft = draftObject;
@@ -3751,7 +3752,7 @@ namespace OutlookAI.Core.Com
 
                 if (error == null)
                 {
-                    (bool bodyOk, string? bodyError) = InsertBodyAboveSignature(document!, bodyText);
+                    (bool bodyOk, string? bodyError) = InsertBodyAboveSignature(document!, body);
                     error = bodyOk ? null : bodyError ?? "BodyInsertFailed";
                 }
 
@@ -3791,7 +3792,12 @@ namespace OutlookAI.Core.Com
                     html = htmlAfter;
                 }
 
-                string fragment = OutlookAI.Core.Text.HtmlBodyComposer.ToHtmlFragment(bodyText);
+                // An HTML body is ALREADY normalized markup - it must not be escaped here
+                // (that would show the agent its own tags as text); it only gets the same
+                // <div> wrapper the text path uses so the splice has one root element.
+                string fragment = body.IsHtml
+                    ? "<div>" + body.Html + "</div>"
+                    : OutlookAI.Core.Text.HtmlBodyComposer.ToHtmlFragment(body.Text);
                 draft.HTMLBody = OutlookAI.Core.Text.HtmlBodyComposer.InsertAtBodyTop(
                     html.Length > 0 ? html : null, fragment);
             }
@@ -3930,8 +3936,20 @@ namespace OutlookAI.Core.Com
         /// Line breaks become soft line breaks (vertical tab), matching the fallback
         /// path's &lt;br&gt; behavior; one paragraph mark separates the body from what
         /// follows. The signature and quote regions themselves are never modified.
+        /// <para>
+        /// An HTML body (batch B - B1) takes the same route with one substitution: the
+        /// draft region is CLEARED and the markup is inserted with
+        /// <c>Range.InsertFile</c> from a temporary .htm file - the same verb
+        /// <see cref="ApplySignatureToDocument"/> already uses to place a signature, and
+        /// the only rich-content mechanism proven in this codebase (the add-in inserts
+        /// signatures the same way). Word's own HTML converter does the rendering, so
+        /// headings, lists and tables arrive as real Word structures inside the message's
+        /// WordSection1, and the boundary marker is re-anchored by the SAME
+        /// <c>Content.End</c> delta arithmetic - a collapsed insert range does not span
+        /// what was inserted, so the length must be measured, not read off the range.
+        /// </para>
         /// </summary>
-        private static (bool Inserted, string? Error) InsertBodyAboveSignature(object documentObject, string bodyText)
+        private static (bool Inserted, string? Error) InsertBodyAboveSignature(object documentObject, ComDraftBody body)
         {
             dynamic doc = documentObject;
             object? bookmarks = null;
@@ -3983,18 +4001,25 @@ namespace OutlookAI.Core.Com
                 // below the template's blank paragraphs. A trailing empty paragraph keeps
                 // Outlook's own blank line between body and signature/quote.
                 int insertAt = boundary != null ? boundaryStart : 0;
-                string normalized = bodyText.Replace("\r\n", "\n").Replace('\n', '\v');
                 int writtenEnd;
-                object? range = null;
-                try
+                if (body.IsHtml)
                 {
-                    range = doc.Range(0, insertAt);
-                    ((dynamic)range!).Text = normalized + (boundary != null ? "\r\r" : "\r");
-                    writtenEnd = (int)((dynamic)range).End;
+                    writtenEnd = InsertHtmlIntoDraftRegion(doc, body.Html, insertAt, boundary != null);
                 }
-                finally
+                else
                 {
-                    Release(range);
+                    string normalized = body.Text.Replace("\r\n", "\n").Replace('\n', '\v');
+                    object? range = null;
+                    try
+                    {
+                        range = doc.Range(0, insertAt);
+                        ((dynamic)range!).Text = normalized + (boundary != null ? "\r\r" : "\r");
+                        writtenEnd = (int)((dynamic)range).End;
+                    }
+                    finally
+                    {
+                        Release(range);
+                    }
                 }
 
                 if (boundary != null)
@@ -4032,6 +4057,116 @@ namespace OutlookAI.Core.Com
             finally
             {
                 Release(bookmarks);
+            }
+        }
+
+        /// <summary>
+        /// Places an already-normalized HTML fragment into the draft region of the held
+        /// inspector's Word document and returns the document offset just PAST it (which
+        /// is where the signature/quote region now begins).
+        /// <para>
+        /// Mechanism: clear the compose boilerplate <c>[0, draftEnd)</c>, then
+        /// <c>Range.InsertFile</c> a temporary .htm file at a COLLAPSED range at 0 - the
+        /// same call <see cref="ApplySignatureToDocument"/> makes for signatures, i.e. the
+        /// one HTML-into-Word route this codebase has proven. Word's HTML converter turns
+        /// the markup into real Word structures inside the message body, so the result
+        /// inherits the message style instead of sitting outside WordSection1 (the batch-A
+        /// A1(ii) defect). The inserted LENGTH must be measured as a <c>Content.End</c>
+        /// delta: a collapsed insert range does not grow to span what was inserted.
+        /// </para>
+        /// </summary>
+        private static int InsertHtmlIntoDraftRegion(dynamic doc, string html, int draftEnd, bool hasBoundary)
+        {
+            string path = WriteTemporaryHtmlFile(html, hasBoundary);
+            try
+            {
+                if (draftEnd > 0)
+                {
+                    // Outlook's empty compose boilerplate - replaced, not appended to,
+                    // exactly like the plain-text path's Range(0, draftEnd).Text write.
+                    object? clearRange = null;
+                    try
+                    {
+                        clearRange = doc.Range(0, draftEnd);
+                        ((dynamic)clearRange!).Delete();
+                    }
+                    finally
+                    {
+                        Release(clearRange);
+                    }
+                }
+
+                int endBefore = GetDocumentEnd(doc);
+                object? insertRange = null;
+                try
+                {
+                    insertRange = doc.Range(0, 0);
+                    ((dynamic)insertRange!).InsertFile(path, Type.Missing, false, false, false);
+                }
+                finally
+                {
+                    Release(insertRange);
+                }
+
+                int endAfter = GetDocumentEnd(doc);
+                return Math.Max(0, endAfter - endBefore);
+            }
+            finally
+            {
+                try
+                {
+                    File.Delete(path);
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+        }
+
+        /// <summary>
+        /// Writes the fragment as a self-contained utf-8 .htm file for Word's converter.
+        /// It lives under the shared state root (v3.MD section 0.5.2), never in a mailbox
+        /// path, and is deleted immediately after the insert; a trailing empty paragraph
+        /// is added when a signature/quote region follows, so Word cannot merge the last
+        /// body paragraph into it.
+        /// </summary>
+        private static string WriteTemporaryHtmlFile(string html, bool hasBoundary)
+        {
+            string directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "OutlookAI",
+                "tmp");
+            Directory.CreateDirectory(directory);
+            PurgeStaleTemporaryFiles(directory);
+
+            string path = Path.Combine(directory, "draft-body-" + Guid.NewGuid().ToString("N") + ".htm");
+            string document = Services.SignatureManager.EnsureHtmlDocument(html + (hasBoundary ? "\r\n<p>&nbsp;</p>" : string.Empty));
+            File.WriteAllText(path, document, new UTF8Encoding(false));
+            return path;
+        }
+
+        /// <summary>Best-effort cleanup of temp bodies a crashed run could have left behind.</summary>
+        private static void PurgeStaleTemporaryFiles(string directory)
+        {
+            try
+            {
+                DateTime cutoff = DateTime.UtcNow.AddHours(-1);
+                foreach (string stale in Directory.GetFiles(directory, "draft-body-*.htm"))
+                {
+                    if (File.GetLastWriteTimeUtc(stale) < cutoff)
+                    {
+                        File.Delete(stale);
+                    }
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
             }
         }
 
@@ -5272,7 +5407,7 @@ namespace OutlookAI.Core.Com
                 body);
         }
 
-        private ComItemDetail SnapshotDetail(object itemObject, bool includeHeaders, bool includeBody)
+        private ComItemDetail SnapshotDetail(object itemObject, bool includeHeaders, bool includeBody, bool includeHtml = false)
         {
             dynamic item = itemObject;
             string entryId = (string)item.EntryID;
@@ -5345,6 +5480,11 @@ namespace OutlookAI.Core.Com
             }
 
             long bodyTotal = body.Length;
+
+            // The raw markup, only on request (read include_html): the plain-text
+            // rendering above collapses exactly the structure an agent needs to verify -
+            // formatting, where the signature region starts, where the quote begins.
+            string? htmlBody = includeHtml ? (TryGetString(() => (string?)item.HTMLBody) ?? string.Empty) : null;
 
             // Recipients with SMTP resolution (PR_SMTP_ADDRESS via PropertyAccessor).
             List<ComRecipientInfo> recipients = new List<ComRecipientInfo>();
@@ -5491,7 +5631,8 @@ namespace OutlookAI.Core.Com
                 isRead,
                 conversationId,
                 internetMessageId,
-                headers);
+                headers,
+                htmlBody);
         }
 
         /// <summary>

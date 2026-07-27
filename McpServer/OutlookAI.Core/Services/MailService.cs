@@ -87,6 +87,16 @@ namespace OutlookAI.Core.Services
         /// <summary>Default read body cap.</summary>
         public const int BodyCharsDefault = 20_000;
 
+        /// <summary>
+        /// Default budget for the opt-in raw HTML (read include_html). It has its OWN
+        /// default rather than sharing the text body's: Outlook's compose boilerplate is
+        /// ~40 KB of stylesheet BEFORE any message content, so a 20 000-character window
+        /// would hand the agent nothing but CSS and defeat the point of the option
+        /// (measured live on this build, batch B). Still bounded and always reported via
+        /// bodyHtmlTotalChars / bodyHtmlTruncated; the hard ceiling stays BodyCharsCap.
+        /// </summary>
+        public const int HtmlCharsDefault = 100_000;
+
         /// <summary>Minimum header cap (headers are opt-in).</summary>
         public const int HeaderCharsMin = 256;
 
@@ -861,7 +871,14 @@ namespace OutlookAI.Core.Services
         /// string. Index hits are located lazily (HitLocator) and the located EntryID is
         /// cached for the rest of the process lifetime.
         /// </summary>
-        public ReadOutcome Read(string id, int maxBodyChars = BodyCharsDefault, bool includeHeaders = false, int maxHeaderChars = HeaderCharsDefault, int bodyOffset = 0)
+        public ReadOutcome Read(
+            string id,
+            int maxBodyChars = BodyCharsDefault,
+            bool includeHeaders = false,
+            int maxHeaderChars = HeaderCharsDefault,
+            int bodyOffset = 0,
+            bool includeHtml = false,
+            int maxHtmlChars = HtmlCharsDefault)
         {
             if (string.IsNullOrWhiteSpace(id))
             {
@@ -869,6 +886,7 @@ namespace OutlookAI.Core.Services
             }
 
             maxBodyChars = Clamp(maxBodyChars, 0, BodyCharsCap);
+            maxHtmlChars = Clamp(maxHtmlChars, 0, BodyCharsCap);
             maxHeaderChars = Clamp(maxHeaderChars, HeaderCharsMin, HeaderCharsCap);
             if (bodyOffset < 0)
             {
@@ -887,13 +905,13 @@ namespace OutlookAI.Core.Services
 
             ComItemDetail detail = _gateway.Run(s =>
             {
-                ComItemDetail? d = s.TryReadItem(entryId, storeId, includeHeaders, includeBody: !haveCachedBody, out string? error);
+                ComItemDetail? d = s.TryReadItem(entryId, storeId, includeHeaders, includeBody: !haveCachedBody, out string? error, includeHtml);
                 if (d == null && storeId == null)
                 {
                     // Direct EntryID without a known store: retry across stores.
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
-                        d = s.TryReadItem(entryId, store.StoreId, includeHeaders, includeBody: !haveCachedBody, out error);
+                        d = s.TryReadItem(entryId, store.StoreId, includeHeaders, includeBody: !haveCachedBody, out error, includeHtml);
                         if (d != null)
                         {
                             break;
@@ -938,6 +956,21 @@ namespace OutlookAI.Core.Services
             IReadOnlyList<RecipientView> recipients = CapRecipients(detail.Recipients, out int recipientTotal, out bool recipientsTruncated);
             IReadOnlyList<AttachmentView> attachments = CapAttachments(detail.Attachments, out int attachmentTotal, out bool attachmentsTruncated);
 
+            // The raw HTML is bulky, so it obeys the payload discipline of section 12: one
+            // window from the START (no paging - the point is to inspect structure), with
+            // the true total size and a truncation flag always reported. Its budget is its
+            // own (HtmlCharsDefault), see that constant for why.
+            string? bodyHtml = null;
+            long? bodyHtmlTotalChars = null;
+            bool? bodyHtmlTruncated = null;
+            if (includeHtml)
+            {
+                string html = detail.HtmlBody ?? string.Empty;
+                bodyHtmlTotalChars = html.Length;
+                bodyHtmlTruncated = html.Length > maxHtmlChars;
+                bodyHtml = html.Length > maxHtmlChars ? html.Substring(0, maxHtmlChars) : html;
+            }
+
             return new ReadOutcome
             {
                 Id = hitId,
@@ -957,6 +990,9 @@ namespace OutlookAI.Core.Services
                 BodyTotalChars = fullBody.Length,
                 BodyTruncated = moreBeyondWindow,
                 BodyOrigin = bodyOrigin,
+                BodyHtml = bodyHtml,
+                BodyHtmlTotalChars = bodyHtmlTotalChars,
+                BodyHtmlTruncated = bodyHtmlTruncated,
                 SizeBytes = detail.SizeBytes,
                 IsRead = detail.IsRead,
                 ConversationId = detail.ConversationId,
@@ -1431,7 +1467,8 @@ namespace OutlookAI.Core.Services
             string? signature = null,
             string? bcc = null,
             string? importance = null,
-            bool? requestReadReceipt = null)
+            bool? requestReadReceipt = null,
+            string? bodyHtml = null)
         {
             if (string.IsNullOrWhiteSpace(account))
             {
@@ -1456,22 +1493,66 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("subject is too long (max 255 characters).", nameof(subject));
             }
 
-            if (string.IsNullOrWhiteSpace(body))
-            {
-                throw new ArgumentException("body is required (plain text; it is placed above the signature).", nameof(body));
-            }
+            ComDraftBody draftBody = ResolveDraftBody(body, bodyHtml, "the signature", out IReadOnlyList<string> htmlAdjustments);
 
             ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature);
             ComDraftOptions options = new(
                 ccList, bccList, subjectOverride: null, ParseImportance(importance), requestReadReceipt);
             ComDraftCreateResult created = _gateway.Run(s =>
             {
-                ComDraftCreateResult? r = s.TryCreateNewDraft(account, toList, subject!, body!, display, signatureOverride, options, out string? error);
+                ComDraftCreateResult? r = s.TryCreateNewDraft(account, toList, subject!, draftBody, display, signatureOverride, options, out string? error);
                 return r ?? throw new InvalidOperationException(BuildDraftError(error, account));
             });
 
-            AuditDraft("new_draft", created, requestedAccount: account, sourceEntryId: null);
-            return ToDraftOutcome("new", created, hitId: null, sourceEntryId: null);
+            AuditDraft("new_draft", created, requestedAccount: account, sourceEntryId: null, draftBody);
+            return ToDraftOutcome("new", created, hitId: null, sourceEntryId: null, draftBody, htmlAdjustments);
+        }
+
+        /// <summary>
+        /// Picks the ONE body form a draft call supplied and prepares it for the COM layer
+        /// (soak fix batch B - B1). Exactly one of <paramref name="body"/> (plain text, the
+        /// unchanged default) and <paramref name="bodyHtml"/> (HTML) must be present; the
+        /// HTML is put through <see cref="Text.HtmlFragmentNormalizer"/> here, PRE-COM, so a
+        /// hostile or malformed fragment is repaired (or rejected) before it can touch a
+        /// mailbox, and everything that changed is reported back to the caller.
+        /// </summary>
+        private static ComDraftBody ResolveDraftBody(string? body, string? bodyHtml, string placementHint, out IReadOnlyList<string> htmlAdjustments)
+        {
+            htmlAdjustments = Array.Empty<string>();
+            bool hasText = !string.IsNullOrWhiteSpace(body);
+            bool hasHtml = !string.IsNullOrWhiteSpace(bodyHtml);
+
+            if (hasText && hasHtml)
+            {
+                throw new ArgumentException(
+                    "body and body_html are mutually exclusive - supply exactly one. Use body for plain text, body_html for formatted HTML.",
+                    nameof(bodyHtml));
+            }
+
+            if (!hasText && !hasHtml)
+            {
+                throw new ArgumentException(
+                    "A body is required: supply either body (plain text) or body_html (formatted HTML). Either one is placed above "
+                    + placementHint + ".",
+                    nameof(body));
+            }
+
+            if (!hasHtml)
+            {
+                return ComDraftBody.FromText(body!);
+            }
+
+            Text.HtmlNormalizationResult normalized = Text.HtmlFragmentNormalizer.Normalize(bodyHtml);
+            if (!normalized.HasVisibleContent)
+            {
+                throw new ArgumentException(
+                    "body_html contained no usable content after normalization (only unsupported or removed markup). "
+                    + "Send visible HTML, or use body for plain text.",
+                    nameof(bodyHtml));
+            }
+
+            htmlAdjustments = normalized.Adjustments;
+            return ComDraftBody.FromHtml(normalized.Html);
         }
 
         /// <summary>
@@ -1489,9 +1570,10 @@ namespace OutlookAI.Core.Services
             string? bcc = null,
             string? subject = null,
             string? importance = null,
-            bool? requestReadReceipt = null)
+            bool? requestReadReceipt = null,
+            string? bodyHtml = null)
         {
-            (string? hitId, string sourceEntryId, ComDraftCreateResult created) = CreateDerived(
+            (string? hitId, string sourceEntryId, ComDraftCreateResult created, ComDraftBody draftBody, IReadOnlyList<string> htmlAdjustments) = CreateDerived(
                 id,
                 replyAll ? ComDerivedDraftKind.ReplyAll : ComDerivedDraftKind.Reply,
                 to: null,
@@ -1502,10 +1584,11 @@ namespace OutlookAI.Core.Services
                 bcc,
                 subject,
                 importance,
-                requestReadReceipt);
+                requestReadReceipt,
+                bodyHtml);
             string op = replyAll ? "replyall_draft" : "reply_draft";
-            AuditDraft(op, created, requestedAccount: null, sourceEntryId);
-            return ToDraftOutcome(replyAll ? "replyall" : "reply", created, hitId, sourceEntryId);
+            AuditDraft(op, created, requestedAccount: null, sourceEntryId, draftBody);
+            return ToDraftOutcome(replyAll ? "replyall" : "reply", created, hitId, sourceEntryId, draftBody, htmlAdjustments);
         }
 
         /// <summary>
@@ -1523,7 +1606,8 @@ namespace OutlookAI.Core.Services
             string? bcc = null,
             string? subject = null,
             string? importance = null,
-            bool? requestReadReceipt = null)
+            bool? requestReadReceipt = null,
+            string? bodyHtml = null)
         {
             IReadOnlyList<string> toList = Text.HtmlBodyComposer.SplitRecipients(to);
             if (toList.Count == 0)
@@ -1531,13 +1615,13 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("to is required for forward_draft: one or more recipient addresses separated by ';' or ','.", nameof(to));
             }
 
-            (string? hitId, string sourceEntryId, ComDraftCreateResult created) = CreateDerived(
-                id, ComDerivedDraftKind.Forward, toList, body, display, signature, cc, bcc, subject, importance, requestReadReceipt);
-            AuditDraft("forward_draft", created, requestedAccount: null, sourceEntryId);
-            return ToDraftOutcome("forward", created, hitId, sourceEntryId);
+            (string? hitId, string sourceEntryId, ComDraftCreateResult created, ComDraftBody draftBody, IReadOnlyList<string> htmlAdjustments) = CreateDerived(
+                id, ComDerivedDraftKind.Forward, toList, body, display, signature, cc, bcc, subject, importance, requestReadReceipt, bodyHtml);
+            AuditDraft("forward_draft", created, requestedAccount: null, sourceEntryId, draftBody);
+            return ToDraftOutcome("forward", created, hitId, sourceEntryId, draftBody, htmlAdjustments);
         }
 
-        private (string? HitId, string SourceEntryId, ComDraftCreateResult Created) CreateDerived(
+        private (string? HitId, string SourceEntryId, ComDraftCreateResult Created, ComDraftBody Body, IReadOnlyList<string> HtmlAdjustments) CreateDerived(
             string id,
             ComDerivedDraftKind kind,
             IReadOnlyList<string>? to,
@@ -1548,17 +1632,15 @@ namespace OutlookAI.Core.Services
             string? bcc,
             string? subject,
             string? importance,
-            bool? requestReadReceipt)
+            bool? requestReadReceipt,
+            string? bodyHtml)
         {
             if (string.IsNullOrWhiteSpace(id))
             {
                 throw new ArgumentException("id is required (a hit id from search/thread or a full EntryID).", nameof(id));
             }
 
-            if (string.IsNullOrWhiteSpace(body))
-            {
-                throw new ArgumentException("body is required (plain text; it is placed above the quoted mail).", nameof(body));
-            }
+            ComDraftBody draftBody = ResolveDraftBody(body, bodyHtml, "the quoted mail", out IReadOnlyList<string> htmlAdjustments);
 
             if (subject != null && subject.Length > 255)
             {
@@ -1576,14 +1658,14 @@ namespace OutlookAI.Core.Services
             IReadOnlyList<string> toList = to ?? Array.Empty<string>();
             ComDraftCreateResult created = _gateway.Run(s =>
             {
-                ComDraftCreateResult? r = s.TryCreateDerivedDraft(entryId, storeId, kind, toList, body!, display, signatureOverride, options, out string? error);
+                ComDraftCreateResult? r = s.TryCreateDerivedDraft(entryId, storeId, kind, toList, draftBody, display, signatureOverride, options, out string? error);
                 if (r == null && storeId == null)
                 {
                     // Direct EntryID without a known store: retry across stores (same
                     // pattern as read/open_in_outlook).
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
-                        r = s.TryCreateDerivedDraft(entryId, store.StoreId, kind, toList, body!, display, signatureOverride, options, out error);
+                        r = s.TryCreateDerivedDraft(entryId, store.StoreId, kind, toList, draftBody, display, signatureOverride, options, out error);
                         if (r != null)
                         {
                             break;
@@ -1596,7 +1678,7 @@ namespace OutlookAI.Core.Services
                     + "). Re-run search - the item may have moved.");
             });
 
-            return (hitId, entryId, created);
+            return (hitId, entryId, created, draftBody, htmlAdjustments);
         }
 
         /// <summary>
@@ -1688,7 +1770,7 @@ namespace OutlookAI.Core.Services
         /// appended for every created draft; a failure surfaces with the draft's EntryID
         /// preserved in the message instead of being swallowed.
         /// </summary>
-        private static void AuditDraft(string operation, ComDraftCreateResult created, string? requestedAccount, string? sourceEntryId)
+        private static void AuditDraft(string operation, ComDraftCreateResult created, string? requestedAccount, string? sourceEntryId, ComDraftBody body)
         {
             try
             {
@@ -1702,6 +1784,7 @@ namespace OutlookAI.Core.Services
                     ("signature", created.SignatureOverrideName),
                     ("signatureApplied", created.SignatureOverrideName != null ? (created.SignatureOverrideApplied ? "true" : "false") : null),
                     ("bodyPlacement", created.BodyPlacedViaWordEditor ? "wordEditor" : "html"),
+                    ("bodyFormat", body.FormatName),
                     ("displayed", created.Displayed ? "true" : "false"),
                     ("recipients", created.Draft.Recipients.Count.ToString(CultureInfo.InvariantCulture)),
                     ("unresolvedRecipients", created.UnresolvedRecipients.Count > 0
@@ -1720,7 +1803,13 @@ namespace OutlookAI.Core.Services
             }
         }
 
-        private static DraftOutcome ToDraftOutcome(string kind, ComDraftCreateResult created, string? hitId, string? sourceEntryId)
+        private static DraftOutcome ToDraftOutcome(
+            string kind,
+            ComDraftCreateResult created,
+            string? hitId,
+            string? sourceEntryId,
+            ComDraftBody body,
+            IReadOnlyList<string> htmlAdjustments)
         {
             IReadOnlyList<RecipientView> recipients = CapRecipients(created.Draft.Recipients, out int total, out bool truncated);
             return new DraftOutcome
@@ -1749,6 +1838,9 @@ namespace OutlookAI.Core.Services
                 ConversationTopicPreserved = created.ConversationTopicPreserved,
                 Importance = ImportanceName(created.Draft.Importance) is string name && name != "normal" ? name : null,
                 ReadReceiptRequested = created.Draft.ReadReceiptRequested ? true : (bool?)null,
+                BodyFormat = body.FormatName,
+                BodyPlacement = created.BodyPlacedViaWordEditor ? "wordEditor" : "html",
+                HtmlAdjustments = htmlAdjustments.Count > 0 ? htmlAdjustments : null,
             };
         }
 

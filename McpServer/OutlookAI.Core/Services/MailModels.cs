@@ -417,6 +417,20 @@ namespace OutlookAI.Core.Services
         /// <summary>"text" (Outlook's own plain-text rendering), "html-converted", or "none".</summary>
         public string BodyOrigin { get; set; } = "text";
 
+        /// <summary>
+        /// Stored HTML body (Outlook's own HTMLBody), only when include_html=true - the
+        /// only way to see formatting, signature placement and quote boundaries, which the
+        /// plain-text body collapses. Windowed from its start with the same max_body_chars
+        /// budget as the text body (batch B, B2).
+        /// </summary>
+        public string? BodyHtml { get; set; }
+
+        /// <summary>Full HTML body length in characters (only when include_html=true).</summary>
+        public long? BodyHtmlTotalChars { get; set; }
+
+        /// <summary>True when BodyHtml was cut at the character budget (only when include_html=true).</summary>
+        public bool? BodyHtmlTruncated { get; set; }
+
         /// <summary>Total item size in bytes.</summary>
         public long? SizeBytes { get; set; }
 
@@ -777,6 +791,24 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Present (true) only when a read receipt was requested.</summary>
         public bool? ReadReceiptRequested { get; set; }
+
+        /// <summary>Which body form was used: "text" (from body) or "html" (from body_html).</summary>
+        public string? BodyFormat { get; set; }
+
+        /// <summary>
+        /// How the body reached the item: "wordEditor" (composed inside the held Inspector
+        /// like Outlook's own compose window - the normal path) or "html" (the fallback
+        /// wholesale HTMLBody assignment). On "html" the rendering is less faithful, so
+        /// check the draft with read include_html=true.
+        /// </summary>
+        public string? BodyPlacement { get; set; }
+
+        /// <summary>
+        /// Only present when body_html was supplied AND normalization changed something:
+        /// exactly what was dropped, unwrapped, escaped or repaired, so the agent can see
+        /// how its markup was altered instead of guessing (batch B, B1).
+        /// </summary>
+        public IReadOnlyList<string>? HtmlAdjustments { get; set; }
     }
 
     /// <summary>
