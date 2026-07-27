@@ -916,6 +916,13 @@ namespace OutlookAI.Core.Services
         /// silently ignored, so a misspelled file name is visible.
         /// </summary>
         public IReadOnlyList<string>? AttachmentsNotFound { get; set; }
+
+        /// <summary>
+        /// Files Outlook refused at attach time despite passing the pre-COM checks. Never
+        /// silent: the rest of the update stands, and these names say exactly what did not
+        /// make it onto the draft.
+        /// </summary>
+        public IReadOnlyList<string>? AttachmentsFailed { get; set; }
     }
 
     /// <summary>

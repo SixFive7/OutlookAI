@@ -1011,6 +1011,7 @@ namespace OutlookAI.Core.Com
             IReadOnlyList<ComAttachmentInfo> attachments,
             IReadOnlyList<string> attachmentsAdded,
             IReadOnlyList<string> attachmentsRemoved,
+            IReadOnlyList<string> attachmentsFailed,
             bool bodyReplaced,
             bool bodyPlacedViaWordEditor,
             bool displayed,
@@ -1025,6 +1026,7 @@ namespace OutlookAI.Core.Com
             Attachments = attachments;
             AttachmentsAdded = attachmentsAdded;
             AttachmentsRemoved = attachmentsRemoved;
+            AttachmentsFailed = attachmentsFailed;
             BodyReplaced = bodyReplaced;
             BodyPlacedViaWordEditor = bodyPlacedViaWordEditor;
             Displayed = displayed;
@@ -1051,6 +1053,13 @@ namespace OutlookAI.Core.Com
 
         /// <summary>File names removed by this call.</summary>
         public IReadOnlyList<string> AttachmentsRemoved { get; }
+
+        /// <summary>
+        /// File names Outlook refused at <c>Attachments.Add</c> despite passing the
+        /// pre-COM checks. Reported rather than thrown: the draft already exists, so a
+        /// blanket failure would tell the caller nothing happened when something did.
+        /// </summary>
+        public IReadOnlyList<string> AttachmentsFailed { get; }
 
         /// <summary>True when the draft region was rewritten (a body was supplied).</summary>
         public bool BodyReplaced { get; }

@@ -2316,8 +2316,10 @@ namespace OutlookAI.Core.Com
 
                     // Attachments AFTER the composition closed the inspector (D46/C3):
                     // adding a file re-renders the item, and the Word edits must already
-                    // be committed by then.
-                    AddAttachmentsToDraft(draft, options?.AttachmentPaths);
+                    // be committed by then. A per-file COM refusal is reported through the
+                    // saved-item snapshot below (requested count vs what is really there)
+                    // rather than losing the draft.
+                    _ = AddAttachmentsToDraft(draft, options?.AttachmentPaths);
                     draft.Save();
 
                     // The GetInspector touch leaves a HIDDEN Inspector alive inside
@@ -2525,7 +2527,7 @@ namespace OutlookAI.Core.Com
                     }
 
                     // Attachments AFTER the composition closed the inspector (D46/C3).
-                    AddAttachmentsToDraft(draft, options?.AttachmentPaths);
+                    _ = AddAttachmentsToDraft(draft, options?.AttachmentPaths);
                     draft.Save();
 
                     // Same hidden-Inspector cleanup as the new-draft path: only needed
@@ -3685,6 +3687,7 @@ namespace OutlookAI.Core.Com
             {
                 dynamic ns = _namespace!;
                 object? item = null;
+                object? fresh = null;
                 try
                 {
                     item = storeId != null
@@ -3697,17 +3700,35 @@ namespace OutlookAI.Core.Com
                         return null;
                     }
 
-                    dynamic draft = item!;
                     List<string> changed = new List<string>();
                     List<string> unresolved = new List<string>();
-
-                    // 1. Body / signature FIRST: Word edits reach the item only through
-                    //    Close(olSave) on the SAME held inspector, and an item.Save()
-                    //    between the edits and that close wipes them (D37 footgun).
                     bool bodyReplaced = false;
                     bool wordPlaced = false;
                     bool overrideApplied = false;
-                    string? overrideError = null;
+
+                    // ⚠ THE ORDERING HERE COST TWO LIVE RUNS TO GET RIGHT, and neither of
+                    // the two obvious shapes works on an ALREADY-SAVED item:
+                    //
+                    //  (a) compose in Word, then set properties on THIS reference and
+                    //      Save() - the creators' order. On a NEW item that is correct,
+                    //      because GetInspector binds to the very object we hold. On a
+                    //      SAVED item Outlook's inspector edits its OWN MailItem instance;
+                    //      Close(olSave) commits through that one, and our Save() then
+                    //      writes the pre-edit content straight back over it. Observed
+                    //      exactly: property changes stuck, every body rewrite vanished
+                    //      while the call reported success.
+                    //  (b) set properties and Save() FIRST, then compose. That loses the
+                    //      body a different way: right after a Save() the freshly acquired
+                    //      inspector has no Word editor yet, so the compose refuses with
+                    //      NoWordEditor. (Re-acquiring the inspector to retry is worse
+                    //      still - every GetInspector materializes ANOTHER hidden inspector
+                    //      (section 12) and asking for a second one wedged Outlook solid.)
+                    //
+                    // What works is neither: compose FIRST on a freshly opened item (the
+                    // proven shape - the inspector is the first thing touched after the
+                    // open), let Close(olSave) commit it, then RE-OPEN the item and apply
+                    // every property change to that fresh instance, which already contains
+                    // the Word edits and can therefore be Save()d without clobbering them.
                     if (body != null || signatureOverride != null)
                     {
                         (bool ok, string? composeError) = ReviseHeldDocument(item!, body, signatureOverride);
@@ -3731,10 +3752,17 @@ namespace OutlookAI.Core.Com
                         }
                     }
 
-                    // 2. Attachments: removals first, then additions, so removing and
-                    //    adding the same file name in one call means REPLACE.
+                    // Re-open AFTER the inspector committed: this instance carries the Word
+                    // edits, so saving it cannot undo them.
+                    fresh = storeId != null
+                        ? ns.GetItemFromID(entryIdHex, storeId)
+                        : ns.GetItemFromID(entryIdHex);
+                    dynamic draft = fresh!;
+
+                    // Attachments: removals first, then additions, so removing and adding
+                    // the same file name in one call means REPLACE.
                     List<string> removed = RemoveAttachmentsByName(draft, attachmentsToRemove);
-                    List<string> added = AddAttachmentsToDraft(draft, attachmentsToAdd);
+                    (List<string> added, List<string> failedToAttach) = AddAttachmentsToDraft((object)draft, attachmentsToAdd);
                     if (removed.Count > 0)
                     {
                         changed.Add("attachmentsRemoved");
@@ -3745,8 +3773,8 @@ namespace OutlookAI.Core.Com
                         changed.Add("attachmentsAdded");
                     }
 
-                    // 3. Recipients: REPLACE per class, and only for the classes the
-                    //    caller actually supplied (an omitted class is left alone).
+                    // Recipients: REPLACE per class, and only for the classes the caller
+                    // actually supplied (an omitted class is left alone).
                     if (toRecipients != null)
                     {
                         ReplaceRecipients(draft, 1, toRecipients, unresolved);
@@ -3765,10 +3793,10 @@ namespace OutlookAI.Core.Com
                         changed.Add("bcc");
                     }
 
-                    // 4. Subject, with the A3 threading restore: assigning Subject makes
-                    //    Outlook REGENERATE PR_CONVERSATION_INDEX, detaching the draft from
-                    //    its thread - capture the draft's OWN index/topic and write them
-                    //    back afterwards (live-proven on this build in batch A).
+                    // Subject, with the A3 threading restore: assigning Subject makes
+                    // Outlook REGENERATE PR_CONVERSATION_INDEX, detaching the draft from
+                    // its thread - capture the draft's OWN index/topic and write them back
+                    // afterwards (live-proven on this build in batch A).
                     bool? topicPreserved = null;
                     if (subject != null)
                     {
@@ -3790,7 +3818,7 @@ namespace OutlookAI.Core.Com
                         }
                     }
 
-                    // 5. Plain item properties.
+                    // Plain item properties.
                     if (importance != null)
                     {
                         try
@@ -3817,31 +3845,34 @@ namespace OutlookAI.Core.Com
 
                     draft.Save();
 
+                    bool displayed = false;
                     if (display)
                     {
                         try
                         {
                             draft.Display();
+                            displayed = true;
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
                         }
                     }
 
-                    ComDraftInfo info = SnapshotDraft(item!);
+                    ComDraftInfo info = SnapshotDraft(fresh!);
                     return new ComDraftUpdateResult(
                         info,
                         changed,
                         unresolved,
-                        SnapshotAttachments(item!),
+                        SnapshotAttachments(fresh!),
                         added,
                         removed,
+                        failedToAttach,
                         bodyReplaced,
                         wordPlaced,
-                        display,
+                        displayed,
                         signatureOverride?.Name,
                         overrideApplied,
-                        overrideError,
+                        null,
                         topicPreserved);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
@@ -3851,6 +3882,7 @@ namespace OutlookAI.Core.Com
                 }
                 finally
                 {
+                    Release(fresh);
                     Release(item);
                 }
             });
@@ -4065,6 +4097,8 @@ namespace OutlookAI.Core.Com
                     }
                 }
 
+                // Depth guard reached with a live reference still held.
+                Release(current);
                 return false;
             }
             catch (Exception ex) when (IsComCallFailure(ex))
@@ -4102,6 +4136,12 @@ namespace OutlookAI.Core.Com
                     return (false, "SignatureFileMissing");
                 }
 
+                // EXACTLY ONE acquisition, deliberately - matching the creators.
+                // A retry loop was tried here and REMOVED: every GetInspector call
+                // materializes another hidden Inspector for the same item (v3.MD section
+                // 12), and asking for a second one after releasing the first wedged
+                // Outlook indefinitely on a headless instance. One inspector, held to the
+                // close, is the only shape this codebase has ever proven.
                 try
                 {
                     inspector = draft.GetInspector;
@@ -4113,6 +4153,21 @@ namespace OutlookAI.Core.Com
                 if (inspector == null)
                 {
                     return (false, "NoInspector");
+                }
+
+                // ⚠ ACTIVATE BEFORE EDITING - live-measured, and the difference between
+                // a working revision and a silent no-op. On a NEW item the WordEditor of a
+                // hidden inspector is live and its edits commit. On an ALREADY-SAVED draft
+                // the hidden inspector hands back a document whose edits go nowhere: the
+                // call reports success and the stored HTMLBody changes by EXACTLY ZERO
+                // bytes (measured: 38932 -> 38932, new text absent, old text intact).
+                // Activating the inspector materializes the real editing surface.
+                try
+                {
+                    ((dynamic)inspector!).Activate();
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
                 }
 
                 try
@@ -4136,20 +4191,60 @@ namespace OutlookAI.Core.Com
 
                 if (error == null && body != null)
                 {
-                    (bool bodyOk, string? bodyError) = InsertBodyAboveSignature(document!, body);
+                    // replaceWholeDocumentWhenNoBoundary: an update must clear the PREVIOUS
+                    // body even when the draft carries neither a signature nor a quoted
+                    // original to bound the region.
+                    (bool bodyOk, string? bodyError) = InsertBodyAboveSignature(
+                        document!, body, replaceWholeDocumentWhenNoBoundary: true);
                     error = bodyOk ? null : bodyError ?? "BodyInsertFailed";
                 }
 
                 if (error == null)
                 {
+                    // ⚠ THE COMMIT, and it is NOT the creators' Close(olSave).
+                    // On a NEW item Close(olSave) is what writes the Word document into
+                    // the item, because closing is what saves an item that was never
+                    // saved. On an ALREADY-SAVED draft it does nothing - live-measured:
+                    // the call reported success and the re-opened draft still held the
+                    // OLD body, with the new text nowhere in the document.
+                    // What does commit is saving the inspector's OWN item -
+                    // Inspector.CurrentItem is the instance the WordEditor edits, so
+                    // Save() on THAT writes the document through. The close is then
+                    // olDiscard on purpose: the save already happened, and a second
+                    // save-on-close would re-render the document from the item (the D37
+                    // footgun) for no gain.
+                    object? currentItem = null;
                     try
                     {
-                        ((dynamic)inspector!).Close(0); // olSave - the load-bearing flush
-                        flushed = true;
+                        currentItem = ((dynamic)inspector!).CurrentItem;
+                        if (currentItem != null)
+                        {
+                            ((dynamic)currentItem!).Save();
+                            flushed = true;
+                        }
+                        else
+                        {
+                            error = "NoCurrentItem";
+                        }
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
                         error = DescribeComFailure(ex);
+                    }
+                    finally
+                    {
+                        Release(currentItem);
+                    }
+
+                    if (flushed)
+                    {
+                        try
+                        {
+                            ((dynamic)inspector!).Close(1); // olDiscard - already saved
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                        }
                     }
                 }
 
@@ -4164,7 +4259,9 @@ namespace OutlookAI.Core.Com
                 if (!flushed && inspector != null)
                 {
                     // Discard, never save: the draft must survive a failed revision
-                    // untouched rather than half-rewritten.
+                    // untouched rather than half-rewritten. (On the success path the
+                    // inspector was already closed with olDiscard after the explicit
+                    // save.)
                     try
                     {
                         ((dynamic)inspector!).Close(1); // olDiscard
@@ -4240,12 +4337,13 @@ namespace OutlookAI.Core.Com
         /// because a draft that silently misses a file the agent believes it attached is
         /// exactly the failure mode the fail-closed validation exists to prevent.
         /// </summary>
-        private static List<string> AddAttachmentsToDraft(dynamic mail, IReadOnlyList<string>? paths)
+        private static (List<string> Added, List<string> Failed) AddAttachmentsToDraft(dynamic mail, IReadOnlyList<string>? paths)
         {
             List<string> added = new List<string>();
+            List<string> failed = new List<string>();
             if (paths == null || paths.Count == 0)
             {
-                return added;
+                return (added, failed);
             }
 
             object? attachments = null;
@@ -4261,6 +4359,15 @@ namespace OutlookAI.Core.Com
                         attachment = collection.Add(path);
                         added.Add(Path.GetFileName(path));
                     }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        // A COM refusal here is rare (every path was existence- and
+                        // readability-checked pre-COM), but it must NOT abort a draft that
+                        // already exists - that would leave the caller with a saved draft
+                        // and an error claiming nothing happened. Report the file instead,
+                        // loudly, in the outcome and the audit line.
+                        failed.Add(Path.GetFileName(path));
+                    }
                     finally
                     {
                         Release(attachment);
@@ -4272,7 +4379,7 @@ namespace OutlookAI.Core.Com
                 Release(attachments);
             }
 
-            return added;
+            return (added, failed);
         }
 
         /// <summary>
@@ -4814,7 +4921,10 @@ namespace OutlookAI.Core.Com
         /// what was inserted, so the length must be measured, not read off the range.
         /// </para>
         /// </summary>
-        private static (bool Inserted, string? Error) InsertBodyAboveSignature(object documentObject, ComDraftBody body)
+        private static (bool Inserted, string? Error) InsertBodyAboveSignature(
+            object documentObject,
+            ComDraftBody body,
+            bool replaceWholeDocumentWhenNoBoundary = false)
         {
             dynamic doc = documentObject;
             object? bookmarks = null;
@@ -4865,7 +4975,20 @@ namespace OutlookAI.Core.Com
                 // WriteDraftToDocument does, so the body starts at the top instead of
                 // below the template's blank paragraphs. A trailing empty paragraph keeps
                 // Outlook's own blank line between body and signature/quote.
+                //
+                // ⚠ WITH NO BOUNDARY MARKER the draft region has no upper bound, and the
+                // two callers need OPPOSITE things (live-caught by the batch-C reply test):
+                // on a CREATE the document holds only empty boilerplate, so writing at 0
+                // is correct and safe; on an UPDATE the document holds the PREVIOUS body,
+                // so writing at 0 would PREPEND - the new text above the old one, the exact
+                // duplication update_draft exists to avoid. When the caller is revising, the
+                // draft region therefore runs to the end of the document (minus Word's
+                // final paragraph mark, which cannot be deleted).
                 int insertAt = boundary != null ? boundaryStart : 0;
+                if (boundary == null && replaceWholeDocumentWhenNoBoundary)
+                {
+                    insertAt = Math.Max(0, GetDocumentEnd(doc) - 1);
+                }
                 int writtenEnd;
                 if (body.IsHtml)
                 {

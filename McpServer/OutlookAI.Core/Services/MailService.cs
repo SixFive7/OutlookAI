@@ -2109,8 +2109,9 @@ namespace OutlookAI.Core.Services
                 case "NoInspector":
                 case "NoWordEditor":
                     return RefuseDraft("compose_surface_unavailable", operation, entryId,
-                        "Outlook would not open the draft's editor, so the body could not be replaced. The draft is unchanged. "
-                        + "Close any compose window that has it open and retry.");
+                        "Outlook would not open the draft's editor (" + comError + "), so the body could not be replaced. "
+                        + "The draft is unchanged. This usually means Outlook is still starting up or is busy - retry in a "
+                        + "moment, and close any compose window that already has this draft open.");
                 case "SignatureFileMissing":
                     return RefuseDraft("signature_file_missing", operation, entryId,
                         "The requested signature's file is missing on disk. The draft is unchanged; see list_signatures.");
@@ -2164,6 +2165,9 @@ namespace OutlookAI.Core.Services
                         : null),
                     ("attachmentsRemoved", updated.AttachmentsRemoved.Count > 0
                         ? updated.AttachmentsRemoved.Count.ToString(CultureInfo.InvariantCulture)
+                        : null),
+                    ("attachmentsFailed", updated.AttachmentsFailed.Count > 0
+                        ? updated.AttachmentsFailed.Count.ToString(CultureInfo.InvariantCulture)
                         : null),
                     ("attachmentsTotal", updated.Attachments.Count.ToString(CultureInfo.InvariantCulture)),
                     ("recipients", updated.Draft.Recipients.Count.ToString(CultureInfo.InvariantCulture)),
@@ -2248,6 +2252,7 @@ namespace OutlookAI.Core.Services
                 AttachmentsAdded = updated.AttachmentsAdded.Count > 0 ? updated.AttachmentsAdded : null,
                 AttachmentsRemoved = updated.AttachmentsRemoved.Count > 0 ? updated.AttachmentsRemoved : null,
                 AttachmentsNotFound = notRemoved.Count > 0 ? notRemoved : null,
+                AttachmentsFailed = updated.AttachmentsFailed.Count > 0 ? updated.AttachmentsFailed : null,
             };
         }
 
