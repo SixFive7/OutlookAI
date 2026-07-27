@@ -307,10 +307,11 @@ namespace OutlookAI.Core.Services
         public static string DescribeUnresolvedFolder(string? folder, string store)
         {
             return "No results, and the folder path '" + folder + "' matched NOTHING in the index for store '"
-                + store + "' although the store itself has indexed mail - so this is a folder-resolution problem, "
-                + "not an empty folder. Check the path with list_folders (delegate mailboxes are indexed by folder "
-                + "NAME, and Outlook may show a localized name the index does not use), or retry with "
-                + "exhaustive:true to scan the folder through Outlook directly.";
+                + store + "' although the store itself has indexed mail - so this looks like a folder-resolution "
+                + "problem rather than an empty folder (a folder created minutes ago can also still be missing from "
+                + "the index). Check the path with list_folders (delegate mailboxes are indexed by folder NAME, and "
+                + "Outlook may show a localized name the index does not use), or retry with exhaustive:true to scan "
+                + "the folder through Outlook directly.";
         }
 
         private static IEnumerable<string> Quote(IReadOnlyList<string> names)

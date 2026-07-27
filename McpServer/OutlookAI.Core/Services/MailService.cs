@@ -260,9 +260,10 @@ namespace OutlookAI.Core.Services
 
             // The folder bound is reported BEFORE anything else: an agent that gets a
             // widened or name-matched delegate scope must see that first (constraints
-            // C2/C3), and a folder that did not resolve must never look like an empty one
-            // (C7 - the guard below).
-            AddFolderScopeAdvice(advice, folderScope, request, indexResult.Hits.Count);
+            // C2/C3). The zero-row guard (C7) runs AFTER the sweep instead - the freshness
+            // sweep can still supply hits for a folder the index has never seen, and
+            // "the folder did not resolve" must not be said over a non-empty answer.
+            AddFolderScopeAdvice(advice, folderScope);
 
             if (!request.IndexOnly)
             {
@@ -292,6 +293,8 @@ namespace OutlookAI.Core.Services
 
                 AddSweepCoverageAdvice(advice, sweep, staleness);
             }
+
+            AddUnresolvedFolderAdvice(advice, folderScope, request, summaries.Count);
 
             // Snapshot AFTER the sweep: the sweep may have just autostarted Outlook
             // (D17) and the staleness block must reflect that reality, not the
@@ -362,11 +365,11 @@ namespace OutlookAI.Core.Services
 
         /// <summary>
         /// Reports every way the folder bound differs from what was asked (v3.MD
-        /// constraints C2/C3/C7). Nothing here changes the result set - it exists so the
-        /// result set can never be misread.
+        /// constraints C2/C3). Nothing here changes the result set - it exists so the
+        /// result set can never be misread. The C7 zero-row guard is separate
+        /// (<see cref="AddUnresolvedFolderAdvice"/>): it can only judge the MERGED answer.
         /// </summary>
-        private void AddFolderScopeAdvice(
-            List<string> advice, FolderScopeResolution? folderScope, SearchRequest request, int indexHitCount)
+        private static void AddFolderScopeAdvice(List<string> advice, FolderScopeResolution? folderScope)
         {
             if (folderScope == null || folderScope.RequestedFolder == null)
             {
@@ -388,17 +391,24 @@ namespace OutlookAI.Core.Services
                     + "mailbox's folder tree: delegate mailboxes are indexed by folder NAME only, so a same-named "
                     + "folder elsewhere in that mailbox would also be included.");
             }
+        }
 
-            if (indexHitCount > 0)
+        /// <summary>
+        /// The non-silent zero-row guard (v3.MD constraint C7). Two TOP-1 probes, only
+        /// ever on a FULLY empty answer (index plus freshness sweep): first "does this
+        /// folder bound match ANY row" - so a folder that merely holds no match stays
+        /// quiet, which the one-probe form would not - then "does the store". Rows in the
+        /// store but none for the folder means the PATH did not resolve, which is the
+        /// failure mode that hid the delegate defect.
+        /// </summary>
+        private void AddUnresolvedFolderAdvice(
+            List<string> advice, FolderScopeResolution? folderScope, SearchRequest request, int hitCount)
+        {
+            if (hitCount > 0 || folderScope == null || folderScope.RequestedFolder == null)
             {
                 return;
             }
 
-            // Non-silent zero-row guard (C7). Two TOP-1 probes, only ever on the empty
-            // path: first "does this folder bound match ANY row" (so a folder that is
-            // simply empty of matches stays quiet), then "does the store". Rows in the
-            // store but none for the folder means the PATH did not resolve - the failure
-            // mode that hid the delegate defect for months.
             try
             {
                 if (_index.Value.FolderScopeHasAnyItem(folderScope.Scope, folderScope.FolderPaths))

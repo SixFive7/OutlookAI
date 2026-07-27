@@ -411,7 +411,14 @@ public sealed class LiveFolderScopeTests
             Assert.NotNull(outcome.Sweep);
             Assert.True(outcome.Sweep!.Performed);
             Assert.Contains(outcome.Hits, h => h.Subject == seedSubject);
-            _output.WriteLine($"apostrophe folder searched without throwing: hits={outcome.Hits.Count}");
+
+            // And the zero-row guard stays quiet: this folder IS new to the index, but
+            // the answer is not empty - the guard judges the merged result, not the index
+            // rows alone, or every just-created folder would be called unresolvable.
+            Assert.DoesNotContain(
+                outcome.Advice ?? Array.Empty<string>(),
+                a => a.Contains("matched NOTHING in the index", StringComparison.Ordinal));
+            _output.WriteLine($"apostrophe folder searched without throwing: hits={outcome.Hits.Count}, no false resolution advice");
 
             // Exhaustive too - a different escaping path (DASL, not WS-SQL).
             Assert.Contains(Exhaustive(folder, includeSubfolders: false).Hits, h => h.Subject == seedSubject);

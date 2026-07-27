@@ -339,7 +339,10 @@ public sealed class FolderScopeResolverTests
         string advice = FolderScopeResolver.DescribeUnresolvedFolder("Inbox/Typo", "Sam Delegate");
 
         Assert.Contains("matched NOTHING in the index", advice, StringComparison.Ordinal);
-        Assert.Contains("not an empty folder", advice, StringComparison.Ordinal);
+        Assert.Contains("folder-resolution problem rather than an empty folder", advice, StringComparison.Ordinal);
+        // The one honest alternative explanation is named too - a folder created minutes
+        // ago has no index rows yet, and the guard must not present that as a defect.
+        Assert.Contains("created minutes ago", advice, StringComparison.Ordinal);
         Assert.Contains("list_folders", advice, StringComparison.Ordinal);
         Assert.Contains("exhaustive:true", advice, StringComparison.Ordinal);
     }
