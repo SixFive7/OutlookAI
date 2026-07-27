@@ -285,6 +285,13 @@ public sealed class LiveHtmlDraftTests
     {
         string token = "B1SHOT" + Marker;
 
+        // Make sure Outlook owns a normal window BEFORE this test opens one. Displaying
+        // and then closing an Inspector on an Outlook that has NO other window makes the
+        // instance EXIT (the D43 idle-self-exit hazard, live-proven again here: the next
+        // test in the collection then died on RPC_S_SERVER_UNAVAILABLE 0x800706BA). The
+        // Explorer is scoped to the hub store, which S5 allows.
+        _fixture.Service.GotoFolder(Hub);
+
         // S5: hub store, and every visible character is agent-authored.
         LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft");
         DraftOutcome outcome = Service.NewDraft(
@@ -313,6 +320,10 @@ public sealed class LiveHtmlDraftTests
             CleanupDraft(outcome.EntryId);
         }
 
+        // Outlook must have SURVIVED the close - the rest of the tier depends on it. A
+        // dead instance surfaces here as RPC_S_SERVER_UNAVAILABLE, naming the real cause
+        // instead of failing whichever test happens to run next.
+        Assert.NotNull(_fixture.VerifySession.GetOpenInspectors());
         AssertNoTaggedArtifactsRemain();
     }
 

@@ -172,7 +172,13 @@ public sealed class LiveDraftTests
         string subject = _fixture.TaggedSubject("display-case");
         string agentBody = "Display-case draft, agent-authored content only. " + Marker;
 
-        // The ONE .Display() case (D4 default behavior; S5: the window shows only
+        // Displaying and then closing an Inspector on an Outlook that has NO other window
+        // makes the instance EXIT (D43 idle-self-exit hazard), which kills the rest of the
+        // live tier with RPC_S_SERVER_UNAVAILABLE. Give it a hub-scoped Explorer first
+        // (S5-safe) so the close can never be the last window.
+        Service.GotoFolder(Hub);
+
+        // The .Display() case (D4 default behavior; S5: the window shows only
         // agent-authored content plus the hub's own signature).
         DraftOutcome outcome = Service.NewDraft(LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null, subject, agentBody, display: true);
         try
