@@ -144,8 +144,18 @@ public sealed class MoveArchiveLiveMcpToolTests
                 Hub, Marker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
         }
 
-        Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(
-            Hub, Marker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive));
+        // The STRICT count cannot tolerate the documented materialization lag: an item
+        // can surface after the stable-zero sweep returned, which failed this test in an
+        // otherwise green run. Purge once more (S3-legal: tag AND this run's marker) and
+        // assert only what SURVIVES - the same correction batch A made for the T2 suites.
+        int remaining = LiveOutlookTestMailer.CountTaggedArtifactsAfterPurgingStragglers(
+            Hub, Marker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive, out int stragglersPurged);
+        if (stragglersPurged > 0)
+        {
+            _output.WriteLine($"cleanup[{Hub}]: {stragglersPurged} late-materialized artifact(s) purged (documented lag)");
+        }
+
+        Assert.Equal(0, remaining);
         Assert.Equal(0, LiveOutlookTestMailer.CountTestFolders(Hub));
         _output.WriteLine("t3 move/archive: 0 marker artifacts, 0 test folders remain in hub");
 

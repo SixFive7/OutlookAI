@@ -360,23 +360,29 @@ public sealed class LiveMailServiceTests
     [Fact]
     public void Thread_IndexPath_AndComFallback()
     {
-        // A recent hit with a conversation id from a busy store.
-        HitSummary? seed = null;
+        // Recent hits with a conversation id from a busy store. SEVERAL of them, on
+        // purpose: the COM fallback below walks a REAL production item, and any single
+        // one of them can be unwalkable right now (a stale index row whose item has moved
+        // or gone). Pinning the walk on one arbitrary item pins the corpus, not the
+        // contract - it failed exactly that way, twice, with the index tier happily
+        // returning 50 members for the same conversation.
+        List<HitSummary> candidates = new();
         foreach (string store in _fixture.Settings.ExpectedStoreDisplayNames)
         {
-            seed = Service.Search(new SearchRequest
+            candidates.AddRange(Service.Search(new SearchRequest
             {
                 IndexOnly = true,
                 Store = store,
                 IncludeAttachmentHits = false,
                 Top = 20,
-            }).Hits.FirstOrDefault(h => h.ConversationId != null && !string.IsNullOrEmpty(h.Subject));
-            if (seed != null)
+            }).Hits.Where(h => h.ConversationId != null && !string.IsNullOrEmpty(h.Subject)));
+            if (candidates.Count >= 5)
             {
                 break;
             }
         }
 
+        HitSummary? seed = candidates.FirstOrDefault();
         Assert.NotNull(seed);
 
         // Index path.
@@ -396,10 +402,14 @@ public sealed class LiveMailServiceTests
         // members for). That is the documented busy-Outlook shape, not a contract
         // violation - retry rather than pin the race.
         ThreadOutcome comThread = Service.Thread("zzzznonexistentconversationzzzz", seed.Id, seed.Store);
-        for (int attempt = 0; attempt < 3 && comThread.Hits.Count == 0; attempt++)
+        foreach (HitSummary candidate in candidates.Take(5))
         {
-            Thread.Sleep(1500);
-            comThread = Service.Thread("zzzznonexistentconversationzzzz", seed.Id, seed.Store);
+            if (comThread.Hits.Count > 0)
+            {
+                break;
+            }
+
+            comThread = Service.Thread("zzzznonexistentconversationzzzz", candidate.Id, candidate.Store);
         }
 
         _output.WriteLine($"thread(com) source={comThread.Source} members={comThread.Hits.Count} ms={comThread.ElapsedMs}");
