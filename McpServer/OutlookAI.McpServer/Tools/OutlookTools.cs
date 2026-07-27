@@ -332,6 +332,23 @@ public static class OutlookTools
         return Guard(() => ServerRuntime.Service.ShowSearchResults(query, scope, store, folder));
     }
 
+    private const string CcHint = "Cc recipient address(es), separated by ';' or ','. ADDED to the recipients Outlook already "
+        + "put on the draft - existing recipients are never replaced. Addresses that do not resolve are reported back in "
+        + "unresolvedRecipients (they stay on the draft for the user to fix), never dropped silently.";
+
+    private const string BccHint = "Bcc recipient address(es), separated by ';' or ','. ADDED to the draft like cc; other "
+        + "recipients never see them. Unresolvable addresses come back in unresolvedRecipients.";
+
+    private const string ImportanceHint = "Message importance: 'low', 'normal' or 'high'. Omit for Outlook's default (normal).";
+
+    private const string ReadReceiptHint = "Ask for a read receipt (default: the account's own setting). Use only when the "
+        + "user asked for one - recipients see the request.";
+
+    private const string DerivedSubjectHint = "Replacement subject line. Omit to keep Outlook's own RE:/FW: subject, which is "
+        + "the safe default. The draft keeps threading either way (its ConversationIndex still extends the original and the "
+        + "original conversation topic is carried over, reported as conversationTopicPreserved), but a changed subject is what "
+        + "the recipient sees, so only override when the user asked to rename the thread. Max 255 characters.";
+
     [McpServerTool(Name = "new_draft")]
     [Description("Create a NEW email draft for the user - saved into the chosen account's Drafts folder with that account's "
         + "identity and signature, and opened on screen (default) so the user can review, edit and send it themselves. "
@@ -342,15 +359,19 @@ public static class OutlookTools
         [Description("To recipient address(es), separated by ';' or ','.")] string to,
         [Description("Subject line.")] string subject,
         [Description("Plain-text body. Placed ABOVE the account's signature.")] string body,
-        [Description("Cc recipient address(es), separated by ';' or ','. Optional.")] string? cc = null,
+        [Description(CcHint)] string? cc = null,
+        [Description(BccHint)] string? bcc = null,
         [Description("Open the draft in an Outlook window for the user (default true). Pass false only when the user asked not to see it.")]
         bool display = true,
         [Description("Signature name to apply instead of the account default (see list_signatures). Pick the BEST one for this "
             + "message - e.g. match the recipient's/thread's language using the excerpts; with a single signature the choice is "
             + "trivial. Omit for the account's default signature.")]
-        string? signature = null)
+        string? signature = null,
+        [Description(ImportanceHint)] string? importance = null,
+        [Description(ReadReceiptHint)] bool? request_read_receipt = null)
     {
-        return Guard(() => ServerRuntime.Service.NewDraft(account, to, cc, subject, body, display, signature));
+        return Guard(() => ServerRuntime.Service.NewDraft(
+            account, to, cc, subject, body, display, signature, bcc, importance, request_read_receipt));
     }
 
     [McpServerTool(Name = "reply_draft")]
@@ -360,12 +381,18 @@ public static class OutlookTools
     public static string ReplyDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
         [Description("Plain-text reply body. Placed ABOVE the quoted original.")] string body,
+        [Description(CcHint)] string? cc = null,
+        [Description(BccHint)] string? bcc = null,
+        [Description(DerivedSubjectHint)] string? subject = null,
         [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true,
         [Description("Signature name to apply instead of the account default (see list_signatures). Pick the BEST one for this "
             + "reply - e.g. match the thread's language; with a single signature the choice is trivial. Omit for the default.")]
-        string? signature = null)
+        string? signature = null,
+        [Description(ImportanceHint)] string? importance = null,
+        [Description(ReadReceiptHint)] bool? request_read_receipt = null)
     {
-        return Guard(() => ServerRuntime.Service.ReplyDraft(id, body, replyAll: false, display, signature));
+        return Guard(() => ServerRuntime.Service.ReplyDraft(
+            id, body, replyAll: false, display, signature, cc, bcc, subject, importance, request_read_receipt));
     }
 
     [McpServerTool(Name = "replyall_draft")]
@@ -375,12 +402,18 @@ public static class OutlookTools
     public static string ReplyAllDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
         [Description("Plain-text reply body. Placed ABOVE the quoted original.")] string body,
+        [Description(CcHint)] string? cc = null,
+        [Description(BccHint)] string? bcc = null,
+        [Description(DerivedSubjectHint)] string? subject = null,
         [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true,
         [Description("Signature name to apply instead of the account default (see list_signatures). Pick the BEST one for this "
             + "reply - e.g. match the thread's language; with a single signature the choice is trivial. Omit for the default.")]
-        string? signature = null)
+        string? signature = null,
+        [Description(ImportanceHint)] string? importance = null,
+        [Description(ReadReceiptHint)] bool? request_read_receipt = null)
     {
-        return Guard(() => ServerRuntime.Service.ReplyDraft(id, body, replyAll: true, display, signature));
+        return Guard(() => ServerRuntime.Service.ReplyDraft(
+            id, body, replyAll: true, display, signature, cc, bcc, subject, importance, request_read_receipt));
     }
 
     [McpServerTool(Name = "forward_draft")]
@@ -391,12 +424,18 @@ public static class OutlookTools
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to forward.")] string id,
         [Description("Plain-text body. Placed ABOVE the forwarded mail.")] string body,
         [Description("To recipient address(es), separated by ';' or ','.")] string to,
+        [Description(CcHint)] string? cc = null,
+        [Description(BccHint)] string? bcc = null,
+        [Description(DerivedSubjectHint)] string? subject = null,
         [Description("Open the draft in an Outlook window for the user (default true).")] bool display = true,
         [Description("Signature name to apply instead of the account default (see list_signatures). Pick the BEST one for this "
             + "message - e.g. match the new recipient's language; with a single signature the choice is trivial. Omit for the default.")]
-        string? signature = null)
+        string? signature = null,
+        [Description(ImportanceHint)] string? importance = null,
+        [Description(ReadReceiptHint)] bool? request_read_receipt = null)
     {
-        return Guard(() => ServerRuntime.Service.ForwardDraft(id, body, to, display, signature));
+        return Guard(() => ServerRuntime.Service.ForwardDraft(
+            id, body, to, display, signature, cc, bcc, subject, importance, request_read_receipt));
     }
 
     [McpServerTool(Name = "send")]
