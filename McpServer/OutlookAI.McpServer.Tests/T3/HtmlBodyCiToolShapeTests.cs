@@ -15,7 +15,7 @@ public sealed class HtmlBodyCiToolShapeTests
 {
     private static readonly string[] AllDraftTools =
     [
-        "new_draft", "reply_draft", "replyall_draft", "forward_draft",
+        "new_draft", "reply_draft", "replyall_draft", "forward_draft", "update_draft",
     ];
 
     public static TheoryData<string> AllDraftToolNames => Names(AllDraftTools);

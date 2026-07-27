@@ -80,6 +80,135 @@ public sealed class DraftValidationTests : IDisposable
         Assert.Throws<ArgumentException>(() => _service.ReplyDraft("h1", body, replyAll: false, display: false));
     }
 
+    // --------------------------------------------- D46/C1+C2: update_draft / discard_draft
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void UpdateDraft_RequiresAnId(string? id)
+    {
+        Assert.Throws<ArgumentException>(() => _service.UpdateDraft(id!, subject: "s", display: false));
+    }
+
+    [Fact]
+    public void UpdateDraft_WithNoChangeRequested_IsRejectedBeforeAnyIdResolution()
+    {
+        // Rejected BEFORE the id is even resolved: a no-op update would still open the
+        // item and re-save it, which is a mailbox write for nothing.
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => _service.UpdateDraft("h424242", display: false));
+        Assert.Contains("Nothing to update", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UpdateDraft_BothBodyForms_AreMutuallyExclusive()
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(
+            () => _service.UpdateDraft("h424242", body: "text", bodyHtml: "<p>x</p>", display: false));
+        Assert.Contains("mutually exclusive", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UpdateDraft_BlankSubject_IsRejected_RatherThanClearingTheSubject()
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(
+            () => _service.UpdateDraft("h424242", subject: "   ", display: false));
+        Assert.Contains("must not be blank", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UpdateDraft_OverlongSubject_IsRejected()
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(
+            () => _service.UpdateDraft("h424242", subject: new string('s', 256), display: false));
+        Assert.Contains("too long", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UpdateDraft_EmptyToList_IsRejected_BecauseToIsReplaceNotAppend()
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(
+            () => _service.UpdateDraft("h424242", to: " ; , ", display: false));
+        Assert.Contains("REPLACES the To list", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UpdateDraft_EmptyCcOrBcc_IsAccepted_BecauseThatIsHowYouClearThem()
+    {
+        // An empty cc/bcc is a legitimate REPLACE-with-nothing; only the id may complain.
+        foreach (Func<UpdateDraftOutcome> call in new Func<UpdateDraftOutcome>[]
+                 {
+                     () => _service.UpdateDraft("h424242", cc: "", display: false),
+                     () => _service.UpdateDraft("h424242", bcc: "", display: false),
+                 })
+        {
+            ArgumentException ex = Assert.Throws<ArgumentException>(() => call());
+            Assert.Contains("Unknown id", ex.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void UpdateDraft_InvalidImportance_IsRejectedBeforeAnyComWork()
+    {
+        Assert.Throws<ArgumentException>(() => _service.UpdateDraft("h424242", importance: "urgent", display: false));
+    }
+
+    [Fact]
+    public void UpdateDraft_BadAttachmentPath_IsRejectedBeforeAnyComWork()
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(
+            () => _service.UpdateDraft("h424242", attachments: new[] { "relative.pdf" }, display: false));
+        Assert.Contains("absolute path", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UpdateDraft_AcceptedArguments_ReachIdResolution_ProvingTheyPassedValidation()
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(
+            () => _service.UpdateDraft(
+                "h424242", body: "new text", subject: "New subject", to: "a@b.example",
+                importance: "high", requestReadReceipt: true,
+                removeAttachments: new[] { "old.pdf" }, display: false));
+        Assert.Contains("Unknown id", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void DiscardDraft_RequiresAnId(string? id)
+    {
+        Assert.Throws<ArgumentException>(() => _service.DiscardDraft(id!));
+    }
+
+    [Fact]
+    public void DiscardDraft_UnknownHitId_FailsIdResolution()
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => _service.DiscardDraft("h424242"));
+        Assert.Contains("Unknown id", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DiscardDraft_EntryIdNotFromThisServer_IsRefusedBeforeAnyComWork()
+    {
+        // THE guardrail (S1 v3): a well-formed EntryID no draft tool of this process ever
+        // returned is refused by the registry, with Outlook never touched. The gateway
+        // here cannot even start Outlook, so reaching COM would fail loudly instead.
+        DraftRefusedException ex = Assert.Throws<DraftRefusedException>(
+            () => _service.DiscardDraft(new string('A', 96)));
+
+        Assert.Equal("not_created_by_this_server", ex.Reason);
+        Assert.Contains("not created or last updated by this server session", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Delete it in Outlook instead", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DiscardDraft_RegistryStartsEmpty_SoAFreshServerCanDeleteNothing()
+    {
+        // A server restart must not inherit deletion rights over items it cannot vouch for.
+        Assert.Equal(0, _service.DraftRegistry.Count);
+    }
+
     [Fact]
     public void ReplyDraft_UnknownHitId_ThrowsInstructiveArgumentError()
     {

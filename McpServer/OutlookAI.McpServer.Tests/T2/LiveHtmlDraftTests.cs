@@ -341,13 +341,23 @@ public sealed class LiveHtmlDraftTests
                 WaitForInspector(outcome.EntryId, TimeSpan.FromSeconds(20)),
                 "no Inspector appeared for the displayed HTML draft within 20 s");
 
-            string path = ScreenCapture.CaptureOutlookWindowByCaptionFragment(
-                Marker,
-                _fixture.ScreenshotsDirectory,
-                $"soakfixB-html-draft-{DateTime.Now:yyyyMMdd-HHmmss}.png");
-            FileInfo file = new(path);
-            Assert.True(file.Exists && file.Length > 0, "screenshot must exist and be non-empty");
-            _output.WriteLine($"B1 screenshot saved: {path} bytes={file.Length}");
+            // S5 evidence is best-effort (soak fix 19): a lost foreground race means no
+            // file, never a file of someone else's window. The rendering itself is
+            // asserted against the raw HTMLBody elsewhere in this class.
+            try
+            {
+                string path = ScreenCapture.CaptureOutlookWindowByCaptionFragment(
+                    Marker,
+                    _fixture.ScreenshotsDirectory,
+                    $"soakfixB-html-draft-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+                FileInfo file = new(path);
+                Assert.True(file.Exists && file.Length > 0, "screenshot must exist and be non-empty");
+                _output.WriteLine($"B1 screenshot saved: {path} bytes={file.Length}");
+            }
+            catch (ScreenCaptureSkippedException ex)
+            {
+                _output.WriteLine($"S5 evidence skipped (no polluted capture written): {ex.Message}");
+            }
         }
         finally
         {

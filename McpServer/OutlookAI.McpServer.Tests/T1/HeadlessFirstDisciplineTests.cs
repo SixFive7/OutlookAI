@@ -22,12 +22,12 @@ public sealed class HeadlessFirstDisciplineTests
 
     /// <summary>Tools that may open a window ONLY via their `display` parameter (D4: default true).</summary>
     private static readonly IReadOnlyList<string> DraftDisplayTools =
-        ["new_draft", "reply_draft", "replyall_draft", "forward_draft"];
+        ["new_draft", "reply_draft", "replyall_draft", "forward_draft", "update_draft"];
 
     /// <summary>Tools that must NEVER cause an Outlook window, in any argument combination.</summary>
     private static readonly IReadOnlyList<string> HeadlessSafeTools =
         ["search", "thread", "read", "save_attachment", "outlook_health", "list_accounts", "list_folders",
-         "list_signatures", "manage_signature", "send", "move_mail", "archive_mail"];
+         "list_signatures", "manage_signature", "send", "move_mail", "archive_mail", "discard_draft"];
 
     private static Dictionary<string, MethodInfo> DiscoverAdvertisedTools()
     {

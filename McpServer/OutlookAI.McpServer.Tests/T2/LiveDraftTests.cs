@@ -189,13 +189,23 @@ public sealed class LiveDraftTests
             Assert.True(inspector != null, "no Inspector appeared for the displayed draft within 15 s");
             _output.WriteLine($"display case: inspector entryIdMatches=true itemClass={inspector!.ItemClass}");
 
-            string path = ScreenCapture.CaptureOutlookWindowByCaptionFragment(
-                Marker,
-                _fixture.ScreenshotsDirectory,
-                $"phase4-new-draft-display-{DateTime.Now:yyyyMMdd-HHmmss}.png");
-            var file = new FileInfo(path);
-            Assert.True(file.Exists && file.Length > 0, "screenshot must exist and be non-empty");
-            _output.WriteLine($"screenshot saved: {path} bytes={file.Length}");
+            // S5 evidence is best-effort: if Outlook will not take the foreground the
+            // helper refuses rather than capturing whatever sits on top (soak fix 19).
+            // The contract under test is the displayed Inspector, asserted above.
+            try
+            {
+                string path = ScreenCapture.CaptureOutlookWindowByCaptionFragment(
+                    Marker,
+                    _fixture.ScreenshotsDirectory,
+                    $"phase4-new-draft-display-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+                var file = new FileInfo(path);
+                Assert.True(file.Exists && file.Length > 0, "screenshot must exist and be non-empty");
+                _output.WriteLine($"screenshot saved: {path} bytes={file.Length}");
+            }
+            catch (ScreenCaptureSkippedException ex)
+            {
+                _output.WriteLine($"S5 evidence skipped (no polluted capture written): {ex.Message}");
+            }
         }
         finally
         {

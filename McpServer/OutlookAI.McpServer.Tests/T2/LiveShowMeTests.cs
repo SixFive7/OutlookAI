@@ -192,15 +192,24 @@ public sealed class LiveShowMeTests
             ComExplorerState? searchState = _fixture.VerifySession.TryGetActiveExplorerState(out _);
             _output.WriteLine($"post-search explorer: folderName='{searchState?.CurrentFolderName}' (search-results view swap observable={searchState?.CurrentFolderName != null})");
 
-            string path = ScreenCapture.CaptureOutlookWindow(
-                searchState?.Caption,
-                _fixture.ScreenshotsDirectory,
-                $"phase3-show-search-results-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+            // S5 evidence is best-effort (soak fix 19): the helper refuses to write a
+            // capture it cannot prove is Outlook's own window.
+            try
+            {
+                string path = ScreenCapture.CaptureOutlookWindow(
+                    searchState?.Caption,
+                    _fixture.ScreenshotsDirectory,
+                    $"phase3-show-search-results-{DateTime.Now:yyyyMMdd-HHmmss}.png");
 
-            var file = new FileInfo(path);
-            Assert.True(file.Exists, "screenshot file must exist");
-            Assert.True(file.Length > 0, "screenshot file must be non-empty");
-            _output.WriteLine($"screenshot saved: {path} bytes={file.Length}");
+                var file = new FileInfo(path);
+                Assert.True(file.Exists, "screenshot file must exist");
+                Assert.True(file.Length > 0, "screenshot file must be non-empty");
+                _output.WriteLine($"screenshot saved: {path} bytes={file.Length}");
+            }
+            catch (ScreenCaptureSkippedException ex)
+            {
+                _output.WriteLine($"S5 evidence skipped (no polluted capture written): {ex.Message}");
+            }
         }
         finally
         {
