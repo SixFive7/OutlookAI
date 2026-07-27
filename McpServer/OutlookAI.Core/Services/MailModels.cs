@@ -144,6 +144,14 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Conversation id for the thread tool.</summary>
         public string? ConversationId { get; set; }
+
+        /// <summary>
+        /// True when the folder this index row names no longer exists in Outlook - a stale
+        /// (orphan) index row: read/open/save_attachment on it cannot succeed and re-running
+        /// the search returns it again. Omitted (null) for every ordinary hit, and whenever
+        /// Outlook was not reachable to check.
+        /// </summary>
+        public bool? StaleIndexRow { get; set; }
     }
 
     /// <summary>Freshness gap-sweep diagnostics attached to (non-exhaustive) search results.</summary>
