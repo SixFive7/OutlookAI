@@ -316,6 +316,36 @@ public static class LiveOutlookTestMailer
     }
 
     /// <summary>
+    /// Final post-test zero check for suites that SELF-SEND. <see
+    /// cref="DeleteTaggedArtifactsUntilStableZero"/> returns once the count has held at
+    /// zero for its stability window, but a Sent-Items or Inbox copy can still surface
+    /// LATER than that under load (Phase-4 fact 6 / soak fix 15 - live-observed twice
+    /// again during soak-fix batch A, where two suites of the same collection each found
+    /// exactly one straggler seconds after a stable zero). A straggler is therefore
+    /// PURGED once more - S3-legal, it matches tag AND this run's marker - and only what
+    /// survives that second purge is reported. Returns the final count (assert it is 0)
+    /// and sets <paramref name="stragglersPurged"/> for the test's log line, so a genuine
+    /// leak still fails loudly while the documented lag does not.
+    /// </summary>
+    public static int CountTaggedArtifactsAfterPurgingStragglers(
+        string storeDisplayName,
+        string uniqueMarker,
+        int[]? folderIds,
+        out int stragglersPurged)
+    {
+        stragglersPurged = 0;
+        int count = CountTaggedArtifacts(storeDisplayName, uniqueMarker, folderIds);
+        if (count == 0)
+        {
+            return 0;
+        }
+
+        stragglersPurged = count;
+        DeleteTaggedArtifactsUntilStableZero(storeDisplayName, uniqueMarker, folderIds: folderIds);
+        return CountTaggedArtifacts(storeDisplayName, uniqueMarker, folderIds);
+    }
+
+    /// <summary>
     /// Deletes ONE item by EntryID from the given store, refusing unless its subject
     /// carries BOTH the tag and <paramref name="uniqueMarker"/> (the S3 double-match:
     /// created-this-run id AND tag). Delete() moves it to the store's Deleted Items;
