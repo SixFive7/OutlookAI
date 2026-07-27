@@ -147,14 +147,27 @@ public static class OutlookTools
         + "sender/recipients with SMTP addresses, attachment list, conversation id. For an attachment-content hit this opens the PARENT mail. "
         + "Long bodies page cheaply: when bodyTruncated=true, call again with body_offset = bodyOffset + body.length to CONTINUE reading - "
         + "the next window is served from the already-extracted body, not re-read from the start. "
-        + "Needs Outlook (starts it if allowed). First read of an index hit locates the item (up to a few seconds); repeats are cached.")]
+        + "The plain text HIDES layout: to check how a mail actually renders - or to verify a draft you just created with body_html - "
+        + "pass include_html=true and inspect the stored HTML. "
+        + "Needs Outlook (starts it if allowed). First read of an index hit locates the item (up to a few seconds); repeats are cached. "
+        + "Works on any EntryID, including a draft you just created (drafts are not in the search index; pass the draft's entryId directly).")]
     public static string Read(
         [Description("Hit id (e.g. h12) or full EntryID hex.")] string id,
         [Description("Body window size in characters (default 20000; 0 = metadata only). bodyTruncated=true means more body exists beyond the window; bodyTotalChars is the full size.")] int max_body_chars = MailService.BodyCharsDefault,
         [Description("Include raw transport headers (capped at 8 KB). Default false.")] bool include_headers = false,
-        [Description("Start of the body window in characters (default 0). Use the previous read's bodyOffset + body.length to continue a long body.")] int body_offset = 0)
+        [Description("Start of the body window in characters (default 0). Use the previous read's bodyOffset + body.length to continue a long body.")] int body_offset = 0,
+        [Description("Also return the stored HTML body (Outlook's own HTMLBody) as bodyHtml - the ONLY way to verify formatting, "
+            + "signature placement and quoted-thread boundaries, all of which the plain-text body collapses. Use it to check a draft "
+            + "you created with body_html. The HTML has its own budget (max_html_chars) and is returned from its start; "
+            + "bodyHtmlTotalChars gives the true size and bodyHtmlTruncated says whether it was cut. Default false (HTML is bulky).")]
+        bool include_html = false,
+        [Description("Budget for bodyHtml in characters (default 100000, max 500000; 0 = omit it). Only used with include_html. "
+            + "It is deliberately larger than max_body_chars: Outlook puts ~40000 characters of stylesheet BEFORE the message "
+            + "content, so a small window would show CSS instead of your text.")]
+        int max_html_chars = MailService.HtmlCharsDefault)
     {
-        return Guard(() => ServerRuntime.Service.Read(id, max_body_chars, include_headers, MailService.HeaderCharsDefault, body_offset));
+        return Guard(() => ServerRuntime.Service.Read(
+            id, max_body_chars, include_headers, MailService.HeaderCharsDefault, body_offset, include_html, max_html_chars));
     }
 
     [McpServerTool(Name = "save_attachment")]
@@ -344,6 +357,18 @@ public static class OutlookTools
     private const string ReadReceiptHint = "Ask for a read receipt (default: the account's own setting). Use only when the "
         + "user asked for one - recipients see the request.";
 
+    private const string BodyHtmlHint = "Formatted HTML body, used INSTEAD of body - supply exactly one of body or body_html. "
+        + "The HTML is inserted as REAL HTML into the draft region only: above the signature and above any quoted original, "
+        + "both of which stay untouched. Send a FRAGMENT (no <html>/<head>/<body> wrapper needed - they are stripped if present) "
+        + "and do NOT escape it or wrap it in <pre>. Supported: h1-h6, p, br, hr, strong/b, em/i, u, s, sub/sup, ol/ul/li, dl/dt/dd, "
+        + "blockquote, pre/code, tables (table/caption/thead/tbody/tfoot/tr/th/td), a[href] (http/https/mailto/tel only), and "
+        + "span/div - all with inline style attributes, which ARE kept because formatting is the point. Dropped WITH their content: "
+        + "script, style blocks, iframe, object/embed, link/meta, audio/video. Dropped but their text is kept: img and any other "
+        + "unsupported tag. Also removed: event handlers (on*), id/name/class attributes, and CSS that loads or executes anything. "
+        + "Malformed markup is REPAIRED, not rejected - unclosed and mis-nested tags are closed, stray '<' is escaped, a stray "
+        + "<li>/<tr>/<td> gets the list or table it needs. Everything that was changed comes back in htmlAdjustments, so read that "
+        + "field. VERIFY THE RESULT with read include_html=true - read's plain text hides layout problems.";
+
     private const string DerivedSubjectHint = "Replacement subject line. Omit to keep Outlook's own RE:/FW: subject, which is "
         + "the safe default. The draft keeps threading either way (its ConversationIndex still extends the original and the "
         + "original conversation topic is carried over, reported as conversationTopicPreserved), but a changed subject is what "
@@ -352,13 +377,17 @@ public static class OutlookTools
     [McpServerTool(Name = "new_draft")]
     [Description("Create a NEW email draft for the user - saved into the chosen account's Drafts folder with that account's "
         + "identity and signature, and opened on screen (default) so the user can review, edit and send it themselves. "
-        + "NOTHING IS SENT by this tool. Body is plain text (line breaks preserved) and is placed above the signature.")]
+        + "NOTHING IS SENT by this tool. Supply EITHER body (plain text, line breaks preserved) OR body_html (real HTML, for a "
+        + "formatted letter); either way the text is placed above the signature.")]
     public static string NewDraft(
         [Description("Sending account SMTP address (see list_accounts) - determines the From identity, the Drafts folder and the signature.")]
         string account,
         [Description("To recipient address(es), separated by ';' or ','.")] string to,
         [Description("Subject line.")] string subject,
-        [Description("Plain-text body. Placed ABOVE the account's signature.")] string body,
+        [Description("Plain-text body. Placed ABOVE the account's signature. Use body_html instead when the message needs formatting "
+            + "(headings, bold, lists, tables); exactly one of body or body_html is required.")]
+        string? body = null,
+        [Description(BodyHtmlHint)] string? body_html = null,
         [Description(CcHint)] string? cc = null,
         [Description(BccHint)] string? bcc = null,
         [Description("Open the draft in an Outlook window for the user (default true). Pass false only when the user asked not to see it.")]
@@ -371,7 +400,7 @@ public static class OutlookTools
         [Description(ReadReceiptHint)] bool? request_read_receipt = null)
     {
         return Guard(() => ServerRuntime.Service.NewDraft(
-            account, to, cc, subject, body, display, signature, bcc, importance, request_read_receipt));
+            account, to, cc, subject, body, display, signature, bcc, importance, request_read_receipt, body_html));
     }
 
     [McpServerTool(Name = "reply_draft")]
@@ -380,7 +409,10 @@ public static class OutlookTools
         + "The draft is saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT.")]
     public static string ReplyDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
-        [Description("Plain-text reply body. Placed ABOVE the quoted original.")] string body,
+        [Description("Plain-text reply body. Placed ABOVE the quoted original. Use body_html instead when the reply needs formatting; "
+            + "exactly one of body or body_html is required.")]
+        string? body = null,
+        [Description(BodyHtmlHint)] string? body_html = null,
         [Description(CcHint)] string? cc = null,
         [Description(BccHint)] string? bcc = null,
         [Description(DerivedSubjectHint)] string? subject = null,
@@ -392,7 +424,7 @@ public static class OutlookTools
         [Description(ReadReceiptHint)] bool? request_read_receipt = null)
     {
         return Guard(() => ServerRuntime.Service.ReplyDraft(
-            id, body, replyAll: false, display, signature, cc, bcc, subject, importance, request_read_receipt));
+            id, body, replyAll: false, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html));
     }
 
     [McpServerTool(Name = "replyall_draft")]
@@ -401,7 +433,10 @@ public static class OutlookTools
         + "Saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT.")]
     public static string ReplyAllDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
-        [Description("Plain-text reply body. Placed ABOVE the quoted original.")] string body,
+        [Description("Plain-text reply body. Placed ABOVE the quoted original. Use body_html instead when the reply needs formatting; "
+            + "exactly one of body or body_html is required.")]
+        string? body = null,
+        [Description(BodyHtmlHint)] string? body_html = null,
         [Description(CcHint)] string? cc = null,
         [Description(BccHint)] string? bcc = null,
         [Description(DerivedSubjectHint)] string? subject = null,
@@ -413,7 +448,7 @@ public static class OutlookTools
         [Description(ReadReceiptHint)] bool? request_read_receipt = null)
     {
         return Guard(() => ServerRuntime.Service.ReplyDraft(
-            id, body, replyAll: true, display, signature, cc, bcc, subject, importance, request_read_receipt));
+            id, body, replyAll: true, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html));
     }
 
     [McpServerTool(Name = "forward_draft")]
@@ -422,8 +457,11 @@ public static class OutlookTools
         + "Saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT.")]
     public static string ForwardDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to forward.")] string id,
-        [Description("Plain-text body. Placed ABOVE the forwarded mail.")] string body,
         [Description("To recipient address(es), separated by ';' or ','.")] string to,
+        [Description("Plain-text body. Placed ABOVE the forwarded mail. Use body_html instead when the message needs formatting; "
+            + "exactly one of body or body_html is required.")]
+        string? body = null,
+        [Description(BodyHtmlHint)] string? body_html = null,
         [Description(CcHint)] string? cc = null,
         [Description(BccHint)] string? bcc = null,
         [Description(DerivedSubjectHint)] string? subject = null,
@@ -435,7 +473,7 @@ public static class OutlookTools
         [Description(ReadReceiptHint)] bool? request_read_receipt = null)
     {
         return Guard(() => ServerRuntime.Service.ForwardDraft(
-            id, body, to, display, signature, cc, bcc, subject, importance, request_read_receipt));
+            id, body, to, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html));
     }
 
     [McpServerTool(Name = "send")]
