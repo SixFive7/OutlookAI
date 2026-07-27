@@ -47,6 +47,25 @@ public sealed class TripwireVerdict
 /// </summary>
 public static class StoreCountTripwire
 {
+    /// <summary>
+    /// Marks a census entry the SYSTEM prunes on its own (Deleted Items ages out; Outlook
+    /// writes and removes sync-issue reports unprompted). Shrinking there is not evidence
+    /// of anything, so it is noted rather than failed - a tripwire that cries wolf gets
+    /// ignored, which is the one outcome that must not happen.
+    /// </summary>
+    public const string VolatilePrefix = "~";
+
+    /// <summary>True when a census key names a self-pruning folder.</summary>
+    public static bool IsVolatile(string folderKey)
+    {
+        return folderKey != null && folderKey.StartsWith(VolatilePrefix, StringComparison.Ordinal);
+    }
+
+    private static string Display(string folderKey)
+    {
+        return IsVolatile(folderKey) ? folderKey[VolatilePrefix.Length..] + " (self-pruning)" : folderKey;
+    }
+
     /// <summary>Compares two per-store, per-folder censuses.</summary>
     public static TripwireVerdict Evaluate(
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>> before,
@@ -73,13 +92,13 @@ public static class StoreCountTripwire
             {
                 if (!now.TryGetValue(folder.Key, out int afterCount))
                 {
-                    if (isHub)
+                    if (isHub || IsVolatile(folder.Key))
                     {
-                        notes.Add("  hub folder removed: '" + folder.Key + "' (test folders are cleaned up).");
+                        notes.Add("  folder removed: store '" + store.Key + "' folder '" + Display(folder.Key) + "'.");
                     }
                     else
                     {
-                        failures.Add("  FOLDER REMOVED: store '" + store.Key + "' folder '" + folder.Key
+                        failures.Add("  FOLDER REMOVED: store '" + store.Key + "' folder '" + Display(folder.Key)
                             + "' existed before the run and is gone (" + Count(folder.Value) + " before).");
                     }
 
@@ -92,15 +111,16 @@ public static class StoreCountTripwire
                     continue;
                 }
 
-                if (delta < 0 && !isHub)
+                if (delta < 0 && !isHub && !IsVolatile(folder.Key))
                 {
-                    failures.Add("  ITEMS LOST: store '" + store.Key + "' folder '" + folder.Key + "' "
+                    failures.Add("  ITEMS LOST: store '" + store.Key + "' folder '" + Display(folder.Key) + "' "
                         + Count(folder.Value) + " -> " + Count(afterCount) + " (" + Count(delta) + ").");
                 }
                 else if (!isHub)
                 {
-                    notes.Add("  arrivals: store '" + store.Key + "' folder '" + folder.Key + "' "
-                        + Count(folder.Value) + " -> " + Count(afterCount) + " (+" + Count(delta) + ").");
+                    notes.Add("  churn: store '" + store.Key + "' folder '" + Display(folder.Key) + "' "
+                        + Count(folder.Value) + " -> " + Count(afterCount)
+                        + " (" + (delta > 0 ? "+" : string.Empty) + Count(delta) + ").");
                 }
             }
 
@@ -111,13 +131,13 @@ public static class StoreCountTripwire
                     continue;
                 }
 
-                if (isHub)
+                if (isHub || IsVolatile(folder.Key))
                 {
-                    notes.Add("  hub folder added: '" + folder.Key + "'.");
+                    notes.Add("  folder added: store '" + store.Key + "' folder '" + Display(folder.Key) + "'.");
                 }
                 else
                 {
-                    failures.Add("  FOLDER ADDED: store '" + store.Key + "' folder '" + folder.Key
+                    failures.Add("  FOLDER ADDED: store '" + store.Key + "' folder '" + Display(folder.Key)
                         + "' did not exist before the run (" + Count(folder.Value) + " items).");
                 }
             }

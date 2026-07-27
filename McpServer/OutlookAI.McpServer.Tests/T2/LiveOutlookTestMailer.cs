@@ -674,8 +674,33 @@ public static class LiveOutlookTestMailer
                     ?? throw new InvalidOperationException(
                         "Store not found for the count tripwire: '" + storeDisplayName + "'.");
                 root = store.GetRootFolder();
+
+                // Folders the SYSTEM prunes on its own: Deleted Items ages out, and
+                // Outlook writes and removes sync-issue reports whenever it feels like it.
+                // A shrink there is not evidence of anything, so the census marks them and
+                // the tripwire notes rather than fails them.
+                HashSet<string> volatileIds = new(StringComparer.OrdinalIgnoreCase);
+                foreach (int volatileFolderId in new[] { 3, 20, 19, 21, 22 })
+                {
+                    try
+                    {
+                        dynamic volatileFolder = store.GetDefaultFolder(volatileFolderId);
+                        try
+                        {
+                            volatileIds.Add((string)volatileFolder.EntryID);
+                        }
+                        finally
+                        {
+                            Release(volatileFolder);
+                        }
+                    }
+                    catch (Exception ex) when (ex is COMException or RuntimeBinderException)
+                    {
+                    }
+                }
+
                 Dictionary<string, int> counts = new(StringComparer.OrdinalIgnoreCase);
-                CollectMailFolderCounts(root, string.Empty, counts, 0);
+                CollectMailFolderCounts(root, string.Empty, counts, 0, volatileIds, false);
                 if (counts.Count == 0)
                 {
                     throw new InvalidOperationException(
@@ -696,7 +721,12 @@ public static class LiveOutlookTestMailer
     }
 
     private static void CollectMailFolderCounts(
-        dynamic folder, string parentPath, Dictionary<string, int> counts, int depth)
+        dynamic folder,
+        string parentPath,
+        Dictionary<string, int> counts,
+        int depth,
+        HashSet<string> volatileFolderIds,
+        bool parentIsVolatile)
     {
         if (depth > 32)
         {
@@ -708,6 +738,18 @@ public static class LiveOutlookTestMailer
         {
             string name = (string)folder.Name;
             string path = parentPath.Length == 0 ? name : parentPath + "/" + name;
+            bool isVolatile = parentIsVolatile;
+            if (!isVolatile)
+            {
+                try
+                {
+                    isVolatile = volatileFolderIds.Contains((string)folder.EntryID);
+                }
+                catch (Exception ex) when (ex is COMException or RuntimeBinderException)
+                {
+                }
+            }
+
             if (depth > 0)
             {
                 bool isMail;
@@ -722,7 +764,8 @@ public static class LiveOutlookTestMailer
 
                 if (isMail)
                 {
-                    counts[path] = (int)folder.Items.Count;
+                    counts[(isVolatile ? StoreCountTripwire.VolatilePrefix : string.Empty) + path]
+                        = (int)folder.Items.Count;
                 }
             }
 
@@ -733,7 +776,8 @@ public static class LiveOutlookTestMailer
                 dynamic child = children[i];
                 try
                 {
-                    CollectMailFolderCounts(child, depth == 0 ? string.Empty : path, counts, depth + 1);
+                    CollectMailFolderCounts(
+                        child, depth == 0 ? string.Empty : path, counts, depth + 1, volatileFolderIds, isVolatile);
                 }
                 finally
                 {

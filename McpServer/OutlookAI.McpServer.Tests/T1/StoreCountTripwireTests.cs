@@ -13,6 +13,7 @@ public sealed class StoreCountTripwireTests
     private const string Hub = "hub@example.test";
     private const string Other = "other@example.test";
     private const string DelegateStore = "Someone Else";
+    private const string Volatile = StoreCountTripwire.VolatilePrefix;
 
     private static Dictionary<string, IReadOnlyDictionary<string, int>> Census(
         params (string Store, (string Folder, int Count)[] Folders)[] stores)
@@ -36,8 +37,8 @@ public sealed class StoreCountTripwireTests
     {
         return Census(
             (Hub, new[] { ("Inbox", 2), ("Sent Items", 21), ("Deleted Items", 0), ("Outbox", 0) }),
-            (Other, new[] { ("Inbox", 171), ("Sent Items", 4866), ("Sync Issues/Conflicts", 40) }),
-            (DelegateStore, new[] { ("Inbox", 99), ("Archive", 6153), ("Deleted Items", 19525) }));
+            (Other, new[] { ("Inbox", 171), ("Sent Items", 4866), (Volatile + "Sync Issues/Conflicts", 40) }),
+            (DelegateStore, new[] { ("Inbox", 99), ("Archive", 6153), (Volatile + "Deleted Items", 19525) }));
     }
 
     [Fact]
@@ -102,13 +103,13 @@ public sealed class StoreCountTripwireTests
     public void FolderRemovedOutsideTheHub_Fires()
     {
         var after = Baseline();
-        ((Dictionary<string, int>)after[Other]).Remove("Sync Issues/Conflicts");
+        ((Dictionary<string, int>)after[Other]).Remove("Sent Items");
 
         TripwireVerdict verdict = StoreCountTripwire.Evaluate(Baseline(), after, Hub);
 
         Assert.True(verdict.Failed);
         Assert.Contains(verdict.Failures, f => f.Contains("FOLDER REMOVED", StringComparison.Ordinal)
-            && f.Contains("Sync Issues/Conflicts", StringComparison.Ordinal));
+            && f.Contains("Sent Items", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -121,6 +122,24 @@ public sealed class StoreCountTripwireTests
 
         Assert.True(verdict.Failed);
         Assert.Contains(verdict.Failures, f => f.Contains("FOLDER ADDED", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SelfPruningFolders_ShrinkWithoutFailingTheSuite()
+    {
+        // Deleted Items ages out and Outlook writes/removes sync-issue reports on its own.
+        // A tripwire that fails on those gets ignored, which is the one outcome that must
+        // not happen - so they are noted, while ordinary mail folders still fail.
+        var after = Baseline();
+        ((Dictionary<string, int>)after[DelegateStore])[Volatile + "Deleted Items"] = 19000;
+        ((Dictionary<string, int>)after[Other]).Remove(Volatile + "Sync Issues/Conflicts");
+
+        TripwireVerdict verdict = StoreCountTripwire.Evaluate(Baseline(), after, Hub);
+
+        Assert.False(verdict.Failed);
+        Assert.Contains(verdict.Notes, n => n.Contains("self-pruning", StringComparison.Ordinal));
+        Assert.True(StoreCountTripwire.IsVolatile(Volatile + "Deleted Items"));
+        Assert.False(StoreCountTripwire.IsVolatile("Inbox"));
     }
 
     [Fact]
