@@ -1158,7 +1158,8 @@ namespace OutlookAI.Core.Com
             int perFolderCap,
             bool includeBodies,
             string? onlyStoreDisplayName,
-            IReadOnlyList<string>? folderPath = null)
+            IReadOnlyList<string>? folderPath = null,
+            bool includeSubfolders = true)
         {
             EnsureNotDisposed();
             if (perFolderCap < 1)
@@ -1176,6 +1177,7 @@ namespace OutlookAI.Core.Com
             return _runner.Run(() =>
             {
                 dynamic ns = _namespace!;
+                SweepTally tally = new SweepTally();
                 List<ComMailBrief> items = new List<ComMailBrief>();
                 List<string> sweptFolders = new List<string>();
                 int skipped = 0;
@@ -1184,8 +1186,10 @@ namespace OutlookAI.Core.Com
                 {
                     SweepScopedFolder(
                         ns, onlyStoreDisplayName!, folderPath, sinceUtc, perFolderCap, includeBodies,
-                        items, sweptFolders, ref skipped);
-                    return new ComSweepResult(items, sweptFolders.Count, skipped, sweptFolders);
+                        includeSubfolders, items, sweptFolders, ref skipped, tally);
+                    return new ComSweepResult(
+                        items, sweptFolders.Count, skipped, sweptFolders,
+                        tally.Failed, tally.ItemCapped, tally.FolderCapReached);
                 }
 
                 dynamic stores = ns.Stores;
@@ -1222,8 +1226,24 @@ namespace OutlookAI.Core.Com
                                 try
                                 {
                                     folder = store.GetDefaultFolder(folderId);
-                                    SweepFolder(ns, folder!, storeName, storeId, folderKind, sinceUtc, perFolderCap, includeBodies, items);
-                                    sweptFolders.Add(DescribeSweptFolder(storeName, folder!, folderKind));
+                                    string label = DescribeSweptFolder(storeName, folder!, folderKind);
+                                    SweepOutcome outcome = SweepFolder(
+                                        ns, folder!, storeName, storeId, folderKind, sinceUtc, perFolderCap, includeBodies, items);
+                                    if (outcome == SweepOutcome.Failed)
+                                    {
+                                        // A folder whose table could not be read has NO
+                                        // freshness coverage - reporting it as swept was a
+                                        // lie (section-12 no-silent-caps discipline).
+                                        skipped++;
+                                        tally.Failed++;
+                                        continue;
+                                    }
+
+                                    sweptFolders.Add(label);
+                                    if (outcome == SweepOutcome.ItemCapped)
+                                    {
+                                        tally.ItemCapped.Add(label);
+                                    }
                                 }
                                 catch (Exception ex) when (IsComCallFailure(ex))
                                 {
@@ -1247,15 +1267,44 @@ namespace OutlookAI.Core.Com
                     Release(stores);
                 }
 
-                return new ComSweepResult(items, sweptFolders.Count, skipped, sweptFolders);
+                return new ComSweepResult(
+                    items, sweptFolders.Count, skipped, sweptFolders,
+                    tally.Failed, tally.ItemCapped, tally.FolderCapReached);
             });
         }
 
         /// <summary>
-        /// STA-side folder-scoped sweep: walks to the requested folder and sweeps it plus
-        /// its subfolders (bounded by <see cref="MaxScopedSweepFolders"/>). Mirrors the
-        /// exhaustive scan's tree rule - only mail folders (DefaultItemType 0) are swept,
-        /// but non-mail folders still get their subtrees visited.
+        /// Mutable counters a sweep collects so the caller can report partial coverage
+        /// instead of implying complete coverage (section-12 no-silent-caps discipline).
+        /// </summary>
+        private sealed class SweepTally
+        {
+            internal int Failed { get; set; }
+
+            internal List<string> ItemCapped { get; } = new List<string>();
+
+            internal bool FolderCapReached { get; set; }
+        }
+
+        /// <summary>Why a single-folder sweep stopped.</summary>
+        private enum SweepOutcome
+        {
+            /// <summary>Every item in the window was collected.</summary>
+            Complete = 0,
+
+            /// <summary>The per-folder item cap cut the (newest-first) list short.</summary>
+            ItemCapped = 1,
+
+            /// <summary>The folder's table could not be read - no coverage at all.</summary>
+            Failed = 2,
+        }
+
+        /// <summary>
+        /// STA-side folder-scoped sweep: walks to the requested folder and sweeps it,
+        /// plus its subfolders when <paramref name="includeSubfolders"/> is set (bounded
+        /// by <see cref="MaxScopedSweepFolders"/>). Mirrors the exhaustive scan's tree
+        /// rule - only mail folders (DefaultItemType 0) are swept, but non-mail folders
+        /// still get their subtrees visited.
         /// </summary>
         private void SweepScopedFolder(
             dynamic ns,
@@ -1264,9 +1313,11 @@ namespace OutlookAI.Core.Com
             DateTime sinceUtc,
             int perFolderCap,
             bool includeBodies,
+            bool includeSubfolders,
             List<ComMailBrief> items,
             List<string> sweptFolders,
-            ref int skipped)
+            ref int skipped,
+            SweepTally tally)
         {
             string? storeId = null;
             dynamic? store = FindStoreByDisplayName(storeDisplayName);
@@ -1304,7 +1355,8 @@ namespace OutlookAI.Core.Com
             {
                 SweepFolderTree(
                     ns, root, storeDisplayName, storeId, string.Join("/", folderPath),
-                    sinceUtc, perFolderCap, includeBodies, items, sweptFolders, ref skipped);
+                    sinceUtc, perFolderCap, includeBodies, includeSubfolders,
+                    items, sweptFolders, ref skipped, tally);
             }
             finally
             {
@@ -1321,13 +1373,16 @@ namespace OutlookAI.Core.Com
             DateTime sinceUtc,
             int perFolderCap,
             bool includeBodies,
+            bool includeSubfolders,
             List<ComMailBrief> items,
             List<string> sweptFolders,
-            ref int skipped)
+            ref int skipped,
+            SweepTally tally)
         {
             if (sweptFolders.Count >= MaxScopedSweepFolders)
             {
                 skipped++;
+                tally.FolderCapReached = true;
                 return;
             }
 
@@ -1344,8 +1399,27 @@ namespace OutlookAI.Core.Com
 
             if (defaultItemType == 0)
             {
-                SweepFolder(ns, folderObject, storeName, storeId, null, sinceUtc, perFolderCap, includeBodies, items);
-                sweptFolders.Add(storeName + "/" + relativePath);
+                string label = storeName + "/" + relativePath;
+                SweepOutcome outcome = SweepFolder(
+                    ns, folderObject, storeName, storeId, null, sinceUtc, perFolderCap, includeBodies, items);
+                if (outcome == SweepOutcome.Failed)
+                {
+                    skipped++;
+                    tally.Failed++;
+                }
+                else
+                {
+                    sweptFolders.Add(label);
+                    if (outcome == SweepOutcome.ItemCapped)
+                    {
+                        tally.ItemCapped.Add(label);
+                    }
+                }
+            }
+
+            if (!includeSubfolders)
+            {
+                return;
             }
 
             object? subFolders = null;
@@ -1364,7 +1438,8 @@ namespace OutlookAI.Core.Com
                         string childName = TryGetString(() => (string?)((dynamic)childFolder).Name) ?? "?";
                         SweepFolderTree(
                             ns, childFolder, storeName, storeId, relativePath + "/" + childName,
-                            sinceUtc, perFolderCap, includeBodies, items, sweptFolders, ref skipped);
+                            sinceUtc, perFolderCap, includeBodies, includeSubfolders,
+                            items, sweptFolders, ref skipped, tally);
                     }
                     finally
                     {
@@ -1374,7 +1449,9 @@ namespace OutlookAI.Core.Com
             }
             catch (Exception ex) when (IsComCallFailure(ex))
             {
-                // No enumerable subfolders.
+                // A subtree we could not enumerate is a coverage hole, not a non-event:
+                // count it so foldersSkipped stops under-reporting (soak fix 15).
+                skipped++;
             }
             finally
             {
@@ -4311,6 +4388,8 @@ namespace OutlookAI.Core.Com
         /// store. Bounded by <paramref name="maxItems"/> and <paramref name="timeBudgetMs"/>.
         /// <paramref name="searchIn"/> selects which properties the terms must appear in
         /// (subject and/or body) - the same three scopes the index tier offers (D40).
+        /// <paramref name="includeSubfolders"/> decides whether a folder-scoped scan walks
+        /// the subtree; without a folder path the whole store tree is always walked.
         /// </summary>
         public ComExhaustiveResult ExhaustiveScan(
             string storeDisplayName,
@@ -4320,7 +4399,8 @@ namespace OutlookAI.Core.Com
             DateTime? beforeUtc,
             int maxItems,
             int timeBudgetMs,
-            SearchIn searchIn = SearchInValues.Default)
+            SearchIn searchIn = SearchInValues.Default,
+            bool includeSubfolders = false)
         {
             EnsureNotDisposed();
             if (string.IsNullOrWhiteSpace(storeDisplayName))
@@ -4393,7 +4473,11 @@ namespace OutlookAI.Core.Com
 
                 try
                 {
-                    bool recurse = folderPath == null || folderPath.Count == 0;
+                    // A whole-store scan always recurses; a folder-scoped one follows the
+                    // caller's include_subfolders flag (soak fix 15 - before it, a
+                    // folder-scoped exhaustive scan was unconditionally shallow while the
+                    // index tier's folder scope was recursive).
+                    bool recurse = folderPath == null || folderPath.Count == 0 || includeSubfolders;
                     ScanFolderTree(_namespace!, scanRoot, storeDisplayName, storeId, recurse, state);
                 }
                 finally
@@ -4423,7 +4507,11 @@ namespace OutlookAI.Core.Com
             bool recurse,
             ExhaustiveScanState state)
         {
-            if (state.ShouldStop)
+            // The deadline is evaluated PER FOLDER, not only inside the per-row drain:
+            // a folder whose filter matches zero rows never entered the drain loop, so a
+            // wide low-yield subtree used to overrun the budget without bound while
+            // timedOut stayed false (soak fix 15).
+            if (state.CheckDeadline() || state.ShouldStop)
             {
                 return;
             }
@@ -4474,7 +4562,9 @@ namespace OutlookAI.Core.Com
             }
             catch (Exception ex) when (IsComCallFailure(ex))
             {
-                // No enumerable subfolders.
+                // A subtree that cannot be enumerated is a coverage hole: count it, so
+                // foldersSkipped stops silently under-reporting (soak fix 15).
+                state.FoldersSkipped++;
             }
             finally
             {
@@ -4527,9 +4617,8 @@ namespace OutlookAI.Core.Com
                 state.FoldersScanned++;
                 while (!(bool)t.EndOfTable && !state.ShouldStop)
                 {
-                    if (state.Clock.Elapsed > state.Budget)
+                    if (state.CheckDeadline())
                     {
-                        state.TimedOut = true;
                         return;
                     }
 
@@ -4627,14 +4716,43 @@ namespace OutlookAI.Core.Com
             internal bool TimedOut { get; set; }
 
             internal bool ShouldStop => Truncated || TimedOut;
+
+            /// <summary>
+            /// Latches <see cref="TimedOut"/> once the budget is spent. Called at every
+            /// FOLDER boundary as well as per row - a zero-match folder never reaches the
+            /// row loop, so folder-level checking is what actually bounds a wide subtree.
+            /// </summary>
+            internal bool CheckDeadline()
+            {
+                if (TimedOut)
+                {
+                    return true;
+                }
+
+                if (Clock.Elapsed <= Budget)
+                {
+                    return false;
+                }
+
+                TimedOut = true;
+                return true;
+            }
         }
 
-        private void SweepFolder(
+        /// <summary>
+        /// Sweeps ONE folder's window. Returns how it ended so the caller can report
+        /// partial coverage: before soak fix 15 a COM failure here was swallowed and the
+        /// folder was still counted as successfully swept, and the per-folder item cap was
+        /// wholly invisible (itemsSeen is post-cap, so "200" was indistinguishable from
+        /// "exactly 200 existed" - and the table is sorted newest-first, so the OLDEST
+        /// items in the freshness window were the ones silently dropped).
+        /// </summary>
+        private SweepOutcome SweepFolder(
             dynamic ns,
             object folderObject,
             string storeName,
             string storeId,
-            string folderKind,
+            string? folderKind,
             DateTime sinceUtc,
             int cap,
             bool includeBodies,
@@ -4675,7 +4793,7 @@ namespace OutlookAI.Core.Com
                 int entryIdIndex = FindTableColumn(t, "EntryID");
                 if (entryIdIndex < 0)
                 {
-                    return;
+                    return SweepOutcome.Failed;
                 }
 
                 int taken = 0;
@@ -4710,10 +4828,14 @@ namespace OutlookAI.Core.Com
                         Release(row);
                     }
                 }
+
+                // The cap is only a truncation when the table still had rows to give.
+                return taken >= cap && !(bool)t.EndOfTable ? SweepOutcome.ItemCapped : SweepOutcome.Complete;
             }
             catch (Exception ex) when (IsComCallFailure(ex))
             {
-                // GetTable/filter unsupported on this folder - counted as swept with zero rows.
+                // GetTable/filter unsupported on this folder: NO freshness coverage here.
+                return SweepOutcome.Failed;
             }
             finally
             {
@@ -5051,6 +5173,110 @@ namespace OutlookAI.Core.Com
                 conversationId,
                 internetMessageId,
                 headers);
+        }
+
+        /// <summary>
+        /// Store-relative folder PATHS of one store, names only - no PR_CONTENT_COUNT /
+        /// PR_CONTENT_UNREAD reads, no child counts, no sorting. Deliberately much cheaper
+        /// than <see cref="ListFolders"/>, because the index tier calls it to learn a
+        /// DELEGATE store's real nesting: the delegate index namespace is FLAT, so mapping
+        /// a requested subtree onto the leaf names it contains (and spotting leaf-name
+        /// collisions) needs the COM tree, and only Outlook has it.
+        /// </summary>
+        public IReadOnlyList<string> ListFolderPaths(string storeDisplayName, int absoluteWalkCap)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(storeDisplayName))
+            {
+                throw new ArgumentException("Store display name must not be blank.", nameof(storeDisplayName));
+            }
+
+            if (absoluteWalkCap < 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(absoluteWalkCap));
+            }
+
+            return _runner.Run(() =>
+            {
+                List<string> result = new List<string>();
+                dynamic? store = FindStoreByDisplayName(storeDisplayName);
+                if (store == null)
+                {
+                    return (IReadOnlyList<string>)result;
+                }
+
+                object? root = null;
+                try
+                {
+                    root = store.GetRootFolder();
+                    CollectFolderPaths(root!, string.Empty, 1, absoluteWalkCap, result);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                }
+                finally
+                {
+                    Release(root);
+                    Release((object?)store);
+                }
+
+                return (IReadOnlyList<string>)result;
+            });
+        }
+
+        private void CollectFolderPaths(
+            object folderObject, string parentPath, int depth, int absoluteWalkCap, List<string> result)
+        {
+            if (depth > FolderWalkDepthGuard || result.Count >= absoluteWalkCap)
+            {
+                return;
+            }
+
+            dynamic folder = folderObject;
+            object? subFolders = null;
+            try
+            {
+                subFolders = folder.Folders;
+                dynamic folderCollection = (dynamic)subFolders!;
+                int count = folderCollection.Count;
+                for (int i = 1; i <= count; i++)
+                {
+                    if (result.Count >= absoluteWalkCap)
+                    {
+                        return;
+                    }
+
+                    object? child = null;
+                    try
+                    {
+                        child = folderCollection[i];
+                        string name = TryGetString(() => (string?)((dynamic)child!).Name) ?? string.Empty;
+                        if (name.Length == 0)
+                        {
+                            continue;
+                        }
+
+                        string path = parentPath.Length == 0 ? name : parentPath + "/" + name;
+                        result.Add(path);
+                        CollectFolderPaths(child!, path, depth + 1, absoluteWalkCap, result);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                    finally
+                    {
+                        Release(child);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                // Folder without enumerable children.
+            }
+            finally
+            {
+                Release(subFolders);
+            }
         }
 
         /// <summary>Recursion guard for the full-tree folder walk (real trees are a handful of levels).</summary>

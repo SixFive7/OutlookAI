@@ -40,6 +40,26 @@ namespace OutlookAI.Core.Services
         /// <summary>Store-relative folder path ('/'-separated) to scope to; requires <see cref="Store"/>.</summary>
         public string? Folder { get; set; }
 
+        /// <summary>
+        /// Whether <see cref="Folder"/> covers its SUBFOLDERS too. Default true (user
+        /// decision, soak fix 15) - it matches what the index tier always did and removes
+        /// the old asymmetry where an exhaustive folder scan silently covered less ground
+        /// than the same folder search.
+        /// <para>
+        /// Honored by all three tiers: index (recursive SCOPE vs SCOPE + folder-path
+        /// equality), freshness sweep (subtree walk vs single folder - and the flag is part
+        /// of the sweep cache key) and exhaustive scan (the ScanFolderTree recurse flag).
+        /// Ignored without a <see cref="Folder"/>: a whole store is recursive either way.
+        /// </para>
+        /// <para>
+        /// ⚠ Delegate mailboxes are indexed FLAT (no folder nesting), so the index tier
+        /// covers a delegate subtree by matching each contained folder NAME. When that set
+        /// cannot be built or is too large the query widens to the whole delegate mailbox
+        /// and says so in advice - it is never narrowed silently.
+        /// </para>
+        /// </summary>
+        public bool IncludeSubfolders { get; set; } = true;
+
         /// <summary>Sender filter (index-backed per-column CONTAINS).</summary>
         public string? From { get; set; }
 
@@ -147,10 +167,11 @@ namespace OutlookAI.Core.Services
 
         /// <summary>
         /// What the sweep covered, following the search scope (soak fix 13):
-        /// <c>"folder"</c> = the searched folder and its subfolders;
-        /// <c>"default folders (Inbox, Sent Items, Deleted Items, Junk Email)"</c> =
-        /// those folders in the searched store, or in every store when the search is
-        /// not store-scoped. Lets an agent see the freshness coverage of its query.
+        /// <c>"folder"</c> = the searched folder (plus its subfolders when
+        /// include_subfolders is on); <c>"default folders (Inbox, Sent Items, Deleted
+        /// Items, Junk Email)"</c> = those folders in the searched store, or in every
+        /// store when the search is not store-scoped. Lets an agent see the freshness
+        /// coverage of its query.
         /// </summary>
         public string? Scope { get; set; }
 
@@ -164,8 +185,35 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public IReadOnlyList<string>? Folders { get; set; }
 
-        /// <summary>Folders skipped (unresolvable, or past the folder cap of a scoped sweep).</summary>
+        /// <summary>
+        /// True when <see cref="Folders"/> was dropped because the sweep covered more
+        /// than <see cref="MailService.SweptFolderListCap"/> folders. Without this the
+        /// omission is indistinguishable from "no folders to report" - a cap must never
+        /// be invisible (section-12 discipline). Null when the list is present.
+        /// </summary>
+        public bool? FolderListOmitted { get; set; }
+
+        /// <summary>Folders skipped (unresolvable, unenumerable, or past the folder cap of a scoped sweep).</summary>
         public int FoldersSkipped { get; set; }
+
+        /// <summary>
+        /// Folders whose item enumeration FAILED, so they have no freshness coverage at
+        /// all. Until soak fix 15 these were counted as successfully swept.
+        /// </summary>
+        public int FoldersFailed { get; set; }
+
+        /// <summary>
+        /// Folders where the per-folder item cap (<c>SweepPerFolderCap</c>) truncated the
+        /// window. The sweep reads newest-first, so the OLDEST fresh mail in those folders
+        /// was dropped. Null when nothing was truncated.
+        /// </summary>
+        public IReadOnlyList<string>? ItemCappedFolders { get; set; }
+
+        /// <summary>
+        /// True when the scoped sweep hit <c>MaxScopedSweepFolders</c> and stopped walking
+        /// the subtree, so folders past the cut-off were never visited.
+        /// </summary>
+        public bool? FolderCapReached { get; set; }
 
         /// <summary>Items in the window before term filtering.</summary>
         public int ItemsSeen { get; set; }
@@ -203,6 +251,34 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Scan wall-clock cost.</summary>
         public long ElapsedMs { get; set; }
+    }
+
+    /// <summary>
+    /// How a folder-scoped search was actually resolved (present only when the request
+    /// carried a folder). Exists so a caller can SEE the answer's real breadth instead of
+    /// assuming it: a delegate mailbox can only be covered by folder NAME, and a request
+    /// that could not be narrowed is widened, never silently trimmed.
+    /// </summary>
+    public sealed class SearchScopeInfo
+    {
+        /// <summary>The folder path as requested.</summary>
+        public string? Folder { get; set; }
+
+        /// <summary>Whether subfolders were requested.</summary>
+        public bool IncludeSubfolders { get; set; }
+
+        /// <summary>
+        /// The resolution shape: <c>folder</c> (recursive folder scope),
+        /// <c>folder_only</c> (folder without subfolders), <c>delegate_folders</c> (flat
+        /// delegate namespace, matched by folder name) or <c>delegate_store_widened</c>.
+        /// </summary>
+        public string Shape { get; set; } = string.Empty;
+
+        /// <summary>True when the answer covers MORE than the requested folder subtree.</summary>
+        public bool? Widened { get; set; }
+
+        /// <summary>How many flat folder names the delegate query matched (delegate scopes only).</summary>
+        public int? FolderNamesMatched { get; set; }
     }
 
     /// <summary>Index staleness snapshot attached to search results.</summary>
@@ -243,6 +319,9 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Exhaustive-scan diagnostics (exhaustive searches only).</summary>
         public ExhaustiveInfo? Exhaustive { get; set; }
+
+        /// <summary>How the folder scope resolved (folder-scoped searches only).</summary>
+        public SearchScopeInfo? Scope { get; set; }
 
         /// <summary>Staleness self-report (R7/D19). Best-effort on exhaustive searches.</summary>
         public StalenessInfo Staleness { get; set; } = new StalenessInfo();

@@ -57,6 +57,7 @@ namespace OutlookAI.Core.Services
                 DateTime baseGapStartUtc,
                 string? store,
                 string? folder,
+                bool includeSubfolders,
                 DateTime fetchedAtUtc,
                 long elapsedMs)
             {
@@ -64,6 +65,7 @@ namespace OutlookAI.Core.Services
                 BaseGapStartUtc = baseGapStartUtc;
                 Store = store;
                 Folder = folder;
+                IncludeSubfolders = includeSubfolders;
                 FetchedAtUtc = fetchedAtUtc;
                 ElapsedMs = elapsedMs;
             }
@@ -83,6 +85,13 @@ namespace OutlookAI.Core.Services
             /// </summary>
             public string? Folder { get; }
 
+            /// <summary>
+            /// Whether the sweep covered the folder's SUBTREE. Part of the cache key
+            /// (v3.MD constraint C6): a shallow sweep answering a recursive query would
+            /// report one folder of coverage as a whole subtree's worth.
+            /// </summary>
+            public bool IncludeSubfolders { get; }
+
             /// <summary>When the sweep ran (UTC).</summary>
             public DateTime FetchedAtUtc { get; }
 
@@ -98,12 +107,18 @@ namespace OutlookAI.Core.Services
         /// entry (whose items the caller filters down by store display name - sound only
         /// because every store gets the identical default folder set).
         /// </summary>
-        public bool TryGet(DateTime baseGapStartUtc, string? store, string? folder, DateTime nowUtc, out CachedSweep? cached)
+        public bool TryGet(
+            DateTime baseGapStartUtc,
+            string? store,
+            string? folder,
+            bool includeSubfolders,
+            DateTime nowUtc,
+            out CachedSweep? cached)
         {
             lock (_lock)
             {
                 Prune(nowUtc);
-                if (TryGetUsable(KeyFor(store, folder), baseGapStartUtc, nowUtc, out cached))
+                if (TryGetUsable(KeyFor(store, folder, includeSubfolders), baseGapStartUtc, nowUtc, out cached))
                 {
                     return true;
                 }
@@ -111,8 +126,10 @@ namespace OutlookAI.Core.Services
                 // A store-scoped request can be served from an all-stores sweep (the
                 // caller filters items by store); never the other way around, and never
                 // across folder scopes - a folder-scoped sweep covers one subtree only.
+                // The default folder set is shallow by construction, so an all-stores
+                // entry may serve only a shallow-equivalent request.
                 if (store != null && folder == null
-                    && TryGetUsable(KeyFor(null, null), baseGapStartUtc, nowUtc, out cached))
+                    && TryGetUsable(KeyFor(null, null, includeSubfolders), baseGapStartUtc, nowUtc, out cached))
                 {
                     return true;
                 }
@@ -127,6 +144,7 @@ namespace OutlookAI.Core.Services
             DateTime baseGapStartUtc,
             string? store,
             string? folder,
+            bool includeSubfolders,
             ComSweepResult result,
             long elapsedMs,
             DateTime nowUtc)
@@ -144,7 +162,8 @@ namespace OutlookAI.Core.Services
             lock (_lock)
             {
                 Prune(nowUtc);
-                _entries[KeyFor(store, folder)] = new CachedSweep(result, baseGapStartUtc, store, folder, nowUtc, elapsedMs);
+                _entries[KeyFor(store, folder, includeSubfolders)] =
+                    new CachedSweep(result, baseGapStartUtc, store, folder, includeSubfolders, nowUtc, elapsedMs);
             }
         }
 
@@ -158,14 +177,17 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// Cache key: store scope + folder scope. The unit separator cannot occur in a
-        /// store display name or a folder path, so the two parts can never blur into
-        /// each other (a store literally named "x/y" must not collide with store "x",
-        /// folder "y").
+        /// Cache key: store scope + folder scope + subtree flag. The unit separator cannot
+        /// occur in a store display name or a folder path, so the parts can never blur
+        /// into each other (a store literally named "x/y" must not collide with store "x",
+        /// folder "y"). The flag belongs in the key because a SHALLOW sweep must never
+        /// answer a RECURSIVE query - it would report one folder of coverage as a whole
+        /// subtree's worth (v3.MD constraint C6).
         /// </summary>
-        private static string KeyFor(string? store, string? folder)
+        private static string KeyFor(string? store, string? folder, bool includeSubfolders)
         {
-            return (store ?? string.Empty) + "\u001F" + (folder ?? string.Empty);
+            return (store ?? string.Empty) + "\u001F" + (folder ?? string.Empty)
+                + "\u001F" + (includeSubfolders ? "1" : "0");
         }
 
         private bool TryGetUsable(string key, DateTime baseGapStartUtc, DateTime nowUtc, out CachedSweep? cached)

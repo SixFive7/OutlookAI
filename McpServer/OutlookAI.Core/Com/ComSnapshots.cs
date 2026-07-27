@@ -778,12 +778,18 @@ namespace OutlookAI.Core.Com
             IReadOnlyList<ComMailBrief> items,
             int foldersSwept,
             int foldersSkipped,
-            IReadOnlyList<string>? sweptFolders = null)
+            IReadOnlyList<string>? sweptFolders = null,
+            int foldersFailed = 0,
+            IReadOnlyList<string>? itemCappedFolders = null,
+            bool folderCapReached = false)
         {
             Items = items;
             FoldersSwept = foldersSwept;
             FoldersSkipped = foldersSkipped;
             SweptFolders = sweptFolders ?? Array.Empty<string>();
+            FoldersFailed = foldersFailed;
+            ItemCappedFolders = itemCappedFolders ?? Array.Empty<string>();
+            FolderCapReached = folderCapReached;
         }
 
         /// <summary>Items received/sent at or after the sweep start.</summary>
@@ -800,5 +806,27 @@ namespace OutlookAI.Core.Com
         /// exactly what the freshness sweep covered (soak fix 13).
         /// </summary>
         public IReadOnlyList<string> SweptFolders { get; }
+
+        /// <summary>
+        /// Folders whose item enumeration FAILED through COM. Before soak fix 15 such a
+        /// folder was counted as successfully swept with zero rows, which reported a hole
+        /// in freshness coverage as full coverage.
+        /// </summary>
+        public int FoldersFailed { get; }
+
+        /// <summary>
+        /// Folders where the per-folder item cap cut the sweep short - the cap is applied
+        /// newest-first, so the OLDEST items in the freshness window are the ones that
+        /// vanish. Named so the caller can say which coverage is partial (section-12
+        /// no-silent-caps discipline).
+        /// </summary>
+        public IReadOnlyList<string> ItemCappedFolders { get; }
+
+        /// <summary>
+        /// True when the scoped sweep's FOLDER cap stopped the subtree walk, so folders
+        /// below the cut-off were never visited (and are therefore not even counted in
+        /// <see cref="FoldersSkipped"/> beyond the first refusal).
+        /// </summary>
+        public bool FolderCapReached { get; }
     }
 }

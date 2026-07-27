@@ -51,6 +51,13 @@ namespace OutlookAI.Core.Services
         private static readonly TimeSpan SweepSafetyMargin = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan EmptyIndexSweepWindow = TimeSpan.FromDays(7);
 
+        /// <summary>
+        /// How long a store's COM folder-path list is reused. Only DELEGATE folder scopes
+        /// need it (the flat index namespace has to be mapped back onto the real tree), so
+        /// this keeps a per-search COM walk off the hot path. Matches the store-details TTL.
+        /// </summary>
+        private static readonly TimeSpan FolderPathCacheTtl = TimeSpan.FromMinutes(5);
+
         // ------------------------------------------------------------ payload caps
         // Section 12 compact-payload discipline, reviewed in Phase 7: every list a tool
         // can return is capped, every cap has a has-more/truncated indicator, and the
@@ -125,6 +132,8 @@ namespace OutlookAI.Core.Services
         private readonly ConcurrentDictionary<string, CachedHit> _hits =
             new ConcurrentDictionary<string, CachedHit>(StringComparer.Ordinal);
         private readonly object _catalogLock = new object();
+        private readonly Dictionary<string, (IReadOnlyList<string> Paths, DateTime FetchedUtc)> _folderPaths =
+            new Dictionary<string, (IReadOnlyList<string>, DateTime)>(StringComparer.OrdinalIgnoreCase);
         private string? _providerReport;
         private IReadOnlyList<StoreScopeInfo>? _catalog;
         private IReadOnlyList<ComStoreDetail>? _storeDetails;
@@ -202,15 +211,18 @@ namespace OutlookAI.Core.Services
                 return RunExhaustive(request, terms, top);
             }
 
+            FolderScopeResolution? folderScope = null;
             string? scope = null;
             if (request.Store != null)
             {
-                scope = ResolveScope(request.Store, request.Folder);
+                folderScope = ResolveFolderScope(request.Store, request.Folder, request.IncludeSubfolders);
+                scope = folderScope.Scope;
             }
 
             IndexQuery query = new IndexQuery
             {
                 Scope = scope,
+                FolderPathsAnyOf = folderScope?.FolderPaths,
                 Terms = terms.Count > 0 ? terms : null,
                 SearchIn = request.SearchIn,
                 Kinds = request.AttachmentHitsOnly
@@ -245,6 +257,13 @@ namespace OutlookAI.Core.Services
 
             SweepInfo? sweep = null;
             List<string> advice = new List<string>();
+
+            // The folder bound is reported BEFORE anything else: an agent that gets a
+            // widened or name-matched delegate scope must see that first (constraints
+            // C2/C3), and a folder that did not resolve must never look like an empty one
+            // (C7 - the guard below).
+            AddFolderScopeAdvice(advice, folderScope, request, indexResult.Hits.Count);
+
             if (!request.IndexOnly)
             {
                 sweep = RunGapSweep(request, terms, staleness, indexResult.Hits, summaries, snippetChars);
@@ -270,6 +289,8 @@ namespace OutlookAI.Core.Services
                         + "' could not be opened in Outlook, so results for it are index-only and may lag the last "
                         + DescribeAge(staleness) + " of mail. Check the path with list_folders.");
                 }
+
+                AddSweepCoverageAdvice(advice, sweep, staleness);
             }
 
             // Snapshot AFTER the sweep: the sweep may have just autostarted Outlook
@@ -302,12 +323,15 @@ namespace OutlookAI.Core.Services
                     + ") or narrow with store/folder/from/after filters.");
             }
 
+            AddTopClampAdvice(advice, request.Top, top);
+
             return new SearchOutcome
             {
                 Hits = summaries,
                 Truncated = truncated,
                 IndexElapsedMs = indexResult.ElapsedMilliseconds,
                 Sweep = sweep,
+                Scope = DescribeSearchScope(folderScope, request),
                 Staleness = new StalenessInfo
                 {
                     NewestIndexedUtc = staleness.NewestIndexedReceivedUtc,
@@ -315,6 +339,159 @@ namespace OutlookAI.Core.Services
                     OutlookRunning = outlookRunning,
                 },
                 Advice = advice.Count > 0 ? advice : null,
+            };
+        }
+
+        /// <summary>
+        /// A caller <c>top</c> above <see cref="SearchTopCap"/> is clamped, not rejected -
+        /// but a silent clamp makes a 500-hit request look like a complete 100-hit answer.
+        /// Section-12 discipline: every cap is reported (soak fix 15).
+        /// </summary>
+        private static void AddTopClampAdvice(List<string> advice, int requestedTop, int effectiveTop)
+        {
+            if (requestedTop <= effectiveTop)
+            {
+                return;
+            }
+
+            advice.Add("top=" + requestedTop.ToString(CultureInfo.InvariantCulture) + " was reduced to "
+                + effectiveTop.ToString(CultureInfo.InvariantCulture) + " (the hard cap): search returns at most "
+                + SearchTopCap.ToString(CultureInfo.InvariantCulture)
+                + " hits per call. Narrow with store/folder/from/after, or page by moving the 'before' bound.");
+        }
+
+        /// <summary>
+        /// Reports every way the folder bound differs from what was asked (v3.MD
+        /// constraints C2/C3/C7). Nothing here changes the result set - it exists so the
+        /// result set can never be misread.
+        /// </summary>
+        private void AddFolderScopeAdvice(
+            List<string> advice, FolderScopeResolution? folderScope, SearchRequest request, int indexHitCount)
+        {
+            if (folderScope == null || folderScope.RequestedFolder == null)
+            {
+                return;
+            }
+
+            if (folderScope.Widened)
+            {
+                advice.Add(FolderScopeResolver.DescribeWidening(folderScope));
+            }
+
+            if (folderScope.CollidingLeafNames != null && folderScope.CollidingLeafNames.Count > 0)
+            {
+                advice.Add(FolderScopeResolver.DescribeCollision(folderScope));
+            }
+            else if (folderScope.IsDelegateStore && folderScope.FolderTreeUnavailable && !folderScope.Widened)
+            {
+                advice.Add("Outlook could not be reached, so this delegate folder scope was not checked against the "
+                    + "mailbox's folder tree: delegate mailboxes are indexed by folder NAME only, so a same-named "
+                    + "folder elsewhere in that mailbox would also be included.");
+            }
+
+            if (indexHitCount > 0)
+            {
+                return;
+            }
+
+            // Non-silent zero-row guard (C7). Two TOP-1 probes, only ever on the empty
+            // path: first "does this folder bound match ANY row" (so a folder that is
+            // simply empty of matches stays quiet), then "does the store". Rows in the
+            // store but none for the folder means the PATH did not resolve - the failure
+            // mode that hid the delegate defect for months.
+            try
+            {
+                if (_index.Value.FolderScopeHasAnyItem(folderScope.Scope, folderScope.FolderPaths))
+                {
+                    return;
+                }
+
+                if (_index.Value.FolderScopeHasAnyItem(folderScope.StoreScope, null))
+                {
+                    advice.Add(FolderScopeResolver.DescribeUnresolvedFolder(request.Folder, request.Store!));
+                }
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // The guard is a diagnostic; a failing probe must never fail the search.
+            }
+        }
+
+        /// <summary>
+        /// Narrates every freshness-coverage hole the sweep just reported. Before soak
+        /// fix 15 all of these landed in the payload as bare integers with no advice
+        /// branch anywhere - or, for a failed folder, were not reported at all.
+        /// </summary>
+        private static void AddSweepCoverageAdvice(List<string> advice, SweepInfo sweep, IndexStalenessReport staleness)
+        {
+            if (!sweep.Performed)
+            {
+                return;
+            }
+
+            if (sweep.FoldersFailed > 0)
+            {
+                advice.Add("Freshness sweep FAILED on " + sweep.FoldersFailed.ToString(CultureInfo.InvariantCulture)
+                    + " folder(s) - Outlook would not enumerate them, so mail that arrived there in the last "
+                    + DescribeAge(staleness) + " is missing from these results. Retry, or use exhaustive:true for that folder.");
+            }
+
+            if (sweep.ItemCappedFolders != null && sweep.ItemCappedFolders.Count > 0)
+            {
+                advice.Add("Freshness sweep hit its per-folder cap of "
+                    + SweepPerFolderCap.ToString(CultureInfo.InvariantCulture) + " items in: "
+                    + string.Join(", ", sweep.ItemCappedFolders)
+                    + ". It reads newest-first, so the OLDEST not-yet-indexed mail in those folders is not covered - "
+                    + "narrow the window with 'after' or search those folders directly.");
+            }
+
+            if (sweep.FolderCapReached == true)
+            {
+                advice.Add("Freshness sweep stopped at its folder cap ("
+                    + OutlookComSession.MaxScopedSweepFolders.ToString(CultureInfo.InvariantCulture)
+                    + "), so deeper subfolders were never visited - index results still cover them, but brand-new "
+                    + "mail there may be missing. Scope the search to a narrower folder for full freshness coverage.");
+            }
+            else if (sweep.FoldersSkipped > 0)
+            {
+                advice.Add("Freshness sweep skipped " + sweep.FoldersSkipped.ToString(CultureInfo.InvariantCulture)
+                    + " folder(s) it could not resolve or enumerate, so mail that arrived there in the last "
+                    + DescribeAge(staleness) + " may be missing. Check paths with list_folders.");
+            }
+
+            if (sweep.FolderListOmitted == true)
+            {
+                advice.Add("The swept-folder list is omitted above " + SweptFolderListCap.ToString(CultureInfo.InvariantCulture)
+                    + " folders (payload discipline); sweep.foldersSwept is the true count.");
+            }
+        }
+
+        /// <summary>Compact scope block; present only for folder-scoped searches.</summary>
+        private static SearchScopeInfo? DescribeSearchScope(FolderScopeResolution? folderScope, SearchRequest request)
+        {
+            if (folderScope == null || folderScope.RequestedFolder == null)
+            {
+                return null;
+            }
+
+            string shape = folderScope.Kind switch
+            {
+                FolderScopeKind.PrimaryRecursive => "folder",
+                FolderScopeKind.PrimaryNonRecursive => "folder_only",
+                FolderScopeKind.DelegateFlat => "delegate_folders",
+                FolderScopeKind.DelegateWidened => "delegate_store_widened",
+                _ => "store",
+            };
+
+            return new SearchScopeInfo
+            {
+                Folder = request.Folder,
+                IncludeSubfolders = request.IncludeSubfolders,
+                Shape = shape,
+                Widened = folderScope.Widened ? true : (bool?)null,
+                FolderNamesMatched = folderScope.IsDelegateStore && folderScope.FolderPaths != null
+                    ? folderScope.FolderPaths.Count
+                    : (int?)null,
             };
         }
 
@@ -367,7 +544,13 @@ namespace OutlookAI.Core.Services
             // arrival was invisible until the index caught up.
             IReadOnlyList<string>? sweepFolderPath = ParseFolderSegments(request.Folder);
             string? folderKey = sweepFolderPath == null ? null : string.Join("/", sweepFolderPath);
-            info.Scope = folderKey == null ? DefaultSweepScopeDescription : "folder";
+
+            // The default folder set is shallow by construction (SweepFolder, not
+            // SweepFolderTree), so only a folder-scoped sweep can honor the flag.
+            bool sweepRecursive = folderKey != null && request.IncludeSubfolders;
+            info.Scope = folderKey == null
+                ? DefaultSweepScopeDescription
+                : sweepRecursive ? "folder" : "folder (no subfolders)";
 
             // D34 sweep cache: rapid-fire iterative searches reuse one sweep for up to
             // ~10 s (keyed on the frontier-derived window base + store scope + folder
@@ -380,16 +563,14 @@ namespace OutlookAI.Core.Services
             // over-returns.
             DateTime nowUtc = DateTime.UtcNow;
             IReadOnlyList<ComMailBrief> sweptItems;
-            if (_sweepCache.TryGet(baseGapStart, request.Store, folderKey, nowUtc, out SweepCache.CachedSweep? cachedSweep)
+            if (_sweepCache.TryGet(baseGapStart, request.Store, folderKey, sweepRecursive, nowUtc, out SweepCache.CachedSweep? cachedSweep)
                 && cachedSweep != null)
             {
                 info.Performed = true;
                 info.Cached = true;
                 info.CacheAgeSeconds = Math.Round((nowUtc - cachedSweep.FetchedAtUtc).TotalSeconds, 1);
                 info.ElapsedMs = 0;
-                info.FoldersSwept = cachedSweep.Result.FoldersSwept;
-                info.FoldersSkipped = cachedSweep.Result.FoldersSkipped;
-                info.Folders = DescribeSweptFolders(cachedSweep.Result, request.Store);
+                ApplySweepCounters(info, cachedSweep.Result, request.Store);
                 sweptItems = cachedSweep.Result.Items;
             }
             else
@@ -399,7 +580,7 @@ namespace OutlookAI.Core.Services
                 try
                 {
                     sweepResult = _gateway.Run(s => s.SweepFoldersNewerThan(
-                        gapStart, SweepPerFolderCap, includeBodies: true, request.Store, sweepFolderPath));
+                        gapStart, SweepPerFolderCap, includeBodies: true, request.Store, sweepFolderPath, sweepRecursive));
                 }
                 catch (OutlookUnavailableException ex)
                 {
@@ -423,16 +604,15 @@ namespace OutlookAI.Core.Services
                 stopwatch.Stop();
                 info.Performed = true;
                 info.ElapsedMs = stopwatch.ElapsedMilliseconds;
-                info.FoldersSwept = sweepResult.FoldersSwept;
-                info.FoldersSkipped = sweepResult.FoldersSkipped;
-                info.Folders = DescribeSweptFolders(sweepResult, request.Store);
+                ApplySweepCounters(info, sweepResult, request.Store);
                 sweptItems = sweepResult.Items;
 
                 // Only unclamped windows are cacheable: an After-narrowed sweep must
                 // not poison wider follow-up searches.
                 if (gapStart == baseGapStart)
                 {
-                    _sweepCache.Store(baseGapStart, request.Store, folderKey, sweepResult, info.ElapsedMs, nowUtc);
+                    _sweepCache.Store(
+                        baseGapStart, request.Store, folderKey, sweepRecursive, sweepResult, info.ElapsedMs, nowUtc);
                 }
             }
 
@@ -542,7 +722,8 @@ namespace OutlookAI.Core.Services
                 request.BeforeUtc,
                 maxItems: top,
                 timeBudgetMs: ExhaustiveTimeBudgetMs,
-                searchIn: request.SearchIn));
+                searchIn: request.SearchIn,
+                includeSubfolders: request.IncludeSubfolders));
             stopwatch.Stop();
 
             List<HitSummary> summaries = new List<HitSummary>();
@@ -589,8 +770,20 @@ namespace OutlookAI.Core.Services
             if (scan.TimedOut)
             {
                 advice.Add("The " + (ExhaustiveTimeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
-                    + " s time budget stopped the scan - results are partial. Narrow the folder/date bounds.");
+                    + " s time budget stopped the scan after " + scan.FoldersScanned.ToString(CultureInfo.InvariantCulture)
+                    + " folder(s) - results are partial. Narrow the folder/date bounds, or pass include_subfolders:false "
+                    + "to scan just the named folder.");
             }
+
+            if (scan.FoldersSkipped > 0)
+            {
+                advice.Add("The scan SKIPPED " + scan.FoldersSkipped.ToString(CultureInfo.InvariantCulture)
+                    + " folder(s) Outlook would not filter or enumerate (of "
+                    + (scan.FoldersScanned + scan.FoldersSkipped).ToString(CultureInfo.InvariantCulture)
+                    + " reached) - mail in them is NOT covered by these results.");
+            }
+
+            AddTopClampAdvice(advice, request.Top, top);
 
             // Staleness is best-effort context here: exhaustive works even when the
             // SystemIndex is unreachable (that is one of its jobs).
@@ -622,6 +815,12 @@ namespace OutlookAI.Core.Services
                     Truncated = scan.Truncated,
                     TimedOut = scan.TimedOut,
                     ElapsedMs = stopwatch.ElapsedMilliseconds,
+                },
+                Scope = request.Folder == null ? null : new SearchScopeInfo
+                {
+                    Folder = request.Folder,
+                    IncludeSubfolders = request.IncludeSubfolders,
+                    Shape = request.IncludeSubfolders ? "folder" : "folder_only",
                 },
                 Staleness = new StalenessInfo
                 {
@@ -1139,6 +1338,42 @@ namespace OutlookAI.Core.Services
             }
 
             return folders.Count == 0 || folders.Count > SweptFolderListCap ? null : folders;
+        }
+
+        /// <summary>
+        /// Copies the sweep's coverage counters onto the response block, including the
+        /// ones added by soak fix 15 (failed folders, per-folder item truncation, folder
+        /// cap, and whether the folder LIST was dropped by its own cap). Every one of
+        /// these was previously either absent or indistinguishable from success.
+        /// </summary>
+        private static void ApplySweepCounters(SweepInfo info, ComSweepResult result, string? store)
+        {
+            info.FoldersSwept = result.FoldersSwept;
+            info.FoldersSkipped = result.FoldersSkipped;
+            info.FoldersFailed = result.FoldersFailed;
+            info.Folders = DescribeSweptFolders(result, store);
+            info.FolderListOmitted = info.Folders == null && result.SweptFolders.Count > SweptFolderListCap
+                ? true
+                : (bool?)null;
+            info.FolderCapReached = result.FolderCapReached ? true : (bool?)null;
+
+            List<string> capped = new List<string>();
+            foreach (string entry in result.ItemCappedFolders)
+            {
+                if (store != null)
+                {
+                    int separator = entry.IndexOf('/');
+                    if (separator < 0
+                        || !string.Equals(entry.Substring(0, separator), store, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                }
+
+                capped.Add(entry);
+            }
+
+            info.ItemCappedFolders = capped.Count == 0 ? null : capped;
         }
 
         private static IReadOnlyList<string>? ParseFolderSegments(string? folder)
@@ -2708,6 +2943,26 @@ namespace OutlookAI.Core.Services
 
         private string ResolveScope(string store, string? folder)
         {
+            return ResolveFolderScope(store, folder, includeSubfolders: true).Scope;
+        }
+
+        /// <summary>
+        /// Turns a store display name + folder path + include_subfolders into the index
+        /// predicates, choosing the shape the store's namespace actually supports.
+        /// <para>
+        /// ⚠ THE DELEGATE FIX (soak fix 15). This method used to build a NESTED delegate
+        /// URL (<c>&lt;host&gt;/1/&lt;delegate&gt;/&lt;path&gt;</c>) for a delegate
+        /// folder. The delegate index namespace is FLAT - intermediate folders are dropped
+        /// from both the mapi URL and System.ItemFolderPathDisplay - so that URL addressed
+        /// a folder that does not exist and every delegate SUBFOLDER search returned 0
+        /// rows, silently (measured: 8/8 probed subfolders, ~3,871 items across 15
+        /// subfolders unreachable on this profile). Delegate scopes now go through
+        /// <see cref="FolderScopeResolver.ForDelegateStore"/>: delegate STORE ROOT scope +
+        /// folder-NAME equality, verified exact against COM ground truth.
+        /// </para>
+        /// </summary>
+        private FolderScopeResolution ResolveFolderScope(string store, string? folder, bool includeSubfolders)
+        {
             IReadOnlyList<StoreScopeInfo> catalog = GetCatalog();
             StoreScopeInfo? match = catalog.FirstOrDefault(s =>
                 string.Equals(s.StoreDisplayName, store, StringComparison.OrdinalIgnoreCase));
@@ -2723,12 +2978,7 @@ namespace OutlookAI.Core.Services
 
             if (match != null)
             {
-                if (folder == null)
-                {
-                    return match.StorePrefix;
-                }
-
-                return match.StorePrefix + "/0/" + folder.Trim('/');
+                return FolderScopeResolver.ForPrimaryStore(match.StorePrefix, folder, includeSubfolders);
             }
 
             // Delegate store: scope under an owner's /1/<name> subtree.
@@ -2747,7 +2997,11 @@ namespace OutlookAI.Core.Services
 
                 if (exists)
                 {
-                    return folder == null ? delegateScope : delegateScope + "/" + folder.Trim('/');
+                    // The COM tree is needed only for a delegate FOLDER scope: to map the
+                    // requested subtree onto the flat leaf names it contains, and to spot
+                    // leaf names the flat namespace merges.
+                    IReadOnlyList<string>? tree = folder == null ? null : TryGetFolderPaths(store);
+                    return FolderScopeResolver.ForDelegateStore(delegateScope, folder, includeSubfolders, tree);
                 }
             }
 
@@ -2755,6 +3009,45 @@ namespace OutlookAI.Core.Services
             throw new ArgumentException(
                 "Store '" + store + "' was not found in the local index. Known stores: " + known
                 + ". Use list_accounts for the full store list.");
+        }
+
+        /// <summary>
+        /// Store-relative folder paths of one store from COM, cached for
+        /// <see cref="FolderPathCacheTtl"/>. Returns null when Outlook cannot be reached -
+        /// the caller then widens rather than narrowing on a guess.
+        /// </summary>
+        private IReadOnlyList<string>? TryGetFolderPaths(string store)
+        {
+            lock (_catalogLock)
+            {
+                if (_folderPaths.TryGetValue(store, out (IReadOnlyList<string> Paths, DateTime FetchedUtc) cached)
+                    && DateTime.UtcNow - cached.FetchedUtc <= FolderPathCacheTtl)
+                {
+                    return cached.Paths;
+                }
+            }
+
+            IReadOnlyList<string> paths;
+            try
+            {
+                paths = _gateway.Run(s => s.ListFolderPaths(store, FolderWalkAbsoluteCap));
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                return null;
+            }
+
+            if (paths.Count == 0)
+            {
+                return null;
+            }
+
+            lock (_catalogLock)
+            {
+                _folderPaths[store] = (paths, DateTime.UtcNow);
+            }
+
+            return paths;
         }
 
         private IReadOnlyList<StoreScopeInfo> GetCatalog()
