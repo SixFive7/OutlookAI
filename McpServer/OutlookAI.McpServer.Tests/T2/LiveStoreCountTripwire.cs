@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using OutlookAI.Core.Com;
 
 namespace OutlookAI.McpServer.Tests.T2;
 
@@ -21,6 +22,16 @@ public static class LiveStoreCountTripwire
     private static Dictionary<string, IReadOnlyDictionary<string, int>>? _baseline;
     private static string? _hub;
     private static bool _verified;
+
+    /// <summary>
+    /// One COM session held for the whole live tier. The census itself opens and releases
+    /// short-lived Outlook references; if the tests STARTED Outlook, releasing the last one
+    /// arms its idle self-exit (~11.5 min - the measured headless lifetime), which then
+    /// fires in the middle of the run and turns every later COM call into "RPC server is
+    /// unavailable". Holding one reference keeps the instance alive exactly like a real
+    /// agent session does. Released in <see cref="Verify"/> - never quits Outlook (S7).
+    /// </summary>
+    private static OutlookComSession? _keepAlive;
 
     /// <summary>True once a baseline exists for this process.</summary>
     public static bool HasBaseline
@@ -65,6 +76,17 @@ public static class LiveStoreCountTripwire
             }
 
             _hub = settings.TestHubStoreDisplayName;
+            try
+            {
+                _keepAlive = OutlookComSession.Connect(allowStartingOutlook: true);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                throw new InvalidOperationException(
+                    "REFUSING to run the live tier: Outlook could not be reached for the count tripwire ("
+                    + ex.GetType().Name + ").", ex);
+            }
+
             Stopwatch stopwatch = Stopwatch.StartNew();
             _baseline = Capture(WatchedStores(settings), "baseline");
             stopwatch.Stop();
@@ -108,6 +130,16 @@ public static class LiveStoreCountTripwire
             $"[tripwire] post-run census in {stopwatch.ElapsedMilliseconds} ms; "
             + $"{verdict.Failures.Count} failure(s), {verdict.Notes.Count} note(s).");
 
+        // Releases COM references only - Outlook keeps running (S7: never kill/close).
+        OutlookComSession? keepAlive;
+        lock (Gate)
+        {
+            keepAlive = _keepAlive;
+            _keepAlive = null;
+        }
+
+        keepAlive?.Dispose();
+
         if (verdict.Failed)
         {
             throw new InvalidOperationException(verdict.Describe());
@@ -119,6 +151,8 @@ public static class LiveStoreCountTripwire
     {
         lock (Gate)
         {
+            _keepAlive?.Dispose();
+            _keepAlive = null;
             _baseline = null;
             _hub = null;
             _verified = false;

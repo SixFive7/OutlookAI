@@ -220,7 +220,13 @@ public sealed class LiveAttachmentKindRecallTests
                 + $"hit(s), {droppedKindHits} of a type the old kind filter dropped.");
 
             probe ??= outcome.Hits.FirstOrDefault(h => HasExtension(h.AttachmentFileName, previouslyDropped));
-            Assert.All(outcome.Hits, h => Assert.True(h.IsAttachmentHit));
+
+            // Only INDEX rows answer the attachment-only question: the freshness gap-sweep
+            // merges live COM hits regardless of the flag (it reads items, not attachment
+            // content), which is pre-existing behavior and not what this test is about.
+            Assert.All(
+                outcome.Hits.Where(h => h.Source == "index"),
+                h => Assert.True(h.IsAttachmentHit));
         }
 
         Assert.NotNull(probe);

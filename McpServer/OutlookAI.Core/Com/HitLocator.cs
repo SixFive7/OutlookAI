@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Collections.Generic;
 
 using OutlookAI.Core.IndexSearch;
@@ -148,6 +149,12 @@ namespace OutlookAI.Core.Com
         /// </summary>
         public const int DelegateLeafWalkCap = 5000;
 
+        /// <summary>Attempts at the delegate leaf walk before an empty answer is believed.</summary>
+        public const int DelegateLeafWalkAttempts = 3;
+
+        /// <summary>Backoff between delegate leaf-walk attempts.</summary>
+        public const int DelegateLeafWalkRetryMs = 400;
+
         private static ComOpenResult? TryResolveDelegateLeaf(
             OutlookComSession session,
             string storeDisplayName,
@@ -157,13 +164,40 @@ namespace OutlookAI.Core.Com
             int toleranceSeconds,
             ref string? error)
         {
-            IReadOnlyList<IReadOnlyList<string>> candidates;
-            try
+            // The tree walk is a burst of COM calls into a possibly busy Outlook, and a
+            // rejected enumeration surfaces as "no folders" rather than as an error. An
+            // empty answer is therefore retried before it is believed - live-bitten: the
+            // same delegate hit resolved standalone and reported FolderNotFound inside a
+            // full-suite run.
+            IReadOnlyList<IReadOnlyList<string>> candidates = Array.Empty<IReadOnlyList<string>>();
+            bool walkFailed = false;
+            for (int attempt = 0; attempt < DelegateLeafWalkAttempts; attempt++)
             {
-                candidates = session.FindFolderPathsByLeafName(storeDisplayName, leafName, DelegateLeafWalkCap);
+                if (attempt > 0)
+                {
+                    Thread.Sleep(DelegateLeafWalkRetryMs);
+                }
+
+                try
+                {
+                    candidates = session.FindFolderPathsByLeafName(storeDisplayName, leafName, DelegateLeafWalkCap);
+                    walkFailed = false;
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    walkFailed = true;
+                    continue;
+                }
+
+                if (candidates.Count > 0)
+                {
+                    break;
+                }
             }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
+
+            if (walkFailed)
             {
+                error = "DelegateLeafWalkFailed";
                 return null;
             }
 
@@ -189,6 +223,8 @@ namespace OutlookAI.Core.Com
                 }
             }
 
+            // Say WHICH shape of failure this was: no folder of that name anywhere, or a
+            // folder that exists but no longer holds the item.
             if (candidates.Count == 0)
             {
                 error = "FolderNotFound";
