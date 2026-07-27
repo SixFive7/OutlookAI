@@ -152,6 +152,27 @@ namespace OutlookAI.Core.IndexSearch
         /// </summary>
         public string? Scope { get; set; }
 
+        /// <summary>
+        /// Non-recursive folder narrowing: the exact <c>System.ItemFolderPathDisplay</c>
+        /// values a row may carry, ORed. Combined with <see cref="Scope"/> this selects
+        /// specific folders WITHOUT their subfolders, including their attachment-content
+        /// rows (those inherit the parent message's folder display path).
+        /// <para>
+        /// Equality on this column is index-backed (<c>isColumn</c> in the property
+        /// schema; measured 6-49 ms) - it is NOT the section-12 <c>LIKE</c>-on-
+        /// <c>System.ItemPathDisplay</c> property scan. The shallow <c>DIRECTORY=</c>
+        /// predicate is deliberately NOT used: it returns zero <c>System.Kind='document'</c>
+        /// rows, dropping up to 41% of a folder's hits (v3.MD section 12).
+        /// </para>
+        /// <para>
+        /// Null = no folder narrowing (a bare <see cref="Scope"/> is recursive). Values
+        /// are derived from the scope URL by
+        /// <see cref="OutlookAI.Core.Mapi.MapiItemUrl.TryBuildFolderPathDisplay"/> -
+        /// never from a store display name.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<string>? FolderPathsAnyOf { get; set; }
+
         /// <summary>Free-text terms, ANDed. Each may end in '*' for prefix matching.</summary>
         public IReadOnlyList<string>? Terms { get; set; }
 

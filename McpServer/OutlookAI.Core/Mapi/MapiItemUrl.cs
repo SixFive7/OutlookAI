@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
 
 namespace OutlookAI.Core.Mapi
 {
@@ -254,5 +255,71 @@ namespace OutlookAI.Core.Mapi
         /// <c>scheme://{SID}/StoreSegment</c>. Use as the SCOPE predicate value.
         /// </summary>
         public string StorePrefix => Scheme + "://" + SidSegment + "/" + StoreSegment;
+
+        /// <summary>
+        /// Derives the <c>System.ItemFolderPathDisplay</c> value of a FOLDER-level mapi
+        /// URL by pure string transform (v3.MD Phase-7 probe block, rule (f), verified on
+        /// 25/25 folders across all five stores): <c>'/'</c> + the store segment with its
+        /// <c>($hash)</c> suffix stripped + <c>'/'</c> + every segment after the
+        /// store-type segment.
+        /// <para>
+        /// ⚠ FOOTGUN this rule exists to avoid: for a DELEGATE store the leading name is
+        /// the HOST account, never the delegate's own <c>Store.DisplayName</c> - building
+        /// the path from the display name returns 0 rows, silently, on 15/15 delegate
+        /// folders. Deriving it from the URL is free and was never wrong; the rejected
+        /// alternative (probing the value with <c>DIRECTORY=</c>) is unsound because
+        /// folders can hold attachment-only rows a shallow traversal cannot see.
+        /// </para>
+        /// <para>
+        /// Returns false for anything that is not a mapi URL. A store-root URL yields the
+        /// store's own path (<c>/account</c>), a delegate root <c>/host/delegate</c>.
+        /// </para>
+        /// </summary>
+        public static bool TryBuildFolderPathDisplay(string? folderScopeUrl, out string? displayPath)
+        {
+            displayPath = null;
+            if (string.IsNullOrWhiteSpace(folderScopeUrl))
+            {
+                return false;
+            }
+
+            string url = folderScopeUrl!.Trim().TrimEnd('/');
+            int schemeEnd = url.IndexOf("://", StringComparison.Ordinal);
+            if (schemeEnd <= 0 || !url.Substring(0, schemeEnd).StartsWith("mapi", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string[] segments = url.Substring(schemeEnd + 3).Split('/');
+            if (segments.Length < 2 || segments[0].Length == 0 || segments[1].Length == 0)
+            {
+                return false;
+            }
+
+            SplitStoreSegment(segments[1], out string storeDisplayName, out _);
+
+            // Segment 2 is the store-type digit (0 default, 1 delegate, 2 public folders)
+            // when present; folder segments follow it. A URL without it addresses the
+            // store root.
+            int folderStart = 2;
+            if (segments.Length > 2 && int.TryParse(segments[2], NumberStyles.None, CultureInfo.InvariantCulture, out _))
+            {
+                folderStart = 3;
+            }
+
+            StringBuilder path = new StringBuilder("/").Append(storeDisplayName);
+            for (int i = folderStart; i < segments.Length; i++)
+            {
+                if (segments[i].Length == 0)
+                {
+                    continue;
+                }
+
+                path.Append('/').Append(segments[i]);
+            }
+
+            displayPath = path.ToString();
+            return true;
+        }
     }
 }

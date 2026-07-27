@@ -437,13 +437,168 @@ public sealed class WsSqlBuilderTests
         Assert.Throws<ArgumentException>(() => WsSqlBuilder.Build(query));
     }
 
+    // ------------------------------------------------- escaping (soak fix 15, item 3)
+
     [Fact]
-    public void Build_RejectsScopeWithSingleQuote()
+    public void Build_EscapesSingleQuotesInTheScope_InsteadOfThrowing()
+    {
+        // Was: ValidateScope THREW on any scope containing an apostrophe, which made a
+        // folder named O'Brien un-searchable by hard exception. Measured rule: a raw '
+        // is a syntax error (0x80040E14) in BOTH literal positions and '' parses in
+        // both, so doubling is the fix.
+        var query = BaseQuery();
+        query.Scope = "mapi16://{sid}/store($ab12)/0/O'Brien";
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains("SCOPE='mapi16://{sid}/store($ab12)/0/O''Brien'", sql, StringComparison.Ordinal);
+        // Exactly one doubled quote - the literal is not double-escaped.
+        Assert.DoesNotContain("O'''Brien", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_EscapesSingleQuotesInTheFolderPathLiteral()
     {
         var query = BaseQuery();
-        query.Scope = "mapi16://{sid}/store'--injection";
+        query.Scope = "mapi16://{sid}/store($ab12)/0/O'Brien";
+        query.FolderPathsAnyOf = new[] { "/store/O'Brien" };
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains("System.ItemFolderPathDisplay='/store/O''Brien'", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_LeavesEveryOtherCharacterLiteralUnderEquality()
+    {
+        // Proved live: '=' is not LIKE - '%', '_', '[', ']', '{', '}', '"' are literal,
+        // and a space must stay a space (%20 matches nothing, because the MAPI handler
+        // already URL-encoded its URLs at index time).
+        var query = BaseQuery();
+        query.Scope = "mapi16://{sid}/store($ab12)/0/Sent Items";
+        query.FolderPathsAnyOf = new[] { "/store/A_b%c [d] {e} \"f\" Sent Items" };
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains("System.ItemFolderPathDisplay='/store/A_b%c [d] {e} \"f\" Sent Items'", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("%20", sql, StringComparison.Ordinal);
+        Assert.Contains("SCOPE='mapi16://{sid}/store($ab12)/0/Sent Items'", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_RejectsControlCharactersInTheScope()
+    {
+        var query = BaseQuery();
+        query.Scope = "mapi16://{sid}/store" + (char)7 + "bell";
 
         Assert.Throws<ArgumentException>(() => WsSqlBuilder.Build(query));
+    }
+
+    // ------------------------------- non-recursive folder predicate (soak fix 15, item 4)
+
+    [Fact]
+    public void Build_EmitsFolderPathEquality_NotDirectory_ForANonRecursiveScope()
+    {
+        var query = BaseQuery();
+        query.Scope = "mapi16://{sid}/alice@example.com($ab12)/0/Inbox";
+        query.FolderPathsAnyOf = new[] { "/alice@example.com/Inbox" };
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains("SCOPE='mapi16://{sid}/alice@example.com($ab12)/0/Inbox'", sql, StringComparison.Ordinal);
+        Assert.Contains("System.ItemFolderPathDisplay='/alice@example.com/Inbox'", sql, StringComparison.Ordinal);
+
+        // DIRECTORY= is shallow AND fast but returns ZERO Kind='document' rows - it drops
+        // every attachment-content hit (41% of one real folder's rows). Never emitted.
+        Assert.DoesNotContain("DIRECTORY", sql, StringComparison.OrdinalIgnoreCase);
+        // Still the section-12 kind filter, so attachment rows survive the narrowing.
+        Assert.Contains("(System.Kind='email' OR System.Kind='document')", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_OrsMultipleFolderPaths_ForAFlatDelegateSubtree()
+    {
+        var query = BaseQuery();
+        query.Scope = "mapi16://{sid}/host@example.com($ab12)/1/Someone Else";
+        query.FolderPathsAnyOf = new[]
+        {
+            "/host@example.com/Someone Else/Inbox",
+            "/host@example.com/Someone Else/20251015",
+        };
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains(
+            "(System.ItemFolderPathDisplay='/host@example.com/Someone Else/Inbox' "
+            + "OR System.ItemFolderPathDisplay='/host@example.com/Someone Else/20251015')",
+            sql,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_CollapsesDuplicateFolderPaths()
+    {
+        var query = BaseQuery();
+        query.Scope = "mapi16://{sid}/host@example.com($ab12)/1/Someone Else";
+        query.FolderPathsAnyOf = new[]
+        {
+            "/host@example.com/Someone Else/Conflicts",
+            "/host@example.com/Someone Else/conflicts",
+        };
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains("System.ItemFolderPathDisplay='/host@example.com/Someone Else/Conflicts'", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain(" OR System.ItemFolderPathDisplay=", sql, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("alice@example.com/Inbox")] // no leading slash
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Build_RejectsMalformedFolderPaths(string path)
+    {
+        var query = BaseQuery();
+        query.Scope = "mapi16://{sid}/alice@example.com($ab12)/0/Inbox";
+        query.FolderPathsAnyOf = new[] { path };
+
+        Assert.Throws<ArgumentException>(() => WsSqlBuilder.Build(query));
+    }
+
+    [Fact]
+    public void Build_RefusesAnOverlongFolderPathOrSet()
+    {
+        // MEASURED: the provider executes a 95-literal OR-set and FAILS OUTRIGHT
+        // ("Catastrophic failure", 0x8000FFFF) at 100. The builder's ceiling is the
+        // last-resort guard; callers widen long before it.
+        Assert.Equal(64, WsSqlBuilder.MaxFolderPaths);
+
+        var query = BaseQuery();
+        query.Scope = "mapi16://{sid}/host@example.com($ab12)/1/Someone Else";
+        query.FolderPathsAnyOf = Enumerable
+            .Range(0, WsSqlBuilder.MaxFolderPaths + 1)
+            .Select(i => "/host@example.com/Someone Else/f" + i)
+            .ToArray();
+
+        Assert.Throws<ArgumentException>(() => WsSqlBuilder.Build(query));
+    }
+
+    [Fact]
+    public void FolderScopeExistenceProbe_CarriesNoSearchFilters()
+    {
+        // The C7 guard must answer "does this folder scope resolve", never "does the
+        // search match" - so it carries no term, date or sender predicate.
+        string sql = WsSqlBuilder.BuildFolderScopeExistenceProbe(
+            "mapi16://{sid}/host@example.com($ab12)/1/Someone Else",
+            new[] { "/host@example.com/Someone Else/Inbox" });
+
+        Assert.Contains("SELECT TOP 1 System.ItemUrl", sql, StringComparison.Ordinal);
+        Assert.Contains("SCOPE='mapi16://{sid}/host@example.com($ab12)/1/Someone Else'", sql, StringComparison.Ordinal);
+        Assert.Contains("System.ItemFolderPathDisplay='/host@example.com/Someone Else/Inbox'", sql, StringComparison.Ordinal);
+        Assert.Contains("(System.Kind='email' OR System.Kind='document')", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("CONTAINS", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("DateReceived", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("ORDER BY", sql, StringComparison.Ordinal);
     }
 
     [Theory]

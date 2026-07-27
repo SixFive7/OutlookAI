@@ -155,6 +155,18 @@ namespace OutlookAI.Core.IndexSearch
         }
 
         /// <summary>
+        /// True when the index holds at least one row for a folder scope (scope plus
+        /// optional folder-path equalities), ignoring every search filter. The non-silent
+        /// zero-row guard uses this to tell "this folder holds no match" apart from "this
+        /// folder path matched nothing in the index" (v3.MD constraint C7).
+        /// </summary>
+        public bool FolderScopeHasAnyItem(string? scope, IReadOnlyList<string>? folderPaths)
+        {
+            string sql = WsSqlBuilder.BuildFolderScopeExistenceProbe(scope, folderPaths);
+            return _client.ExecuteRows(sql, 1).Count > 0;
+        }
+
+        /// <summary>
         /// Targeted store-scope discovery for one account: unordered URL samples are
         /// dominated by the big stores (a 30k sample missed the tiny idle store on this
         /// machine), and SCOPE demands the exact store segment including the ($hash)

@@ -9,7 +9,12 @@ namespace OutlookAI.Core.IndexSearch
     /// Builds Windows Search SQL for SystemIndex queries. Every emitted statement honors
     /// the v3.MD section-12 anti-pattern checklist:
     /// <list type="bullet">
-    /// <item>Scoping only via <c>SCOPE='mapi...'</c> - never LIKE on System.ItemPathDisplay.</item>
+    /// <item>Scoping only via <c>SCOPE='mapi...'</c> - never LIKE on System.ItemPathDisplay.
+    /// Non-recursive narrowing adds <c>System.ItemFolderPathDisplay=</c> equality
+    /// (index-backed) - never the shallow <c>DIRECTORY=</c> predicate, which silently
+    /// drops every attachment-content row.</item>
+    /// <item>String literals escape a single quote by doubling it, in EVERY position -
+    /// a folder named <c>O'Brien</c> must be searchable, not an exception.</item>
     /// <item>Never selects System.Message.MessageId (0x80040E55 in combined queries),
     /// System.Search.Contents (query-only) or System.Search.EntryID (not the MAPI id).</item>
     /// <item>Rejects bare '*' terms (CONTAINS('*') = 0x80041605).</item>
@@ -63,6 +68,23 @@ namespace OutlookAI.Core.IndexSearch
         private const int MaxTop = 5000;
         private const int MaxTermLength = 128;
 
+        /// <summary>
+        /// Hard ceiling on <see cref="IndexQuery.FolderPathsAnyOf"/> literals in one
+        /// statement. MEASURED on this machine (read-only ADODB battery, 2026-07-27): a
+        /// folder-path OR-set of 95 literals executes, 100 fails outright with
+        /// "Catastrophic failure" (0x8000FFFF) - the provider has a hard restriction-count
+        /// limit, so an uncapped OR-set is a crash, not a slowdown. Cost is linear and
+        /// modest well below it (delegate store root + term, warm best-of-3: bare SCOPE
+        /// 43 ms, x10 53 ms, x20 59 ms, x40 71 ms, x80 101 ms), which is why callers cap
+        /// at a much lower value and WIDEN to the plain scope instead of truncating a set.
+        /// This constant is the builder's last-resort guard: exceeding it throws rather
+        /// than emitting a statement that would fail at execution time.
+        /// </summary>
+        public const int MaxFolderPaths = 64;
+
+        /// <summary>The non-recursive folder column (see <see cref="IndexQuery.FolderPathsAnyOf"/>).</summary>
+        private const string FolderPathColumn = "System.ItemFolderPathDisplay";
+
         /// <summary>Subject column of the term predicate (query-only for CONTAINS, selectable).</summary>
         private const string SubjectColumn = "System.Subject";
 
@@ -95,6 +117,11 @@ namespace OutlookAI.Core.IndexSearch
             if (query.Scope != null)
             {
                 where.Add("SCOPE='" + ValidateScope(query.Scope) + "'");
+            }
+
+            if (query.FolderPathsAnyOf != null && query.FolderPathsAnyOf.Count > 0)
+            {
+                where.Add(BuildFolderPathPredicate(query.FolderPathsAnyOf));
             }
 
             switch (query.Kinds)
@@ -220,6 +247,113 @@ namespace OutlookAI.Core.IndexSearch
         }
 
         /// <summary>
+        /// Statement probing whether the index holds ANY row for a folder scope - the
+        /// non-silent zero-row guard (v3.MD probe block, constraint C7). Deliberately
+        /// carries no term/date/sender predicates: it answers "does this folder scope
+        /// resolve at all", never "does the search match".
+        /// </summary>
+        public static string BuildFolderScopeExistenceProbe(string? scope, IReadOnlyList<string>? folderPaths)
+        {
+            List<string> where = new List<string>();
+            if (scope != null)
+            {
+                where.Add("SCOPE='" + ValidateScope(scope) + "'");
+            }
+
+            if (folderPaths != null && folderPaths.Count > 0)
+            {
+                where.Add(BuildFolderPathPredicate(folderPaths));
+            }
+
+            if (where.Count == 0)
+            {
+                throw new ArgumentException("A folder-scope probe needs a scope or a folder path.", nameof(scope));
+            }
+
+            where.Add("(System.Kind='email' OR System.Kind='document')");
+            return "SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE " + string.Join(" AND ", where);
+        }
+
+        /// <summary>
+        /// Non-recursive folder predicate: <c>System.ItemFolderPathDisplay</c> equality,
+        /// ORed over the requested paths. Under <c>=</c> nothing but the single quote
+        /// needs escaping - <c>%</c>, <c>_</c>, <c>[</c>, <c>]</c>, <c>{</c>, <c>}</c> and
+        /// <c>"</c> are literal (proved live: '/store/Inbo_' and '/store/Inbox%' both
+        /// return 0 against a real Inbox, so '=' is not LIKE), and spaces must stay
+        /// literal (a %20-encoded space returns 0 - the MAPI handler already encoded its
+        /// URLs at index time).
+        /// </summary>
+        private static string BuildFolderPathPredicate(IReadOnlyList<string> folderPaths)
+        {
+            if (folderPaths.Count > MaxFolderPaths)
+            {
+                throw new ArgumentException(
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "At most {0} folder paths may be ORed in one statement (the provider fails outright near 100).",
+                        MaxFolderPaths),
+                    nameof(folderPaths));
+            }
+
+            List<string> equalities = new List<string>(folderPaths.Count);
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string path in folderPaths)
+            {
+                string validated = ValidateFolderPath(path);
+                if (!seen.Add(validated))
+                {
+                    continue; // Duplicate leaf names collapse to one equality.
+                }
+
+                equalities.Add(FolderPathColumn + "='" + EscapeSqlLiteral(validated) + "'");
+            }
+
+            if (equalities.Count == 0)
+            {
+                throw new ArgumentException("Folder paths must contain at least one usable value.", nameof(folderPaths));
+            }
+
+            return equalities.Count == 1 ? equalities[0] : "(" + string.Join(" OR ", equalities) + ")";
+        }
+
+        private static string ValidateFolderPath(string folderPath)
+        {
+            if (folderPath == null)
+            {
+                throw new ArgumentException("Folder path must not be null.", nameof(folderPath));
+            }
+
+            string trimmed = folderPath.Trim();
+            if (trimmed.Length == 0)
+            {
+                throw new ArgumentException("Folder path must not be blank.", nameof(folderPath));
+            }
+
+            if (trimmed[0] != '/')
+            {
+                throw new ArgumentException(
+                    "Folder path must be a System.ItemFolderPathDisplay value starting with '/' (e.g. '/account/Inbox').",
+                    nameof(folderPath));
+            }
+
+            if (trimmed.Length > 512)
+            {
+                // The property-store limit; real paths here top out around 47 characters.
+                throw new ArgumentException("Folder path is too long.", nameof(folderPath));
+            }
+
+            foreach (char c in trimmed)
+            {
+                if (char.IsControl(c))
+                {
+                    throw new ArgumentException("Folder path contains control characters.", nameof(folderPath));
+                }
+            }
+
+            return trimmed;
+        }
+
+        /// <summary>
         /// Term predicate. Multi-term queries AND across the WHOLE matched text, not
         /// inside one column: each term gets its own Subject-OR-Contents pair and the
         /// pairs are ANDed, so mail carrying one term in the subject and another in the
@@ -258,6 +392,19 @@ namespace OutlookAI.Core.IndexSearch
             }
         }
 
+        /// <summary>
+        /// Validates a SCOPE value and returns it as a READY-TO-EMBED SQL literal body
+        /// (single quotes doubled).
+        /// <para>
+        /// This used to THROW on any scope containing <c>'</c>, which made a folder named
+        /// <c>O'Brien</c> un-searchable by hard exception. Measured (2026-07-27): a raw
+        /// <c>'</c> yields 0x80040E14 (syntax error) in both the SCOPE and the folder-path
+        /// literal, while <c>''</c> parses in both - so doubling is the correct and only
+        /// required escape. Nothing else needs escaping: <c>%</c>, <c>_</c>, <c>[</c>,
+        /// <c>]</c>, <c>{</c>, <c>}</c> and <c>"</c> are literal under <c>=</c>, and
+        /// spaces must stay literal (<c>%20</c> matches nothing).
+        /// </para>
+        /// </summary>
         private static string ValidateScope(string scope)
         {
             string trimmed = scope.Trim();
@@ -274,12 +421,21 @@ namespace OutlookAI.Core.IndexSearch
                     nameof(scope));
             }
 
-            if (trimmed.IndexOf('\'') >= 0)
+            foreach (char c in trimmed)
             {
-                throw new ArgumentException("Scope must not contain single quotes.", nameof(scope));
+                if (char.IsControl(c))
+                {
+                    throw new ArgumentException("Scope contains control characters.", nameof(scope));
+                }
             }
 
-            return trimmed;
+            return EscapeSqlLiteral(trimmed);
+        }
+
+        /// <summary>Doubles single quotes - the only escape a WS-SQL string literal needs.</summary>
+        private static string EscapeSqlLiteral(string value)
+        {
+            return value.IndexOf('\'') < 0 ? value : value.Replace("'", "''");
         }
 
         /// <summary>
