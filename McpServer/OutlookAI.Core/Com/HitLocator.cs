@@ -17,6 +17,13 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Located via the System.ItemPathDisplay-derived path (fallback path).</summary>
         ItemPathDisplay = 2,
+
+        /// <summary>
+        /// Delegate hit resolved by matching the FLAT index leaf name against the real
+        /// (nested) COM folder tree - the delegate namespace drops every intermediate
+        /// folder, so the URL path alone addresses nothing.
+        /// </summary>
+        DelegateLeafName = 3,
     }
 
     /// <summary>Outcome of locating one index hit through COM.</summary>
@@ -91,6 +98,23 @@ namespace OutlookAI.Core.Com
                 {
                     return new HitLocationResult(HitLocationTier.UrlSegments, located, storeName, null);
                 }
+
+                // The delegate index namespace is FLAT (D42): an item in the delegate's
+                // 'Archive/AliExpress' is indexed as '<host>/1/<delegate>/AliExpress', so
+                // walking that path from the delegate store root finds nothing and EVERY
+                // delegate hit in a nested folder was unopenable - read, save_attachment,
+                // open_in_outlook and the thread COM fallback all failed with
+                // FolderNotFound. Resolve the flat leaf against the real COM tree instead.
+                if (hit.StoreType == 1 && folders!.Count == 1
+                    && string.Equals(urlError, "FolderNotFound", StringComparison.Ordinal))
+                {
+                    ComOpenResult? viaLeaf = TryResolveDelegateLeaf(
+                        session, storeName!, folders[0], lookupSubject, hit, toleranceSeconds, ref urlError);
+                    if (viaLeaf != null)
+                    {
+                        return new HitLocationResult(HitLocationTier.DelegateLeafName, viaLeaf, storeName, null);
+                    }
+                }
             }
             else
             {
@@ -116,6 +140,61 @@ namespace OutlookAI.Core.Com
             }
 
             return new HitLocationResult(HitLocationTier.Failed, null, null, $"url:{urlError} fallback:NoItemPathDisplay");
+        }
+
+        /// <summary>
+        /// Walk cap for the delegate leaf-name resolution: real delegate trees hold tens of
+        /// folders, so this only bounds a pathological one.
+        /// </summary>
+        public const int DelegateLeafWalkCap = 5000;
+
+        private static ComOpenResult? TryResolveDelegateLeaf(
+            OutlookComSession session,
+            string storeDisplayName,
+            string leafName,
+            string lookupSubject,
+            IndexHit hit,
+            int toleranceSeconds,
+            ref string? error)
+        {
+            IReadOnlyList<IReadOnlyList<string>> candidates;
+            try
+            {
+                candidates = session.FindFolderPathsByLeafName(storeDisplayName, leafName, DelegateLeafWalkCap);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                return null;
+            }
+
+            foreach (IReadOnlyList<string> candidate in candidates)
+            {
+                if (candidate.Count <= 1)
+                {
+                    continue; // The flat path itself - already tried and failed.
+                }
+
+                ComOpenResult? located = session.TryResolveByPath(
+                    storeDisplayName, candidate, lookupSubject, hit.DateReceivedUtc, out string? leafError, toleranceSeconds);
+                if (located != null)
+                {
+                    return located;
+                }
+
+                // Keep the most informative reason: "the folder exists, the item is not in
+                // it" beats "no folder of that name".
+                if (leafError != null && !string.Equals(leafError, "FolderNotFound", StringComparison.Ordinal))
+                {
+                    error = leafError;
+                }
+            }
+
+            if (candidates.Count == 0)
+            {
+                error = "FolderNotFound";
+            }
+
+            return null;
         }
 
         /// <summary>

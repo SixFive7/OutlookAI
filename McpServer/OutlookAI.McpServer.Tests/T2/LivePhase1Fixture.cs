@@ -30,11 +30,11 @@ public sealed class LiveTestSettings
     public SubjectOnlyProbeSettings? SubjectOnlyProbe { get; set; }
 
     /// <summary>
-    /// OPTIONAL coordinates of a known orphan-index-row population (see
-    /// <see cref="OrphanFolderProbeSettings"/>). Absent = the stale-row test proves only
-    /// that ordinary hits are NOT flagged.
+    /// OPTIONAL coordinates of a delegate folder that is NESTED in Outlook but FLAT in the
+    /// index (see <see cref="DelegateNestedFolderProbeSettings"/>). Absent = the locator
+    /// test proves only the no-false-positive half.
     /// </summary>
-    public OrphanFolderProbeSettings? OrphanFolderProbe { get; set; }
+    public DelegateNestedFolderProbeSettings? DelegateNestedFolderProbe { get; set; }
 
     /// <summary>Loads the settings file or throws with setup instructions.</summary>
     public static LiveTestSettings Load()
@@ -105,18 +105,21 @@ public sealed class SubjectOnlyProbeSettings
 }
 
 /// <summary>
-/// Coordinates of a known ORPHAN index population: a folder name the index still serves
-/// rows for although no Outlook folder of that name exists in that store (v3.MD block (q)
-/// measured ~458 such rows in one delegate mailbox). Gitignored like every other machine
-/// coordinate (S6); the test only ever prints counts and flags (S4) and writes nothing.
+/// Coordinates of a delegate folder the index publishes FLAT while Outlook nests it - the
+/// shape that made every delegate hit in a subfolder unopenable until soak fix 16.
+/// Gitignored like every other machine coordinate (S6); the tests print counts, paths of
+/// their own making and booleans only (S4) and write nothing.
 /// </summary>
-public sealed class OrphanFolderProbeSettings
+public sealed class DelegateNestedFolderProbeSettings
 {
-    /// <summary>Store display name holding the orphan rows.</summary>
+    /// <summary>Delegate store display name.</summary>
     public string StoreDisplayName { get; set; } = string.Empty;
 
-    /// <summary>The indexed folder name with no matching Outlook folder.</summary>
+    /// <summary>The flat leaf name the index serves (and the COM folder's own name).</summary>
     public string FolderName { get; set; } = string.Empty;
+
+    /// <summary>The COM parent path the index drops (proves the folder really is nested).</summary>
+    public string ComParentPath { get; set; } = string.Empty;
 }
 
 /// <summary>

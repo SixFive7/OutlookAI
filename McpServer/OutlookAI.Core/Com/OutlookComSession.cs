@@ -5224,6 +5224,122 @@ namespace OutlookAI.Core.Com
             });
         }
 
+        /// <summary>
+        /// Store-relative folder paths, as SEGMENTS, whose LEAF name equals
+        /// <paramref name="leafName"/>.
+        /// <para>
+        /// Exists because the delegate index namespace is FLAT (D42): a delegate item in
+        /// <c>Archive/AliExpress</c> is indexed as <c>&lt;host&gt;/1/&lt;delegate&gt;/AliExpress</c>,
+        /// so walking that path from the delegate store root hits nothing and every such
+        /// hit was unopenable. Resolving the leaf against the real COM tree restores them.
+        /// Names-only walk, same cost as <see cref="ListFolderPaths"/>; several matches are
+        /// possible (leaf collisions are a documented delegate reality) and all are
+        /// returned, shallowest first, for the caller to probe in order.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<IReadOnlyList<string>> FindFolderPathsByLeafName(
+            string storeDisplayName, string leafName, int absoluteWalkCap)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(storeDisplayName))
+            {
+                throw new ArgumentException("Store display name must not be blank.", nameof(storeDisplayName));
+            }
+
+            if (string.IsNullOrWhiteSpace(leafName))
+            {
+                throw new ArgumentException("Leaf name must not be blank.", nameof(leafName));
+            }
+
+            return _runner.Run(() =>
+            {
+                List<IReadOnlyList<string>> matches = new List<IReadOnlyList<string>>();
+                dynamic? store = FindStoreByDisplayName(storeDisplayName);
+                if (store == null)
+                {
+                    return (IReadOnlyList<IReadOnlyList<string>>)matches;
+                }
+
+                object? root = null;
+                try
+                {
+                    root = store.GetRootFolder();
+                    CollectFolderSegmentsByLeaf(
+                        root!, new List<string>(), leafName, 1, absoluteWalkCap, matches);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                }
+                finally
+                {
+                    Release(root);
+                    Release((object?)store);
+                }
+
+                matches.Sort((a, b) => a.Count.CompareTo(b.Count));
+                return (IReadOnlyList<IReadOnlyList<string>>)matches;
+            });
+        }
+
+        private void CollectFolderSegmentsByLeaf(
+            object folderObject,
+            List<string> parentSegments,
+            string leafName,
+            int depth,
+            int absoluteWalkCap,
+            List<IReadOnlyList<string>> matches)
+        {
+            if (depth > FolderWalkDepthGuard || matches.Count >= absoluteWalkCap)
+            {
+                return;
+            }
+
+            dynamic folder = folderObject;
+            object? subFolders = null;
+            try
+            {
+                subFolders = folder.Folders;
+                dynamic folderCollection = (dynamic)subFolders!;
+                int count = folderCollection.Count;
+                for (int i = 1; i <= count; i++)
+                {
+                    object? child = null;
+                    try
+                    {
+                        child = folderCollection[i];
+                        string name = TryGetString(() => (string?)((dynamic)child!).Name) ?? string.Empty;
+                        if (name.Length == 0)
+                        {
+                            continue;
+                        }
+
+                        List<string> segments = new List<string>(parentSegments) { name };
+                        if (string.Equals(name, leafName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            matches.Add(segments);
+                        }
+
+                        CollectFolderSegmentsByLeaf(child!, segments, leafName, depth + 1, absoluteWalkCap, matches);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                    finally
+                    {
+                        Release(child);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                // Folder without enumerable children.
+            }
+            finally
+            {
+                Release(subFolders);
+            }
+        }
+
         private void CollectFolderPaths(
             object folderObject, string parentPath, int depth, int absoluteWalkCap, List<string> result)
         {

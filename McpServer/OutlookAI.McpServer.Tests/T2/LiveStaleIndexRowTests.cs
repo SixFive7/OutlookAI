@@ -1,3 +1,4 @@
+using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 using Xunit;
 using Xunit.Abstractions;
@@ -5,14 +6,19 @@ using Xunit.Abstractions;
 namespace OutlookAI.McpServer.Tests.T2;
 
 /// <summary>
-/// Live verification of the orphan-index-row handling (soak fix 16 part B2). The index
-/// legitimately outlives the mailbox: block (q) measured ~458 rows in one delegate store
-/// filed under a leaf name with NO Outlook folder - search returns them, nothing can open
-/// them, and the shipped error said "Re-run search - the item may have moved", the one
-/// remedy that provably cannot work.
+/// Live cover for delegate hits whose folder the index publishes FLAT (soak fix 16 part
+/// B2) - and for the stale-row marker that remains once they resolve.
 /// <para>
-/// STRICTLY READ-ONLY. The delegate probe reads counts and flags only - no subject,
-/// sender or body reaches the output (S4) - and writes nothing anywhere (S1).
+/// THE DEFECT this pins: the delegate index namespace drops every intermediate folder, so
+/// an item in the delegate's <c>Archive/SomeFolder</c> is indexed as
+/// <c>&lt;host&gt;/1/&lt;delegate&gt;/SomeFolder</c>. The locator walked that path from the
+/// delegate store root, found nothing, and EVERY such hit failed to open - read,
+/// save_attachment, open_in_outlook and the thread COM fallback alike. D42 fixed searching
+/// those folders; opening what the search returned stayed broken.
+/// </para>
+/// <para>
+/// STRICTLY READ-ONLY on the delegate mailbox: counts, booleans and the locator tier only -
+/// no subject, sender or body reaches the output (S4), and nothing is written (S1).
 /// </para>
 /// </summary>
 [Collection("LivePhase2")]
@@ -29,13 +35,13 @@ public sealed class LiveStaleIndexRowTests
     }
 
     [Fact]
-    public void OrphanRows_AreFlagged_Advised_AndFailReadWithAnActionableMessage()
+    public void DelegateHitsInANestedFolder_AreReadable_ViaTheFlatLeafName()
     {
-        OrphanFolderProbeSettings? probe = _fixture.Settings.OrphanFolderProbe;
+        DelegateNestedFolderProbeSettings? probe = _fixture.Settings.DelegateNestedFolderProbe;
         if (probe == null || string.IsNullOrWhiteSpace(probe.StoreDisplayName)
             || string.IsNullOrWhiteSpace(probe.FolderName))
         {
-            _output.WriteLine("no orphanFolderProbe configured - covered by the no-false-positive test only.");
+            _output.WriteLine("no delegateNestedFolderProbe configured - skipping the positive half.");
             return;
         }
 
@@ -43,41 +49,45 @@ public sealed class LiveStaleIndexRowTests
         {
             Store = probe.StoreDisplayName,
             Folder = probe.FolderName,
-            Top = 5,
+            Top = 3,
             SnippetChars = 0,
         });
 
         _output.WriteLine(
-            $"orphan probe: {outcome.Hits.Count} hit(s), "
+            $"delegate nested probe: {outcome.Hits.Count} hit(s), "
             + $"{outcome.Hits.Count(h => h.StaleIndexRow == true)} flagged staleIndexRow.");
 
         Assert.NotEmpty(outcome.Hits);
 
-        // (1) every hit under a folder Outlook does not have is flagged...
-        Assert.All(outcome.Hits, h => Assert.True(h.StaleIndexRow));
+        // (1) The folder EXISTS in Outlook (nested), so nothing here may be called stale.
+        Assert.All(outcome.Hits, h => Assert.Null(h.StaleIndexRow));
+        if (outcome.Advice != null)
+        {
+            Assert.DoesNotContain(outcome.Advice, a => a.Contains("staleIndexRow", StringComparison.Ordinal));
+        }
 
-        // (2) ...and the agent is told, in advice, before it burns a read on one.
-        Assert.NotNull(outcome.Advice);
-        Assert.Contains(outcome.Advice!, a => a.Contains("staleIndexRow", StringComparison.Ordinal));
+        // (2) ...and the hit OPENS - the regression this test exists for. Before the fix
+        // this threw "FolderNotFound" for every delegate item in a subfolder.
+        ReadOutcome read = _fixture.Service.Read(outcome.Hits[0].Id, maxBodyChars: 0);
+        _output.WriteLine($"read locatedVia={read.LocatedVia} in {read.LocateMs} ms; folder='{read.Folder}'.");
 
-        // (3) reading one fails with a diagnosis, not a misleading retry suggestion.
-        InvalidOperationException error = Assert.Throws<InvalidOperationException>(
-            () => _fixture.Service.Read(outcome.Hits[0].Id, maxBodyChars: 0));
-        _output.WriteLine("read error: " + error.Message);
+        Assert.False(string.IsNullOrEmpty(read.EntryId));
+        Assert.Equal("delegateLeafName", read.LocatedVia);
 
-        Assert.Contains("no longer exists in Outlook", error.Message, StringComparison.Ordinal);
-        Assert.Contains("stale index row", error.Message, StringComparison.Ordinal);
-        Assert.Contains("exhaustive:true", error.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("may have moved", error.Message, StringComparison.Ordinal);
-
-        // (4) the diagnostic token survives for debugging.
-        Assert.Contains("FolderNotFound", error.Message, StringComparison.Ordinal);
+        // (3) The COM folder really is nested - i.e. the flat URL genuinely addressed
+        // nothing and the leaf-name resolution is what found it.
+        using OutlookComSession verify = OutlookComSession.Connect(allowStartingOutlook: true);
+        IReadOnlyList<IReadOnlyList<string>> matches = verify.FindFolderPathsByLeafName(
+            probe.StoreDisplayName, probe.FolderName, 5000);
+        Assert.NotEmpty(matches);
+        Assert.All(matches, m => Assert.True(m.Count > 1, "the probe folder must be nested, not top-level"));
+        _output.WriteLine("COM leaf matches: " + string.Join(" | ", matches.Select(m => string.Join("/", m))));
     }
 
     [Fact]
     public void OrdinaryHits_AreNeverFlaggedStale()
     {
-        // The flag must be rare and right: a false positive would teach agents to ignore
+        // The marker must be rare and right: a false positive would teach agents to ignore
         // real mail. Probe the hub, whose folders certainly exist.
         SearchOutcome outcome = _fixture.Service.Search(new SearchRequest
         {

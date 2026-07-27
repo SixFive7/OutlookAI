@@ -2896,7 +2896,12 @@ namespace OutlookAI.Core.Services
 
                 cached.LocatedEntryId = location.Located.EntryId;
                 cached.LocatedStoreId = storeId;
-                cached.LocatedVia = location.Tier == HitLocationTier.UrlSegments ? "urlSegments" : "itemPathDisplay";
+                cached.LocatedVia = location.Tier switch
+                {
+                    HitLocationTier.UrlSegments => "urlSegments",
+                    HitLocationTier.DelegateLeafName => "delegateLeafName",
+                    _ => "itemPathDisplay",
+                };
                 return (cached.LocatedEntryId, storeId, cached.LocatedVia, stopwatch.ElapsedMilliseconds, id);
             }
 
@@ -3152,7 +3157,12 @@ namespace OutlookAI.Core.Services
         /// </summary>
         private int FlagStaleIndexRows(IReadOnlyList<(HitSummary Summary, IndexHit Hit)> pairs)
         {
-            if (pairs.Count == 0 || !_gateway.ProbeConnected())
+            // Gate on the PROCESS, not on a held session: a search that reached this point
+            // has normally just swept through COM, but a first search on a fresh service
+            // may not hold a session yet, and gating on that made the flag appear or not
+            // depending on what ran before (live-bitten). Outlook running means attaching
+            // is cheap and cannot start anything.
+            if (pairs.Count == 0 || !(ComGateway.IsOutlookRunning() || _gateway.ProbeConnected()))
             {
                 return 0;
             }

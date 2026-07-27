@@ -574,6 +574,78 @@ public static class LiveOutlookTestMailer
     /// zero-test-folders assert.
     /// </summary>
     /// <summary>
+    /// Saves a tagged DRAFT carrying <paramref name="attachmentPaths"/> into the given
+    /// store's Drafts folder and returns its EntryID.
+    /// <para>
+    /// Deliberately a draft rather than a self-send: the attachment-recall proof only
+    /// needs an indexed item that HOLDS the attachments, and transport adds a dependency
+    /// on Outlook actually flushing the Outbox (which a headless instance may not do -
+    /// soak fix 15). Drafts are indexed exactly like received mail.
+    /// </para>
+    /// </summary>
+    public static string SaveTaggedDraftWithAttachments(
+        string storeDisplayName, string subject, string body, IReadOnlyList<string> attachmentPaths)
+    {
+        LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Draft, nameof(SaveTaggedDraftWithAttachments));
+        if (!subject.Contains(SubjectTag, StringComparison.Ordinal))
+        {
+            throw new ArgumentException($"Test draft subject must carry the {SubjectTag} tag (S3).", nameof(subject));
+        }
+
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? drafts = null;
+            dynamic? items = null;
+            dynamic? mail = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the attachment draft.");
+
+                // Per-account filing (Phase-4 footgun): a plain CreateItem draft lands in
+                // the DEFAULT store's Drafts.
+                drafts = store.GetDefaultFolder(16);
+                items = drafts.Items;
+                mail = items.Add(0); // olMailItem
+                mail.Subject = subject;
+                mail.Body = body;
+
+                dynamic attachments = mail.Attachments;
+                try
+                {
+                    foreach (string path in attachmentPaths)
+                    {
+                        attachments.Add(path);
+                    }
+                }
+                finally
+                {
+                    Release(attachments);
+                }
+
+                mail.Save();
+                return (string)mail.EntryID;
+            }
+            finally
+            {
+                Release(mail);
+                Release(items);
+                Release(drafts);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
     /// READ-ONLY census for the per-store count tripwire: store-relative path -&gt; item
     /// count for every MAIL folder in <paramref name="storeDisplayName"/> (mail-typed
     /// folders plus Deleted Items, Outbox and the Sync Issues subtree, which are all
