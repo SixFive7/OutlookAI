@@ -809,6 +809,151 @@ namespace OutlookAI.Core.Services
         /// how its markup was altered instead of guessing (batch B, B1).
         /// </summary>
         public IReadOnlyList<string>? HtmlAdjustments { get; set; }
+
+        /// <summary>
+        /// Files actually on the SAVED draft (name + size read back from Outlook, not
+        /// echoed from the request - D46/C3). Absent when the draft carries none.
+        /// </summary>
+        public IReadOnlyList<AttachmentView>? Attachments { get; set; }
+
+        /// <summary>Total size of the attachment set in bytes (present only with attachments).</summary>
+        public long? AttachmentsTotalBytes { get; set; }
+
+        /// <summary>
+        /// How many files the call asked to attach - present only when attachments were
+        /// requested, so a mismatch with the Attachments list is visible rather than silent.
+        /// </summary>
+        public int? AttachmentsRequested { get; set; }
+    }
+
+    /// <summary>
+    /// update_draft outcome (v3.MD D46/C1). Everything is read back from the SAVED draft;
+    /// <see cref="Changed"/> names exactly which parts this call rewrote, so an agent can
+    /// see that an omitted field really was left alone.
+    /// </summary>
+    public sealed class UpdateDraftOutcome
+    {
+        /// <summary>Always "updated" on success (a refusal comes back as an error object).</summary>
+        public string Status { get; set; } = "updated";
+
+        /// <summary>The hit id the draft was referenced by, when one was used.</summary>
+        public string? Id { get; set; }
+
+        /// <summary>EntryID of the updated draft.</summary>
+        public string EntryId { get; set; } = string.Empty;
+
+        /// <summary>Store holding the draft.</summary>
+        public string? Store { get; set; }
+
+        /// <summary>Drafts folder name (localized).</summary>
+        public string? Folder { get; set; }
+
+        /// <summary>SmtpAddress the draft will send as.</summary>
+        public string? Account { get; set; }
+
+        /// <summary>Subject after the update.</summary>
+        public string? Subject { get; set; }
+
+        /// <summary>Which parts this call actually changed (body, subject, to, cc, bcc, ...).</summary>
+        public IReadOnlyList<string>? Changed { get; set; }
+
+        /// <summary>True when the revised draft was (re)opened in an Outlook window.</summary>
+        public bool Displayed { get; set; }
+
+        /// <summary>Conversation id after the update (unchanged by a subject rewrite - A3).</summary>
+        public string? ConversationId { get; set; }
+
+        /// <summary>Recipients on the draft AFTER the update (capped).</summary>
+        public IReadOnlyList<RecipientView>? Recipients { get; set; }
+
+        /// <summary>True when Recipients was capped at the payload limit.</summary>
+        public bool? RecipientsTruncated { get; set; }
+
+        /// <summary>Real recipient count before capping (present only when capped).</summary>
+        public int? RecipientsTotal { get; set; }
+
+        /// <summary>Addresses Outlook could not resolve; they stay on the draft.</summary>
+        public IReadOnlyList<string>? UnresolvedRecipients { get; set; }
+
+        /// <summary>Only when the subject was replaced: whether threading survived it (A3).</summary>
+        public bool? ConversationTopicPreserved { get; set; }
+
+        /// <summary>Importance when it is not the default.</summary>
+        public string? Importance { get; set; }
+
+        /// <summary>Present (true) only when a read receipt is requested.</summary>
+        public bool? ReadReceiptRequested { get; set; }
+
+        /// <summary>Signature name requested for this update, when one was.</summary>
+        public string? Signature { get; set; }
+
+        /// <summary>Whether the requested signature swap was applied.</summary>
+        public bool? SignatureApplied { get; set; }
+
+        /// <summary>"text" or "html" - present only when a body was supplied.</summary>
+        public string? BodyFormat { get; set; }
+
+        /// <summary>"wordEditor" - present only when a body was supplied.</summary>
+        public string? BodyPlacement { get; set; }
+
+        /// <summary>What the HTML normalizer changed, when body_html was supplied.</summary>
+        public IReadOnlyList<string>? HtmlAdjustments { get; set; }
+
+        /// <summary>Files on the draft after the update (read back from the saved item).</summary>
+        public IReadOnlyList<AttachmentView>? Attachments { get; set; }
+
+        /// <summary>Total size of the attachment set in bytes.</summary>
+        public long? AttachmentsTotalBytes { get; set; }
+
+        /// <summary>File names this call added.</summary>
+        public IReadOnlyList<string>? AttachmentsAdded { get; set; }
+
+        /// <summary>File names this call removed.</summary>
+        public IReadOnlyList<string>? AttachmentsRemoved { get; set; }
+
+        /// <summary>
+        /// Requested removals that matched nothing on the draft - reported rather than
+        /// silently ignored, so a misspelled file name is visible.
+        /// </summary>
+        public IReadOnlyList<string>? AttachmentsNotFound { get; set; }
+    }
+
+    /// <summary>
+    /// discard_draft outcome (v3.MD D46/C2, S1 v3). The delete is SOFT: the draft is in
+    /// Deleted Items, and <see cref="NewEntryId"/> + <see cref="FromFolder"/> make the
+    /// operation reversible exactly like a move (D39).
+    /// </summary>
+    public sealed class DiscardDraftOutcome
+    {
+        /// <summary>Always "discarded" on success.</summary>
+        public string Status { get; set; } = "discarded";
+
+        /// <summary>True - the draft was soft-deleted.</summary>
+        public bool Discarded { get; set; }
+
+        /// <summary>The hit id the draft was referenced by, when one was used.</summary>
+        public string? Id { get; set; }
+
+        /// <summary>EntryID the draft had in Drafts (now stale).</summary>
+        public string EntryId { get; set; } = string.Empty;
+
+        /// <summary>EntryID in Deleted Items when it could be re-located (EntryIDs change on any move).</summary>
+        public string? NewEntryId { get; set; }
+
+        /// <summary>Store the draft lived in.</summary>
+        public string? Store { get; set; }
+
+        /// <summary>Folder it was discarded from - the undo address.</summary>
+        public string? FromFolder { get; set; }
+
+        /// <summary>Deleted Items folder name it went to.</summary>
+        public string? ToFolder { get; set; }
+
+        /// <summary>Subject of the discarded draft.</summary>
+        public string? Subject { get; set; }
+
+        /// <summary>How to undo it.</summary>
+        public string? Advice { get; set; }
     }
 
     /// <summary>

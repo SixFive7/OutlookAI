@@ -97,6 +97,14 @@ namespace OutlookAI.Core.Com
         private const int OlMailItemClass = 43;
 
         /// <summary>
+        /// How many newest Deleted Items entries discard_draft inspects when re-locating a
+        /// just-discarded draft (D46/C2). Bounded on purpose: the new EntryID is a
+        /// convenience for undo, never a correctness requirement, and Deleted Items on a
+        /// real mailbox holds tens of thousands of items.
+        /// </summary>
+        private const int DiscardRelocateScanCap = 40;
+
+        /// <summary>
         /// PR_CONVERSATION_TOPIC. The object model exposes ConversationTopic read-only,
         /// so preserving a thread's grouping across a subject override goes through the
         /// PropertyAccessor with the MAPI proptag DASL (batch A - A3).
@@ -2305,6 +2313,11 @@ namespace OutlookAI.Core.Com
                     AddRecipients(draft, options?.CcRecipients ?? Array.Empty<string>(), 2, unresolved);
                     AddRecipients(draft, options?.BccRecipients ?? Array.Empty<string>(), 3, unresolved);
                     ApplyDraftOptions(draft, options);
+
+                    // Attachments AFTER the composition closed the inspector (D46/C3):
+                    // adding a file re-renders the item, and the Word edits must already
+                    // be committed by then.
+                    AddAttachmentsToDraft(draft, options?.AttachmentPaths);
                     draft.Save();
 
                     // The GetInspector touch leaves a HIDDEN Inspector alive inside
@@ -2348,7 +2361,9 @@ namespace OutlookAI.Core.Com
                         overrideApplied,
                         overrideError,
                         wordPlaced,
-                        unresolved);
+                        unresolved,
+                        conversationTopicPreserved: null,
+                        attachments: SnapshotAttachments(mail!));
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -2509,6 +2524,8 @@ namespace OutlookAI.Core.Com
                         topicPreserved = indexRestored && topicRestored;
                     }
 
+                    // Attachments AFTER the composition closed the inspector (D46/C3).
+                    AddAttachmentsToDraft(draft, options?.AttachmentPaths);
                     draft.Save();
 
                     // Same hidden-Inspector cleanup as the new-draft path: only needed
@@ -2577,7 +2594,8 @@ namespace OutlookAI.Core.Com
                         overrideError,
                         wordPlaced,
                         unresolved,
-                        topicPreserved);
+                        topicPreserved,
+                        SnapshotAttachments(mail!));
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -3434,7 +3452,9 @@ namespace OutlookAI.Core.Com
                         isSent,
                         body,
                         accountSmtp,
-                        info.Recipients);
+                        info.Recipients,
+                        SnapshotAttachments(item!),
+                        SendContentHash.DigestHtml(TryGetString(() => (string?)((dynamic)item!).HTMLBody)));
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -3518,7 +3538,18 @@ namespace OutlookAI.Core.Com
 
                     ComDraftInfo info = SnapshotDraft(item!);
                     string? body = TryGetString(() => (string?)((dynamic)item!).Body);
-                    string currentHash = SendContentHash.Compute(info.Subject, info.Recipients, body, sentOnBehalfOfName);
+
+                    // D46: the attachment set and an HTML-body digest are hash inputs too,
+                    // so a file added/removed - or a markup-only edit the plain text cannot
+                    // show - after the token was issued invalidates it right here, inside
+                    // the STA, immediately before Send().
+                    string currentHash = SendContentHash.Compute(
+                        info.Subject,
+                        info.Recipients,
+                        body,
+                        sentOnBehalfOfName,
+                        SnapshotAttachments(item!),
+                        SendContentHash.DigestHtml(TryGetString(() => (string?)((dynamic)item!).HTMLBody)));
                     if (!string.Equals(currentHash, expectedContentHash, StringComparison.Ordinal))
                     {
                         capturedError = "ContentChangedSinceToken";
@@ -3606,6 +3637,840 @@ namespace OutlookAI.Core.Com
 
             error = capturedError;
             return result;
+        }
+
+        // ------------------------------------------------------------------ update / discard drafts (D46, soak fix 19)
+
+        /// <summary>
+        /// update_draft backbone (v3.MD D46/C1). Revises an EXISTING unsent draft in
+        /// place: the draft region is REPLACED through the batch-A/B one-held-Inspector
+        /// model (so the signature and any quoted original survive byte-identically),
+        /// recipients follow REPLACE semantics per class, and a subject change carries the
+        /// A3 conversation-index/topic restore so the draft stays in its thread.
+        /// <para>
+        /// DELIBERATELY NO HTMLBody FALLBACK, unlike the creators: the fallback SPLICES
+        /// content in at the top of the body, which on an update would APPEND the new text
+        /// above the old instead of replacing it. A failed Word step therefore discards the
+        /// inspector (<c>Close(olDiscard)</c>) and refuses the whole update, leaving the
+        /// draft exactly as it was - a refusal the agent can retry beats a silently
+        /// duplicated body.
+        /// </para>
+        /// Preconditions are all fail-closed: mail item, UNSENT, and living in a Drafts
+        /// folder.
+        /// </summary>
+        public ComDraftUpdateResult? TryUpdateDraft(
+            string entryIdHex,
+            string? storeId,
+            ComDraftBody? body,
+            string? subject,
+            IReadOnlyList<string>? toRecipients,
+            IReadOnlyList<string>? ccRecipients,
+            IReadOnlyList<string>? bccRecipients,
+            int? importance,
+            bool? requestReadReceipt,
+            ComSignatureOverride? signatureOverride,
+            IReadOnlyList<string> attachmentsToAdd,
+            IReadOnlyList<string> attachmentsToRemove,
+            bool display,
+            out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(entryIdHex))
+            {
+                throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
+            }
+
+            string? capturedError = null;
+            ComDraftUpdateResult? result = _runner.Run<ComDraftUpdateResult?>(() =>
+            {
+                dynamic ns = _namespace!;
+                object? item = null;
+                try
+                {
+                    item = storeId != null
+                        ? ns.GetItemFromID(entryIdHex, storeId)
+                        : ns.GetItemFromID(entryIdHex);
+
+                    capturedError = CheckEditableDraft(item!);
+                    if (capturedError != null)
+                    {
+                        return null;
+                    }
+
+                    dynamic draft = item!;
+                    List<string> changed = new List<string>();
+                    List<string> unresolved = new List<string>();
+
+                    // 1. Body / signature FIRST: Word edits reach the item only through
+                    //    Close(olSave) on the SAME held inspector, and an item.Save()
+                    //    between the edits and that close wipes them (D37 footgun).
+                    bool bodyReplaced = false;
+                    bool wordPlaced = false;
+                    bool overrideApplied = false;
+                    string? overrideError = null;
+                    if (body != null || signatureOverride != null)
+                    {
+                        (bool ok, string? composeError) = ReviseHeldDocument(item!, body, signatureOverride);
+                        if (!ok)
+                        {
+                            capturedError = composeError ?? "BodyReplaceFailed";
+                            return null;
+                        }
+
+                        wordPlaced = true;
+                        bodyReplaced = body != null;
+                        overrideApplied = signatureOverride != null;
+                        if (body != null)
+                        {
+                            changed.Add("body");
+                        }
+
+                        if (signatureOverride != null)
+                        {
+                            changed.Add("signature");
+                        }
+                    }
+
+                    // 2. Attachments: removals first, then additions, so removing and
+                    //    adding the same file name in one call means REPLACE.
+                    List<string> removed = RemoveAttachmentsByName(draft, attachmentsToRemove);
+                    List<string> added = AddAttachmentsToDraft(draft, attachmentsToAdd);
+                    if (removed.Count > 0)
+                    {
+                        changed.Add("attachmentsRemoved");
+                    }
+
+                    if (added.Count > 0)
+                    {
+                        changed.Add("attachmentsAdded");
+                    }
+
+                    // 3. Recipients: REPLACE per class, and only for the classes the
+                    //    caller actually supplied (an omitted class is left alone).
+                    if (toRecipients != null)
+                    {
+                        ReplaceRecipients(draft, 1, toRecipients, unresolved);
+                        changed.Add("to");
+                    }
+
+                    if (ccRecipients != null)
+                    {
+                        ReplaceRecipients(draft, 2, ccRecipients, unresolved);
+                        changed.Add("cc");
+                    }
+
+                    if (bccRecipients != null)
+                    {
+                        ReplaceRecipients(draft, 3, bccRecipients, unresolved);
+                        changed.Add("bcc");
+                    }
+
+                    // 4. Subject, with the A3 threading restore: assigning Subject makes
+                    //    Outlook REGENERATE PR_CONVERSATION_INDEX, detaching the draft from
+                    //    its thread - capture the draft's OWN index/topic and write them
+                    //    back afterwards (live-proven on this build in batch A).
+                    bool? topicPreserved = null;
+                    if (subject != null)
+                    {
+                        string? currentTopic = TryGetString(() => (string?)draft.ConversationTopic)
+                            ?? TryGetPropertyString(draft, ConversationTopicDasl);
+                        string? currentIndex = TryGetString(() => (string?)draft.ConversationIndex);
+
+                        draft.Subject = subject;
+                        changed.Add("subject");
+
+                        byte[]? indexBytes = HexToBytes(currentIndex);
+                        if (indexBytes != null || !string.IsNullOrEmpty(currentTopic))
+                        {
+                            bool indexRestored = indexBytes != null
+                                && TrySetPropertyBinary(draft, ConversationIndexDasl, indexBytes!);
+                            bool topicRestored = !string.IsNullOrEmpty(currentTopic)
+                                && TrySetPropertyString(draft, ConversationTopicDasl, currentTopic!);
+                            topicPreserved = indexRestored && topicRestored;
+                        }
+                    }
+
+                    // 5. Plain item properties.
+                    if (importance != null)
+                    {
+                        try
+                        {
+                            draft.Importance = importance.Value;
+                            changed.Add("importance");
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                        }
+                    }
+
+                    if (requestReadReceipt != null)
+                    {
+                        try
+                        {
+                            draft.ReadReceiptRequested = requestReadReceipt.Value;
+                            changed.Add("requestReadReceipt");
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                        }
+                    }
+
+                    draft.Save();
+
+                    if (display)
+                    {
+                        try
+                        {
+                            draft.Display();
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                        }
+                    }
+
+                    ComDraftInfo info = SnapshotDraft(item!);
+                    return new ComDraftUpdateResult(
+                        info,
+                        changed,
+                        unresolved,
+                        SnapshotAttachments(item!),
+                        added,
+                        removed,
+                        bodyReplaced,
+                        wordPlaced,
+                        display,
+                        signatureOverride?.Name,
+                        overrideApplied,
+                        overrideError,
+                        topicPreserved);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(item);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// discard_draft backbone (v3.MD D46/C2, S1 v3 - the ONLY mail-deleting code path
+        /// in the product). SOFT delete only: <c>MailItem.Delete()</c>, which moves the
+        /// item to the store's Deleted Items exactly like pressing Delete in Outlook.
+        /// <c>PermanentlyDelete</c> is never called, Deleted Items is never emptied and
+        /// its contents are never touched. The caller has already proven the draft came
+        /// from THIS server (<c>ServerDraftRegistry</c>); this layer re-proves the item is
+        /// a mail item, is UNSENT and lives in a Drafts folder before deleting anything.
+        /// A best-effort re-locate in Deleted Items returns the new EntryID so the discard
+        /// stays reversible in the same way a move is (D39).
+        /// </summary>
+        public ComDraftDiscardResult? TryDiscardDraft(string entryIdHex, string? storeId, out string? error)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(entryIdHex))
+            {
+                throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
+            }
+
+            string? capturedError = null;
+            ComDraftDiscardResult? result = _runner.Run<ComDraftDiscardResult?>(() =>
+            {
+                dynamic ns = _namespace!;
+                object? item = null;
+                object? parent = null;
+                object? parentStore = null;
+                try
+                {
+                    item = storeId != null
+                        ? ns.GetItemFromID(entryIdHex, storeId)
+                        : ns.GetItemFromID(entryIdHex);
+
+                    capturedError = CheckEditableDraft(item!);
+                    if (capturedError != null)
+                    {
+                        return null;
+                    }
+
+                    ComDraftInfo info = SnapshotDraft(item!);
+
+                    // Deleted Items identity is resolved BEFORE the delete (afterwards the
+                    // item's Parent is the target, not the source).
+                    string? deletedItemsName = null;
+                    string? deletedItemsEntryId = null;
+                    parent = ((dynamic)item!).Parent;
+                    if (parent != null)
+                    {
+                        parentStore = ((dynamic)parent!).Store;
+                        if (parentStore != null)
+                        {
+                            object? deleted = null;
+                            try
+                            {
+                                deleted = ((dynamic)parentStore!).GetDefaultFolder(3); // olFolderDeletedItems
+                                deletedItemsName = TryGetString(() => (string?)((dynamic)deleted!).Name);
+                                deletedItemsEntryId = TryGetString(() => (string?)((dynamic)deleted!).EntryID);
+                            }
+                            catch (Exception ex) when (IsComCallFailure(ex))
+                            {
+                            }
+                            finally
+                            {
+                                Release(deleted);
+                            }
+                        }
+                    }
+
+                    // THE soft delete. Never PermanentlyDelete - S1 v3 allows a draft to be
+                    // put in the bin, never to be destroyed.
+                    ((dynamic)item!).Delete();
+
+                    string? newEntryId = deletedItemsEntryId == null
+                        ? null
+                        : TryFindDiscardedCopy(deletedItemsEntryId, info.Subject, info.EntryId);
+
+                    return new ComDraftDiscardResult(
+                        info.EntryId,
+                        newEntryId,
+                        info.StoreDisplayName,
+                        info.ParentFolderName,
+                        deletedItemsName,
+                        info.Subject);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    capturedError = DescribeComFailure(ex);
+                    return null;
+                }
+                finally
+                {
+                    Release(parentStore);
+                    Release(parent);
+                    Release(item);
+                }
+            });
+
+            error = capturedError;
+            return result;
+        }
+
+        /// <summary>
+        /// The shared fail-closed precondition gate for update_draft and discard_draft:
+        /// the item must be a MAIL item, must be UNSENT, and must live in a Drafts folder.
+        /// Returns a content-free error code, or null when the item may be edited.
+        /// </summary>
+        private static string? CheckEditableDraft(object itemObject)
+        {
+            if (!IsMailItem(itemObject))
+            {
+                return "NotAMailItem";
+            }
+
+            bool isSent = true; // fail CLOSED: an unreadable Sent flag is treated as sent
+            try
+            {
+                isSent = (bool)((dynamic)itemObject).Sent;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+
+            if (isSent)
+            {
+                return "AlreadySent";
+            }
+
+            return IsInDraftsFolder(itemObject) ? null : "NotInDraftsFolder";
+        }
+
+        /// <summary>
+        /// True when the item's parent folder IS the store's Drafts folder or sits
+        /// underneath it. Folder identity is compared by EntryID against
+        /// <c>GetDefaultFolder(16)</c>, never by name - Drafts is localized (v3.MD D39's
+        /// localization-proof rule).
+        /// </summary>
+        private static bool IsInDraftsFolder(object itemObject)
+        {
+            object? folder = null;
+            object? store = null;
+            try
+            {
+                folder = ((dynamic)itemObject).Parent;
+                if (folder == null)
+                {
+                    return false;
+                }
+
+                store = ((dynamic)folder!).Store;
+                if (store == null)
+                {
+                    return false;
+                }
+
+                string? draftsEntryId = null;
+                object? drafts = null;
+                try
+                {
+                    drafts = ((dynamic)store!).GetDefaultFolder(16); // olFolderDrafts
+                    draftsEntryId = TryGetString(() => (string?)((dynamic)drafts!).EntryID);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                }
+                finally
+                {
+                    Release(drafts);
+                }
+
+                if (string.IsNullOrEmpty(draftsEntryId))
+                {
+                    return false;
+                }
+
+                // Walk up from the item's folder: Drafts itself, or any folder below it.
+                object? current = folder;
+                folder = null; // ownership moves to the walk loop
+                for (int depth = 0; depth < FolderWalkDepthGuard && current != null; depth++)
+                {
+                    string? currentId = TryGetString(() => (string?)((dynamic)current!).EntryID);
+                    if (string.Equals(currentId, draftsEntryId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Release(current);
+                        return true;
+                    }
+
+                    object? next = null;
+                    try
+                    {
+                        next = ((dynamic)current!).Parent;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+
+                    Release(current);
+                    current = next;
+
+                    // The store root's Parent is the Namespace/store object, which has no
+                    // EntryID - the walk ends there rather than looping.
+                    if (current != null && TryGetString(() => (string?)((dynamic)current!).EntryID) == null)
+                    {
+                        Release(current);
+                        current = null;
+                    }
+                }
+
+                return false;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return false;
+            }
+            finally
+            {
+                Release(store);
+                Release(folder);
+            }
+        }
+
+        /// <summary>
+        /// The held-Inspector revision used by update_draft: acquire the inspector ONCE,
+        /// optionally swap the signature region, optionally REPLACE the draft region with
+        /// the new body, then flush with <c>Close(olSave)</c>. Any failure closes the
+        /// inspector with <c>olDiscard</c> so a half-written document never reaches the
+        /// item, and reports the error instead of falling back to an appending splice.
+        /// </summary>
+        private static (bool Ok, string? Error) ReviseHeldDocument(
+            object draftObject,
+            ComDraftBody? body,
+            ComSignatureOverride? signatureOverride)
+        {
+            dynamic draft = draftObject;
+            object? inspector = null;
+            object? document = null;
+            string? error = null;
+            bool flushed = false;
+            try
+            {
+                if (signatureOverride != null && !File.Exists(signatureOverride.FilePath))
+                {
+                    return (false, "SignatureFileMissing");
+                }
+
+                try
+                {
+                    inspector = draft.GetInspector;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                }
+
+                if (inspector == null)
+                {
+                    return (false, "NoInspector");
+                }
+
+                try
+                {
+                    document = ((dynamic)inspector!).WordEditor;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                }
+
+                if (document == null)
+                {
+                    error = "NoWordEditor";
+                }
+
+                if (error == null && signatureOverride != null)
+                {
+                    (bool sigOk, string? sigError) = ApplySignatureToDocument(document!, signatureOverride.FilePath);
+                    error = sigOk ? null : sigError ?? "SignatureInsertFailed";
+                }
+
+                if (error == null && body != null)
+                {
+                    (bool bodyOk, string? bodyError) = InsertBodyAboveSignature(document!, body);
+                    error = bodyOk ? null : bodyError ?? "BodyInsertFailed";
+                }
+
+                if (error == null)
+                {
+                    try
+                    {
+                        ((dynamic)inspector!).Close(0); // olSave - the load-bearing flush
+                        flushed = true;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        error = DescribeComFailure(ex);
+                    }
+                }
+
+                return (flushed, error);
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return (false, DescribeComFailure(ex));
+            }
+            finally
+            {
+                if (!flushed && inspector != null)
+                {
+                    // Discard, never save: the draft must survive a failed revision
+                    // untouched rather than half-rewritten.
+                    try
+                    {
+                        ((dynamic)inspector!).Close(1); // olDiscard
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                }
+
+                Release(document);
+                Release(inspector);
+            }
+        }
+
+        /// <summary>
+        /// REPLACE semantics for one recipient class (D46/C1): every existing recipient of
+        /// that type is removed - descending, because <c>Recipients.Remove</c> reindexes -
+        /// and the supplied addresses are added in its place. Other classes are untouched.
+        /// </summary>
+        private static void ReplaceRecipients(dynamic mail, int type, IReadOnlyList<string> addresses, ICollection<string> unresolved)
+        {
+            object? recipients = null;
+            try
+            {
+                recipients = mail.Recipients;
+                dynamic collection = (dynamic)recipients!;
+                int count = collection.Count;
+                List<int> doomed = new List<int>();
+                for (int i = 1; i <= count; i++)
+                {
+                    object? recipient = null;
+                    try
+                    {
+                        recipient = collection[i];
+                        int recipientType = (int)((dynamic)recipient!).Type;
+                        if (recipientType == type)
+                        {
+                            doomed.Add(i);
+                        }
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                    finally
+                    {
+                        Release(recipient);
+                    }
+                }
+
+                for (int i = doomed.Count - 1; i >= 0; i--)
+                {
+                    try
+                    {
+                        collection.Remove(doomed[i]);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                }
+            }
+            finally
+            {
+                Release(recipients);
+            }
+
+            AddRecipients(mail, addresses, type, unresolved);
+        }
+
+        /// <summary>
+        /// Attaches already-validated absolute paths to a draft and returns the names that
+        /// went on. The paths were existence/readability-checked PRE-COM
+        /// (<c>DraftAttachments.Validate</c>); a COM refusal here is surfaced by throwing,
+        /// because a draft that silently misses a file the agent believes it attached is
+        /// exactly the failure mode the fail-closed validation exists to prevent.
+        /// </summary>
+        private static List<string> AddAttachmentsToDraft(dynamic mail, IReadOnlyList<string>? paths)
+        {
+            List<string> added = new List<string>();
+            if (paths == null || paths.Count == 0)
+            {
+                return added;
+            }
+
+            object? attachments = null;
+            try
+            {
+                attachments = mail.Attachments;
+                dynamic collection = (dynamic)attachments!;
+                foreach (string path in paths)
+                {
+                    object? attachment = null;
+                    try
+                    {
+                        attachment = collection.Add(path);
+                        added.Add(Path.GetFileName(path));
+                    }
+                    finally
+                    {
+                        Release(attachment);
+                    }
+                }
+            }
+            finally
+            {
+                Release(attachments);
+            }
+
+            return added;
+        }
+
+        /// <summary>
+        /// Removes attachments by FILE NAME (case-insensitive), descending because
+        /// <c>Attachments.Delete</c> reindexes. Returns the names actually removed - a name
+        /// that matched nothing simply does not appear, and the caller reports that.
+        /// </summary>
+        private static List<string> RemoveAttachmentsByName(dynamic mail, IReadOnlyList<string>? names)
+        {
+            List<string> removed = new List<string>();
+            if (names == null || names.Count == 0)
+            {
+                return removed;
+            }
+
+            HashSet<string> wanted = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
+            object? attachments = null;
+            try
+            {
+                attachments = mail.Attachments;
+                dynamic collection = (dynamic)attachments!;
+                int count = collection.Count;
+                List<int> doomed = new List<int>();
+                List<string> doomedNames = new List<string>();
+                for (int i = 1; i <= count; i++)
+                {
+                    object? attachment = null;
+                    try
+                    {
+                        attachment = collection[i];
+                        string? fileName = TryGetString(() => (string?)((dynamic)attachment!).FileName);
+                        if (fileName != null && wanted.Contains(fileName))
+                        {
+                            doomed.Add(i);
+                            doomedNames.Add(fileName);
+                        }
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                    finally
+                    {
+                        Release(attachment);
+                    }
+                }
+
+                for (int i = doomed.Count - 1; i >= 0; i--)
+                {
+                    object? attachment = null;
+                    try
+                    {
+                        attachment = collection[doomed[i]];
+                        ((dynamic)attachment!).Delete();
+                        removed.Add(doomedNames[i]);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                    finally
+                    {
+                        Release(attachment);
+                    }
+                }
+            }
+            finally
+            {
+                Release(attachments);
+            }
+
+            removed.Reverse();
+            return removed;
+        }
+
+        /// <summary>
+        /// Attachment snapshot of an item (name + size, 1-based index) - the shape
+        /// <c>read</c> already reports, reused by the draft tools' result and by the send
+        /// content hash.
+        /// </summary>
+        private static IReadOnlyList<ComAttachmentInfo> SnapshotAttachments(object itemObject)
+        {
+            List<ComAttachmentInfo> infos = new List<ComAttachmentInfo>();
+            object? attachments = null;
+            try
+            {
+                attachments = ((dynamic)itemObject).Attachments;
+                dynamic collection = (dynamic)attachments!;
+                int count = collection.Count;
+                for (int i = 1; i <= count; i++)
+                {
+                    object? attachment = null;
+                    try
+                    {
+                        attachment = collection[i];
+                        dynamic a = (dynamic)attachment!;
+                        string? fileName = TryGetString(() => (string?)a.FileName);
+                        long? size = null;
+                        try
+                        {
+                            size = (long)(int)a.Size;
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                        }
+
+                        infos.Add(new ComAttachmentInfo(i, fileName, size));
+                    }
+                    finally
+                    {
+                        Release(attachment);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+            finally
+            {
+                Release(attachments);
+            }
+
+            return infos;
+        }
+
+        /// <summary>
+        /// Best-effort re-locate of a just-discarded draft inside Deleted Items so the
+        /// outcome can carry a usable newEntryId (EntryIDs change on ANY move). Read-only
+        /// and failure-tolerant: nothing depends on finding it, and Deleted Items contents
+        /// are never modified.
+        /// </summary>
+        private string? TryFindDiscardedCopy(string deletedItemsEntryId, string? subject, string oldEntryId)
+        {
+            object? folder = null;
+            object? items = null;
+            try
+            {
+                dynamic ns = _namespace!;
+                folder = ns.GetFolderFromID(deletedItemsEntryId);
+                if (folder == null)
+                {
+                    return null;
+                }
+
+                items = ((dynamic)folder!).Items;
+                dynamic collection = (dynamic)items!;
+                try
+                {
+                    collection.Sort("[LastModificationTime]", true);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                }
+
+                int count = collection.Count;
+                int scanned = 0;
+                for (int i = 1; i <= count && scanned < DiscardRelocateScanCap; i++, scanned++)
+                {
+                    object? candidate = null;
+                    try
+                    {
+                        candidate = collection[i];
+                        if (!IsMailItem(candidate!))
+                        {
+                            continue;
+                        }
+
+                        string? candidateSubject = TryGetString(() => (string?)((dynamic)candidate!).Subject);
+                        if (!string.Equals(candidateSubject ?? string.Empty, subject ?? string.Empty, StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+
+                        string? candidateId = TryGetString(() => (string?)((dynamic)candidate!).EntryID);
+                        if (candidateId != null
+                            && !string.Equals(candidateId, oldEntryId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return candidateId;
+                        }
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                    finally
+                    {
+                        Release(candidate);
+                    }
+                }
+
+                return null;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return null;
+            }
+            finally
+            {
+                Release(items);
+                Release(folder);
+            }
         }
 
         /// <summary>STA-side: true when the object reports OlObjectClass 43 (olMail).</summary>

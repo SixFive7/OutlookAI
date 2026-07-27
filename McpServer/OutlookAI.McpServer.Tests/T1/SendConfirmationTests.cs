@@ -186,8 +186,8 @@ public sealed class SendConfirmationTests
         var r1 = new[] { To("a@example.com"), To("b@example.com") };
         var r2 = new[] { To("b@example.com"), To("a@example.com") };
 
-        string h1 = SendContentHash.Compute("Subject", r1, "body", null);
-        string h2 = SendContentHash.Compute("Subject", r2, "body", null);
+        string h1 = SendContentHash.Compute("Subject", r1, "body", null, null, null);
+        string h2 = SendContentHash.Compute("Subject", r2, "body", null, null, null);
 
         Assert.Equal(h1, h2);
         Assert.Equal(64, h1.Length);
@@ -201,9 +201,9 @@ public sealed class SendConfirmationTests
     public void Hash_ChangesWhenAnyBoundPartChanges(string subject, string body, string? onBehalfOf)
     {
         var recipients = new[] { To("a@example.com") };
-        string baseline = SendContentHash.Compute("Subject", recipients, "body", null);
+        string baseline = SendContentHash.Compute("Subject", recipients, "body", null, null, null);
 
-        string changed = SendContentHash.Compute(subject, recipients, body, onBehalfOf);
+        string changed = SendContentHash.Compute(subject, recipients, body, onBehalfOf, null, null);
 
         Assert.NotEqual(baseline, changed);
     }
@@ -211,11 +211,11 @@ public sealed class SendConfirmationTests
     [Fact]
     public void Hash_ChangesOnRecipientSetOrKindChange()
     {
-        string baseline = SendContentHash.Compute("S", new[] { To("a@example.com") }, "b", null);
+        string baseline = SendContentHash.Compute("S", new[] { To("a@example.com") }, "b", null, null, null);
 
-        string added = SendContentHash.Compute("S", new[] { To("a@example.com"), To("c@example.com") }, "b", null);
+        string added = SendContentHash.Compute("S", new[] { To("a@example.com"), To("c@example.com") }, "b", null, null, null);
         string ccInstead = SendContentHash.Compute(
-            "S", new[] { new ComRecipientInfo("cc", "Name", "a@example.com") }, "b", null);
+            "S", new[] { new ComRecipientInfo("cc", "Name", "a@example.com") }, "b", null, null, null);
 
         Assert.NotEqual(baseline, added);
         Assert.NotEqual(baseline, ccInstead);
@@ -227,24 +227,118 @@ public sealed class SendConfirmationTests
         var recipients = new[] { To("A@Example.COM") };
 
         // CRLF vs LF for the SAME body must not flip the hash (COM read paths differ).
-        string crlf = SendContentHash.Compute("S", recipients, "line1\r\nline2", null);
-        string lf = SendContentHash.Compute("S", new[] { To("a@example.com") }, "line1\nline2", null);
+        string crlf = SendContentHash.Compute("S", recipients, "line1\r\nline2", null, null, null);
+        string lf = SendContentHash.Compute("S", new[] { To("a@example.com") }, "line1\nline2", null, null, null);
         Assert.Equal(crlf, lf);
 
         // But an actual body difference does.
-        Assert.NotEqual(crlf, SendContentHash.Compute("S", recipients, "line1\n\nline2", null));
+        Assert.NotEqual(crlf, SendContentHash.Compute("S", recipients, "line1\n\nline2", null, null, null));
 
         // On-behalf-of is trimmed + case-normalized (same both calls contract).
         Assert.Equal(
-            SendContentHash.Compute("S", recipients, "b", " Boss@Example.com "),
-            SendContentHash.Compute("S", recipients, "b", "boss@example.com"));
+            SendContentHash.Compute("S", recipients, "b", " Boss@Example.com ", null, null),
+            SendContentHash.Compute("S", recipients, "b", "boss@example.com", null, null));
     }
 
     [Fact]
     public void Hash_NullSafeOnSubjectAndBody()
     {
-        string h = SendContentHash.Compute(null, Array.Empty<ComRecipientInfo>(), null, null);
+        string h = SendContentHash.Compute(null, Array.Empty<ComRecipientInfo>(), null, null, null, null);
         Assert.Equal(64, h.Length);
+    }
+
+    // --------------------------------------------- D46/C3: the attachment + HTML interlock
+
+    private static ComAttachmentInfo Att(int index, string name, long size) => new(index, name, size);
+
+    [Fact]
+    public void Hash_ChangesWhenAnAttachmentIsAdded_SoAPendingTokenIsInvalidated()
+    {
+        var recipients = new[] { To("a@example.com") };
+        string withoutFile = SendContentHash.Compute("S", recipients, "b", null, null, null);
+
+        string withFile = SendContentHash.Compute(
+            "S", recipients, "b", null, new[] { Att(1, "offer.pdf", 1234) }, null);
+
+        Assert.NotEqual(withoutFile, withFile);
+    }
+
+    [Fact]
+    public void Hash_ChangesWhenAnAttachmentIsRemoved()
+    {
+        var recipients = new[] { To("a@example.com") };
+        var both = new[] { Att(1, "a.pdf", 10), Att(2, "b.pdf", 20) };
+
+        string withBoth = SendContentHash.Compute("S", recipients, "b", null, both, null);
+        string withOne = SendContentHash.Compute("S", recipients, "b", null, new[] { Att(1, "a.pdf", 10) }, null);
+
+        Assert.NotEqual(withBoth, withOne);
+    }
+
+    [Fact]
+    public void Hash_ChangesWhenAnAttachmentKeepsItsNameButNotItsSize()
+    {
+        // The "swap the file, keep the name" attack: size is hashed as well as the name.
+        var recipients = new[] { To("a@example.com") };
+
+        string original = SendContentHash.Compute("S", recipients, "b", null, new[] { Att(1, "offer.pdf", 1000) }, null);
+        string swapped = SendContentHash.Compute("S", recipients, "b", null, new[] { Att(1, "offer.pdf", 2000) }, null);
+
+        Assert.NotEqual(original, swapped);
+    }
+
+    [Fact]
+    public void Hash_IsAttachmentOrderInsensitive_AndNameCaseInsensitive()
+    {
+        // Outlook may enumerate the collection differently after a reopen - the hash must
+        // depend on the SET, exactly like the recipient list, or a send would spuriously
+        // refuse.
+        var recipients = new[] { To("a@example.com") };
+        string ab = SendContentHash.Compute(
+            "S", recipients, "b", null, new[] { Att(1, "a.pdf", 10), Att(2, "B.pdf", 20) }, null);
+        string ba = SendContentHash.Compute(
+            "S", recipients, "b", null, new[] { Att(1, "b.pdf", 20), Att(2, "A.pdf", 10) }, null);
+
+        Assert.Equal(ab, ba);
+    }
+
+    [Fact]
+    public void Hash_TreatsNullAndEmptyAttachmentListsAsTheSame()
+    {
+        var recipients = new[] { To("a@example.com") };
+
+        Assert.Equal(
+            SendContentHash.Compute("S", recipients, "b", null, null, null),
+            SendContentHash.Compute("S", recipients, "b", null, Array.Empty<ComAttachmentInfo>(), null));
+    }
+
+    [Fact]
+    public void Hash_ChangesOnAMarkupOnlyEdit_ThatThePlainBodyCannotShow()
+    {
+        // WHY THIS EXISTS (D46/C3): Outlook derives MailItem.Body from HTMLBody, and that
+        // derivation is lossy - retargeting a hyperlink while its visible label stays put
+        // leaves the plain text byte-identical. Without the HTML digest a confirm token
+        // would survive exactly that edit.
+        var recipients = new[] { To("a@example.com") };
+        const string PlainBody = "Click here to pay.";
+        string honest = SendContentHash.DigestHtml("<p>Click <a href=\"https://bank.example/pay\">here</a> to pay.</p>")!;
+        string swapped = SendContentHash.DigestHtml("<p>Click <a href=\"https://evil.example/pay\">here</a> to pay.</p>")!;
+
+        Assert.NotEqual(honest, swapped);
+        Assert.NotEqual(
+            SendContentHash.Compute("S", recipients, PlainBody, null, null, honest),
+            SendContentHash.Compute("S", recipients, PlainBody, null, null, swapped));
+    }
+
+    [Fact]
+    public void DigestHtml_IsStableAndNullSafe()
+    {
+        Assert.Null(SendContentHash.DigestHtml(null));
+        Assert.Null(SendContentHash.DigestHtml(string.Empty));
+
+        string a = SendContentHash.DigestHtml("<p>x</p>")!;
+        Assert.Equal(a, SendContentHash.DigestHtml("<p>x</p>"));
+        Assert.Matches("^[0-9a-f]{64}$", a);
     }
 
     // ------------------------------------------------------------------ refusal type

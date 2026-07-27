@@ -369,6 +369,14 @@ public static class OutlookTools
         + "<li>/<tr>/<td> gets the list or table it needs. Everything that was changed comes back in htmlAdjustments, so read that "
         + "field. VERIFY THE RESULT with read include_html=true - read's plain text hides layout problems.";
 
+    private const string AttachmentsHint = "Files to attach, as ABSOLUTE paths on this machine (e.g. "
+        + "\"C:\\\\Users\\\\me\\\\Documents\\\\offer.pdf\"). Any readable file is allowed - there is no folder restriction. "
+        + "Every path is checked BEFORE anything is written: if even one is missing, unreadable, empty or a directory, "
+        + "NOTHING is attached and no draft is created/changed, and the error names each bad path with its own reason, so "
+        + "fix them and call again. Max 20 files and 150 MB per call. The result reports the files that ended up on the "
+        + "saved draft with their names and sizes. Attaching a file to a draft that already has a pending send "
+        + "confirm_token invalidates that token.";
+
     private const string DerivedSubjectHint = "Replacement subject line. Omit to keep Outlook's own RE:/FW: subject, which is "
         + "the safe default. The draft keeps threading either way (its ConversationIndex still extends the original and the "
         + "original conversation topic is carried over, reported as conversationTopicPreserved), but a changed subject is what "
@@ -397,10 +405,11 @@ public static class OutlookTools
             + "trivial. Omit for the account's default signature.")]
         string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
-        [Description(ReadReceiptHint)] bool? request_read_receipt = null)
+        [Description(ReadReceiptHint)] bool? request_read_receipt = null,
+        [Description(AttachmentsHint)] string[]? attachments = null)
     {
         return Guard(() => ServerRuntime.Service.NewDraft(
-            account, to, cc, subject, body, display, signature, bcc, importance, request_read_receipt, body_html));
+            account, to, cc, subject, body, display, signature, bcc, importance, request_read_receipt, body_html, attachments));
     }
 
     [McpServerTool(Name = "reply_draft")]
@@ -421,10 +430,11 @@ public static class OutlookTools
             + "reply - e.g. match the thread's language; with a single signature the choice is trivial. Omit for the default.")]
         string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
-        [Description(ReadReceiptHint)] bool? request_read_receipt = null)
+        [Description(ReadReceiptHint)] bool? request_read_receipt = null,
+        [Description(AttachmentsHint)] string[]? attachments = null)
     {
         return Guard(() => ServerRuntime.Service.ReplyDraft(
-            id, body, replyAll: false, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html));
+            id, body, replyAll: false, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html, attachments));
     }
 
     [McpServerTool(Name = "replyall_draft")]
@@ -445,10 +455,11 @@ public static class OutlookTools
             + "reply - e.g. match the thread's language; with a single signature the choice is trivial. Omit for the default.")]
         string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
-        [Description(ReadReceiptHint)] bool? request_read_receipt = null)
+        [Description(ReadReceiptHint)] bool? request_read_receipt = null,
+        [Description(AttachmentsHint)] string[]? attachments = null)
     {
         return Guard(() => ServerRuntime.Service.ReplyDraft(
-            id, body, replyAll: true, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html));
+            id, body, replyAll: true, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html, attachments));
     }
 
     [McpServerTool(Name = "forward_draft")]
@@ -470,10 +481,82 @@ public static class OutlookTools
             + "message - e.g. match the new recipient's language; with a single signature the choice is trivial. Omit for the default.")]
         string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
-        [Description(ReadReceiptHint)] bool? request_read_receipt = null)
+        [Description(ReadReceiptHint)] bool? request_read_receipt = null,
+        [Description(AttachmentsHint)] string[]? attachments = null)
     {
         return Guard(() => ServerRuntime.Service.ForwardDraft(
-            id, body, to, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html));
+            id, body, to, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html, attachments));
+    }
+
+    [McpServerTool(Name = "update_draft")]
+    [Description("REVISE an existing draft in place - the draft keeps its id, its place in Drafts and its identity, and "
+        + "only the parts you pass are touched. Use it to iterate on a draft you already created (fix a sentence, add a "
+        + "recipient, attach the file you forgot) instead of creating a second draft. NOTHING IS SENT.\n\n"
+        + "THE BODY IS REPLACED, NOT APPENDED: body/body_html rewrite YOUR text only - the account's signature and, on a "
+        + "reply or forward, the quoted original are left exactly as they are, below it. Omit both to keep the current text.\n\n"
+        + "RECIPIENTS ARE REPLACED (the opposite of the draft tools' cc/bcc, which append): to/cc/bcc each REPLACE that "
+        + "whole list, which is the only way to REMOVE someone. To add a recipient, pass the full new list. A list you do "
+        + "not pass is left untouched.\n\n"
+        + "ATTACHMENTS ARE ADDED: attachments adds files; remove_attachments removes them by file name. Both in one call = "
+        + "replace (removals run first).\n\n"
+        + "Only saved, UNSENT drafts in a Drafts folder can be updated - a sent mail, a received mail or an item elsewhere "
+        + "is refused with a clear reason and nothing is changed. Any pending send confirm_token for the draft is "
+        + "invalidated by the update.")]
+    public static string UpdateDraft(
+        [Description("The draft to revise: the entryId a draft tool returned (preferred), or a hit id of a saved, UNSENT draft.")]
+        string id,
+        [Description("New plain-text body. REPLACES your text in the draft region only - the signature and any quoted "
+            + "original survive. Omit to leave the body alone; exactly one of body or body_html may be supplied.")]
+        string? body = null,
+        [Description(BodyHtmlHint)] string? body_html = null,
+        [Description("New subject line. Omit to keep the current one. On a reply/forward draft the threading is preserved "
+            + "(ConversationIndex and the original topic are restored after the rename, reported as conversationTopicPreserved).")]
+        string? subject = null,
+        [Description("REPLACEMENT To list, separated by ';' or ','. Replaces every current To recipient - pass the full "
+            + "list. Omit to keep the current To recipients.")]
+        string? to = null,
+        [Description("REPLACEMENT Cc list, separated by ';' or ','. Replaces every current Cc recipient; pass an empty "
+            + "string to clear Cc. Omit to keep the current ones. NOTE: this is REPLACE, unlike the draft tools' append.")]
+        string? cc = null,
+        [Description("REPLACEMENT Bcc list, separated by ';' or ','. Replaces every current Bcc recipient; pass an empty "
+            + "string to clear Bcc. Omit to keep the current ones.")]
+        string? bcc = null,
+        [Description(ImportanceHint)] string? importance = null,
+        [Description(ReadReceiptHint)] bool? request_read_receipt = null,
+        [Description("Signature name to swap in (see list_signatures). Replaces the draft's signature region only, "
+            + "leaving your text and any quoted original untouched. Omit to keep the current signature.")]
+        string? signature = null,
+        [Description(AttachmentsHint)] string[]? attachments = null,
+        [Description("File names to REMOVE from the draft, exactly as reported in the attachments list (e.g. "
+            + "\"offer.pdf\"). Removals happen before additions, so listing a name here and attaching a new file with the "
+            + "same name replaces it. Names that match nothing come back in attachmentsNotFound instead of failing.")]
+        string[]? remove_attachments = null,
+        [Description("Re-open the revised draft in an Outlook window for the user (default true, like the draft tools). "
+            + "Pass false when the user is not watching or the draft is already open and you do not want it refocused.")]
+        bool display = true)
+    {
+        return Guard(() => ServerRuntime.Service.UpdateDraft(
+            id, body, body_html, subject, to, cc, bcc, importance, request_read_receipt, signature,
+            attachments, remove_attachments, display));
+    }
+
+    [McpServerTool(Name = "discard_draft")]
+    [Description("Throw away a draft YOU just created in this session - the cleanup counterpart of the draft tools, for "
+        + "when a draft turned out wrong or is no longer wanted. DESTRUCTIVE but deliberately tiny in reach.\n\n"
+        + "WHAT IT CAN TOUCH: only a draft returned by new_draft / reply_draft / replyall_draft / forward_draft / "
+        + "update_draft in THIS server session, that is still UNSENT and still in a Drafts folder. All three conditions "
+        + "must hold.\n\n"
+        + "WHAT IT CAN NEVER TOUCH: mail the user received or wrote themselves, anything already sent, anything outside "
+        + "Drafts, a draft from an earlier session (restarting the server clears the list), and the contents of Deleted "
+        + "Items. It cannot empty anything and it cannot delete permanently.\n\n"
+        + "It is a SOFT delete - exactly like pressing Delete in Outlook: the draft moves to Deleted Items and the result "
+        + "carries newEntryId plus fromFolder, so it can be put back with move_mail. Anything it refuses comes back as a "
+        + "clear error saying why - it never silently does nothing. Every discard is audit-logged.")]
+    public static string DiscardDraft(
+        [Description("The draft to discard: the entryId a draft tool returned for a draft created in THIS session.")]
+        string id)
+    {
+        return Guard(() => ServerRuntime.Service.DiscardDraft(id));
     }
 
     [McpServerTool(Name = "send")]
@@ -507,7 +590,14 @@ public static class OutlookTools
         {
             return Error("SendRefused", ex.Message,
                 "Nothing was sent. If automatic sending is still explicitly wanted and the draft is unchanged, request a fresh "
-                + "token by calling send without confirm_token and re-confirm with the user.");
+                + "token by calling send without confirm_token and re-confirm with the user.",
+                ex.Reason);
+        }
+        catch (DraftRefusedException ex)
+        {
+            return Error("DraftRefused", ex.Message,
+                "Nothing was changed or deleted. Check the draft with read, or create a new draft instead.",
+                ex.Reason);
         }
         catch (OutlookUnavailableException ex)
         {
@@ -532,9 +622,12 @@ public static class OutlookTools
         }
     }
 
-    private static string Error(string type, string message, string? advice)
+    private static string Error(string type, string message, string? advice, string? reason = null)
     {
-        var payload = new { error = new { type, message, advice } };
+        // 'reason' is the machine-readable refusal code (send/draft refusals). It is
+        // omitted for everything else by the null-ignoring serializer, so the existing
+        // error shape is unchanged for every other failure.
+        var payload = new { error = new { type, reason, message, advice } };
         return JsonSerializer.Serialize(payload, Json);
     }
 

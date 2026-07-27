@@ -140,6 +140,7 @@ namespace OutlookAI.Core.Services
         private readonly Lazy<IndexSearchService> _index;
         private readonly ComGateway _gateway;
         private readonly SendConfirmationTokens _sendTokens;
+        private readonly ServerDraftRegistry _draftRegistry = new ServerDraftRegistry();
         private readonly SweepCache _sweepCache = new SweepCache();
         private readonly BodyCache _bodies = new BodyCache();
         private readonly ConcurrentDictionary<string, CachedHit> _hits =
@@ -1468,7 +1469,8 @@ namespace OutlookAI.Core.Services
             string? bcc = null,
             string? importance = null,
             bool? requestReadReceipt = null,
-            string? bodyHtml = null)
+            string? bodyHtml = null,
+            IReadOnlyList<string>? attachments = null)
         {
             if (string.IsNullOrWhiteSpace(account))
             {
@@ -1494,18 +1496,21 @@ namespace OutlookAI.Core.Services
             }
 
             ComDraftBody draftBody = ResolveDraftBody(body, bodyHtml, "the signature", out IReadOnlyList<string> htmlAdjustments);
+            IReadOnlyList<DraftAttachmentFile> files = DraftAttachments.Validate(attachments);
 
             ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature);
             ComDraftOptions options = new(
-                ccList, bccList, subjectOverride: null, ParseImportance(importance), requestReadReceipt);
+                ccList, bccList, subjectOverride: null, ParseImportance(importance), requestReadReceipt,
+                files.Select(f => f.Path).ToList());
             ComDraftCreateResult created = _gateway.Run(s =>
             {
                 ComDraftCreateResult? r = s.TryCreateNewDraft(account, toList, subject!, draftBody, display, signatureOverride, options, out string? error);
                 return r ?? throw new InvalidOperationException(BuildDraftError(error, account));
             });
 
-            AuditDraft("new_draft", created, requestedAccount: account, sourceEntryId: null, draftBody);
-            return ToDraftOutcome("new", created, hitId: null, sourceEntryId: null, draftBody, htmlAdjustments);
+            _draftRegistry.Register(created.Draft.EntryId);
+            AuditDraft("new_draft", created, requestedAccount: account, sourceEntryId: null, draftBody, files);
+            return ToDraftOutcome("new", created, hitId: null, sourceEntryId: null, draftBody, htmlAdjustments, files);
         }
 
         /// <summary>
@@ -1571,9 +1576,10 @@ namespace OutlookAI.Core.Services
             string? subject = null,
             string? importance = null,
             bool? requestReadReceipt = null,
-            string? bodyHtml = null)
+            string? bodyHtml = null,
+            IReadOnlyList<string>? attachments = null)
         {
-            (string? hitId, string sourceEntryId, ComDraftCreateResult created, ComDraftBody draftBody, IReadOnlyList<string> htmlAdjustments) = CreateDerived(
+            (string? hitId, string sourceEntryId, ComDraftCreateResult created, ComDraftBody draftBody, IReadOnlyList<string> htmlAdjustments, IReadOnlyList<DraftAttachmentFile> files) = CreateDerived(
                 id,
                 replyAll ? ComDerivedDraftKind.ReplyAll : ComDerivedDraftKind.Reply,
                 to: null,
@@ -1585,10 +1591,12 @@ namespace OutlookAI.Core.Services
                 subject,
                 importance,
                 requestReadReceipt,
-                bodyHtml);
+                bodyHtml,
+                attachments);
             string op = replyAll ? "replyall_draft" : "reply_draft";
-            AuditDraft(op, created, requestedAccount: null, sourceEntryId, draftBody);
-            return ToDraftOutcome(replyAll ? "replyall" : "reply", created, hitId, sourceEntryId, draftBody, htmlAdjustments);
+            _draftRegistry.Register(created.Draft.EntryId);
+            AuditDraft(op, created, requestedAccount: null, sourceEntryId, draftBody, files);
+            return ToDraftOutcome(replyAll ? "replyall" : "reply", created, hitId, sourceEntryId, draftBody, htmlAdjustments, files);
         }
 
         /// <summary>
@@ -1607,7 +1615,8 @@ namespace OutlookAI.Core.Services
             string? subject = null,
             string? importance = null,
             bool? requestReadReceipt = null,
-            string? bodyHtml = null)
+            string? bodyHtml = null,
+            IReadOnlyList<string>? attachments = null)
         {
             IReadOnlyList<string> toList = Text.HtmlBodyComposer.SplitRecipients(to);
             if (toList.Count == 0)
@@ -1615,13 +1624,14 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("to is required for forward_draft: one or more recipient addresses separated by ';' or ','.", nameof(to));
             }
 
-            (string? hitId, string sourceEntryId, ComDraftCreateResult created, ComDraftBody draftBody, IReadOnlyList<string> htmlAdjustments) = CreateDerived(
-                id, ComDerivedDraftKind.Forward, toList, body, display, signature, cc, bcc, subject, importance, requestReadReceipt, bodyHtml);
-            AuditDraft("forward_draft", created, requestedAccount: null, sourceEntryId, draftBody);
-            return ToDraftOutcome("forward", created, hitId, sourceEntryId, draftBody, htmlAdjustments);
+            (string? hitId, string sourceEntryId, ComDraftCreateResult created, ComDraftBody draftBody, IReadOnlyList<string> htmlAdjustments, IReadOnlyList<DraftAttachmentFile> files) = CreateDerived(
+                id, ComDerivedDraftKind.Forward, toList, body, display, signature, cc, bcc, subject, importance, requestReadReceipt, bodyHtml, attachments);
+            _draftRegistry.Register(created.Draft.EntryId);
+            AuditDraft("forward_draft", created, requestedAccount: null, sourceEntryId, draftBody, files);
+            return ToDraftOutcome("forward", created, hitId, sourceEntryId, draftBody, htmlAdjustments, files);
         }
 
-        private (string? HitId, string SourceEntryId, ComDraftCreateResult Created, ComDraftBody Body, IReadOnlyList<string> HtmlAdjustments) CreateDerived(
+        private (string? HitId, string SourceEntryId, ComDraftCreateResult Created, ComDraftBody Body, IReadOnlyList<string> HtmlAdjustments, IReadOnlyList<DraftAttachmentFile> Files) CreateDerived(
             string id,
             ComDerivedDraftKind kind,
             IReadOnlyList<string>? to,
@@ -1633,7 +1643,8 @@ namespace OutlookAI.Core.Services
             string? subject,
             string? importance,
             bool? requestReadReceipt,
-            string? bodyHtml)
+            string? bodyHtml,
+            IReadOnlyList<string>? attachments)
         {
             if (string.IsNullOrWhiteSpace(id))
             {
@@ -1641,6 +1652,7 @@ namespace OutlookAI.Core.Services
             }
 
             ComDraftBody draftBody = ResolveDraftBody(body, bodyHtml, "the quoted mail", out IReadOnlyList<string> htmlAdjustments);
+            IReadOnlyList<DraftAttachmentFile> files = DraftAttachments.Validate(attachments);
 
             if (subject != null && subject.Length > 255)
             {
@@ -1653,7 +1665,8 @@ namespace OutlookAI.Core.Services
                 Text.HtmlBodyComposer.SplitRecipients(bcc),
                 string.IsNullOrWhiteSpace(subject) ? null : subject!.Trim(),
                 ParseImportance(importance),
-                requestReadReceipt);
+                requestReadReceipt,
+                files.Select(f => f.Path).ToList());
             (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
             IReadOnlyList<string> toList = to ?? Array.Empty<string>();
             ComDraftCreateResult created = _gateway.Run(s =>
@@ -1678,7 +1691,7 @@ namespace OutlookAI.Core.Services
                     + "). Re-run search - the item may have moved.");
             });
 
-            return (hitId, entryId, created, draftBody, htmlAdjustments);
+            return (hitId, entryId, created, draftBody, htmlAdjustments, files);
         }
 
         /// <summary>
@@ -1770,12 +1783,22 @@ namespace OutlookAI.Core.Services
         /// appended for every created draft; a failure surfaces with the draft's EntryID
         /// preserved in the message instead of being swallowed.
         /// </summary>
-        private static void AuditDraft(string operation, ComDraftCreateResult created, string? requestedAccount, string? sourceEntryId, ComDraftBody body)
+        private static void AuditDraft(
+            string operation,
+            ComDraftCreateResult created,
+            string? requestedAccount,
+            string? sourceEntryId,
+            ComDraftBody body,
+            IReadOnlyList<DraftAttachmentFile> attachments)
         {
             try
             {
                 Audit.AuditLog.Append(
                     operation,
+                    ("attachments", attachments.Count > 0 ? attachments.Count.ToString(CultureInfo.InvariantCulture) : null),
+                    ("attachmentBytes", attachments.Count > 0
+                        ? DraftAttachments.TotalBytes(attachments).ToString(CultureInfo.InvariantCulture)
+                        : null),
                     ("entryId", created.Draft.EntryId),
                     ("store", created.Draft.StoreDisplayName),
                     ("account", created.Draft.SendUsingAccountSmtp ?? requestedAccount),
@@ -1809,11 +1832,21 @@ namespace OutlookAI.Core.Services
             string? hitId,
             string? sourceEntryId,
             ComDraftBody body,
-            IReadOnlyList<string> htmlAdjustments)
+            IReadOnlyList<string> htmlAdjustments,
+            IReadOnlyList<DraftAttachmentFile> attachments)
         {
             IReadOnlyList<RecipientView> recipients = CapRecipients(created.Draft.Recipients, out int total, out bool truncated);
+
+            // Attachments come from the SAVED item, never from the request (the A4
+            // round-trip discipline): what the agent is told is what Outlook holds.
+            IReadOnlyList<AttachmentView> attachmentViews = CapAttachments(created.Attachments, out int _, out bool _);
             return new DraftOutcome
             {
+                Attachments = attachmentViews.Count > 0 ? attachmentViews : null,
+                AttachmentsTotalBytes = attachmentViews.Count > 0
+                    ? attachmentViews.Sum(a => a.SizeBytes ?? 0)
+                    : (long?)null,
+                AttachmentsRequested = attachments.Count > 0 ? attachments.Count : (int?)null,
                 Kind = kind,
                 Id = hitId,
                 SourceEntryId = sourceEntryId,
@@ -1841,6 +1874,380 @@ namespace OutlookAI.Core.Services
                 BodyFormat = body.FormatName,
                 BodyPlacement = created.BodyPlacedViaWordEditor ? "wordEditor" : "html",
                 HtmlAdjustments = htmlAdjustments.Count > 0 ? htmlAdjustments : null,
+            };
+        }
+
+        // ------------------------------------------------------------------ update / discard drafts (D46, soak fix 19)
+
+        /// <summary>
+        /// Test/diagnostic view of the per-process registry of drafts THIS server created
+        /// or last updated - the allowlist <c>discard_draft</c> is gated on (D46/C2).
+        /// </summary>
+        public ServerDraftRegistry DraftRegistry => _draftRegistry;
+
+        /// <summary>
+        /// update_draft (v3.MD D46/C1): revises an existing UNSENT draft in place. Only
+        /// the parts supplied are touched; everything omitted is left exactly as it is.
+        /// <para>
+        /// RECIPIENTS ARE REPLACE, NOT APPEND - deliberately the opposite of the draft
+        /// creators' cc/bcc append (batch A, A2). On creation "append" is the only sane
+        /// reading because Outlook has just filled the list itself; on a revision the
+        /// caller is stating the final list, and there would otherwise be no way to REMOVE
+        /// a recipient. Passing the full list is therefore how you add one.
+        /// </para>
+        /// <para>
+        /// ATTACHMENTS ARE ADD, plus an explicit <paramref name="removeAttachments"/> name
+        /// list - the simplest surface that can express add, remove and replace without a
+        /// mode flag: remove+add of the same name in one call IS a replace, and the
+        /// removals run first so that works.
+        /// </para>
+        /// </summary>
+        public UpdateDraftOutcome UpdateDraft(
+            string id,
+            string? body = null,
+            string? bodyHtml = null,
+            string? subject = null,
+            string? to = null,
+            string? cc = null,
+            string? bcc = null,
+            string? importance = null,
+            bool? requestReadReceipt = null,
+            string? signature = null,
+            IReadOnlyList<string>? attachments = null,
+            IReadOnlyList<string>? removeAttachments = null,
+            bool display = true)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                throw new ArgumentException(
+                    "id is required (the entryId a draft tool returned, or a hit id of a saved unsent draft).", nameof(id));
+            }
+
+            // A body is OPTIONAL here (unlike the creators), but the two forms stay
+            // mutually exclusive.
+            ComDraftBody? draftBody = null;
+            IReadOnlyList<string> htmlAdjustments = Array.Empty<string>();
+            if (!string.IsNullOrWhiteSpace(body) || !string.IsNullOrWhiteSpace(bodyHtml))
+            {
+                draftBody = ResolveDraftBody(body, bodyHtml, "the signature", out htmlAdjustments);
+            }
+
+            if (subject != null && subject.Trim().Length == 0)
+            {
+                throw new ArgumentException(
+                    "subject must not be blank - omit it to keep the draft's current subject.", nameof(subject));
+            }
+
+            if (subject != null && subject.Length > 255)
+            {
+                throw new ArgumentException("subject is too long (max 255 characters).", nameof(subject));
+            }
+
+            IReadOnlyList<string>? toList = to == null ? null : Text.HtmlBodyComposer.SplitRecipients(to);
+            IReadOnlyList<string>? ccList = cc == null ? null : Text.HtmlBodyComposer.SplitRecipients(cc);
+            IReadOnlyList<string>? bccList = bcc == null ? null : Text.HtmlBodyComposer.SplitRecipients(bcc);
+            if (toList != null && toList.Count == 0)
+            {
+                throw new ArgumentException(
+                    "to was supplied but holds no usable address. update_draft REPLACES the To list, so an empty value would "
+                    + "leave the draft with no recipient - omit to to keep the current list.",
+                    nameof(to));
+            }
+
+            int? parsedImportance = ParseImportance(importance);
+            ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature);
+            IReadOnlyList<DraftAttachmentFile> files = DraftAttachments.Validate(attachments);
+            IReadOnlyList<string> removeNames = DraftAttachments.ValidateRemoveNames(removeAttachments);
+
+            if (draftBody == null && subject == null && toList == null && ccList == null && bccList == null
+                && parsedImportance == null && requestReadReceipt == null && signatureOverride == null
+                && files.Count == 0 && removeNames.Count == 0)
+            {
+                throw new ArgumentException(
+                    "Nothing to update: supply at least one of body / body_html / subject / to / cc / bcc / importance / "
+                    + "request_read_receipt / signature / attachments / remove_attachments.",
+                    nameof(id));
+            }
+
+            (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
+
+            ComDraftUpdateResult updated = _gateway.Run(s =>
+            {
+                string? error = null;
+                ComDraftUpdateResult? r = s.TryUpdateDraft(
+                    entryId, storeId, draftBody, subject?.Trim(), toList, ccList, bccList,
+                    parsedImportance, requestReadReceipt, signatureOverride,
+                    files.Select(f => f.Path).ToList(), removeNames, display, out error);
+
+                if (r == null && storeId == null && error == "ItemNotFound")
+                {
+                    foreach (ComStoreDetail store in GetStoreDetails(s))
+                    {
+                        r = s.TryUpdateDraft(
+                            entryId, store.StoreId, draftBody, subject?.Trim(), toList, ccList, bccList,
+                            parsedImportance, requestReadReceipt, signatureOverride,
+                            files.Select(f => f.Path).ToList(), removeNames, display, out error);
+                        if (r != null)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                return r ?? throw BuildDraftRefusal("update_draft", error, entryId);
+            });
+
+            // EntryIDs are not stable - re-key the registry so a following discard_draft
+            // still recognises the draft this call just rewrote (D46/C2).
+            _draftRegistry.Replace(entryId, updated.Draft.EntryId);
+            AuditUpdate(updated, draftBody, hitId);
+            return ToUpdateOutcome(updated, hitId, draftBody, htmlAdjustments, removeNames);
+        }
+
+        /// <summary>
+        /// discard_draft (v3.MD D46/C2, the S1 v3 amendment): SOFT-deletes a draft THIS
+        /// server created or last updated - <c>Delete()</c>, which moves it to Deleted
+        /// Items exactly like pressing Delete in Outlook. It is the only mail-deleting
+        /// tool in the product and it is narrow by construction:
+        /// <list type="bullet">
+        /// <item>the item must be in the session registry (this server authored it),</item>
+        /// <item>it must live in a Drafts folder,</item>
+        /// <item>it must be UNSENT.</item>
+        /// </list>
+        /// Never <c>PermanentlyDelete</c>, never empties anything, never touches Deleted
+        /// Items' existing contents. Every refusal is explicit and audited - there is no
+        /// silent no-op path.
+        /// </summary>
+        public DiscardDraftOutcome DiscardDraft(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                throw new ArgumentException(
+                    "id is required (the entryId a draft tool returned for a draft created in THIS session).", nameof(id));
+            }
+
+            (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
+
+            // THE GUARDRAIL, checked before any COM work: only drafts this server process
+            // produced are reachable. Both the raw argument and the resolved EntryID count,
+            // so a hit id pointing at our own draft works too.
+            if (!_draftRegistry.Contains(entryId) && !_draftRegistry.Contains(id))
+            {
+                throw RefuseDraft(
+                    "not_created_by_this_server",
+                    "discard_draft",
+                    entryId,
+                    "This draft was not created or last updated by this server session, so it cannot be discarded. "
+                    + "discard_draft exists only to clean up drafts the assistant itself just made: it can reach a draft "
+                    + "returned by new_draft / reply_draft / replyall_draft / forward_draft / update_draft in THIS session, "
+                    + "and nothing else - not mail you received, not anything you wrote yourself, not a sent item, and not a "
+                    + "draft from an earlier session (a server restart clears the list). Delete it in Outlook instead.");
+            }
+
+            ComDraftDiscardResult discarded = _gateway.Run(s =>
+            {
+                string? error = null;
+                ComDraftDiscardResult? r = s.TryDiscardDraft(entryId, storeId, out error);
+                if (r == null && storeId == null && error == "ItemNotFound")
+                {
+                    foreach (ComStoreDetail store in GetStoreDetails(s))
+                    {
+                        r = s.TryDiscardDraft(entryId, store.StoreId, out error);
+                        if (r != null)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                return r ?? throw BuildDraftRefusal("discard_draft", error, entryId);
+            });
+
+            AuditDiscard(discarded, hitId);
+            _draftRegistry.Forget(entryId);
+            _draftRegistry.Register(discarded.NewEntryId);
+            return new DiscardDraftOutcome
+            {
+                Status = "discarded",
+                Discarded = true,
+                Id = hitId,
+                EntryId = discarded.OldEntryId,
+                NewEntryId = discarded.NewEntryId,
+                Store = discarded.StoreDisplayName,
+                FromFolder = discarded.FromFolder,
+                ToFolder = discarded.ToFolder,
+                Subject = discarded.Subject,
+                Advice = discarded.NewEntryId != null && discarded.FromFolder != null
+                    ? "Soft delete only - the draft is in " + (discarded.ToFolder ?? "Deleted Items")
+                        + " and can be restored with move_mail using newEntryId and folder='" + discarded.FromFolder + "'."
+                    : "Soft delete only - the draft was moved to " + (discarded.ToFolder ?? "Deleted Items")
+                        + " and can be restored from there in Outlook.",
+            };
+        }
+
+        /// <summary>
+        /// Maps a COM-side refusal code from update/discard to the user-facing refusal.
+        /// Every one of these means NOTHING was changed or deleted.
+        /// </summary>
+        private static Exception BuildDraftRefusal(string operation, string? comError, string entryId)
+        {
+            switch (comError)
+            {
+                case "NotAMailItem":
+                    return RefuseDraft("not_a_mail_item", operation, entryId,
+                        "That id is not a mail item (it may be an appointment, contact or task). "
+                        + (operation == "discard_draft" ? "discard_draft" : "update_draft") + " works on mail drafts only.");
+                case "AlreadySent":
+                    return RefuseDraft("not_an_unsent_draft", operation, entryId,
+                        "That item has already been sent, so it is no longer a draft and cannot be "
+                        + (operation == "discard_draft" ? "discarded" : "revised")
+                        + ". Only saved, UNSENT drafts can be. A sent mail can never be changed or deleted by this server.");
+                case "NotInDraftsFolder":
+                    return RefuseDraft("not_in_drafts_folder", operation, entryId,
+                        "That item does not live in a Drafts folder, so it is not a draft this server may touch. "
+                        + "Move it to Drafts in Outlook first if it really is an unfinished message.");
+                case "NoInspector":
+                case "NoWordEditor":
+                    return RefuseDraft("compose_surface_unavailable", operation, entryId,
+                        "Outlook would not open the draft's editor, so the body could not be replaced. The draft is unchanged. "
+                        + "Close any compose window that has it open and retry.");
+                case "SignatureFileMissing":
+                    return RefuseDraft("signature_file_missing", operation, entryId,
+                        "The requested signature's file is missing on disk. The draft is unchanged; see list_signatures.");
+                case "ItemNotFound":
+                    return new InvalidOperationException(
+                        "The draft could not be opened - it may have been deleted, moved or already sent. "
+                        + "Re-check with read, or re-run search for a fresh id.");
+                default:
+                    return RefuseDraft("com_failure", operation, entryId,
+                        "The draft could not be " + (operation == "discard_draft" ? "discarded" : "updated")
+                        + " (" + (comError ?? "unknown") + "). Nothing was changed. Check outlook_health and retry.");
+            }
+        }
+
+        /// <summary>Audit-logs the refusal and builds the exception (nothing was changed).</summary>
+        private static DraftRefusedException RefuseDraft(string reason, string operation, string? entryId, string message)
+        {
+            try
+            {
+                Audit.AuditLog.Append(
+                    operation + "_refused",
+                    ("entryId", entryId),
+                    ("reason", reason));
+            }
+            catch (InvalidOperationException)
+            {
+                // A refusal changed nothing; an unwritable audit log must not convert it
+                // into a different, more confusing error.
+            }
+
+            return new DraftRefusedException(reason, message);
+        }
+
+        private static void AuditUpdate(ComDraftUpdateResult updated, ComDraftBody? body, string? hitId)
+        {
+            try
+            {
+                Audit.AuditLog.Append(
+                    "update_draft",
+                    ("entryId", updated.Draft.EntryId),
+                    ("hitId", hitId),
+                    ("store", updated.Draft.StoreDisplayName),
+                    ("folder", updated.Draft.ParentFolderName),
+                    ("account", updated.Draft.SendUsingAccountSmtp),
+                    ("changed", updated.ChangedFields.Count > 0 ? string.Join("+", updated.ChangedFields) : "none"),
+                    ("bodyFormat", body?.FormatName),
+                    ("bodyPlacement", updated.BodyReplaced ? (updated.BodyPlacedViaWordEditor ? "wordEditor" : "html") : null),
+                    ("signature", updated.SignatureOverrideName),
+                    ("attachmentsAdded", updated.AttachmentsAdded.Count > 0
+                        ? updated.AttachmentsAdded.Count.ToString(CultureInfo.InvariantCulture)
+                        : null),
+                    ("attachmentsRemoved", updated.AttachmentsRemoved.Count > 0
+                        ? updated.AttachmentsRemoved.Count.ToString(CultureInfo.InvariantCulture)
+                        : null),
+                    ("attachmentsTotal", updated.Attachments.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("recipients", updated.Draft.Recipients.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("unresolvedRecipients", updated.UnresolvedRecipients.Count > 0
+                        ? updated.UnresolvedRecipients.Count.ToString(CultureInfo.InvariantCulture)
+                        : null),
+                    ("conversationTopicPreserved", updated.ConversationTopicPreserved?.ToString().ToLowerInvariant()),
+                    ("displayed", updated.Displayed ? "true" : "false"));
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidOperationException(
+                    "The draft was updated (EntryID " + updated.Draft.EntryId
+                    + ") but the audit line could not be written: " + ex.Message, ex);
+            }
+        }
+
+        private static void AuditDiscard(ComDraftDiscardResult discarded, string? hitId)
+        {
+            try
+            {
+                Audit.AuditLog.Append(
+                    "discard_draft",
+                    ("entryId", discarded.OldEntryId),
+                    ("newEntryId", discarded.NewEntryId),
+                    ("hitId", hitId),
+                    ("store", discarded.StoreDisplayName),
+                    ("fromFolder", discarded.FromFolder),
+                    ("toFolder", discarded.ToFolder),
+                    ("mode", "soft"));
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidOperationException(
+                    "The draft was discarded (EntryID " + discarded.OldEntryId
+                    + ", now in " + (discarded.ToFolder ?? "Deleted Items")
+                    + ") but the audit line could not be written: " + ex.Message, ex);
+            }
+        }
+
+        private static UpdateDraftOutcome ToUpdateOutcome(
+            ComDraftUpdateResult updated,
+            string? hitId,
+            ComDraftBody? body,
+            IReadOnlyList<string> htmlAdjustments,
+            IReadOnlyList<string> requestedRemovals)
+        {
+            IReadOnlyList<RecipientView> recipients = CapRecipients(updated.Draft.Recipients, out int total, out bool truncated);
+            IReadOnlyList<AttachmentView> attachmentViews = CapAttachments(updated.Attachments, out int _, out bool _);
+            IReadOnlyList<string>? notRemoved = requestedRemovals
+                .Where(n => !updated.AttachmentsRemoved.Any(r => string.Equals(r, n, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+
+            return new UpdateDraftOutcome
+            {
+                Status = "updated",
+                Id = hitId,
+                EntryId = updated.Draft.EntryId,
+                Store = updated.Draft.StoreDisplayName,
+                Folder = updated.Draft.ParentFolderName,
+                Account = updated.Draft.SendUsingAccountSmtp,
+                Subject = updated.Draft.Subject,
+                Changed = updated.ChangedFields.Count > 0 ? updated.ChangedFields : null,
+                Displayed = updated.Displayed,
+                ConversationId = updated.Draft.ConversationId,
+                Recipients = recipients,
+                RecipientsTruncated = truncated ? true : (bool?)null,
+                RecipientsTotal = truncated ? total : (int?)null,
+                UnresolvedRecipients = updated.UnresolvedRecipients.Count > 0
+                    ? updated.UnresolvedRecipients.Take(UnresolvedRecipientsCap).ToList()
+                    : null,
+                ConversationTopicPreserved = updated.ConversationTopicPreserved,
+                Importance = ImportanceName(updated.Draft.Importance) is string name && name != "normal" ? name : null,
+                ReadReceiptRequested = updated.Draft.ReadReceiptRequested ? true : (bool?)null,
+                Signature = updated.SignatureOverrideName,
+                SignatureApplied = updated.SignatureOverrideName != null ? updated.SignatureOverrideApplied : (bool?)null,
+                BodyFormat = body?.FormatName,
+                BodyPlacement = updated.BodyReplaced ? (updated.BodyPlacedViaWordEditor ? "wordEditor" : "html") : null,
+                HtmlAdjustments = htmlAdjustments.Count > 0 ? htmlAdjustments : null,
+                Attachments = attachmentViews.Count > 0 ? attachmentViews : null,
+                AttachmentsTotalBytes = attachmentViews.Count > 0 ? attachmentViews.Sum(a => a.SizeBytes ?? 0) : (long?)null,
+                AttachmentsAdded = updated.AttachmentsAdded.Count > 0 ? updated.AttachmentsAdded : null,
+                AttachmentsRemoved = updated.AttachmentsRemoved.Count > 0 ? updated.AttachmentsRemoved : null,
+                AttachmentsNotFound = notRemoved.Count > 0 ? notRemoved : null,
             };
         }
 
@@ -1904,7 +2311,8 @@ namespace OutlookAI.Core.Services
                     + "'), so a verified send identity cannot be established. Move the draft creation to one of the accounts from list_accounts.");
             }
 
-            string contentHash = SendContentHash.Compute(state.Subject, state.Recipients, state.BodyText, sentOnBehalfOf);
+            string contentHash = SendContentHash.Compute(
+                state.Subject, state.Recipients, state.BodyText, sentOnBehalfOf, state.Attachments, state.BodyHtmlDigest);
 
             if (string.IsNullOrWhiteSpace(confirmToken))
             {

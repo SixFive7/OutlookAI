@@ -563,14 +563,22 @@ namespace OutlookAI.Core.Com
             IReadOnlyList<string>? bccRecipients = null,
             string? subjectOverride = null,
             int? importance = null,
-            bool? requestReadReceipt = null)
+            bool? requestReadReceipt = null,
+            IReadOnlyList<string>? attachmentPaths = null)
         {
             CcRecipients = ccRecipients ?? Array.Empty<string>();
             BccRecipients = bccRecipients ?? Array.Empty<string>();
             SubjectOverride = subjectOverride;
             Importance = importance;
             RequestReadReceipt = requestReadReceipt;
+            AttachmentPaths = attachmentPaths ?? Array.Empty<string>();
         }
+
+        /// <summary>
+        /// Absolute paths to attach, already existence/readability-validated PRE-COM by
+        /// <c>DraftAttachments.Validate</c> (D46/C3) - the STA side only adds them.
+        /// </summary>
+        public IReadOnlyList<string> AttachmentPaths { get; }
 
         /// <summary>Addresses APPENDED as Cc.</summary>
         public IReadOnlyList<string> CcRecipients { get; }
@@ -627,8 +635,10 @@ namespace OutlookAI.Core.Com
             string? signatureOverrideError = null,
             bool bodyPlacedViaWordEditor = false,
             IReadOnlyList<string>? unresolvedRecipients = null,
-            bool? conversationTopicPreserved = null)
+            bool? conversationTopicPreserved = null,
+            IReadOnlyList<ComAttachmentInfo>? attachments = null)
         {
+            Attachments = attachments ?? Array.Empty<ComAttachmentInfo>();
             Draft = draft;
             AccountResolved = accountResolved;
             SignatureInjected = signatureInjected;
@@ -644,6 +654,12 @@ namespace OutlookAI.Core.Com
             UnresolvedRecipients = unresolvedRecipients ?? Array.Empty<string>();
             ConversationTopicPreserved = conversationTopicPreserved;
         }
+
+        /// <summary>
+        /// Attachments read back from the SAVED item (D46/C3) - a real round trip, not an
+        /// echo of the requested paths, so what the agent is told is what Outlook holds.
+        /// </summary>
+        public IReadOnlyList<ComAttachmentInfo> Attachments { get; }
 
         /// <summary>The created draft (EntryID is final - post-move when a move happened).</summary>
         public ComDraftInfo Draft { get; }
@@ -718,7 +734,9 @@ namespace OutlookAI.Core.Com
             bool isSent,
             string? bodyText,
             string? resolvedAccountSmtp,
-            IReadOnlyList<ComRecipientInfo> recipients)
+            IReadOnlyList<ComRecipientInfo> recipients,
+            IReadOnlyList<ComAttachmentInfo>? attachments = null,
+            string? bodyHtmlDigest = null)
         {
             EntryId = entryId;
             StoreId = storeId;
@@ -729,7 +747,22 @@ namespace OutlookAI.Core.Com
             BodyText = bodyText;
             ResolvedAccountSmtp = resolvedAccountSmtp;
             Recipients = recipients;
+            Attachments = attachments ?? Array.Empty<ComAttachmentInfo>();
+            BodyHtmlDigest = bodyHtmlDigest;
         }
+
+        /// <summary>
+        /// Attachments currently on the draft - a content-hash input since D46, so a file
+        /// added or removed after a confirm token was issued invalidates that token.
+        /// </summary>
+        public IReadOnlyList<ComAttachmentInfo> Attachments { get; }
+
+        /// <summary>
+        /// SHA-256 of the stored HTML body (content-hash input since D46: a markup-only
+        /// edit leaves the plain text identical, so the text alone cannot see it). Null
+        /// when the item has no readable HTML body.
+        /// </summary>
+        public string? BodyHtmlDigest { get; }
 
         /// <summary>Real EntryID as the object model reports it.</summary>
         public string EntryId { get; }
@@ -961,5 +994,126 @@ namespace OutlookAI.Core.Com
         /// <see cref="FoldersSkipped"/> beyond the first refusal).
         /// </summary>
         public bool FolderCapReached { get; }
+    }
+
+    /// <summary>
+    /// Outcome of <c>update_draft</c> (v3.MD D46/C1): the re-snapshotted draft plus what
+    /// the revision actually changed, all read back from the SAVED item rather than
+    /// echoed from the request.
+    /// </summary>
+    public sealed class ComDraftUpdateResult
+    {
+        /// <summary>Creates the update outcome.</summary>
+        public ComDraftUpdateResult(
+            ComDraftInfo draft,
+            IReadOnlyList<string> changedFields,
+            IReadOnlyList<string> unresolvedRecipients,
+            IReadOnlyList<ComAttachmentInfo> attachments,
+            IReadOnlyList<string> attachmentsAdded,
+            IReadOnlyList<string> attachmentsRemoved,
+            bool bodyReplaced,
+            bool bodyPlacedViaWordEditor,
+            bool displayed,
+            string? signatureOverrideName,
+            bool signatureOverrideApplied,
+            string? signatureOverrideError,
+            bool? conversationTopicPreserved)
+        {
+            Draft = draft;
+            ChangedFields = changedFields;
+            UnresolvedRecipients = unresolvedRecipients;
+            Attachments = attachments;
+            AttachmentsAdded = attachmentsAdded;
+            AttachmentsRemoved = attachmentsRemoved;
+            BodyReplaced = bodyReplaced;
+            BodyPlacedViaWordEditor = bodyPlacedViaWordEditor;
+            Displayed = displayed;
+            SignatureOverrideName = signatureOverrideName;
+            SignatureOverrideApplied = signatureOverrideApplied;
+            SignatureOverrideError = signatureOverrideError;
+            ConversationTopicPreserved = conversationTopicPreserved;
+        }
+
+        /// <summary>The draft as it stands AFTER the update.</summary>
+        public ComDraftInfo Draft { get; }
+
+        /// <summary>Names of the fields this call actually changed.</summary>
+        public IReadOnlyList<string> ChangedFields { get; }
+
+        /// <summary>Addresses Outlook could not resolve (they stay on the draft).</summary>
+        public IReadOnlyList<string> UnresolvedRecipients { get; }
+
+        /// <summary>Attachments on the SAVED draft after the update.</summary>
+        public IReadOnlyList<ComAttachmentInfo> Attachments { get; }
+
+        /// <summary>File names added by this call.</summary>
+        public IReadOnlyList<string> AttachmentsAdded { get; }
+
+        /// <summary>File names removed by this call.</summary>
+        public IReadOnlyList<string> AttachmentsRemoved { get; }
+
+        /// <summary>True when the draft region was rewritten (a body was supplied).</summary>
+        public bool BodyReplaced { get; }
+
+        /// <summary>True when the body went in through the held-Inspector WordEditor.</summary>
+        public bool BodyPlacedViaWordEditor { get; }
+
+        /// <summary>True when the updated draft was (re)opened for the user.</summary>
+        public bool Displayed { get; }
+
+        /// <summary>Requested signature-override name, when one was requested.</summary>
+        public string? SignatureOverrideName { get; }
+
+        /// <summary>Whether the requested signature override was applied.</summary>
+        public bool SignatureOverrideApplied { get; }
+
+        /// <summary>Content-free reason a requested override failed.</summary>
+        public string? SignatureOverrideError { get; }
+
+        /// <summary>Only set when the subject was replaced: whether threading survived it (A3).</summary>
+        public bool? ConversationTopicPreserved { get; }
+    }
+
+    /// <summary>
+    /// Outcome of <c>discard_draft</c> (v3.MD D46/C2, S1 v3): the identity of the draft
+    /// that was SOFT-deleted, its source folder, and - best effort - where it landed, so
+    /// the operation stays reversible in the same way a move is.
+    /// </summary>
+    public sealed class ComDraftDiscardResult
+    {
+        /// <summary>Creates the discard outcome.</summary>
+        public ComDraftDiscardResult(
+            string oldEntryId,
+            string? newEntryId,
+            string? storeDisplayName,
+            string? fromFolder,
+            string? toFolder,
+            string? subject)
+        {
+            OldEntryId = oldEntryId;
+            NewEntryId = newEntryId;
+            StoreDisplayName = storeDisplayName;
+            FromFolder = fromFolder;
+            ToFolder = toFolder;
+            Subject = subject;
+        }
+
+        /// <summary>EntryID the draft had before the soft delete.</summary>
+        public string OldEntryId { get; }
+
+        /// <summary>EntryID in Deleted Items when it could be re-located (EntryIDs change on any move).</summary>
+        public string? NewEntryId { get; }
+
+        /// <summary>Store the draft lived in.</summary>
+        public string? StoreDisplayName { get; }
+
+        /// <summary>Folder the draft was discarded FROM (the undo address).</summary>
+        public string? FromFolder { get; }
+
+        /// <summary>Deleted Items folder name (localized) it was moved to.</summary>
+        public string? ToFolder { get; }
+
+        /// <summary>The discarded draft's subject (echoed so the agent can confirm what went).</summary>
+        public string? Subject { get; }
     }
 }
