@@ -23,8 +23,8 @@ public static class LiveOutlookTestMailer
 
     /// <summary>
     /// Default-folder ids swept for tagged artifacts: Drafts, Inbox, Sent Items, the
-    /// SYNC ISSUES subtree, then Deleted Items LAST so the final pass purges what
-    /// Delete() moved there.
+    /// OUTBOX, the SYNC ISSUES subtree, then Deleted Items LAST so the final pass
+    /// purges what Delete() moved there.
     /// <para>
     /// The Sync Issues subtree (20 Sync Issues, 19 Conflicts, 21 Local Failures,
     /// 22 Server Failures) was added after a tagged test item was found stranded in
@@ -33,20 +33,27 @@ public static class LiveOutlookTestMailer
     /// hundreds of items, not the ~100k an archive holds, so counting them is cheap.
     /// </para>
     /// <para>
+    /// The Outbox (4) joined them for the same reason: when Outlook is running HEADLESS
+    /// it may not dispatch a queued self-send, so the test mail sits in the Outbox, the
+    /// arrival wait times out, and the artifact outlives its own cleanup - observed on a
+    /// full-suite run whose Outlook had been started by the tests themselves. Deleting
+    /// there is S3-legal (tag AND marker must both match) and cannot touch real mail.
+    /// </para>
+    /// <para>
     /// ⚠ Deliberately WITHOUT the Archive folder: business-store archives hold ~100k
     /// items and a LIKE count over them takes minutes - adding 39 here made the
     /// cross-account sweeps time out (live-bitten 2026-07-26). Hub-scoped D39
     /// cleanups pass <see cref="HubSweepFolderIdsWithArchive"/> explicitly instead.
     /// </para>
     /// </summary>
-    private static readonly int[] SweepFolderIds = { 16, 6, 5, 20, 19, 21, 22, 3 };
+    private static readonly int[] SweepFolderIds = { 16, 6, 5, 4, 20, 19, 21, 22, 3 };
 
     /// <summary>
     /// Sweep set for the TINY test hub only (D39): includes the designated Archive
     /// folder (39) so archive_mail artifacts are counted and purged. Never use
     /// against business stores (their archives are huge - see SweepFolderIds).
     /// </summary>
-    public static readonly int[] HubSweepFolderIdsWithArchive = { 16, 6, 5, 39, 20, 19, 21, 22, 3 };
+    public static readonly int[] HubSweepFolderIdsWithArchive = { 16, 6, 5, 39, 4, 20, 19, 21, 22, 3 };
 
     /// <summary>
     /// The Sync Issues subtree ids, exposed so a targeted purge can name them
@@ -160,6 +167,25 @@ public static class LiveOutlookTestMailer
                     }
 
                     mail.Send();
+
+                    // Send() only QUEUES the mail. A user-driven Outlook flushes the
+                    // Outbox on its own schedule, but an Outlook the tests started
+                    // themselves (D17, headless) may sit on it indefinitely - the seed
+                    // then never arrives, the arrival wait times out, and the artifact
+                    // outlives its cleanup in the Outbox (observed on a full-suite run
+                    // whose Outlook had exited beforehand). Ask for delivery explicitly;
+                    // best-effort, because a profile can refuse it and the wait loop
+                    // remains the authority either way.
+                    try
+                    {
+                        session!.SendAndReceive(false);
+                    }
+                    catch (COMException)
+                    {
+                    }
+                    catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+                    {
+                    }
                 }
                 finally
                 {

@@ -61,11 +61,9 @@ public sealed class Phase4LiveMcpToolShapeTests
                 });
                 foreach (JsonElement hit in search.GetProperty("hits").EnumerateArray())
                 {
-                    bool isInbox = hit.TryGetProperty("folderKind", out JsonElement kind)
-                        && kind.GetString() == "inbox";
                     bool subjectMatches = hit.TryGetProperty("subject", out JsonElement subj)
                         && subj.GetString() == seedSubject;
-                    if (subjectMatches && (isInbox || !hit.TryGetProperty("folderKind", out _)))
+                    if (subjectMatches && IsArrivedCopy(hit))
                     {
                         hitId = hit.GetProperty("id").GetString();
                         break;
@@ -150,6 +148,42 @@ public sealed class Phase4LiveMcpToolShapeTests
 
         Assert.Equal(0, LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker));
         _output.WriteLine("t3 drafts: 0 marker artifacts remain in hub");
+    }
+
+    /// <summary>
+    /// True when a hit is the seed's ARRIVED (Inbox) copy - the only copy the draft tools
+    /// can safely be pointed at.
+    /// <para>
+    /// A self-send briefly exists as a Drafts and then an Outbox copy, and the index can
+    /// ingest one of those within a second or two (the same fact soak fix 14 hit in the
+    /// freshness test). The old acceptance took ANY index hit - no folderKind means
+    /// "index row" - so the test could reply to a copy that had already moved on, and
+    /// the id then failed to locate: "Hit could not be located in Outlook
+    /// (url:NoSubjectTimeMatch)". Requiring the Inbox copy removes the race instead of
+    /// widening a timeout around it.
+    /// </para>
+    /// </summary>
+    private static bool IsArrivedCopy(JsonElement hit)
+    {
+        if (hit.TryGetProperty("folderKind", out JsonElement kind))
+        {
+            return kind.GetString() == "inbox"; // live (freshness sweep) hit
+        }
+
+        if (!hit.TryGetProperty("folder", out JsonElement folderElement))
+        {
+            return false;
+        }
+
+        string? folder = folderElement.GetString();
+        if (string.IsNullOrEmpty(folder))
+        {
+            return false;
+        }
+
+        string leaf = folder!.Split('/')[^1];
+        return leaf.Equals("Inbox", StringComparison.OrdinalIgnoreCase)
+            || leaf.Equals("Postvak IN", StringComparison.OrdinalIgnoreCase);
     }
 
     private string AssertDraftShape(JsonElement outcome, string expectedKind)
