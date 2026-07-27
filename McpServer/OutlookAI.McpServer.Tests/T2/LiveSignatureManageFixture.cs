@@ -18,6 +18,10 @@ public sealed class LiveSignatureManageFixture : IDisposable
     public LiveSignatureManageFixture()
     {
         Settings = LiveTestSettings.Load();
+
+        // Fail-closed per-store count tripwire: no census, no live tier. Cheap after
+        // the first fixture (one process-wide baseline).
+        LiveStoreCountTripwire.EnsureBaseline(Settings);
         Service = MailService.CreateDefault();
         RunMarker = "d38" + Guid.NewGuid().ToString("N").Substring(0, 12);
 

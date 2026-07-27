@@ -29,6 +29,13 @@ public sealed class LiveTestSettings
     /// <summary>The SF-6 / D40 recall-regression population (see <see cref="SubjectOnlyProbeSettings"/>).</summary>
     public SubjectOnlyProbeSettings? SubjectOnlyProbe { get; set; }
 
+    /// <summary>
+    /// OPTIONAL coordinates of a known orphan-index-row population (see
+    /// <see cref="OrphanFolderProbeSettings"/>). Absent = the stale-row test proves only
+    /// that ordinary hits are NOT flagged.
+    /// </summary>
+    public OrphanFolderProbeSettings? OrphanFolderProbe { get; set; }
+
     /// <summary>Loads the settings file or throws with setup instructions.</summary>
     public static LiveTestSettings Load()
     {
@@ -98,6 +105,21 @@ public sealed class SubjectOnlyProbeSettings
 }
 
 /// <summary>
+/// Coordinates of a known ORPHAN index population: a folder name the index still serves
+/// rows for although no Outlook folder of that name exists in that store (v3.MD block (q)
+/// measured ~458 such rows in one delegate mailbox). Gitignored like every other machine
+/// coordinate (S6); the test only ever prints counts and flags (S4) and writes nothing.
+/// </summary>
+public sealed class OrphanFolderProbeSettings
+{
+    /// <summary>Store display name holding the orphan rows.</summary>
+    public string StoreDisplayName { get; set; } = string.Empty;
+
+    /// <summary>The indexed folder name with no matching Outlook folder.</summary>
+    public string FolderName { get; set; } = string.Empty;
+}
+
+/// <summary>
 /// Shared state for the T2 live tier: one index service (provider auto-selected), one
 /// store-scope discovery, one lazy Outlook COM session (may START Outlook per S7/D17 -
 /// never stops it), one lazy full walk of the tiny test-hub store, and the store-UID to
@@ -112,6 +134,10 @@ public sealed class LivePhase1Fixture : IDisposable
     public LivePhase1Fixture()
     {
         Settings = LiveTestSettings.Load();
+
+        // Fail-closed per-store count tripwire: no census, no live tier. Cheap after
+        // the first fixture (one process-wide baseline).
+        LiveStoreCountTripwire.EnsureBaseline(Settings);
         Service = IndexSearchService.CreateDefault(out string providerReport);
         ProviderReport = providerReport;
 

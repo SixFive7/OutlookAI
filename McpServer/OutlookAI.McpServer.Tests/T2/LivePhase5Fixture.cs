@@ -19,6 +19,10 @@ public sealed class LivePhase5Fixture : IDisposable
     public LivePhase5Fixture()
     {
         Settings = LiveTestSettings.Load();
+
+        // Fail-closed per-store count tripwire: no census, no live tier. Cheap after
+        // the first fixture (one process-wide baseline).
+        LiveStoreCountTripwire.EnsureBaseline(Settings);
         Service = MailService.CreateDefault();
         RunMarker = "p5" + Guid.NewGuid().ToString("N").Substring(0, 14);
         _verifySession = new Lazy<OutlookComSession>(

@@ -16,6 +16,10 @@ public sealed class LiveLifecycleFixture : IDisposable
     public LiveLifecycleFixture()
     {
         Settings = LiveTestSettings.Load();
+
+        // Fail-closed per-store count tripwire: no census, no live tier. Cheap after
+        // the first fixture (one process-wide baseline).
+        LiveStoreCountTripwire.EnsureBaseline(Settings);
         Service = MailService.CreateDefault();
         RunMarker = "lc" + Guid.NewGuid().ToString("N")[..12];
     }
@@ -45,7 +49,17 @@ public sealed class LiveLifecycleFixture : IDisposable
             // Cleanup is re-attempted by the per-test paths; never mask a test failure.
         }
 
-        Service.Dispose();
+        try
+        {
+            Service.Dispose();
+        }
+        finally
+        {
+            // LAST collection in the suite (SuiteCollectionOrderer forces it): re-count
+            // every watched store and fail loudly on any loss outside the hub. Outside the
+            // try/catch above on purpose - a tripwire that can be swallowed is not one.
+            LiveStoreCountTripwire.Verify();
+        }
     }
 }
 
