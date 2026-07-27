@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Microsoft.CSharp.RuntimeBinder;
 
 namespace OutlookAI.McpServer.Tests.T2;
 
@@ -69,6 +70,18 @@ public static class LiveOutlookTestMailer
     /// </summary>
     public static DateTime SendSelfMail(string smtpAddress, string subject, string body, string? attachmentPath)
     {
+        return SendSelfMailWithAttachments(
+            smtpAddress, subject, body, attachmentPath == null ? null : new[] { attachmentPath });
+    }
+
+    /// <summary>
+    /// As above with SEVERAL attachments - the attachment-recall proof needs a mail
+    /// carrying more than one attachment type at once (soak fix 16).
+    /// </summary>
+    public static DateTime SendSelfMailWithAttachments(
+        string smtpAddress, string subject, string body, IReadOnlyList<string>? attachmentPaths)
+    {
+        LiveStoreWriteGuard.Assert(smtpAddress, StoreWriteKind.Send, nameof(SendSelfMail));
         if (!subject.Contains(SubjectTag, StringComparison.Ordinal))
         {
             throw new ArgumentException($"Test mail subject must carry the {SubjectTag} tag (S3).", nameof(subject));
@@ -119,12 +132,15 @@ public static class LiveOutlookTestMailer
                     mail.Subject = subject;
                     mail.Body = body;
                     mail.To = smtpAddress;
-                    if (attachmentPath != null)
+                    if (attachmentPaths != null && attachmentPaths.Count > 0)
                     {
                         dynamic attachments = mail.Attachments;
                         try
                         {
-                            attachments.Add(attachmentPath);
+                            foreach (string attachmentPath in attachmentPaths)
+                            {
+                                attachments.Add(attachmentPath);
+                            }
                         }
                         finally
                         {
@@ -214,6 +230,7 @@ public static class LiveOutlookTestMailer
     /// </summary>
     public static int DeleteTaggedArtifacts(string storeDisplayName, string uniqueMarker, int[]? folderIds = null)
     {
+        LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Delete, nameof(DeleteTaggedArtifacts));
         if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
         {
             throw new ArgumentException("Marker too weak for a safe delete filter (S3).", nameof(uniqueMarker));
@@ -307,6 +324,7 @@ public static class LiveOutlookTestMailer
     /// </summary>
     public static bool DeleteItemByEntryId(string storeDisplayName, string entryIdHex, string uniqueMarker)
     {
+        LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Delete, nameof(DeleteItemByEntryId));
         if (string.IsNullOrWhiteSpace(entryIdHex))
         {
             throw new ArgumentException("EntryID required.", nameof(entryIdHex));
@@ -380,6 +398,7 @@ public static class LiveOutlookTestMailer
     /// </summary>
     public static void AppendToDraftBody(string storeDisplayName, string entryIdHex, string uniqueMarker, string textToAppend)
     {
+        LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Draft, nameof(AppendToDraftBody));
         if (string.IsNullOrWhiteSpace(entryIdHex))
         {
             throw new ArgumentException("EntryID required.", nameof(entryIdHex));
@@ -554,6 +573,108 @@ public static class LiveOutlookTestMailer
     /// <see cref="TestFolderNamePrefix"/> (ordinal) - the D39 post-suite
     /// zero-test-folders assert.
     /// </summary>
+    /// <summary>
+    /// READ-ONLY census for the per-store count tripwire: store-relative path -&gt; item
+    /// count for every MAIL folder in <paramref name="storeDisplayName"/> (mail-typed
+    /// folders plus Deleted Items, Outbox and the Sync Issues subtree, which are all
+    /// mail-typed). Calendar/Contacts/Tasks are skipped deliberately - their churn is not
+    /// mail loss and would only add false positives.
+    /// <para>
+    /// Counts only: <c>Folder.Items.Count</c> is a property read, never a walk, and no
+    /// subject, sender or body is touched (S4). Throws if the store cannot be enumerated -
+    /// the tripwire is fail-closed.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyDictionary<string, int> CountMailFolderItems(string storeDisplayName)
+    {
+        return RunSta<IReadOnlyDictionary<string, int>>(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? root = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException(
+                        "Store not found for the count tripwire: '" + storeDisplayName + "'.");
+                root = store.GetRootFolder();
+                Dictionary<string, int> counts = new(StringComparer.OrdinalIgnoreCase);
+                CollectMailFolderCounts(root, string.Empty, counts, 0);
+                if (counts.Count == 0)
+                {
+                    throw new InvalidOperationException(
+                        "The count tripwire found no mail folder in '" + storeDisplayName + "'.");
+                }
+
+                return counts;
+            }
+            finally
+            {
+                Release(root);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    private static void CollectMailFolderCounts(
+        dynamic folder, string parentPath, Dictionary<string, int> counts, int depth)
+    {
+        if (depth > 32)
+        {
+            return;
+        }
+
+        dynamic? children = null;
+        try
+        {
+            string name = (string)folder.Name;
+            string path = parentPath.Length == 0 ? name : parentPath + "/" + name;
+            if (depth > 0)
+            {
+                bool isMail;
+                try
+                {
+                    isMail = (int)folder.DefaultItemType == 0; // olMailItem
+                }
+                catch (Exception ex) when (ex is COMException or RuntimeBinderException)
+                {
+                    isMail = false;
+                }
+
+                if (isMail)
+                {
+                    counts[path] = (int)folder.Items.Count;
+                }
+            }
+
+            children = folder.Folders;
+            int childCount = children.Count;
+            for (int i = 1; i <= childCount; i++)
+            {
+                dynamic child = children[i];
+                try
+                {
+                    CollectMailFolderCounts(child, depth == 0 ? string.Empty : path, counts, depth + 1);
+                }
+                finally
+                {
+                    Release(child);
+                }
+            }
+        }
+        finally
+        {
+            Release(children);
+        }
+    }
+
     public static int CountTestFolders(string storeDisplayName)
     {
         return RunSta(() =>
@@ -603,6 +724,7 @@ public static class LiveOutlookTestMailer
     /// </summary>
     public static int DeleteTestFolders(string storeDisplayName)
     {
+        LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Folder, nameof(DeleteTestFolders));
         int total = 0;
         for (int pass = 0; pass < 6; pass++)
         {

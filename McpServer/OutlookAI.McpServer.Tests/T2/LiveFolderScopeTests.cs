@@ -299,7 +299,7 @@ public sealed class LiveFolderScopeTests
             // A DRAFT seed keeps this test independent of mail delivery AND of index
             // latency: both tiers exercised below read Outlook directly.
             DraftOutcome draft = Service.NewDraft(
-                Hub, to: Hub, cc: null, subject: seedSubject,
+                LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), to: Hub, cc: null, subject: seedSubject,
                 body: "Folder-scope subtree probe " + probeTerm + " (soak fix 15).", display: false);
             entryId = draft.EntryId;
             Assert.False(string.IsNullOrEmpty(entryId));
@@ -387,7 +387,7 @@ public sealed class LiveFolderScopeTests
         try
         {
             DraftOutcome draft = Service.NewDraft(
-                Hub, to: Hub, cc: null, subject: seedSubject,
+                LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), to: Hub, cc: null, subject: seedSubject,
                 body: "Apostrophe folder probe " + probeTerm + " (soak fix 15).", display: false);
             entryId = draft.EntryId;
 

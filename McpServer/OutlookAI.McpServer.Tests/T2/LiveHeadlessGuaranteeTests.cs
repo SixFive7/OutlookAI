@@ -76,7 +76,8 @@ public sealed class LiveHeadlessGuaranteeTests
         // HIDDEN inspector (Phase-4 fact 5) and no window may become visible.
         string subject = $"{LiveOutlookTestMailer.SubjectTag} headless-guarantee {_fixture.RunMarker}";
         DraftOutcome draft = AssertNoNewWindow(baseline, "new_draft display:false", () => service.NewDraft(
-            hub, hub, cc: null, subject, "Agent-authored body (D33 window-delta check). " + _fixture.RunMarker, display: false));
+            LiveStoreWriteGuard.Writable(hub, StoreWriteKind.Draft, "new_draft"), hub, cc: null, subject,
+            "Agent-authored body (D33 window-delta check). " + _fixture.RunMarker, display: false));
         Assert.False(draft.Displayed);
         try
         {

@@ -145,7 +145,8 @@ public sealed class LiveSignatureTests
         string agentText = "New mail with steered signature " + Marker + "\r\nSecond line.";
         string subject = _fixture.TaggedSubject("sig-new");
 
-        DraftOutcome outcome = Service.NewDraft(Hub, Hub, cc: null, subject, agentText, display: false, signature: sig.Name);
+        DraftOutcome outcome = Service.NewDraft(
+            LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null, subject, agentText, display: false, signature: sig.Name);
         try
         {
             Assert.Equal(sig.Name, outcome.Signature);

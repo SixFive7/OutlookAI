@@ -41,10 +41,12 @@ public sealed class LiveSendTests
         try
         {
             DraftOutcome draftA = Service.NewDraft(
-                Hub, Hub, cc: null, _fixture.TaggedSubject("neg-a"), "Negative-test draft A body " + Marker, display: false);
+                LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null,
+                _fixture.TaggedSubject("neg-a"), "Negative-test draft A body " + Marker, display: false);
             draftIds.Add(draftA.EntryId);
             DraftOutcome draftB = Service.NewDraft(
-                Hub, Hub, cc: null, _fixture.TaggedSubject("neg-b"), "Negative-test draft B body " + Marker, display: false);
+                LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null,
+                _fixture.TaggedSubject("neg-b"), "Negative-test draft B body " + Marker, display: false);
             draftIds.Add(draftB.EntryId);
 
             // --- Step 1 golden shape: refuse + issue a bound one-time token.
@@ -120,7 +122,8 @@ public sealed class LiveSendTests
         try
         {
             DraftOutcome draft = shortTtlService.NewDraft(
-                Hub, Hub, cc: null, _fixture.TaggedSubject("neg-exp"), "Expiry-test draft body " + Marker, display: false);
+                LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null,
+                _fixture.TaggedSubject("neg-exp"), "Expiry-test draft body " + Marker, display: false);
             draftEntryId = draft.EntryId;
 
             SendOutcome issued = shortTtlService.Send(draft.EntryId);
@@ -153,7 +156,8 @@ public sealed class LiveSendTests
     {
         int auditBefore = CountAuditLines();
         DraftOutcome draft = Service.NewDraft(
-            Hub, Hub, cc: null, _fixture.TaggedSubject("neg-del"), "Deleted-draft test body " + Marker, display: false);
+            LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null,
+            _fixture.TaggedSubject("neg-del"), "Deleted-draft test body " + Marker, display: false);
         string entryId = draft.EntryId;
         CleanupDraft(entryId);
 

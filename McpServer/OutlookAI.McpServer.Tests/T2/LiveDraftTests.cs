@@ -46,7 +46,7 @@ public sealed class LiveDraftTests
         string agentBody = "Agent-authored Phase-4 body " + Marker + "\r\nSecond line for break handling.";
         string subject = _fixture.TaggedSubject("new-draft");
 
-        DraftOutcome outcome = Service.NewDraft(Hub, Hub, cc: null, subject, agentBody, display: false);
+        DraftOutcome outcome = Service.NewDraft(LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null, subject, agentBody, display: false);
         try
         {
             Assert.Equal("new", outcome.Kind);
@@ -174,7 +174,7 @@ public sealed class LiveDraftTests
 
         // The ONE .Display() case (D4 default behavior; S5: the window shows only
         // agent-authored content plus the hub's own signature).
-        DraftOutcome outcome = Service.NewDraft(Hub, Hub, cc: null, subject, agentBody, display: true);
+        DraftOutcome outcome = Service.NewDraft(LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft"), Hub, cc: null, subject, agentBody, display: true);
         try
         {
             Assert.True(outcome.Displayed);
@@ -220,7 +220,8 @@ public sealed class LiveDraftTests
             string subject = _fixture.TaggedSubject("identity");
 
             DraftOutcome outcome = Service.NewDraft(
-                account, account, cc: null, subject, "Identity verification draft (agent-authored). " + Marker, display: false);
+                LiveStoreWriteGuard.Writable(account, StoreWriteKind.Draft, "new_draft"), account, cc: null, subject,
+                "Identity verification draft (agent-authored). " + Marker, display: false);
             bool deleted = false;
             try
             {
