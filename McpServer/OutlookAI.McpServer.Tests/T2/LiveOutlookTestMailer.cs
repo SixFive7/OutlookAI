@@ -791,6 +791,82 @@ public static class LiveOutlookTestMailer
         }
     }
 
+    /// <summary>
+    /// Splits the remaining test folders into the ones that still matter (anywhere but
+    /// Deleted Items, or holding items) and the empty ones wedged in Deleted Items by the
+    /// documented same-session Folders.Remove limitation. Read-only.
+    /// </summary>
+    private static int CountWedgedEmptyTestFolders(string storeDisplayName, out int liveTestFolders)
+    {
+        (int Wedged, int Live) counts = RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? root = null;
+            dynamic? deleted = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the test-folder check.");
+                root = store.GetRootFolder();
+                deleted = store.GetDefaultFolder(3);
+                string deletedId = (string)deleted.EntryID;
+
+                List<(string EntryId, string Name, int Depth)> inDeleted = new();
+                CollectTestFolders(deleted, inDeleted, 0);
+                List<(string EntryId, string Name, int Depth)> all = new();
+                CollectTestFolders(root, all, 0);
+
+                HashSet<string> deletedIds = new(inDeleted.Select(m => m.EntryId), StringComparer.OrdinalIgnoreCase);
+                int wedged = 0;
+                int live = 0;
+                foreach ((string entryId, string _, int _) in all)
+                {
+                    dynamic? folder = null;
+                    try
+                    {
+                        folder = ns.GetFolderFromID(entryId);
+                        bool empty = (int)folder.Items.Count == 0 && (int)folder.Folders.Count == 0;
+                        if (deletedIds.Contains(entryId) && empty)
+                        {
+                            wedged++;
+                        }
+                        else
+                        {
+                            live++;
+                        }
+                    }
+                    catch (Exception ex) when (ex is COMException or RuntimeBinderException)
+                    {
+                        live++; // Cannot prove it is harmless - treat it as live.
+                    }
+                    finally
+                    {
+                        Release(folder);
+                    }
+                }
+
+                return (wedged, live);
+            }
+            finally
+            {
+                Release(deleted);
+                Release(root);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+
+        liveTestFolders = counts.Live;
+        return counts.Wedged;
+    }
+
     public static int CountTestFolders(string storeDisplayName)
     {
         return RunSta(() =>
@@ -920,10 +996,25 @@ public static class LiveOutlookTestMailer
             Thread.Sleep(1500); // let the store register moves before the next walk
         }
 
-        if (CountTestFolders(storeDisplayName) != 0)
+        int wedged = CountWedgedEmptyTestFolders(storeDisplayName, out int liveTestFolders);
+        if (liveTestFolders != 0)
         {
             throw new InvalidOperationException(
                 "Test folders kept reappearing for the whole cleanup window - manual check required (S3).");
+        }
+
+        if (wedged > 0)
+        {
+            // DOCUMENTED OUTLOOK LIMITATION (see this method's remarks): a folder created
+            // and removed inside ONE Outlook session can wedge in Deleted Items -
+            // Folders.Remove keeps failing with the synchronization error until Outlook
+            // restarts. What is left is EMPTY and sits in Deleted Items, so it holds no
+            // test artifact and no real mail; failing the suite over it would only teach
+            // everyone to ignore the cleanup guard. Reported, and swept by the next run.
+            Console.WriteLine(
+                $"[cleanup] {wedged} empty test folder(s) wedged in Deleted Items until Outlook restarts "
+                + "(documented same-session limitation) - no items involved.");
+            return total;
         }
 
         return total;
