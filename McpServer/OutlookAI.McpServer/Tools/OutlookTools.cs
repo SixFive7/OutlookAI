@@ -46,7 +46,8 @@ public static class OutlookTools
         + "MATCHING: query terms are whitespace-separated and ANDed; each term matches whole words, and the terms "
         + "may land in different parts of the mail - one in the subject, another in the body (search_in narrows "
         + "matching to just the subject or just the body). Body includes "
-        + "attachment text - those matches return as separate hits with isAttachmentHit=true "
+        + "attachment text of EVERY attachment type - documents, images, embedded messages, calendar invites, "
+        + "media - and those matches return as separate hits with isAttachmentHit=true "
         + "(include_attachment_hits=false drops them; read on such a hit opens the parent mail). Sender and "
         + "recipients are NOT matched by query terms - use from / to. Append * for prefix match (haproxy*). "
         + "Allowed characters: letters, digits and @.-_'+ ; omit query entirely to filter only by "
@@ -69,7 +70,8 @@ public static class OutlookTools
         + "archive_mail (ids are valid for this session). truncated=true means more matches exist beyond top "
         + "(max 100) - narrow with store/folder/from/after rather than raising it. Read advice when present and "
         + "relay it to the user when it concerns them: it is where every partial result, cap, skipped folder and "
-        + "widened scope is reported.\n\n"
+        + "widened scope is reported. A hit marked staleIndexRow=true names a folder that no longer exists in "
+        + "Outlook: it cannot be read or opened, and searching again returns it again - skip it.\n\n"
         + "EXHAUSTIVE: exhaustive=true bypasses the index and scans folders through Outlook instead - requires "
         + "store plus folder and/or after, is far slower, and matches whole words in subject and body only (no "
         + "attachment text). It follows include_subfolders like the other modes, so a folder scope walks the "
@@ -96,7 +98,9 @@ public static class OutlookTools
         [Description("Only mail received before this instant (ISO 8601).")] string? before = null,
         [Description("true = unread mail only.")] bool? unread_only = null,
         [Description("Filter on attachment presence.")] bool? has_attachments = null,
-        [Description("Include attachment-CONTENT matches (kind=document rows). Default true.")] bool include_attachment_hits = true,
+        [Description("Include attachment-CONTENT matches (any attachment type: documents, images, embedded "
+            + "messages, invites, media). Default true.")]
+        bool include_attachment_hits = true,
         [Description("Max hits (1-100, default 25). Keep small - iterate instead.")] int top = 25,
         [Description("Snippet length per hit (0-1000, default 200; 0 = no snippets).")] int snippet_chars = 200)
     {

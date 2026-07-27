@@ -20,6 +20,14 @@ public sealed class WsSqlBuilderTests
         Terms = new[] { "factuur" },
     };
 
+    /// <summary>Everything after FROM SystemIndex WHERE - System.Kind is a legal SELECT column.</summary>
+    private static string WhereClause(string sql)
+    {
+        const string marker = " FROM SystemIndex WHERE ";
+        int cut = sql.IndexOf(marker, StringComparison.Ordinal);
+        return cut < 0 ? sql : sql.Substring(cut + marker.Length);
+    }
+
     [Fact]
     public void Build_DefaultShape_MatchesProvenProbeQuery()
     {
@@ -28,7 +36,13 @@ public sealed class WsSqlBuilderTests
         Assert.StartsWith("SELECT TOP 25 ", sql, StringComparison.Ordinal);
         Assert.Contains(" FROM SystemIndex WHERE ", sql, StringComparison.Ordinal);
         Assert.Contains($"SCOPE='{SyntheticScope}'", sql, StringComparison.Ordinal);
-        Assert.Contains("(System.Kind='email' OR System.Kind='document')", sql, StringComparison.Ordinal);
+
+        // Soak fix 16: under a mapi SCOPE the default (attachment-bearing) shape emits NO
+        // Kind predicate at all. An attachment-content row carries the ATTACHMENT's kind,
+        // so 'document' dropped 22.6% of them (picture / communication / calendar / music
+        // / video); IndexRowFilter decides admission on the URL after the rows come back.
+        // (System.Kind stays in the SELECT list - it is the filter's input.)
+        Assert.DoesNotContain("System.Kind=", WhereClause(sql), StringComparison.Ordinal);
         Assert.Contains(
             "(CONTAINS(System.Subject, '\"factuur\"') OR CONTAINS(System.Search.Contents, '\"factuur\"'))",
             sql,
@@ -294,15 +308,49 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
-    public void Build_DocumentsOnly_ForAttachmentEntryQueries()
+    public void Build_DocumentsOnly_EmitsNoKindPredicateUnderAScope()
     {
+        // attachment_hits_only used to mean Kind='document', which is exactly the filter
+        // that dropped 709 of 3,139 attachment rows. It now means "every /at= row",
+        // decided by IndexRowFilter.
         var query = BaseQuery();
         query.Kinds = KindFilter.DocumentsOnly;
 
         string sql = WsSqlBuilder.Build(query);
 
-        Assert.Contains("System.Kind='document'", sql, StringComparison.Ordinal);
-        Assert.DoesNotContain("System.Kind='email'", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Kind=", WhereClause(sql), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_Unscoped_EnumeratesTheAttachmentKinds_SoTheFileSystemStaysOut()
+    {
+        // With no SCOPE there is no namespace fence, so the provider still gets a kind
+        // list - the measured union of message-level and attachment-row kinds.
+        var query = BaseQuery();
+        query.Scope = null;
+
+        string sql = WsSqlBuilder.Build(query);
+
+        foreach (string kind in IndexRowFilter.UnscopedKinds)
+        {
+            Assert.Contains($"System.Kind='{kind}'", sql, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("System.Kind='picture'", sql, StringComparison.Ordinal);
+        Assert.Contains("System.Kind='communication'", sql, StringComparison.Ordinal);
+        Assert.Contains("System.Kind='calendar'", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_TopOverride_EmitsTheOverFetchedTop_NotTheRequestedOne()
+    {
+        var query = BaseQuery();
+        query.Top = 26;
+
+        Assert.StartsWith("SELECT TOP 62 ", WsSqlBuilder.Build(query, 62), StringComparison.Ordinal);
+        Assert.StartsWith("SELECT TOP 26 ", WsSqlBuilder.Build(query, null), StringComparison.Ordinal);
+        Assert.Throws<ArgumentException>(() => WsSqlBuilder.Build(query, 0));
+        Assert.Throws<ArgumentException>(() => WsSqlBuilder.Build(query, WsSqlBuilder.MaxTop + 1));
     }
 
     [Fact]
@@ -511,8 +559,9 @@ public sealed class WsSqlBuilderTests
         // DIRECTORY= is shallow AND fast but returns ZERO Kind='document' rows - it drops
         // every attachment-content hit (41% of one real folder's rows). Never emitted.
         Assert.DoesNotContain("DIRECTORY", sql, StringComparison.OrdinalIgnoreCase);
-        // Still the section-12 kind filter, so attachment rows survive the narrowing.
-        Assert.Contains("(System.Kind='email' OR System.Kind='document')", sql, StringComparison.Ordinal);
+        // ...and no Kind filter either, so attachment rows of EVERY kind survive the
+        // narrowing (they inherit the parent's folder display path).
+        Assert.DoesNotContain("System.Kind=", WhereClause(sql), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -595,7 +644,10 @@ public sealed class WsSqlBuilderTests
         Assert.Contains("SELECT TOP 1 System.ItemUrl", sql, StringComparison.Ordinal);
         Assert.Contains("SCOPE='mapi16://{sid}/host@example.com($ab12)/1/Someone Else'", sql, StringComparison.Ordinal);
         Assert.Contains("System.ItemFolderPathDisplay='/host@example.com/Someone Else/Inbox'", sql, StringComparison.Ordinal);
-        Assert.Contains("(System.Kind='email' OR System.Kind='document')", sql, StringComparison.Ordinal);
+
+        // No kind filter: the question is "does this folder scope resolve", and a folder
+        // holding only meeting requests resolves just as well as one holding mail.
+        Assert.DoesNotContain("System.Kind=", WhereClause(sql), StringComparison.Ordinal);
         Assert.DoesNotContain("CONTAINS", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("DateReceived", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("ORDER BY", sql, StringComparison.Ordinal);

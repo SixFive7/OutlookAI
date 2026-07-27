@@ -26,7 +26,11 @@ namespace OutlookAI.Core.IndexSearch
     /// <item>Multi-term queries AND ACROSS the columns (one pair per term), never inside
     /// one column - the in-column shape missed mail with one term in the subject and
     /// another in the body (soak fix 13).</item>
-    /// <item>Kind filter is 'email' or '(email OR document)' - never unfiltered.</item>
+    /// <item>Kind: 'email' narrows to messages; the attachment-bearing shapes emit NO
+    /// Kind predicate under a mapi SCOPE (the namespace is the guard) and an enumerated
+    /// kind list without one, because an attachment row carries the ATTACHMENT's kind -
+    /// 'document' alone dropped 22.6% of them. Admission is decided by IndexRowFilter
+    /// after the rows come back (v3.MD section 0.8 block (q)).</item>
     /// <item>No aggregates, no JOINs (unsupported in WS-SQL).</item>
     /// <item>Sender/recipient filters use per-column CONTAINS - Phase-1 probes measured
     /// equality/LIKE on FromAddress at 1-10 s (property scan) vs ~60 ms for CONTAINS.</item>
@@ -65,7 +69,9 @@ namespace OutlookAI.Core.IndexSearch
             "System.Search.EntryID",
         };
 
-        private const int MaxTop = 5000;
+        /// <summary>Hard ceiling on the emitted <c>SELECT TOP</c> (also bounds the post-filter over-fetch).</summary>
+        public const int MaxTop = 5000;
+
         private const int MaxTermLength = 128;
 
         /// <summary>
@@ -94,6 +100,17 @@ namespace OutlookAI.Core.IndexSearch
         /// <summary>Builds the search statement for <paramref name="query"/>.</summary>
         public static string Build(IndexQuery query)
         {
+            return Build(query, null);
+        }
+
+        /// <summary>
+        /// Builds the search statement, optionally emitting a different <c>TOP</c> than
+        /// <see cref="IndexQuery.Top"/>. The override exists for the post-filter over-fetch
+        /// (<see cref="IndexRowFilter.ComputeSqlTop"/>): the caller still wants
+        /// <c>query.Top</c> ADMITTED rows, but the statement must offer more candidates.
+        /// </summary>
+        public static string Build(IndexQuery query, int? topOverride)
+        {
             if (query == null)
             {
                 throw new ArgumentNullException(nameof(query));
@@ -104,6 +121,14 @@ namespace OutlookAI.Core.IndexSearch
                 throw new ArgumentException(
                     string.Format(CultureInfo.InvariantCulture, "Top must be between 1 and {0}.", MaxTop),
                     nameof(query));
+            }
+
+            int effectiveTop = topOverride ?? query.Top;
+            if (effectiveTop < 1 || effectiveTop > MaxTop)
+            {
+                throw new ArgumentException(
+                    string.Format(CultureInfo.InvariantCulture, "Top must be between 1 and {0}.", MaxTop),
+                    nameof(topOverride));
             }
 
             if (query.ReceivedOnOrAfterUtc.HasValue && query.ReceivedBeforeUtc.HasValue
@@ -127,13 +152,23 @@ namespace OutlookAI.Core.IndexSearch
             switch (query.Kinds)
             {
                 case KindFilter.EmailOnly:
+                    // Messages only: 'email' is exactly the message-level kind.
                     where.Add("System.Kind='email'");
                     break;
                 case KindFilter.DocumentsOnly:
-                    where.Add("System.Kind='document'");
-                    break;
                 case KindFilter.EmailAndDocuments:
-                    where.Add("(System.Kind='email' OR System.Kind='document')");
+                    // Attachment-bearing shapes. An attachment-content row carries the
+                    // ATTACHMENT's kind (picture / communication / calendar / music /
+                    // video, not just document), so no kind list can be both complete and
+                    // future-proof - IndexRowFilter decides admission on the URL instead.
+                    // Under a mapi SCOPE the namespace already fences the statement, so no
+                    // Kind predicate is emitted at all; without one the enumerated kinds
+                    // keep the provider from offering the whole file system.
+                    if (query.Scope == null)
+                    {
+                        where.Add(BuildUnscopedKindPredicate());
+                    }
+
                     break;
                 default:
                     throw new ArgumentException("Unknown KindFilter value.", nameof(query));
@@ -183,8 +218,15 @@ namespace OutlookAI.Core.IndexSearch
                     + ValidateConversationId(query.ConversationIdEquals).Replace("'", "''") + "'");
             }
 
+            if (where.Count == 0)
+            {
+                // Cannot happen through the shipped paths (an unscoped query always keeps
+                // the enumerated kind predicate), but an empty WHERE would be invalid SQL.
+                throw new ArgumentException("A search statement needs at least one predicate.", nameof(query));
+            }
+
             StringBuilder sql = new StringBuilder();
-            sql.Append("SELECT TOP ").Append(query.Top.ToString(CultureInfo.InvariantCulture));
+            sql.Append("SELECT TOP ").Append(effectiveTop.ToString(CultureInfo.InvariantCulture));
             sql.Append(' ').Append(string.Join(", ", SelectColumns));
             sql.Append(" FROM SystemIndex WHERE ");
             sql.Append(string.Join(" AND ", where));
@@ -270,8 +312,27 @@ namespace OutlookAI.Core.IndexSearch
                 throw new ArgumentException("A folder-scope probe needs a scope or a folder path.", nameof(scope));
             }
 
-            where.Add("(System.Kind='email' OR System.Kind='document')");
+            // No kind predicate: the question is "does this folder scope resolve", and a
+            // folder holding only meeting requests or only attachment rows resolves just as
+            // well as one holding mail. Filtering here would re-create the silent zero the
+            // guard exists to prevent.
             return "SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE " + string.Join(" AND ", where);
+        }
+
+        /// <summary>
+        /// Kind predicate for a statement with no SCOPE. Enumerates the kinds actually seen
+        /// on message-level and attachment-content rows (v3.MD block (q)); it keeps the
+        /// provider selective, while <see cref="IndexRowFilter"/> supplies correctness.
+        /// </summary>
+        private static string BuildUnscopedKindPredicate()
+        {
+            List<string> equalities = new List<string>(IndexRowFilter.UnscopedKinds.Count);
+            foreach (string kind in IndexRowFilter.UnscopedKinds)
+            {
+                equalities.Add("System.Kind='" + kind + "'");
+            }
+
+            return "(" + string.Join(" OR ", equalities) + ")";
         }
 
         /// <summary>

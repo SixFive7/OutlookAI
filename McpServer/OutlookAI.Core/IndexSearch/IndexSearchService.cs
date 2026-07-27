@@ -11,12 +11,22 @@ namespace OutlookAI.Core.IndexSearch
     /// <summary>Result of one index search: compact hits plus timing/provenance.</summary>
     public sealed class IndexSearchResult
     {
-        internal IndexSearchResult(IReadOnlyList<IndexHit> hits, long elapsedMilliseconds, string sql, IndexProviderKind provider)
+        internal IndexSearchResult(
+            IReadOnlyList<IndexHit> hits,
+            long elapsedMilliseconds,
+            string sql,
+            IndexProviderKind provider,
+            int rowsScanned,
+            int rowsDropped,
+            bool candidatesExhausted)
         {
             Hits = hits;
             ElapsedMilliseconds = elapsedMilliseconds;
             Sql = sql;
             Provider = provider;
+            RowsScanned = rowsScanned;
+            RowsDropped = rowsDropped;
+            CandidatesExhausted = candidatesExhausted;
         }
 
         /// <summary>Mapped hits, newest first (ORDER BY System.Message.DateReceived DESC).</summary>
@@ -30,6 +40,19 @@ namespace OutlookAI.Core.IndexSearch
 
         /// <summary>Provider that served the query.</summary>
         public IndexProviderKind Provider { get; }
+
+        /// <summary>Rows the statement returned before <see cref="IndexRowFilter"/> ran.</summary>
+        public int RowsScanned { get; }
+
+        /// <summary>Rows the post-filter removed (non-mail namespace, or a non-mail message-level kind).</summary>
+        public int RowsDropped { get; }
+
+        /// <summary>
+        /// True when the over-fetched candidate list ran out before enough rows were
+        /// admitted - the only way the post-filter could hide matches. Reported, never
+        /// silent (no-silent-caps discipline, D42).
+        /// </summary>
+        public bool CandidatesExhausted { get; }
     }
 
     /// <summary>
@@ -114,18 +137,38 @@ namespace OutlookAI.Core.IndexSearch
                 throw new ArgumentNullException(nameof(query));
             }
 
-            string sql = WsSqlBuilder.Build(query);
+            // The Kind predicate no longer fences the statement (attachment rows carry the
+            // attachment's kind - v3.MD block (q)), so admission happens in code and the
+            // statement over-fetches candidates to keep "TOP n" meaning n ADMITTED rows.
+            int sqlTop = IndexRowFilter.ComputeSqlTop(query.Top, query.Scope != null, WsSqlBuilder.MaxTop);
+            string sql = WsSqlBuilder.Build(query, sqlTop);
             Stopwatch stopwatch = Stopwatch.StartNew();
-            IReadOnlyList<IReadOnlyDictionary<string, object?>> rows = _client.ExecuteRows(sql, query.Top);
+            IReadOnlyList<IReadOnlyDictionary<string, object?>> rows = _client.ExecuteRows(sql, sqlTop);
             stopwatch.Stop();
 
-            List<IndexHit> hits = new List<IndexHit>(rows.Count);
+            List<IndexHit> hits = new List<IndexHit>(Math.Min(rows.Count, query.Top));
+            int dropped = 0;
+            int scanned = 0;
             foreach (IReadOnlyDictionary<string, object?> row in rows)
             {
-                hits.Add(IndexRowMapper.Map(row));
+                scanned++;
+                IndexHit hit = IndexRowMapper.Map(row);
+                if (!IndexRowFilter.Keep(hit, query.Kinds))
+                {
+                    dropped++;
+                    continue;
+                }
+
+                hits.Add(hit);
+                if (hits.Count >= query.Top)
+                {
+                    break;
+                }
             }
 
-            return new IndexSearchResult(hits, stopwatch.ElapsedMilliseconds, sql, _client.Provider);
+            bool exhausted = hits.Count < query.Top && rows.Count >= sqlTop;
+            return new IndexSearchResult(
+                hits, stopwatch.ElapsedMilliseconds, sql, _client.Provider, scanned, dropped, exhausted);
         }
 
         /// <summary>
