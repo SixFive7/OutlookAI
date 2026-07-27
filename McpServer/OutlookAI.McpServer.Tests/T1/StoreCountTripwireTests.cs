@@ -143,6 +143,28 @@ public sealed class StoreCountTripwireTests
     }
 
     [Fact]
+    public void DelegateHierarchyChurn_IsNotedNotFailed_ButItemLossStillFails()
+    {
+        // A delegate/shared mailbox syncs its folder tree lazily: a real 450-item folder
+        // was absent from one census and present again in the next. Folders appearing and
+        // disappearing there says something about the hierarchy cache, not about deletion.
+        var after = Baseline();
+        ((Dictionary<string, int>)after[DelegateStore]).Remove("Archive");
+        ((Dictionary<string, int>)after[DelegateStore])["Archive/Sub"] = 12;
+
+        Assert.False(StoreCountTripwire.Evaluate(Baseline(), after, Hub, new[] { DelegateStore }).Failed);
+
+        // ...but the same store still fails on ITEM LOSS in a folder seen in both censuses -
+        // that is the shape a mass deletion actually has.
+        var lost = Baseline();
+        ((Dictionary<string, int>)lost[DelegateStore])["Inbox"] = 3;
+        Assert.True(StoreCountTripwire.Evaluate(Baseline(), lost, Hub, new[] { DelegateStore }).Failed);
+
+        // Without the lazy grant, the same disappearance is a hard failure.
+        Assert.True(StoreCountTripwire.Evaluate(Baseline(), after, Hub).Failed);
+    }
+
+    [Fact]
     public void HubChurn_IsToleratedByThisGuard()
     {
         // The hub legitimately gains, loses and reshapes tagged items; the zero-artifact

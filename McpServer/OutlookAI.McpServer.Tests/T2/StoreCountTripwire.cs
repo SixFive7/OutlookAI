@@ -70,10 +70,20 @@ public static class StoreCountTripwire
     public static TripwireVerdict Evaluate(
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>> before,
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>> after,
-        string hubStoreDisplayName)
+        string hubStoreDisplayName,
+        IEnumerable<string>? lazyHierarchyStores = null)
     {
         ArgumentNullException.ThrowIfNull(before);
         ArgumentNullException.ThrowIfNull(after);
+
+        // MEASURED on this profile: a delegate/shared store's folder HIERARCHY is synced
+        // lazily - the same mailbox enumerated 165 folders in one census and 159 minutes
+        // later, with a real 450-item subfolder simply absent from the second walk (and
+        // present again afterwards). A folder appearing or disappearing there is therefore
+        // evidence about the hierarchy cache, not about deletion. Item loss inside a folder
+        // seen in BOTH censuses stays a hard failure everywhere - that is the shape mass
+        // deletion actually has.
+        HashSet<string> lazyStores = new(lazyHierarchyStores ?? [], StringComparer.OrdinalIgnoreCase);
 
         List<string> failures = new();
         List<string> notes = new();
@@ -81,6 +91,7 @@ public static class StoreCountTripwire
         foreach (KeyValuePair<string, IReadOnlyDictionary<string, int>> store in before)
         {
             bool isHub = string.Equals(store.Key, hubStoreDisplayName, StringComparison.OrdinalIgnoreCase);
+            bool lazyHierarchy = lazyStores.Contains(store.Key);
             if (!after.TryGetValue(store.Key, out IReadOnlyDictionary<string, int>? now))
             {
                 // A store present at the start and gone at the end is never benign.
@@ -92,9 +103,10 @@ public static class StoreCountTripwire
             {
                 if (!now.TryGetValue(folder.Key, out int afterCount))
                 {
-                    if (isHub || IsVolatile(folder.Key))
+                    if (isHub || lazyHierarchy || IsVolatile(folder.Key))
                     {
-                        notes.Add("  folder removed: store '" + store.Key + "' folder '" + Display(folder.Key) + "'.");
+                        notes.Add("  folder not enumerated after the run: store '" + store.Key + "' folder '"
+                            + Display(folder.Key) + "'.");
                     }
                     else
                     {
@@ -131,9 +143,10 @@ public static class StoreCountTripwire
                     continue;
                 }
 
-                if (isHub || IsVolatile(folder.Key))
+                if (isHub || lazyHierarchy || IsVolatile(folder.Key))
                 {
-                    notes.Add("  folder added: store '" + store.Key + "' folder '" + Display(folder.Key) + "'.");
+                    notes.Add("  folder newly enumerated: store '" + store.Key + "' folder '"
+                        + Display(folder.Key) + "'.");
                 }
                 else
                 {

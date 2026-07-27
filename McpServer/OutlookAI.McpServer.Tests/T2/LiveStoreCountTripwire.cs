@@ -21,6 +21,7 @@ public static class LiveStoreCountTripwire
     private static readonly object Gate = new();
     private static Dictionary<string, IReadOnlyDictionary<string, int>>? _baseline;
     private static string? _hub;
+    private static IReadOnlyList<string> _lazyHierarchyStores = Array.Empty<string>();
     private static bool _verified;
 
     /// <summary>
@@ -76,6 +77,7 @@ public static class LiveStoreCountTripwire
             }
 
             _hub = settings.TestHubStoreDisplayName;
+            _lazyHierarchyStores = settings.ExpectedDelegateStoreDisplayNames.ToList();
             try
             {
                 _keepAlive = OutlookComSession.Connect(allowStartingOutlook: true);
@@ -104,6 +106,7 @@ public static class LiveStoreCountTripwire
     {
         Dictionary<string, IReadOnlyDictionary<string, int>> baseline;
         string hub;
+        IReadOnlyList<string> lazyStores;
         lock (Gate)
         {
             if (_baseline == null || _hub == null || _verified)
@@ -114,13 +117,31 @@ public static class LiveStoreCountTripwire
             _verified = true;
             baseline = _baseline;
             hub = _hub;
+            lazyStores = _lazyHierarchyStores;
         }
 
         Stopwatch stopwatch = Stopwatch.StartNew();
         Dictionary<string, IReadOnlyDictionary<string, int>> after = Capture(baseline.Keys.ToList(), "post-run");
         stopwatch.Stop();
 
-        TripwireVerdict verdict = StoreCountTripwire.Evaluate(baseline, after, hub);
+        TripwireVerdict verdict = StoreCountTripwire.Evaluate(baseline, after, hub, lazyStores);
+        if (verdict.Failed)
+        {
+            // Confirm before crying: one more census, and only what fails BOTH times is
+            // reported. COM enumeration under a busy Outlook is not perfectly repeatable.
+            Console.WriteLine("[tripwire] suspected loss - re-counting to confirm.");
+            Dictionary<string, IReadOnlyDictionary<string, int>> recheck =
+                Capture(baseline.Keys.ToList(), "confirmation");
+            TripwireVerdict second = StoreCountTripwire.Evaluate(baseline, recheck, hub, lazyStores);
+            List<string> confirmed = verdict.Failures.Intersect(second.Failures, StringComparer.Ordinal).ToList();
+            if (confirmed.Count == 0)
+            {
+                Console.WriteLine("[tripwire] not reproducible on the second census - treating as enumeration noise.");
+            }
+
+            verdict = new TripwireVerdict(confirmed, verdict.Notes);
+        }
+
         foreach (string note in verdict.Notes)
         {
             Console.WriteLine("[tripwire] note:" + note);
