@@ -170,26 +170,39 @@ public sealed class SearchSchemaCiTests
         Assert.Contains("truncated=true", description, StringComparison.Ordinal);
         Assert.Contains("advice", description, StringComparison.OrdinalIgnoreCase);
 
-        // Exhaustive contract: bounds + the attachment-text limitation + the scope
-        // asymmetry (soak fix 14): exhaustive is NON-recursive (OutlookComSession
-        // 'recurse = folderPath is empty') while the index tier's SCOPE= is recursive,
-        // so a recursive exhaustive sweep needs one call per subfolder - or no folder
-        // at all, which scans the whole store tree.
+        // Folder-scope contract (soak fix 15): ONE rule for every mode - folder includes
+        // its subfolders unless include_subfolders=false - plus the delegate caveats
+        // (name matching, widening, same-name collisions) and the scope block.
+        Assert.Contains("include_subfolders=false", description, StringComparison.Ordinal);
+        Assert.Contains("Delegate", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("WITHOUT", description, StringComparison.Ordinal);
+        Assert.Contains("folder NAME", description, StringComparison.Ordinal);
+        Assert.Contains("widens", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("same name", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("scope block", description, StringComparison.Ordinal);
+
+        // Exhaustive contract: bounds + the attachment-text limitation. Soak fix 15
+        // REMOVED the asymmetry the previous wording documented - exhaustive now follows
+        // include_subfolders like every other mode - so the old clauses must be gone and
+        // the cost warning must be present instead.
         Assert.Contains("exhaustive=true", description, StringComparison.Ordinal);
         Assert.Contains("no attachment text", description, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("ONLY the named folder - no subfolders", description, StringComparison.Ordinal);
-        Assert.Contains("once per subfolder", description, StringComparison.Ordinal);
-        Assert.Contains("list_folders", description, StringComparison.Ordinal);
-        Assert.Contains("omit folder to scan the whole store", description, StringComparison.Ordinal);
+        Assert.Contains("follows include_subfolders", description, StringComparison.Ordinal);
+        Assert.Contains("120 s", description, StringComparison.Ordinal);
+        Assert.Contains("foldersScanned/foldersSkipped", description, StringComparison.Ordinal);
+
+        // The retired asymmetry claims (soak fix 14's wording) must not survive.
+        Assert.DoesNotContain("ONLY the named folder - no subfolders", description, StringComparison.Ordinal);
+        Assert.DoesNotContain("once per subfolder", description, StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// Soak-fix-14 pin (user order 2026-07-27): the folder ARGUMENT itself must state
-    /// the recursion asymmetry - the default (index) search covers the folder and its
-    /// subfolders, exhaustive=true scans the named folder alone.
+    /// Soak-fix-15 pin: the folder ARGUMENT states ONE recursion rule for every mode
+    /// (subfolders included unless include_subfolders=false), and the flag itself is on
+    /// the wire as an optional boolean defaulting to true.
     /// </summary>
     [Fact]
-    public async Task SearchFolderParameter_StatesSubfolderCoverage_AndTheExhaustiveException()
+    public async Task SearchFolderParameter_StatesOneSubfolderRule_ForEveryMode()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
@@ -206,12 +219,33 @@ public sealed class SearchSchemaCiTests
 
         Assert.True(searchTool != null, "the search tool must be advertised");
 
-        string folderDescription = searchTool!.Value.GetProperty("inputSchema").GetProperty("properties")
-            .GetProperty("folder").GetProperty("description").GetString()!;
+        JsonElement schema = searchTool!.Value.GetProperty("inputSchema");
+        JsonElement properties = schema.GetProperty("properties");
 
+        string folderDescription = properties.GetProperty("folder").GetProperty("description").GetString()!;
         Assert.Contains("subfolders", folderDescription, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("exhaustive=true", folderDescription, StringComparison.Ordinal);
-        Assert.Contains("this folder only", folderDescription, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("include_subfolders=false", folderDescription, StringComparison.Ordinal);
+
+        // The soak-fix-14 exception clause is retired: exhaustive is no longer special.
+        Assert.DoesNotContain("except with exhaustive", folderDescription, StringComparison.OrdinalIgnoreCase);
+
+        Assert.True(
+            properties.TryGetProperty("include_subfolders", out JsonElement includeSubfolders),
+            "include_subfolders must be advertised on the search tool");
+        Assert.Contains("boolean", DescribeJsonType(includeSubfolders.GetProperty("type")), StringComparison.Ordinal);
+
+        string flagDescription = includeSubfolders.GetProperty("description").GetString()!;
+        Assert.Contains("Default true", flagDescription, StringComparison.Ordinal);
+        Assert.Contains("every mode", flagDescription, StringComparison.OrdinalIgnoreCase);
+
+        // Optional argument: an existing caller that never passes it keeps working.
+        if (schema.TryGetProperty("required", out JsonElement required))
+        {
+            foreach (JsonElement entry in required.EnumerateArray())
+            {
+                Assert.NotEqual("include_subfolders", entry.GetString());
+            }
+        }
     }
 
     private static string DescribeJsonType(JsonElement type)

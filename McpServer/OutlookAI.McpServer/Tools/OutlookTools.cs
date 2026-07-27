@@ -59,16 +59,23 @@ public static class OutlookTools
         + "The response's sweep block reports what was covered. The sweep is cached ~10 s, "
         + "so rapid follow-up searches run at index speed. If it cannot run, "
         + "index results are returned with a warning in advice - a search never fails for that reason.\n\n"
+        + "FOLDER SCOPE: folder covers that folder AND its subfolders by default in every mode; pass "
+        + "include_subfolders=false for that one folder alone. Delegate/shared mailboxes are indexed WITHOUT "
+        + "their folder nesting, so a folder scope there matches by folder NAME: if the subfolder set cannot be "
+        + "built the search widens to the whole delegate mailbox and says so in advice, and if that mailbox has "
+        + "two folders with the same name the results can include both - advice says that too. The scope block "
+        + "in the response reports what was actually covered.\n\n"
         + "RESULTS: each hit carries an id for read, thread, save_attachment, open_in_outlook, move_mail and "
         + "archive_mail (ids are valid for this session). truncated=true means more matches exist beyond top "
         + "(max 100) - narrow with store/folder/from/after rather than raising it. Read advice when present and "
-        + "relay it to the user when it concerns them.\n\n"
+        + "relay it to the user when it concerns them: it is where every partial result, cap, skipped folder and "
+        + "widened scope is reported.\n\n"
         + "EXHAUSTIVE: exhaustive=true bypasses the index and scans folders through Outlook instead - requires "
         + "store plus folder and/or after, is far slower, and matches whole words in subject and body only (no "
-        + "attachment text). It scans ONLY the named folder - no subfolders, unlike the default search, which "
-        + "covers that folder and its subfolders; to sweep a subtree exhaustively, call it once per subfolder "
-        + "(list_folders gives the tree), or omit folder to scan the whole store bounded by after. Use it when "
-        + "the index looks stale or wrong, or when completeness matters more than speed.")]
+        + "attachment text). It follows include_subfolders like the other modes, so a folder scope walks the "
+        + "subtree - which on a big subtree can hit the 120 s budget; pass include_subfolders=false to scan just "
+        + "the named folder, and check foldersScanned/foldersSkipped plus advice for partial coverage. Use it "
+        + "when the index looks stale or wrong, or when completeness matters more than speed.")]
     public static string Search(
         [Description("Free-text terms, whitespace-separated, ANDed. Each term may match in the subject or the body (see search_in). Letters/digits plus @.-_'+ only; trailing * for prefix. Omit to filter by sender/date only.")]
         string? query = null,
@@ -79,7 +86,10 @@ public static class OutlookTools
         bool exhaustive = false,
         [Description("Store display name to search in (see list_accounts). Omit for all stores (required when exhaustive=true).")] string? store = null,
         [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Requires store. "
-            + "Includes its subfolders - except with exhaustive=true, which scans this folder only.")] string? folder = null,
+            + "Includes its subfolders unless include_subfolders=false.")] string? folder = null,
+        [Description("Whether folder covers its subfolders. Default true, in every mode. Set false to search that "
+            + "one folder only - also the cheap way to keep an exhaustive scan bounded.")]
+        bool include_subfolders = true,
         [Description("Sender filter: address or name fragment (index-backed).")] string? from = null,
         [Description("Recipient (To/Cc) filter: address fragment (index-backed).")] string? to = null,
         [Description("Only mail received at/after this instant (ISO 8601, e.g. 2026-07-01 or 2026-07-01T08:00:00Z).")] string? after = null,
@@ -99,6 +109,7 @@ public static class OutlookTools
                 Exhaustive = exhaustive,
                 Store = store,
                 Folder = folder,
+                IncludeSubfolders = include_subfolders,
                 From = from,
                 To = to,
                 AfterUtc = ParseUtc(after, "after"),
