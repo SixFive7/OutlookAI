@@ -102,6 +102,9 @@ namespace OutlookAI.Core.Services
         /// <summary>Cap on attachments listed in read payloads (flagged; higher indexes stay saveable).</summary>
         public const int AttachmentsCap = 100;
 
+        /// <summary>Cap on unresolvable addresses echoed back by the draft tools (batch A, A2).</summary>
+        public const int UnresolvedRecipientsCap = 20;
+
         /// <summary>
         /// Folders per list_folders page (section 12 discipline bound; real profiles fit
         /// in one page - offset paging exists for the pathological rest). Raised
@@ -1418,7 +1421,17 @@ namespace OutlookAI.Core.Services
         /// account's identity and signature (v3.MD section 3 mechanics), optionally
         /// displayed for the user (D4 default). Never sends. Audit-logged (load-bearing).
         /// </summary>
-        public DraftOutcome NewDraft(string account, string? to, string? cc, string? subject, string? body, bool display = true, string? signature = null)
+        public DraftOutcome NewDraft(
+            string account,
+            string? to,
+            string? cc,
+            string? subject,
+            string? body,
+            bool display = true,
+            string? signature = null,
+            string? bcc = null,
+            string? importance = null,
+            bool? requestReadReceipt = null)
         {
             if (string.IsNullOrWhiteSpace(account))
             {
@@ -1427,6 +1440,7 @@ namespace OutlookAI.Core.Services
 
             IReadOnlyList<string> toList = Text.HtmlBodyComposer.SplitRecipients(to);
             IReadOnlyList<string> ccList = Text.HtmlBodyComposer.SplitRecipients(cc);
+            IReadOnlyList<string> bccList = Text.HtmlBodyComposer.SplitRecipients(bcc);
             if (toList.Count == 0)
             {
                 throw new ArgumentException("to is required: one or more recipient addresses separated by ';' or ','.", nameof(to));
@@ -1448,9 +1462,11 @@ namespace OutlookAI.Core.Services
             }
 
             ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature);
+            ComDraftOptions options = new(
+                ccList, bccList, subjectOverride: null, ParseImportance(importance), requestReadReceipt);
             ComDraftCreateResult created = _gateway.Run(s =>
             {
-                ComDraftCreateResult? r = s.TryCreateNewDraft(account, toList, ccList, subject!, body!, display, signatureOverride, out string? error);
+                ComDraftCreateResult? r = s.TryCreateNewDraft(account, toList, subject!, body!, display, signatureOverride, options, out string? error);
                 return r ?? throw new InvalidOperationException(BuildDraftError(error, account));
             });
 
@@ -1463,10 +1479,30 @@ namespace OutlookAI.Core.Services
         /// <c>Reply()</c>/<c>ReplyAll()</c> - threading and quoted history preserved,
         /// agent text above the quote, saved to the source store's Drafts (D4). Never sends.
         /// </summary>
-        public DraftOutcome ReplyDraft(string id, string? body, bool replyAll = false, bool display = true, string? signature = null)
+        public DraftOutcome ReplyDraft(
+            string id,
+            string? body,
+            bool replyAll = false,
+            bool display = true,
+            string? signature = null,
+            string? cc = null,
+            string? bcc = null,
+            string? subject = null,
+            string? importance = null,
+            bool? requestReadReceipt = null)
         {
             (string? hitId, string sourceEntryId, ComDraftCreateResult created) = CreateDerived(
-                id, replyAll ? ComDerivedDraftKind.ReplyAll : ComDerivedDraftKind.Reply, to: null, body, display, signature);
+                id,
+                replyAll ? ComDerivedDraftKind.ReplyAll : ComDerivedDraftKind.Reply,
+                to: null,
+                body,
+                display,
+                signature,
+                cc,
+                bcc,
+                subject,
+                importance,
+                requestReadReceipt);
             string op = replyAll ? "replyall_draft" : "reply_draft";
             AuditDraft(op, created, requestedAccount: null, sourceEntryId);
             return ToDraftOutcome(replyAll ? "replyall" : "reply", created, hitId, sourceEntryId);
@@ -1477,7 +1513,17 @@ namespace OutlookAI.Core.Services
         /// quoted content and attachments preserved, agent text above the quote, saved to
         /// the source store's Drafts (D4). Never sends.
         /// </summary>
-        public DraftOutcome ForwardDraft(string id, string? body, string? to, bool display = true, string? signature = null)
+        public DraftOutcome ForwardDraft(
+            string id,
+            string? body,
+            string? to,
+            bool display = true,
+            string? signature = null,
+            string? cc = null,
+            string? bcc = null,
+            string? subject = null,
+            string? importance = null,
+            bool? requestReadReceipt = null)
         {
             IReadOnlyList<string> toList = Text.HtmlBodyComposer.SplitRecipients(to);
             if (toList.Count == 0)
@@ -1486,7 +1532,7 @@ namespace OutlookAI.Core.Services
             }
 
             (string? hitId, string sourceEntryId, ComDraftCreateResult created) = CreateDerived(
-                id, ComDerivedDraftKind.Forward, toList, body, display, signature);
+                id, ComDerivedDraftKind.Forward, toList, body, display, signature, cc, bcc, subject, importance, requestReadReceipt);
             AuditDraft("forward_draft", created, requestedAccount: null, sourceEntryId);
             return ToDraftOutcome("forward", created, hitId, sourceEntryId);
         }
@@ -1497,7 +1543,12 @@ namespace OutlookAI.Core.Services
             IReadOnlyList<string>? to,
             string? body,
             bool display,
-            string? signature)
+            string? signature,
+            string? cc,
+            string? bcc,
+            string? subject,
+            string? importance,
+            bool? requestReadReceipt)
         {
             if (string.IsNullOrWhiteSpace(id))
             {
@@ -1509,19 +1560,30 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("body is required (plain text; it is placed above the quoted mail).", nameof(body));
             }
 
+            if (subject != null && subject.Length > 255)
+            {
+                throw new ArgumentException("subject is too long (max 255 characters).", nameof(subject));
+            }
+
             ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature);
+            ComDraftOptions options = new(
+                Text.HtmlBodyComposer.SplitRecipients(cc),
+                Text.HtmlBodyComposer.SplitRecipients(bcc),
+                string.IsNullOrWhiteSpace(subject) ? null : subject!.Trim(),
+                ParseImportance(importance),
+                requestReadReceipt);
             (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
             IReadOnlyList<string> toList = to ?? Array.Empty<string>();
             ComDraftCreateResult created = _gateway.Run(s =>
             {
-                ComDraftCreateResult? r = s.TryCreateDerivedDraft(entryId, storeId, kind, toList, body!, display, signatureOverride, out string? error);
+                ComDraftCreateResult? r = s.TryCreateDerivedDraft(entryId, storeId, kind, toList, body!, display, signatureOverride, options, out string? error);
                 if (r == null && storeId == null)
                 {
                     // Direct EntryID without a known store: retry across stores (same
                     // pattern as read/open_in_outlook).
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
-                        r = s.TryCreateDerivedDraft(entryId, store.StoreId, kind, toList, body!, display, signatureOverride, out error);
+                        r = s.TryCreateDerivedDraft(entryId, store.StoreId, kind, toList, body!, display, signatureOverride, options, out error);
                         if (r != null)
                         {
                             break;
@@ -1566,6 +1628,46 @@ namespace OutlookAI.Core.Services
             return new ComSignatureOverride(resolved.Name, resolved.PreferredFilePath!);
         }
 
+        /// <summary>
+        /// Validates the optional draft-tool importance BEFORE any COM work (batch A,
+        /// A4): null/blank = leave Outlook's default; "low"/"normal"/"high" map to
+        /// OlImportance 0/1/2; anything else is rejected with the allowed values so an
+        /// agent can self-correct.
+        /// </summary>
+        public static int? ParseImportance(string? importance)
+        {
+            if (string.IsNullOrWhiteSpace(importance))
+            {
+                return null;
+            }
+
+            switch (importance!.Trim().ToLowerInvariant())
+            {
+                case "low":
+                    return 0;
+                case "normal":
+                    return 1;
+                case "high":
+                    return 2;
+                default:
+                    throw new ArgumentException(
+                        "importance must be 'low', 'normal' or 'high' (got '" + importance.Trim() + "').",
+                        nameof(importance));
+            }
+        }
+
+        /// <summary>OlImportance value back to the wire vocabulary.</summary>
+        private static string? ImportanceName(int? importance)
+        {
+            return importance switch
+            {
+                0 => "low",
+                1 => "normal",
+                2 => "high",
+                _ => null,
+            };
+        }
+
         private static string BuildDraftError(string? error, string account)
         {
             if (error == "AccountNotFound")
@@ -1599,8 +1701,13 @@ namespace OutlookAI.Core.Services
                     ("signatureInjected", created.SignatureInjected ? "true" : "false"),
                     ("signature", created.SignatureOverrideName),
                     ("signatureApplied", created.SignatureOverrideName != null ? (created.SignatureOverrideApplied ? "true" : "false") : null),
+                    ("bodyPlacement", created.BodyPlacedViaWordEditor ? "wordEditor" : "html"),
                     ("displayed", created.Displayed ? "true" : "false"),
                     ("recipients", created.Draft.Recipients.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("unresolvedRecipients", created.UnresolvedRecipients.Count > 0
+                        ? created.UnresolvedRecipients.Count.ToString(CultureInfo.InvariantCulture)
+                        : null),
+                    ("conversationTopicPreserved", created.ConversationTopicPreserved?.ToString().ToLowerInvariant()),
                     ("movedToDrafts", created.MovedToDrafts ? "true" : "false"),
                     ("initialFolder", created.InitialSaveFolderName),
                     ("sourceEntryId", sourceEntryId));
@@ -1636,6 +1743,12 @@ namespace OutlookAI.Core.Services
                 Recipients = recipients,
                 RecipientsTruncated = truncated ? true : (bool?)null,
                 RecipientsTotal = truncated ? total : (int?)null,
+                UnresolvedRecipients = created.UnresolvedRecipients.Count > 0
+                    ? created.UnresolvedRecipients.Take(UnresolvedRecipientsCap).ToList()
+                    : null,
+                ConversationTopicPreserved = created.ConversationTopicPreserved,
+                Importance = ImportanceName(created.Draft.Importance) is string name && name != "normal" ? name : null,
+                ReadReceiptRequested = created.Draft.ReadReceiptRequested ? true : (bool?)null,
             };
         }
 

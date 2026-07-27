@@ -757,6 +757,26 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Real recipient count before capping (present only when capped).</summary>
         public int? RecipientsTotal { get; set; }
+
+        /// <summary>
+        /// Addresses Outlook could NOT resolve against the address book (present only
+        /// when there are any). They stay on the draft - the user can fix them in the
+        /// compose window - but they are never dropped silently (batch A, A2).
+        /// </summary>
+        public IReadOnlyList<string>? UnresolvedRecipients { get; set; }
+
+        /// <summary>
+        /// Only present when a derived draft's subject was overridden: whether the
+        /// original conversation topic could be carried over so the draft still groups
+        /// with the source thread (batch A, A3).
+        /// </summary>
+        public bool? ConversationTopicPreserved { get; set; }
+
+        /// <summary>Draft importance when it is not the default ("low" or "high").</summary>
+        public string? Importance { get; set; }
+
+        /// <summary>Present (true) only when a read receipt was requested.</summary>
+        public bool? ReadReceiptRequested { get; set; }
     }
 
     /// <summary>
