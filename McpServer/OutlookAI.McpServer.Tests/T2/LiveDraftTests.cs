@@ -277,7 +277,10 @@ public sealed class LiveDraftTests
     {
         // S3 post-suite proof (also run explicitly after the full suite): NO item
         // tagged [OutlookAI-McpTest] - from this or any earlier run - remains in
-        // Drafts/Inbox/Sent/Deleted of ANY of the three accounts. Self-send copies of
+        // Drafts/Inbox/Sent/Deleted or the SYNC ISSUES subtree (Sync Issues,
+        // Conflicts, Local Failures, Server Failures - widened in soak fix 15 after a
+        // tagged item was found stranded in the hub's Local Failures folder, where
+        // nothing had ever swept) of ANY of the three accounts. Self-send copies of
         // earlier collections can MATERIALIZE with lag (Phase-2/Phase-4 documented
         // race; worst on a store mid-resync), outliving their test's stable-zero
         // window - such stragglers are purged here first (S3-legal: tag-matched), then

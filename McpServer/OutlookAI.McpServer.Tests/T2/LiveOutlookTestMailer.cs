@@ -22,21 +22,38 @@ public static class LiveOutlookTestMailer
     public const string TestFolderNamePrefix = "OutlookAI-McpTest-Folder";
 
     /// <summary>
-    /// Default-folder ids swept for tagged artifacts: Drafts, Inbox, Sent Items,
-    /// Deleted Items LAST so the second pass purges what Delete() moved there.
+    /// Default-folder ids swept for tagged artifacts: Drafts, Inbox, Sent Items, the
+    /// SYNC ISSUES subtree, then Deleted Items LAST so the final pass purges what
+    /// Delete() moved there.
+    /// <para>
+    /// The Sync Issues subtree (20 Sync Issues, 19 Conflicts, 21 Local Failures,
+    /// 22 Server Failures) was added after a tagged test item was found stranded in
+    /// the hub's Local Failures folder: a cached-Exchange store can file a copy of a
+    /// test artifact there on its own, and nothing swept it. Those folders hold
+    /// hundreds of items, not the ~100k an archive holds, so counting them is cheap.
+    /// </para>
+    /// <para>
     /// ⚠ Deliberately WITHOUT the Archive folder: business-store archives hold ~100k
     /// items and a LIKE count over them takes minutes - adding 39 here made the
     /// cross-account sweeps time out (live-bitten 2026-07-26). Hub-scoped D39
     /// cleanups pass <see cref="HubSweepFolderIdsWithArchive"/> explicitly instead.
+    /// </para>
     /// </summary>
-    private static readonly int[] SweepFolderIds = { 16, 6, 5, 3 };
+    private static readonly int[] SweepFolderIds = { 16, 6, 5, 20, 19, 21, 22, 3 };
 
     /// <summary>
     /// Sweep set for the TINY test hub only (D39): includes the designated Archive
     /// folder (39) so archive_mail artifacts are counted and purged. Never use
     /// against business stores (their archives are huge - see SweepFolderIds).
     /// </summary>
-    public static readonly int[] HubSweepFolderIdsWithArchive = { 16, 6, 5, 39, 3 };
+    public static readonly int[] HubSweepFolderIdsWithArchive = { 16, 6, 5, 39, 20, 19, 21, 22, 3 };
+
+    /// <summary>
+    /// The Sync Issues subtree ids, exposed so a targeted purge can name them
+    /// (olFolderSyncIssues 20, olFolderConflicts 19, olFolderLocalFailures 21,
+    /// olFolderServerFailures 22).
+    /// </summary>
+    public static readonly int[] SyncIssuesFolderIds = { 20, 19, 21, 22 };
 
     /// <summary>
     /// Sends a mail from <paramref name="smtpAddress"/> to itself (refuses to run when
@@ -527,7 +544,7 @@ public static class LiveOutlookTestMailer
                 store = FindStore(stores, storeDisplayName)
                     ?? throw new InvalidOperationException("Store not found for test-folder count.");
                 root = store.GetRootFolder();
-                List<(string EntryId, string Name)> matches = new();
+                List<(string EntryId, string Name, int Depth)> matches = new();
                 CollectTestFolders(root, matches, 0);
                 return matches.Count;
             }
@@ -578,11 +595,15 @@ public static class LiveOutlookTestMailer
                         ?? throw new InvalidOperationException("Store not found for test-folder cleanup.");
                     string storeId = (string)store.StoreID;
                     root = store.GetRootFolder();
-                    List<(string EntryId, string Name)> matches = new();
+                    List<(string EntryId, string Name, int Depth)> matches = new();
                     CollectTestFolders(root, matches, 0);
 
                     int actions = 0;
-                    foreach ((string entryId, string name) in matches)
+                    // DEEPEST FIRST: a parent whose test child still exists cannot be
+                    // removed, and a parent-first pass would keep rediscovering both
+                    // until the retry window ran out (live-bitten by the first nested
+                    // test folder, soak fix 15).
+                    foreach ((string entryId, string name, int _) in matches.OrderByDescending(m => m.Depth))
                     {
                         if (!name.Contains(TestFolderNamePrefix, StringComparison.Ordinal))
                         {
@@ -765,7 +786,7 @@ public static class LiveOutlookTestMailer
         }
     }
 
-    private static void CollectTestFolders(dynamic folder, List<(string EntryId, string Name)> matches, int depth)
+    private static void CollectTestFolders(dynamic folder, List<(string EntryId, string Name, int Depth)> matches, int depth)
     {
         if (depth > 32)
         {
@@ -794,7 +815,7 @@ public static class LiveOutlookTestMailer
 
                     if (name != null && name.Contains(TestFolderNamePrefix, StringComparison.Ordinal))
                     {
-                        matches.Add(((string)child.EntryID, name));
+                        matches.Add(((string)child.EntryID, name, depth));
                     }
 
                     CollectTestFolders(child, matches, depth + 1);
@@ -904,6 +925,17 @@ public static class LiveOutlookTestMailer
                 return 0;
             }
 
+            // Cheap pre-check before the full item walk: the item-by-item pass below is
+            // the TESTED delete path (double-match on tag AND marker, per S3) and must
+            // stay, but walking every item of a folder holding thousands - which the
+            // Sync Issues subtree does on a busy store - costs seconds for nothing when
+            // the folder holds no artifact at all. GetTable with a DASL restriction
+            // answers that in milliseconds.
+            if (!FolderMayContain(folder, uniqueMarker))
+            {
+                return 0;
+            }
+
             items = folder.Items;
             int count = items.Count;
             // Iterate backwards: Delete() reindexes the collection.
@@ -946,6 +978,38 @@ public static class LiveOutlookTestMailer
         {
             Release(items);
             Release(folder);
+        }
+    }
+
+    /// <summary>
+    /// True when the folder holds at least one item whose subject carries the marker.
+    /// Conservative: any COM failure returns true so the caller still does the full,
+    /// tested walk - a cheap optimization must never become a silent skip.
+    /// </summary>
+    private static bool FolderMayContain(dynamic folder, string uniqueMarker)
+    {
+        if (uniqueMarker.IndexOf('\'') >= 0 || uniqueMarker.IndexOf('%') >= 0)
+        {
+            return true; // Not expressible as a DASL literal - walk everything.
+        }
+
+        dynamic? table = null;
+        try
+        {
+            table = folder.GetTable("@SQL=\"urn:schemas:httpmail:subject\" LIKE '%" + uniqueMarker + "%'");
+            return !(bool)table.EndOfTable;
+        }
+        catch (COMException)
+        {
+            return true;
+        }
+        catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+        {
+            return true;
+        }
+        finally
+        {
+            Release(table);
         }
     }
 
