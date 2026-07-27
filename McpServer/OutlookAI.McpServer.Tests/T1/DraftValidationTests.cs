@@ -185,6 +185,90 @@ public sealed class DraftValidationTests : IDisposable
         Assert.Contains("Unknown id", ex.Message, StringComparison.Ordinal);
     }
 
+    // ---------------------------------------------------------------- body / body_html (batch B - B1)
+
+    [Theory]
+    [InlineData("new")]
+    [InlineData("reply")]
+    [InlineData("replyall")]
+    [InlineData("forward")]
+    public void ExactlyOneBodyForm_IsRequired_AndTheErrorNamesBoth(string kind)
+    {
+        ArgumentException missing = Assert.Throws<ArgumentException>(() => CallWithBody(kind, body: null, bodyHtml: null));
+        Assert.Contains("body", missing.Message, StringComparison.Ordinal);
+        Assert.Contains("body_html", missing.Message, StringComparison.Ordinal);
+
+        ArgumentException both = Assert.Throws<ArgumentException>(() => CallWithBody(kind, body: "text", bodyHtml: "<p>html</p>"));
+        Assert.Contains("mutually exclusive", both.Message, StringComparison.Ordinal);
+        Assert.Contains("body_html", both.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("new")]
+    [InlineData("reply")]
+    [InlineData("replyall")]
+    [InlineData("forward")]
+    public void BodyHtmlWithNothingVisible_IsRejectedBeforeAnyComWork(string kind)
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+            CallWithBody(kind, body: null, bodyHtml: "<script>alert(1)</script><!-- nothing -->"));
+
+        Assert.Contains("no usable content", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("new")]
+    [InlineData("reply")]
+    [InlineData("replyall")]
+    [InlineData("forward")]
+    public void OversizeBodyHtml_IsRejectedBeforeAnyComWork(string kind)
+    {
+        string huge = "<p>" + new string('a', OutlookAI.Core.Text.HtmlFragmentNormalizer.MaxInputChars) + "</p>";
+
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => CallWithBody(kind, body: null, bodyHtml: huge));
+
+        Assert.Contains("body_html", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("reply")]
+    [InlineData("replyall")]
+    [InlineData("forward")]
+    public void AcceptedBodyHtml_PassesValidation_AndOnlyThenReachesIdResolution(string kind)
+    {
+        // A well-formed fragment must get PAST every body gate; the derived tools then
+        // fail on the unknown hit id - still before any COM work - which proves body_html
+        // was accepted rather than silently rejected. (new_draft has no further pre-COM
+        // gate after the body, so its acceptance is pinned on the wire and live instead.)
+        ArgumentException ex = Assert.Throws<ArgumentException>(() =>
+            CallWithBody(kind, body: null, bodyHtml: "<h1>Title</h1><p>Hello</p>"));
+
+        Assert.Contains("Unknown id", ex.Message, StringComparison.Ordinal);
+    }
+
+    private void CallWithBody(string kind, string? body, string? bodyHtml)
+    {
+        switch (kind)
+        {
+            case "new":
+                _service.NewDraft("hub@example.com", "a@b.example", null, "subject", body, display: false,
+                    signature: null, bcc: null, importance: null, requestReadReceipt: null, bodyHtml: bodyHtml);
+                break;
+            case "reply":
+                _service.ReplyDraft("h424242", body, replyAll: false, display: false, signature: null,
+                    cc: null, bcc: null, subject: null, importance: null, requestReadReceipt: null, bodyHtml: bodyHtml);
+                break;
+            case "replyall":
+                _service.ReplyDraft("h424242", body, replyAll: true, display: false, signature: null,
+                    cc: null, bcc: null, subject: null, importance: null, requestReadReceipt: null, bodyHtml: bodyHtml);
+                break;
+            default:
+                _service.ForwardDraft("h424242", body, "a@b.example", display: false, signature: null,
+                    cc: null, bcc: null, subject: null, importance: null, requestReadReceipt: null, bodyHtml: bodyHtml);
+                break;
+        }
+    }
+
     private void CallDerived(string kind, string? subject, string? importance)
     {
         switch (kind)

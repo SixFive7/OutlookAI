@@ -28,6 +28,8 @@ public sealed class PayloadDisciplineTests
         // Read: body/header text caps (flags: bodyTruncated/headersTruncated).
         Assert.Equal(500_000, MailService.BodyCharsCap);
         Assert.Equal(20_000, MailService.BodyCharsDefault);
+        Assert.Equal(100_000, MailService.HtmlCharsDefault);
+        Assert.True(MailService.HtmlCharsDefault <= MailService.BodyCharsCap, "the HTML budget may not exceed the hard body cap");
         Assert.Equal(256, MailService.HeaderCharsMin);
         Assert.Equal(65_536, MailService.HeaderCharsCap);
         Assert.Equal(8_192, MailService.HeaderCharsDefault);
