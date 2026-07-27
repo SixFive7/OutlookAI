@@ -390,7 +390,18 @@ public sealed class LiveMailServiceTests
 
         // COM fallback path: a conversation id that cannot exist in the index forces the
         // Outlook Conversation walk over the referenced item.
+        // The walk itself is a COM call against a live Outlook, and a busy one can answer
+        // a conversation query with nothing at all (measured: source=com, members=0, in
+        // 69 ms, on an item whose conversation the index tier had just returned 50
+        // members for). That is the documented busy-Outlook shape, not a contract
+        // violation - retry rather than pin the race.
         ThreadOutcome comThread = Service.Thread("zzzznonexistentconversationzzzz", seed.Id, seed.Store);
+        for (int attempt = 0; attempt < 3 && comThread.Hits.Count == 0; attempt++)
+        {
+            Thread.Sleep(1500);
+            comThread = Service.Thread("zzzznonexistentconversationzzzz", seed.Id, seed.Store);
+        }
+
         _output.WriteLine($"thread(com) source={comThread.Source} members={comThread.Hits.Count} ms={comThread.ElapsedMs}");
         Assert.Equal("com", comThread.Source);
         Assert.True(comThread.Hits.Count >= 1, "COM conversation walk must return at least the item itself");

@@ -604,6 +604,14 @@ public sealed class LiveFolderScopeTests
         // still materialize after it - which failed this class nondeterministically, a
         // different test each run. Purge once more (S3-legal: tag AND this run's marker)
         // and assert only what SURVIVES that.
+        // ONE purge pass is still not enough under full-suite load: a straggler can
+        // materialize between the purge and the count that follows it (measured - this
+        // class failed on exactly that, one surviving artifact, in an otherwise green
+        // run). Drive to a STABLE zero first, the way the self-send suites do, and only
+        // then apply the straggler-tolerant count.
+        LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(
+            Hub, Marker, folderIds: LiveOutlookTestMailer.HubSweepFolderIdsWithArchive);
+
         int remaining = LiveOutlookTestMailer.CountTaggedArtifactsAfterPurgingStragglers(
             Hub, Marker, LiveOutlookTestMailer.HubSweepFolderIdsWithArchive, out int stragglersPurged);
         if (stragglersPurged > 0)
