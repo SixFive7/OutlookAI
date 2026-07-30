@@ -5712,6 +5712,94 @@ namespace OutlookAI.Core.Com
             }
         }
 
+        /// <summary>Pumped wait between re-reads of an attachment whose size still reads zero (soak fix 21).</summary>
+        private const int AttachmentSizeSettleDelayMs = 250;
+
+        /// <summary>How many times a zero-sized attachment snapshot is re-read before it is reported as-is.</summary>
+        private const int AttachmentSizeSettleAttempts = 4;
+
+        /// <summary>
+        /// Attachment snapshot for a draft RESULT, taken from a FRESH item reference.
+        /// <para>
+        /// Soak fix 21, and it was the defect a field report filed as "the draft picked up
+        /// a ZERO-BYTE image001.png from the signature template". No bytes were ever lost:
+        /// the compose reference these flows hold - the item whose hidden Inspector was
+        /// just closed - answers <c>Attachment.Size</c> with ZERO for an attachment Outlook
+        /// materialized during the composition, and in the HTMLBody-fallback shape answers
+        /// <c>Attachments.Count</c> with zero as well. Measured 8/8 on a real account
+        /// signature: <c>new_draft</c> reported <c>image001.png = 0</c> while <c>read</c>
+        /// reported 3 035 on the SAME item milliseconds later, over 2 834 real PNG bytes.
+        /// The tool was telling the calling agent its signature logo was empty.
+        /// </para>
+        /// <para>
+        /// Remedy, and the ORDERING is the load-bearing part: re-opening the item by
+        /// EntryID inside the composing call does NOT help - measured, including with
+        /// bounded PUMPED waits, it still reads zero, because the compose flow's own item
+        /// reference is still alive at that point. The size is committed by the time the
+        /// NEXT call arrives, so this runs as its own COM call, after the creation call has
+        /// returned and released everything (that is exactly why <c>read</c> always
+        /// reported the truth while <c>new_draft</c> did not). The caller keeps whichever
+        /// snapshot is better under <see cref="AttachmentSnapshotMerge"/>'s monotone rule,
+        /// so a re-read can only ever improve a result.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<ComAttachmentInfo> SnapshotAttachmentsById(string entryId, string? storeId)
+        {
+            IReadOnlyList<ComAttachmentInfo> best = Array.Empty<ComAttachmentInfo>();
+            if (string.IsNullOrEmpty(entryId))
+            {
+                return best;
+            }
+
+            for (int attempt = 0; attempt < AttachmentSizeSettleAttempts; attempt++)
+            {
+                if (attempt > 0)
+                {
+                    // The retry exists ONLY for the not-yet-settled size; a snapshot that
+                    // already knows every byte must not cost a wait. And the wait must be
+                    // PUMPED: an unpumped Thread.Sleep on this STA blocks the very message
+                    // queue Outlook needs to finish committing the attachment, so the size
+                    // it waits for can never arrive (measured: 0 for the whole of a 400 ms
+                    // unpumped sleep, correct on the next pumped call).
+                    if (!AttachmentSnapshotMerge.HasUnsizedAttachment(best))
+                    {
+                        break;
+                    }
+
+                    PumpedStaRunner.PumpedWait(AttachmentSizeSettleDelayMs);
+                }
+
+                object? reopened = null;
+                try
+                {
+                    dynamic ns = _namespace!;
+                    reopened = string.IsNullOrEmpty(storeId)
+                        ? ns.GetItemFromID(entryId)
+                        : ns.GetItemFromID(entryId, storeId);
+                    IReadOnlyList<ComAttachmentInfo> fresh = SnapshotAttachments(reopened!);
+                    if (AttachmentSnapshotMerge.IsBetter(fresh, best))
+                    {
+                        best = fresh;
+                    }
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    break;
+                }
+                finally
+                {
+                    Release(reopened);
+                }
+
+                if (!AttachmentSnapshotMerge.HasUnsizedAttachment(best))
+                {
+                    break;
+                }
+            }
+
+            return best;
+        }
+
         /// <summary>STA-side identity/threading snapshot of a mail item.</summary>
         private ComDraftInfo SnapshotDraft(object itemObject, string? fallbackStoreName = null, string? fallbackStoreId = null, string? fallbackFolderName = null, string? fallbackFolderEntryId = null, string? fallbackSendUsingSmtp = null)
         {

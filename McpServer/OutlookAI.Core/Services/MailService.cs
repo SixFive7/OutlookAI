@@ -1527,6 +1527,43 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
+        /// Re-reads a just-saved draft's attachments in a SEPARATE COM call and returns the
+        /// better of the two snapshots.
+        /// <para>
+        /// Soak fix 21, and it fixes a defect that was reported to us as data loss: the
+        /// snapshot taken INSIDE a compose call reports an attachment Outlook materialized
+        /// during that composition - a signature's inline logo - as ZERO bytes, and in the
+        /// HTMLBody-fallback shape does not see it at all. Nothing is wrong with the item;
+        /// the size is simply not committed while the composing call still holds the item
+        /// open, which is why <c>read</c> always reported it correctly and the draft tools
+        /// did not. A second, plain call answers the truth, so every draft tool now echoes
+        /// the same bytes the recipient will get. Failure here can never fail a draft: the
+        /// original snapshot is kept.
+        /// </para>
+        /// </summary>
+        private IReadOnlyList<Com.ComAttachmentInfo> VerifiedAttachments(
+            Com.ComDraftInfo draft,
+            IReadOnlyList<Com.ComAttachmentInfo> inHand)
+        {
+            if (!Com.AttachmentSnapshotMerge.HasUnsizedAttachment(inHand) && inHand.Count > 0)
+            {
+                return inHand;
+            }
+
+            try
+            {
+                IReadOnlyList<Com.ComAttachmentInfo> fresh =
+                    _gateway.Run(s => s.SnapshotAttachmentsById(draft.EntryId, draft.StoreId));
+                return Com.AttachmentSnapshotMerge.IsBetter(fresh, inHand) ? fresh : inHand;
+            }
+            catch (Exception)
+            {
+                // Reporting must never cost a caller their draft.
+                return inHand;
+            }
+        }
+
+        /// <summary>
         /// Picks the ONE body form a draft call supplied and prepares it for the COM layer
         /// (soak fix batch B - B1). Exactly one of <paramref name="body"/> (plain text, the
         /// unchanged default) and <paramref name="bodyHtml"/> (HTML) must be present; the
@@ -1839,7 +1876,7 @@ namespace OutlookAI.Core.Services
             }
         }
 
-        private static DraftOutcome ToDraftOutcome(
+        private DraftOutcome ToDraftOutcome(
             string kind,
             ComDraftCreateResult created,
             string? hitId,
@@ -1852,7 +1889,8 @@ namespace OutlookAI.Core.Services
 
             // Attachments come from the SAVED item, never from the request (the A4
             // round-trip discipline): what the agent is told is what Outlook holds.
-            IReadOnlyList<AttachmentView> attachmentViews = CapAttachments(created.Attachments, out int _, out bool _);
+            IReadOnlyList<AttachmentView> attachmentViews = CapAttachments(
+                VerifiedAttachments(created.Draft, created.Attachments), out int _, out bool _);
             return new DraftOutcome
             {
                 Attachments = attachmentViews.Count > 0 ? attachmentViews : null,
@@ -2224,7 +2262,7 @@ namespace OutlookAI.Core.Services
             }
         }
 
-        private static UpdateDraftOutcome ToUpdateOutcome(
+        private UpdateDraftOutcome ToUpdateOutcome(
             ComDraftUpdateResult updated,
             string? hitId,
             ComDraftBody? body,
@@ -2232,7 +2270,8 @@ namespace OutlookAI.Core.Services
             IReadOnlyList<string> requestedRemovals)
         {
             IReadOnlyList<RecipientView> recipients = CapRecipients(updated.Draft.Recipients, out int total, out bool truncated);
-            IReadOnlyList<AttachmentView> attachmentViews = CapAttachments(updated.Attachments, out int _, out bool _);
+            IReadOnlyList<AttachmentView> attachmentViews = CapAttachments(
+                VerifiedAttachments(updated.Draft, updated.Attachments), out int _, out bool _);
             IReadOnlyList<string>? notRemoved = requestedRemovals
                 .Where(n => !updated.AttachmentsRemoved.Any(r => string.Equals(r, n, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
