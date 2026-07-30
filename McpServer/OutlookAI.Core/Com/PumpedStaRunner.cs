@@ -153,13 +153,58 @@ namespace OutlookAI.Core.Com
             GC.KeepAlive(filter);
         }
 
+        /// <summary>
+        /// Waits roughly <paramref name="milliseconds"/> while KEEPING THE STA MESSAGE
+        /// QUEUE PUMPED - the only kind of wait that lets Outlook finish deferred work
+        /// started by the call in progress.
+        /// <para>
+        /// Soak fix 21: a plain <see cref="Thread.Sleep(int)"/> inside a work item blocks
+        /// this thread's queue, so Outlook cannot complete what it was asked to do and the
+        /// state being waited for never changes - measured on a freshly composed draft
+        /// whose inline signature attachment reported <c>Size = 0</c> for the whole of a
+        /// 400 ms unpumped sleep and read correctly on the very next pumped call. Every
+        /// in-work-item wait for Outlook-side settling must use this, never Thread.Sleep.
+        /// </para>
+        /// </summary>
+        internal static void PumpedWait(int milliseconds)
+        {
+            if (milliseconds <= 0)
+            {
+                return;
+            }
+
+            // Stopwatch, not Environment.TickCount64: Core also targets net48 (D18 v2).
+            System.Diagnostics.Stopwatch elapsed = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
+            {
+                long remaining = milliseconds - elapsed.ElapsedMilliseconds;
+                if (remaining <= 0)
+                {
+                    return;
+                }
+
+                _ = NativeMethods.MsgWaitForMultipleObjectsEx(
+                    0,
+                    Array.Empty<IntPtr>(),
+                    (uint)remaining,
+                    NativeMethods.QS_ALLINPUT,
+                    NativeMethods.MWMO_INPUTAVAILABLE);
+                DrainPendingMessages();
+            }
+        }
+
         private void PumpPendingMessages()
+        {
+            DrainPendingMessages(m => _shutdown = m);
+        }
+
+        private static void DrainPendingMessages(Action<bool>? onQuit = null)
         {
             while (NativeMethods.PeekMessage(out NativeMethods.MSG msg, IntPtr.Zero, 0, 0, NativeMethods.PM_REMOVE))
             {
                 if (msg.message == NativeMethods.WM_QUIT)
                 {
-                    _shutdown = true;
+                    onQuit?.Invoke(true);
                     return;
                 }
 
