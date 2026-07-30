@@ -221,12 +221,21 @@ public sealed class LiveAttachmentKindRecallTests
 
             probe ??= outcome.Hits.FirstOrDefault(h => HasExtension(h.AttachmentFileName, previouslyDropped));
 
-            // Only INDEX rows answer the attachment-only question: the freshness gap-sweep
-            // merges live COM hits regardless of the flag (it reads items, not attachment
-            // content), which is pre-existing behavior and not what this test is about.
-            Assert.All(
-                outcome.Hits.Where(h => h.Source == "index"),
-                h => Assert.True(h.IsAttachmentHit));
+            // D47 - THE FILTER IS NOW EXACT, AND THIS IS WHERE IT USED TO LEAK. The
+            // freshness sweep reads Subject/Body through COM and never opens an
+            // attachment, so a sweep row can never be an attachment-content match; it was
+            // nevertheless merged in, and this assertion used to have to exempt every
+            // non-index row to pass. It no longer does: EVERY row must be an attachment
+            // hit, and no row may come from the sweep at all.
+            Assert.All(outcome.Hits, h => Assert.True(
+                h.IsAttachmentHit, $"attachment-only search returned a message row (source={h.Source})"));
+            Assert.DoesNotContain(outcome.Hits, h => h.Source == "live");
+
+            // ...and the skip is REPORTED rather than silently narrowing freshness.
+            Assert.False(outcome.Sweep?.Performed ?? false);
+            Assert.Contains(
+                outcome.Advice ?? Array.Empty<string>(),
+                a => a.Contains("attachment content is matched by the index only", StringComparison.OrdinalIgnoreCase));
         }
 
         Assert.NotNull(probe);

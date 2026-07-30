@@ -167,6 +167,27 @@ public sealed class SearchSchemaCiTests
         // The retired freshness claim (sweep limited to Inbox + Sent Items) is gone.
         Assert.DoesNotContain("Inbox or Sent Items", description, StringComparison.Ordinal);
 
+        // D47: the freshness tier's REACH is now stated where it belongs. The sweep reads
+        // Subject/Body through COM and never opens an attachment, so attachment-content
+        // matching is index-only - the fact that makes an attachment-only search
+        // index-only by construction. Leaving it out of the FRESHNESS paragraph was the
+        // documentation half of the merged-sweep-hits defect.
+        Assert.Contains(
+            "The sweep matches subject and body only - attachment text is matched by the index alone",
+            description,
+            StringComparison.Ordinal);
+        Assert.Contains("only once that mail is indexed", description, StringComparison.Ordinal);
+
+        // D47, the mirror image on the parameter itself: excluding attachment hits drops
+        // ONLY those rows. The sweep keeps running - it produces message rows, which is
+        // exactly what such a caller asked for - so freshness coverage is not silently
+        // narrowed by setting the flag.
+        JsonElement attachmentFlag = searchTool.Value
+            .GetProperty("inputSchema").GetProperty("properties").GetProperty("include_attachment_hits");
+        string attachmentFlagDescription = attachmentFlag.GetProperty("description").GetString()!;
+        Assert.Contains("drops only those hits", attachmentFlagDescription, StringComparison.Ordinal);
+        Assert.Contains("freshness sweep's, are unaffected", attachmentFlagDescription, StringComparison.Ordinal);
+
         // Results contract: the id is the currency of every follow-up tool (D39 added
         // move_mail/archive_mail), truncation is definite, advice is for relaying.
         foreach (string followUpTool in new[] { "read", "thread", "save_attachment", "open_in_outlook", "move_mail", "archive_mail" })

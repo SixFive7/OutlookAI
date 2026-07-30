@@ -57,6 +57,8 @@ public static class OutlookTools
         + "scope: with folder set it covers that folder and its subfolders, otherwise Inbox, Sent Items, Deleted "
         + "Items and Junk Email of the store(s) in scope (those four folders only, not their subfolders) - so for "
         + "brand-new mail filed into any other folder, pass store + folder. "
+        + "The sweep matches subject and body only - attachment text is matched by the index alone, so a term "
+        + "living only inside an attachment is findable only once that mail is indexed. "
         + "The response's sweep block reports what was covered. The sweep is cached ~10 s, "
         + "so rapid follow-up searches run at index speed. If it cannot run, "
         + "index results are returned with a warning in advice - a search never fails for that reason.\n\n"
@@ -98,7 +100,8 @@ public static class OutlookTools
         [Description("true = unread mail only.")] bool? unread_only = null,
         [Description("Filter on attachment presence.")] bool? has_attachments = null,
         [Description("Include attachment-CONTENT matches (any attachment type: documents, images, embedded "
-            + "messages, invites, media). Default true.")]
+            + "messages, invites, media). Default true. Setting it false drops only those hits; ordinary "
+            + "subject/body matches, including the freshness sweep's, are unaffected.")]
         bool include_attachment_hits = true,
         [Description("Max hits (1-100, default 25). Keep small - iterate instead.")] int top = 25,
         [Description("Snippet length per hit (0-1000, default 200; 0 = no snippets).")] int snippet_chars = 200)

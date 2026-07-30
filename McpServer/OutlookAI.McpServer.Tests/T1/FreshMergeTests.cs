@@ -253,4 +253,45 @@ public sealed class FreshMergeTests
     {
         Assert.Equal("alice@example.com", FreshMerge.ResolveHitStore(Hit()));
     }
+
+    // ============================================== D47: what the sweep cannot answer
+
+    [Fact]
+    public void Sweep_IsRefused_ForAnAttachmentOnlySearch_BecauseItNeverOpensAnAttachment()
+    {
+        // THE DEFECT THIS PINS: the sweep reads Subject/Body through COM, so every row it
+        // can produce is a MESSAGE row. Merging those under an attachment-ONLY filter
+        // returned precisely the rows the filter excludes.
+        Assert.Equal(
+            FreshMerge.AttachmentContentNotSweepable,
+            FreshMerge.SweepRefusalReason(hasRecipientFilter: false, attachmentHitsOnly: true));
+    }
+
+    [Fact]
+    public void Sweep_Runs_WhenAttachmentHitsAreMerelyExcluded_TheMirrorImageCase()
+    {
+        // The mirror image is NOT symmetric, and deliberately so: excluding attachment
+        // hits asks for message rows, which is all the sweep produces. It must still run,
+        // or freshness coverage would be lost for no reason.
+        Assert.Null(FreshMerge.SweepRefusalReason(hasRecipientFilter: false, attachmentHitsOnly: false));
+    }
+
+    [Fact]
+    public void Sweep_RecipientFilterRefusal_StillWins_WhenBothApply()
+    {
+        // Order is contractual: the recipient refusal is the older, more specific advice.
+        Assert.Equal(
+            FreshMerge.RecipientFilterNotSweepable,
+            FreshMerge.SweepRefusalReason(hasRecipientFilter: true, attachmentHitsOnly: true));
+        Assert.Equal(
+            FreshMerge.RecipientFilterNotSweepable,
+            FreshMerge.SweepRefusalReason(hasRecipientFilter: true, attachmentHitsOnly: false));
+    }
+
+    [Fact]
+    public void SweepRefusalReasons_AreDistinctMachineReadableTokens()
+    {
+        Assert.NotEqual(FreshMerge.RecipientFilterNotSweepable, FreshMerge.AttachmentContentNotSweepable);
+        Assert.DoesNotContain(" ", FreshMerge.AttachmentContentNotSweepable, StringComparison.Ordinal);
+    }
 }

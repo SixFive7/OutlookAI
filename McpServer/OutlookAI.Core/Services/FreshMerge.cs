@@ -14,6 +14,48 @@ namespace OutlookAI.Core.Services
     /// </summary>
     public static class FreshMerge
     {
+        /// <summary>Sweep refusal: recipient ('to') filters have no sweep-side equivalent.</summary>
+        public const string RecipientFilterNotSweepable = "RecipientFilterNotSweepable";
+
+        /// <summary>Sweep refusal: attachment CONTENT is matched by the index tier alone (D47).</summary>
+        public const string AttachmentContentNotSweepable = "AttachmentContentNotSweepable";
+
+        /// <summary>
+        /// Why the freshness sweep cannot answer this request at all, or null when it can
+        /// (D47 - the rule stated in ONE place, and pinned in T1).
+        /// <para>
+        /// The sweep reads <c>MailItem.Subject</c> and <c>MailItem.Body</c> through COM. It
+        /// never opens an attachment, so every row it can produce is a MESSAGE row. That
+        /// makes the two attachment flags asymmetric on purpose, and the asymmetry is the
+        /// whole rule:
+        /// </para>
+        /// <list type="bullet">
+        /// <item><description><b>attachment hits ONLY</b> - the caller asked for rows the
+        /// sweep can never produce, so merging its message rows would return exactly what
+        /// the filter excludes. The sweep is refused (and reported), matching the
+        /// exhaustive tier, which refuses such a search outright for the same reason.</description></item>
+        /// <item><description><b>attachment hits EXCLUDED</b> - the caller asked for
+        /// message rows, which is all the sweep produces. It runs normally; nothing to
+        /// filter.</description></item>
+        /// <item><description><b>attachment hits INCLUDED</b> (the default) - the sweep
+        /// contributes its message rows and simply adds no attachment ones.</description></item>
+        /// </list>
+        /// </summary>
+        public static string? SweepRefusalReason(bool hasRecipientFilter, bool attachmentHitsOnly)
+        {
+            if (hasRecipientFilter)
+            {
+                return RecipientFilterNotSweepable;
+            }
+
+            if (attachmentHitsOnly)
+            {
+                return AttachmentContentNotSweepable;
+            }
+
+            return null;
+        }
+
         /// <summary>
         /// Applies the search terms (ANDed; a trailing '*' marks a prefix stem and is
         /// matched as a case-insensitive substring, slightly over-matching the index's

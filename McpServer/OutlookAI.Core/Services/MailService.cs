@@ -282,10 +282,16 @@ namespace OutlookAI.Core.Services
             if (!request.IndexOnly)
             {
                 sweep = RunGapSweep(request, terms, staleness, indexResult.Hits, summaries, snippetChars);
-                if (sweep.Error == "RecipientFilterNotSweepable")
+                if (sweep.Error == FreshMerge.RecipientFilterNotSweepable)
                 {
                     advice.Add("Freshness sweep skipped: recipient ('to') filters cannot be matched by the sweep, so results are "
                         + "index-only and may lag the last " + DescribeAge(staleness) + " of mail.");
+                }
+                else if (sweep.Error == FreshMerge.AttachmentContentNotSweepable)
+                {
+                    advice.Add("Freshness sweep skipped: attachment content is matched by the index only, so an attachment-only "
+                        + "search is index-only by construction and does not cover the last " + DescribeAge(staleness)
+                        + " of mail. Search without the attachment-only filter to get freshness coverage of subject and body.");
                 }
                 else if (sweep.Error != null)
                 {
@@ -562,10 +568,17 @@ namespace OutlookAI.Core.Services
                 return info;
             }
 
-            if (request.To != null)
+            // What the sweep structurally cannot answer, decided in one pure place
+            // (FreshMerge.SweepRefusalReason, T1-pinned). D47 added the attachment-only
+            // case: the sweep never opens an attachment, so under an attachment-ONLY
+            // filter every row it could contribute is one the filter excludes - merging
+            // them was incoherent, and refusing matches the exhaustive tier, which has
+            // always refused such a search outright for the same reason.
+            string? refusal = FreshMerge.SweepRefusalReason(request.To != null, request.AttachmentHitsOnly);
+            if (refusal != null)
             {
                 info.Performed = false;
-                info.Error = "RecipientFilterNotSweepable";
+                info.Error = refusal;
                 return info;
             }
 
