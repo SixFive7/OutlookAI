@@ -895,6 +895,25 @@ public static class LiveOutlookTestMailer
     }
 
     /// <summary>
+    /// Test folders a cleanup guard may legitimately FAIL over: any that still holds
+    /// something, or still lives outside Deleted Items. <paramref name="wedgedEmpty"/>
+    /// receives the rest - EMPTY folders stranded in Deleted Items by the documented
+    /// same-session <c>Folders.Remove</c> limitation, which <see cref="DeleteTestFolders"/>
+    /// deliberately tolerates and reports rather than failing on. Read-only.
+    /// <para>
+    /// Exists because asserting the RAW test-folder count fails the suite over exactly
+    /// the remnant the cleanup helper just decided was acceptable - a test pinning an
+    /// Outlook limitation instead of a contract, which is a flake by construction (it
+    /// depends on whether Outlook has restarted since the folder was created).
+    /// </para>
+    /// </summary>
+    public static int CountLiveTestFolders(string storeDisplayName, out int wedgedEmpty)
+    {
+        wedgedEmpty = CountWedgedEmptyTestFolders(storeDisplayName, out int live);
+        return live;
+    }
+
+    /// <summary>
     /// Splits the remaining test folders into the ones that still matter (anywhere but
     /// Deleted Items, or holding items) and the empty ones wedged in Deleted Items by the
     /// documented same-session Folders.Remove limitation. Read-only.

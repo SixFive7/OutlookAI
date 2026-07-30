@@ -217,7 +217,16 @@ public sealed class LiveSweepScopeTests
         }
 
         Assert.Equal(0, remaining);
-        Assert.Equal(0, LiveOutlookTestMailer.CountTestFolders(Hub));
+        // Folders: LIVE ones only - an empty test folder can wedge in Deleted Items
+        // for the rest of an Outlook session (documented in DeleteTestFolders, which
+        // tolerates and reports it). Asserting the raw count pins that limitation
+        // instead of the contract; see CountLiveTestFolders.
+        Assert.Equal(0, LiveOutlookTestMailer.CountLiveTestFolders(Hub, out int wedgedEmptyFolders));
+        if (wedgedEmptyFolders > 0)
+        {
+            Console.WriteLine($"cleanup[{Hub}]: {wedgedEmptyFolders} empty test folder(s) wedged in Deleted Items "
+                + "until Outlook restarts (documented same-session limitation, no items involved)");
+        }
         _output.WriteLine(_fixture.VerifyHubReconciled());
     }
 

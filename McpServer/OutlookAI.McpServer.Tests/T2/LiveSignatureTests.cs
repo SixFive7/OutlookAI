@@ -158,10 +158,20 @@ public sealed class LiveSignatureTests
             Assert.True(agentAt >= 0, "agent text must be present");
             Assert.True(sigAt > agentAt, $"signature must follow the agent text (agent@{agentAt} sig@{sigAt})");
 
-            // The image resource of the signature: recorded, not hard-asserted (the
-            // embed shape may vary by Outlook build - content-free observability).
+            // D47 - the signature's image resource is now a CONTRACT on the create path,
+            // not an observation. Word's InsertFile leaves such a picture LINKED to the
+            // file on disk (which renders on this machine only, and which no re-render
+            // can carry), so the composition embeds it: the saved draft must carry a real
+            // inline attachment, and its HTML must reference it by cid: rather than by a
+            // file:/// path. Getting this right on CREATE is what makes update_draft
+            // lossless - it starts from an embedded picture.
+            Assert.True(read.Attachments.Count > 0, "the signature's image must be embedded as an inline attachment");
+            string html = _fixture.VerifySession.TryGetHtmlBody(outcome.EntryId, _fixture.GetStoreId(Hub), out string? htmlError)
+                ?? throw new InvalidOperationException("draft HTML unavailable: " + (htmlError ?? "empty"));
+            Assert.Contains("src=\"cid:", html, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("src=\"file:///", html, StringComparison.OrdinalIgnoreCase);
             _output.WriteLine($"new-draft override: agent@{agentAt} sig@{sigAt} attachments={read.Attachments.Count} "
-                + $"bodyTotal={read.BodyTotalChars}");
+                + $"bodyTotal={read.BodyTotalChars}; signature image embedded (cid:, no file:/// link)");
         }
         finally
         {
