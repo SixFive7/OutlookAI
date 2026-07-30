@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 using Xunit;
@@ -170,8 +172,19 @@ public sealed class LiveSignatureTests
                 ?? throw new InvalidOperationException("draft HTML unavailable: " + (htmlError ?? "empty"));
             Assert.Contains("src=\"cid:", html, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("src=\"file:///", html, StringComparison.OrdinalIgnoreCase);
+
+            // Soak fix 21 - THE ZERO-BYTE PIN. A field report filed this as data loss:
+            // the draft "picked up a zero-byte image001.png from the signature template".
+            // The bytes were always there; the DRAFT TOOL'S OWN ECHO was the lie, because
+            // the snapshot taken inside the composing call reads Size = 0 for an
+            // attachment Outlook materialized during that composition. An agent that
+            // believes that echo concludes the logo is broken, so the echo is now a
+            // contract: non-zero bytes, and a cid: whose local part names the attachment.
+            AssertInlineImageEchoedWithRealBytes(outcome.Attachments, outcome.AttachmentsTotalBytes, html);
+
             _output.WriteLine($"new-draft override: agent@{agentAt} sig@{sigAt} attachments={read.Attachments.Count} "
-                + $"bodyTotal={read.BodyTotalChars}; signature image embedded (cid:, no file:/// link)");
+                + $"bodyTotal={read.BodyTotalChars}; signature image embedded (cid:, no file:/// link), "
+                + $"draft echo bytes={outcome.AttachmentsTotalBytes}");
         }
         finally
         {
@@ -197,6 +210,41 @@ public sealed class LiveSignatureTests
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /// <summary>
+    /// Soak fix 21: the draft tool's OWN attachment echo must describe the inline image
+    /// the recipient will get - a real, non-zero attachment named by the cid the HTML
+    /// references. Shared with <c>LiveDraftOptionsTests</c>, which runs the same contract
+    /// against the real business-account signatures.
+    /// </summary>
+    internal static void AssertInlineImageEchoedWithRealBytes(
+        IReadOnlyList<AttachmentView>? echoed,
+        long? totalBytes,
+        string html)
+    {
+        string cidName = RequireCidLocalName(html);
+        Assert.True(echoed != null && echoed.Count > 0,
+            "the draft result must ECHO the signature's inline attachment (a caller that sees none concludes the image is missing)");
+        AttachmentView? match = echoed!.FirstOrDefault(a =>
+            string.Equals(a.FileName, cidName, StringComparison.OrdinalIgnoreCase));
+        Assert.True(match != null,
+            $"the echoed attachments must include the one the HTML references by cid ('{cidName}'); echoed: "
+            + string.Join(", ", echoed!.Select(a => a.FileName ?? "?")));
+        Assert.True(match!.SizeBytes is > 0,
+            $"the echoed inline image must carry REAL bytes, not zero (sizeBytes={match.SizeBytes?.ToString(CultureInfo.InvariantCulture) ?? "null"})");
+        Assert.True(totalBytes is > 0, "attachmentsTotalBytes must be positive when an inline image is attached");
+    }
+
+    /// <summary>
+    /// The file name a <c>src="cid:name@domain"</c> reference points at - the local part of
+    /// the content id, which Outlook always sets to the attachment's file name.
+    /// </summary>
+    internal static string RequireCidLocalName(string html)
+    {
+        Match m = Regex.Match(html, "src=\"cid:([^\"@]+)", RegexOptions.IgnoreCase);
+        Assert.True(m.Success, "the composed HTML must reference the signature image by cid:");
+        return m.Groups[1].Value;
+    }
 
     private ComMailBrief WaitForInboxArrival(string seedSubject, DateTime sentUtc)
     {

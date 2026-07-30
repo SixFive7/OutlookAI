@@ -133,7 +133,20 @@ public sealed class LiveDraftOptionsTests
                     .Any(i => i.EntryId != null && string.Equals(i.EntryId, outcome.EntryId, StringComparison.OrdinalIgnoreCase));
                 Assert.False(inspectorSeen, "identity draft must never get an Inspector");
 
-                _output.WriteLine($"A1[{account}/default]: injected=true bodyBeforeSignatureRegion=true displayed=false");
+                // Soak fix 21 - the same zero-byte contract as LiveSignatureTests, but on
+                // the REAL account signatures, which is where it was reported: a signature
+                // with a company logo must be echoed by the draft tool as an attachment
+                // with REAL bytes. Conditional because not every configured signature has
+                // an image; when one does, the echo is a contract, never an observation.
+                bool hasInlineImage = html.IndexOf("src=\"cid:", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (hasInlineImage)
+                {
+                    LiveSignatureTests.AssertInlineImageEchoedWithRealBytes(
+                        outcome.Attachments, outcome.AttachmentsTotalBytes, html);
+                }
+
+                _output.WriteLine($"A1[{account}/default]: injected=true bodyBeforeSignatureRegion=true displayed=false "
+                    + $"inlineImage={hasInlineImage} echoedBytes={outcome.AttachmentsTotalBytes?.ToString() ?? "-"}");
             }
             finally
             {
