@@ -67,6 +67,16 @@ public sealed class LiveUpdateDiscardTests
                 $"C1 create diag: bodyPlacement={draft.BodyPlacement} signatureApplied={draft.SignatureApplied} "
                 + $"signatureError={draft.SignatureError ?? "-"} htmlLen={before.Length}");
 
+            // D47 PRECONDITION, and the whole reason the image survives below: the
+            // signature's picture must be EMBEDDED (a cid: resource backed by a real
+            // inline attachment), not left as the file:/// link Word's InsertFile
+            // produces. A link renders on this machine and nowhere else, and no
+            // re-render can carry it.
+            string cidBefore = RequireCidImage(before, "created draft");
+            Assert.DoesNotContain("src=\"file:///", before, StringComparison.OrdinalIgnoreCase);
+            Assert.NotEmpty(Service.Read(draft.EntryId, maxBodyChars: 0).Attachments!);
+            _output.WriteLine($"C1 create image: embedded as {cidBefore}, backed by an inline attachment");
+
             LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "update_draft");
             UpdateDraftOutcome updated = Service.UpdateDraft(
                 draft.EntryId, body: revised + " second version.", display: false);
@@ -103,14 +113,96 @@ public sealed class LiveUpdateDiscardTests
             Assert.True(bodyAt < signatureAt, "revised body must precede the signature content");
             AssertBodyInsideWordSection(after, bodyAt);
 
-            // OBSERVATION, deliberately not an assertion: the signature's TEXT and its
-            // position survive a revision, but its embedded <img> resource does not come
-            // back through the re-rendered document on this build. Recorded rather than
-            // enforced - the contract under test is the region boundary, and a hard
-            // assertion here would pin Outlook's image-resource behaviour instead.
+            // D47 - WAS AN OBSERVATION, IS NOW THE CONTRACT. The signature's embedded
+            // image must come back through the re-rendered document intact: the same
+            // cid: reference AND the inline attachment behind it. This used to fail,
+            // because Word's InsertFile leaves signature pictures LINKED to the file on
+            // disk and cannot re-serialize such a link - it emits a placeholder shape
+            // instead. Asserting BOTH halves matters: an <img> whose attachment has gone
+            // is a broken image, and an attachment no <img> points at is dead weight.
+            Assert.Equal(cidBefore, RequireCidImage(after, "revised draft"));
+            Assert.DoesNotContain("v:rect", after, StringComparison.OrdinalIgnoreCase);
+            IReadOnlyList<AttachmentView> attachmentsAfter = Service.Read(updated.EntryId, maxBodyChars: 0).Attachments!;
+            Assert.NotEmpty(attachmentsAfter);
+            Assert.Null(updated.InlineImagesDropped);
+            Assert.Null(updated.InlineImagesAdvice);
             _output.WriteLine(
-                $"C1 signature-image after update: present={after.IndexOf("<img", StringComparison.OrdinalIgnoreCase) >= 0}");
+                $"C1 signature-image after update: {cidBefore} still referenced, {attachmentsAfter.Count} attachment(s) intact");
             _output.WriteLine($"C1 body replace: bodyAt={bodyAt} anchorAt={anchorAt} contentAt={signatureAt}; old text absent");
+        }
+        finally
+        {
+            CleanupDraft(draft.EntryId);
+        }
+
+        AssertNoTaggedArtifactsRemain();
+    }
+
+    [Fact]
+    public void UpdateDraft_ReportsAnInlineImageItCannotCarryOver_AndReapplyingTheSignatureRestoresIt()
+    {
+        // THE RESIDUAL LIMITATION (D47), proven rather than described. A draft composed
+        // by an OLDER build carries its signature picture as a file:/// LINK. Word cannot
+        // re-serialize such a link across a revision - it emits a placeholder shape - and
+        // nothing in the update path can rescue it, because by the time the WordEditor is
+        // available the picture is already a placeholder. So the contract is: the loss is
+        // REPORTED, never silent, and the reported remedy actually works.
+        using TestSignature sig = TestSignature.Create(Marker);
+
+        LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft");
+        DraftOutcome draft = Service.NewDraft(
+            Hub, Hub, cc: null, _fixture.TaggedSubject("d47-legacy"), "D47LEGACY" + Marker,
+            display: false, signature: sig.Name);
+        try
+        {
+            string current = RequireHtmlBody(draft.EntryId);
+            RequireCidImage(current, "created draft");
+
+            // Rewrite the stored HTML into the PRE-D47 shape: the same picture, but
+            // linked to the signature file instead of embedded. Goes through the tested,
+            // allowlist-guarded helper (S3 tag AND run-marker double match).
+            int cidAt = current.IndexOf("src=\"cid:", StringComparison.OrdinalIgnoreCase);
+            int cidEnd = current.IndexOf('"', cidAt + 5);
+            Assert.True(cidAt > 0 && cidEnd > cidAt, "the created draft must carry a cid: image to downgrade");
+            string linkTarget = "file:///"
+                + Path.GetDirectoryName(sig.FilePath)!.Replace('\\', '/') + "/"
+                + Path.GetFileNameWithoutExtension(sig.FilePath) + "_files/sigimg.png";
+            LiveOutlookTestMailer.SetDraftHtmlBody(
+                Hub, draft.EntryId, Marker, current.Substring(0, cidAt) + "src=\"" + linkTarget + current.Substring(cidEnd));
+
+            string legacy = RequireHtmlBody(draft.EntryId);
+            Assert.Contains("src=\"file:///", legacy, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(1, CountImages(legacy));
+
+            // (1) The revision loses it - and SAYS SO.
+            LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "update_draft");
+            UpdateDraftOutcome lost = Service.UpdateDraft(
+                draft.EntryId, body: "D47LOST" + Marker, display: false);
+
+            string afterLoss = RequireHtmlBody(lost.EntryId);
+            _output.WriteLine(
+                $"D47 legacy: images {CountImages(legacy)}->{CountImages(afterLoss)} "
+                + $"reported={lost.InlineImagesDropped?.ToString() ?? "null"}");
+            Assert.Equal(0, CountImages(afterLoss));
+            Assert.Equal(1, lost.InlineImagesDropped);
+            Assert.NotNull(lost.InlineImagesAdvice);
+            Assert.Contains("signature", lost.InlineImagesAdvice!, StringComparison.OrdinalIgnoreCase);
+
+            // (2) The advertised remedy works: re-applying the signature brings the image
+            // back, and back EMBEDDED - so the next revision keeps it.
+            UpdateDraftOutcome restored = Service.UpdateDraft(
+                lost.EntryId, body: "D47RESTORED" + Marker, signature: sig.Name, display: false);
+
+            string afterRemedy = RequireHtmlBody(restored.EntryId);
+            string cid = RequireCidImage(afterRemedy, "draft after the signature was re-applied");
+            Assert.Null(restored.InlineImagesDropped);
+
+            // ...and it now survives a further plain revision, which is the point.
+            UpdateDraftOutcome again = Service.UpdateDraft(
+                restored.EntryId, body: "D47AGAIN" + Marker, display: false);
+            Assert.Equal(cid, RequireCidImage(RequireHtmlBody(again.EntryId), "draft after a further revision"));
+            Assert.Null(again.InlineImagesDropped);
+            _output.WriteLine($"D47 remedy: signature re-applied, image embedded as {cid}, survives a further revision");
         }
         finally
         {
@@ -601,6 +693,25 @@ public sealed class LiveUpdateDiscardTests
         catch (UnauthorizedAccessException)
         {
         }
+    }
+
+    /// <summary>
+    /// Asserts the body carries exactly one inline image and that it is EMBEDDED, and
+    /// returns its cid: reference so before/after can be compared for identity (D47).
+    /// </summary>
+    private static string RequireCidImage(string html, string what)
+    {
+        Assert.Equal(1, CountImages(html));
+        int at = html.IndexOf("src=\"cid:", StringComparison.OrdinalIgnoreCase);
+        Assert.True(at > 0, $"the {what} must reference its inline image by cid:, not by a file:/// link");
+        int end = html.IndexOf('"', at + 5);
+        Assert.True(end > at, $"the {what}'s cid: reference must be a terminated attribute");
+        return html.Substring(at + 5, end - at - 5);
+    }
+
+    private static int CountImages(string html)
+    {
+        return OutlookAI.Core.Text.HtmlBodyComposer.CountInlineImages(html);
     }
 
     private static int RequireIndexOf(string html, string needle, string what)

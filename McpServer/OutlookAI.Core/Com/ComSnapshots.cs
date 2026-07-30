@@ -1018,8 +1018,10 @@ namespace OutlookAI.Core.Com
             string? signatureOverrideName,
             bool signatureOverrideApplied,
             string? signatureOverrideError,
-            bool? conversationTopicPreserved)
+            bool? conversationTopicPreserved,
+            int inlineImagesDropped = 0)
         {
+            InlineImagesDropped = inlineImagesDropped;
             Draft = draft;
             ChangedFields = changedFields;
             UnresolvedRecipients = unresolvedRecipients;
@@ -1035,6 +1037,15 @@ namespace OutlookAI.Core.Com
             SignatureOverrideError = signatureOverrideError;
             ConversationTopicPreserved = conversationTopicPreserved;
         }
+
+        /// <summary>
+        /// How many <c>&lt;img&gt;</c> elements the stored body LOST across this revision
+        /// (D47). Non-zero only for a draft whose inline image was still a
+        /// <c>file:///</c> LINK rather than an embedded <c>cid:</c> resource - Word cannot
+        /// re-serialize such a link and replaces it with a placeholder shape. Never
+        /// silent: the outcome reports it and names the remedy.
+        /// </summary>
+        public int InlineImagesDropped { get; }
 
         /// <summary>The draft as it stands AFTER the update.</summary>
         public ComDraftInfo Draft { get; }

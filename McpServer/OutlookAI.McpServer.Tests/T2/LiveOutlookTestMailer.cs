@@ -492,6 +492,79 @@ public static class LiveOutlookTestMailer
     }
 
     /// <summary>
+    /// Replaces the raw <c>HTMLBody</c> of one draft this run created. Exists for exactly
+    /// one purpose (D47): seeding a draft in the LEGACY shape - a signature image left as
+    /// a <c>file:///</c> LINK rather than an embedded <c>cid:</c> resource - so the
+    /// update path's rescue of such a draft can be proven rather than assumed. Same S3
+    /// double-match guard as <see cref="AppendToDraftBody"/>: tag AND this run's marker,
+    /// and the item must still be unsent.
+    /// </summary>
+    public static void SetDraftHtmlBody(string storeDisplayName, string entryIdHex, string uniqueMarker, string html)
+    {
+        LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Draft, nameof(SetDraftHtmlBody));
+        if (string.IsNullOrWhiteSpace(entryIdHex))
+        {
+            throw new ArgumentException("EntryID required.", nameof(entryIdHex));
+        }
+
+        if (string.IsNullOrWhiteSpace(uniqueMarker) || uniqueMarker.Length < 12)
+        {
+            throw new ArgumentException("Marker too weak for a safe modify filter (S3).", nameof(uniqueMarker));
+        }
+
+        RunSta<object?>(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? item = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for draft modification.");
+                item = ns.GetItemFromID(entryIdHex, (string)store.StoreID);
+
+                string? subject = null;
+                try
+                {
+                    subject = (string?)item.Subject;
+                }
+                catch (COMException)
+                {
+                }
+
+                if (subject == null
+                    || !subject.Contains(SubjectTag, StringComparison.Ordinal)
+                    || !subject.Contains(uniqueMarker, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Refusing to modify: the item's subject does not carry both the test tag and this run's marker (S3).");
+                }
+
+                if ((bool)item.Sent)
+                {
+                    throw new InvalidOperationException("Refusing to modify: the item is not an unsent draft.");
+                }
+
+                item.HTMLBody = html;
+                item.Save();
+                return null;
+            }
+            finally
+            {
+                Release(item);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
     /// Counts items whose subject contains <paramref name="subjectFragment"/> across
     /// the store's default folders (default set: Drafts, Inbox, Sent Items, Deleted
     /// Items; hub archive coverage via <see cref="HubSweepFolderIdsWithArchive"/>) -

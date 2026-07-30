@@ -2175,6 +2175,9 @@ namespace OutlookAI.Core.Services
                         ? updated.UnresolvedRecipients.Count.ToString(CultureInfo.InvariantCulture)
                         : null),
                     ("conversationTopicPreserved", updated.ConversationTopicPreserved?.ToString().ToLowerInvariant()),
+                    ("inlineImagesDropped", updated.InlineImagesDropped > 0
+                        ? updated.InlineImagesDropped.ToString(CultureInfo.InvariantCulture)
+                        : null),
                     ("displayed", updated.Displayed ? "true" : "false"));
             }
             catch (InvalidOperationException ex)
@@ -2253,8 +2256,21 @@ namespace OutlookAI.Core.Services
                 AttachmentsRemoved = updated.AttachmentsRemoved.Count > 0 ? updated.AttachmentsRemoved : null,
                 AttachmentsNotFound = notRemoved.Count > 0 ? notRemoved : null,
                 AttachmentsFailed = updated.AttachmentsFailed.Count > 0 ? updated.AttachmentsFailed : null,
+                InlineImagesDropped = updated.InlineImagesDropped > 0 ? updated.InlineImagesDropped : (int?)null,
+                InlineImagesAdvice = updated.InlineImagesDropped > 0 ? InlineImagesDroppedAdvice : null,
             };
         }
+
+        /// <summary>
+        /// The remedy for a revision that lost an inline image (D47) - live-proven, not
+        /// guessed: re-supplying <c>signature</c> makes the update re-insert the signature
+        /// file, and the picture is then embedded as it goes in.
+        /// </summary>
+        internal const string InlineImagesDroppedAdvice =
+            "Inline image(s) the draft carried were lost by this revision: they were still linked to a file "
+            + "on disk rather than embedded, and re-rendering the document cannot preserve such a link. "
+            + "Only drafts composed before this was fixed are affected. Call update_draft again with the "
+            + "signature argument set to restore the signature (and its images) in embedded form.";
 
         // ------------------------------------------------------------------ send (Phase 5, v3.MD L5/D4)
 

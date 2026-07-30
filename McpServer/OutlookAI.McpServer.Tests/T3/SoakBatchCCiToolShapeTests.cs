@@ -148,6 +148,16 @@ public sealed class SoakBatchCCiToolShapeTests
         Assert.Contains("UNSENT", description, StringComparison.Ordinal);
         Assert.Contains("confirm_token", description, StringComparison.Ordinal);
         Assert.Contains("NOTHING IS SENT", description, StringComparison.Ordinal);
+
+        // D47: signature images survive, and the one case that cannot is named together
+        // with its remedy - a limitation an agent may not discover by accident.
+        Assert.Contains("SIGNATURE IMAGES survive a revision", description, StringComparison.Ordinal);
+        Assert.Contains("inlineImagesDropped", description, StringComparison.Ordinal);
+        Assert.Contains("older version of this server", description, StringComparison.Ordinal);
+        Assert.Contains("never silent", description, StringComparison.OrdinalIgnoreCase);
+
+        // The retired admission ("images may be lost", with no remedy) must not come back.
+        Assert.DoesNotContain("images are not preserved", description, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

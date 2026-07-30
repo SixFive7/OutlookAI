@@ -923,6 +923,17 @@ namespace OutlookAI.Core.Services
         /// make it onto the draft.
         /// </summary>
         public IReadOnlyList<string>? AttachmentsFailed { get; set; }
+
+        /// <summary>
+        /// Present (non-zero) only when the revision LOST inline images the draft already
+        /// carried (D47) - a draft whose signature image was still a <c>file:///</c> link
+        /// instead of an embedded resource, which Word cannot re-serialize. Paired with
+        /// <see cref="InlineImagesAdvice"/>, which names the fix.
+        /// </summary>
+        public int? InlineImagesDropped { get; set; }
+
+        /// <summary>What to do about <see cref="InlineImagesDropped"/>; null when none were lost.</summary>
+        public string? InlineImagesAdvice { get; set; }
     }
 
     /// <summary>

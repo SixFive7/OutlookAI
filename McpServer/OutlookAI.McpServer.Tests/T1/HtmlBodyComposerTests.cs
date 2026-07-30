@@ -91,4 +91,39 @@ public sealed class HtmlBodyComposerTests
             Assert.Equal(r, r.Trim());
         });
     }
+
+    // ================================== D47: inline-image accounting for update_draft
+
+    [Theory]
+    [InlineData(null, 0)]
+    [InlineData("", 0)]
+    [InlineData("<p>no pictures here</p>", 0)]
+    [InlineData("<img src=\"cid:image001.png@01D\" alt=logo>", 1)]
+    [InlineData("<IMG SRC=x><img/><img\r\nsrc=y>", 3)]
+    [InlineData("<image src=x><imgfoo>", 0)]
+    [InlineData("<img", 0)]
+    public void CountInlineImages_CountsImgElementsOnly(string? html, int expected)
+    {
+        Assert.Equal(expected, HtmlBodyComposer.CountInlineImages(html));
+    }
+
+    [Fact]
+    public void CountInlineImages_SeesTheLossThatMadeD47_LinkedImageBecomesAPlaceholderShape()
+    {
+        // The measured shapes, before and after Word re-serializes a LINKED picture: the
+        // <img> is replaced by a VML placeholder AutoShape carrying only the alt text.
+        const string linked = "<p><img width=1 height=1 src=\"file:///C:/x/sig_files/logo.png\" alt=logo></p>";
+        const string afterRerender = "<p><!--[if gte vml 1]><v:rect id=\"Picture_x0020_1\" alt=\"logo\"/><![endif]--></p>";
+
+        Assert.Equal(1, HtmlBodyComposer.CountInlineImages(linked));
+        Assert.Equal(0, HtmlBodyComposer.CountInlineImages(afterRerender));
+    }
+
+    [Fact]
+    public void CountInlineImages_AnEmbeddedImageSurvivesTheSameRoundTrip()
+    {
+        const string embedded = "<p><img width=1 height=1 src=\"cid:image001.png@01DD202F.4A7E0EF0\" alt=logo></p>";
+
+        Assert.Equal(1, HtmlBodyComposer.CountInlineImages(embedded));
+    }
 }

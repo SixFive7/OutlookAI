@@ -499,6 +499,10 @@ public static class OutlookTools
         + "not pass is left untouched.\n\n"
         + "ATTACHMENTS ARE ADDED: attachments adds files; remove_attachments removes them by file name. Both in one call = "
         + "replace (removals run first).\n\n"
+        + "SIGNATURE IMAGES survive a revision: they are stored embedded in the draft, so re-rendering keeps them. The one "
+        + "exception is a draft composed by an older version of this server, whose signature image is still LINKED to a "
+        + "file on disk - such a link cannot survive the re-render. That is never silent: the result reports "
+        + "inlineImagesDropped with advice, and passing signature restores the signature and its images in embedded form.\n\n"
         + "Only saved, UNSENT drafts in a Drafts folder can be updated - a sent mail, a received mail or an item elsewhere "
         + "is refused with a clear reason and nothing is changed. Any pending send confirm_token for the draft is "
         + "invalidated by the update.")]

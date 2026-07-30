@@ -3729,6 +3729,20 @@ namespace OutlookAI.Core.Com
                     // open), let Close(olSave) commit it, then RE-OPEN the item and apply
                     // every property change to that fresh instance, which already contains
                     // the Word edits and can therefore be Save()d without clobbering them.
+                    // D47: an inline image the draft ALREADY carries can only survive the
+                    // re-render if it is embedded. One that is still a file:/// link (any
+                    // draft composed before D47) is re-serialized by Word as a placeholder
+                    // shape and vanishes. Counted on both sides of the compose so the
+                    // outcome can REPORT the loss instead of letting the agent believe the
+                    // signature came through whole. Only when Word actually runs.
+                    int imagesBefore = 0;
+                    bool countImages = body != null || signatureOverride != null;
+                    if (countImages)
+                    {
+                        imagesBefore = OutlookAI.Core.Text.HtmlBodyComposer.CountInlineImages(
+                            TryGetString(() => (string?)((dynamic)item!).HTMLBody));
+                    }
+
                     if (body != null || signatureOverride != null)
                     {
                         (bool ok, string? composeError) = ReviseHeldDocument(item!, body, signatureOverride);
@@ -3858,6 +3872,14 @@ namespace OutlookAI.Core.Com
                         }
                     }
 
+                    int imagesDropped = 0;
+                    if (countImages)
+                    {
+                        int imagesAfter = OutlookAI.Core.Text.HtmlBodyComposer.CountInlineImages(
+                            TryGetString(() => (string?)((dynamic)fresh!).HTMLBody));
+                        imagesDropped = Math.Max(0, imagesBefore - imagesAfter);
+                    }
+
                     ComDraftInfo info = SnapshotDraft(fresh!);
                     return new ComDraftUpdateResult(
                         info,
@@ -3873,7 +3895,8 @@ namespace OutlookAI.Core.Com
                         signatureOverride?.Name,
                         overrideApplied,
                         null,
-                        topicPreserved);
+                        topicPreserved,
+                        imagesDropped);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -4197,6 +4220,15 @@ namespace OutlookAI.Core.Com
                     (bool bodyOk, string? bodyError) = InsertBodyAboveSignature(
                         document!, body, replaceWholeDocumentWhenNoBoundary: true);
                     error = bodyOk ? null : bodyError ?? "BodyInsertFailed";
+                }
+
+                if (error == null)
+                {
+                    // D47, belt to the create-path braces: any picture still LINKED in this
+                    // document (an older draft, or a signature just re-inserted by the
+                    // override above) is embedded now, so this re-render is the last one
+                    // that could drop it.
+                    _ = EmbedLinkedPictures(document!);
                 }
 
                 if (error == null)
@@ -4730,6 +4762,15 @@ namespace OutlookAI.Core.Com
 
                 if (error == null)
                 {
+                    // D47: embed the signature's images instead of leaving them as
+                    // file:/// links into the Signatures directory. Done HERE, on the
+                    // create path, because that is where the link is born - an update
+                    // then starts from an embedded cid: image and re-renders losslessly.
+                    _ = EmbedLinkedPictures(document!);
+                }
+
+                if (error == null)
+                {
                     // The load-bearing flush (probe-proven): olSave on the SAME held
                     // inspector commits the Word edits into the item.
                     try
@@ -4887,6 +4928,80 @@ namespace OutlookAI.Core.Com
             {
                 Release(bookmarks);
             }
+        }
+
+        /// <summary>
+        /// Turns every LINKED picture in the compose document into an EMBEDDED one, and
+        /// returns how many it converted. Best-effort by design: a failure here must never
+        /// fail a composition, so every COM problem is swallowed and simply not counted.
+        /// <para>
+        /// ⚠ THE MECHANISM THIS EXISTS FOR (live-measured, D47). Word's
+        /// <c>Range.InsertFile</c> of a signature .htm does NOT embed the signature's
+        /// images: it inserts each one as a LINKED <c>InlineShape</c> pointing at the file
+        /// on disk, and Outlook stores that link verbatim, so the saved draft carries
+        /// <c>&lt;img src="file:///…\Signatures\&lt;name&gt;_files\logo.png"&gt;</c> and
+        /// ZERO attachments. The link only renders because the file happens to sit on this
+        /// machine. Re-rendering such a document - which is exactly what
+        /// <c>update_draft</c> does when the held inspector re-materializes the saved HTML
+        /// - makes Word re-serialize the unresolved linked picture as its VML placeholder
+        /// AutoShape (<c>&lt;v:rect … alt="logo"&gt;</c>), and the <c>&lt;img&gt;</c>
+        /// disappears. Embedding the picture at composition time removes the link, so
+        /// Outlook writes real image bytes as an inline <c>cid:</c> attachment that
+        /// survives any number of re-renders - and reaches the recipient, which a
+        /// <c>file:///</c> link never could.
+        /// </para>
+        /// <c>SavePictureWithDocument</c> must be set BEFORE <c>BreakLink</c>: breaking a
+        /// link whose picture is not stored with the document leaves nothing behind.
+        /// </summary>
+        private static int EmbedLinkedPictures(object documentObject)
+        {
+            dynamic doc = documentObject;
+            int embedded = 0;
+            object? shapes = null;
+            try
+            {
+                shapes = doc.InlineShapes;
+                dynamic collection = (dynamic)shapes!;
+                int count = (int)collection.Count;
+                for (int i = 1; i <= count; i++)
+                {
+                    object? shape = null;
+                    object? link = null;
+                    try
+                    {
+                        shape = collection[i];
+
+                        // An already-embedded picture has no LinkFormat: late-bound COM
+                        // answers either null or a binding failure, and both mean skip.
+                        link = ((dynamic)shape!).LinkFormat;
+                        if (link == null)
+                        {
+                            continue;
+                        }
+
+                        ((dynamic)link!).SavePictureWithDocument = true;
+                        ((dynamic)link!).BreakLink();
+                        embedded++;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                    }
+                    finally
+                    {
+                        Release(link);
+                        Release(shape);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+            finally
+            {
+                Release(shapes);
+            }
+
+            return embedded;
         }
 
         /// <summary>

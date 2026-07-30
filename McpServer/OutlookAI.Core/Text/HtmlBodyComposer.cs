@@ -148,5 +148,47 @@ namespace OutlookAI.Core.Text
 
             return result;
         }
+
+        /// <summary>
+        /// Counts the <c>&lt;img&gt;</c> elements in a stored message body (D47). Used to
+        /// detect - and therefore never silently allow - a revision that loses an inline
+        /// image the draft used to carry. Deliberately a plain tag count, not a parse: the
+        /// question is "did the same document come back with fewer pictures", and any
+        /// mechanism that drops one shows up in it.
+        /// <para>
+        /// Only <c>&lt;img</c> followed by a tag-name terminator counts, so an element such
+        /// as <c>&lt;image&gt;</c> is not mistaken for one.
+        /// </para>
+        /// </summary>
+        public static int CountInlineImages(string? html)
+        {
+            if (string.IsNullOrEmpty(html))
+            {
+                return 0;
+            }
+
+            int count = 0;
+            int at = 0;
+            while (true)
+            {
+                int found = html!.IndexOf("<img", at, StringComparison.OrdinalIgnoreCase);
+                if (found < 0)
+                {
+                    return count;
+                }
+
+                at = found + 4;
+                if (at >= html.Length)
+                {
+                    return count;
+                }
+
+                char next = html[at];
+                if (char.IsWhiteSpace(next) || next == '>' || next == '/')
+                {
+                    count++;
+                }
+            }
+        }
     }
 }
