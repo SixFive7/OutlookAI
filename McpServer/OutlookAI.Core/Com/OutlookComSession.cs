@@ -230,45 +230,6 @@ namespace OutlookAI.Core.Com
             });
         }
 
-        /// <summary>
-        /// D49: IUnknown-identity test for "this Explorer IS the lifetime pin". Two COM
-        /// references address the same object only when their IUnknown pointers match -
-        /// comparing RCWs, folder paths or captions would all be wrong here.
-        /// </summary>
-        private bool IsComposeSurfacePin(object? explorer)
-        {
-            object? pin = _composeSurfacePin;
-            if (explorer == null || pin == null)
-            {
-                return false;
-            }
-
-            IntPtr a = IntPtr.Zero;
-            IntPtr b = IntPtr.Zero;
-            try
-            {
-                a = Marshal.GetIUnknownForObject(explorer);
-                b = Marshal.GetIUnknownForObject(pin);
-                return a == b;
-            }
-            catch (Exception)
-            {
-                return false;
-            }
-            finally
-            {
-                if (a != IntPtr.Zero)
-                {
-                    _ = Marshal.Release(a);
-                }
-
-                if (b != IntPtr.Zero)
-                {
-                    _ = Marshal.Release(b);
-                }
-            }
-        }
-
         /// <summary>True when an OUTLOOK.EXE process exists for this session's user.</summary>
         public static bool IsOutlookProcessRunning()
         {
@@ -2245,14 +2206,16 @@ namespace OutlookAI.Core.Com
             {
             }
 
-            // D49: ActiveExplorer() can hand back this session's own LIFETIME PIN - the
-            // deliberately never-displayed Explorer that stops a window-less Outlook from
-            // exiting. It must never be repurposed as a show-me surface: displaying it
-            // would make the pin the user's window, and the first test or user that closes
-            // that window would take the pin with it, which is exactly the failure mode
-            // the pin exists to prevent. Identity is compared through IUnknown, never by
-            // folder or caption.
-            if (explorer != null && IsComposeSurfacePin(explorer))
+            // D49: ActiveExplorer() can hand back a LIFETIME PIN - a deliberately
+            // never-displayed Explorer that stops a window-less Outlook from exiting.
+            // Repurposing one as a show-me surface would make the pin the user's window,
+            // and closing that window would then take the pin with it - exactly the
+            // failure the pin exists to prevent. The test is process-wide on purpose: the
+            // pin holding Outlook up may belong to ANOTHER server session, so ownership
+            // cannot be the criterion. If no Outlook window is visible at all, whatever
+            // came back is by definition not a window the user can see, so a fresh one is
+            // created instead.
+            if (explorer != null && ComposeSurface.CountUserVisibleWindows() == 0)
             {
                 Release(explorer);
                 explorer = null;

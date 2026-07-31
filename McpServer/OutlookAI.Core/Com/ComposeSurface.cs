@@ -244,8 +244,11 @@ namespace OutlookAI.Core.Com
                 int count = (int)((dynamic)explorers!).Count;
                 if (count > 0)
                 {
-                    // Something already holds Outlook open - adding another Explorer would
-                    // be pure cost, and D33 says we create no surface we do not need.
+                    // Anything already holding Outlook open - the user's own window, or
+                    // another server session's pin - makes a second one pure cost, and
+                    // D33 says we create no surface we do not need. A pin is only ever
+                    // RELEASED, never closed, on session teardown, so relying on another
+                    // session's is safe: it outlives that session.
                     return null;
                 }
 
