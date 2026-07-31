@@ -214,6 +214,7 @@ namespace OutlookAI.Core.Com
                         }
                     }
 
+                    ComposeSurface.ForgetPin(_composeSurfacePin);
                     Release(_composeSurfacePin);
                     _composeSurfacePin = null;
                     ComposeSurfacePinned = false;
@@ -2211,11 +2212,10 @@ namespace OutlookAI.Core.Com
             // Repurposing one as a show-me surface would make the pin the user's window,
             // and closing that window would then take the pin with it - exactly the
             // failure the pin exists to prevent. The test is process-wide on purpose: the
-            // pin holding Outlook up may belong to ANOTHER server session, so ownership
-            // cannot be the criterion. If no Outlook window is visible at all, whatever
-            // came back is by definition not a window the user can see, so a fresh one is
-            // created instead.
-            if (explorer != null && ComposeSurface.CountUserVisibleWindows() == 0)
+            // pin holding Outlook up may belong to ANOTHER server session in this
+            // process, so ownership cannot be the criterion - COM identity against the
+            // process-wide pin registry is.
+            if (explorer != null && ComposeSurface.IsPin(explorer))
             {
                 Release(explorer);
                 explorer = null;
@@ -7879,11 +7879,28 @@ namespace OutlookAI.Core.Com
                     _quitSinkRegistration = null;
                     _quitSink = null;
 
-                    // D49: RELEASE the pin, never Close() it. Closing the last Explorer is
-                    // precisely what makes Outlook exit (Phase-1 row 5), and the shipped
-                    // server never stops Outlook (S7). Releasing the reference leaves the
-                    // non-displayed Explorer in Outlook's own collection, so the instance
-                    // this session started keeps running exactly as D17 intends.
+                    // D49: CLOSE the pin, do not merely release it. Measured: an Explorer
+                    // released but left in Outlook's collection outlives the session that
+                    // made it and keeps Outlook up for good - a later Application.Quit
+                    // (the user choosing Exit) then does NOT terminate the process, and
+                    // repeated sessions accumulate invisible Explorers. Closing it here
+                    // restores the pre-D49 lifecycle exactly: the pin exists for precisely
+                    // as long as the session that needs it, and Outlook is left in the
+                    // state it would have been in anyway. Any other window - the user's, or
+                    // another live session's pin - still keeps Outlook running.
+                    if (_composeSurfacePin != null)
+                    {
+                        try
+                        {
+                            ((dynamic)_composeSurfacePin).Close();
+                        }
+                        catch (Exception)
+                        {
+                            // Outlook may already be gone; teardown must not throw.
+                        }
+                    }
+
+                    ComposeSurface.ForgetPin(_composeSurfacePin);
                     Release(_composeSurfacePin);
                     _composeSurfacePin = null;
                     Release(_namespace);

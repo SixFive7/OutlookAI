@@ -53,6 +53,16 @@ namespace OutlookAI.Core.Com
     /// </summary>
     public static class ComposeSurface
     {
+        /// <summary>
+        /// IUnknown pointers of every lifetime pin this PROCESS holds. COM identity is the
+        /// only sound way to recognise a pin: it has no distinguishing folder, caption or
+        /// window title, and several server sessions can be live at once, so per-session
+        /// ownership is not enough to answer "is this Explorer a pin?".
+        /// </summary>
+        private static readonly HashSet<IntPtr> PinPointers = new HashSet<IntPtr>();
+
+        private static readonly object PinLock = new object();
+
         /// <summary>Where a parked window is moved. Far outside any real virtual screen.</summary>
         public const int ParkX = -32000;
 
@@ -80,6 +90,76 @@ namespace OutlookAI.Core.Com
             /// rectangle test to decide ownership.
             /// </summary>
             public bool Visible { get; }
+        }
+
+
+        /// <summary>True when <paramref name="explorer"/> IS one of this process's pins.</summary>
+        public static bool IsPin(object? explorer)
+        {
+            if (explorer == null)
+            {
+                return false;
+            }
+
+            IntPtr p = IntPtr.Zero;
+            try
+            {
+                p = Marshal.GetIUnknownForObject(explorer);
+                lock (PinLock)
+                {
+                    return PinPointers.Contains(p);
+                }
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+            finally
+            {
+                if (p != IntPtr.Zero)
+                {
+                    _ = Marshal.Release(p);
+                }
+            }
+        }
+
+        private static void RememberPin(object explorer, bool remember)
+        {
+            IntPtr p = IntPtr.Zero;
+            try
+            {
+                p = Marshal.GetIUnknownForObject(explorer);
+                lock (PinLock)
+                {
+                    if (remember)
+                    {
+                        _ = PinPointers.Add(p);
+                    }
+                    else
+                    {
+                        _ = PinPointers.Remove(p);
+                    }
+                }
+            }
+            catch (Exception)
+            {
+            }
+            finally
+            {
+                if (p != IntPtr.Zero)
+                {
+                    _ = Marshal.Release(p);
+                }
+            }
+        }
+
+        /// <summary>Drops <paramref name="explorer"/> from the pin registry (teardown).</summary>
+        public static void ForgetPin(object? explorer)
+        {
+            if (explorer != null)
+            {
+                RememberPin(explorer, remember: false);
+            }
         }
 
         /// <summary>
@@ -257,7 +337,9 @@ namespace OutlookAI.Core.Com
                 // 0 = olFolderDisplayNormal. Deliberately NOT followed by Display():
                 // an Explorer that is never displayed owns an INVISIBLE window, which
                 // pins the process without putting anything on screen (Phase-1 row 2).
-                return ((dynamic)explorers!).Add(folder, 0);
+                object created = ((dynamic)explorers!).Add(folder, 0);
+                RememberPin(created, remember: true);
+                return created;
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
