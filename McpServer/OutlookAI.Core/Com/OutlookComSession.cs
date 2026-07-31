@@ -231,6 +231,31 @@ namespace OutlookAI.Core.Com
             });
         }
 
+        /// <summary>
+        /// D49: makes sure this session holds the lifetime pin, creating it if it does not.
+        /// <para>
+        /// Idempotent, and deliberately called from MORE than one place. Doing it once at
+        /// <see cref="Connect"/> is not enough: on a COLD start Outlook may not have its
+        /// Explorers collection or default folders ready when Connect runs, so the attempt
+        /// can fail and leave the session unpinned - and an unpinned session is one whose
+        /// own compose call kills the Outlook it is composing in (Phase-1 row 1). Every
+        /// compose therefore re-ensures it first; when a pin already exists the cost is one
+        /// field test.
+        /// </para>
+        /// MUST run on the STA thread - every caller is already inside a work item.
+        /// </summary>
+        private void EnsureComposeSurfacePin()
+        {
+            if (_composeSurfacePin != null || _application == null || _namespace == null)
+            {
+                return;
+            }
+
+            _composeSurfacePin = ComposeSurface.TryPinProcess(_application, _namespace, out string? pinError);
+            ComposeSurfacePinned = _composeSurfacePin != null;
+            ComposeSurfacePinError = pinError;
+        }
+
         /// <summary>True when an OUTLOOK.EXE process exists for this session's user.</summary>
         public static bool IsOutlookProcessRunning()
         {
@@ -349,10 +374,7 @@ namespace OutlookAI.Core.Com
                     // shows nothing, leaves Process.MainWindowHandle zero (so outlook_health
                     // still reports headless), and does not cost the user promotability -
                     // launching outlook.exe with the pin held still opens a normal window.
-                    session._composeSurfacePin = ComposeSurface.TryPinProcess(
-                        session._application!, session._namespace!, out string? pinError);
-                    session.ComposeSurfacePinned = session._composeSurfacePin != null;
-                    session.ComposeSurfacePinError = pinError;
+                    session.EnsureComposeSurfacePin();
                 });
 
                 // SF-2 fix, part 2: watch the OUTLOOK.EXE process itself (crash / hard
@@ -2364,6 +2386,9 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             ComDraftCreateResult? result = _runner.Run<ComDraftCreateResult?>(() =>
             {
+                // D49: an unpinned session kills the Outlook it composes in - see
+                // EnsureComposeSurfacePin. Idempotent; a field test when already pinned.
+                EnsureComposeSurfacePin();
                 object? account = null;
                 object? deliveryStore = null;
                 object? draftsFolder = null;
@@ -2541,6 +2566,9 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             ComDraftCreateResult? result = _runner.Run<ComDraftCreateResult?>(() =>
             {
+                // D49: an unpinned session kills the Outlook it composes in - see
+                // EnsureComposeSurfacePin. Idempotent; a field test when already pinned.
+                EnsureComposeSurfacePin();
                 dynamic ns = _namespace!;
                 object? source = null;
                 object? sourceParent = null;
@@ -3803,6 +3831,9 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             ComDraftUpdateResult? result = _runner.Run<ComDraftUpdateResult?>(() =>
             {
+                // D49: an unpinned session kills the Outlook it composes in - see
+                // EnsureComposeSurfacePin. Idempotent; a field test when already pinned.
+                EnsureComposeSurfacePin();
                 dynamic ns = _namespace!;
                 object? item = null;
                 object? fresh = null;
