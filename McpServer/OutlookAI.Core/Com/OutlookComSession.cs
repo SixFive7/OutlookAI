@@ -7888,7 +7888,14 @@ namespace OutlookAI.Core.Com
                     // as long as the session that needs it, and Outlook is left in the
                     // state it would have been in anyway. Any other window - the user's, or
                     // another live session's pin - still keeps Outlook running.
-                    if (_composeSurfacePin != null)
+                    // ...but ONLY when this session started Outlook, i.e. when closing the
+                    // pin leaves Outlook exactly as we found it: not running. Closing it
+                    // on a session that merely ATTACHED can pull the surface out from
+                    // under whoever else is using that instance - measured, and it cost a
+                    // full-suite run 16 cascading RPC_S_SERVER_UNAVAILABLE failures when a
+                    // per-collection fixture happened to own the pin and disposed
+                    // mid-run. "Leave Outlook as you found it" is the rule.
+                    if (_composeSurfacePin != null && StartedOutlook)
                     {
                         try
                         {
