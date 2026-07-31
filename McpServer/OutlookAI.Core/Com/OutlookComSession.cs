@@ -130,6 +130,13 @@ namespace OutlookAI.Core.Com
         private Action<OutlookComSession>? _onOutlookGone;
         private int _outlookGoneSignaled;
 
+        /// <summary>
+        /// D49: the non-displayed Explorer that keeps a window-less Outlook alive across an
+        /// <c>Inspector.Close</c>. Released (NEVER Closed - closing the last Explorer is
+        /// what makes Outlook exit) when the session is disposed.
+        /// </summary>
+        private object? _composeSurfacePin;
+
         private OutlookComSession(PumpedStaRunner runner, bool startedOutlook)
         {
             _runner = runner;
@@ -144,6 +151,16 @@ namespace OutlookAI.Core.Com
 
         /// <summary>True when the Application Quit event sink is advised (SF-2 proactive release path).</summary>
         public bool QuitSinkActive { get; private set; }
+
+        /// <summary>
+        /// D49: true when THIS session created the non-displayed Explorer that keeps a
+        /// window-less Outlook alive. False when a window/Explorer already existed (nothing
+        /// to pin) or the attempt failed - see <see cref="ComposeSurfacePinError"/>.
+        /// </summary>
+        public bool ComposeSurfacePinned { get; private set; }
+
+        /// <summary>D49: content-free reason the process pin could not be created, else null.</summary>
+        public string? ComposeSurfacePinError { get; private set; }
 
         /// <summary>True when an OUTLOOK.EXE process exists for this session's user.</summary>
         public static bool IsOutlookProcessRunning()
@@ -253,6 +270,20 @@ namespace OutlookAI.Core.Com
                     {
                         session.QuitSinkActive = false;
                     }
+
+                    // D49 THE PROCESS PIN. A window-less Outlook EXITS the moment the only
+                    // Inspector closes (Phase-1 row 1) - which is the compose path's own
+                    // last step, so every headless draft was killing the instance it had
+                    // just used, taking update_draft (com_failure) and three live-suite
+                    // collections (RPC_S_SERVER_UNAVAILABLE) with it. A NON-DISPLAYED
+                    // Explorer owns an invisible window that keeps the process alive; it
+                    // shows nothing, leaves Process.MainWindowHandle zero (so outlook_health
+                    // still reports headless), and does not cost the user promotability -
+                    // launching outlook.exe with the pin held still opens a normal window.
+                    session._composeSurfacePin = ComposeSurface.TryPinProcess(
+                        session._application!, session._namespace!, out string? pinError);
+                    session.ComposeSurfacePinned = session._composeSurfacePin != null;
+                    session.ComposeSurfacePinError = pinError;
                 });
 
                 // SF-2 fix, part 2: watch the OUTLOOK.EXE process itself (crash / hard
@@ -2197,7 +2228,7 @@ namespace OutlookAI.Core.Com
             return new ComExplorerState(caption, folderPath, folderName, windowState);
         }
 
-        private static string DescribeComFailure(Exception ex)
+        internal static string DescribeComFailure(Exception ex)
         {
             return ex is COMException com
                 ? string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", com.HResult)
@@ -2305,7 +2336,7 @@ namespace OutlookAI.Core.Com
                     // account; a string would not bind).
                     SetSendUsingAccount(mail!, account);
 
-                    (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError, bool wordPlaced) =
+                    (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError, bool wordPlaced, bool surfacePromoted) =
                         ComposeDraft((object)draft, body, signatureOverride);
                     draft.Subject = subject;
                     List<string> unresolved = new List<string>();
@@ -2365,7 +2396,9 @@ namespace OutlookAI.Core.Com
                         wordPlaced,
                         unresolved,
                         conversationTopicPreserved: null,
-                        attachments: SnapshotAttachments(mail!));
+                        attachments: SnapshotAttachments(mail!),
+                        composeSurfacePromoted: surfacePromoted,
+                        composeSurfaceError: wordPlaced ? null : overrideError ?? "NoWordEditor");
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -2488,7 +2521,7 @@ namespace OutlookAI.Core.Com
                         }
                     }
 
-                    (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError, bool wordPlaced) =
+                    (bool signatureInjected, long textBefore, long textAfter, bool overrideApplied, string? overrideError, bool wordPlaced, bool surfacePromoted) =
                         ComposeDraft((object)draft, body, signatureOverride);
                     List<string> unresolved = new List<string>();
                     if (kind == ComDerivedDraftKind.Forward)
@@ -2597,7 +2630,9 @@ namespace OutlookAI.Core.Com
                         wordPlaced,
                         unresolved,
                         topicPreserved,
-                        SnapshotAttachments(mail!));
+                        SnapshotAttachments(mail!),
+                        composeSurfacePromoted: surfacePromoted,
+                        composeSurfaceError: wordPlaced ? null : overrideError ?? "NoWordEditor");
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -4185,25 +4220,17 @@ namespace OutlookAI.Core.Com
                 // call reports success and the stored HTMLBody changes by EXACTLY ZERO
                 // bytes (measured: 38932 -> 38932, new text absent, old text intact).
                 // Activating the inspector materializes the real editing surface.
-                try
-                {
-                    ((dynamic)inspector!).Activate();
-                }
-                catch (Exception ex) when (IsComCallFailure(ex))
-                {
-                }
-
-                try
-                {
-                    document = ((dynamic)inspector!).WordEditor;
-                }
-                catch (Exception ex) when (IsComCallFailure(ex))
-                {
-                }
-
+                // D49: the Activate() is unchanged in PURPOSE and now correct in EFFECT.
+                // It was always required (see above), but on a window-less Outlook a bare
+                // Activate() PAINTS the compose window where the user can see it - a D33
+                // violation that shipped unnoticed because it only happens headless, and
+                // the headless path then died anyway. ComposeSurface parks the window
+                // off-screen FIRST, activates, hides whatever became visible, and hands
+                // back the WordEditor. Nothing is user-visible at any point.
+                document = ComposeSurface.PromoteForWordEditor(inspector!, out string? promoteError);
                 if (document == null)
                 {
-                    error = "NoWordEditor";
+                    error = promoteError ?? "NoWordEditor";
                 }
 
                 if (error == null && signatureOverride != null)
@@ -4686,7 +4713,7 @@ namespace OutlookAI.Core.Com
         /// HTMLBody assignment (whose input still carries the injected signature), so a
         /// draft is never lost or left body-less; the failure is reported content-free.
         /// </summary>
-        private static (bool SignatureInjected, long TextBefore, long TextAfter, bool OverrideApplied, string? OverrideError, bool BodyPlacedViaWordEditor) ComposeDraft(
+        private static (bool SignatureInjected, long TextBefore, long TextAfter, bool OverrideApplied, string? OverrideError, bool BodyPlacedViaWordEditor, bool SurfacePromoted) ComposeDraft(
             object draftObject,
             ComDraftBody body,
             ComSignatureOverride? signatureOverride)
@@ -4698,6 +4725,7 @@ namespace OutlookAI.Core.Com
             long textAfter = textBefore;
             bool injected = false;
             bool wordComposeDone = false;
+            bool promoted = false;
             string? error = null;
 
             object? inspector = null;
@@ -4740,11 +4768,27 @@ namespace OutlookAI.Core.Com
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
+                        // ⚠ Headless does NOT return null here, it THROWS
+                        // COMException "The operation failed." (D49 Phase-1 finding 1).
+                        // Note also that Inspector.IsWordMail() reports TRUE in exactly
+                        // this state, so it is never a usable gate.
                     }
 
                     if (document == null)
                     {
-                        error = "NoWordEditor";
+                        // D49 THE EDITOR PROMOTION. Outlook is window-less, so the editor
+                        // does not exist yet. Park the inspector's (already existing,
+                        // invisible) window off-screen, Activate it, and hide whatever the
+                        // activation put on screen: measured 53-79 ms to a live WordEditor
+                        // with nothing user-visible at any point. Only reached when the
+                        // editor was unobtainable, so a windowed Outlook never gets its
+                        // windows touched and its behaviour is byte-identical to before.
+                        document = ComposeSurface.PromoteForWordEditor(inspector!, out string? promoteError);
+                        promoted = document != null;
+                        if (document == null)
+                        {
+                            error = promoteError ?? "NoWordEditor";
+                        }
                     }
                 }
 
@@ -4815,7 +4859,7 @@ namespace OutlookAI.Core.Com
                     html.Length > 0 ? html : null, fragment);
             }
 
-            return (injected, textBefore, textAfter, signatureOverride != null && wordComposeDone, error, wordComposeDone);
+            return (injected, textBefore, textAfter, signatureOverride != null && wordComposeDone, error, wordComposeDone, promoted && wordComposeDone);
         }
 
         /// <summary>
@@ -5366,11 +5410,30 @@ namespace OutlookAI.Core.Com
                     }
 
                     inspector = ((dynamic)itemObject!).GetInspector;
-                    document = inspector != null ? ((dynamic)inspector).WordEditor : null;
+                    if (inspector == null)
+                    {
+                        capturedError = "NoInspector";
+                        return false;
+                    }
+
+                    try
+                    {
+                        document = ((dynamic)inspector).WordEditor;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        // Headless throws rather than returning null (D49).
+                    }
+
                     if (document == null)
                     {
-                        capturedError = "NoWordEditor";
-                        return false;
+                        // D49: same invisible promotion as the two compose paths.
+                        document = ComposeSurface.PromoteForWordEditor(inspector, out string? promoteError);
+                        if (document == null)
+                        {
+                            capturedError = promoteError ?? "NoWordEditor";
+                            return false;
+                        }
                     }
 
                     (bool ok, string? overrideError) = ApplySignatureToDocument(document, signatureFilePath);
@@ -7677,7 +7740,7 @@ namespace OutlookAI.Core.Com
             }
         }
 
-        private static void Release(object? comObject)
+        internal static void Release(object? comObject)
         {
             if (comObject != null && Marshal.IsComObject(comObject))
             {
@@ -7732,6 +7795,14 @@ namespace OutlookAI.Core.Com
                     _quitSinkRegistration?.Unadvise();
                     _quitSinkRegistration = null;
                     _quitSink = null;
+
+                    // D49: RELEASE the pin, never Close() it. Closing the last Explorer is
+                    // precisely what makes Outlook exit (Phase-1 row 5), and the shipped
+                    // server never stops Outlook (S7). Releasing the reference leaves the
+                    // non-displayed Explorer in Outlook's own collection, so the instance
+                    // this session started keeps running exactly as D17 intends.
+                    Release(_composeSurfacePin);
+                    _composeSurfacePin = null;
                     Release(_namespace);
                     Release(_application);
                     _namespace = null;

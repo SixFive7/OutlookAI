@@ -636,8 +636,12 @@ namespace OutlookAI.Core.Com
             bool bodyPlacedViaWordEditor = false,
             IReadOnlyList<string>? unresolvedRecipients = null,
             bool? conversationTopicPreserved = null,
-            IReadOnlyList<ComAttachmentInfo>? attachments = null)
+            IReadOnlyList<ComAttachmentInfo>? attachments = null,
+            bool composeSurfacePromoted = false,
+            string? composeSurfaceError = null)
         {
+            ComposeSurfacePromoted = composeSurfacePromoted;
+            ComposeSurfaceError = composeSurfaceError;
             Attachments = attachments ?? Array.Empty<ComAttachmentInfo>();
             Draft = draft;
             AccountResolved = accountResolved;
@@ -704,6 +708,21 @@ namespace OutlookAI.Core.Com
         /// fell back to the single wholesale HTMLBody assignment.
         /// </summary>
         public bool BodyPlacedViaWordEditor { get; }
+
+        /// <summary>
+        /// D49: true when the Word editor only became available because the compose surface
+        /// was promoted invisibly (Outlook was window-less). Reported so headless
+        /// composition is observable rather than merely assumed to work.
+        /// </summary>
+        public bool ComposeSurfacePromoted { get; }
+
+        /// <summary>
+        /// D49: content-free reason the Word compose surface could not be obtained, set
+        /// WHENEVER the composition fell back to the HTMLBody splice - never gated on a
+        /// signature override having been requested, because the fallback degrades the
+        /// draft either way and a degradation the caller cannot see is the D48 defect.
+        /// </summary>
+        public string? ComposeSurfaceError { get; }
 
         /// <summary>Addresses Outlook could not resolve against the address book (never silently dropped).</summary>
         public IReadOnlyList<string> UnresolvedRecipients { get; }
