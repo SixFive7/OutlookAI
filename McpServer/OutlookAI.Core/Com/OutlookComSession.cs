@@ -2169,6 +2169,24 @@ namespace OutlookAI.Core.Com
             }
 
             dynamic e = explorer!;
+
+            // D49: ActiveExplorer() can hand back the session's own PROCESS PIN - a
+            // deliberately never-displayed Explorer that owns an invisible window. The
+            // show-me tools exist to put something on the user's screen, so an explorer
+            // with no visible window anywhere is Displayed before it is activated;
+            // otherwise goto_folder/show_search_results would set CurrentFolder on a
+            // window nobody can see and report success.
+            try
+            {
+                if (ComposeSurface.CountUserVisibleWindows() == 0)
+                {
+                    e.Display();
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+
             try
             {
                 if ((int)e.WindowState == 1) // olMinimized
