@@ -1857,6 +1857,13 @@ namespace OutlookAI.Core.Services
                     ("signature", created.SignatureOverrideName),
                     ("signatureApplied", created.SignatureOverrideName != null ? (created.SignatureOverrideApplied ? "true" : "false") : null),
                     ("bodyPlacement", created.BodyPlacedViaWordEditor ? "wordEditor" : "html"),
+                    // D49: the compose surface is audited on EVERY draft - "promoted" is the
+                    // headless-but-fully-capable case, and a degraded composition names its
+                    // reason here as well as on the wire, so a lesser draft is never silent.
+                    ("composeSurface", created.BodyPlacedViaWordEditor
+                        ? (created.ComposeSurfacePromoted ? "wordEditorPromoted" : "wordEditor")
+                        : "htmlFallback"),
+                    ("composeSurfaceError", created.BodyPlacedViaWordEditor ? null : created.ComposeSurfaceError),
                     ("bodyFormat", body.FormatName),
                     ("displayed", created.Displayed ? "true" : "false"),
                     ("recipients", created.Draft.Recipients.Count.ToString(CultureInfo.InvariantCulture)),
@@ -1924,9 +1931,24 @@ namespace OutlookAI.Core.Services
                 ReadReceiptRequested = created.Draft.ReadReceiptRequested ? true : (bool?)null,
                 BodyFormat = body.FormatName,
                 BodyPlacement = created.BodyPlacedViaWordEditor ? "wordEditor" : "html",
+                ComposeSurfacePromoted = created.ComposeSurfacePromoted ? true : (bool?)null,
+                ComposeSurfaceError = created.BodyPlacedViaWordEditor ? null : created.ComposeSurfaceError,
+                ComposeSurfaceAdvice = created.BodyPlacedViaWordEditor ? null : ComposeSurfaceDegradedAdvice,
                 HtmlAdjustments = htmlAdjustments.Count > 0 ? htmlAdjustments : null,
             };
         }
+
+        /// <summary>
+        /// D49: what a caller is told when a draft could only be composed through the
+        /// HTMLBody fallback. It names every capability the fallback does NOT deliver,
+        /// because the D48 defect was precisely that this degradation was invisible.
+        /// </summary>
+        internal const string ComposeSurfaceDegradedAdvice =
+            "Outlook's Word compose surface could not be obtained, so this draft was composed by the HTMLBody fallback: "
+            + "the body sits outside Outlook's own WordSection1 container (it does not inherit the message style), "
+            + "an explicit signature override could not be applied, and a signature's linked images were not embedded. "
+            + "The draft was still created and nothing was lost. Retry once - if it keeps happening, Outlook is in a state "
+            + "that refuses an editor; opening any Outlook window (goto_folder) makes the full compose path available again.";
 
         // ------------------------------------------------------------------ update / discard drafts (D46, soak fix 19)
 

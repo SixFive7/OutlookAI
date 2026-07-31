@@ -804,6 +804,25 @@ namespace OutlookAI.Core.Services
         public string? BodyPlacement { get; set; }
 
         /// <summary>
+        /// D49: present (true) only when Outlook was window-less and the compose surface had
+        /// to be promoted invisibly to obtain the Word editor. Purely informational - the
+        /// draft is composed to the full standard either way; it exists so headless
+        /// composition is observable instead of assumed.
+        /// </summary>
+        public bool? ComposeSurfacePromoted { get; set; }
+
+        /// <summary>
+        /// D49: present ONLY when the composition fell back to the HTMLBody splice, naming
+        /// the content-free reason the Word surface was unavailable. Never gated on a
+        /// signature override having been requested: a fallback draft is a lesser draft
+        /// whatever the caller asked for, and D48 shipped precisely because that was silent.
+        /// </summary>
+        public string? ComposeSurfaceError { get; set; }
+
+        /// <summary>D49: what the caller can do about a degraded composition. Present with <see cref="ComposeSurfaceError"/>.</summary>
+        public string? ComposeSurfaceAdvice { get; set; }
+
+        /// <summary>
         /// Only present when body_html was supplied AND normalization changed something:
         /// exactly what was dropped, unwrapped, escaped or repaired, so the agent can see
         /// how its markup was altered instead of guessing (batch B, B1).
