@@ -99,6 +99,12 @@ public sealed class LiveDisconnectRecoveryTests
                 WindowProbe.PostClose(hwnd);
             }
 
+            // D49: the parked windows are no longer the only thing holding Outlook up -
+            // a live session pins it with an invisible Explorer. Wait for the windows to
+            // go, then relinquish the pin, or Outlook will (correctly) refuse to exit.
+            _ = PollUntil(() => WindowProbe.VisibleOutlookWindows().Count == 0, TimeSpan.FromSeconds(60));
+            _ = independentGateway.Run(s => s.TryCloseInvisibleExplorers());
+
             bool preExited = PollUntil(() => Process.GetProcessesByName("OUTLOOK").Length == 0, TimeSpan.FromSeconds(120));
             Assert.True(preExited, "Outlook did not exit within 120 s of closing its parked windows (safety counts were clean)");
             _output.WriteLine("windowed Outlook exited after graceful close; re-autostarting headless for the scenario");
@@ -150,6 +156,27 @@ public sealed class LiveDisconnectRecoveryTests
         // Graceful user-close-equivalent on exactly our window.
         _output.WriteLine("posting WM_CLOSE to our window");
         WindowProbe.PostClose(ourWindow);
+
+        // (0) D49 - THE NEW CONTRACT, asserted before the old scenario can even be
+        // staged. Losing its last window used to kill Outlook within ~1-2 s even with
+        // COM clients attached, and that is exactly what broke the compose path: closing
+        // the Inspector a draft was written in took the whole instance down, which is
+        // where update_draft's com_failure and the three RPC_S_SERVER_UNAVAILABLE suite
+        // failures came from. A live session now holds an invisible Explorer, so Outlook
+        // returns to the window-less state the product prefers (D33) instead of dying.
+        bool windowGone = PollUntil(() => WindowProbe.VisibleOutlookWindows().Count == 0, TimeSpan.FromSeconds(30));
+        Assert.True(windowGone, "our window did not close");
+        Thread.Sleep(3000); // well past the measured ~1-2 s forced-shutdown window
+        Assert.True(
+            Process.GetProcessesByName("OUTLOOK").Length > 0,
+            "D49 regression: Outlook exited when its last window closed - the compose-surface pin is not holding it");
+        Assert.True(independentGateway.IsConnected, "the session must stay connected across a window close");
+        _output.WriteLine("D49: Outlook survived losing its last window and is headless again; session still connected");
+
+        // Now relinquish the pin, which is the ONLY thing still keeping Outlook alive -
+        // otherwise the disconnect scenario below cannot be staged at all any more.
+        int closedExplorers = independentGateway.Run(s => s.TryCloseInvisibleExplorers());
+        _output.WriteLine($"released the lifetime pin ({closedExplorers} invisible Explorer(s) closed)");
 
         // (1) Background release: the independent gateway receives NO calls - only the
         // process-exit watcher can flip IsConnected (the sharp SF-2 assert).

@@ -162,6 +162,113 @@ namespace OutlookAI.Core.Com
         /// <summary>D49: content-free reason the process pin could not be created, else null.</summary>
         public string? ComposeSurfacePinError { get; private set; }
 
+        /// <summary>
+        /// D49: relinquishes the lifetime pin - closes every Explorer when NONE of them
+        /// has a visible window, i.e. when the only thing keeping Outlook alive is the
+        /// invisible surface this server holds. Returns how many were closed.
+        /// <para>
+        /// Refuses (returns 0) the moment any Outlook window is visible: closing a window
+        /// the user can see is never this method's business, and the check is the same
+        /// user-owned/not-user-owned rule the promotion uses.
+        /// </para>
+        /// <para>
+        /// Note that closing the last Explorer is precisely what makes a window-less
+        /// Outlook exit, which is why the normal Dispose path only RELEASES the pin. This
+        /// exists so the disconnect-recovery suite can still stage a real Outlook exit -
+        /// the scenario the pin otherwise (deliberately) prevents.
+        /// </para>
+        /// </summary>
+        public int TryCloseInvisibleExplorers()
+        {
+            EnsureNotDisposed();
+            return _runner.Run(() =>
+            {
+                if (ComposeSurface.CountUserVisibleWindows() > 0)
+                {
+                    return 0;
+                }
+
+                object? explorers = null;
+                try
+                {
+                    explorers = ((dynamic)_application!).Explorers;
+                    int count = (int)((dynamic)explorers!).Count;
+                    int closed = 0;
+
+                    // Reverse order: closing an Explorer removes it from the collection.
+                    for (int i = count; i >= 1; i--)
+                    {
+                        object? explorer = null;
+                        try
+                        {
+                            explorer = ((dynamic)explorers!).Item(i);
+                            ((dynamic)explorer!).Close();
+                            closed++;
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                        }
+                        finally
+                        {
+                            Release(explorer);
+                        }
+                    }
+
+                    Release(_composeSurfacePin);
+                    _composeSurfacePin = null;
+                    ComposeSurfacePinned = false;
+                    return closed;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    return 0;
+                }
+                finally
+                {
+                    Release(explorers);
+                }
+            });
+        }
+
+        /// <summary>
+        /// D49: IUnknown-identity test for "this Explorer IS the lifetime pin". Two COM
+        /// references address the same object only when their IUnknown pointers match -
+        /// comparing RCWs, folder paths or captions would all be wrong here.
+        /// </summary>
+        private bool IsComposeSurfacePin(object? explorer)
+        {
+            object? pin = _composeSurfacePin;
+            if (explorer == null || pin == null)
+            {
+                return false;
+            }
+
+            IntPtr a = IntPtr.Zero;
+            IntPtr b = IntPtr.Zero;
+            try
+            {
+                a = Marshal.GetIUnknownForObject(explorer);
+                b = Marshal.GetIUnknownForObject(pin);
+                return a == b;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+            finally
+            {
+                if (a != IntPtr.Zero)
+                {
+                    _ = Marshal.Release(a);
+                }
+
+                if (b != IntPtr.Zero)
+                {
+                    _ = Marshal.Release(b);
+                }
+            }
+        }
+
         /// <summary>True when an OUTLOOK.EXE process exists for this session's user.</summary>
         public static bool IsOutlookProcessRunning()
         {
@@ -2138,6 +2245,19 @@ namespace OutlookAI.Core.Com
             {
             }
 
+            // D49: ActiveExplorer() can hand back this session's own LIFETIME PIN - the
+            // deliberately never-displayed Explorer that stops a window-less Outlook from
+            // exiting. It must never be repurposed as a show-me surface: displaying it
+            // would make the pin the user's window, and the first test or user that closes
+            // that window would take the pin with it, which is exactly the failure mode
+            // the pin exists to prevent. Identity is compared through IUnknown, never by
+            // folder or caption.
+            if (explorer != null && IsComposeSurfacePin(explorer))
+            {
+                Release(explorer);
+                explorer = null;
+            }
+
             if (explorer == null)
             {
                 object? defaultFolder = null;
@@ -2169,24 +2289,6 @@ namespace OutlookAI.Core.Com
             }
 
             dynamic e = explorer!;
-
-            // D49: ActiveExplorer() can hand back the session's own PROCESS PIN - a
-            // deliberately never-displayed Explorer that owns an invisible window. The
-            // show-me tools exist to put something on the user's screen, so an explorer
-            // with no visible window anywhere is Displayed before it is activated;
-            // otherwise goto_folder/show_search_results would set CurrentFolder on a
-            // window nobody can see and report success.
-            try
-            {
-                if (ComposeSurface.CountUserVisibleWindows() == 0)
-                {
-                    e.Display();
-                }
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-            }
-
             try
             {
                 if ((int)e.WindowState == 1) // olMinimized
