@@ -31,6 +31,7 @@ namespace OutlookAI.TaskPane
         private readonly Label lblOstValues;
         private readonly Label lblRestart;
         private readonly Label lblGpo;
+        private readonly Label lblMcp;
         private readonly Button btnApply;
         private readonly Button btnClose;
 
@@ -95,7 +96,7 @@ namespace OutlookAI.TaskPane
             MinimizeBox = false;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(470, 607);
+            ClientSize = new Size(470, 655);
 
             int margin = 12;
             int innerWidth = ClientSize.Width - 2 * margin;
@@ -215,18 +216,27 @@ namespace OutlookAI.TaskPane
                 Visible = false,
             };
 
+            // Mail-server registration with Claude Code. Always visible: "connected and
+            // pointing at the right place" is worth stating, not just its absence.
+            lblMcp = new Label
+            {
+                Name = "lblMcp",
+                Location = new Point(margin, 571),
+                Size = new Size(innerWidth, 44),
+            };
+
             btnApply = new Button
             {
                 Name = "btnApply",
                 Text = "Apply now",
-                Location = new Point(ClientSize.Width - margin - 170, 571),
+                Location = new Point(ClientSize.Width - margin - 170, 619),
                 Size = new Size(84, 26),
             };
             btnClose = new Button
             {
                 Name = "btnClose",
                 Text = "Close",
-                Location = new Point(ClientSize.Width - margin - 80, 571),
+                Location = new Point(ClientSize.Width - margin - 80, 619),
                 Size = new Size(80, 26),
             };
 
@@ -237,6 +247,7 @@ namespace OutlookAI.TaskPane
             Controls.Add(grpOst);
             Controls.Add(lblRestart);
             Controls.Add(lblGpo);
+            Controls.Add(lblMcp);
             Controls.Add(btnApply);
             Controls.Add(btnClose);
 
@@ -247,7 +258,15 @@ namespace OutlookAI.TaskPane
             chkSearch.CheckedChanged += OnToggleChanged;
             chkCaching.CheckedChanged += OnToggleChanged;
             chkOst.CheckedChanged += OnToggleChanged;
-            btnApply.Click += (s, e) => { OutlookTuningService.ReconcileFromUi(); RefreshFromState(); };
+            btnApply.Click += (s, e) =>
+            {
+                OutlookTuningService.ReconcileFromUi();
+                // Same button, same promise: re-check the mail-server registration too, so a
+                // drift the user just fixed (installing the runtime, say) is picked up without
+                // restarting Outlook. Never throws out of its public surface.
+                McpRegistrationService.Reconcile();
+                RefreshFromState();
+            };
             btnClose.Click += (s, e) => Close();
 
             ResumeLayout(false);
@@ -277,8 +296,67 @@ namespace OutlookAI.TaskPane
             RefreshFromState();
         }
 
+        // Reads only what the last reconcile recorded, so opening the dialog never touches
+        // Claude Code's config file. "Apply now" is what re-runs the reconcile.
+        private void RefreshMcpLine()
+        {
+            try
+            {
+                var reg = McpRegistrationService.GetSnapshot();
+                string text;
+                switch (reg.Status)
+                {
+                    case McpRegistrationService.StatusOk:
+                        text = "Mail server: registered with Claude Code.";
+                        break;
+                    case McpRegistrationService.StatusHealed:
+                        text = "Mail server: registration was pointing elsewhere and has been repaired.";
+                        break;
+                    case McpRegistrationService.StatusNoClaude:
+                        text = "Mail server: Claude Code was not found on this machine, so there is nothing to register with.";
+                        break;
+                    case McpRegistrationService.StatusNoServer:
+                        text = "Mail server: not installed alongside the add-in; any existing registration was left unchanged.";
+                        break;
+                    case McpRegistrationService.StatusNoRuntime:
+                        text = "Mail server: needs the .NET 10 runtime, which is not installed. Get it from "
+                               + McpRegistrationService.DotnetRuntimeDownloadUrl + " and restart Outlook.";
+                        break;
+                    case McpRegistrationService.StatusParseFailed:
+                        text = "Mail server: Claude Code's configuration could not be read, so it was left untouched.";
+                        break;
+                    default:
+                        text = "Mail server: registration state unknown"
+                               + (string.IsNullOrEmpty(reg.Detail) ? "." : (" — " + reg.Detail));
+                        break;
+                }
+
+                if (!string.IsNullOrEmpty(reg.RegisteredCommand) &&
+                    (reg.Status == McpRegistrationService.StatusOk || reg.Status == McpRegistrationService.StatusHealed))
+                {
+                    text += Environment.NewLine + reg.RegisteredCommand;
+                }
+
+                lblMcp.Text = text;
+                lblMcp.ForeColor = IsMcpProblem(reg.Status) ? ThemeService.StatusError : ThemeService.SecondaryText;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("MCP line refresh: " + ex.Message);
+            }
+        }
+
+        private static bool IsMcpProblem(string status)
+        {
+            return status == McpRegistrationService.StatusNoRuntime
+                || status == McpRegistrationService.StatusParseFailed
+                || status == McpRegistrationService.StatusError;
+        }
+
         private void RefreshFromState()
         {
+            RefreshMcpLine();
+
             OutlookTuningService.TuningSnapshot snap;
             try
             {
@@ -379,6 +457,9 @@ namespace OutlookAI.TaskPane
             lblSearchWarning.ForeColor = ThemeService.SecondaryText;
             lblRestart.ForeColor = ThemeService.StatusError;
             lblGpo.ForeColor = ThemeService.SecondaryText;
+            // Colour depends on the state, so let the refresh own it rather than pinning a
+            // colour here that the next refresh would immediately overwrite.
+            RefreshMcpLine();
 
             foreach (var grp in new[] { grpSearch, grpCaching, grpOst })
                 grp.ForeColor = ThemeService.Text;

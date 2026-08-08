@@ -130,6 +130,22 @@ namespace OutlookAI
             try { OutlookTuningService.ReconcileOnStartup(); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("Tuning reconcile: " + ex.Message); }
 
+            // Keep Claude Code's MCP registration pointing at the installed mail server, and
+            // heal it when it drifts (a developer build output, or a path from an older
+            // install). Off the UI thread, unlike the tuning reconcile above: this one reads
+            // and may rewrite a file in the user profile, and Outlook startup must not wait
+            // on disk. It touches no COM and no Outlook object model, so running it on a
+            // worker thread does not disturb the add-in's COM ownership rules.
+            try
+            {
+                System.Threading.Tasks.Task.Run(() =>
+                {
+                    try { McpRegistrationService.Reconcile(); }
+                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine("MCP registration reconcile: " + ex.Message); }
+                });
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("MCP registration reconcile start: " + ex.Message); }
+
             _inspectors = this.Application.Inspectors;
             _inspectors.NewInspector += Inspectors_NewInspector;
 

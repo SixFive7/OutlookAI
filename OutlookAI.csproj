@@ -176,6 +176,7 @@
     </Compile>
 
     <Compile Include="Services\ClaudeServices.cs" />
+    <Compile Include="Services\McpRegistrationService.cs" />
     <Compile Include="Services\OutlookTuningService.cs" />
     <Compile Include="Services\SignatureStore.cs" />
     <Compile Include="Services\ThemeService.cs" />
