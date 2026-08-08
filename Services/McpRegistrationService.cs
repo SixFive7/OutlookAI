@@ -307,8 +307,13 @@ namespace OutlookAI.Services
         {
             try
             {
+                // The 64-bit registry view and the 64-bit Program Files explicitly: Outlook
+                // may be a 32-bit process, and under WOW64 the default view would redirect
+                // into Wow6432Node and to the 32-bit Program Files - neither of which is
+                // where the x64 runtime this server needs lives.
                 string root = null;
-                using (var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedhost"))
+                using (var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+                using (var key = hklm.OpenSubKey(@"SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedhost"))
                 {
                     if (key != null)
                     {
@@ -320,9 +325,10 @@ namespace OutlookAI.Services
 
                 if (string.IsNullOrEmpty(root))
                 {
-                    root = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                        @"dotnet\shared\Microsoft.NETCore.App");
+                    string programFiles = Environment.GetEnvironmentVariable("ProgramW6432");
+                    if (string.IsNullOrEmpty(programFiles))
+                        programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+                    root = Path.Combine(programFiles, @"dotnet\shared\Microsoft.NETCore.App");
                 }
 
                 if (!Directory.Exists(root))

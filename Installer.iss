@@ -88,11 +88,22 @@ end;
 // sibling 'sharedfx' key is NOT reliable - it is absent on machines that do have the
 // runtime (verified on the development machine, which has 10.0.10 installed), which is
 // why detection probes the filesystem rather than the registry.
+// HKLM64 / {commonpf64} deliberately: this setup is a 32-bit process, so a plain HKLM
+// read would be redirected into Wow6432Node and a plain {commonpf} would point at the
+// 32-bit Program Files - neither of which is where the x64 runtime lives. Both constants
+// exist only on 64-bit Windows, hence the IsWin64 guard (a 32-bit Windows cannot run this
+// x64 server at all, so reporting "not installed" there is correct).
 function DotnetSharedFrameworkRoot: string;
 var
   base: string;
 begin
-  if RegQueryStringValue(HKLM, 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedhost', 'Path', base) and (base <> '') then
+  if not IsWin64 then
+  begin
+    Result := '';
+    exit;
+  end;
+
+  if RegQueryStringValue(HKLM64, 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedhost', 'Path', base) and (base <> '') then
     Result := AddBackslash(base) + 'shared\Microsoft.NETCore.App'
   else
     Result := ExpandConstant('{commonpf64}\dotnet\shared\Microsoft.NETCore.App');
@@ -109,7 +120,7 @@ var
 begin
   Result := False;
   root := DotnetSharedFrameworkRoot;
-  if not DirExists(root) then
+  if (root = '') or (not DirExists(root)) then
     exit;
 
   if FindFirst(AddBackslash(root) + '*', FindRec) then
