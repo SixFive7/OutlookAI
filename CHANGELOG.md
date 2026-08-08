@@ -62,6 +62,7 @@
 - Add mail reading tools: full message read with safe truncation, sender/recipient details, conversation (thread) view, and saving attachments to disk so the assistant can open them.
 - Add mailbox insight tools: account and store listing (delegate and online-only stores flagged), folder trees with unread counts, and an index freshness self-report with actionable advice.
 - Update the README with the MCP server and Settings documentation, and add developer documentation for the MCP server.
+- Remove a superseded OutlookAI signing certificate from your Trusted Publishers store during install and update — its private key was briefly exposed publicly, so it should no longer be trusted. Current releases are signed with a different, unaffected certificate.
 
 ## v2.3.4.145 - 2026-07-22
 

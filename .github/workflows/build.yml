@@ -1,0 +1,57 @@
+name: Build
+
+# Compile-only validation so broken builds are caught on pull requests before a
+# release is cut. Does not sign, publish, or create a release.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Generate temporary signing certificate
+        shell: pwsh
+        # VSTO requires ClickOnce manifest signing to be enabled AND the cert present in
+        # the store; it cannot be disabled. Use a throwaway self-signed cert so this gate
+        # validates the full build without needing the real signing secret.
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=OutlookAI CI Build" -CertStoreLocation Cert:\CurrentUser\My
+          "SIGN_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+
+      - name: Build
+        run: msbuild OutlookAI.csproj /p:Configuration=Release /p:TreatWarningsAsErrors=true /p:ManifestCertificateThumbprint=${{ env.SIGN_THUMBPRINT }} /p:DefineConstants="VSTO40%3BTRACE"
+
+      - name: Validate installer script
+        shell: pwsh
+        # Compile installer.iss so a script error is caught here instead of mid-release.
+        # Also confirms iscc is present on the runner image (the installer step relies on
+        # it being preinstalled). [Files] needs publish\ to exist; a placeholder suffices
+        # for a syntax check.
+        run: |
+          New-Item -ItemType Directory -Force publish | Out-Null
+          Set-Content publish\placeholder.txt "placeholder"
+          iscc /DMyAppVersion=0.0.0.1 /O"$env:RUNNER_TEMP\issout" installer.iss
+
+  dependency-review:
+    # Flags known-vulnerable or disallowed-license dependencies introduced by a PR.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v5.0.0

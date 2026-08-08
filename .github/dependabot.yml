@@ -1,0 +1,13 @@
+# Dependabot keeps the workflow's GitHub Actions up to date.
+# The release workflow floats major tags (e.g. actions/checkout@v7), so these PRs
+# mainly surface new MAJOR versions - keeping the pipeline current without going stale.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns:
+          - "*"

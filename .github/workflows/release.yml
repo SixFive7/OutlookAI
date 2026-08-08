@@ -9,7 +9,14 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: write       # push the stamped changelog; create the release and upload the asset
+  id-token: write       # OIDC token for build-provenance attestation (Sigstore)
+  attestations: write   # record the build-provenance attestation
+
+# Serialize releases so two manual dispatches can't race the push to master.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -17,9 +24,10 @@ jobs:
     # (Microsoft.VisualStudio.Tools.Applications.Hosting) the ClickOnce signing task needs.
     # Pin to the VS 2022 image, which still ships it.
     runs-on: windows-2022
+    timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -116,9 +124,6 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3
 
-      - name: Setup NuGet
-        uses: NuGet/setup-nuget@v3
-
       - name: Import signing certificate
         run: |
           $pfxBytes = [Convert]::FromBase64String("${{ secrets.PFX_BASE64 }}")
@@ -127,9 +132,16 @@ jobs:
           $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My
           Remove-Item $pfxPath
           Write-Host "Imported certificate: $($cert.Thumbprint)"
-
-      - name: Restore packages
-        run: nuget restore OutlookAI.csproj
+          # Fail if the signing cert has expired; warn as it approaches expiry.
+          $daysLeft = [int]($cert.NotAfter - (Get-Date)).TotalDays
+          if ($daysLeft -lt 0) {
+            Write-Error "::error::Signing certificate EXPIRED on $($cert.NotAfter). Renew before releasing."
+            exit 1
+          } elseif ($daysLeft -lt 30) {
+            Write-Warning "::warning::Signing certificate expires in $daysLeft days (on $($cert.NotAfter))."
+          } else {
+            Write-Host "Signing certificate valid for $daysLeft more days (expires $($cert.NotAfter))."
+          }
 
       - name: Build and Publish
         run: >
@@ -150,9 +162,6 @@ jobs:
           Export-Certificate -Cert $cert -FilePath publish\OutlookAI.cer -Type CERT
           Write-Host "Exported certificate: $($cert.Subject) ($($cert.Thumbprint))"
 
-      - name: Install Inno Setup
-        run: choco install innosetup -y --no-progress
-
       - name: Create installer
         run: iscc /DMyAppVersion=${{ steps.version.outputs.FULL_VERSION }} Installer.iss
 
@@ -162,7 +171,33 @@ jobs:
           $signtool = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
             Where-Object { $_.FullName -match 'x64' } | Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $signtool) { Write-Error "signtool.exe not found"; exit 1 }
-          & $signtool.FullName sign /a /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "OutlookAI-v${{ steps.version.outputs.FULL_VERSION }}.exe"
+          $exe = "OutlookAI-v${{ steps.version.outputs.FULL_VERSION }}.exe"
+          # Try multiple RFC-3161 timestamp servers so a single server outage doesn't fail the release.
+          $tsServers = @(
+            'http://timestamp.digicert.com',
+            'http://timestamp.sectigo.com'
+          )
+          $signed = $false
+          foreach ($ts in $tsServers) {
+            Write-Host "Signing with timestamp server $ts"
+            & $signtool.FullName sign /a /fd SHA256 /tr $ts /td SHA256 $exe
+            if ($LASTEXITCODE -eq 0) { $signed = $true; break }
+            Write-Warning "Timestamp server $ts failed (exit $LASTEXITCODE); trying next..."
+            Start-Sleep -Seconds 5
+          }
+          if (-not $signed) { Write-Error "All timestamp servers failed"; exit 1 }
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: OutlookAI-v${{ steps.version.outputs.FULL_VERSION }}.exe
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: OutlookAI-installer
+          path: OutlookAI-v${{ steps.version.outputs.FULL_VERSION }}.exe
+          if-no-files-found: error
 
       - name: Commit stamped changelog
         run: |
@@ -177,10 +212,11 @@ jobs:
           git diff --staged --quiet && echo "No changes to commit" || (git commit -m "Release v${{ steps.version.outputs.FULL_VERSION }}" && git push)
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.version.outputs.FULL_VERSION }}
-          target_commitish: ${{ github.ref_name }}
-          name: OutlookAI v${{ steps.version.outputs.FULL_VERSION }}
-          body_path: release_notes.txt
-          files: OutlookAI-v${{ steps.version.outputs.FULL_VERSION }}.exe
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          gh release create "v${{ steps.version.outputs.FULL_VERSION }}"
+          "OutlookAI-v${{ steps.version.outputs.FULL_VERSION }}.exe"
+          --target "${{ github.ref_name }}"
+          --title "OutlookAI v${{ steps.version.outputs.FULL_VERSION }}"
+          --notes-file release_notes.txt
