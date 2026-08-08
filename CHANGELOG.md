@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v3.0.0.319 - 2026-08-08
+
 - Add the OutlookAI MCP server: a local server that lets AI agents such as Claude Code work with your mail - it searches all locally indexed Outlook mail (all accounts, delegate mailboxes and attachment contents) in milliseconds.
 - Install the mail server with the add-in: it now ships in the same installer, under a McpServer folder next to the add-in, and both carry the same version so one update covers both. The server needs the .NET 10 runtime (the base runtime, not the desktop one), which the installer downloads and installs for you like it already does for .NET Framework 4.8 and the VSTO runtime. As with those, an automatic background update does not install prerequisites - it runs unattended after Outlook closes and cannot ask you for permission - so if the runtime is missing OutlookAI Settings says so and links to the download; the add-in itself is unaffected either way.
 - Register the mail server automatically, and keep it registered: on every Outlook start OutlookAI points Claude Code at the installed server and repairs the entry if it has drifted, so there is no setup command to run any more. Your Claude Code configuration is treated as the file it is - a configuration that cannot be read is never rewritten, everything unrelated to OutlookAI is left byte for byte as it was, the previous file is kept as a backup, and an entry that is already correct is not touched at all. If Claude Code is not installed, or the .NET 10 runtime is missing, nothing is changed and the reason is shown in OutlookAI Settings. The health report also states whether the registration matches the server that is actually running.
