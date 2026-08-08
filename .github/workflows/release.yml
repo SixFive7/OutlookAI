@@ -160,6 +160,52 @@ jobs:
           /p:IsWebBootstrapper=false
           /p:DefineConstants="VSTO40%3BTRACE"
 
+      # Installer.iss registers the add-in as `file:///{app}\OutlookAI.vsto|vstolocal`.
+      # `|vstolocal` means "load in place, no ClickOnce", and the VSTO runtime then resolves
+      # the add-in assemblies from the folder that holds the .vsto - it does NOT descend into
+      # the ClickOnce `Application Files\<version>\` folder that /target:Publish writes them
+      # to, and it does not undo the `.deploy` rename. So the publish tree on its own gives a
+      # registration that cannot load: Outlook logs `FileNotFoundException: Could not load
+      # file or assembly 'OutlookAI, Version=<ver>'` and sets LoadBehavior=2. That has been
+      # true of every release since 1b098ad (v2.3.3.141), which replaced the VSTOInstaller.exe
+      # ClickOnce install with the direct |vstolocal registration but kept the publish layout.
+      # Fix: put an un-suffixed copy of the payload next to the manifest. The ClickOnce tree
+      # stays as published (the .vsto still references it, and it costs ~230 KB), so nothing
+      # about signing, versioning or the deployment manifests changes.
+      - name: Flatten VSTO payload next to the manifest (|vstolocal)
+        shell: pwsh
+        run: |
+          $appFiles = "publish\Application Files"
+          if (-not (Test-Path $appFiles)) {
+            Write-Error "VSTO publish produced no '$appFiles' folder"; exit 1
+          }
+          $verDirs = @(Get-ChildItem $appFiles -Directory)
+          if ($verDirs.Count -ne 1) {
+            Write-Error "Expected exactly one versioned payload folder under '$appFiles', found $($verDirs.Count): $($verDirs.Name -join ', ')"
+            exit 1
+          }
+          # OutlookAI.vsto is skipped: publish writes a byte-identical copy of the deployment
+          # manifest into the versioned folder, and publish\OutlookAI.vsto is the one that is
+          # registered - copying over it would be a no-op at best and a surprise at worst.
+          Get-ChildItem $verDirs[0].FullName -File |
+            Where-Object { $_.Name -ne 'OutlookAI.vsto' } |
+            ForEach-Object {
+              $dest = Join-Path "publish" ($_.Name -replace '\.deploy$', '')
+              Copy-Item $_.FullName $dest -Force
+              Write-Host "flattened $($_.Name) -> $dest"
+            }
+          foreach ($required in @('publish\OutlookAI.vsto', 'publish\OutlookAI.dll.manifest', 'publish\OutlookAI.dll')) {
+            if (-not (Test-Path $required)) { Write-Error "Missing after flatten: $required"; exit 1 }
+          }
+          # The add-in assembly next to the manifest must be the stamped one - this is the
+          # file the registration actually loads, so a version mismatch here is a dead add-in.
+          $dllVersion = (Get-Item 'publish\OutlookAI.dll').VersionInfo.FileVersion
+          if ($dllVersion -ne "${{ steps.version.outputs.FULL_VERSION }}") {
+            Write-Error "Flattened OutlookAI.dll is $dllVersion, expected ${{ steps.version.outputs.FULL_VERSION }}"
+            exit 1
+          }
+          Write-Host "Flattened add-in payload verified at $dllVersion"
+
       # Must run AFTER the msbuild publish above (which owns publish\) and BEFORE the
       # installer is compiled, so the payload is inside the tree Installer.iss packages.
       # Framework-dependent on purpose (v3.MD Phase 8, user decision): self-contained would

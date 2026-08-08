@@ -45,7 +45,14 @@ Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs creat
 ; when installed, but directly in bin\Release for a developer build).
 Root: HKCU; Subkey: "Software\OutlookAI"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletevalue
 
-; Register add-in with Outlook
+; Register add-in with Outlook.
+; `|vstolocal` = load in place, no ClickOnce. The VSTO runtime then resolves the add-in
+; assemblies from the folder holding the .vsto - it does NOT look inside the ClickOnce
+; `Application Files\<version>\` folder, and it does not undo the `.deploy` rename. So
+; {app} must contain OutlookAI.vsto, OutlookAI.dll.manifest AND the un-suffixed assemblies
+; side by side; the release workflow's "Flatten VSTO payload" step is what puts them there.
+; Without it the add-in fails to load with FileNotFoundException and Outlook sets
+; LoadBehavior=2 (the defect shipped in v2.3.3.141 through v3.0.0.319).
 Root: HKCU; Subkey: "Software\Microsoft\Office\Outlook\Addins\OutlookAI"; ValueType: string; ValueName: "Manifest"; ValueData: "file:///{app}\OutlookAI.vsto|vstolocal"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Microsoft\Office\Outlook\Addins\OutlookAI"; ValueType: dword; ValueName: "LoadBehavior"; ValueData: "3"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Microsoft\Office\Outlook\Addins\OutlookAI"; ValueType: string; ValueName: "FriendlyName"; ValueData: "OutlookAI"; Flags: uninsdeletekey

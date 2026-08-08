@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix the add-in not loading at all after installing: since v2.3.3.141 the installer put the add-in's files in a folder layout Outlook could not load them from, so an installed OutlookAI silently disabled itself on the first Outlook start and left you with no ribbon button and no writing sidebar. The installer now places them where Outlook looks, and an install is checked at build time so this cannot ship again. If you are on v2.3.3.141, v2.3.4.145 or v3.0.0.319 you must install this update by hand - a disabled add-in can never update itself.
+
 ## v3.0.0.319 - 2026-08-08
 
 - Add the OutlookAI MCP server: a local server that lets AI agents such as Claude Code work with your mail - it searches all locally indexed Outlook mail (all accounts, delegate mailboxes and attachment contents) in milliseconds.
