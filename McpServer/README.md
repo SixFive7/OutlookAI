@@ -4,6 +4,8 @@ The `McpServer/` folder contains the v3 layer of OutlookAI: a local **MCP (Model
 
 This document is for contributors. User-facing documentation is in the [repository README](../README.md#mcp-server-mail-search-reading-and-drafting-for-ai-agents).
 
+As of Phase 8 the server ships inside the add-in installer and the add-in keeps its Claude Code registration correct by itself — see [Deployment and registration](#deployment-and-registration) for the installed layout, the .NET 10 prerequisite, and the developer path.
+
 ## Architecture
 
 Two independent data paths, one process:
@@ -73,6 +75,14 @@ dotnet test  McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.cspro
 
 `McpServer/Directory.Build.props` enforces `TreatWarningsAsErrors`, nullable, and latest C# for all three projects. Building Core standalone gates **both** targets; a net48 break fails the build. CI is `.github/workflows/mcpserver.yml` (windows runner, dotnet only, live tier excluded).
 
+The **shipped** artifact is not a `dotnet build` output — the release workflow publishes it into the installer payload. To reproduce that shape locally:
+
+```
+dotnet publish McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj -c Release -r win-x64 --self-contained false -o <out-dir>
+```
+
+Add `-p:Version=<major.minor.patch.build>` to reproduce the release's version stamp; without it the build carries the `99.99.99.0` developer version from `Directory.Build.props`. See [Deployment and registration](#deployment-and-registration).
+
 ### Test tiers
 
 | Tier | What | Where it runs |
@@ -89,15 +99,53 @@ Live-test conventions:
 - Tests may start Outlook (headless COM start) and drive its UI, but never kill or restart it. Test output never prints subjects/bodies from business stores — counts, ids, hashes, booleans only.
 - Tests run sequentially (`xunit.runner.json` disables collection parallelism) so live timing and Outlook interactions stay deterministic. The T3 client locates the built server exe via an `AssemblyMetadata` attribute baked into the tests csproj.
 
-## Registration
+## Deployment and registration
 
-Register the built server user-globally for Claude Code (any MCP client works equivalently):
+### Installed mode (the shipping path, Phase 8)
+
+The server ships inside the normal add-in installer. The release workflow publishes it **framework-dependent, `win-x64`** into `publish\McpServer\`, where `Installer.iss`'s single recursive payload rule (`Source: "publish\*" … recursesubdirs`) picks it up, so it lands at:
 
 ```
+{app}\McpServer\OutlookAI.McpServer.exe        {app} = %LOCALAPPDATA%\OutlookAI\Setup
+```
+
+`{app}` is per-user (`PrivilegesRequired=lowest`, no admin for the install itself) and is recorded in `HKCU\Software\OutlookAI\InstallDir`, so the add-in resolves the server from the registry rather than guessing from its own assembly location — installed, that assembly sits under `{app}\Application Files\<version>\`, but in a developer build it sits directly in `bin\Release`.
+
+Framework-dependent is a deliberate choice: self-contained would add ~70 MB and blow past the auto-updater's hard 50 MB download cap (`UpdateService.maxDownloadBytes`, enforced by a release-workflow gate). The prerequisite that buys is the **base** .NET 10 runtime — `Microsoft.NETCore.App` 10.x, **not** the Desktop runtime, since nothing here references WinForms or WPF. Default roll-forward is `Minor`, so any 10.x satisfies it and 11.x would not; both the installer's `IsNetRuntime10Installed` and the add-in's `McpRegistrationService.IsDotnetRuntime10Installed` therefore probe for a `10.` directory specifically, and both probe the **filesystem** (`…\dotnet\shared\Microsoft.NETCore.App`) because the `sharedfx` registry key is absent on machines that do have the runtime. The installer downloads and installs it like it already does for .NET Framework 4.8 and the VSTO runtime — **interactive installs only**: a silent auto-update runs unattended after Outlook closes, and the elevation prompt would sit there unanswered. On that path the add-in detects the missing runtime instead and reports it.
+
+**Both components carry one version.** The release stamps the same `FULL_VERSION` into `Properties/AssemblyInfo.cs` and into the server via `-p:Version=`, and the workflow fails the release if the published exe's `FileVersion` does not match. Local builds of both keep `99.99.99.0` (`McpServer/Directory.Build.props`), which is the marker the add-in's `UpdateService` uses to skip self-updating a developer build.
+
+**Per-session processes and file-in-use.** Claude Code spawns one server process per agent session (it exits on stdin EOF), so several copies typically hold their own image file open when an update lands. `CloseApplications=yes` alone does not deal with them — Restart Manager has no window to ask — so `StopRunningMcpServers` stops them explicitly at `ssInstall`, i.e. **before** any file is replaced, matching on `ExecutablePath` under `{app}`. Matching by path and never by image name is what keeps a developer build running from a source tree alive during an install. A session whose server was stopped simply spawns a fresh one on its next mail call; nothing is persisted in the server process. What that costs the session is the per-process state: hit ids (`h1`, `h2`, …) and send-confirmation tokens are invalidated, and the error text tells the agent to re-search.
+
+### The add-in owns the registration
+
+`Services/McpRegistrationService.cs` (add-in side, net48) reconciles `~/.claude.json` on **every Outlook start**, off the UI thread, so that `mcpServers.outlookai.command` names the installed server. Same on-every-start reconcile shape as `OutlookTuningService`, for the same reason: it heals drift instead of trusting a one-shot install-time write. `claude mcp add` is no longer part of the shipping path.
+
+The file belongs to the Claude Code CLI, is large, and is rewritten by that CLI, so the discipline is defensive:
+
+- a file that does not parse is **never** written to (a truncating rewrite would cost the user every project entry in it) — it is reported as `config_unreadable`
+- only the `mcpServers` value is re-rendered; `TryFindTopLevelValueSpan` locates that span depth- and string-aware, and every other byte is spliced through unchanged, so no unrelated setting is reformatted or reordered and a nested `mcpServers` key inside a project entry cannot be mistaken for the top-level one
+- other servers, and any extra keys on the `outlookai` entry, are carried over verbatim; the entry is normalized to `type: stdio` with `command` = the installed exe (plus empty `args`/`env` when absent)
+- the result is re-parsed and checked (top-level key count unchanged, the command reads back as the installed server) *before* anything is written
+- the write is atomic via `File.Replace`, leaving the previous content as `~/.claude.json.outlookai-backup`
+- an already-correct entry is a **no-op** — no write, no backup churn
+
+It stands down and reports rather than guessing when Claude Code is absent, when no server sits next to the add-in, or when the .NET 10 runtime is missing. Every run records its outcome under `HKCU\Software\OutlookAI\Mcp` (`Status`, `Detail`, `Command`, `ResolvedServerPath`, `Healed`, `LastReconcileUtc`) — that key is the contract between the add-in and `outlook_health`. Status codes: `ok`, `healed`, `claude_code_not_installed`, `server_not_installed`, `dotnet_runtime_missing`, `config_unreadable`, `error`. Everything is per-user (HKCU + the user profile): no elevation, no COM, no Outlook object model.
+
+The add-in surfaces the same state as a status line in the OutlookAI Settings dialog, whose **Apply now** re-runs the reconcile.
+
+### Developer setup (secondary path)
+
+Building the server and registering the build output by hand still works, and is what contributors do during development and soak:
+
+```
+dotnet build McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj -c Release
 claude mcp add --scope user outlookai <absolute-path-to>\McpServer\OutlookAI.McpServer\bin\Release\net10.0-windows\OutlookAI.McpServer.exe
 ```
 
-One server process is spawned per agent session and exits on stdin EOF. Hit ids (`h1`, `h2`, …) and send-confirmation tokens are per-process; a restart invalidates them (the error text tells the agent to re-search). During development/soak the registration points at build output; installer/updater integration is a later productization step.
+Any MCP client works equivalently — the server speaks MCP over stdio.
+
+A developer **add-in** build resolves no installed server beside it, so the reconcile reports `server_not_installed` and leaves such a registration alone by design. An installed add-in on the same machine is the opposite case: it *will* take the registration over on the next Outlook start (`healed`), which is exactly the drift the feature exists to fix — re-run the `claude mcp add` above to point it back at your build, and expect to do so again after the next Outlook start. To sanity-check where a live session's server actually came from, call `outlook_health` and read `registration.runningFrom`.
 
 ### Server instructions (MCP `initialize`)
 
@@ -122,5 +170,16 @@ One server process is spawned per agent session and exits on stdin EOF. Hit ids 
 ## Health & diagnostics
 
 `outlook_health` reports everything the server depends on (Outlook process/version/headless state, probed COM liveness, store reachability, index freshness globally AND per store with actionable advice, WSearch service state, audit writability, tuning state, installer mutex) without ever starting Outlook — it merges the former `health` and `index_status` tools into one call. The audit log at `%LOCALAPPDATA%\OutlookAI\audit.log` records every write operation with timestamps and EntryIDs.
+
+The **`registration`** block (Phase 8, `HealthReporting.ReadMcpRegistration`) answers "is this server the one Claude Code is configured to spawn?":
+
+| Field | Meaning |
+|---|---|
+| `status` | `ok` (the registered command IS this executable), `drifted` (registered, but naming something else — typically a stale developer build path), `absent` (no `outlookai` entry), `unreadable` (config present but not parseable, so the add-in never rewrites it), `unknown` (config could not be examined) |
+| `runningFrom` | The executable hosting this process (`CurrentProcessPath()` — not `Environment.ProcessPath`, which does not exist on the net48 target Core also compiles for) |
+| `registeredCommand` | `mcpServers.outlookai.command` as read from `~/.claude.json` |
+| `addInStatus`, `addInHealed`, `addInLastReconcileUtc`, `addInResolvedServerPath` | What the add-in's last reconcile recorded under `HKCU\Software\OutlookAI\Mcp`; null when the add-in has never run one |
+
+`status` is computed by comparing `registeredCommand` against `runningFrom` (path comparison, not string comparison — casing and separators may differ for the same file), so drift is visible **even when the add-in has never reconciled**, and the two halves of the block can legitimately disagree: that disagreement is the signal. Health only ever *reports* on `~/.claude.json` — it never reads it for writing and never repairs it. Repair is the add-in's job.
 
 The tuning block of `outlook_health` also carries `uiSearchBackend` — the EFFECTIVE Outlook UI search backend read from the live registry (`DisableServerAssistedSearch`, policy hive authoritative over the user hive; absent/0 = Outlook's server-assisted default). `"local"` means the Outlook search box queries the same Windows Search index the agent's `search` uses; `"server-assisted"` means UI results are server-capped and differently ranked, so what the user sees can diverge from what the agent finds — `show_search_results` then appends a strong advice note recommending the Search tuning group be re-enabled. The registry value stays deliberately user-togglable: disabling it is the sanctioned mitigation for the documented replies-stick-in-Outbox side effect of local-search mode.
