@@ -9,6 +9,14 @@
     built with `dotnet build`.
   -->
   <PropertyGroup>
+    <!--
+      Developer-build version, matching the add-in's Properties/AssemblyInfo.cs convention
+      (v3.MD Phase 8 / R11): both components carry 99.99.99.0 until a release stamps them.
+      The release workflow overrides this with -p:Version=<FULL_VERSION>, the same value it
+      stamps into AssemblyInfo.cs, so one release produces one version across the whole app.
+      Major 99 is the marker the add-in's UpdateService uses to skip self-updating a dev build.
+    -->
+    <Version>99.99.99.0</Version>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
