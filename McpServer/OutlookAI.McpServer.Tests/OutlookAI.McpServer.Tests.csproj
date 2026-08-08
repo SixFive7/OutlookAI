@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- x64 to match the server host; T2 live tests (Phase 1+) will also need an x64
+         test host for the Search.CollatorDSO OLE DB provider. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>OutlookAI.McpServer.Tests</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <!-- PNG encoding for the S5 screenshot evidence (T2 live tier only; Windows-only
+         like the rest of the test host). Pinned in the 10.0.x family (v3.MD D31). -->
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OutlookAI.Core\OutlookAI.Core.csproj" />
+    <ProjectReference Include="..\OutlookAI.McpServer\OutlookAI.McpServer.csproj" />
+    <!-- Incident-7 remediation console (one-shot operator tool): referenced so its
+         decision rules stay pinned by T1 RemediationRulesTests and the project keeps
+         compiling in CI. -->
+    <ProjectReference Include="..\OutlookAI.RemediationTools\OutlookAI.RemediationTools.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Sequential collections: live tests share one Outlook and time COM operations;
+         parallel collections would also let the fresh-mode send race the oracle walk. -->
+    <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Absolute path to the built server exe, baked in at build time so the T3
+         conformance test can spawn it regardless of the test host's working directory.
+         The ProjectReference above guarantees the exe is built first. -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>McpServerExePath</_Parameter1>
+      <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\OutlookAI.McpServer\bin\$(Configuration)\net10.0-windows\OutlookAI.McpServer.exe'))</_Parameter2>
+    </AssemblyAttribute>
+    <!-- Test project directory, so T2 live tests can locate the gitignored
+         live-fixtures/ folder (machine-local settings; never committed - v3.MD S6). -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TestProjectDir</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

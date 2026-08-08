@@ -1,0 +1,25 @@
+<Project>
+  <!--
+    Shared build settings for all v3 McpServer projects (see v3.MD sections 0.4/0.5).
+    Scoped to McpServer/ only - the VSTO add-in at the repo root is old-style MSBuild
+    and is not affected by this file.
+
+    Build these projects by explicit csproj path (dotnet build McpServer/...), never
+    via OutlookAI.slnx: the solution only contains the VSTO project, which cannot be
+    built with `dotnet build`.
+  -->
+  <PropertyGroup>
+    <!--
+      Developer-build version, matching the add-in's Properties/AssemblyInfo.cs convention
+      (v3.MD Phase 8 / R11): both components carry 99.99.99.0 until a release stamps them.
+      The release workflow overrides this with -p:Version=<FULL_VERSION>, the same value it
+      stamps into AssemblyInfo.cs, so one release produces one version across the whole app.
+      Major 99 is the marker the add-in's UpdateService uses to skip self-updating a dev build.
+    -->
+    <Version>99.99.99.0</Version>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+</Project>

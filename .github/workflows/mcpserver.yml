@@ -1,0 +1,54 @@
+name: McpServer
+
+# Builds the v3 MCP server projects and runs the non-live test suite
+# (T1 unit + T3 stdio conformance). Complements build.yml/codeql.yml, which cover
+# the VSTO add-in: this workflow deliberately does NOT build OutlookAI.csproj -
+# the add-in needs MSBuild + VSTO tooling and is validated by those workflows.
+# Live (T2) tests are excluded: they need the real Windows Search index and
+# Outlook on the dev machine.
+on:
+  push:
+    branches: [master, v3]
+    paths:
+      - 'McpServer/**'
+      - '.github/workflows/mcpserver.yml'
+  pull_request:
+    paths:
+      - 'McpServer/**'
+      - '.github/workflows/mcpserver.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcpserver-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      # Build by explicit csproj path, never via OutlookAI.slnx: the solution only
+      # contains the VSTO project, which cannot be built with `dotnet build`.
+      # Building Core standalone gates BOTH targets (net48 + net10.0-windows) - the
+      # net48 target is the v3.1 add-in-host compatibility gate (v3.MD R10/D18 v2).
+      - name: Build OutlookAI.Core (net48 + net10.0-windows)
+        run: dotnet build McpServer/OutlookAI.Core/OutlookAI.Core.csproj -c Release
+
+      - name: Build OutlookAI.McpServer
+        run: dotnet build McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj -c Release
+
+      - name: Build OutlookAI.McpServer.Tests
+        run: dotnet build McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj -c Release
+
+      - name: Run tests (live tier excluded)
+        run: dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj -c Release --no-build --filter "Category!=Live"

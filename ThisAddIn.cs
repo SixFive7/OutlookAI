@@ -17,6 +17,16 @@ namespace OutlookAI
 
         internal Microsoft.Office.Core.IRibbonUI RibbonUI { get; set; }
 
+        // Created on Outlook's main UI thread during startup; lets code that may run on a
+        // non-UI thread (the COMAddIn.Object automation surface — out-of-process COM calls
+        // arrive on RPC worker threads) marshal UI work onto the UI thread. Never shown.
+        private System.Windows.Forms.Control _uiMarshalControl;
+
+        internal System.Windows.Forms.Control UiMarshalControl
+        {
+            get { return _uiMarshalControl; }
+        }
+
         internal static void ReleaseCom(object obj)
         {
             if (obj != null)
@@ -99,9 +109,42 @@ namespace OutlookAI
             if (installerRunning)
                 return;
 
+            try
+            {
+                _uiMarshalControl = new System.Windows.Forms.Control();
+                var forceHandle = _uiMarshalControl.Handle; // force creation on the UI thread
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("UI marshal control: " + ex.Message);
+                _uiMarshalControl = null;
+            }
+
             ClaudeService.WarmUp();
             UpdateService.Start();
             ThemeService.StartWatching();
+
+            // Keep the user's Outlook tuning (search / caching / OST headroom) applied.
+            // Registry-only, idempotent, and never throws out of its public surface, but
+            // guard anyway: tuning must never be able to break add-in startup.
+            try { OutlookTuningService.ReconcileOnStartup(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("Tuning reconcile: " + ex.Message); }
+
+            // Keep Claude Code's MCP registration pointing at the installed mail server, and
+            // heal it when it drifts (a developer build output, or a path from an older
+            // install). Off the UI thread, unlike the tuning reconcile above: this one reads
+            // and may rewrite a file in the user profile, and Outlook startup must not wait
+            // on disk. It touches no COM and no Outlook object model, so running it on a
+            // worker thread does not disturb the add-in's COM ownership rules.
+            try
+            {
+                System.Threading.Tasks.Task.Run(() =>
+                {
+                    try { McpRegistrationService.Reconcile(); }
+                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine("MCP registration reconcile: " + ex.Message); }
+                });
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("MCP registration reconcile start: " + ex.Message); }
 
             _inspectors = this.Application.Inspectors;
             _inspectors.NewInspector += Inspectors_NewInspector;
@@ -123,6 +166,13 @@ namespace OutlookAI
 
         private void ThisAddIn_Shutdown(object sender, EventArgs e)
         {
+            try { SettingsDialog.CloseIfOpen(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("Settings close on shutdown: " + ex.Message); }
+
+            try { _uiMarshalControl?.Dispose(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("UI marshal dispose: " + ex.Message); }
+            _uiMarshalControl = null;
+
             UpdateService.Stop();
             ThemeService.StopWatching();
             ClaudeService.Shutdown();
@@ -459,6 +509,18 @@ namespace OutlookAI
         {
             _ribbon = new Ribbon();
             return _ribbon;
+        }
+
+        // Exposes a small automation object on COMAddIn.Object so out-of-process callers
+        // (unattended verification, future tooling) can open/close the settings dialog and
+        // read tuning state without driving the ribbon UI.
+        private AddInAutomation _automation;
+
+        protected override object RequestComAddInAutomationService()
+        {
+            if (_automation == null)
+                _automation = new AddInAutomation();
+            return _automation;
         }
 
         #region VSTO generated code

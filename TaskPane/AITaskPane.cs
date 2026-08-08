@@ -24,6 +24,9 @@ namespace OutlookAI.TaskPane
         private bool _freshDraft;
         private bool _isProcessing;
 
+        // D38: "Select the best signature" needs at least one installed signature.
+        private bool _signaturesAvailable;
+
         // Debug: 7 clicks within 3 seconds to enable
         private bool _debug;
         private int _debugClickCount;
@@ -39,6 +42,7 @@ namespace OutlookAI.TaskPane
             ApplyTheme();
             ThemeService.ThemeChanged += OnThemeChanged;
             SetupTooltips();
+            RefreshSignatureAvailability();
             lblVersion.Click += lblVersion_Click;
             lblVersion.DoubleClick += lblVersion_Click;
 
@@ -175,6 +179,17 @@ namespace OutlookAI.TaskPane
             lblStatus.Visible = false;
             _editHistory.Clear();
             _freshDraft = false;
+            RefreshSignatureAvailability();
+        }
+
+        /// <summary>
+        /// The signature button is enabled only while at least one signature is
+        /// installed (cheap directory listing; re-checked when the pane is reused).
+        /// </summary>
+        private void RefreshSignatureAvailability()
+        {
+            _signaturesAvailable = SignatureStore.AnySignatureInstalled();
+            btnSelectSignature.Enabled = _signaturesAvailable && !_isProcessing;
         }
 
         // === Button click handlers ===
@@ -263,6 +278,316 @@ namespace OutlookAI.TaskPane
                 await ProcessAction(ClaudeService.ActionType.Draft, txtPrompt.Text, selectedText);
             }
             catch (Exception ex) { ShowStatus(ex.Message, true); }
+        }
+
+        private async void btnSelectSignature_Click(object sender, EventArgs e)
+        {
+            try { await ProcessSelectSignature(); }
+            catch (Exception ex) { ShowStatus(ex.Message, true); }
+        }
+
+        // === D38: Select the best signature ===
+
+        /// <summary>
+        /// Gathers the draft context (recipients + draft body + quoted thread), lets
+        /// the AI pick the best installed signature (skipped when only one exists),
+        /// and applies it through the SAME _MailAutoSig bookmark machinery that
+        /// anchors every other pane action - draft text and quoted thread are never
+        /// touched, only the signature region is replaced (or inserted above the
+        /// quote / at the end when none exists yet).
+        /// </summary>
+        private async Task ProcessSelectSignature()
+        {
+            if (_isProcessing) return;
+            _isProcessing = true;
+            object preAsyncDoc = null;
+            try
+            {
+                SetUIEnabled(false);
+
+                var signatures = SignatureStore.ListSignatures();
+                if (signatures.Count == 0)
+                {
+                    RefreshSignatureAvailability();
+                    ShowStatus("No signatures are installed in Outlook.", true);
+                    return;
+                }
+
+                string draftText;
+                string threadText;
+
+                object doc = null;
+                try
+                {
+                    doc = GetWordDocument();
+                    if (doc == null)
+                    {
+                        ShowStatus("Could not access email editor.", true);
+                        return;
+                    }
+
+                    dynamic wordDoc = doc;
+                    var bmks = wordDoc.Bookmarks;
+                    bmks.ShowHidden = true;
+                    ThisAddIn.ReleaseCom((object)bmks);
+                    DebugLog("SelectSignature BEFORE read", wordDoc);
+
+                    draftText = ReadDraftText(wordDoc);
+                    threadText = ReadThreadText(wordDoc);
+                    preAsyncDoc = doc;
+                    doc = null;
+                }
+                finally
+                {
+                    ThisAddIn.ReleaseCom(doc);
+                }
+
+                string recipientsText = GetRecipientSummary();
+
+                SignatureStore.SignatureOption chosen;
+                if (signatures.Count == 1)
+                {
+                    // One signature installed: the choice is trivial - no AI call.
+                    chosen = signatures[0];
+                }
+                else
+                {
+                    ShowStatus("Selecting the best signature...", false);
+                    string answer = await ClaudeService.SelectSignatureAsync(
+                        signatures, draftText, threadText, recipientsText);
+                    chosen = SignatureStore.FindByName(signatures, answer);
+                    if (chosen == null)
+                    {
+                        string shown = answer ?? "";
+                        if (shown.Length > 60) shown = shown.Substring(0, 60) + "...";
+                        InvokeOnUI(() => ShowStatus("AI answered \"" + shown + "\", which matches no installed signature.", true));
+                        return;
+                    }
+                }
+
+                var capturedDoc = preAsyncDoc;
+                InvokeOnUI(() =>
+                {
+                    if (_disposed) return;
+                    if (ApplySignatureToDocument(capturedDoc, chosen.FilePath))
+                        ShowStatus("Applied signature \"" + chosen.Name + "\".", false);
+                });
+            }
+            catch (Exception ex)
+            {
+                InvokeOnUI(() =>
+                {
+                    string msg = ex.InnerException != null ? ex.InnerException.Message : ex.Message;
+                    ShowStatus(msg, true);
+                });
+            }
+            finally
+            {
+                ThisAddIn.ReleaseCom(preAsyncDoc);
+                _isProcessing = false;
+                if (!_disposed && !IsDisposed)
+                    SetUIEnabled(true);
+            }
+        }
+
+        /// <summary>
+        /// The signature-region bookmark dance (ADDITIVE reuse of the pane's proven
+        /// _MailAutoSig machinery - same pattern as Outlook's own Insert &gt; Signature
+        /// switcher): replace the _MailAutoSig region when it exists, else insert
+        /// above _MailOriginal (quoted thread), else at the end of the document; then
+        /// recreate the _MailAutoSig bookmark over the inserted content so the
+        /// draft/signature/thread split keeps working. The draft region [0, draftEnd)
+        /// and the quoted thread are never modified.
+        /// </summary>
+        private bool ApplySignatureToDocument(object capturedDoc, string signatureFilePath)
+        {
+            object doc = capturedDoc;
+            dynamic bookmarks = null;
+            try
+            {
+                if (doc == null)
+                {
+                    ShowStatus("Could not access email editor.", true);
+                    return false;
+                }
+
+                if (signatureFilePath == null || !System.IO.File.Exists(signatureFilePath))
+                {
+                    ShowStatus("The signature's file no longer exists.", true);
+                    return false;
+                }
+
+                dynamic wordDoc = doc;
+                bookmarks = wordDoc.Bookmarks;
+                bookmarks.ShowHidden = true;
+                DebugLog("ApplySignature BEFORE", wordDoc);
+
+                int insertAt;
+                if (bookmarks.Exists("_MailAutoSig"))
+                {
+                    // Replace: drop the marker, then the old signature content itself.
+                    var bmk = bookmarks["_MailAutoSig"];
+                    var range = bmk.Range;
+                    insertAt = range.Start;
+                    bmk.Delete();
+                    range.Delete();
+                    ThisAddIn.ReleaseCom(range);
+                    ThisAddIn.ReleaseCom(bmk);
+                }
+                else if (bookmarks.Exists("_MailOriginal"))
+                {
+                    // No signature region yet: insert directly ABOVE the quoted thread.
+                    var bmk = bookmarks["_MailOriginal"];
+                    var range = bmk.Range;
+                    insertAt = range.Start;
+                    ThisAddIn.ReleaseCom(range);
+                    ThisAddIn.ReleaseCom(bmk);
+                }
+                else
+                {
+                    // Plain new draft: end of document (before the final paragraph mark).
+                    var content = wordDoc.Content;
+                    insertAt = Math.Max(0, (int)content.End - 1);
+                    ThisAddIn.ReleaseCom(content);
+                }
+
+                var contentBefore = wordDoc.Content;
+                int endBefore = contentBefore.End;
+                ThisAddIn.ReleaseCom(contentBefore);
+
+                var insertRange = wordDoc.Range(insertAt, insertAt);
+                insertRange.InsertFile(signatureFilePath, Type.Missing, false, false, false);
+                ThisAddIn.ReleaseCom(insertRange);
+
+                var contentAfter = wordDoc.Content;
+                int endAfter = contentAfter.End;
+                ThisAddIn.ReleaseCom(contentAfter);
+                int newEnd = insertAt + Math.Max(0, endAfter - endBefore);
+
+                // Recreate the marker over the inserted content so Outlook and the
+                // pane's draft/signature/thread split keep working on this draft.
+                var newRange = wordDoc.Range(insertAt, newEnd);
+                bookmarks.Add("_MailAutoSig", newRange);
+                ThisAddIn.ReleaseCom(newRange);
+
+                DebugLog("ApplySignature AFTER", wordDoc);
+
+                if (endAfter <= endBefore)
+                {
+                    ShowStatus("The signature file inserted no content.", true);
+                    return false;
+                }
+
+                return true;
+            }
+            catch (COMException ex)
+            {
+                Debug.WriteLine("ApplySignatureToDocument COM error: " + ex.Message);
+                ShowStatus("Could not apply signature: " + ex.Message, true);
+                return false;
+            }
+            catch (InvalidOperationException ex)
+            {
+                Debug.WriteLine("ApplySignatureToDocument error: " + ex.Message);
+                ShowStatus("Could not apply signature: " + ex.Message, true);
+                return false;
+            }
+            finally
+            {
+                ThisAddIn.ReleaseCom((object)bookmarks);
+            }
+        }
+
+        /// <summary>The compose item behind the pane (Inspector item or the inline response).</summary>
+        private object GetCurrentMailItem()
+        {
+            try
+            {
+                if (_disposed) return null;
+                if (!_isInlineResponse)
+                    return _owningInspector?.CurrentItem;
+
+                var explorer = Globals.ThisAddIn.Application.ActiveExplorer();
+                if (explorer == null) return null;
+                try
+                {
+                    return ((dynamic)explorer).ActiveInlineResponse;
+                }
+                finally
+                {
+                    ThisAddIn.ReleaseCom(explorer);
+                }
+            }
+            catch (COMException)
+            {
+                return null;
+            }
+            catch (InvalidCastException)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Compact "Name &lt;address&gt;" summary of the draft's recipients (capped) as
+        /// context for the signature choice. Empty when unavailable - the choice then
+        /// rests on draft/thread language alone.
+        /// </summary>
+        private string GetRecipientSummary()
+        {
+            object item = null;
+            object recipients = null;
+            try
+            {
+                item = GetCurrentMailItem();
+                if (item == null) return "";
+
+                recipients = ((dynamic)item).Recipients;
+                int count = ((dynamic)recipients).Count;
+                var sb = new StringBuilder();
+                for (int i = 1; i <= count && i <= 20; i++)
+                {
+                    object recipient = null;
+                    try
+                    {
+                        recipient = ((dynamic)recipients)[i];
+                        string name = null;
+                        string address = null;
+                        try { name = ((dynamic)recipient).Name as string; } catch (COMException) { }
+                        try { address = ((dynamic)recipient).Address as string; } catch (COMException) { }
+                        if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(address))
+                            continue;
+
+                        if (sb.Length > 0) sb.AppendLine();
+                        sb.Append(name ?? "");
+                        if (!string.IsNullOrWhiteSpace(address) && !string.Equals(address, name, StringComparison.OrdinalIgnoreCase))
+                            sb.Append(" <").Append(address).Append(">");
+                    }
+                    finally
+                    {
+                        ThisAddIn.ReleaseCom(recipient);
+                    }
+                }
+
+                return sb.ToString();
+            }
+            catch (COMException)
+            {
+                return "";
+            }
+            catch (InvalidCastException)
+            {
+                return "";
+            }
+            catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+            {
+                return "";
+            }
+            finally
+            {
+                ThisAddIn.ReleaseCom(recipients);
+                ThisAddIn.ReleaseCom(item);
+            }
         }
 
         // === Core processing ===
@@ -643,6 +968,7 @@ namespace OutlookAI.TaskPane
             _toolTip.SetToolTip(btnDraft, "Draft a new email from scratch based on your instruction.\nClears any previous AI draft.");
             _toolTip.SetToolTip(btnEditDraft, "Edit the current draft based on your instruction.\nPreserves conversation history for iterative refinement.");
             _toolTip.SetToolTip(btnEditSelection, "Edit only the selected text based on your instruction.\nLeaves the rest of the draft unchanged.");
+            _toolTip.SetToolTip(btnSelectSignature, "Let the AI pick the best of your installed signatures for this email\n(matching the language of the draft, thread, and recipients) and apply it.\nYour draft text and the quoted thread stay untouched.");
         }
 
         private void InvokeOnUI(Action action)
@@ -745,6 +1071,7 @@ namespace OutlookAI.TaskPane
             btnDraft.Enabled = enabled;
             btnEditDraft.Enabled = enabled;
             btnEditSelection.Enabled = enabled;
+            btnSelectSignature.Enabled = enabled && _signaturesAvailable;
             txtPrompt.Enabled = enabled;
         }
 

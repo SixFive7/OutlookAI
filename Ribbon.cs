@@ -14,9 +14,12 @@ namespace OutlookAI
 
         public string GetCustomUI(string ribbonID)
         {
-            if (ribbonID == "Microsoft.Outlook.Mail.Compose" ||
-                ribbonID == "Microsoft.Outlook.Explorer")
+            // Compose Inspectors keep the original XML untouched; the Explorer gets its own
+            // copy extended with the OutlookAI Settings group on the main Mail tab.
+            if (ribbonID == "Microsoft.Outlook.Mail.Compose")
                 return GetResourceText("OutlookAI.Ribbon.xml");
+            if (ribbonID == "Microsoft.Outlook.Explorer")
+                return GetResourceText("OutlookAI.RibbonExplorer.xml");
 
             return string.Empty;
         }
@@ -44,6 +47,11 @@ namespace OutlookAI
         {
             var pane = Globals.ThisAddIn.FindPaneForWindow(control.Context);
             return pane != null && pane.Visible;
+        }
+
+        public void OnOpenSettings(Office.IRibbonControl control)
+        {
+            TaskPane.SettingsDialog.ShowSettings();
         }
 
         private static string GetResourceText(string resourceName)

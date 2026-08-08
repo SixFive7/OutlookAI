@@ -176,6 +176,9 @@
     </Compile>
 
     <Compile Include="Services\ClaudeServices.cs" />
+    <Compile Include="Services\McpRegistrationService.cs" />
+    <Compile Include="Services\OutlookTuningService.cs" />
+    <Compile Include="Services\SignatureStore.cs" />
     <Compile Include="Services\ThemeService.cs" />
     <Compile Include="Services\UpdateService.cs" />
     <Compile Include="TaskPane\AITaskPane.cs">
@@ -184,11 +187,16 @@
     <Compile Include="TaskPane\AITaskPane.Designer.cs">
       <DependentUpon>AITaskPane.cs</DependentUpon>
     </Compile>
+    <Compile Include="TaskPane\SettingsDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="AddInAutomation.cs" />
     <Compile Include="Ribbon.cs" />
     <Compile Include="ThisAddIn.cs">
       <SubType>Code</SubType>
     </Compile>
     <EmbeddedResource Include="Ribbon.xml" />
+    <EmbeddedResource Include="RibbonExplorer.xml" />
 <None Include="ThisAddIn.Designer.xml">
       <DependentUpon>ThisAddIn.cs</DependentUpon>
     </None>

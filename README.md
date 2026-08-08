@@ -2,7 +2,7 @@
 
 > **Inspired by [OutlookAI by kirklandsig](https://github.com/kirklandsig/OutlookAI)** — originally created and released under the MIT License.
 
-An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add-in. Uses the Claude Code CLI as its AI backend with the Claude Opus 4.6 model, letting you use your existing Claude Pro or Max subscription — no separate API key or per-token billing required.
+An AI-powered email assistant for Microsoft Outlook: a VSTO add-in with an AI writing sidebar for composing mail, plus a local [MCP server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) that lets AI agents like Claude Code search, read, and draft mail in your mailboxes — fast, local, and cloud-independent. The sidebar uses the Claude Code CLI as its AI backend with the Claude Opus 4.6 model, letting you use your existing Claude Pro or Max subscription — no separate API key or per-token billing required.
 
 <p align="center">
   <img src="Docs/screenshot-light.png" alt="OutlookAI light mode" width="48%" />
@@ -18,9 +18,13 @@ An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add
   - [Instruction-Based Drafting and Editing](#instruction-based-drafting-and-editing)
   - [Context Awareness](#context-awareness)
   - [Iterative Refinement](#iterative-refinement)
+  - [Outlook Tuning and Settings](#outlook-tuning-and-settings)
   - [Dark Mode](#dark-mode)
   - [Automatic Updates](#automatic-updates)
   - [Debug Mode](#debug-mode)
+- [MCP Server (Mail Search, Reading, and Drafting for AI Agents)](#mcp-server-mail-search-reading-and-drafting-for-ai-agents)
+  - [Setup and Registration](#setup-and-registration)
+  - [Outlook Lifetime and the Tray Icon](#outlook-lifetime-and-the-tray-icon)
 - [Limitations](#limitations)
 - [Requirements](#requirements)
 - [Getting Started](#getting-started)
@@ -45,7 +49,7 @@ An AI-powered email writing assistant for Microsoft Outlook, built as a VSTO add
 
 ### Quick Actions
 
-Six one-click buttons to transform your email draft instantly:
+One-click buttons to transform your email draft instantly:
 
 | Button | What it does |
 |---|---|
@@ -55,6 +59,7 @@ Six one-click buttons to transform your email draft instantly:
 | **Lengthen** | Expand with more detail, context, or explanation. Keeps the same tone and intent. |
 | **Formal** | Rewrite in a more formal, professional tone. Keeps the same content and meaning. |
 | **Friendly** | Rewrite in a warmer, more conversational tone. Keeps the same content and meaning. |
+| **Select the best signature** | The AI looks at your draft, the quoted thread, and the recipients, picks the most fitting of your installed Outlook signatures (for example by matching the language), and applies it. Your draft text and the quoted conversation stay untouched. With a single installed signature it is applied directly without an AI call; the button is available only when at least one signature exists. |
 
 ### Instruction-Based Drafting and Editing
 
@@ -85,6 +90,20 @@ When using **Edit current draft**, each AI interaction is recorded in an edit hi
 
 Each step builds on the last, with full context of the conversation.
 
+### Outlook Tuning and Settings
+
+OutlookAI keeps a proven Outlook configuration applied automatically:
+
+- **Fast local search** — registry settings that route Outlook's search to the local Windows Search index (no server round-trips, no 250-result display cap)
+- **Full mailbox caching** — Cached Exchange Mode sync slider set to All (shared folders included), so search covers the whole mailbox
+- **OST headroom** — raised local cache size limits so a fully cached mailbox never silently stalls syncing
+
+The tuning service reconciles these on every Outlook start, writes only actual differences, respects (and flags) values enforced by organizational group policy, and tells you when a change still needs an Outlook restart.
+
+An **OutlookAI Settings** button on the main Mail ribbon opens a small dialog (light/dark theme aware) where each tuning group can be toggled on or off and the current effective values are shown. Turning a group off stops managing it and leaves your Outlook settings as they are; uninstalling never reverts your Outlook configuration.
+
+The dialog also carries a **Mail server** status line: whether the [MCP server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) is registered with Claude Code and which executable that registration points at — or what is standing in the way (Claude Code not found, no server installed alongside the add-in, or the .NET 10 runtime missing, with the download link). **Apply now** re-runs the tuning reconcile *and* the registration check, so something you have just fixed is picked up without restarting Outlook.
+
 ### Dark Mode
 
 The task pane automatically matches your Outlook theme:
@@ -107,6 +126,8 @@ The add-in checks for updates automatically:
 - The version label at the bottom of the task pane shows update status: "up to date", "downloading v2.x.x…", or "v2.x.x ready — installs on close"
 - Click the "update error" link (if visible) to see error details
 
+The add-in and the [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) ship in the same installer and carry the same version number, so one update covers both. A silent auto-update deliberately does **not** install missing prerequisites (.NET Framework 4.8, the VSTO runtime, the .NET 10 runtime) — it runs unattended after Outlook closes, and the elevation prompt would sit there unanswered. Prerequisites are installed when you run the installer yourself; until then the add-in reports what is missing in [OutlookAI Settings](#outlook-tuning-and-settings).
+
 ### Debug Mode
 
 For troubleshooting, click the version label at the bottom of the task pane 7 times to enable debug mode. Once enabled:
@@ -117,18 +138,89 @@ For troubleshooting, click the version label at the bottom of the task pane 7 ti
 
 ---
 
+## MCP Server (Mail Search, Reading, and Drafting for AI Agents)
+
+Alongside the compose sidebar, OutlookAI includes a local **MCP (Model Context Protocol) server** that gives AI agents — Claude Code, or any MCP-capable client — safe, fast access to your mail. It runs entirely on your machine: mail is searched through the local Windows Search index and read through Outlook itself, with no cloud mail API and no data leaving your computer.
+
+What an agent can do with it:
+
+| Capability | Tools |
+|---|---|
+| **Search** all cached mailboxes (including delegate/shared mailboxes and attachment contents) in milliseconds; search words are matched as whole words, each independently in the subject or the body, and matching can be narrowed to just one of them (`search_in`); results always include mail that arrived seconds ago (a built-in freshness sweep that follows the folder you search, cached briefly so repeated searches stay instant), and an `exhaustive` option scans folders directly when the index is stale | `search`, `thread` |
+| **Read** any mail in full (long bodies page in windows without re-reading from the start; sender/recipient details, conversation view), optionally including the stored HTML so the agent can check formatting, signature placement and where the quoted thread begins — all of which the plain-text view hides — and save attachments to disk so the agent can open them | `read`, `save_attachment`, `list_accounts`, `list_folders` |
+| **Organize mail** — move mail (up to 50 at a time) to another folder within the same account, creating the target folder on request, or archive it exactly like Outlook's own Archive button: each item goes to its own account's designated Archive folder (resolved per mailbox, localized names included). Every move is audited and reversible — results carry the source folder and old/new ids so any move can be undone — and moving to Deleted Items is refused | `move_mail`, `archive_mail` |
+| **Show you things** — open a mail on your screen, jump Outlook to a folder, or run a query in Outlook's own search box so you see the result list | `open_in_outlook`, `goto_folder`, `show_search_results` |
+| **Draft for you** — new mail, reply, reply-all, forward: the draft opens on screen with the right account identity, that account's real signature untouched below your text (or a specific signature the agent picks to match the message, e.g. by language), and the agent's text above the quote, ready for *you* to review and press Send. The body is plain text by default or **real HTML** (`body_html`) when the message needs to look like a letter — headings, bold, lists, tables, links and inline styling land as genuine formatting in your message only, with the signature and quoted thread untouched below it; unsafe or unsupported markup is removed or unwrapped and half-finished markup repaired, and whatever changed is reported back. Optional Cc/Bcc (added to whoever Outlook already filled in, with any unrecognized address reported back), a subject override that keeps the reply in its thread, importance and a read-receipt request | `new_draft`, `reply_draft`, `replyall_draft`, `forward_draft`, `list_signatures` |
+| **Manage signatures** — create, update, or delete an Outlook signature (all three formats written, missing ones derived) and optionally set it as an account's default; before any update or delete the previous files are automatically backed up under `%LOCALAPPDATA%\OutlookAI\signature-backups` and the backup path is returned | `manage_signature` |
+| **Send only with friction** — automatic sending requires an explicit two-step confirmation with a one-time token bound to the exact draft content; the sending account is hard-verified before transport and every step is audit-logged | `send` |
+| **Self-diagnose** — one call reports Outlook/index/service state, index freshness per store, audit-log writability, tuning state, and whether Claude Code's registration points at the server that is actually running | `outlook_health` |
+
+Safety properties: the server has **no delete tool and no content-modification tool** for existing mail — the only mail-changing operations are content-preserving MOVES (move/archive), which are fully audited and reversible (results carry the source folder, so any move can be undone by moving back) and refuse Deleted Items as a target; signature management is the one destructive-capable surface and it always backs up the previous signature files before changing or deleting anything; every draft/save/move/archive/send/signature operation writes an audit line to `%LOCALAPPDATA%\OutlookAI\audit.log`; payloads are compact and truncation-flagged so agents iterate with cheap targeted queries instead of bulk-reading your mailbox. The server never closes or restarts Outlook (it can start it when needed).
+
+Developer documentation (architecture, test tiers, contributor facts): [`McpServer/README.md`](McpServer/README.md).
+
+### Setup and Registration
+
+**The server ships with the add-in.** The installer places it next to the add-in at `%LOCALAPPDATA%\OutlookAI\Setup\McpServer\OutlookAI.McpServer.exe`. There is nothing to build, copy, or register by hand.
+
+**Prerequisite — the .NET 10 runtime.** The server is a framework-dependent .NET 10 application and needs the *base* .NET runtime (`Microsoft.NETCore.App` 10.x; **not** the Desktop runtime — the server uses no WinForms or WPF). The installer detects it and downloads/installs it on demand, exactly as it already does for .NET Framework 4.8 and the VSTO runtime, and only on an **interactive** install (see [Automatic Updates](#automatic-updates) for why a silent auto-update skips prerequisites). The add-in itself never needs it — if the runtime is missing, the compose sidebar keeps working and only the mail server is unavailable. The add-in says so in [OutlookAI Settings](#outlook-tuning-and-settings) and names the download page: <https://dotnet.microsoft.com/download/dotnet/10.0>. Install it, restart Outlook, and the registration completes itself.
+
+**Registration keeps itself correct.** The server speaks MCP over stdio, and on every Outlook start the add-in reconciles Claude Code's user-global configuration (`~/.claude.json`) so that `mcpServers.outlookai.command` names the installed server. That heals drift on its own — a stale entry left over from an earlier install path, for example. Running `claude mcp add` by hand is no longer needed.
+
+The reconcile is deliberately conservative with a file it does not own:
+
+- a configuration it cannot parse is never rewritten — it is reported instead
+- only the `mcpServers` value is re-rendered; every other byte of the file is spliced through unchanged, so no unrelated setting is reformatted or reordered, and other MCP servers stay exactly as they were
+- the replacement is atomic and keeps the previous file as `~/.claude.json.outlookai-backup`
+- an entry that is already correct writes nothing at all
+
+It also stands down and reports instead of guessing: when Claude Code is not installed on the machine, when there is no server next to the add-in (the developer case below), or when the .NET 10 runtime is missing.
+
+**Where the state is reported** — two places:
+
+- the **Mail server** line in the [OutlookAI Settings](#outlook-tuning-and-settings) dialog, in plain language, with **Apply now** to re-check
+- the `registration` block of the `outlook_health` tool, for an agent: `status` (`ok` / `drifted` / `absent` / `unreadable` / `unknown`), `runningFrom`, `registeredCommand`, plus what the add-in last recorded (`addInStatus`, `addInHealed`, `addInLastReconcileUtc`, `addInResolvedServerPath`). The status is computed by comparing the registered command against the executable the server is actually running from, so drift is visible even when the add-in has never reconciled. `outlook_health` only ever reports on the file — repairing it is the add-in's job.
+
+**Updates and running server processes.** Claude Code spawns one server process per agent session, so several are typically running when an update lands. The installer stops the instances running from the install directory before it replaces any file — matched by executable path, so a build running from a source tree is left alone. A session whose server was stopped simply spawns a fresh one on its next mail call; nothing is persisted in the server process, so nothing is lost.
+
+**Developer setup (secondary path)** — building the server from source and pointing Claude Code at the build output still works and is what contributors do. It needs the .NET 10 SDK:
+
+```
+dotnet build McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj -c Release
+claude mcp add --scope user outlookai <repo>\McpServer\OutlookAI.McpServer\bin\Release\net10.0-windows\OutlookAI.McpServer.exe
+```
+
+A developer add-in build has no server installed beside it, so the reconcile recognizes that case and leaves such a registration alone. If an installed OutlookAI is also present, it *will* take the registration over on the next Outlook start — that is the drift healing doing its job, and re-running the command above points it back at your build.
+
+### Outlook Lifetime and the Tray Icon
+
+When an agent needs Outlook and it is not running, the server starts it **headless**: no window appears — just an Outlook icon in the system tray whose tooltip reads *"Another program is using Outlook. To disconnect programs and exit Outlook, click the Outlook icon and then click Exit Now."* This is normal Outlook behavior for a programmatically started instance, and it is by design the server's preferred state: a headless Outlook syncs mail and feeds the Windows Search index like a normal one, without being in your way.
+
+How the lifetime behaves (measured on a current classic Outlook build):
+
+- **While any agent session is connected**, the headless Outlook keeps running. Server processes are per-agent-session and release their connection when the session ends.
+- **After the last connection is released**, a headless Outlook keeps running for roughly **10-12 minutes** and then exits on its own. The tray tooltip may still show the "another program" message during that grace period even though nothing is connected anymore.
+- **Want a normal Outlook?** Just launch Outlook the usual way — the *same* headless process promotes itself to a full windowed session within a couple of seconds (watch the taskbar rather than the tray). No conflict, nothing to close first.
+- **Closing the window** (yours or a promoted one) exits Outlook within seconds — even while agent sessions are still connected. Outlook has deliberately not let external programs keep it alive after a user closes it since Outlook 2007 SP2. The server simply reconnects — and restarts Outlook headless — the next time an agent needs mail access.
+- **Exit Now** on the tray icon force-disconnects clients and exits the headless Outlook immediately; agents likewise reconnect on demand later.
+- The server itself **never closes or restarts Outlook** under any circumstances.
+
+One rule for other automation on the machine: do not drive `Application.Quit()` while agent sessions are attached — Outlook then tears down and parks indefinitely, waiting for the attached clients (that is what the tray tooltip is warning about). The parked state resolves itself a few seconds after the attached sessions release (for agent sessions: when they end). Prefer closing Outlook's window, or stop the agent sessions first.
+
+---
+
 ## Limitations
 
-OutlookAI is focused on email composition assistance. The following are **not** supported:
+The compose sidebar is focused on email composition assistance. The following are **not** supported there:
 
 - **No model selection** — Hard-coded to Claude Opus 4.6. There is no UI to choose a different model.
 - **No request cancellation** — Once an action is submitted, it runs until completion or times out after 2 minutes. There is no cancel button.
-- **No settings or configuration UI** — No preferences panel. All behavior is built-in.
+- **No AI preferences UI** — The [Settings dialog](#outlook-tuning-and-settings) covers Outlook tuning only; the AI behavior itself is built-in.
 - **No preview before applying** — AI results are written directly into the email draft. There is no intermediate preview/accept/reject step.
 - **No undo** — Standard Ctrl+Z in the Outlook editor may work for simple cases, but there is no dedicated undo for AI operations.
 - **No saved prompts or templates** — Instructions must be typed each time.
-- **No reading or summarizing received emails** — The assistant only works in compose mode (new, reply, forward). It cannot process emails you are reading.
-- **No attachment awareness** — The AI does not see or reference email attachments.
+- **No reading or summarizing received emails in the sidebar** — The sidebar only works in compose mode (new, reply, forward). Reading, searching, and summarizing received mail is what the [MCP server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) provides, through an agent like Claude Code.
+- **No attachment awareness in the sidebar** — The sidebar AI does not see email attachments (agents can read them via the MCP server's `save_attachment`).
 - **No HTML or rich-text formatting control** — The AI returns plain text. Formatting is handled by Outlook's editor.
 - **No Outlook for Mac, Outlook on the web, or new Outlook** — Only classic desktop Outlook (2016, 2019, 2021, 2024) on Windows is supported.
 - **No keyboard shortcuts** — All actions require clicking buttons in the task pane.
@@ -144,6 +236,7 @@ OutlookAI is focused on email composition assistance. The following are **not** 
 | **Outlook** | Microsoft Outlook 2016 or later (2016, 2019, 2021, 2024) — classic desktop version only. Outlook 2016 is the minimum supported version. |
 | **Runtime** | .NET Framework 4.8 |
 | **VSTO Runtime** | [Visual Studio Tools for Office Runtime](https://aka.ms/VSTORuntimeDownload) (downloaded and installed automatically if missing — requires admin elevation) |
+| **.NET 10 Runtime** | Base runtime only (`Microsoft.NETCore.App` 10.x — [download](https://dotnet.microsoft.com/download/dotnet/10.0)), required by the [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents), not by the add-in. Downloaded and installed automatically when you run the installer yourself (requires admin elevation). |
 | **Claude Code CLI** | [Install instructions](https://docs.anthropic.com/en/docs/claude-code/overview) — requires a Claude Pro or Max subscription |
 | **Node.js** | Required by Claude Code CLI |
 
@@ -172,10 +265,11 @@ OutlookAI is focused on email composition assistance. The following are **not** 
 
 1. Download the latest `.exe` installer from [GitHub Releases](../../releases/latest)
 2. Run the installer — it installs to your local AppData with no admin privileges required
-3. If .NET Framework 4.8 or the VSTO Runtime is missing, the installer downloads and installs them automatically (admin elevation is prompted only for these system-level prerequisites)
+3. If .NET Framework 4.8, the VSTO Runtime, or the .NET 10 Runtime is missing, the installer downloads and installs it automatically (admin elevation is prompted only for these system-level prerequisites)
 4. Open Outlook — the AI Assistant button appears in the ribbon on compose windows
+5. Nothing else to do for the [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents): it is installed alongside the add-in, and the add-in registers it with Claude Code on that first Outlook start. Check the **Mail server** line in [OutlookAI Settings](#outlook-tuning-and-settings) if you want to confirm.
 
-The installer registers the add-in directly via the Windows registry and installs the signing certificate to your Trusted Publishers store. To uninstall, use Add/Remove Programs.
+The installer registers the add-in directly via the Windows registry and installs the signing certificate to your Trusted Publishers store. Everything lands under `%LOCALAPPDATA%\OutlookAI\Setup` — the add-in at the top level, the mail server in the `McpServer` subfolder — and no admin rights are needed for the install itself. To uninstall, use Add/Remove Programs.
 
 ### Building from Source
 
@@ -183,6 +277,7 @@ The installer registers the add-in directly via the Windows registry and install
 - Visual Studio 2022
 - Office/SharePoint development workload
 - .NET desktop development workload
+- .NET 10 SDK (for the mail server only)
 
 **Steps:**
 1. Clone this repository
@@ -191,6 +286,8 @@ The installer registers the add-in directly via the Windows registry and install
 4. Build > Rebuild Solution
 
 The project uses MSBuild to generate VSTO manifests and Inno Setup for the installer. Releases are created on demand via the release workflow (`gh workflow run release`).
+
+The mail server is a separate .NET 10 project built with `dotnet`, not through the Visual Studio solution — see [`McpServer/README.md`](McpServer/README.md) for its build, test, and registration instructions. The release workflow publishes it (framework-dependent, win-x64) into the installer payload and stamps it with the **same version as the add-in**, so one release produces one version across the whole product; local developer builds of both carry `99.99.99.0`, which is also the marker the auto-updater uses to leave a developer build alone.
 
 ---
 
@@ -336,6 +433,19 @@ Claude Code CLI requires Node.js to run.
 </details>
 
 <details>
+<summary><strong>The mail tools aren't available to my agent</strong></summary>
+
+Open **OutlookAI Settings** on the Mail ribbon and read the **Mail server** line — it names the actual cause:
+
+- *"needs the .NET 10 runtime"* — install the base runtime from [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/10.0) and restart Outlook. This is the usual outcome after a silent auto-update, which does not install prerequisites.
+- *"Claude Code was not found"* — install the Claude Code CLI (see [Claude Code Setup](#claude-code-setup)) and restart Outlook.
+- *"not installed alongside the add-in"* — you are running a developer build of the add-in; register a built server yourself (see [Setup and Registration](#setup-and-registration)).
+- *"Claude Code's configuration could not be read"* — `~/.claude.json` is not valid JSON. The add-in deliberately refuses to rewrite a file it cannot parse. Fix or restore the file, then press **Apply now**.
+
+Then start a fresh agent session — Claude Code reads its MCP configuration at session start, so an already-running session will not pick up a repaired registration. Asking the agent to run `outlook_health` reports the same state from the server's side, including whether the registration points at the executable it is actually running from.
+</details>
+
+<details>
 <summary><strong>Requests timing out (2-minute timeout)</strong></summary>
 
 - Check your internet connection
@@ -353,7 +463,7 @@ You've hit Claude's rate limit for your subscription tier. Wait a moment and try
 <details>
 <summary><strong>Upgrade fails or add-in doesn't update</strong></summary>
 
-The installer overwrites files and re-registers the add-in on every run. If an upgrade seems stuck:
+The installer overwrites files and re-registers the add-in on every run. It also stops any mail server processes running from the install directory before replacing files, so an active agent session does not block an upgrade. If an upgrade seems stuck:
 
 1. Close Outlook
 2. Delete the install directory: `%LOCALAPPDATA%\OutlookAI\Setup`
