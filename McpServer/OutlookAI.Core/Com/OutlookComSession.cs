@@ -5984,7 +5984,7 @@ namespace OutlookAI.Core.Com
             string entryId = (string)item.EntryID;
             string? subject = TryGetString(() => (string?)item.Subject);
             string? conversationIndex = TryGetString(() => (string?)item.ConversationIndex);
-            string? conversationId = TryGetString(() => (string?)item.ConversationID);
+            string? conversationId = TryGetNonEmptyString(() => (string?)item.ConversationID);
             string? conversationTopic = TryGetString(() => (string?)item.ConversationTopic)
                 ?? TryGetPropertyString(item, ConversationTopicDasl);
             int? importance = null;
@@ -6813,7 +6813,7 @@ namespace OutlookAI.Core.Com
             DateTime? sent = TryGetDateTime(() => (DateTime)item.SentOn);
             string? senderName = TryGetString(() => (string?)item.SenderName);
             string? senderAddress = TryGetSenderSmtp(item);
-            string? conversationId = TryGetString(() => (string?)item.ConversationID);
+            string? conversationId = TryGetNonEmptyString(() => (string?)item.ConversationID);
 
             bool? isRead = null;
             try
@@ -7818,6 +7818,20 @@ namespace OutlookAI.Core.Com
             double utcDelta = Math.Abs((asUtc - indexUtc).TotalSeconds);
             double rawDelta = Math.Abs((DateTime.SpecifyKind(local, DateTimeKind.Utc) - indexUtc).TotalSeconds);
             return utcDelta <= toleranceSeconds || rawDelta <= toleranceSeconds;
+        }
+
+        /// <summary>
+        /// Like <see cref="TryGetString"/>, but an EMPTY result is normalized to null.
+        /// Outlook hands back an empty ConversationID for an item that belongs to no
+        /// conversation, and an empty string is not null - so it survived onto the wire and
+        /// an agent that read a mail and then followed its conversation passed that empty id
+        /// straight into thread, which refuses it outright. Null is omitted from the payload
+        /// entirely, so there is nothing to follow and nothing to fail on.
+        /// </summary>
+        private static string? TryGetNonEmptyString(Func<string?> getter)
+        {
+            string? value = TryGetString(getter);
+            return string.IsNullOrWhiteSpace(value) ? null : value;
         }
 
         private static string? TryGetString(Func<string?> getter)
