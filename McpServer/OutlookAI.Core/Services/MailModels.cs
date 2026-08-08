@@ -1156,6 +1156,42 @@ namespace OutlookAI.Core.Services
     }
 
     /// <summary>
+    /// How this server is registered with Claude Code (Phase 8 / D6 v2 / R11). Two
+    /// independent sources, deliberately: the OBSERVED state, read here and now from
+    /// ~/.claude.json and compared against the executable this very process is running
+    /// from, plus what the add-in's reconcile last recorded in HKCU. They can disagree -
+    /// that disagreement is exactly what makes drift visible.
+    /// </summary>
+    public sealed class McpRegistrationHealthView
+    {
+        /// <summary>
+        /// "ok" (the registered command IS this executable), "drifted" (registered, but
+        /// pointing somewhere else - typically a stale developer build path), "absent"
+        /// (no outlookai entry), "unreadable" (config present but not parseable, so it is
+        /// never rewritten) or "unknown" (config could not be examined).
+        /// </summary>
+        public string Status { get; set; } = "unknown";
+
+        /// <summary>Executable this process is actually running from.</summary>
+        public string? RunningFrom { get; set; }
+
+        /// <summary>Command recorded under mcpServers.outlookai in ~/.claude.json (null when absent).</summary>
+        public string? RegisteredCommand { get; set; }
+
+        /// <summary>Status code from the add-in's last registration reconcile (null when the add-in never ran one).</summary>
+        public string? AddInStatus { get; set; }
+
+        /// <summary>True when the add-in's last reconcile had to repair the registration.</summary>
+        public bool? AddInHealed { get; set; }
+
+        /// <summary>Timestamp (ISO 8601) of the add-in's last registration reconcile.</summary>
+        public string? AddInLastReconcileUtc { get; set; }
+
+        /// <summary>Installed server path the add-in resolved, when it recorded one.</summary>
+        public string? AddInResolvedServerPath { get; set; }
+    }
+
+    /// <summary>
     /// outlook_health tool outcome (Phase 7; index_status merged in D37): compact
     /// self-check of everything the server depends on plus the index freshness report.
     /// </summary>
@@ -1178,6 +1214,9 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Outlook tuning state summary (registry read).</summary>
         public TuningHealthView Tuning { get; set; } = new TuningHealthView();
+
+        /// <summary>Whether Claude Code's MCP registration points at this executable (Phase 8).</summary>
+        public McpRegistrationHealthView Registration { get; set; } = new McpRegistrationHealthView();
 
         /// <summary>Actionable freshness advice (distinct from Problems: guidance, not degradation).</summary>
         public IReadOnlyList<string>? Advice { get; set; }

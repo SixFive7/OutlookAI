@@ -3265,6 +3265,9 @@ namespace OutlookAI.Core.Services
                     Error = auditError,
                 },
                 Tuning = HealthReporting.ReadTuningStateFromRegistry(),
+                // The apphost that was actually launched, which is precisely what a
+                // registration has to name in order to spawn this server.
+                Registration = HealthReporting.ReadMcpRegistration(HealthReporting.CurrentProcessPath()),
             };
         }
 

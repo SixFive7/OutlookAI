@@ -85,6 +85,16 @@ public sealed class Phase7CiToolShapeTests
         Assert.True(uiSearchBackend is "local" or "server-assisted",
             $"unexpected tuning.uiSearchBackend '{uiSearchBackend}'");
 
+        // Phase 8: whether Claude Code's user-global registration actually points at THIS
+        // executable. Always present - a machine where the add-in never reconciled still
+        // gets the observed verdict, which on a CI runner (no config file) is "absent".
+        JsonElement registration = report.GetProperty("registration");
+        string? registrationStatus = registration.GetProperty("status").GetString();
+        Assert.True(
+            registrationStatus is "ok" or "drifted" or "absent" or "unreadable" or "unknown",
+            $"unexpected registration.status '{registrationStatus}'");
+        Assert.False(string.IsNullOrWhiteSpace(registration.GetProperty("runningFrom").GetString()));
+
         // Degraded reports must SAY why (compact problem lines - section 12).
         if (status == "degraded")
         {

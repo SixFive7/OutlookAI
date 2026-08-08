@@ -270,5 +270,417 @@ namespace OutlookAI.Core.Services
                 return null;
             }
         }
+
+        // ===== MCP registration (Phase 8) =====
+
+        /// <summary>Registry path of the add-in's registration state (mirrors McpRegistrationService.McpKeyPath).</summary>
+        public const string McpRegistrationKeyPath = @"Software\OutlookAI\Mcp";
+
+        /// <summary>registration.status: the registered command IS the running executable.</summary>
+        public const string RegistrationOk = "ok";
+
+        /// <summary>registration.status: an entry exists but names a different executable.</summary>
+        public const string RegistrationDrifted = "drifted";
+
+        /// <summary>registration.status: no outlookai entry at all.</summary>
+        public const string RegistrationAbsent = "absent";
+
+        /// <summary>registration.status: the config exists but could not be parsed (so it is never rewritten).</summary>
+        public const string RegistrationUnreadable = "unreadable";
+
+        /// <summary>registration.status: the config could not be examined at all.</summary>
+        public const string RegistrationUnknown = "unknown";
+
+        /// <summary>
+        /// Compares the registered command against the running executable (pure, T1-pinned).
+        /// Path comparison, not string comparison: the registration and the process path can
+        /// differ only in casing or separators and still be the same file.
+        /// </summary>
+        public static string DescribeMcpRegistration(string? registeredCommand, string? runningFrom)
+        {
+            if (string.IsNullOrWhiteSpace(registeredCommand))
+            {
+                return RegistrationAbsent;
+            }
+
+            if (string.IsNullOrWhiteSpace(runningFrom))
+            {
+                return RegistrationUnknown;
+            }
+
+            return SamePath(registeredCommand!, runningFrom!) ? RegistrationOk : RegistrationDrifted;
+        }
+
+        /// <summary>Whether two paths name the same file, tolerating case and separator differences.</summary>
+        public static bool SamePath(string a, string b)
+        {
+            try
+            {
+                return string.Equals(
+                    Path.GetFullPath(a).TrimEnd('\\'),
+                    Path.GetFullPath(b).TrimEnd('\\'),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        /// <summary>
+        /// The observed registration plus what the add-in last recorded. Never throws, and
+        /// never writes: health only ever reports on this file, the add-in owns repairing it.
+        /// </summary>
+        public static McpRegistrationHealthView ReadMcpRegistration(string? runningFrom)
+        {
+            var view = new McpRegistrationHealthView { RunningFrom = runningFrom };
+
+            bool readable;
+            view.RegisteredCommand = TryReadRegisteredCommand(out readable);
+            view.Status = readable
+                ? DescribeMcpRegistration(view.RegisteredCommand, runningFrom)
+                : RegistrationUnreadable;
+
+            try
+            {
+                using (RegistryKey? key = Registry.CurrentUser.OpenSubKey(McpRegistrationKeyPath, writable: false))
+                {
+                    if (key != null)
+                    {
+                        view.AddInStatus = key.GetValue("Status") as string;
+                        view.AddInLastReconcileUtc = key.GetValue("LastReconcileUtc") as string;
+                        view.AddInResolvedServerPath = key.GetValue("ResolvedServerPath") as string;
+                        object? healed = key.GetValue("Healed");
+                        if (healed is int healedInt)
+                        {
+                            view.AddInHealed = healedInt != 0;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                // Leave the add-in fields null; the observed status above still stands.
+            }
+
+            if (string.IsNullOrEmpty(view.AddInStatus)) view.AddInStatus = null;
+            if (string.IsNullOrEmpty(view.AddInLastReconcileUtc)) view.AddInLastReconcileUtc = null;
+            if (string.IsNullOrEmpty(view.AddInResolvedServerPath)) view.AddInResolvedServerPath = null;
+
+            return view;
+        }
+
+        /// <summary>
+        /// mcpServers.outlookai.command from ~/.claude.json. <paramref name="readable"/> is
+        /// false only when the file exists but could not be read or understood - an absent
+        /// file is perfectly readable and simply has no entry.
+        /// </summary>
+        private static string? TryReadRegisteredCommand(out bool readable)
+        {
+            readable = true;
+            try
+            {
+                string path = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    ".claude.json");
+
+                if (!File.Exists(path))
+                {
+                    return null;
+                }
+
+                // FileShare.ReadWrite: the Claude Code CLI owns this file and may hold it open.
+                string text;
+                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var reader = new StreamReader(stream))
+                {
+                    text = reader.ReadToEnd();
+                }
+
+                return ExtractRegisteredCommand(text, out readable);
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                readable = false;
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Pulls mcpServers -> outlookai -> command out of raw JSON text (pure, T1-pinned).
+        /// Hand-scanned rather than deserialized so this compiles on BOTH Core targets:
+        /// System.Text.Json is not available on net48, and Core takes no JSON dependency
+        /// (v3.MD D18 v2 / section 0.5.2 - Core must stay host-neutral and reference-light).
+        /// Read-only by construction: nothing here can modify the file.
+        /// <paramref name="readable"/> is false when the text is not a JSON object at all.
+        /// </summary>
+        public static string? ExtractRegisteredCommand(string? json, out bool readable)
+        {
+            readable = true;
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return null;
+            }
+
+            int i = SkipWhitespace(json!, 0);
+            if (i >= json!.Length || json[i] != '{')
+            {
+                readable = false;
+                return null;
+            }
+
+            int servers = FindMemberValue(json, i, "mcpServers");
+            if (servers < 0 || json[servers] != '{')
+            {
+                return null;
+            }
+
+            int entry = FindMemberValue(json, servers, "outlookai");
+            if (entry < 0 || json[entry] != '{')
+            {
+                return null;
+            }
+
+            int command = FindMemberValue(json, entry, "command");
+            if (command < 0 || json[command] != '"')
+            {
+                return null;
+            }
+
+            // (FindMemberValue never returns an index past the end, so the reads above are
+            // in bounds; truncated input yields -1 instead.)
+
+            int end = SkipString(json, command);
+            return end < 0 ? null : Unescape(json.Substring(command + 1, end - command - 2));
+        }
+
+        /// <summary>
+        /// Start index of the value of <paramref name="name"/> among the DIRECT members of the
+        /// object beginning at <paramref name="objectStart"/>, or -1. Members are walked one at
+        /// a time and each value is skipped whole, so a same-named key nested deeper can never
+        /// be mistaken for a direct member.
+        /// </summary>
+        private static int FindMemberValue(string json, int objectStart, string name)
+        {
+            int i = SkipWhitespace(json, objectStart + 1);
+            if (i < json.Length && json[i] == '}')
+            {
+                return -1;
+            }
+
+            while (i < json.Length)
+            {
+                if (json[i] != '"')
+                {
+                    return -1;
+                }
+
+                int keyEnd = SkipString(json, i);
+                if (keyEnd < 0)
+                {
+                    return -1;
+                }
+
+                string key = Unescape(json.Substring(i + 1, keyEnd - i - 2));
+
+                i = SkipWhitespace(json, keyEnd);
+                if (i >= json.Length || json[i] != ':')
+                {
+                    return -1;
+                }
+
+                int valueStart = SkipWhitespace(json, i + 1);
+                if (valueStart >= json.Length)
+                {
+                    // Truncated right after the colon: no value to point at.
+                    return -1;
+                }
+
+                if (key == name)
+                {
+                    return valueStart;
+                }
+
+                int valueEnd = SkipValue(json, valueStart);
+                if (valueEnd < 0)
+                {
+                    return -1;
+                }
+
+                i = SkipWhitespace(json, valueEnd);
+                if (i >= json.Length || json[i] != ',')
+                {
+                    return -1;
+                }
+
+                i = SkipWhitespace(json, i + 1);
+            }
+
+            return -1;
+        }
+
+        private static int SkipWhitespace(string json, int i)
+        {
+            while (i < json.Length && char.IsWhiteSpace(json[i]))
+            {
+                i++;
+            }
+
+            return i;
+        }
+
+        /// <summary>Index just past the closing quote of the string starting at i, or -1.</summary>
+        private static int SkipString(string json, int i)
+        {
+            i++;
+            while (i < json.Length)
+            {
+                char c = json[i];
+                if (c == '\\')
+                {
+                    i += 2;
+                    continue;
+                }
+
+                if (c == '"')
+                {
+                    return i + 1;
+                }
+
+                i++;
+            }
+
+            return -1;
+        }
+
+        /// <summary>Index just past the end of the value starting at i, or -1.</summary>
+        private static int SkipValue(string json, int i)
+        {
+            if (i >= json.Length)
+            {
+                return -1;
+            }
+
+            char c = json[i];
+            if (c == '"')
+            {
+                return SkipString(json, i);
+            }
+
+            if (c == '{' || c == '[')
+            {
+                int depth = 0;
+                while (i < json.Length)
+                {
+                    char d = json[i];
+                    if (d == '"')
+                    {
+                        int end = SkipString(json, i);
+                        if (end < 0)
+                        {
+                            return -1;
+                        }
+
+                        i = end;
+                        continue;
+                    }
+
+                    if (d == '{' || d == '[')
+                    {
+                        depth++;
+                    }
+                    else if (d == '}' || d == ']')
+                    {
+                        depth--;
+                        if (depth == 0)
+                        {
+                            return i + 1;
+                        }
+                    }
+
+                    i++;
+                }
+
+                return -1;
+            }
+
+            while (i < json.Length)
+            {
+                char d = json[i];
+                if (d == ',' || d == '}' || d == ']' || char.IsWhiteSpace(d))
+                {
+                    return i;
+                }
+
+                i++;
+            }
+
+            return i;
+        }
+
+        private static string Unescape(string s)
+        {
+            if (s.IndexOf('\\') < 0)
+            {
+                return s;
+            }
+
+            var sb = new System.Text.StringBuilder(s.Length);
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (s[i] != '\\' || i + 1 >= s.Length)
+                {
+                    sb.Append(s[i]);
+                    continue;
+                }
+
+                i++;
+                char c = s[i];
+                switch (c)
+                {
+                    case 'n': sb.Append('\n'); break;
+                    case 'r': sb.Append('\r'); break;
+                    case 't': sb.Append('\t'); break;
+                    case 'b': sb.Append('\b'); break;
+                    case 'f': sb.Append('\f'); break;
+                    case 'u':
+                        if (i + 4 < s.Length
+                            && int.TryParse(s.Substring(i + 1, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int code))
+                        {
+                            sb.Append((char)code);
+                            i += 4;
+                        }
+                        else
+                        {
+                            sb.Append(c);
+                        }
+
+                        break;
+                    default: sb.Append(c); break;
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Path of the executable hosting this process - what a registration must name to
+        /// spawn this server. Not Environment.ProcessPath: that does not exist on net48, and
+        /// Core compiles for both targets (R10).
+        /// </summary>
+        public static string? CurrentProcessPath()
+        {
+            try
+            {
+                using (Process process = Process.GetCurrentProcess())
+                {
+                    return process.MainModule?.FileName;
+                }
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                return null;
+            }
+        }
     }
 }
