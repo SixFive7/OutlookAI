@@ -24,6 +24,7 @@ An AI-powered email assistant for Microsoft Outlook: a VSTO add-in with an AI wr
   - [Debug Mode](#debug-mode)
 - [MCP Server (Mail Search, Reading, and Drafting for AI Agents)](#mcp-server-mail-search-reading-and-drafting-for-ai-agents)
   - [Setup and Registration](#setup-and-registration)
+  - [Registering for a Single Project](#registering-for-a-single-project)
   - [Outlook Lifetime and the Tray Icon](#outlook-lifetime-and-the-tray-icon)
 - [Limitations](#limitations)
 - [Requirements](#requirements)
@@ -102,7 +103,14 @@ The tuning service reconciles these on every Outlook start, writes only actual d
 
 An **OutlookAI Settings** button on the main Mail ribbon opens a small dialog (light/dark theme aware) where each tuning group can be toggled on or off and the current effective values are shown. Turning a group off stops managing it and leaves your Outlook settings as they are; uninstalling never reverts your Outlook configuration.
 
-The dialog also carries a **Mail server** status line: whether the [MCP server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) is registered with Claude Code and which executable that registration points at — or what is standing in the way (Claude Code not found, no server installed alongside the add-in, or the .NET 10 runtime missing, with the download link). **Apply now** re-runs the tuning reconcile *and* the registration check, so something you have just fixed is picked up without restarting Outlook.
+The dialog also carries a **Mail server in Claude Code** section — where the [MCP server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) is available to agents, and whether that is actually working:
+
+- **Make available in all my Claude Code projects** — the opt-in for your personal Claude Code configuration. Outlook asks you this once rather than deciding for you; unticking it removes the entry it added.
+- **Add to a specific project…** — pick a folder and the server is registered for that project alone, via its `.mcp.json`. See [Registering for a Single Project](#registering-for-a-single-project).
+- **Copy CLI command** — the same registration as a `claude mcp add` line, for when you would rather type it.
+- a status line: what is registered and which executable it points at, or what is standing in the way (Claude Code not found, no server installed alongside the add-in, or the .NET 10 runtime missing, with the download link).
+
+**Apply now** re-runs the tuning reconcile *and* the registration check, so something you have just fixed is picked up without restarting Outlook.
 
 ### Dark Mode
 
@@ -165,20 +173,35 @@ Developer documentation (architecture, test tiers, contributor facts): [`McpServ
 
 **Prerequisite — the .NET 10 runtime.** The server is a framework-dependent .NET 10 application and needs the *base* .NET runtime (`Microsoft.NETCore.App` 10.x; **not** the Desktop runtime — the server uses no WinForms or WPF). The installer detects it and downloads/installs it on demand, exactly as it already does for .NET Framework 4.8 and the VSTO runtime, and only on an **interactive** install (see [Automatic Updates](#automatic-updates) for why a silent auto-update skips prerequisites). The add-in itself never needs it — if the runtime is missing, the compose sidebar keeps working and only the mail server is unavailable. The add-in says so in [OutlookAI Settings](#outlook-tuning-and-settings) and names the download page: <https://dotnet.microsoft.com/download/dotnet/10.0>. Install it, restart Outlook, and the registration completes itself.
 
-**Registration keeps itself correct.** The server speaks MCP over stdio, and on every Outlook start the add-in reconciles Claude Code's user-global configuration (`~/.claude.json`) so that `mcpServers.outlookai.command` names the installed server. That heals drift on its own — a stale entry left over from an earlier install path, for example. Running `claude mcp add` by hand is no longer needed.
+**Nothing is registered until you say so.** A fresh install registers the server with Claude Code *nowhere*. You choose where it applies, in [OutlookAI Settings](#outlook-tuning-and-settings) under **Mail server in Claude Code**:
+
+| Choice | What it writes | Who it covers |
+|---|---|---|
+| **Make available in all my Claude Code projects** (tick box) | `mcpServers.outlookai` in your personal `~/.claude.json` | every project you open on this machine, as you |
+| **Add to a specific project…** (button) | `.mcp.json` in the folder you pick | that one project — and, since that file is normally committed, your teammates too |
+
+**Outlook asks — it never guesses.** The first time you run it, Outlook puts the question to you directly: register the mail server for all your projects, or leave Claude Code's configuration alone. Until you answer, nothing is written anywhere. It asks again — at most once per Outlook session, and never more than that — whenever what it finds contradicts what you chose: the entry has gone while the setting is on, an entry has appeared while the setting is off, or an `outlookai` entry is already there naming something other than the installed server. That last one is never adopted, overwritten or deleted on your behalf: if you registered a wrapper of your own under that name, it stays exactly as you left it unless you say otherwise. Every answer can be changed later in OutlookAI Settings.
+
+Upgrading from an earlier version changes nothing, and asks you nothing: a machine whose `outlookai` entry already points at the installed server is treated as having opted in, and the tick box starts on.
+
+An Outlook that started in the background for an agent session has no window to put a question in, so it asks nothing and changes nothing — the next Outlook you actually sit in front of asks instead.
+
+**The "all my projects" tick box keeps itself correct.** The server speaks MCP over stdio, and while the box is ticked, every Outlook start reconciles `~/.claude.json` so that `mcpServers.outlookai.command` names the installed server. That heals drift on its own — a stale entry left over from an earlier install path, for example. Unticking the box removes the entry it added, and only that one; that *is* how you unregister, and there is no separate step for it. Projects with their own `.mcp.json` are unaffected either way.
+
+**The registered command is portable.** What gets written is `${LOCALAPPDATA}/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe`, not a resolved absolute path — Claude Code expands `${VAR}` (and `${VAR:-default}`) itself. The registration therefore survives a roaming profile and a renamed Windows account, neither of which a hard-coded `C:\Users\<you>\…` path survives. An install outside the default location, or a developer build, is registered by its real path instead, because there the portable spelling would name a different file.
 
 The reconcile is deliberately conservative with a file it does not own:
 
 - a configuration it cannot parse is never rewritten — it is reported instead
 - only the `mcpServers` value is re-rendered; every other byte of the file is spliced through unchanged, so no unrelated setting is reformatted or reordered, and other MCP servers stay exactly as they were
 - the replacement is atomic and keeps the previous file as `~/.claude.json.outlookai-backup`
-- an entry that is already correct writes nothing at all
+- an entry that is already correct writes nothing at all — including a hand-written one that leaves `"type"` out, which is a perfectly valid way to spell a stdio server
 
 It also stands down and reports instead of guessing: when Claude Code is not installed on the machine, when there is no server next to the add-in (the developer case below), or when the .NET 10 runtime is missing.
 
 **Where the state is reported** — two places:
 
-- the **Mail server** line in the [OutlookAI Settings](#outlook-tuning-and-settings) dialog, in plain language, with **Apply now** to re-check
+- the status line in the **Mail server in Claude Code** section of the [OutlookAI Settings](#outlook-tuning-and-settings) dialog, in plain language, with **Apply now** to re-check
 - the `registration` block of the `outlook_health` tool, for an agent: `status` (`ok` / `drifted` / `absent` / `unreadable` / `unknown`), `runningFrom`, `registeredCommand`, plus what the add-in last recorded (`addInStatus`, `addInHealed`, `addInLastReconcileUtc`, `addInResolvedServerPath`). The status is computed by comparing the registered command against the executable the server is actually running from, so drift is visible even when the add-in has never reconciled. `outlook_health` only ever reports on the file — repairing it is the add-in's job.
 
 **Updates and running server processes.** Claude Code spawns one server process per agent session, so several are typically running when an update lands. The installer stops the instances running from the install directory before it replaces any file — matched by executable path, so a build running from a source tree is left alone. A session whose server was stopped simply spawns a fresh one on its next mail call; nothing is persisted in the server process, so nothing is lost.
@@ -191,6 +214,41 @@ claude mcp add --scope user outlookai <repo>\McpServer\OutlookAI.McpServer\bin\R
 ```
 
 A developer add-in build has no server installed beside it, so the reconcile recognizes that case and leaves such a registration alone. If an installed OutlookAI is also present, it *will* take the registration over on the next Outlook start — that is the drift healing doing its job, and re-running the command above points it back at your build.
+
+### Registering for a Single Project
+
+Sometimes "every project I open" is more than you want — the mail server belongs to the two repos where you actually work on email, and nowhere else. **Add to a specific project…** in [OutlookAI Settings](#outlook-tuning-and-settings) does exactly that.
+
+**What the button does.** You pick a folder; the add-in writes (or merges into) a `.mcp.json` at its root:
+
+```json
+{
+  "mcpServers": {
+    "outlookai": {
+      "type": "stdio",
+      "command": "${LOCALAPPDATA}/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe",
+      "args": [],
+      "env": {}
+    }
+  }
+}
+```
+
+It **merges, never overwrites**. Other MCP servers already in that file, and every other byte of it, are left exactly as they were; only the `outlookai` entry is written. A `.mcp.json` that does not parse is refused outright and reported — a file the add-in cannot read is a file it will not rewrite. An entry that already says this writes nothing at all, so pressing the button twice leaves no diff for source control to show.
+
+**Claude Code will ask you to approve it.** The first time you open Claude Code in that folder, it asks whether you trust the MCP servers listed in `.mcp.json`. That prompt is Claude Code's own security check, it exists precisely because `.mcp.json` arrives from source control, and the add-in deliberately does not answer it for you. Say yes once and the project is set up.
+
+**The file is meant to be committed.** That is the point of project scope: your teammates get the same server list from the repo. Because the entry names `${LOCALAPPDATA}` rather than a path on your machine, it is portable — a teammate with OutlookAI installed gets a working mail server, and a teammate without it sees a failed-connection warning for that one server and nothing else breaks. (If your own install is in a non-default location, the button writes that real path instead and says so — that entry will not resolve on anyone else's machine.)
+
+**Prefer the CLI?** **Copy CLI command** puts the equivalent on your clipboard, with this machine's real path filled in. Run it from the project folder:
+
+```
+claude mcp add --scope project outlookai -- "C:\Users\<you>\AppData\Local\OutlookAI\Setup\McpServer\OutlookAI.McpServer.exe"
+```
+
+`--scope project` is what writes `.mcp.json`; `--scope user` is the same thing the tick box does. Either way, the approval prompt above still applies to project scope.
+
+The copied command deliberately spells out the real path rather than `${LOCALAPPDATA}`: PowerShell expands `${NAME}` itself, quoted or not, so that form would reach the CLI with the path blanked out. Claude Code expands it when it *reads* the configuration, which is why the file the button writes can use it and a shell command cannot. If you want the portable spelling in a `.mcp.json` you created from the CLI, edit the `command` afterwards — or just use the button.
 
 ### Outlook Lifetime and the Tray Icon
 
@@ -237,8 +295,7 @@ The compose sidebar is focused on email composition assistance. The following ar
 | **Runtime** | .NET Framework 4.8 |
 | **VSTO Runtime** | [Visual Studio Tools for Office Runtime](https://aka.ms/VSTORuntimeDownload) (downloaded and installed automatically if missing — requires admin elevation) |
 | **.NET 10 Runtime** | Base runtime only (`Microsoft.NETCore.App` 10.x — [download](https://dotnet.microsoft.com/download/dotnet/10.0)), required by the [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents), not by the add-in. Downloaded and installed automatically when you run the installer yourself (requires admin elevation). |
-| **Claude Code CLI** | [Install instructions](https://docs.anthropic.com/en/docs/claude-code/overview) — requires a Claude Pro or Max subscription |
-| **Node.js** | Required by Claude Code CLI |
+| **Claude Code CLI** | [Install instructions](https://code.claude.com/docs/en/setup) — requires a Claude Pro or Max subscription. Install it with the native installer: the add-in looks for the CLI at `%USERPROFILE%\.local\bin\claude.exe`, which is where that installer puts it. |
 
 ---
 
@@ -246,16 +303,16 @@ The compose sidebar is focused on email composition assistance. The following ar
 
 ### Claude Code Setup
 
-1. Install Node.js from [nodejs.org](https://nodejs.org) if you don't have it
-2. Install Claude Code CLI:
+1. Install the Claude Code CLI with the [native installer](https://code.claude.com/docs/en/setup) — run this in PowerShell:
+   ```powershell
+   irm https://claude.ai/install.ps1 | iex
    ```
-   npm install -g @anthropic-ai/claude-code
+   It needs no Node.js, and it installs to `%USERPROFILE%\.local\bin\claude.exe` — the path the add-in looks for. An npm or WinGet install puts `claude` somewhere else and the add-in will not find it.
+2. Sign in with your Claude subscription — run `claude` and follow the browser prompt:
    ```
-3. Authenticate with your Claude subscription:
+   claude
    ```
-   claude auth login
-   ```
-4. Verify it works:
+3. Verify it works:
    ```
    claude -p "Hello"
    ```
@@ -267,7 +324,7 @@ The compose sidebar is focused on email composition assistance. The following ar
 2. Run the installer — it installs to your local AppData with no admin privileges required
 3. If .NET Framework 4.8, the VSTO Runtime, or the .NET 10 Runtime is missing, the installer downloads and installs it automatically (admin elevation is prompted only for these system-level prerequisites)
 4. Open Outlook — the AI Assistant button appears in the ribbon on compose windows
-5. Nothing else to do for the [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents): it is installed alongside the add-in, and the add-in registers it with Claude Code on that first Outlook start. Check the **Mail server** line in [OutlookAI Settings](#outlook-tuning-and-settings) if you want to confirm.
+5. The [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) is installed alongside the add-in, but nothing is registered with Claude Code until you choose where. Outlook asks you shortly after it starts whether to make it available in all your Claude Code projects; you can also decide — or change your mind — in **OutlookAI Settings** on the Mail ribbon, under **Mail server in Claude Code**, where **Add to a specific project…** covers a single project instead. See [Setup and Registration](#setup-and-registration). (Upgrading from an earlier version? Your existing registration is kept, the tick box starts on, and you are asked nothing.)
 
 The installer registers the add-in directly via the Windows registry and installs the signing certificate to your Trusted Publishers store. Everything lands under `%LOCALAPPDATA%\OutlookAI\Setup` — the add-in at the top level, the mail server in the `McpServer` subfolder — and no admin rights are needed for the install itself. To uninstall, use Add/Remove Programs.
 
@@ -360,7 +417,7 @@ OutlookAI uses a **pre-warmed fire-and-forget** approach:
 This gives the zero-latency benefit of a persistent process with the simplicity of fire-and-forget — no protocol implementation, no process lifecycle management, no extra dependencies.
 
 **Technical details:**
-- CLI path: `~/.local/bin/claude.exe`
+- CLI path: `%USERPROFILE%\.local\bin\claude.exe` — the native installer's location, which is the only path searched (PATH is not consulted)
 - CLI arguments: `-p - --output-format json --max-turns 1 --model "claude-opus-4-6"`
 - Timeout: 2 minutes per request
 - Output: JSON response parsed for the `result` field (with `text` field as fallback for older CLI versions)
@@ -408,26 +465,25 @@ The installer automatically adds the signing certificate to your Trusted Publish
 <details>
 <summary><strong>"Claude Code CLI is not installed" error</strong></summary>
 
-The CLI was not found at `~/.local/bin/claude.exe`.
+The CLI was not found at `%USERPROFILE%\.local\bin\claude.exe`. That is the only path the add-in searches, so an npm or WinGet install produces this error even when `claude` works fine in your terminal — those methods install elsewhere.
 
-1. Install Claude Code: `npm install -g @anthropic-ai/claude-code`
+1. Install Claude Code with the [native installer](https://code.claude.com/docs/en/setup) — in PowerShell: `irm https://claude.ai/install.ps1 | iex`
 2. Restart Outlook
 </details>
 
 <details>
 <summary><strong>"Node.js is required" error</strong></summary>
 
-Claude Code CLI requires Node.js to run.
+Only an npm install of Claude Code can produce this — the native installer ships a self-contained binary that never invokes Node.
 
-1. Install Node.js from [nodejs.org](https://nodejs.org)
-2. Restart your terminal and verify: `node --version`
-3. Restart Outlook
+1. Reinstall with the [native installer](https://code.claude.com/docs/en/setup) — in PowerShell: `irm https://claude.ai/install.ps1 | iex`
+2. Restart Outlook
 </details>
 
 <details>
 <summary><strong>"Claude Code is not authenticated" error</strong></summary>
 
-1. Open a terminal and run: `claude auth login`
+1. Open a terminal and run `claude` — it opens a browser to sign in (inside an existing session, use `/login`)
 2. Sign in with your Claude Pro or Max subscription
 3. Restart Outlook
 </details>
@@ -435,12 +491,15 @@ Claude Code CLI requires Node.js to run.
 <details>
 <summary><strong>The mail tools aren't available to my agent</strong></summary>
 
-Open **OutlookAI Settings** on the Mail ribbon and read the **Mail server** line — it names the actual cause:
+Open **OutlookAI Settings** on the Mail ribbon and read the status line under **Mail server in Claude Code** — it names the actual cause:
 
+- *"Not registered for all your projects"* — that is the default on a fresh install. Tick **Make available in all my Claude Code projects**, or add the one project you need with **Add to a specific project…** (see [Setup and Registration](#setup-and-registration)).
 - *"needs the .NET 10 runtime"* — install the base runtime from [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/10.0) and restart Outlook. This is the usual outcome after a silent auto-update, which does not install prerequisites.
 - *"Claude Code was not found"* — install the Claude Code CLI (see [Claude Code Setup](#claude-code-setup)) and restart Outlook.
 - *"not installed alongside the add-in"* — you are running a developer build of the add-in; register a built server yourself (see [Setup and Registration](#setup-and-registration)).
 - *"Claude Code's configuration could not be read"* — `~/.claude.json` is not valid JSON. The add-in deliberately refuses to rewrite a file it cannot parse. Fix or restore the file, then press **Apply now**.
+
+If the project you are working in has its own `.mcp.json`, also check that you approved the server the first time Claude Code asked — until then the entry is present but not used.
 
 Then start a fresh agent session — Claude Code reads its MCP configuration at session start, so an already-running session will not pick up a repaired registration. Asking the agent to run `outlook_health` reports the same state from the server's side, including whether the registration points at the executable it is actually running from.
 </details>

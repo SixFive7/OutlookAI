@@ -1,11 +1,26 @@
 #define MyAppName "OutlookAI"
 #define MyAppPublisher "SixFive7"
-#define VstoRuntimeUrl "https://aka.ms/VSTORuntimeDownload"
-#define NetFramework48Url "https://go.microsoft.com/fwlink/?LinkId=2085155"
+; A direct CDN path on purpose, NOT the https://aka.ms/VSTORuntimeDownload alias that shipped
+; through v3.0.1: that alias now lands on the Download Center *page* (details.aspx?id=105890,
+; Content-Type text/html), so on a clean machine setup saved 127 KB of HTML as vstor_redist.exe,
+; executed it, and finished with no VSTO runtime installed and nothing to say why. An alias can
+; be repointed at a web page; a direct path can only 404, which fails the download loudly.
+; This is vstor_redist.exe 10.0.60917 (41,828,424 bytes), the Visual Studio 2010 Tools for
+; Office Runtime redistributable - the one that registers the VSTO Runtime Setup\v4R key that
+; IsVstoInstalled probes.
+#define VstoRuntimeUrl "https://download.microsoft.com/download/5/d/2/5d24f8f8-efbb-4b63-aa33-3785e3104713/vstor_redist.exe"
+; What the failure messages send the user to - a page to read, not a 40 MB direct download.
+#define VstoRuntimeManualUrl "https://www.microsoft.com/download/details.aspx?id=105890"
 ; The MCP server is a framework-dependent net10.0-windows console app. Its runtimeconfig
 ; asks for Microsoft.NETCore.App 10.0.0 only - it references no WinForms/WPF, so the BASE
 ; .NET runtime is enough and the (much larger) Desktop runtime is NOT required.
 ; Default roll-forward is Minor, i.e. any 10.x satisfies it but 11.x would not.
+; Still an aka.ms alias, and so exposed in principle to the same rot that broke the VSTO one -
+; but it is left as-is deliberately: it currently redirects straight to the versioned build
+; (builds.dotnet.microsoft.com/.../dotnet-runtime-10.0.10-win-x64.exe, 200, octet-stream), and
+; the whole point of this alias is that it tracks the newest 10.x patch without an edit here.
+; The MZ check in DownloadFile is what makes that safe - if it ever starts serving a page,
+; setup now says so instead of running it.
 #define NetRuntime10Url "https://aka.ms/dotnet/10.0/dotnet-runtime-win-x64.exe"
 #define NetRuntime10ManualUrl "https://dotnet.microsoft.com/download/dotnet/10.0"
 
@@ -43,7 +58,18 @@ Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs creat
 ; Where the app is installed, so the add-in can find {app}\McpServer\OutlookAI.McpServer.exe
 ; without guessing from its own assembly location (which sits under Application Files\<ver>\
 ; when installed, but directly in bin\Release for a developer build).
-Root: HKCU; Subkey: "Software\OutlookAI"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletevalue
+;
+; uninsdeletekey, not uninsdeletevalue: uninstall must take the WHOLE Software\OutlookAI key,
+; including the two subkeys the add-in creates at runtime and that setup itself never writes -
+; Tuning (with its Desired\ and Applied\ children) and Mcp. Nothing but OutlookAI's own
+; bookkeeping lives under this key, so removing it loses no user data.
+; It deliberately does NOT reach the values the add-in writes into Outlook's own hives
+; (Office\16.0\Outlook\{Search, Cached Mode, PST} and the Policies mirror of Cached Mode):
+; that is the user's Outlook configuration, and uninstalling never reverts it - see
+; Services\OutlookTuningService.cs and the README.
+; Only the uninstaller acts on this. A /SILENT auto-update re-runs setup and never runs the
+; uninstaller, so tuning and registration state survive updates untouched.
+Root: HKCU; Subkey: "Software\OutlookAI"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletekey
 
 ; Register add-in with Outlook.
 ; `|vstolocal` = load in place, no ClickOnce. The VSTO runtime then resolves the add-in
@@ -72,13 +98,20 @@ Filename: "certutil"; Parameters: "-user -delstore TrustedPublisher OutlookAI"; 
 Filename: "certutil"; Parameters: "-user -delstore TrustedPublisher E205060633DD7062D4F90033130542948A69D068"; Flags: runhidden
 
 [Code]
+// Setup is a 32-bit process, so these HKLM reads pass through the WOW64 redirector and
+// actually land in SOFTWARE\Wow6432Node\... - which is exactly where the VSTO runtime
+// registers on 64-bit Windows, and what Microsoft's own detection guidance says to check.
+// Hence no explicit 'Wow6432Node\' probe (it would name the same key a second time; the
+// redirector does not redirect a path that already says Wow6432Node) and no HKLM64 probe:
+// verified on a machine running 64-bit Outlook with the runtime installed and working, the
+// native 64-bit view has no 'VSTO Runtime Setup' key at all, so a 64-bit-view probe could
+// never turn a real miss into a hit - it could only ever add a false positive.
 function IsVstoInstalled: Boolean;
 var
   version: string;
 begin
   Result :=
     RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\VSTO Runtime Setup\v4R', 'Version', version) or
-    RegQueryStringValue(HKLM, 'SOFTWARE\Wow6432Node\Microsoft\VSTO Runtime Setup\v4R', 'Version', version) or
     RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\VSTO Runtime Setup\v4', 'Version', version);
 end;
 
@@ -176,6 +209,40 @@ begin
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
+// An HTTP error page is still a *successful* download: the server answers 200, the bytes land
+// at the requested name, and nothing about the result says "this is not an installer". That is
+// precisely how v3.0.1 shipped broken - the VSTO alias began redirecting to a Download Center
+// landing page, setup wrote 127 KB of HTML to vstor_redist.exe and ran it, and the failure was
+// invisible. So prove the bytes are a Windows executable before anything executes them.
+// Two cheap tests, both from one open handle: every PE image begins with the 'MZ' signature
+// (0x4D 0x5A), and no prerequisite fetched here is remotely small - the smaller of the two is
+// the ~30 MB .NET runtime - so a 1 MB floor rejects error pages and truncated transfers while
+// staying far below any real payload. Failures are swallowed into a False result rather than
+// raised: a file that cannot even be opened is not one to execute, and an escaping exception
+// would abort the whole install instead of falling through to the "could not download" message.
+function IsWindowsExecutable(const Path: string): Boolean;
+var
+  Stream: TFileStream;
+  Header: AnsiString;
+begin
+  Result := False;
+
+  try
+    Stream := TFileStream.Create(Path, fmOpenRead or fmShareDenyNone);
+    try
+      // Read fills Header itself and returns how many bytes it actually got, so the two
+      // indexes below can never run past the end of a file too short to hold a signature.
+      if Stream.Size >= 1000000 then
+        if Stream.Read(Header, 2) = 2 then
+          Result := (Ord(Header[1]) = $4D) and (Ord(Header[2]) = $5A);
+    finally
+      Stream.Free;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
 function DownloadFile(const Url, DestPath: string; var ErrorDetail: string): Boolean;
 var
   ResultCode: Integer;
@@ -216,6 +283,18 @@ begin
     exit;
   end;
 
+  // Guards every prerequisite, not just the one that was caught rotting: this is the single
+  // point both DownloadAndInstall* procedures go through. Delete the file so no later step can
+  // execute it, then fail exactly like any other failed download - each caller already tells
+  // the user which prerequisite it was and where to install it by hand.
+  if not IsWindowsExecutable(DestPath) then
+  begin
+    DeleteFile(DestPath);
+    ErrorDetail := 'The download did not return an installer - the server sent a web page or '
+      + 'an incomplete file. The download link has probably changed.';
+    exit;
+  end;
+
   Result := True;
 end;
 
@@ -236,7 +315,7 @@ begin
     MsgBox('Could not download the VSTO Runtime:' + #13#10 +
       ErrorDetail + #13#10 + #13#10 +
       'Please install it manually from:' + #13#10 +
-      '{#VstoRuntimeUrl}' + #13#10 + #13#10 +
+      '{#VstoRuntimeManualUrl}' + #13#10 + #13#10 +
       'Then restart the OutlookAI installer.', mbError, MB_OK);
     exit;
   end;
@@ -248,7 +327,7 @@ begin
     WizardForm.ProgressGauge.Style := npbstNormal;
     MsgBox('The VSTO Runtime is required but could not be installed (error ' + IntToStr(ErrorCode) + ').' + #13#10 + #13#10 +
       'Please install it manually from:' + #13#10 +
-      '{#VstoRuntimeUrl}' + #13#10 + #13#10 +
+      '{#VstoRuntimeManualUrl}' + #13#10 + #13#10 +
       'Then restart the OutlookAI installer.', mbError, MB_OK);
     exit;
   end;
@@ -259,7 +338,7 @@ begin
   begin
     MsgBox('The VSTO Runtime installation did not complete successfully.' + #13#10 + #13#10 +
       'Please install it manually from:' + #13#10 +
-      '{#VstoRuntimeUrl}' + #13#10 + #13#10 +
+      '{#VstoRuntimeManualUrl}' + #13#10 + #13#10 +
       'Then restart the OutlookAI installer.', mbError, MB_OK);
   end;
 end;
@@ -298,50 +377,6 @@ var
   Executed: Boolean;
 begin
   Executed := Exec('certutil', '-user -delstore TrustedPublisher E205060633DD7062D4F90033130542948A69D068', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-end;
-
-procedure DownloadAndInstallNetFramework;
-var
-  TempPath: string;
-  ErrorCode: Integer;
-  ErrorDetail: string;
-begin
-  TempPath := ExpandConstant('{tmp}\ndp48-web.exe');
-
-  WizardForm.StatusLabel.Caption := 'Downloading .NET Framework 4.8...';
-  WizardForm.ProgressGauge.Style := npbstMarquee;
-
-  if not DownloadFile('{#NetFramework48Url}', TempPath, ErrorDetail) then
-  begin
-    WizardForm.ProgressGauge.Style := npbstNormal;
-    MsgBox('Could not download .NET Framework 4.8:' + #13#10 +
-      ErrorDetail + #13#10 + #13#10 +
-      'Please install it from Windows Update or from:' + #13#10 +
-      'https://dotnet.microsoft.com/download/dotnet-framework/net48' + #13#10 + #13#10 +
-      'Then restart the OutlookAI installer.', mbError, MB_OK);
-    exit;
-  end;
-
-  WizardForm.StatusLabel.Caption := 'Installing .NET Framework 4.8...';
-
-  if not ShellExec('runas', TempPath, '/q /norestart', '', SW_HIDE, ewWaitUntilTerminated, ErrorCode) then
-  begin
-    WizardForm.ProgressGauge.Style := npbstNormal;
-    MsgBox('.NET Framework 4.8 is required but could not be installed (error ' + IntToStr(ErrorCode) + ').' + #13#10 + #13#10 +
-      'Please install it from Windows Update or from:' + #13#10 +
-      'https://dotnet.microsoft.com/download/dotnet-framework/net48' + #13#10 + #13#10 +
-      'Then restart the OutlookAI installer.', mbError, MB_OK);
-    exit;
-  end;
-
-  WizardForm.ProgressGauge.Style := npbstNormal;
-
-  if not IsNetFramework48Installed then
-  begin
-    MsgBox('.NET Framework 4.8 installation did not complete successfully.' + #13#10 + #13#10 +
-      'A restart may be required. Please restart your computer and then' + #13#10 +
-      'run the OutlookAI installer again.', mbError, MB_OK);
-  end;
 end;
 
 procedure DownloadAndInstallNetRuntime10;
@@ -403,17 +438,29 @@ begin
   begin
     if not WizardSilent then
     begin
+      // .NET Framework 4.8 ships in-box with Windows 10 1903 and with every Windows 11, so
+      // on any machine this add-in supports it is already there and this check simply passes.
+      // Checked anyway rather than assumed: the add-in targets net48 and cannot load without
+      // it, so on a machine where it really is absent, saying so plainly beats installing an
+      // add-in that would then silently never load. No download here - the branch that used
+      // to fetch and install 4.8 could not have run on any supported OS, and servicing an
+      // in-box Windows component is Windows Update's job, not setup's.
       if not IsNetFramework48Installed then
-        DownloadAndInstallNetFramework;
+        MsgBox('OutlookAI needs .NET Framework 4.8, which is not installed on this computer.' + #13#10 + #13#10 +
+          'It is part of Windows 10 version 1903 and later, and of every Windows 11, so this' + #13#10 +
+          'normally means Windows is older than OutlookAI supports.' + #13#10 + #13#10 +
+          'Install .NET Framework 4.8 from Windows Update or from' + #13#10 +
+          'https://dotnet.microsoft.com/download/dotnet-framework/net48,' + #13#10 +
+          'then run the OutlookAI installer again.', mbError, MB_OK);
 
-      // VSTO Runtime requires .NET 4.8; skip if it is still
-      // missing (e.g. a reboot is needed to finish .NET setup).
+      // VSTO Runtime requires .NET 4.8; skip if it is missing, since the runtime
+      // would refuse to install anyway.
       if IsNetFramework48Installed and (not IsVstoInstalled) then
         DownloadAndInstallVstoRuntime;
 
       // Needed only by the MCP server, never by the add-in itself - so a failure here is
       // reported and then tolerated; setup still completes and Outlook still gets the
-      // add-in. Interactive runs only, like the two prerequisites above: a silent
+      // add-in. Interactive runs only, like the prerequisite checks above: a silent
       // auto-update runs unattended after Outlook closes, and the elevation prompt this
       // needs would sit there unanswered, blocking the update. On that path the add-in
       // detects the missing runtime instead and says so in OutlookAI Settings.

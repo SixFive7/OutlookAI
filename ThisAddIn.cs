@@ -130,6 +130,14 @@ namespace OutlookAI
             try { OutlookTuningService.ReconcileOnStartup(); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("Tuning reconcile: " + ex.Message); }
 
+            // Where the registration reconcile below sends a question it cannot answer on its
+            // own. Installed BEFORE the reconcile starts, so a first run has somewhere to ask;
+            // nothing is shown from here — the prompt waits for startup to settle and appears
+            // only if this Outlook has a window a human can see (it deliberately does not, when
+            // it was autostarted in the background for an agent session).
+            try { TaskPane.McpRegistrationPrompt.Install(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("MCP prompt install: " + ex.Message); }
+
             // Keep Claude Code's MCP registration pointing at the installed mail server, and
             // heal it when it drifts (a developer build output, or a path from an older
             // install). Off the UI thread, unlike the tuning reconcile above: this one reads
@@ -166,6 +174,9 @@ namespace OutlookAI
 
         private void ThisAddIn_Shutdown(object sender, EventArgs e)
         {
+            try { TaskPane.McpRegistrationPrompt.Shutdown(); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("MCP prompt shutdown: " + ex.Message); }
+
             try { SettingsDialog.CloseIfOpen(); }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine("Settings close on shutdown: " + ex.Message); }
 

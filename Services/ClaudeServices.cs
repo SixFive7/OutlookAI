@@ -480,11 +480,11 @@ namespace OutlookAI.Services
             catch (Win32Exception)
             {
                 _lastPrerequisiteError =
-                    "Claude Code CLI is not installed or not on PATH.\n\n" +
-                    "Install it by running:\n" +
-                    "  npm install -g @anthropic-ai/claude-code\n\n" +
-                    "Then authenticate by running:\n" +
-                    "  claude auth login\n\n" +
+                    "Claude Code CLI was not found at " + ClaudePath + ".\n\n" +
+                    "Install it by running this in PowerShell:\n" +
+                    "  irm https://claude.ai/install.ps1 | iex\n\n" +
+                    "Then sign in by running:\n" +
+                    "  claude\n\n" +
                     "Then restart Outlook.";
                 throw new Exception(_lastPrerequisiteError);
             }
@@ -556,10 +556,10 @@ namespace OutlookAI.Services
 
             if (lower.Contains("not recognized") || lower.Contains("not found") || lower.Contains("no such file"))
                 return "Claude Code CLI is not installed or not on PATH.\n\n" +
-                       "Install it by running:\n" +
-                       "  npm install -g @anthropic-ai/claude-code\n\n" +
-                       "Then authenticate by running:\n" +
-                       "  claude auth login\n\n" +
+                       "Install it by running this in PowerShell:\n" +
+                       "  irm https://claude.ai/install.ps1 | iex\n\n" +
+                       "Then sign in by running:\n" +
+                       "  claude\n\n" +
                        "Then restart Outlook.";
 
             if (lower.Contains("unauthorized") || lower.Contains("not logged in")
@@ -568,8 +568,8 @@ namespace OutlookAI.Services
                 || lower.Contains("api key") || lower.Contains("invalid key"))
                 return "Claude Code is not authenticated.\n\n" +
                        "Run this command in a terminal:\n" +
-                       "  claude auth login\n\n" +
-                       "Then sign in with your Claude subscription and restart Outlook.";
+                       "  claude\n\n" +
+                       "Then sign in with your Claude subscription in the browser and restart Outlook.";
 
             if (lower.Contains("rate limit") || lower.Contains("too many"))
                 return "Rate limit reached. Please wait a moment and try again.";

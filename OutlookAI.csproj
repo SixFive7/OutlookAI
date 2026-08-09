@@ -176,6 +176,8 @@
     </Compile>
 
     <Compile Include="Services\ClaudeServices.cs" />
+    <Compile Include="Services\McpConfigEditor.cs" />
+    <Compile Include="Services\McpRegistrationDecision.cs" />
     <Compile Include="Services\McpRegistrationService.cs" />
     <Compile Include="Services\OutlookTuningService.cs" />
     <Compile Include="Services\SignatureStore.cs" />
@@ -187,6 +189,7 @@
     <Compile Include="TaskPane\AITaskPane.Designer.cs">
       <DependentUpon>AITaskPane.cs</DependentUpon>
     </Compile>
+    <Compile Include="TaskPane\McpRegistrationPrompt.cs" />
     <Compile Include="TaskPane\SettingsDialog.cs">
       <SubType>Form</SubType>
     </Compile>

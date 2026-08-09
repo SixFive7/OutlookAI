@@ -4,7 +4,7 @@ The `McpServer/` folder contains the v3 layer of OutlookAI: a local **MCP (Model
 
 This document is for contributors. User-facing documentation is in the [repository README](../README.md#mcp-server-mail-search-reading-and-drafting-for-ai-agents).
 
-As of Phase 8 the server ships inside the add-in installer and the add-in keeps its Claude Code registration correct by itself — see [Deployment and registration](#deployment-and-registration) for the installed layout, the .NET 10 prerequisite, and the developer path.
+As of Phase 8 the server ships inside the add-in installer, and the add-in owns its Claude Code registration: opt-in for the user-global scope (kept correct on every Outlook start while it is on) and one-shot per project via `.mcp.json`. See [Deployment and registration](#deployment-and-registration) for the installed layout, the .NET 10 prerequisite, both scopes, and the developer path.
 
 ## Architecture
 
@@ -119,20 +119,55 @@ Framework-dependent is a deliberate choice: self-contained would add ~70 MB and 
 
 ### The add-in owns the registration
 
-`Services/McpRegistrationService.cs` (add-in side, net48) reconciles `~/.claude.json` on **every Outlook start**, off the UI thread, so that `mcpServers.outlookai.command` names the installed server. Same on-every-start reconcile shape as `OutlookTuningService`, for the same reason: it heals drift instead of trusting a one-shot install-time write. `claude mcp add` is no longer part of the shipping path.
+`Services/McpRegistrationService.cs` (add-in side, net48) owns both scopes. The text surgery is in `Services/McpConfigEditor.cs`, which is **linked into the T1 test project** (see the tests csproj and `T1/McpConfigEditorTests.cs`) — that file edits configuration the add-in does not own, where a bad splice silently costs the user settings they cannot get back, so it is written framework-neutral (no `JavaScriptSerializer`, no `System.Text.Json`) precisely so the unit tier can pin the code that actually ships. Note the consequence for CI: `mcpserver.yml` lists `Services/McpConfigEditor.cs` in its path filters even though the file lives with the add-in.
+
+**User scope is opt-in, and the opt-in is never inferred.** `HKCU\Software\OutlookAI\Mcp\GlobalRegistrationEnabled` is a **tri-state** DWORD: 1 on, 0 off, *absent* never decided. Absent is load-bearing: it is the difference between "the user does not want this" and "the user has not been asked yet", and only the first may be acted on. The rules live in `Services/McpRegistrationDecision.cs` — pure, **also linked into the T1 test project** (`T1/McpRegistrationDecisionTests.cs`, and another `mcpserver.yml` path filter) — as one matrix over (stored intent × what the entry is):
+
+| | no entry | entry is **ours** | entry is **foreign** | unreadable |
+|---|---|---|---|---|
+| **never decided** | ask (first run) | adopt silently, persist on | ask (replace it, or leave it) | nothing |
+| **on** | ask (put it back, or turn off) | keep correct | repoint it | nothing |
+| **off** | nothing | ask (remove it, or turn on) | nothing | nothing |
+
+"Ours" is narrow on purpose: a stdio entry whose `command`, once `${VAR}` is expanded, resolves to the installed server (`McpRegistrationService.ClassifyEntry`). Anything else — a wrapper the user registered under that name, a remote entry, a non-object value — is **foreign**, and foreign is untouchable in both directions: never adopted as a silent opt-in, never overwritten, never removed. Removing it would also silently undo the user's own "leave it alone" answer on the very next start.
+
+A question is handed to `TaskPane/McpRegistrationPrompt.cs`, which shows it **only** once Outlook startup has settled and only if this process owns a window a human can see (`IsWindowVisible` + `IsIconic` over its own top-level windows, mirroring `ComposeSurface.CountUserVisibleWindows`). A D17-autostarted headless Outlook therefore asks nothing and **writes nothing** — status `awaiting_choice` — leaving the next interactive session to ask. At most one question per Outlook session, answered or not. While a question is outstanding the reconcile changes nothing at all: no config write, no toggle write.
+
+An answer arrives back as `McpRegistrationService.ApplyUserChoice(bool)` — the same call the settings tick box makes — which persists the preference and reconciles with it treated as *just declared*, so it acts instead of asking again. Once on is written it is sticky in the sense that matters: deleting the entry by hand does not turn the feature off, it raises the "put it back?" question.
+
+While it is on, the reconcile runs on **every Outlook start**, off the UI thread — same shape as `OutlookTuningService`, for the same reason: it heals drift instead of trusting a one-shot install-time write. When it is off, the reconcile *removes* our entry and then leaves the file alone; **turning the toggle off is the deregistration path**, deliberately, instead of an uninstall hook.
 
 The file belongs to the Claude Code CLI, is large, and is rewritten by that CLI, so the discipline is defensive:
 
 - a file that does not parse is **never** written to (a truncating rewrite would cost the user every project entry in it) — it is reported as `config_unreadable`
-- only the `mcpServers` value is re-rendered; `TryFindTopLevelValueSpan` locates that span depth- and string-aware, and every other byte is spliced through unchanged, so no unrelated setting is reformatted or reordered and a nested `mcpServers` key inside a project entry cannot be mistaken for the top-level one
-- other servers, and any extra keys on the `outlookai` entry, are carried over verbatim; the entry is normalized to `type: stdio` with `command` = the installed exe (plus empty `args`/`env` when absent)
-- the result is re-parsed and checked (top-level key count unchanged, the command reads back as the installed server) *before* anything is written
+- only the `mcpServers` value is re-rendered; `McpConfigEditor.TryFindTopLevelValueSpan` locates that span with a direct-member walk that skips each value whole, and every other byte is spliced through unchanged, so no unrelated setting is reformatted or reordered and a nested `mcpServers` key inside a project entry cannot be mistaken for the top-level one
+- other servers, and any extra keys on the `outlookai` entry, are carried over verbatim; the entry is normalized to `type: stdio` with `command` = the registered command (plus empty `args`/`env` when absent)
+- the result is re-parsed and checked (top-level key count unchanged, the command reads back byte-identical, and *expands* to the installed exe) *before* anything is written
 - the write is atomic via `File.Replace`, leaving the previous content as `~/.claude.json.outlookai-backup`
 - an already-correct entry is a **no-op** — no write, no backup churn
+- removal cuts only our member, its separating comma and its own indentation, and is verified the same way (result parses, our entry gone, every other server and top-level key still present)
 
-It stands down and reports rather than guessing when Claude Code is absent, when no server sits next to the add-in, or when the .NET 10 runtime is missing. Every run records its outcome under `HKCU\Software\OutlookAI\Mcp` (`Status`, `Detail`, `Command`, `ResolvedServerPath`, `Healed`, `LastReconcileUtc`) — that key is the contract between the add-in and `outlook_health`. Status codes: `ok`, `healed`, `claude_code_not_installed`, `server_not_installed`, `dotnet_runtime_missing`, `config_unreadable`, `error`. Everything is per-user (HKCU + the user profile): no elevation, no COM, no Outlook object model.
+**The registered command is the portable form.** `${LOCALAPPDATA}/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe` — Claude Code expands `${VAR}` and `${VAR:-default}` in `command`, `args` and `env`, in both file shapes. That survives a roaming profile and a renamed account, which is drift the reconcile would otherwise have to keep papering over. `McpConfigEditor.PreferredCommand` falls back to the resolved absolute path whenever the portable spelling does not expand to exactly that file (developer build, non-default install directory), so the entry is never aspirational. Acceptance compares the registered *string* against what we would write, with an equivalent-path escape hatch that is disabled when the portable form is what we would write — which is what upgrades a legacy absolute-path entry to the portable spelling exactly once instead of accepting it forever.
+
+**`type` is optional, on purpose.** A hand-written entry with a `command` and no `type` is a valid stdio server, so it is accepted as-is; requiring an explicit `type` would score every such entry as drift and rewrite the file on every single Outlook start. An entry carrying a `url`/`httpUrl` instead still scores false — taking a remote server over would break it.
+
+It stands down and reports rather than guessing when Claude Code is absent, when no server sits next to the add-in, or when the .NET 10 runtime is missing. Every run records its outcome under `HKCU\Software\OutlookAI\Mcp` (`Status`, `Detail`, `Command`, `ResolvedServerPath`, `Healed`, `LastReconcileUtc`, `GlobalRegistrationEnabled`) — that key is the contract between the add-in and `outlook_health`. Status codes: `ok`, `healed`, `not_registered_by_choice`, `removed`, `claude_code_not_installed`, `server_not_installed`, `dotnet_runtime_missing`, `config_unreadable`, `error`. Everything is per-user (HKCU + the user profile): no elevation, no COM, no Outlook object model.
 
 The add-in surfaces the same state as a status line in the OutlookAI Settings dialog, whose **Apply now** re-runs the reconcile.
+
+### Project scope (`.mcp.json`)
+
+**Add to a specific project…** in the settings dialog picks a folder and merges the `outlookai` entry into `<folder>/.mcp.json` — `McpRegistrationService.TryRegisterInProject`, built on the same `McpConfigEditor` splice discipline. The container is structurally identical to the top level of `~/.claude.json`, which is why one implementation serves both.
+
+What differs from user scope:
+
+- **merge, never overwrite** — other servers and every other byte survive; a `.mcp.json` that does not parse is refused and reported rather than replaced; an entry that already names this command writes nothing at all, so the button leaves no empty source-control diff
+- a file created from scratch is pretty-printed with LF endings (it is normally committed and read in diffs); an entry spliced into an existing file is rendered on one line, reusing the file's own indentation for the line it introduces rather than pretending to know its formatting
+- **no backup is left behind.** `File.Replace` still covers the swap, but the backup is deleted once the write is verified — the project's source control is the better undo, and a stray `.mcp.json.outlookai-backup` in someone's repo would show up in `git status`
+- **the add-in does not pre-approve anything.** Claude Code prompts the user to approve the servers in a `.mcp.json` the first time it opens that folder. Writing `enabledMcpjsonServers` into their settings to skip that prompt would be the add-in bypassing a security check on the user's behalf — and it does not work in untrusted folders anyway. The dialog explains the prompt instead.
+- it is one-shot: nothing reconciles a project file on later Outlook starts
+
+The CLI equivalent is `claude mcp add --scope project outlookai -- "<absolute path to the exe>"`, which is what the dialog's **Copy CLI command** puts on the clipboard. That one deliberately names the real path rather than `${LOCALAPPDATA}`: PowerShell expands `${NAME}` itself, quoted or not, so the portable spelling would reach the CLI blanked out. Claude Code expands it when it *reads* the file, which is exactly why the file the button writes may use it and a shell command may not.
 
 ### Developer setup (secondary path)
 
@@ -145,7 +180,7 @@ claude mcp add --scope user outlookai <absolute-path-to>\McpServer\OutlookAI.Mcp
 
 Any MCP client works equivalently — the server speaks MCP over stdio.
 
-A developer **add-in** build resolves no installed server beside it, so the reconcile reports `server_not_installed` and leaves such a registration alone by design. An installed add-in on the same machine is the opposite case: it *will* take the registration over on the next Outlook start (`healed`), which is exactly the drift the feature exists to fix — re-run the `claude mcp add` above to point it back at your build, and expect to do so again after the next Outlook start. To sanity-check where a live session's server actually came from, call `outlook_health` and read `registration.runningFrom`.
+A developer **add-in** build resolves no installed server beside it, so the reconcile reports `server_not_installed` and leaves such a registration alone by design. An installed add-in on the same machine is the opposite case — but only while its "all my projects" toggle is explicitly **on**. Then it *will* take the registration over on the next Outlook start (`healed`), which is exactly the drift the feature exists to fix: re-run the `claude mcp add` above to point it back at your build, and expect to do so again after the next Outlook start. Untick the toggle in OutlookAI Settings if you would rather it left your hand-registered build alone. Unticking it removes the `outlookai` entry **only if that entry is the installed server's** — an entry naming your build output is foreign to it and is left where it is, so on a machine that has never been asked (no stored preference) your hand-registered build survives untouched and Outlook asks what to do with it instead. To sanity-check where a live session's server actually came from, call `outlook_health` and read `registration.runningFrom`.
 
 ### Server instructions (MCP `initialize`)
 
@@ -177,7 +212,7 @@ The **`registration`** block (Phase 8, `HealthReporting.ReadMcpRegistration`) an
 |---|---|
 | `status` | `ok` (the registered command IS this executable), `drifted` (registered, but naming something else — typically a stale developer build path), `absent` (no `outlookai` entry), `unreadable` (config present but not parseable, so the add-in never rewrites it), `unknown` (config could not be examined) |
 | `runningFrom` | The executable hosting this process (`CurrentProcessPath()` — not `Environment.ProcessPath`, which does not exist on the net48 target Core also compiles for) |
-| `registeredCommand` | `mcpServers.outlookai.command` as read from `~/.claude.json` |
+| `registeredCommand` | `mcpServers.outlookai.command` as read from `~/.claude.json`, verbatim — including a `${LOCALAPPDATA}/…` form, which `status` expands before comparing (`HealthReporting.ExpandEnvironmentReferences`, the read-side twin of the add-in's writer) |
 | `addInStatus`, `addInHealed`, `addInLastReconcileUtc`, `addInResolvedServerPath` | What the add-in's last reconcile recorded under `HKCU\Software\OutlookAI\Mcp`; null when the add-in has never run one |
 
 `status` is computed by comparing `registeredCommand` against `runningFrom` (path comparison, not string comparison — casing and separators may differ for the same file), so drift is visible **even when the add-in has never reconciled**, and the two halves of the block can legitimately disagree: that disagreement is the signal. Health only ever *reports* on `~/.claude.json` — it never reads it for writing and never repairs it. Repair is the add-in's job.

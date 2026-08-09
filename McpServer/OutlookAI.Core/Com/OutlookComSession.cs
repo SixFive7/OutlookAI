@@ -1271,8 +1271,91 @@ namespace OutlookAI.Core.Com
         /// <summary>
         /// Folder cap for a folder-scoped sweep's subtree walk. Bounds the cost of
         /// scoping a search to a folder with a large subtree (~10 ms per folder).
+        /// <para>
+        /// It counts folders VISITED, not folders successfully swept. Counting only
+        /// successes did not bound the walk at all: a non-mail folder (Calendar,
+        /// Contacts, Tasks, Notes, Journal) is never swept yet its subtree is still
+        /// walked, and a folder whose table will not open is counted as failed rather
+        /// than swept - so a wide subtree of either kind was walked in full at zero cap
+        /// cost, every visit paying its COM round trips.
+        /// </para>
         /// </summary>
         public const int MaxScopedSweepFolders = 40;
+
+        /// <summary>
+        /// Wall-clock budget for a folder-scoped sweep's subtree walk, evaluated PER
+        /// FOLDER exactly as the exhaustive scan evaluates its own deadline (see
+        /// <c>ExhaustiveScanState.CheckDeadline</c>): a folder that yields no rows never
+        /// reaches an inner loop, so folder-level checking is the only thing that bounds
+        /// a wide low-yield subtree.
+        /// <para>
+        /// 2 s is deliberately far above any healthy sweep and two orders of magnitude
+        /// below the exhaustive scan's 120 s, because this walk runs INLINE on every
+        /// folder-scoped search while exhaustive is opt-in. Measured: a folder walk costs
+        /// ~10 ms per folder, so the 40-folder cap implies ~400 ms of intended work, and
+        /// whole sweeps through the service measured 33-614 ms. The budget therefore
+        /// leaves roughly 5x headroom over the worst legitimate walk - it should never
+        /// fire on a real tree - while capping a pathological one at ~2 s instead of "as
+        /// long as it takes". It also stays well inside the 10 s sweep-cache TTL, so a
+        /// budget-stopped sweep is cached rather than re-paid by every follow-up search.
+        /// </para>
+        /// </summary>
+        public const int ScopedSweepTimeBudgetMs = 2_000;
+
+        /// <summary>Whether a folder-scoped sweep's subtree walk may visit a folder, and if not, why.</summary>
+        public enum SweepWalkVerdict
+        {
+            /// <summary>Inside every bound - visit the folder.</summary>
+            Visit = 0,
+
+            /// <summary>The wall-clock budget is spent.</summary>
+            TimeBudget = 1,
+
+            /// <summary>The tree is deeper than the recursion guard allows.</summary>
+            DepthLimit = 2,
+
+            /// <summary>The visited-folder cap is reached.</summary>
+            FolderCap = 3,
+        }
+
+        /// <summary>
+        /// The descend/stop decision of the folder-scoped sweep walk, as a PURE function
+        /// so its bounds can be pinned in T1 - the walk itself only exists over live COM
+        /// folders and cannot be exercised there (same reason
+        /// <c>ComposeSurface.SelectWindowsToPark</c> is pure).
+        /// <para>
+        /// <paramref name="foldersVisited"/> counts folders REACHED, mail, non-mail and
+        /// unreadable alike; <paramref name="depth"/> is 0 at the scoped root;
+        /// <paramref name="elapsed"/> is the walk's wall clock.
+        /// </para>
+        /// </summary>
+        public static SweepWalkVerdict DecideSweepWalk(int foldersVisited, int depth, TimeSpan elapsed)
+        {
+            // Most global bound first, so the reason reported is stable when several
+            // apply at the same folder. The deadline's boundary semantics match
+            // ExhaustiveScanState.CheckDeadline: the budget is spent only once elapsed
+            // has PASSED it, never exactly at it.
+            if (elapsed > TimeSpan.FromMilliseconds(ScopedSweepTimeBudgetMs))
+            {
+                return SweepWalkVerdict.TimeBudget;
+            }
+
+            // Same guard, same comparison as the full-tree walk (CollectFolders): real
+            // trees are a handful of levels, and C# recursion cannot survive a cyclic or
+            // pathological one - a StackOverflowException is uncatchable and would take
+            // the whole server process down.
+            if (depth > FolderWalkDepthGuard)
+            {
+                return SweepWalkVerdict.DepthLimit;
+            }
+
+            if (foldersVisited >= MaxScopedSweepFolders)
+            {
+                return SweepWalkVerdict.FolderCap;
+            }
+
+            return SweepWalkVerdict.Visit;
+        }
 
         // 6 = olFolderInbox, 5 = olFolderSentMail, 3 = olFolderDeletedItems, 23 = olFolderJunk.
         private static readonly (int FolderId, string Kind)[] DefaultSweepFolders =
@@ -1336,7 +1419,8 @@ namespace OutlookAI.Core.Com
                         includeSubfolders, items, sweptFolders, ref skipped, tally);
                     return new ComSweepResult(
                         items, sweptFolders.Count, skipped, sweptFolders,
-                        tally.Failed, tally.ItemCapped, tally.FolderCapReached);
+                        tally.Failed, tally.ItemCapped, tally.FolderCapReached,
+                        tally.DepthLimitReached, tally.TimeBudgetExceeded);
                 }
 
                 dynamic stores = ns.Stores;
@@ -1416,7 +1500,8 @@ namespace OutlookAI.Core.Com
 
                 return new ComSweepResult(
                     items, sweptFolders.Count, skipped, sweptFolders,
-                    tally.Failed, tally.ItemCapped, tally.FolderCapReached);
+                    tally.Failed, tally.ItemCapped, tally.FolderCapReached,
+                    tally.DepthLimitReached, tally.TimeBudgetExceeded);
             });
         }
 
@@ -1431,6 +1516,77 @@ namespace OutlookAI.Core.Com
             internal List<string> ItemCapped { get; } = new List<string>();
 
             internal bool FolderCapReached { get; set; }
+
+            /// <summary>The subtree walk refused a folder deeper than the recursion guard.</summary>
+            internal bool DepthLimitReached { get; set; }
+
+            /// <summary>The subtree walk stopped on <see cref="ScopedSweepTimeBudgetMs"/>.</summary>
+            internal bool TimeBudgetExceeded { get; set; }
+        }
+
+        /// <summary>
+        /// Bounds state for ONE folder-scoped subtree walk: the visit counter and the
+        /// wall clock <see cref="DecideSweepWalk"/> is asked about. Every bound that
+        /// fires is LATCHED on the tally - the same discipline as
+        /// <c>ExhaustiveScanState.TimedOut</c> - so the search response reports why the
+        /// walk stopped instead of implying full freshness coverage (section-12
+        /// no-silent-caps).
+        /// </summary>
+        private sealed class ScopedSweepWalk
+        {
+            private readonly SweepTally _tally;
+            private readonly Stopwatch _clock;
+
+            internal ScopedSweepWalk(SweepTally tally)
+            {
+                _tally = tally;
+                _clock = Stopwatch.StartNew();
+            }
+
+            /// <summary>Folders REACHED so far - mail, non-mail and unreadable alike.</summary>
+            private int Visited { get; set; }
+
+            /// <summary>
+            /// Asks whether a folder at <paramref name="depth"/> may be visited WITHOUT
+            /// consuming a visit, latching the reason when it may not. Used to abandon
+            /// the remaining siblings of an already-bounded walk: reaching a child costs
+            /// two COM round trips (index + Name), so a refusal that is only made after
+            /// fetching it still pays for a folder it will never sweep.
+            /// </summary>
+            internal bool CanVisit(int depth) => Record(DecideSweepWalk(Visited, depth, _clock.Elapsed));
+
+            /// <summary>
+            /// Admits the folder at <paramref name="depth"/> and counts the visit, or
+            /// latches the reason it was refused.
+            /// </summary>
+            internal bool TryVisit(int depth)
+            {
+                if (!Record(DecideSweepWalk(Visited, depth, _clock.Elapsed)))
+                {
+                    return false;
+                }
+
+                Visited++;
+                return true;
+            }
+
+            private bool Record(SweepWalkVerdict verdict)
+            {
+                switch (verdict)
+                {
+                    case SweepWalkVerdict.TimeBudget:
+                        _tally.TimeBudgetExceeded = true;
+                        return false;
+                    case SweepWalkVerdict.DepthLimit:
+                        _tally.DepthLimitReached = true;
+                        return false;
+                    case SweepWalkVerdict.FolderCap:
+                        _tally.FolderCapReached = true;
+                        return false;
+                    default:
+                        return true;
+                }
+            }
         }
 
         /// <summary>Why a single-folder sweep stopped.</summary>
@@ -1449,9 +1605,12 @@ namespace OutlookAI.Core.Com
         /// <summary>
         /// STA-side folder-scoped sweep: walks to the requested folder and sweeps it,
         /// plus its subfolders when <paramref name="includeSubfolders"/> is set (bounded
-        /// by <see cref="MaxScopedSweepFolders"/>). Mirrors the exhaustive scan's tree
-        /// rule - only mail folders (DefaultItemType 0) are swept, but non-mail folders
-        /// still get their subtrees visited.
+        /// by <see cref="MaxScopedSweepFolders"/> visits, <see cref="FolderWalkDepthGuard"/>
+        /// levels and <see cref="ScopedSweepTimeBudgetMs"/> of wall clock - see
+        /// <see cref="DecideSweepWalk"/>). Mirrors the exhaustive scan's tree rule - only
+        /// mail folders (DefaultItemType 0) are swept, but non-mail folders still get
+        /// their subtrees visited, which is precisely why the walk is bounded by folders
+        /// VISITED rather than by folders swept.
         /// </summary>
         private void SweepScopedFolder(
             dynamic ns,
@@ -1503,6 +1662,7 @@ namespace OutlookAI.Core.Com
                 SweepFolderTree(
                     ns, root, storeDisplayName, storeId, string.Join("/", folderPath),
                     sinceUtc, perFolderCap, includeBodies, includeSubfolders,
+                    0, new ScopedSweepWalk(tally), // depth 0 = the scoped root
                     items, sweptFolders, ref skipped, tally);
             }
             finally
@@ -1521,15 +1681,21 @@ namespace OutlookAI.Core.Com
             int perFolderCap,
             bool includeBodies,
             bool includeSubfolders,
+            int depth,
+            ScopedSweepWalk walk,
             List<ComMailBrief> items,
             List<string> sweptFolders,
             ref int skipped,
             SweepTally tally)
         {
-            if (sweptFolders.Count >= MaxScopedSweepFolders)
+            // Bounds are checked PER FOLDER, and against folders VISITED. The old check
+            // was `sweptFolders.Count >= MaxScopedSweepFolders`, which counted only
+            // SUCCESSFUL sweeps: a non-mail folder and a folder that failed to open were
+            // both walked - and recursed into - for free, so a wide subtree of them ran
+            // the walk with no bound at all, and no depth guard or clock behind it.
+            if (!walk.TryVisit(depth))
             {
                 skipped++;
-                tally.FolderCapReached = true;
                 return;
             }
 
@@ -1577,6 +1743,18 @@ namespace OutlookAI.Core.Com
                 int count = folderCollection.Count;
                 for (int i = 1; i <= count; i++)
                 {
+                    // Once a bound has fired, the remaining siblings are refused HERE
+                    // rather than one call deeper: fetching a child and reading its Name
+                    // costs two COM round trips, and a folder with thousands of children
+                    // would otherwise pay them all just to reject each one. They are
+                    // still counted as skipped - an unvisited folder is a coverage hole,
+                    // not a non-event (soak fix 15).
+                    if (!walk.CanVisit(depth + 1))
+                    {
+                        skipped += count - i + 1;
+                        break;
+                    }
+
                     object? child = null;
                     try
                     {
@@ -1586,6 +1764,7 @@ namespace OutlookAI.Core.Com
                         SweepFolderTree(
                             ns, childFolder, storeName, storeId, relativePath + "/" + childName,
                             sinceUtc, perFolderCap, includeBodies, includeSubfolders,
+                            depth + 1, walk,
                             items, sweptFolders, ref skipped, tally);
                     }
                     finally

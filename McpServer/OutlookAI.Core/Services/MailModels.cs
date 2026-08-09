@@ -218,6 +218,21 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public bool? FolderCapReached { get; set; }
 
+        /// <summary>
+        /// True when the scoped sweep's subtree walk refused a folder deeper than
+        /// <c>OutlookComSession.FolderWalkDepthGuard</c>. Null when the walk stayed
+        /// inside the guard (which every real folder tree does).
+        /// </summary>
+        public bool? DepthLimitReached { get; set; }
+
+        /// <summary>
+        /// True when the scoped sweep's subtree walk stopped on
+        /// <c>OutlookComSession.ScopedSweepTimeBudgetMs</c>, so the folders it had not
+        /// reached yet have no freshness coverage. Null when the walk finished inside
+        /// its budget.
+        /// </summary>
+        public bool? TimeBudgetExceeded { get; set; }
+
         /// <summary>Items in the window before term filtering.</summary>
         public int ItemsSeen { get; set; }
 

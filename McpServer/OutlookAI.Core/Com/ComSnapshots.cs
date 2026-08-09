@@ -966,7 +966,9 @@ namespace OutlookAI.Core.Com
             IReadOnlyList<string>? sweptFolders = null,
             int foldersFailed = 0,
             IReadOnlyList<string>? itemCappedFolders = null,
-            bool folderCapReached = false)
+            bool folderCapReached = false,
+            bool depthLimitReached = false,
+            bool timeBudgetExceeded = false)
         {
             Items = items;
             FoldersSwept = foldersSwept;
@@ -975,6 +977,8 @@ namespace OutlookAI.Core.Com
             FoldersFailed = foldersFailed;
             ItemCappedFolders = itemCappedFolders ?? Array.Empty<string>();
             FolderCapReached = folderCapReached;
+            DepthLimitReached = depthLimitReached;
+            TimeBudgetExceeded = timeBudgetExceeded;
         }
 
         /// <summary>Items received/sent at or after the sweep start.</summary>
@@ -1013,6 +1017,24 @@ namespace OutlookAI.Core.Com
         /// <see cref="FoldersSkipped"/> beyond the first refusal).
         /// </summary>
         public bool FolderCapReached { get; }
+
+        /// <summary>
+        /// True when the scoped sweep's subtree walk refused a folder deeper than
+        /// <c>OutlookComSession.FolderWalkDepthGuard</c>. A real tree is a handful of
+        /// levels deep, so this means the tree is pathological (or cyclic) - and the
+        /// guard is what keeps a recursive walk from taking the process down with an
+        /// uncatchable StackOverflowException.
+        /// </summary>
+        public bool DepthLimitReached { get; }
+
+        /// <summary>
+        /// True when the scoped sweep's subtree walk ran out of
+        /// <c>OutlookComSession.ScopedSweepTimeBudgetMs</c>, so the folders it had not
+        /// reached yet were never swept. Reported for the same reason as
+        /// <see cref="FolderCapReached"/>: a bound that stops the walk must never be
+        /// invisible (section-12 no-silent-caps discipline).
+        /// </summary>
+        public bool TimeBudgetExceeded { get; }
     }
 
     /// <summary>

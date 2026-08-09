@@ -11,10 +11,18 @@ on:
     branches: [master, v3]
     paths:
       - 'McpServer/**'
+      # Linked into the test project (see the tests csproj) and pinned by T1, so a change
+      # here can break this workflow even though these files live with the add-in.
+      - 'Services/McpConfigEditor.cs'
+      - 'Services/McpRegistrationDecision.cs'
       - '.github/workflows/mcpserver.yml'
   pull_request:
     paths:
       - 'McpServer/**'
+      # Linked into the test project (see the tests csproj) and pinned by T1, so a change
+      # here can break this workflow even though these files live with the add-in.
+      - 'Services/McpConfigEditor.cs'
+      - 'Services/McpRegistrationDecision.cs'
       - '.github/workflows/mcpserver.yml'
   workflow_dispatch:
 

@@ -488,10 +488,34 @@ namespace OutlookAI.Core.Services
             {
                 advice.Add("Freshness sweep stopped at its folder cap ("
                     + OutlookComSession.MaxScopedSweepFolders.ToString(CultureInfo.InvariantCulture)
-                    + "), so deeper subfolders were never visited - index results still cover them, but brand-new "
-                    + "mail there may be missing. Scope the search to a narrower folder for full freshness coverage.");
+                    + " folders visited), so deeper subfolders were never visited - index results still cover them, but "
+                    + "brand-new mail there may be missing. Scope the search to a narrower folder for full freshness coverage.");
             }
-            else if (sweep.FoldersSkipped > 0)
+
+            if (sweep.TimeBudgetExceeded == true)
+            {
+                advice.Add("Freshness sweep stopped at its "
+                    + (OutlookComSession.ScopedSweepTimeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
+                    + " s time budget after " + sweep.FoldersSwept.ToString(CultureInfo.InvariantCulture)
+                    + " folder(s), so the rest of the subtree has no freshness coverage - index results still cover it, "
+                    + "but brand-new mail there may be missing. Scope the search to a narrower folder, or pass "
+                    + "include_subfolders:false to sweep just the named folder.");
+            }
+
+            if (sweep.DepthLimitReached == true)
+            {
+                advice.Add("Freshness sweep refused to descend past its depth guard, so the deepest folders in this "
+                    + "subtree were never swept - a folder tree that deep is unusual enough to be worth checking with "
+                    + "list_folders. Index results still cover them.");
+            }
+
+            // Only when NO bound stopped the walk does a positive skip count mean what
+            // this message says; otherwise the skips are mostly folders the bound refused
+            // and this would misattribute them to unreadable folders.
+            if (sweep.FolderCapReached != true
+                && sweep.TimeBudgetExceeded != true
+                && sweep.DepthLimitReached != true
+                && sweep.FoldersSkipped > 0)
             {
                 advice.Add("Freshness sweep skipped " + sweep.FoldersSkipped.ToString(CultureInfo.InvariantCulture)
                     + " folder(s) it could not resolve or enumerate, so mail that arrived there in the last "
@@ -1428,6 +1452,8 @@ namespace OutlookAI.Core.Services
                 ? true
                 : (bool?)null;
             info.FolderCapReached = result.FolderCapReached ? true : (bool?)null;
+            info.DepthLimitReached = result.DepthLimitReached ? true : (bool?)null;
+            info.TimeBudgetExceeded = result.TimeBudgetExceeded ? true : (bool?)null;
 
             List<string> capped = new List<string>();
             foreach (string entry in result.ItemCappedFolders)

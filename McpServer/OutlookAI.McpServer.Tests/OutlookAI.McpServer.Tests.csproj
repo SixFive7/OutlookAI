@@ -38,6 +38,21 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The add-in's MCP configuration surgery, compiled straight into this test assembly.
+         It edits files the add-in does not own (~/.claude.json and a project's .mcp.json),
+         where a bad splice silently destroys the user's configuration, so it is written
+         framework-neutral (no JavaScriptSerializer, no System.Text.Json) precisely so the
+         T1 suite can pin the code that actually ships rather than a re-implementation.
+         The add-in itself is net48/VSTO and cannot be referenced from here. -->
+    <Compile Include="..\..\Services\McpConfigEditor.cs" Link="Linked\McpConfigEditor.cs" />
+    <!-- And the rules deciding WHEN the add-in may change that configuration by itself and
+         when it must stop and ask the user instead. Linked for the same reason: acting on
+         guessed intent is what destroys a registration someone set up on purpose, so the
+         decision matrix is pinned as the shipped code rather than as a copy of it. -->
+    <Compile Include="..\..\Services\McpRegistrationDecision.cs" Link="Linked\McpRegistrationDecision.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Absolute path to the built server exe, baked in at build time so the T3
          conformance test can spawn it regardless of the test host's working directory.
          The ProjectReference above guarantees the exe is built first. -->

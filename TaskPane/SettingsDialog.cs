@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Text;
 using System.Windows.Forms;
@@ -21,9 +21,11 @@ namespace OutlookAI.TaskPane
         private readonly CheckBox chkSearch;
         private readonly CheckBox chkCaching;
         private readonly CheckBox chkOst;
+        private readonly CheckBox chkGlobalMcp;
         private readonly GroupBox grpSearch;
         private readonly GroupBox grpCaching;
         private readonly GroupBox grpOst;
+        private readonly GroupBox grpClaude;
         private readonly Label lblHeader;
         private readonly Label lblSearchValues;
         private readonly Label lblSearchWarning;
@@ -31,12 +33,32 @@ namespace OutlookAI.TaskPane
         private readonly Label lblOstValues;
         private readonly Label lblRestart;
         private readonly Label lblGpo;
+        private readonly Label lblGlobalMcpHelp;
         private readonly Label lblMcp;
+        private readonly Button btnAddProject;
+        private readonly Button btnCopyCommand;
         private readonly Button btnApply;
         private readonly Button btnClose;
 
         private bool _updating;
         private bool _disposedCustom;
+
+        /// <summary>
+        /// What a manual registration would name, refreshed by <see cref="RefreshFromState"/>.
+        /// Cached in a field so the theme handler can redraw the status line without probing
+        /// the disk again.
+        /// </summary>
+        private string _preferredCommand = "";
+
+        /// <summary>
+        /// The server's real path. The copy button uses this rather than the portable
+        /// <c>${LOCALAPPDATA}</c> spelling on purpose: PowerShell expands <c>${NAME}</c>
+        /// itself — quoted or not — so a copied command carrying that form would arrive at
+        /// the CLI with the path blanked out. Claude Code expands it when it READS the
+        /// config, which is why the file the button writes can use it and a shell command
+        /// cannot.
+        /// </summary>
+        private string _resolvedServerPath = "";
 
         internal static bool IsOpen
         {
@@ -84,6 +106,25 @@ namespace OutlookAI.TaskPane
             }
         }
 
+        /// <summary>
+        /// Repaints an open dialog from stored state. Called when something OUTSIDE it changed
+        /// the registration — the startup prompt being answered — so the tick box and the
+        /// status line can never sit there contradicting what was just chosen. UI thread; a
+        /// no-op when the dialog is closed. Never throws.
+        /// </summary>
+        internal static void RefreshIfOpen()
+        {
+            try
+            {
+                if (IsOpen)
+                    _open.RefreshFromState();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("RefreshIfOpen: " + ex.Message);
+            }
+        }
+
         public SettingsDialog()
         {
             SuspendLayout();
@@ -96,7 +137,7 @@ namespace OutlookAI.TaskPane
             MinimizeBox = false;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(470, 655);
+            ClientSize = new Size(470, 803);
 
             int margin = 12;
             int innerWidth = ClientSize.Width - 2 * margin;
@@ -216,27 +257,69 @@ namespace OutlookAI.TaskPane
                 Visible = false,
             };
 
-            // Mail-server registration with Claude Code. Always visible: "connected and
-            // pointing at the right place" is worth stating, not just its absence.
+            // --- Claude Code group: where the mail server is registered, and its state ---
+            grpClaude = new GroupBox
+            {
+                Name = "grpClaude",
+                Text = "Mail server in Claude Code",
+                Location = new Point(margin, 571),
+                Size = new Size(innerWidth, 186),
+            };
+            chkGlobalMcp = new CheckBox
+            {
+                Name = "chkGlobalMcp",
+                Text = "Make available in all my Claude Code projects",
+                Location = new Point(10, 20),
+                Size = new Size(innerWidth - 20, 18),
+            };
+            lblGlobalMcpHelp = new Label
+            {
+                Name = "lblGlobalMcpHelp",
+                Text = "Registers the mail server in your personal Claude Code configuration, so every " +
+                       "project you open can use it. Turning this off removes that entry again.",
+                Location = new Point(26, 40),
+                Size = new Size(innerWidth - 36, 30),
+            };
+            // Always visible: "connected and pointing at the right place" is worth stating,
+            // not just its absence.
             lblMcp = new Label
             {
                 Name = "lblMcp",
-                Location = new Point(margin, 571),
-                Size = new Size(innerWidth, 44),
+                Location = new Point(10, 74),
+                Size = new Size(innerWidth - 20, 64),
             };
+            btnAddProject = new Button
+            {
+                Name = "btnAddProject",
+                Text = "Add to a specific project…",
+                Location = new Point(10, 146),
+                Size = new Size(176, 26),
+            };
+            btnCopyCommand = new Button
+            {
+                Name = "btnCopyCommand",
+                Text = "Copy CLI command",
+                Location = new Point(194, 146),
+                Size = new Size(176, 26),
+            };
+            grpClaude.Controls.Add(chkGlobalMcp);
+            grpClaude.Controls.Add(lblGlobalMcpHelp);
+            grpClaude.Controls.Add(lblMcp);
+            grpClaude.Controls.Add(btnAddProject);
+            grpClaude.Controls.Add(btnCopyCommand);
 
             btnApply = new Button
             {
                 Name = "btnApply",
                 Text = "Apply now",
-                Location = new Point(ClientSize.Width - margin - 170, 619),
+                Location = new Point(ClientSize.Width - margin - 170, 767),
                 Size = new Size(84, 26),
             };
             btnClose = new Button
             {
                 Name = "btnClose",
                 Text = "Close",
-                Location = new Point(ClientSize.Width - margin - 80, 619),
+                Location = new Point(ClientSize.Width - margin - 80, 767),
                 Size = new Size(80, 26),
             };
 
@@ -247,7 +330,7 @@ namespace OutlookAI.TaskPane
             Controls.Add(grpOst);
             Controls.Add(lblRestart);
             Controls.Add(lblGpo);
-            Controls.Add(lblMcp);
+            Controls.Add(grpClaude);
             Controls.Add(btnApply);
             Controls.Add(btnClose);
 
@@ -258,6 +341,11 @@ namespace OutlookAI.TaskPane
             chkSearch.CheckedChanged += OnToggleChanged;
             chkCaching.CheckedChanged += OnToggleChanged;
             chkOst.CheckedChanged += OnToggleChanged;
+            // Deliberately NOT OnToggleChanged: this one owns a different service, and
+            // toggling it must not drag the Outlook tuning reconcile along with it.
+            chkGlobalMcp.CheckedChanged += OnGlobalMcpChanged;
+            btnAddProject.Click += OnAddProject;
+            btnCopyCommand.Click += OnCopyCommand;
             btnApply.Click += (s, e) =>
             {
                 OutlookTuningService.ReconcileFromUi();
@@ -296,6 +384,127 @@ namespace OutlookAI.TaskPane
             RefreshFromState();
         }
 
+        // The "all my projects" toggle. Ticking or unticking it IS the user declaring their
+        // intent, so it applies immediately rather than waiting for the next Outlook start —
+        // a user who unticks it expects the entry gone now — and it never re-opens the
+        // question the startup prompt asks: they just answered it.
+        private void OnGlobalMcpChanged(object sender, EventArgs e)
+        {
+            if (_updating)
+                return;
+            try
+            {
+                Cursor = Cursors.WaitCursor;
+                McpRegistrationService.ApplyUserChoice(chkGlobalMcp.Checked);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("MCP toggle: " + ex.Message);
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+            RefreshFromState();
+        }
+
+        // Project scope: writes/merges .mcp.json in a folder the user picks. Never throws
+        // out of the click handler - a failure is something to read, not a crash dialog.
+        private void OnAddProject(object sender, EventArgs e)
+        {
+            try
+            {
+                string folder;
+                using (var picker = new FolderBrowserDialog())
+                {
+                    picker.Description = "Choose the project folder that should get the OutlookAI mail server.";
+                    picker.ShowNewFolderButton = false;
+                    if (picker.ShowDialog(this) != DialogResult.OK)
+                        return;
+                    folder = picker.SelectedPath;
+                }
+
+                string configPath, error;
+                bool ok;
+                try
+                {
+                    Cursor = Cursors.WaitCursor;
+                    ok = McpRegistrationService.TryRegisterInProject(folder, out configPath, out error);
+                }
+                finally
+                {
+                    Cursor = Cursors.Default;
+                }
+
+                if (!ok)
+                {
+                    MessageBox.Show(this, error, "OutlookAI", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                var sb = new StringBuilder();
+                sb.AppendLine("Written to:");
+                sb.AppendLine(configPath);
+                sb.AppendLine();
+                sb.AppendLine("The first time you open Claude Code in that folder it will ask you to approve "
+                              + "this server. That prompt is Claude Code's own security check and only you can "
+                              + "answer it — the add-in deliberately does not.");
+                sb.AppendLine();
+                sb.Append(".mcp.json is normally committed to source control. ");
+                if (McpConfigEditor.ContainsEnvironmentReference(_preferredCommand))
+                {
+                    sb.Append("Because the entry points at ${LOCALAPPDATA} rather than a fixed path, it is "
+                              + "portable: teammates who have OutlookAI installed get a working mail server, "
+                              + "and teammates who do not simply see a failed-connection warning for this one "
+                              + "server — nothing else breaks.");
+                }
+                else
+                {
+                    sb.Append("This entry names a fixed path on this machine (the mail server is not in the "
+                              + "default install location here), so it will not resolve on a teammate's "
+                              + "machine — they would see a failed-connection warning for this one server.");
+                }
+
+                MessageBox.Show(this, sb.ToString(), "OutlookAI", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("Add to project: " + ex.Message);
+                MessageBox.Show(this, ex.Message, "OutlookAI", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        // The same registration as a command, for people who would rather use the CLI.
+        private void OnCopyCommand(object sender, EventArgs e)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(_resolvedServerPath))
+                    return;
+
+                string command = "claude mcp add --scope project outlookai -- \"" + _resolvedServerPath + "\"";
+                Clipboard.SetText(command);
+                MessageBox.Show(
+                    this,
+                    "Copied to the clipboard. Run it from the project folder:" + Environment.NewLine
+                        + Environment.NewLine + command + Environment.NewLine + Environment.NewLine
+                        + "Use --scope user instead of --scope project to cover every project, which is what "
+                        + "the tick box above does." + Environment.NewLine + Environment.NewLine
+                        + "This names the real path so it works in any shell. The \"Add to a specific project…\" "
+                        + "button writes the portable ${LOCALAPPDATA} form instead, which is the one to keep if "
+                        + "the file goes into source control.",
+                    "OutlookAI",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                // The clipboard belongs to whatever grabbed it last; losing that race is not
+                // worth a crash dialog.
+                System.Diagnostics.Debug.WriteLine("Copy command: " + ex.Message);
+            }
+        }
+
         // Reads only what the last reconcile recorded, so opening the dialog never touches
         // Claude Code's config file. "Apply now" is what re-runs the reconcile.
         private void RefreshMcpLine()
@@ -307,26 +516,39 @@ namespace OutlookAI.TaskPane
                 switch (reg.Status)
                 {
                     case McpRegistrationService.StatusOk:
-                        text = "Mail server: registered with Claude Code.";
+                        text = "Registered for all your projects.";
                         break;
                     case McpRegistrationService.StatusHealed:
-                        text = "Mail server: registration was pointing elsewhere and has been repaired.";
+                        text = "Registration was missing or pointing elsewhere and has been repaired.";
+                        break;
+                    case McpRegistrationService.StatusDisabled:
+                        text = "Not registered for all your projects. Individual projects with a .mcp.json are unaffected.";
+                        break;
+                    case McpRegistrationService.StatusRemoved:
+                        text = "Removed from your personal Claude Code configuration. Individual projects with a .mcp.json are unaffected.";
                         break;
                     case McpRegistrationService.StatusNoClaude:
-                        text = "Mail server: Claude Code was not found on this machine, so there is nothing to register with.";
+                        text = "Claude Code was not found on this machine, so there is nothing to register with.";
                         break;
                     case McpRegistrationService.StatusNoServer:
-                        text = "Mail server: not installed alongside the add-in; any existing registration was left unchanged.";
+                        text = "The mail server is not installed alongside the add-in; any existing registration was left unchanged.";
                         break;
                     case McpRegistrationService.StatusNoRuntime:
-                        text = "Mail server: needs the .NET 10 runtime, which is not installed. Get it from "
+                        text = "The mail server needs the .NET 10 runtime, which is not installed. Get it from "
                                + McpRegistrationService.DotnetRuntimeDownloadUrl + " and restart Outlook.";
                         break;
                     case McpRegistrationService.StatusParseFailed:
-                        text = "Mail server: Claude Code's configuration could not be read, so it was left untouched.";
+                        text = "Claude Code's configuration could not be read, so it was left untouched.";
+                        break;
+                    case McpRegistrationService.StatusAwaitingChoice:
+                        // The detail carries what was actually found, and there is no useful
+                        // shorter way to say it: nothing has been changed, and why.
+                        text = string.IsNullOrEmpty(reg.Detail)
+                            ? "Waiting for you to choose whether to register the mail server. Nothing has been changed."
+                            : reg.Detail;
                         break;
                     default:
-                        text = "Mail server: registration state unknown"
+                        text = "Registration state unknown"
                                + (string.IsNullOrEmpty(reg.Detail) ? "." : (" — " + reg.Detail));
                         break;
                 }
@@ -335,6 +557,12 @@ namespace OutlookAI.TaskPane
                     (reg.Status == McpRegistrationService.StatusOk || reg.Status == McpRegistrationService.StatusHealed))
                 {
                     text += Environment.NewLine + reg.RegisteredCommand;
+                }
+                else if (!string.IsNullOrEmpty(_preferredCommand))
+                {
+                    // Labelled: an unadorned path under "not registered" reads like a claim
+                    // that it IS registered.
+                    text += Environment.NewLine + "Server: " + _preferredCommand;
                 }
 
                 lblMcp.Text = text;
@@ -355,6 +583,27 @@ namespace OutlookAI.TaskPane
 
         private void RefreshFromState()
         {
+            // The Claude Code group first and in its own guarded block: a tuning snapshot
+            // that fails must not leave the registration controls unpainted.
+            _updating = true;
+            try
+            {
+                _preferredCommand = McpRegistrationService.ResolvePreferredCommand();
+                _resolvedServerPath = McpRegistrationService.ResolveInstalledServerPath() ?? "";
+                chkGlobalMcp.Checked = McpRegistrationService.GetSnapshot().GlobalRegistrationEnabled;
+                bool haveServer = !string.IsNullOrEmpty(_preferredCommand);
+                btnAddProject.Enabled = haveServer;
+                btnCopyCommand.Enabled = haveServer && !string.IsNullOrEmpty(_resolvedServerPath);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("MCP settings refresh: " + ex.Message);
+            }
+            finally
+            {
+                _updating = false;
+            }
+
             RefreshMcpLine();
 
             OutlookTuningService.TuningSnapshot snap;
@@ -457,20 +706,21 @@ namespace OutlookAI.TaskPane
             lblSearchWarning.ForeColor = ThemeService.SecondaryText;
             lblRestart.ForeColor = ThemeService.StatusError;
             lblGpo.ForeColor = ThemeService.SecondaryText;
+            lblGlobalMcpHelp.ForeColor = ThemeService.SecondaryText;
             // Colour depends on the state, so let the refresh own it rather than pinning a
             // colour here that the next refresh would immediately overwrite.
             RefreshMcpLine();
 
-            foreach (var grp in new[] { grpSearch, grpCaching, grpOst })
+            foreach (var grp in new[] { grpSearch, grpCaching, grpOst, grpClaude })
                 grp.ForeColor = ThemeService.Text;
 
-            foreach (var chk in new[] { chkMaster, chkSearch, chkCaching, chkOst })
+            foreach (var chk in new[] { chkMaster, chkSearch, chkCaching, chkOst, chkGlobalMcp })
                 chk.ForeColor = ThemeService.Text;
 
             foreach (var lbl in new[] { lblSearchValues, lblCachingValues, lblOstValues })
                 lbl.ForeColor = ThemeService.Text;
 
-            foreach (var btn in new[] { btnApply, btnClose })
+            foreach (var btn in new[] { btnApply, btnClose, btnAddProject, btnCopyCommand })
             {
                 if (ThemeService.IsDarkMode)
                 {

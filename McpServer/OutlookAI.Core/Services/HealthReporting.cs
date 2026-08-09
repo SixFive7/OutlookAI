@@ -295,6 +295,11 @@ namespace OutlookAI.Core.Services
         /// Compares the registered command against the running executable (pure, T1-pinned).
         /// Path comparison, not string comparison: the registration and the process path can
         /// differ only in casing or separators and still be the same file.
+        ///
+        /// The registered command is EXPANDED first. Claude Code resolves <c>${VAR}</c> in
+        /// <c>command</c> when it reads its configuration, and the add-in registers the
+        /// portable <c>${LOCALAPPDATA}/…</c> spelling on purpose, so comparing the raw text
+        /// would report a perfectly correct registration as drift.
         /// </summary>
         public static string DescribeMcpRegistration(string? registeredCommand, string? runningFrom)
         {
@@ -308,7 +313,101 @@ namespace OutlookAI.Core.Services
                 return RegistrationUnknown;
             }
 
-            return SamePath(registeredCommand!, runningFrom!) ? RegistrationOk : RegistrationDrifted;
+            string resolved = ExpandEnvironmentReferences(registeredCommand);
+            if (string.IsNullOrWhiteSpace(resolved))
+            {
+                // Every reference in it expanded to nothing: it names no file at all, which
+                // is a broken registration, not this one.
+                return RegistrationDrifted;
+            }
+
+            return SamePath(resolved, runningFrom!) ? RegistrationOk : RegistrationDrifted;
+        }
+
+        /// <summary>
+        /// Expands the <c>${VAR}</c> and <c>${VAR:-default}</c> forms Claude Code documents
+        /// for <c>command</c>, <c>args</c> and <c>env</c> (pure when given a
+        /// <paramref name="lookup"/>; T1-pinned). Anything else — a bare <c>$</c>, an
+        /// unterminated or empty <c>${}</c> — is literal text and is copied through, which is
+        /// the only safe reading for a value about to be compared against a real file.
+        ///
+        /// The add-in's <c>McpConfigEditor.ExpandEnvironmentReferences</c> is the same rule on
+        /// the writing side; the two are deliberately separate because Core takes no add-in
+        /// dependency, and both are pinned so they cannot drift apart unnoticed.
+        /// </summary>
+        public static string ExpandEnvironmentReferences(string? value, Func<string, string?>? lookup = null)
+        {
+            // Bound to a non-nullable local once: net48's reference assemblies are not
+            // annotated, so the null-state of string.IsNullOrEmpty's argument does not flow
+            // there the way it does on net10, and Core compiles warning-free for both.
+            string text = value ?? "";
+            if (text.Length == 0 || text.IndexOf("${", StringComparison.Ordinal) < 0)
+            {
+                return text;
+            }
+
+            lookup ??= static name =>
+            {
+                try
+                {
+                    return Environment.GetEnvironmentVariable(name);
+                }
+                catch (Exception ex) when (!(ex is OutOfMemoryException))
+                {
+                    return null;
+                }
+            };
+
+            var sb = new System.Text.StringBuilder(text.Length);
+            int i = 0;
+            while (i < text.Length)
+            {
+                if (text[i] != '$' || i + 1 >= text.Length || text[i + 1] != '{')
+                {
+                    sb.Append(text[i]);
+                    i++;
+                    continue;
+                }
+
+                int close = text.IndexOf('}', i + 2);
+                if (close < 0)
+                {
+                    sb.Append(text, i, text.Length - i);
+                    break;
+                }
+
+                string inner = text.Substring(i + 2, close - i - 2);
+                string name = inner;
+                string fallback = "";
+                int marker = inner.IndexOf(":-", StringComparison.Ordinal);
+                if (marker >= 0)
+                {
+                    name = inner.Substring(0, marker);
+                    fallback = inner.Substring(marker + 2);
+                }
+
+                if (name.Length == 0)
+                {
+                    sb.Append(text, i, close - i + 1);
+                    i = close + 1;
+                    continue;
+                }
+
+                string resolved = "";
+                try
+                {
+                    resolved = lookup(name) ?? "";
+                }
+                catch (Exception ex) when (!(ex is OutOfMemoryException))
+                {
+                    resolved = "";
+                }
+
+                sb.Append(resolved.Length > 0 ? resolved : fallback);
+                i = close + 1;
+            }
+
+            return sb.ToString();
         }
 
         /// <summary>Whether two paths name the same file, tolerating case and separator differences.</summary>

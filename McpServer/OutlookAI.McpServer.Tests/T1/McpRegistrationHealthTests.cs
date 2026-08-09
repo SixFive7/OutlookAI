@@ -39,6 +39,86 @@ public sealed class McpRegistrationHealthTests
     }
 
     [Fact]
+    public void PortableRegistration_IsOkNotDrifted()
+    {
+        // What the add-in now registers: Claude Code expands ${VAR} when it reads the
+        // config, so comparing the raw text would call a correct registration drift.
+        Environment.SetEnvironmentVariable("OUTLOOKAI_TEST_ROOT", @"C:\Users\x\AppData\Local");
+        try
+        {
+            Assert.Equal(
+                HealthReporting.RegistrationOk,
+                HealthReporting.DescribeMcpRegistration(
+                    "${OUTLOOKAI_TEST_ROOT}/OutlookAI/Setup/McpServer/OutlookAI.McpServer.exe",
+                    ServerPath));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("OUTLOOKAI_TEST_ROOT", null);
+        }
+    }
+
+    [Fact]
+    public void PortableRegistrationOfSomethingElse_IsStillDrifted()
+    {
+        Assert.Equal(
+            HealthReporting.RegistrationDrifted,
+            HealthReporting.DescribeMcpRegistration(
+                "${OUTLOOKAI_TEST_UNSET}/OutlookAI.McpServer.exe",
+                ServerPath));
+    }
+
+    [Fact]
+    public void ARegistrationThatExpandsToNothing_IsDriftedNotOk()
+    {
+        // Never let an empty expansion be compared as a path; it names no file.
+        Assert.Equal(
+            HealthReporting.RegistrationDrifted,
+            HealthReporting.DescribeMcpRegistration("${OUTLOOKAI_TEST_UNSET}", ServerPath));
+    }
+
+    // ===== ExpandEnvironmentReferences =====
+
+    [Theory]
+    [InlineData("${SET}/x", "value/x")]
+    [InlineData("${UNSET:-fallback}/x", "fallback/x")]
+    [InlineData("${SET:-fallback}/x", "value/x")]
+    [InlineData("a/${UNSET}b", "a/b")]
+    [InlineData("${SET}-${SET}", "value-value")]
+    // Not references: literal, never guessed at.
+    [InlineData(@"C:\plain\path.exe", @"C:\plain\path.exe")]
+    [InlineData("costs $5", "costs $5")]
+    [InlineData("${unterminated", "${unterminated")]
+    [InlineData("${}", "${}")]
+    public void ExpandsTheFormsClaudeCodeDocuments(string value, string expected)
+    {
+        Assert.Equal(expected, HealthReporting.ExpandEnvironmentReferences(
+            value, name => name == "SET" ? "value" : null));
+    }
+
+    [Theory]
+    [InlineData(null, "")]
+    [InlineData("", "")]
+    public void ExpandingNothingYieldsNothing(string? value, string expected)
+    {
+        Assert.Equal(expected, HealthReporting.ExpandEnvironmentReferences(value));
+    }
+
+    [Fact]
+    public void ExpansionFallsBackToTheProcessEnvironment()
+    {
+        Environment.SetEnvironmentVariable("OUTLOOKAI_TEST_ROOT", "here");
+        try
+        {
+            Assert.Equal("here/x", HealthReporting.ExpandEnvironmentReferences("${OUTLOOKAI_TEST_ROOT}/x"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("OUTLOOKAI_TEST_ROOT", null);
+        }
+    }
+
+    [Fact]
     public void DifferentPathRegistered_IsDrifted()
     {
         // The exact drift this exists to catch: a registration left pointing at a build output.
