@@ -138,7 +138,7 @@ namespace OutlookAI.Core.Services
             + "uncapped, fully local search - enable the Search tuning group in OutlookAI Settings.";
 
         private readonly Lazy<IndexSearchService> _index;
-        private readonly ComGateway _gateway;
+        private readonly IComGateway _gateway;
         private readonly SendConfirmationTokens _sendTokens;
         private readonly ServerDraftRegistry _draftRegistry = new ServerDraftRegistry();
         private readonly SweepCache _sweepCache = new SweepCache();
@@ -155,7 +155,7 @@ namespace OutlookAI.Core.Services
         private int _nextHitId;
 
         /// <summary>Creates the service; both the index client and the COM session attach lazily.</summary>
-        public MailService(ComGateway gateway)
+        public MailService(IComGateway gateway)
             : this(gateway, null)
         {
         }
@@ -164,7 +164,7 @@ namespace OutlookAI.Core.Services
         /// Creates the service with an explicit send-confirmation token store (tests
         /// inject short-TTL stores; production uses the 120 s default).
         /// </summary>
-        public MailService(ComGateway gateway, SendConfirmationTokens? sendTokens)
+        public MailService(IComGateway gateway, SendConfirmationTokens? sendTokens)
         {
             _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
             _sendTokens = sendTokens ?? new SendConfirmationTokens();
@@ -3841,7 +3841,7 @@ namespace OutlookAI.Core.Services
             }
         }
 
-        private IReadOnlyList<ComStoreDetail> GetStoreDetails(OutlookComSession session)
+        private IReadOnlyList<ComStoreDetail> GetStoreDetails(IOutlookSession session)
         {
             lock (_catalogLock)
             {

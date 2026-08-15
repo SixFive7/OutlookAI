@@ -52,7 +52,7 @@ public sealed class LiveDisconnectRecoveryTests
         // Two independent ref holders, like the day-1 incident shape.
         using ComGateway independentGateway = new();
         _ = service.ListAccounts();
-        int stores = independentGateway.Run(s => s.GetStores().Count);
+        int stores = independentGateway.Run(s => ((OutlookComSession)s).GetStores().Count);
         Assert.True(stores > 0);
 
         // Wiring pin: the Quit-sink advise must keep succeeding (defense-in-depth; the
@@ -79,14 +79,14 @@ public sealed class LiveDisconnectRecoveryTests
                 return;
             }
 
-            IReadOnlyList<ComInspectorInfo> inspectors = independentGateway.Run(s => s.GetOpenInspectors());
+            IReadOnlyList<ComInspectorInfo> inspectors = independentGateway.Run(s => ((OutlookComSession)s).GetOpenInspectors());
             if (inspectors.Count > 0)
             {
                 _output.WriteLine($"SKIP: {inspectors.Count} open Inspector window(s) (possible unsent compose) - not closing anything.");
                 return;
             }
 
-            int outboxItems = independentGateway.Run(s => s.CountOutboxItems());
+            int outboxItems = independentGateway.Run(s => ((OutlookComSession)s).CountOutboxItems());
             if (outboxItems != 0)
             {
                 _output.WriteLine($"SKIP: {outboxItems} Outbox item(s) (or count unavailable) - not closing anything.");
@@ -103,14 +103,14 @@ public sealed class LiveDisconnectRecoveryTests
             // a live session pins it with an invisible Explorer. Wait for the windows to
             // go, then relinquish the pin, or Outlook will (correctly) refuse to exit.
             _ = PollUntil(() => WindowProbe.VisibleOutlookWindows().Count == 0, TimeSpan.FromSeconds(60));
-            _ = independentGateway.Run(s => s.TryCloseInvisibleExplorers());
+            _ = independentGateway.Run(s => ((OutlookComSession)s).TryCloseInvisibleExplorers());
 
             bool preExited = PollUntil(() => Process.GetProcessesByName("OUTLOOK").Length == 0, TimeSpan.FromSeconds(120));
             Assert.True(preExited, "Outlook did not exit within 120 s of closing its parked windows (safety counts were clean)");
             _output.WriteLine("windowed Outlook exited after graceful close; re-autostarting headless for the scenario");
 
             // Fresh headless Outlook for the actual scenario (D17 autostart).
-            _ = independentGateway.Run(s => s.GetStores().Count);
+            _ = independentGateway.Run(s => ((OutlookComSession)s).GetStores().Count);
             baselineWindows = WindowProbe.VisibleOutlookWindows();
             if (baselineWindows.Count != 0)
             {
@@ -176,7 +176,7 @@ public sealed class LiveDisconnectRecoveryTests
 
         // Now relinquish the pin, which is the ONLY thing still keeping Outlook alive -
         // otherwise the disconnect scenario below cannot be staged at all any more.
-        int closedExplorers = independentGateway.Run(s => s.TryCloseInvisibleExplorers());
+        int closedExplorers = independentGateway.Run(s => ((OutlookComSession)s).TryCloseInvisibleExplorers());
         _output.WriteLine($"released the lifetime pin ({closedExplorers} invisible Explorer(s) closed)");
 
         // (1) Background release: the independent gateway receives NO calls - only the

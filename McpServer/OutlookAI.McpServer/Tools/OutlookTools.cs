@@ -3,7 +3,10 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using OutlookAI.ComHost.Client;
+using OutlookAI.ComHost.Supervision;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.IndexSearch;
 using OutlookAI.Core.Services;
@@ -11,16 +14,28 @@ using OutlookAI.Core.Services;
 namespace OutlookAI.McpServer.Tools;
 
 /// <summary>
-/// Process-wide service holder: ONE MailService (and with it one ComGateway / pumped
-/// STA thread and one held-open Outlook session) per server process. Created lazily so
-/// starting the server never touches the index or Outlook by itself.
+/// Process-wide service holder: ONE MailService and ONE COM-host supervisor per server
+/// process. Created lazily so starting the server never touches the index or Outlook by
+/// itself.
+/// <para>
+/// Note what this process does NOT hold any more: a COM session, a pumped STA thread, or
+/// any Outlook reference. Those live in the OutlookAI.ComHost child, which exists so a
+/// wedged Outlook call can be reclaimed by killing it (Docs/com-host.md). Everything here
+/// is either pure computation or a bounded round trip.
+/// </para>
 /// </summary>
 internal static class ServerRuntime
 {
+    private static readonly Lazy<RemoteComGateway> LazyGateway = new(
+        () => new RemoteComGateway(allowStartingOutlook: true), LazyThreadSafetyMode.ExecutionAndPublication);
+
     private static readonly Lazy<MailService> LazyService = new(
-        MailService.CreateDefault, LazyThreadSafetyMode.ExecutionAndPublication);
+        () => new MailService(LazyGateway.Value), LazyThreadSafetyMode.ExecutionAndPublication);
 
     internal static MailService Service => LazyService.Value;
+
+    /// <summary>The COM-host gateway, for health reporting that must not go through the service layer.</summary>
+    internal static RemoteComGateway Gateway => LazyGateway.Value;
 }
 
 /// <summary>
@@ -79,7 +94,7 @@ public static class OutlookTools
         + "subtree - which on a big subtree can hit the 120 s budget; pass include_subfolders=false to scan just "
         + "the named folder, and check foldersScanned/foldersSkipped plus advice for partial coverage. Use it "
         + "when the index looks stale or wrong, or when completeness matters more than speed.")]
-    public static string Search(
+    public static async Task<CallToolResult> Search(
         [Description("Free-text terms, whitespace-separated, ANDed. Each term may match in the subject or the body (see search_in). Letters/digits plus @.-_'+ only; trailing * for prefix. Omit to filter by sender/date only.")]
         string? query = null,
         [Description("Which part of the mail the query terms must match: subject_and_body (default), subject, or "
@@ -104,9 +119,10 @@ public static class OutlookTools
             + "subject/body matches, including the freshness sweep's, are unaffected.")]
         bool include_attachment_hits = true,
         [Description("Max hits (1-100, default 25). Keep small - iterate instead.")] int top = 25,
-        [Description("Snippet length per hit (0-1000, default 200; 0 = no snippets).")] int snippet_chars = 200)
+        [Description("Snippet length per hit (0-1000, default 200; 0 = no snippets).")] int snippet_chars = 200,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() =>
+        return await GuardAsync(cancellationToken, () =>
         {
             SearchRequest request = new()
             {
@@ -136,13 +152,14 @@ public static class OutlookTools
         + "and id anchors the COM fallback that walks Outlook's conversation graph when the index has no rows for the "
         + "conversation - COM cannot look up a conversation by id string, it needs a concrete mail item to start from. "
         + "Members are oldest-first; truncated=true means the conversation has more members than 'top'.")]
-    public static string Thread(
+    public static async Task<CallToolResult> Thread(
         [Description("ConversationId from a search hit or read result - the fast index path. Pass when you have it.")] string? conversation_id = null,
         [Description("Hit id (e.g. h12) or EntryID of any mail in the conversation - anchors the COM conversation-graph fallback (used when the index has no rows).")] string? id = null,
         [Description("Store display name to scope the index lookup (faster).")] string? store = null,
-        [Description("Max thread members (default 50).")] int top = 50)
+        [Description("Max thread members (default 50).")] int top = 50,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.Thread(conversation_id, id, store, top));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.Thread(conversation_id, id, store, top));
     }
 
     [McpServerTool(Name = "read")]
@@ -154,7 +171,7 @@ public static class OutlookTools
         + "pass include_html=true and inspect the stored HTML. "
         + "Needs Outlook (starts it if allowed). First read of an index hit locates the item (up to a few seconds); repeats are cached. "
         + "Works on any EntryID, including a draft you just created (drafts are not in the search index; pass the draft's entryId directly).")]
-    public static string Read(
+    public static async Task<CallToolResult> Read(
         [Description("Hit id (e.g. h12) or full EntryID hex.")] string id,
         [Description("Body window size in characters (default 20000; 0 = metadata only). bodyTruncated=true means more body exists beyond the window; bodyTotalChars is the full size.")] int max_body_chars = MailService.BodyCharsDefault,
         [Description("Include raw transport headers (capped at 8 KB). Default false.")] bool include_headers = false,
@@ -167,21 +184,23 @@ public static class OutlookTools
         [Description("Budget for bodyHtml in characters (default 100000, max 500000; 0 = omit it). Only used with include_html. "
             + "It is deliberately larger than max_body_chars: Outlook puts ~40000 characters of stylesheet BEFORE the message "
             + "content, so a small window would show CSS instead of your text.")]
-        int max_html_chars = MailService.HtmlCharsDefault)
+        int max_html_chars = MailService.HtmlCharsDefault,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.Read(
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.Read(
             id, max_body_chars, include_headers, MailService.HeaderCharsDefault, body_offset, include_html, max_html_chars));
     }
 
     [McpServerTool(Name = "save_attachment")]
     [Description("Save one attachment of a mail to disk so you can open/read the file yourself. "
         + "Use the attachment 'index' from a read result. Never overwrites - existing names get a numeric suffix. Returns the absolute path.")]
-    public static string SaveAttachment(
+    public static async Task<CallToolResult> SaveAttachment(
         [Description("Hit id or EntryID of the mail (for attachment-content hits: the hit itself).")] string id,
         [Description("1-based attachment index from read's attachments list.")] int attachment_index,
-        [Description("Absolute target directory. Default: %LOCALAPPDATA%\\OutlookAI\\scratch\\attachments.")] string? target_dir = null)
+        [Description("Absolute target directory. Default: %LOCALAPPDATA%\\OutlookAI\\scratch\\attachments.")] string? target_dir = null,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.SaveAttachment(id, attachment_index, target_dir));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.SaveAttachment(id, attachment_index, target_dir));
     }
 
     [McpServerTool(Name = "move_mail")]
@@ -193,7 +212,7 @@ public static class OutlookTools
         + "with a clear per-item error (run one call per store). Moving CHANGES an item's EntryID: use newEntryId afterwards; "
         + "old hit ids/index rows go stale briefly (re-run search). Moving to Deleted Items or the Outbox is refused - this "
         + "server cannot delete mail. Needs Outlook (starts it headless if needed); never opens windows.")]
-    public static string MoveMail(
+    public static async Task<CallToolResult> MoveMail(
         [Description("1-50 hit ids (e.g. h12) or full EntryID hex strings. Each item is moved within its own store.")]
         string[] ids,
         [Description("Store-relative target folder path (from list_folders), e.g. 'Archive/2026' or 'Projects/Acme'.")]
@@ -202,9 +221,10 @@ public static class OutlookTools
         bool create_folder = false,
         [Description("Optional store display name (see list_accounts): when given, items living in a DIFFERENT store fail "
             + "with a cross-store error instead of moving. Omit to move each item within its own store.")]
-        string? store = null)
+        string? store = null,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.MoveMail(ids, folder, create_folder, store));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.MoveMail(ids, folder, create_folder, store));
     }
 
     [McpServerTool(Name = "archive_mail")]
@@ -216,11 +236,12 @@ public static class OutlookTools
         + "to its own account's Archive. Content-preserving, fully audited and REVERSIBLE like move_mail: results carry "
         + "fromFolder + oldEntryId/newEntryId (undo = move_mail with newEntryId and folder=fromFolder). Archiving changes "
         + "EntryIDs; re-run search for fresh ids. Needs Outlook (starts it headless if needed); never opens windows.")]
-    public static string ArchiveMail(
+    public static async Task<CallToolResult> ArchiveMail(
         [Description("1-50 hit ids (e.g. h12) or full EntryID hex strings; may span accounts.")]
-        string[] ids)
+        string[] ids,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.ArchiveMail(ids));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ArchiveMail(ids));
     }
 
     [McpServerTool(Name = "outlook_health")]
@@ -232,18 +253,18 @@ public static class OutlookTools
         + "Read-only - attaches to Outlook only when it is already running, NEVER starts it. status=ok means all "
         + "dependencies are available; problems lists each degradation; advice carries freshness guidance (search covers "
         + "any index gap automatically with its COM sweep - this tool only reports).")]
-    public static string OutlookHealth()
+    public static async Task<CallToolResult> OutlookHealth(CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.Health());
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.Health());
     }
 
     [McpServerTool(Name = "list_accounts")]
     [Description("List the profile's mail accounts and ALL stores (accounts, delegate/shared caches, archives) with flags: "
         + "isDelegate, onlineOnly/locallySearchable (server-only stores like Online Archives are invisible to local search), "
         + "and inLocalIndex. Store display names are the 'store' argument for search/list_folders.")]
-    public static string ListAccounts()
+    public static async Task<CallToolResult> ListAccounts(CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.ListAccounts());
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ListAccounts());
     }
 
     [McpServerTool(Name = "list_folders")]
@@ -251,11 +272,12 @@ public static class OutlookTools
         + "Traversal order is stable: stores sorted by display name, then depth-first with sibling folders sorted by name. "
         + "One call returns up to 1000 folders (virtually always the whole tree); truncated=true means more exist - "
         + "continue with offset=nextOffset to page the remainder in the same stable order.")]
-    public static string ListFolders(
+    public static async Task<CallToolResult> ListFolders(
         [Description("Store display name (see list_accounts). Omit for all stores.")] string? store = null,
-        [Description("Folders to skip in the stable traversal (default 0). Use the previous result's nextOffset to continue a truncated listing.")] int offset = 0)
+        [Description("Folders to skip in the stable traversal (default 0). Use the previous result's nextOffset to continue a truncated listing.")] int offset = 0,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.ListFolders(store, offset));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ListFolders(store, offset));
     }
 
     [McpServerTool(Name = "list_signatures")]
@@ -264,9 +286,9 @@ public static class OutlookTools
         + "them (missing = unknown, e.g. no signature configured or roaming-managed - never guessed). Use this to pick the "
         + "BEST signature for a draft via the draft tools' 'signature' parameter - e.g. match the language of the "
         + "recipient/thread. Read-only, never starts Outlook.")]
-    public static string ListSignatures()
+    public static async Task<CallToolResult> ListSignatures(CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.ListSignatures());
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ListSignatures());
     }
 
     [McpServerTool(Name = "manage_signature")]
@@ -278,7 +300,7 @@ public static class OutlookTools
         + "also clears per-account default assignments that referenced it. Optional set_default_for records the signature "
         + "as an account's default (new mail, replies, or both) in the Outlook profile; Outlook picks that up at its next "
         + "start. Never starts or touches Outlook itself; every operation is audit-logged.")]
-    public static string ManageSignature(
+    public static async Task<CallToolResult> ManageSignature(
         [Description("'create' | 'update' | 'delete'.")] string action,
         [Description("Signature name (as shown by list_signatures and Outlook's signature pickers).")] string name,
         [Description("Plain-text signature body (create/update). When omitted it is derived from body_html.")]
@@ -287,9 +309,10 @@ public static class OutlookTools
         string? body_html = null,
         [Description("Optionally record the signature as an account default: {\"account\": SMTP address from list_accounts, "
             + "\"scope\": \"new\"|\"reply\"|\"both\"}. Not allowed with delete.")]
-        SetDefaultForArg? set_default_for = null)
+        SetDefaultForArg? set_default_for = null,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.ManageSignature(new ManageSignatureRequest
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ManageSignature(new ManageSignatureRequest
         {
             Action = action,
             Name = name,
@@ -314,20 +337,22 @@ public static class OutlookTools
     [Description("Show the user a mail: opens it in a visible Outlook message window (starts Outlook if needed). "
         + "Use when the user asks to see a mail, or to hand a found mail over for human reading/action. "
         + "Pass a hit id from search/thread or a full EntryID. The window stays open for the user - do not try to close it.")]
-    public static string OpenInOutlook(
-        [Description("Hit id (e.g. h12) or full EntryID hex of the mail to display.")] string id)
+    public static async Task<CallToolResult> OpenInOutlook(
+        [Description("Hit id (e.g. h12) or full EntryID hex of the mail to display.")] string id,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.OpenInOutlook(id));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.OpenInOutlook(id));
     }
 
     [McpServerTool(Name = "goto_folder")]
     [Description("Navigate the user's Outlook window to a folder (like clicking it in the folder pane). "
         + "Starts Outlook and opens a window if none is visible. Omit 'folder' for the store's Inbox.")]
-    public static string GotoFolder(
+    public static async Task<CallToolResult> GotoFolder(
         [Description("Store display name (see list_accounts).")] string store,
-        [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Omit for Inbox.")] string? folder = null)
+        [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Omit for Inbox.")] string? folder = null,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.GotoFolder(store, folder));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.GotoFolder(store, folder));
     }
 
     [McpServerTool(Name = "show_search_results")]
@@ -337,15 +362,16 @@ public static class OutlookTools
         + "Optional store/folder navigate the window there first; scope controls the search breadth from that folder. "
         + "When Outlook's UI search runs server-assisted (local search tuning off), the result carries an 'advice' note that "
         + "the displayed list may diverge from agent search results - relay it to the user.")]
-    public static string ShowSearchResults(
+    public static async Task<CallToolResult> ShowSearchResults(
         [Description("Search text for the Outlook search box (free text and Outlook query syntax).")] string query,
         [Description("current_folder (default - that folder only, no subfolders; the search tool's folder scope DOES "
             + "include them, so pass subfolders to show the same breadth) | subfolders (that folder and its "
             + "subfolders) | all_folders (current store) | all_outlook (all stores).")] string scope = "current_folder",
         [Description("Store display name to navigate to first (see list_accounts).")] string? store = null,
-        [Description("Store-relative folder path to navigate to first. Requires store.")] string? folder = null)
+        [Description("Store-relative folder path to navigate to first. Requires store.")] string? folder = null,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.ShowSearchResults(query, scope, store, folder));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ShowSearchResults(query, scope, store, folder));
     }
 
     private const string CcHint = "Cc recipient address(es), separated by ';' or ','. ADDED to the recipients Outlook already "
@@ -390,7 +416,7 @@ public static class OutlookTools
         + "identity and signature, and opened on screen (default) so the user can review, edit and send it themselves. "
         + "NOTHING IS SENT by this tool. Supply EITHER body (plain text, line breaks preserved) OR body_html (real HTML, for a "
         + "formatted letter); either way the text is placed above the signature.")]
-    public static string NewDraft(
+    public static async Task<CallToolResult> NewDraft(
         [Description("Sending account SMTP address (see list_accounts) - determines the From identity, the Drafts folder and the signature.")]
         string account,
         [Description("To recipient address(es), separated by ';' or ','.")] string to,
@@ -409,9 +435,10 @@ public static class OutlookTools
         string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
         [Description(ReadReceiptHint)] bool? request_read_receipt = null,
-        [Description(AttachmentsHint)] string[]? attachments = null)
+        [Description(AttachmentsHint)] string[]? attachments = null,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.NewDraft(
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.NewDraft(
             account, to, cc, subject, body, display, signature, bcc, importance, request_read_receipt, body_html, attachments));
     }
 
@@ -419,7 +446,7 @@ public static class OutlookTools
     [Description("Create a REPLY draft to a mail (hit id from search/thread, or EntryID) via Outlook's own Reply - "
         + "threading and the quoted original are preserved and the right account's signature is applied; your text goes above the quote. "
         + "The draft is saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT.")]
-    public static string ReplyDraft(
+    public static async Task<CallToolResult> ReplyDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
         [Description("Plain-text reply body. Placed ABOVE the quoted original. Use body_html instead when the reply needs formatting; "
             + "exactly one of body or body_html is required.")]
@@ -434,9 +461,10 @@ public static class OutlookTools
         string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
         [Description(ReadReceiptHint)] bool? request_read_receipt = null,
-        [Description(AttachmentsHint)] string[]? attachments = null)
+        [Description(AttachmentsHint)] string[]? attachments = null,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.ReplyDraft(
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ReplyDraft(
             id, body, replyAll: false, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html, attachments));
     }
 
@@ -444,7 +472,7 @@ public static class OutlookTools
     [Description("Create a REPLY-ALL draft to a mail (hit id or EntryID) via Outlook's own ReplyAll - all original recipients kept, "
         + "threading and quoted history preserved, correct signature applied, your text above the quote. "
         + "Saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT.")]
-    public static string ReplyAllDraft(
+    public static async Task<CallToolResult> ReplyAllDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
         [Description("Plain-text reply body. Placed ABOVE the quoted original. Use body_html instead when the reply needs formatting; "
             + "exactly one of body or body_html is required.")]
@@ -459,9 +487,10 @@ public static class OutlookTools
         string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
         [Description(ReadReceiptHint)] bool? request_read_receipt = null,
-        [Description(AttachmentsHint)] string[]? attachments = null)
+        [Description(AttachmentsHint)] string[]? attachments = null,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.ReplyDraft(
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ReplyDraft(
             id, body, replyAll: true, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html, attachments));
     }
 
@@ -469,7 +498,7 @@ public static class OutlookTools
     [Description("Create a FORWARD draft of a mail (hit id or EntryID) via Outlook's own Forward - quoted content and attachments "
         + "carried over, correct signature applied, your text above the quote. "
         + "Saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT.")]
-    public static string ForwardDraft(
+    public static async Task<CallToolResult> ForwardDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to forward.")] string id,
         [Description("To recipient address(es), separated by ';' or ','.")] string to,
         [Description("Plain-text body. Placed ABOVE the forwarded mail. Use body_html instead when the message needs formatting; "
@@ -485,9 +514,10 @@ public static class OutlookTools
         string? signature = null,
         [Description(ImportanceHint)] string? importance = null,
         [Description(ReadReceiptHint)] bool? request_read_receipt = null,
-        [Description(AttachmentsHint)] string[]? attachments = null)
+        [Description(AttachmentsHint)] string[]? attachments = null,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.ForwardDraft(
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ForwardDraft(
             id, body, to, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html, attachments));
     }
 
@@ -509,7 +539,7 @@ public static class OutlookTools
         + "Only saved, UNSENT drafts in a Drafts folder can be updated - a sent mail, a received mail or an item elsewhere "
         + "is refused with a clear reason and nothing is changed. Any pending send confirm_token for the draft is "
         + "invalidated by the update.")]
-    public static string UpdateDraft(
+    public static async Task<CallToolResult> UpdateDraft(
         [Description("The draft to revise: the entryId a draft tool returned (preferred), or a hit id of a saved, UNSENT draft.")]
         string id,
         [Description("New plain-text body. REPLACES your text in the draft region only - the signature and any quoted "
@@ -540,9 +570,10 @@ public static class OutlookTools
         string[]? remove_attachments = null,
         [Description("Re-open the revised draft in an Outlook window for the user (default true, like the draft tools). "
             + "Pass false when the user is not watching or the draft is already open and you do not want it refocused.")]
-        bool display = true)
+        bool display = true,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.UpdateDraft(
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.UpdateDraft(
             id, body, body_html, subject, to, cc, bcc, importance, request_read_receipt, signature,
             attachments, remove_attachments, display));
     }
@@ -559,11 +590,12 @@ public static class OutlookTools
         + "It is a SOFT delete - exactly like pressing Delete in Outlook: the draft moves to Deleted Items and the result "
         + "carries newEntryId plus fromFolder, so it can be put back with move_mail. Anything it refuses comes back as a "
         + "clear error saying why - it never silently does nothing. Every discard is audit-logged.")]
-    public static string DiscardDraft(
+    public static async Task<CallToolResult> DiscardDraft(
         [Description("The draft to discard: the entryId a draft tool returned for a draft created in THIS session.")]
-        string id)
+        string id,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.DiscardDraft(id));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.DiscardDraft(id));
     }
 
     [McpServerTool(Name = "send")]
@@ -576,22 +608,68 @@ public static class OutlookTools
         + "~2 minutes, work exactly once, and are invalidated by any change to the draft. The From identity is always the "
         + "account owning the draft's store, hard-verified immediately before transport (mismatch aborts - this tool can never "
         + "send from a different account). Every step is audit-logged.")]
-    public static string Send(
+    public static async Task<CallToolResult> Send(
         [Description("The draft to send: the entryId returned by a draft tool (preferred) or a hit id of a saved, UNSENT draft.")]
         string id,
         [Description("One-time confirmation token from the previous send call for this draft. OMIT on the first call.")]
         string? confirm_token = null,
         [Description("Optional Exchange send-on-behalf-of SMTP address (requires server-side permission). Must be identical in both calls.")]
-        string? sent_on_behalf_of = null)
+        string? sent_on_behalf_of = null,
+        CancellationToken cancellationToken = default)
     {
-        return Guard(() => ServerRuntime.Service.Send(id, confirm_token, sent_on_behalf_of));
+        return await GuardAsync(cancellationToken, () => ServerRuntime.Service.Send(id, confirm_token, sent_on_behalf_of));
     }
 
-    private static string Guard<T>(Func<T> operation)
+    /// <summary>
+    /// Runs a tool operation with a bounded COM budget and turns every failure into a
+    /// structured result rather than a hang or an opaque protocol fault.
+    /// <para>
+    /// The service layer is synchronous, so the work runs on a pool thread while this
+    /// method stays async. Blocking that thread is safe here in a way it was not before:
+    /// everything it can block on now goes through the COM host, which the supervisor
+    /// will kill when the deadline expires.
+    /// </para>
+    /// </summary>
+    private static async Task<CallToolResult> GuardAsync<T>(CancellationToken cancellationToken, Func<T> operation)
     {
         try
         {
-            return JsonSerializer.Serialize(operation(), Json);
+            // The ambient context is established here, on the caller's execution context,
+            // so it flows into the pool thread with ExecutionContext capture.
+            using (ComHostRequestContext.Enter(cancellationToken))
+            {
+                T value = await Task.Run(operation, CancellationToken.None).ConfigureAwait(false);
+                return Success(JsonSerializer.Serialize(value, Json));
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The CLIENT cancelled. Rethrowing is what the SDK expects - it suppresses the
+            // response entirely, per spec. Anything else would answer a request that is no
+            // longer there.
+            throw;
+        }
+        catch (OperationCanceledException ex)
+        {
+            // A cancellation that is NOT the client's. Left to propagate it would reach the
+            // SDK's generic handler and reach the agent as the message-redacted
+            // "An error occurred invoking '<tool>'." - silence-adjacent, and exactly the
+            // symptom this whole design exists to remove. So it is answered here instead.
+            return Error("Cancelled", ex.Message,
+                "The operation was cancelled before it completed. Retry; if it repeats, check outlook_health.");
+        }
+        catch (ComHostTimeoutException ex)
+        {
+            return Error("Timeout", ex.Message,
+                "Outlook did not answer within the time budget and the COM host was restarted, so the next call starts "
+                + "clean. Outlook itself may be busy, showing a dialog, or not responding - check outlook_health. "
+                + "search still returns indexed results meanwhile.");
+        }
+        catch (ComHostUnavailableException ex)
+        {
+            return Error("ComHostUnavailable", ex.Message,
+                "The Outlook COM host could not be started or stopped unexpectedly. outlook_health reports its state; "
+                + "search still returns indexed results without it.");
         }
         catch (SendRefusedException ex)
         {
@@ -629,13 +707,37 @@ public static class OutlookTools
         }
     }
 
-    private static string Error(string type, string message, string? advice, string? reason = null)
+    /// <summary>A successful tool result. The text payload is byte-identical to what this server has always returned.</summary>
+    private static CallToolResult Success(string json)
+    {
+        return new CallToolResult
+        {
+            Content = [new TextContentBlock { Text = json }],
+        };
+    }
+
+    /// <summary>
+    /// A failed tool result.
+    /// <para>
+    /// Now carries <c>isError: true</c>. Previously every domain failure was transported
+    /// as a protocol-level SUCCESS whose text happened to contain an error object - a
+    /// private convention that the tool descriptions taught the model but that was
+    /// invisible to any generic MCP client. The text keeps its exact former shape, so
+    /// nothing that already read it breaks; the flag and the structured copy are additive.
+    /// </para>
+    /// </summary>
+    private static CallToolResult Error(string type, string message, string? advice, string? reason = null)
     {
         // 'reason' is the machine-readable refusal code (send/draft refusals). It is
         // omitted for everything else by the null-ignoring serializer, so the existing
         // error shape is unchanged for every other failure.
         var payload = new { error = new { type, reason, message, advice } };
-        return JsonSerializer.Serialize(payload, Json);
+        return new CallToolResult
+        {
+            IsError = true,
+            Content = [new TextContentBlock { Text = JsonSerializer.Serialize(payload, Json) }],
+            StructuredContent = JsonSerializer.SerializeToElement(payload, Json),
+        };
     }
 
     private static DateTime? ParseUtc(string? value, string name)

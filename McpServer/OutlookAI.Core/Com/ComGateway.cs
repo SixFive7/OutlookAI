@@ -49,12 +49,19 @@ namespace OutlookAI.Core.Com
     /// is NEVER killed, stopped or restarted by this process; everything runs
     /// non-elevated (S8 - an elevation mismatch breaks the COM attach).
     /// </summary>
-    public sealed class ComGateway : IDisposable
+    public sealed class ComGateway : IComGateway, IDisposable
     {
         private readonly object _lock = new object();
         private readonly bool _allowStartingOutlook;
         private OutlookComSession? _session;
         private bool _disposed;
+
+        /// <summary>
+        /// Raised (on a worker thread) when Outlook signalled Quit or its process exited.
+        /// The COM host forwards this to the MCP server so the server can drop cached
+        /// store details instead of discovering the loss on the next call.
+        /// </summary>
+        public event Action? OutlookGone;
 
         /// <summary>Creates the gateway; connection happens lazily on first use.</summary>
         public ComGateway(bool allowStartingOutlook = true)
@@ -147,7 +154,7 @@ namespace OutlookAI.Core.Com
         /// starting Outlook per D17) when necessary. If the held session turns out dead
         /// (Outlook exited between calls), it is rebuilt exactly once.
         /// </summary>
-        public T Run<T>(Func<OutlookComSession, T> operation)
+        public T Run<T>(Func<IOutlookSession, T> operation)
         {
             if (operation == null)
             {
@@ -232,6 +239,7 @@ namespace OutlookAI.Core.Com
         private void HandleSessionGone(OutlookComSession session)
         {
             Invalidate(session);
+            OutlookGone?.Invoke();
         }
 
         private void Invalidate(OutlookComSession session)

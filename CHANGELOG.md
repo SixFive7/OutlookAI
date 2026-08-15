@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fix mail tools hanging forever with no answer when Outlook stops responding: if Outlook got into a state where it accepted requests but never replied, every mail tool - search, read, drafts, and even the health check meant to diagnose it - would wait silently until your AI assistant gave up half an hour later, and the server stayed stuck that way until it was restarted. Outlook is now driven from a separate helper process that the server can restart, so a stuck Outlook produces a clear, quick error naming what happened instead of silence, and the very next request starts from a clean slate. Searches still return your indexed mail while Outlook is unavailable.
+- Report failures as real errors: mail tools that fail now mark the response as an error rather than returning a normal-looking result that merely contained an error message inside it. Assistants that did not know OutlookAI's particular convention could previously mistake a failure for a successful answer.
+- Stop leaving stray OutlookAI processes behind: server and helper processes now shut down with the program that started them instead of accumulating in the background - 18 had built up on one machine, one of them stuck holding Outlook open.
+
 ## v3.1.0.325 - 2026-08-15
 
 - Make registering the mail server with Claude Code your choice instead of something that just happens: OutlookAI no longer adds itself to your personal Claude Code configuration on its own. A "Make available in all my Claude Code projects" tick box in OutlookAI Settings turns it on, and unticking it removes the entry again - which is also the tidy way to take it out before uninstalling. If OutlookAI was already registered before this update it stays registered and the box starts ticked, so nothing you already had working changes.

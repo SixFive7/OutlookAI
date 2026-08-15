@@ -14,7 +14,7 @@ namespace OutlookAI.Core.Com
     /// <summary>Data snapshot of an Outlook store (COM-free once returned).</summary>
     public sealed class ComStoreInfo
     {
-        internal ComStoreInfo(string displayName, string storeId)
+        public ComStoreInfo(string displayName, string storeId)
         {
             DisplayName = displayName;
             StoreId = storeId;
@@ -30,7 +30,7 @@ namespace OutlookAI.Core.Com
     /// <summary>Data snapshot of an opened item (COM-free once returned).</summary>
     public sealed class ComOpenResult
     {
-        internal ComOpenResult(string entryId, string? subject, DateTime? receivedTime, int? itemClass)
+        public ComOpenResult(string entryId, string? subject, DateTime? receivedTime, int? itemClass)
         {
             EntryId = entryId;
             Subject = subject;
@@ -54,7 +54,7 @@ namespace OutlookAI.Core.Com
     /// <summary>One item captured by a store walk (COM-free once returned).</summary>
     public sealed class ComWalkedItem
     {
-        internal ComWalkedItem(string entryId, string? subject, string? body, DateTime? receivedTime, string folderPath, int itemClass)
+        public ComWalkedItem(string entryId, string? subject, string? body, DateTime? receivedTime, string folderPath, int itemClass)
         {
             EntryId = entryId;
             Subject = subject;
@@ -92,7 +92,7 @@ namespace OutlookAI.Core.Com
     /// Never quits or kills Outlook (S7); may start it when allowed (D17), except while
     /// the OutlookAISetup installer mutex is held.
     /// </summary>
-    public sealed class OutlookComSession : IDisposable
+    public sealed class OutlookComSession : IOutlookSession, IDisposable
     {
         private const int OlMailItemClass = 43;
 

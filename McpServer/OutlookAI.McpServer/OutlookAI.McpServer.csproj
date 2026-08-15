@@ -22,6 +22,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\OutlookAI.Core\OutlookAI.Core.csproj" />
+    <!--
+      The killable COM child (Docs/com-host.md). Referencing the Exe project does two
+      jobs at once: it shares the pipe contract types, and it makes the SDK copy
+      OutlookAI.ComHost.exe into this project's output - which is how the parent finds
+      the child via AppContext.BaseDirectory in dev builds as well as installed ones.
+      Same pattern as OutlookAI.RemediationTools.
+    -->
+    <ProjectReference Include="..\OutlookAI.ComHost\OutlookAI.ComHost.csproj" />
   </ItemGroup>
 
 </Project>

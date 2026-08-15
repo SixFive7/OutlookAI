@@ -30,7 +30,7 @@ namespace OutlookAI.Core.Com
     /// <summary>Outcome of locating one index hit through COM.</summary>
     public sealed class HitLocationResult
     {
-        internal HitLocationResult(HitLocationTier tier, ComOpenResult? located, string? storeDisplayName, string? error)
+        public HitLocationResult(HitLocationTier tier, ComOpenResult? located, string? storeDisplayName, string? error)
         {
             Tier = tier;
             Located = located;
@@ -71,7 +71,7 @@ namespace OutlookAI.Core.Com
     public static class HitLocator
     {
         /// <summary>Locates a hit; tries the URL-segment path first, then ItemPathDisplay.</summary>
-        public static HitLocationResult Locate(OutlookComSession session, IndexHit hit, int toleranceSeconds = 120)
+        public static HitLocationResult Locate(IOutlookSession session, IndexHit hit, int toleranceSeconds = 120)
         {
             if (session == null)
             {
@@ -156,7 +156,7 @@ namespace OutlookAI.Core.Com
         public const int DelegateLeafWalkRetryMs = 400;
 
         private static ComOpenResult? TryResolveDelegateLeaf(
-            OutlookComSession session,
+            IOutlookSession session,
             string storeDisplayName,
             string leafName,
             string lookupSubject,
