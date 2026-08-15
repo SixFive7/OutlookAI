@@ -40,6 +40,13 @@ namespace OutlookAI.ComHost.Supervision
         private int _consecutiveStartFailures;
         private long _lastStartFailureTimestamp;
         private int _restartCount;
+
+        /// <summary>
+        /// Incremented every time a child is installed. Teardown is scoped to a
+        /// generation so a late kill cannot destroy its own replacement - see
+        /// <see cref="TearDownChild"/>.
+        /// </summary>
+        private int _generation;
         private string? _lastFailureMessage;
         private bool _childHasServed;
         private bool _disposed;
@@ -167,6 +174,12 @@ namespace OutlookAI.ComHost.Supervision
         /// </summary>
         private void ArmDeadline(long id, PendingRequest pending)
         {
+            int generation;
+            lock (_stateLock)
+            {
+                generation = _generation;
+            }
+
             _ = Task.Delay(TimeSpan.FromMilliseconds(pending.DeadlineMilliseconds), pending.DeadlineCts.Token)
                 .ContinueWith(
                     _ =>
@@ -179,15 +192,24 @@ namespace OutlookAI.ComHost.Supervision
                         // The operation is still outstanding past its budget. Reclaim it
                         // the only way a blocked COM call can be reclaimed.
                         //
-                        // Order matters: complete the request as a TIMEOUT first, then
-                        // kill. Killing first tears down the connection, and the teardown
-                        // path fails everything outstanding as "the host stopped" - which
-                        // would win this race and report the vaguer cause, hiding the fact
-                        // that we were the ones who ended it, and why.
-                        RecordFailure($"'{pending.Operation}' exceeded its {pending.DeadlineMilliseconds} ms budget; the COM host was restarted.");
+                        // The ordering here is subtle and was wrong twice, in opposite
+                        // directions, so it is spelled out:
+                        //
+                        // 1. Record the decision to replace the host - failure text, state
+                        //    and restart count - BEFORE releasing the caller. The caller
+                        //    issues its next request the instant it is released, and that
+                        //    request must not observe a host that still looks Ready, nor a
+                        //    restart count that has not caught up yet.
+                        // 2. Complete the request as a TIMEOUT, before the kill. Killing
+                        //    first tears down the connection, and teardown fails everything
+                        //    outstanding as "the host stopped" - which would win the race
+                        //    and report the vaguer cause, hiding both that we ended it and
+                        //    why.
+                        // 3. Kill last. It is the slowest step and nothing waits on it.
+                        BeginReplacement($"'{pending.Operation}' exceeded its {pending.DeadlineMilliseconds} ms budget; the COM host was restarted.");
                         pending.Completion.TrySetException(
                             new ComHostTimeoutException(pending.Operation, pending.DeadlineMilliseconds));
-                        KillChild($"deadline exceeded on '{pending.Operation}'");
+                        KillChild($"deadline exceeded on '{pending.Operation}'", generation);
                     },
                     CancellationToken.None,
                     TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,
@@ -290,6 +312,7 @@ namespace OutlookAI.ComHost.Supervision
             CancellationTokenSource childCts = new CancellationTokenSource();
             TaskCompletionSource<bool> ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
+            int generation;
             lock (_stateLock)
             {
                 _pipe = pipe;
@@ -298,6 +321,7 @@ namespace OutlookAI.ComHost.Supervision
                 _childCts = childCts;
                 _ready = ready;
                 _state = ComHostState.Starting;
+                generation = ++_generation;
             }
 
             DrainStandardError(child);
@@ -311,12 +335,18 @@ namespace OutlookAI.ComHost.Supervision
             }
             catch (Exception ex)
             {
-                NoteStartFailure($"the COM host did not connect within {ReadyTimeoutMilliseconds} ms");
+                // Name what actually happened. Reporting every failure here as a timeout
+                // once masked a disposed-pipe race for several test runs, because the
+                // message asserted a cause rather than reporting one.
+                string reason = ex is OperationCanceledException
+                    ? $"the COM host did not connect within {ReadyTimeoutMilliseconds} ms"
+                    : $"the COM host connection failed to establish ({ex.GetType().Name}: {ex.Message})";
+                NoteStartFailure(reason);
                 TearDownChild();
                 throw new ComHostUnavailableException("The Outlook COM host did not connect.", ex);
             }
 
-            _ = Task.Run(() => ReadLoopAsync(pipe, childCts.Token), CancellationToken.None);
+            _ = Task.Run(() => ReadLoopAsync(pipe, generation, childCts.Token), CancellationToken.None);
 
             try
             {
@@ -333,13 +363,19 @@ namespace OutlookAI.ComHost.Supervision
             lock (_stateLock)
             {
                 _state = ComHostState.Ready;
-                _lastFailureMessage = null;
+
+                // _lastFailureMessage is deliberately NOT cleared here. A recovered wedge
+                // must still leave a trace: the restart count says one happened, and this
+                // says what wedged - which is the actionable half. Clearing it on a
+                // successful restart would leave health reporting "restarted once" with no
+                // explanation, and invisibility is the exact failure this work exists to
+                // end. It reads as "last failure this session", not "current failure".
             }
 
             Volatile.Write(ref _consecutiveStartFailures, 0);
         }
 
-        private async Task ReadLoopAsync(Stream pipe, CancellationToken cancellationToken)
+        private async Task ReadLoopAsync(Stream pipe, int generation, CancellationToken cancellationToken)
         {
             try
             {
@@ -378,7 +414,7 @@ namespace OutlookAI.ComHost.Supervision
             }
             finally
             {
-                OnChildConnectionLost();
+                OnChildConnectionLost(generation);
             }
         }
 
@@ -402,11 +438,11 @@ namespace OutlookAI.ComHost.Supervision
             }
         }
 
-        private void OnChildConnectionLost()
+        private void OnChildConnectionLost(int generation)
         {
             lock (_stateLock)
             {
-                if (_state != ComHostState.None)
+                if (_generation == generation && _state != ComHostState.None)
                 {
                     _state = ComHostState.Faulted;
                 }
@@ -442,11 +478,16 @@ namespace OutlookAI.ComHost.Supervision
             await pipe.FlushAsync().ConfigureAwait(false);
         }
 
-        private void KillChild(string why)
+        private void KillChild(string why, int generation)
         {
             Process? child;
             lock (_stateLock)
             {
+                if (_generation != generation)
+                {
+                    return;
+                }
+
                 child = _child;
                 _state = ComHostState.Faulted;
             }
@@ -460,8 +501,9 @@ namespace OutlookAI.ComHost.Supervision
             {
                 if (!child.HasExited)
                 {
+                    // Not counted here: BeginReplacement already recorded the decision.
+                    // Counting in both places would double-count one reclaimed wedge.
                     child.Kill(entireProcessTree: true);
-                    _ = Interlocked.Increment(ref _restartCount);
                 }
             }
             catch (Exception)
@@ -471,10 +513,21 @@ namespace OutlookAI.ComHost.Supervision
             }
 
             _ = why;
-            TearDownChild();
+            TearDownChild(generation);
         }
 
-        private void TearDownChild()
+        /// <summary>
+        /// Tears down the current child, or - when <paramref name="onlyGeneration"/> is
+        /// given - only if that is still the current one.
+        /// <para>
+        /// The scoping is load-bearing. The deadline watchdog releases the waiting caller
+        /// BEFORE it kills, so the caller can have started a replacement child by the time
+        /// the kill runs. An unscoped teardown would then capture the NEW pipe and dispose
+        /// it, and the replacement would fail to connect - reported, misleadingly, as a
+        /// connect timeout. That is a real bug this fixes, not a theoretical one.
+        /// </para>
+        /// </summary>
+        private void TearDownChild(int? onlyGeneration = null)
         {
             Process? child;
             NamedPipeServerStream? pipe;
@@ -483,6 +536,13 @@ namespace OutlookAI.ComHost.Supervision
 
             lock (_stateLock)
             {
+                if (onlyGeneration is int generation && _generation != generation)
+                {
+                    // Superseded: this kill refers to a child that has already been
+                    // replaced. Doing nothing is exactly right.
+                    return;
+                }
+
                 child = _child;
                 pipe = _pipe;
                 cts = _childCts;
@@ -573,6 +633,27 @@ namespace OutlookAI.ComHost.Supervision
             _ = Interlocked.Increment(ref _consecutiveStartFailures);
             Volatile.Write(ref _lastStartFailureTimestamp, Stopwatch.GetTimestamp());
             RecordFailure(message);
+        }
+
+        /// <summary>
+        /// Marks the host as no longer usable and counts the replacement, atomically and
+        /// BEFORE any waiting caller is released.
+        /// <para>
+        /// This is what makes the restart observable at the moment it is decided rather
+        /// than whenever the kill happens to finish. A caller released first would race
+        /// ahead and see a host that still looked Ready - and try to send on a pipe being
+        /// torn down underneath it.
+        /// </para>
+        /// </summary>
+        private void BeginReplacement(string message)
+        {
+            lock (_stateLock)
+            {
+                _lastFailureMessage = message;
+                _state = ComHostState.Faulted;
+            }
+
+            _ = Interlocked.Increment(ref _restartCount);
         }
 
         private void RecordFailure(string message)

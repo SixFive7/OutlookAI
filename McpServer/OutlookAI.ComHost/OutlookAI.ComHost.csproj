@@ -25,4 +25,16 @@
     <ProjectReference Include="..\OutlookAI.Core\OutlookAI.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      The supervision policy and the wire protocol are internal on purpose - they are not
+      a supported surface for anything but the two ends of this pipe. T1 still needs to
+      pin every policy branch and every framing rule directly, since those are exactly the
+      parts that cannot be observed from outside without wedging a real Outlook.
+    -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>OutlookAI.McpServer.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>

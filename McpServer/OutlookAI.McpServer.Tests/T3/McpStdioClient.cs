@@ -34,7 +34,16 @@ public sealed class McpStdioClient : IAsyncDisposable
         ?? throw new InvalidOperationException("AssemblyMetadata 'McpServerExePath' is missing.");
 
     /// <summary>Spawns the server and completes the initialize handshake.</summary>
-    public static async Task<McpStdioClient> StartAndInitializeAsync(TimeSpan? timeout = null)
+    /// <param name="timeout">Overall client timeout.</param>
+    /// <param name="environment">
+    /// Extra environment variables for the server process. Used by the supervision tests
+    /// to inject a COM-host fault and shorten the deadline: the timeout/kill/respawn path
+    /// is only observable by actually exceeding a budget, and waiting out the real
+    /// two-minute one in every such test would make the suite unusable.
+    /// </param>
+    public static async Task<McpStdioClient> StartAndInitializeAsync(
+        TimeSpan? timeout = null,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         string exePath = ServerExePath;
         if (!File.Exists(exePath))
@@ -56,6 +65,14 @@ public sealed class McpStdioClient : IAsyncDisposable
             StandardOutputEncoding = utf8NoBom,
             StandardErrorEncoding = utf8NoBom,
         };
+
+        if (environment != null)
+        {
+            foreach (KeyValuePair<string, string> entry in environment)
+            {
+                psi.Environment[entry.Key] = entry.Value;
+            }
+        }
 
         Process server = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start the server process.");
@@ -138,14 +155,25 @@ public sealed class McpStdioClient : IAsyncDisposable
     /// Calls a tool and returns the first text content parsed as JSON (all OutlookAI
     /// tools return a single JSON text block). Asserts isError is not set.
     /// </summary>
+    /// <remarks>
+    /// A tool error is NOT a transport failure and is not thrown here. Domain failures now
+    /// set MCP <c>isError</c> - they used to be protocol-level successes whose text merely
+    /// contained an error object - and the error payload is precisely what most of these
+    /// tests assert on. Use <see cref="CallToolWithIsErrorAsync"/> when the flag itself
+    /// matters; a genuine protocol fault still throws from <see cref="RoundTripAsync"/>.
+    /// </remarks>
     public async Task<JsonElement> CallToolAsync(string name, object arguments)
+    {
+        (JsonElement payload, _) = await CallToolWithIsErrorAsync(name, arguments);
+        return payload;
+    }
+
+    /// <summary>Calls a tool and returns both its payload and whether MCP flagged it as an error.</summary>
+    public async Task<(JsonElement Payload, bool IsError)> CallToolWithIsErrorAsync(string name, object arguments)
     {
         JsonElement call = await RoundTripAsync("tools/call", new { name, arguments });
         JsonElement result = call.GetProperty("result");
-        if (result.TryGetProperty("isError", out JsonElement isError) && isError.ValueKind == JsonValueKind.True)
-        {
-            throw new InvalidOperationException($"tools/call {name} reported isError=true: {result.GetRawText()}");
-        }
+        bool isError = result.TryGetProperty("isError", out JsonElement flag) && flag.ValueKind == JsonValueKind.True;
 
         string? text = result.GetProperty("content").EnumerateArray()
             .First(c => c.GetProperty("type").GetString() == "text")
@@ -156,7 +184,7 @@ public sealed class McpStdioClient : IAsyncDisposable
         }
 
         using JsonDocument doc = JsonDocument.Parse(text);
-        return doc.RootElement.Clone();
+        return (doc.RootElement.Clone(), isError);
     }
 
     /// <summary>Calls a tool whose result is plain text (echo), returning the raw text.</summary>

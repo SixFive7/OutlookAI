@@ -42,7 +42,11 @@ namespace OutlookAI.Core.Com
         /// </summary>
         public int RestartCount { get; }
 
-        /// <summary>The last supervision failure, or null when nothing has gone wrong.</summary>
+        /// <summary>
+        /// The last supervision failure this session, or null when nothing has gone wrong.
+        /// Deliberately NOT cleared by a successful restart: a recovered wedge must still
+        /// be explainable afterwards, or the recovery hides the fault.
+        /// </summary>
         public string? LastFailure { get; }
 
         /// <summary>
