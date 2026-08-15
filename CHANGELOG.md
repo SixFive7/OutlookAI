@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v3.1.0.325 - 2026-08-15
+
 - Make registering the mail server with Claude Code your choice instead of something that just happens: OutlookAI no longer adds itself to your personal Claude Code configuration on its own. A "Make available in all my Claude Code projects" tick box in OutlookAI Settings turns it on, and unticking it removes the entry again - which is also the tidy way to take it out before uninstalling. If OutlookAI was already registered before this update it stays registered and the box starts ticked, so nothing you already had working changes.
 - Add the mail server to a single project instead of all of them: a new button in OutlookAI Settings lets you pick a folder and writes a `.mcp.json` there, so the server is available in that project alone. The entry is written with a portable path rather than one pointing inside your own user folder, so the file is safe to commit - a colleague who has OutlookAI installed gets a working server, and one who does not simply sees it fail to connect rather than anything breaking. Claude Code asks you to approve the server the first time you open that folder; that is its own security prompt and is meant to happen. There is also a Copy CLI command button if you would rather add it by hand.
 - Fix a mail-server registration you wrote yourself being overwritten every time Outlook started: an entry that left out the optional type field was treated as damaged and rewritten on each start. Such an entry is now recognised as valid and left alone.
