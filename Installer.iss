@@ -1,15 +1,14 @@
 #define MyAppName "OutlookAI"
 #define MyAppPublisher "SixFive7"
-; A direct CDN path on purpose, NOT the https://aka.ms/VSTORuntimeDownload alias that shipped
-; through v3.0.1: that alias now lands on the Download Center *page* (details.aspx?id=105890,
-; Content-Type text/html), so on a clean machine setup saved 127 KB of HTML as vstor_redist.exe,
-; executed it, and finished with no VSTO runtime installed and nothing to say why. An alias can
-; be repointed at a web page; a direct path can only 404, which fails the download loudly.
-; This is vstor_redist.exe 10.0.60917 (41,828,424 bytes), the Visual Studio 2010 Tools for
-; Office Runtime redistributable - the one that registers the VSTO Runtime Setup\v4R key that
-; IsVstoInstalled probes.
-#define VstoRuntimeUrl "https://download.microsoft.com/download/5/d/2/5d24f8f8-efbb-4b63-aa33-3785e3104713/vstor_redist.exe"
-; What the failure messages send the user to - a page to read, not a 40 MB direct download.
+; The VSTO runtime is CARRIED INSIDE this installer rather than fetched at install time -
+; see the [Files] entry and InstallVstoRuntime. v3.0.1 fetched it from
+; https://aka.ms/VSTORuntimeDownload, and that alias was silently repointed at the Download
+; Center *page* (Content-Type text/html): on a clean machine setup saved 127 KB of HTML as
+; vstor_redist.exe, executed it, and finished with no VSTO runtime and nothing to say why.
+; Pointing at a direct CDN path instead would fix that particular rot but not the class of
+; it - any URL can move, and this is the one prerequisite without which the add-in cannot
+; load at all. A payload compiled into setup cannot 404.
+; Where the failure messages send the user - a page to read, not a 40 MB direct download.
 #define VstoRuntimeManualUrl "https://www.microsoft.com/download/details.aspx?id=105890"
 ; The MCP server is a framework-dependent net10.0-windows console app. Its runtimeconfig
 ; asks for Microsoft.NETCore.App 10.0.0 only - it references no WinForms/WPF, so the BASE
@@ -53,6 +52,24 @@ CreateAppDir=yes
 ; publish\McpServer\* would make ISCC fail in the compile-only installer-validation gate
 ; (build.yml), which only creates a placeholder file in publish\.
 Source: "publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+; The Visual Studio 2010 Tools for Office Runtime redistributable, vstor_redist.exe
+; 10.0.60917.00 (41,828,424 bytes, SHA-256
+; CFE1A40BBE4A50022DB2164ABDB0154984E2CECB761A23CDC81CB5754F6E0A18) - the package that
+; registers the SOFTWARE\Microsoft\VSTO Runtime Setup\v4R key IsVstoInstalled probes.
+;
+; dontcopy, not a DestDir entry: this is a prerequisite installer, not part of the app.
+; It is compressed into setup, extracted to {tmp} by ExtractTemporaryFile only on the
+; machines that actually need it, and never lands in {app} - so nothing has to clean it up
+; afterwards and the installed footprint is unchanged.
+;
+; NOT in git - it is a 40 MB third-party binary in a public repo. CI fetches it before
+; compiling; see .github/workflows/release.yml (real payload, hash-verified) and
+; build.yml (placeholder, since that gate only checks that the script compiles).
+; Deliberately no skipifsourcedoesntexist: if the fetch step is ever removed or fails, the
+; compile must break loudly here rather than quietly produce an installer whose VSTO
+; prerequisite is missing - that silent-failure mode is exactly what shipped in v3.0.1.
+Source: "Redist\vstor_redist.exe"; Flags: dontcopy
 
 [Registry]
 ; Where the app is installed, so the add-in can find {app}\McpServer\OutlookAI.McpServer.exe
@@ -298,21 +315,41 @@ begin
   Result := True;
 end;
 
-procedure DownloadAndInstallVstoRuntime;
+// No download, and so no DownloadFile / IsWindowsExecutable guard: the bytes are the ones
+// compiled into this installer, verified by hash when CI fetched them, and covered by
+// setup's own CRC check on extraction. There is no network step left here to rot or to
+// hand back a web page.
+procedure InstallVstoRuntime;
 var
   TempPath: string;
   ErrorCode: Integer;
   ErrorDetail: string;
+  Extracted: Boolean;
 begin
   TempPath := ExpandConstant('{tmp}\vstor_redist.exe');
 
-  WizardForm.StatusLabel.Caption := 'Downloading VSTO Runtime...';
+  WizardForm.StatusLabel.Caption := 'Preparing VSTO Runtime...';
   WizardForm.ProgressGauge.Style := npbstMarquee;
 
-  if not DownloadFile('{#VstoRuntimeUrl}', TempPath, ErrorDetail) then
+  // Unpacks the payload from setup into {tmp}; Inno removes {tmp} on exit, so the 40 MB
+  // copy needs no cleanup of ours. It signals failure by raising rather than returning, and
+  // an uncaught exception here would abort the entire install - so catch it and report it
+  // the way every other prerequisite failure is reported. Only machines that actually lack
+  // the runtime ever reach this, which is also why the [Files] entry is listed last: with
+  // SolidCompression, extracting it means decompressing everything before it, and putting
+  // it first would push that cost onto every install instead of just these.
+  Extracted := False;
+  try
+    ExtractTemporaryFile('vstor_redist.exe');
+    Extracted := True;
+  except
+    ErrorDetail := GetExceptionMessage;
+  end;
+
+  if not Extracted then
   begin
     WizardForm.ProgressGauge.Style := npbstNormal;
-    MsgBox('Could not download the VSTO Runtime:' + #13#10 +
+    MsgBox('Could not unpack the VSTO Runtime installer:' + #13#10 +
       ErrorDetail + #13#10 + #13#10 +
       'Please install it manually from:' + #13#10 +
       '{#VstoRuntimeManualUrl}' + #13#10 + #13#10 +
@@ -343,6 +380,17 @@ begin
   end;
 end;
 
+// TrustedPublisher only - the store Office's Customization Installer consults to decide
+// whether an add-in may install without asking.
+//
+// Deliberately NOT the user's Root store as well. Adding this self-signed certificate there
+// would complete its chain and retire Office's "Publisher cannot be verified" prompt, but
+// Root is a protected store: certutil hands the import to crypt32, which puts up its own
+// modal "Security Warning ... installing a certificate with an unconfirmed thumbprint is a
+// security risk" dialog and waits, and -f does not suppress it. Measured on a clean Windows
+// 11 VM: still blocked after 30 seconds, certificate never added. So it only trades one
+// prompt for a more alarming one - and this runs on silent auto-updates too, where nobody is
+// there to answer it, which would strand updates exactly the way v3.0.1 existed to fix.
 procedure InstallCertificate;
 var
   ResultCode: Integer;
@@ -456,7 +504,7 @@ begin
       // VSTO Runtime requires .NET 4.8; skip if it is missing, since the runtime
       // would refuse to install anyway.
       if IsNetFramework48Installed and (not IsVstoInstalled) then
-        DownloadAndInstallVstoRuntime;
+        InstallVstoRuntime;
 
       // Needed only by the MCP server, never by the add-in itself - so a failure here is
       // reported and then tolerated; setup still completes and Outlook still gets the

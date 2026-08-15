@@ -323,8 +323,9 @@ The compose sidebar is focused on email composition assistance. The following ar
 1. Download the latest `.exe` installer from [GitHub Releases](../../releases/latest)
 2. Run the installer — it installs to your local AppData with no admin privileges required
 3. If .NET Framework 4.8, the VSTO Runtime, or the .NET 10 Runtime is missing, the installer downloads and installs it automatically (admin elevation is prompted only for these system-level prerequisites)
-4. Open Outlook — the AI Assistant button appears in the ribbon on compose windows
-5. The [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) is installed alongside the add-in, but nothing is registered with Claude Code until you choose where. Outlook asks you shortly after it starts whether to make it available in all your Claude Code projects; you can also decide — or change your mind — in **OutlookAI Settings** on the Mail ribbon, under **Mail server in Claude Code**, where **Add to a specific project…** covers a single project instead. See [Setup and Registration](#setup-and-registration). (Upgrading from an earlier version? Your existing registration is kept, the tick box starts on, and you are asked nothing.)
+4. Open Outlook. The first time it starts after installing, Office shows a **Microsoft Office Customization Installer** dialog headed *"Publisher cannot be verified"* — click **Install**. This is expected, not an error: OutlookAI is signed with its own certificate rather than a commercial one, so Office cannot vouch for the publisher. You are asked once per machine; **Don't Install** leaves the add-in permanently unloaded. [Troubleshooting](#troubleshooting) explains the prompt in full, with the certificate thumbprint if you want to verify it before clicking.
+5. The **AI Assistant** button appears in the ribbon on compose windows
+6. The [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) is installed alongside the add-in, but nothing is registered with Claude Code until you choose where. Outlook asks you shortly after it starts whether to make it available in all your Claude Code projects; you can also decide — or change your mind — in **OutlookAI Settings** on the Mail ribbon, under **Mail server in Claude Code**, where **Add to a specific project…** covers a single project instead. See [Setup and Registration](#setup-and-registration). (Upgrading from an earlier version? Your existing registration is kept, the tick box starts on, and you are asked nothing.)
 
 The installer registers the add-in directly via the Windows registry and installs the signing certificate to your Trusted Publishers store. Everything lands under `%LOCALAPPDATA%\OutlookAI\Setup` — the add-in at the top level, the mail server in the `McpServer` subfolder — and no admin rights are needed for the install itself. To uninstall, use Add/Remove Programs.
 
@@ -428,11 +429,58 @@ This gives the zero-latency benefit of a persistent process with the simplicity 
 ## Troubleshooting
 
 <details>
+<summary><strong>"Publisher cannot be verified" when Outlook first starts</strong></summary>
+
+The first time Outlook starts after installing, Office shows a dialog like this:
+
+> **Microsoft Office Customization Installer**
+>
+> Publisher cannot be verified. Are you sure you want to install this customization?
+>
+> - **Name:** OutlookAI
+> - **From:** `file:///C:/Users/<you>/AppData/Local/OutlookAI/Setup/OutlookAI.vsto`
+> - **Publisher:** Unknown Publisher
+>
+> *While Office customizations can be useful, they can potentially harm your computer. If you do not trust the source, do not install this software.*
+>
+> **[Install]**  **[Don't Install]**
+
+This is expected on every machine, and it is Office asking a normal question rather than reporting a fault. Click **Install**: the add-in loads within a few seconds, Office records the decision for that install path, and the prompt never appears again on this machine. Clicking **Don't Install** means the add-in never loads at all (see the next section).
+
+**Why it happens.** OutlookAI's manifests are signed with a self-signed certificate (`CN=OutlookAI`) rather than a commercial code-signing certificate, and the installer imports it into your **Trusted Publishers** store — the store Office consults. A self-signed certificate is its own root, though, and Windows will not silently trust a new root certificate. The chain therefore cannot be validated, and Office reports the publisher as unverified. Adding the certificate to the Trusted Root store instead was tested and rejected: Windows raises its own, more alarming confirmation for that, and it would hang unattended background updates.
+
+**Want to verify it first?** Compare the certificate thumbprint shown under **More Details** before clicking Install:
+
+```
+2578F7B8 69383572 E751DD6B 61B5374C 55C6E995
+```
+
+That is the same thumbprint the [built-in updater](#automatic-updates) pins when it verifies a downloaded update.
+
+Because that one certificate also signs the installer, Windows SmartScreen may warn the first time you run the downloaded `.exe`.
+</details>
+
+<details>
+<summary><strong>Clicked "Don't Install" — the add-in does nothing</strong></summary>
+
+**Symptom:** the installer finished successfully and the files are in `%LOCALAPPDATA%\OutlookAI\Setup`, but Outlook shows no **AI Assistant** button in the ribbon and no sidebar, as if nothing had been installed. Answering **Don't Install** to the *"Publisher cannot be verified"* prompt (see the previous section) declines the add-in itself, so Outlook loads none of it.
+
+To recover:
+
+1. Close Outlook and start it again
+2. When the **Microsoft Office Customization Installer** dialog appears, click **Install**
+3. The add-in loads within a few seconds, and the prompt does not come back
+
+If the prompt does *not* reappear, Office already has a recorded decision for that install path. Those decisions are kept under `HKCU\Software\Microsoft\VSTO\Security\Inclusion` — check whether a stale entry for `OutlookAI.vsto` is still there from an earlier install. Clearing that entry restores the prompt on the next Outlook start; it does not skip it.
+</details>
+
+<details>
 <summary><strong>Add-in doesn't appear in the ribbon</strong></summary>
 
 - Restart Outlook
 - Check File > Options > Add-ins — look for OutlookAI in the list
 - If it's listed under "Disabled Application Add-ins", re-enable it (see next section)
+- If Outlook asked *"Publisher cannot be verified"* on its first start and you answered **Don't Install**, the add-in was declined and never loaded — see the sections above
 </details>
 
 <details>
@@ -449,7 +497,7 @@ The installer sets a `DoNotDisableAddinList` registry key to prevent Outlook fro
 <details>
 <summary><strong>"Untrusted" or security errors</strong></summary>
 
-The installer automatically adds the signing certificate to your Trusted Publishers store. If you still see trust errors:
+This is not the first-start *"Publisher cannot be verified"* prompt, which is expected and covered above. The installer automatically adds the signing certificate to your Trusted Publishers store. If you still see trust errors:
 
 1. Run the certificate install manually:
    ```

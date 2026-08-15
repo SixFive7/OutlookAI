@@ -240,6 +240,37 @@ jobs:
           Export-Certificate -Cert $cert -FilePath publish\OutlookAI.cer -Type CERT
           Write-Host "Exported certificate: $($cert.Subject) ($($cert.Thumbprint))"
 
+      # The VSTO runtime is compiled INTO the installer (Installer.iss [Files]) instead of
+      # being downloaded at install time, because the install-time URL rotted and shipped a
+      # broken v3.0.1. The 40 MB binary is not committed - it is an unmodified third-party
+      # redistributable and this repo is public - so it is fetched here, once per release.
+      #
+      # Pinned to the versioned Download Center path, never an aka.ms alias, and verified by
+      # SHA-256 AND length before it can be packaged: an alias that starts serving an HTML
+      # page is precisely how v3.0.1 broke, and here that failure lands on the build machine
+      # where it is loud, rather than on a user's machine where it was silent.
+      - name: Fetch VSTO Runtime redistributable
+        shell: pwsh
+        run: |
+          $url = 'https://download.microsoft.com/download/5/d/2/5d24f8f8-efbb-4b63-aa33-3785e3104713/vstor_redist.exe'
+          $expectedHash = 'CFE1A40BBE4A50022DB2164ABDB0154984E2CECB761A23CDC81CB5754F6E0A18'
+          $expectedSize = 41828424
+          New-Item -ItemType Directory -Force Redist | Out-Null
+          $dest = 'Redist\vstor_redist.exe'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+          $actualSize = (Get-Item $dest).Length
+          $actualHash = (Get-FileHash $dest -Algorithm SHA256).Hash
+          if ($actualSize -ne $expectedSize) {
+            Write-Error "vstor_redist.exe is $actualSize bytes, expected $expectedSize. Refusing to package it."
+            exit 1
+          }
+          if ($actualHash -ne $expectedHash) {
+            Write-Error "vstor_redist.exe SHA-256 is $actualHash, expected $expectedHash. Refusing to package it."
+            exit 1
+          }
+          Write-Host "VSTO runtime verified: $actualSize bytes, SHA-256 $actualHash"
+
       - name: Create installer
         shell: pwsh
         run: |

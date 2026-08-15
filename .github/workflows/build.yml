@@ -41,9 +41,17 @@ jobs:
         # Also confirms iscc is present on the runner image (the installer step relies on
         # it being preinstalled). [Files] needs publish\ to exist; a placeholder suffices
         # for a syntax check.
+        #
+        # Redist\vstor_redist.exe gets a placeholder for the same reason. The real 40 MB
+        # VSTO runtime is not in git (see .gitignore) and only release.yml fetches it -
+        # this gate checks that the script compiles, not that the payload is genuine, and
+        # downloading 40 MB on every pull request would be a waste. The consequence is that
+        # the installer this step produces is NOT installable; it is never published.
         run: |
           New-Item -ItemType Directory -Force publish | Out-Null
           Set-Content publish\placeholder.txt "placeholder"
+          New-Item -ItemType Directory -Force Redist | Out-Null
+          Set-Content Redist\vstor_redist.exe "placeholder"
           iscc /DMyAppVersion=0.0.0.1 /O"$env:RUNNER_TEMP\issout" installer.iss
 
   dependency-review:

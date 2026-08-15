@@ -435,6 +435,14 @@ FodyWeavers.xsd
 v3.MD
 Docs/v3-probes/
 
+# Installer prerequisite payload, fetched by CI rather than committed: vstor_redist.exe is
+# a 40 MB unmodified third-party binary, and this is a public repo - committing it would put
+# 40 MB into git history permanently (every clone, forever) for a file Microsoft already
+# hosts and that we are only allowed to redistribute unmodified anyway.
+# release.yml downloads and hash-verifies the real one; build.yml drops a placeholder,
+# since that gate only proves the script compiles. See the [Files] entry in Installer.iss.
+Redist/vstor_redist.exe
+
 # v3 McpServer live-test artifacts — never commit (public repo; safety envelope S6):
 # fixtures recorded from the live mailboxes, write-op audit logs, and UI screenshots
 # produced by live (T2/T3) test runs. Committed fixtures must be synthetic only.
