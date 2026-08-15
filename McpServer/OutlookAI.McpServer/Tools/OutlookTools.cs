@@ -250,6 +250,11 @@ public static class OutlookTools
         + "session liveness (comConnected), store reachability, index freshness (newest indexed mail vs clock, globally AND "
         + "per store - the index only advances while Outlook runs), Windows Search (WSearch) service state, audit-log "
         + "writability, OutlookAI tuning state (incl. the effective UI search backend), and the add-in installer mutex. "
+        + "Also reports comHost: Outlook is driven from a separate helper process this server can restart, and this "
+        + "block gives its state, pid, restartCount and lastFailure. A restartCount above zero means Outlook stopped "
+        + "answering that many times and was recovered from - lastFailure names what timed out. This report is bounded "
+        + "(the COM probe gives up after 5 s) so it always answers, even while Outlook is unresponsive - which is "
+        + "exactly when it is worth calling. "
         + "Read-only - attaches to Outlook only when it is already running, NEVER starts it. status=ok means all "
         + "dependencies are available; problems lists each degradation; advice carries freshness guidance (search covers "
         + "any index gap automatically with its COM sweep - this tool only reports).")]

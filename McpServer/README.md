@@ -8,33 +8,49 @@ As of Phase 8 the server ships inside the add-in installer, and the add-in owns 
 
 ## Architecture
 
-Two independent data paths, one process:
+Two independent data paths, two processes:
 
 ```
 MCP client (stdio JSON-RPC)
    │
    ▼
-OutlookAI.McpServer.exe          net10.0-windows x64 console host
+OutlookAI.McpServer.exe          net10.0-windows x64 console host - NEVER touches Outlook
    ├─ IndexSearch  ── OLE DB `Search.CollatorDSO` → Windows Search SystemIndex
    │                  (WS-SQL; ~10–100 ms per query; works with Outlook closed)
    ├─ EntryIdCodec ── decodes index item URLs (store UID, folder segments, /at= attachment parents)
    ├─ HitLocator   ── maps an index hit to a real Outlook item (see "load-bearing facts")
-   ├─ ComGateway   ── ONE dedicated pumped STA thread owns ALL Outlook COM (late-bound dynamic)
-   │                  └──► OUTLOOK.EXE  (read, show-me, drafts, send, freshness sweeps)
+   ├─ Supervisor   ── bounds every COM call; kills and respawns the host on timeout
+   │                  │  length-prefixed JSON frames over a named pipe
+   │                  ▼
+   │            OutlookAI.ComHost.exe    the killable COM child
+   │                  └─ ComGateway ── ONE pumped STA thread owns ALL Outlook COM (late-bound dynamic)
+   │                        └──► OUTLOOK.EXE  (read, show-me, drafts, send, freshness sweeps)
    └─ Audit log    ── structured line per write op, %LOCALAPPDATA%\OutlookAI\audit.log
 ```
 
-Three projects:
+**Why two processes.** A blocked outbound COM call cannot be cancelled - no timeout, no
+token, no abort - and its RCWs cannot even be released, because `ReleaseComObject`
+marshals into the same wedged apartment. An in-process timeout can therefore only make
+the *caller* give up while the STA thread stays blocked forever holding Outlook
+references. **The only way to reclaim a wedged COM call is to end the process that made
+it.** On 2026-08-15 that gap turned an unresponsive Outlook into 1800 s of total silence
+across 19 of 21 tools. Full rationale: [Docs/com-host.md](Docs/com-host.md).
+
+Four projects:
 
 | Project | Target | Contents |
 |---|---|---|
 | `OutlookAI.Core` | **net48 + net10.0-windows** | ALL domain logic: index search, EntryID codec, COM gateway/session, mail service, audit, health. Host-neutral — no MCP types, no console assumptions. The net48 target exists so a future in-Outlook (VSTO add-in) host can reference Core without a rewrite; it is CI-gated from day one. |
-| `OutlookAI.McpServer` | net10.0-windows x64 | Thin host: [`ModelContextProtocol`](https://www.nuget.org/packages/ModelContextProtocol) SDK (pinned 1.4.1) + stdio wiring + the tool attribute surface. stdout carries JSON-RPC; all logging goes to stderr. |
+| `OutlookAI.McpServer` | net10.0-windows x64 | Thin host: [`ModelContextProtocol`](https://www.nuget.org/packages/ModelContextProtocol) SDK + stdio wiring + the tool attribute surface. stdout carries JSON-RPC; all logging goes to stderr. |
+| `OutlookAI.ComHost` | net10.0-windows x64 | Both ends of the COM pipe: the killable child that owns the STA thread and every Outlook call, and the parent-side supervisor, session proxy and wire protocol. Published into the SAME directory as the server, so it costs ~163 KB rather than a second copy of the dependency set. |
 | `OutlookAI.McpServer.Tests` | net10.0-windows | Three test tiers (below). |
 
 Design rules (binding — see the code comments for the reasoning):
 
-- **One STA thread owns all Outlook COM.** It runs a real message pump and a COM `IMessageFilter` that retries `RPC_E_CALL_REJECTED` (a busy Outlook rejects automation calls). Index queries run on MTA threadpool threads and are parallel-safe.
+- **One STA thread owns all Outlook COM, in the child process.** It runs a real message pump and a COM `IMessageFilter` that retries `RPC_E_CALL_REJECTED` (a busy Outlook rejects automation calls). Index queries run in the PARENT on MTA threadpool threads and are parallel-safe - which is why search still answers from the index while Outlook is unreachable.
+- **Every COM call is bounded, and the bound is enforced by `Process.Kill`.** 120 s for an ordinary operation, 90 s for a connect that may cold-start Outlook, 5 s for the health probe. On expiry the caller gets a structured `Timeout` error, the COM host is replaced, and the next call starts clean. The child deliberately has NO internal COM timeouts: it is not trying to survive a wedge, it is trying to be disposable during one.
+- **`outlook_health` never joins the failure it reports.** It is asked precisely when Outlook may be unresponsive, so its COM probe is bounded at 5 s and degrades that one block rather than failing the report. It also carries a `comHost` block: mode, state, PID, restart count and last failure. A climbing restart count is the visible trace of Outlook wedging and being recovered from.
+- **Nothing outlives its parent.** The COM host is held in a Windows job object with `KILL_ON_JOB_CLOSE` and additionally watches the parent PID, because a killed parent cannot run cleanup code. (18 orphaned server processes had accumulated on one machine before this existed.)
 - **Core stays host-neutral** and keeps shared state under `%LOCALAPPDATA%\OutlookAI\` (audit log, attachment scratch dir) so future hosts can share it.
 - **The server never kills or restarts Outlook.** It may *start* Outlook when a COM-requiring tool needs it — unless the add-in installer's `OutlookAISetup` mutex is held (returns a clear retry-later error instead). Always run non-elevated: an elevation mismatch breaks out-of-process COM attach.
 - **Compact payloads everywhere.** Every list has a cap, every cap has a truncation/has-more flag, and the cap values are public constants on `MailService` pinned by T1 tests. Search over-fetches by one row so `truncated=true` means more matches definitely exist.

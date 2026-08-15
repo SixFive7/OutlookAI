@@ -199,7 +199,10 @@ end;
 
 // The MCP server is spawned once per agent session, so several copies of
 // {app}\McpServer\OutlookAI.McpServer.exe are typically running and holding their own
-// image file open when an update lands. CloseApplications=yes alone does not reliably
+// image file open when an update lands. Each of those may in turn have spawned an
+// OutlookAI.ComHost.exe child, which holds ITS image open the same way - so both names
+// must be stopped, or an update replaces the parent and silently leaves a stale child
+// running the previous build. CloseApplications=yes alone does not reliably
 // deal with them (Restart Manager has no window to ask), so stop them explicitly, BEFORE
 // any file is replaced. Matching is by executable path under {app} - never by image name
 // alone, so a developer build running from a source tree is left alone. Sessions whose
@@ -216,9 +219,15 @@ begin
   if AppDir = '' then
     exit;
 
-  CmdLine := 'try { Get-CimInstance Win32_Process -Filter ''Name=''''OutlookAI.McpServer.exe'''''' '
-    + '| Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith(''' + AppDir + ''', '
+  // Both image names, still matched by path under {app} so a developer build running
+  // from a source tree is left alone. The COM host is stopped FIRST: stopping the parent
+  // first would orphan it briefly, and an orphan still holds the file we are about to
+  // replace.
+  CmdLine := 'try { Get-CimInstance Win32_Process '
+    + '| Where-Object { ($_.Name -eq ''OutlookAI.ComHost.exe'' -or $_.Name -eq ''OutlookAI.McpServer.exe'') '
+    + '-and $_.ExecutablePath -and $_.ExecutablePath.StartsWith(''' + AppDir + ''', '
     + '[StringComparison]::OrdinalIgnoreCase) } '
+    + '| Sort-Object { if ($_.Name -eq ''OutlookAI.ComHost.exe'') { 0 } else { 1 } } '
     + '| ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } } catch { }';
 
   Exec('powershell.exe',

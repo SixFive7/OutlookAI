@@ -52,6 +52,11 @@ jobs:
       - name: Build OutlookAI.Core (net48 + net10.0-windows)
         run: dotnet build McpServer/OutlookAI.Core/OutlookAI.Core.csproj -c Release
 
+      - name: Build OutlookAI.ComHost
+        # Built explicitly even though the server references it: a compile break in the
+        # COM host would otherwise surface as a confusing failure inside another project.
+        run: dotnet build McpServer/OutlookAI.ComHost/OutlookAI.ComHost.csproj -c Release
+
       - name: Build OutlookAI.McpServer
         run: dotnet build McpServer/OutlookAI.McpServer/OutlookAI.McpServer.csproj -c Release
 

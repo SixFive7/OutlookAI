@@ -222,13 +222,22 @@ jobs:
             -c Release -r win-x64 --self-contained false `
             -p:Version=${{ steps.version.outputs.FULL_VERSION }} `
             -o publish\McpServer
-          $exe = "publish\McpServer\OutlookAI.McpServer.exe"
-          if (-not (Test-Path $exe)) { Write-Error "MCP server publish produced no executable"; exit 1 }
-          $stamped = (Get-Item $exe).VersionInfo.FileVersion
-          if ($stamped -ne "${{ steps.version.outputs.FULL_VERSION }}") {
-            Write-Error "MCP server stamped $stamped, expected ${{ steps.version.outputs.FULL_VERSION }}"
-            exit 1
+          # Both executables are checked. The COM host rides in via ProjectReference and
+          # -p:Version flows to it as a global MSBuild property, so it is correct for
+          # free - but nothing would NOTICE if that stopped being true. A silently absent
+          # or unstamped child passes every other gate and produces an installer whose
+          # mail tools fail on the first COM call.
+          foreach ($name in @("OutlookAI.McpServer.exe", "OutlookAI.ComHost.exe")) {
+            $exe = "publish\McpServer\$name"
+            if (-not (Test-Path $exe)) { Write-Error "$name is missing from the MCP server publish output"; exit 1 }
+            $stamped = (Get-Item $exe).VersionInfo.FileVersion
+            if ($stamped -ne "${{ steps.version.outputs.FULL_VERSION }}") {
+              Write-Error "$name stamped $stamped, expected ${{ steps.version.outputs.FULL_VERSION }}"
+              exit 1
+            }
           }
+          $exe = "publish\McpServer\OutlookAI.McpServer.exe"
+          $stamped = (Get-Item $exe).VersionInfo.FileVersion
           $mb = [math]::Round((Get-ChildItem publish -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 2)
           Write-Host "MCP server published at $stamped; total uncompressed payload ${mb} MB"
 
