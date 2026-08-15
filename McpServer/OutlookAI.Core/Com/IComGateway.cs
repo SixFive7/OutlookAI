@@ -37,5 +37,20 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Runs <paramref name="operation"/> against a live session, connecting when necessary.</summary>
         T Run<T>(Func<IOutlookSession, T> operation);
+
+        /// <summary>
+        /// Runs <paramref name="operation"/> with an explicit time budget instead of the
+        /// default one.
+        /// <para>
+        /// Exists for <c>outlook_health</c>. Health is asked precisely when Outlook may be
+        /// unresponsive, so it must not spend the ordinary two-minute budget discovering
+        /// that - it has to answer quickly and say so. The in-process implementation
+        /// ignores the budget, having no way to enforce one.
+        /// </para>
+        /// </summary>
+        T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds);
+
+        /// <summary>How Outlook is being reached, and the health of that path.</summary>
+        ComHostDiagnostics GetDiagnostics();
     }
 }

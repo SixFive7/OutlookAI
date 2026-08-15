@@ -92,6 +92,30 @@ namespace OutlookAI.ComHost.Client
         }
 
         /// <inheritdoc />
+        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds)
+        {
+            ArgumentNullException.ThrowIfNull(operation);
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            using (ComHostRequestContext.Enter(ComHostRequestContext.Token, budgetMilliseconds))
+            {
+                return operation(_session);
+            }
+        }
+
+        /// <inheritdoc />
+        public ComHostDiagnostics GetDiagnostics()
+        {
+            return new ComHostDiagnostics(
+                mode: "child-process",
+                state: _supervisor.State.ToString().ToLowerInvariant(),
+                processId: _supervisor.ChildProcessId,
+                restartCount: _supervisor.RestartCount,
+                lastFailure: _supervisor.LastFailureMessage,
+                injectedFault: Host.ComHostFaultInjection.IsActive ? Host.ComHostFaultInjection.Description : null);
+        }
+
+        /// <inheritdoc />
         public void Dispose()
         {
             if (_disposed)

@@ -99,10 +99,15 @@ namespace OutlookAI.ComHost.Supervision
 
     /// <summary>
     /// Raised when an operation exceeded its deadline and the COM host was killed to
-    /// reclaim it. Distinct from <see cref="TimeoutException"/> so the tool layer can
+    /// reclaim it. Carries the operation and the budget it breached so the tool layer can
     /// say plainly what happened and what the caller can still do.
     /// </summary>
-    public sealed class ComHostTimeoutException : Exception
+    /// <remarks>
+    /// Derives from <see cref="TimeoutException"/> so Core can recognise a deadline
+    /// breach - and report it in plain words rather than as a type name - without taking
+    /// a reference on this assembly.
+    /// </remarks>
+    public sealed class ComHostTimeoutException : TimeoutException
     {
         /// <summary>Creates the exception.</summary>
         public ComHostTimeoutException(string operation, long deadlineMilliseconds)

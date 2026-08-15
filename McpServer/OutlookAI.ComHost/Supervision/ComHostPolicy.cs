@@ -173,12 +173,50 @@ namespace OutlookAI.ComHost.Supervision
                 return overrideMilliseconds.Value;
             }
 
+            // When the test override is set it governs EVERY class, including connect.
+            // Otherwise the cold-start floor below would silently reimpose the 90 s
+            // allowance and any test of the timeout path would take 90 s to observe it.
+            if (ConfiguredDefaultDeadline is > 0)
+            {
+                return ConfiguredDefaultDeadline.Value;
+            }
+
             return operationClass switch
             {
                 ComHostOperationClass.Connect => ConnectDeadlineMilliseconds,
                 ComHostOperationClass.HealthProbe => HealthProbeDeadlineMilliseconds,
                 _ => DefaultOperationDeadlineMilliseconds,
             };
+        }
+
+        /// <summary>
+        /// Environment override for the ordinary operation budget. Its purpose is testing:
+        /// the timeout path is only observable by waiting out a deadline, and waiting out
+        /// the real two-minute budget in every such test would make the suite unusable.
+        /// Unset in production.
+        /// </summary>
+        internal const string DeadlineVariable = "OUTLOOKAI_COMHOST_DEADLINE_MS";
+
+        private static readonly long? ConfiguredDefaultDeadline = ReadConfiguredDeadline();
+
+        /// <summary>
+        /// Floor applied to the first operation on a fresh child, which also pays for
+        /// establishing the COM session and possibly cold-starting Outlook. Follows the
+        /// test override when one is set.
+        /// </summary>
+        internal static long ConnectFloorMilliseconds =>
+            ConfiguredDefaultDeadline is > 0 ? ConfiguredDefaultDeadline.Value : ConnectDeadlineMilliseconds;
+
+        private static long? ReadConfiguredDeadline()
+        {
+            string? raw = Environment.GetEnvironmentVariable(DeadlineVariable);
+            if (long.TryParse(raw, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long value)
+                && value > 0)
+            {
+                return value;
+            }
+
+            return null;
         }
     }
 

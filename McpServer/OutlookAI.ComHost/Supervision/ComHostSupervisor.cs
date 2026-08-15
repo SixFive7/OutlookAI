@@ -109,9 +109,9 @@ namespace OutlookAI.ComHost.Supervision
             // session, which may cold-start OUTLOOK.EXE. Charging it only the ordinary
             // budget would make a legitimate cold start look like a wedge - and the short
             // health-probe budget would make it certain.
-            if (!Volatile.Read(ref _childHasServed) && deadline < ComHostPolicy.ConnectDeadlineMilliseconds)
+            if (!Volatile.Read(ref _childHasServed) && deadline < ComHostPolicy.ConnectFloorMilliseconds)
             {
-                deadline = ComHostPolicy.ConnectDeadlineMilliseconds;
+                deadline = ComHostPolicy.ConnectFloorMilliseconds;
             }
             await EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
 
@@ -178,10 +178,16 @@ namespace OutlookAI.ComHost.Supervision
 
                         // The operation is still outstanding past its budget. Reclaim it
                         // the only way a blocked COM call can be reclaimed.
+                        //
+                        // Order matters: complete the request as a TIMEOUT first, then
+                        // kill. Killing first tears down the connection, and the teardown
+                        // path fails everything outstanding as "the host stopped" - which
+                        // would win this race and report the vaguer cause, hiding the fact
+                        // that we were the ones who ended it, and why.
                         RecordFailure($"'{pending.Operation}' exceeded its {pending.DeadlineMilliseconds} ms budget; the COM host was restarted.");
-                        KillChild($"deadline exceeded on '{pending.Operation}'");
                         pending.Completion.TrySetException(
                             new ComHostTimeoutException(pending.Operation, pending.DeadlineMilliseconds));
+                        KillChild($"deadline exceeded on '{pending.Operation}'");
                     },
                     CancellationToken.None,
                     TaskContinuationOptions.OnlyOnRanToCompletion | TaskContinuationOptions.ExecuteSynchronously,

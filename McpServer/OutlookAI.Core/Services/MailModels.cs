@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 
+using OutlookAI.Core.Com;
 using OutlookAI.Core.IndexSearch;
 
 namespace OutlookAI.Core.Services
@@ -1091,6 +1092,14 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Reachable store display names.</summary>
         public IReadOnlyList<string>? Stores { get; set; }
+
+        /// <summary>
+        /// How Outlook is being reached and whether that path is healthy. With the COM
+        /// host this reports the child's state, its PID, and how many times it has been
+        /// restarted - a climbing restart count is the visible trace of Outlook wedging
+        /// and being recovered from, which was previously indistinguishable from silence.
+        /// </summary>
+        public ComHostDiagnostics? ComHost { get; set; }
     }
 
     /// <summary>Index block of the outlook_health report (Phase 7; per-store rows merged from index_status in D37).</summary>

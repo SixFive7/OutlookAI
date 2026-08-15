@@ -179,6 +179,13 @@ namespace OutlookAI.Core.Services
             return new MailService(new ComGateway(allowStartingOutlook: true));
         }
 
+        /// <summary>
+        /// Time budget for health's COM probe. Short by design: outlook_health exists to
+        /// report an unresponsive Outlook, so it must never wait the ordinary operation
+        /// budget to discover one.
+        /// </summary>
+        public const int HealthProbeBudgetMs = 5_000;
+
         /// <summary>Default directory attachments are saved to when the caller names none.</summary>
         public static string DefaultAttachmentDirectory =>
             Path.Combine(SharedStateDirectory, "scratch", "attachments");
@@ -654,6 +661,16 @@ namespace OutlookAI.Core.Services
                 }
                 catch (OutlookUnavailableException ex)
                 {
+                    info.Performed = false;
+                    info.Error = ex.Message;
+                    return info;
+                }
+                catch (TimeoutException ex)
+                {
+                    // A bounded COM failure: the operation exceeded its budget and the COM
+                    // host was restarted. Its message already says what timed out and what
+                    // was done about it, so surface that rather than a bare type name -
+                    // this text reaches the agent, and through it the user.
                     info.Performed = false;
                     info.Error = ex.Message;
                     return info;
@@ -3145,6 +3162,7 @@ namespace OutlookAI.Core.Services
             bool mutexHeld = ComGateway.IsInstallerMutexHeld();
             List<string> problems = new List<string>();
 
+
             // Outlook + stores (attach-only while running; never a cold start).
             int? storesReachable = null;
             List<string>? storeNames = null;
@@ -3152,7 +3170,10 @@ namespace OutlookAI.Core.Services
             {
                 try
                 {
-                    IReadOnlyList<ComStoreDetail> stores = _gateway.Run(GetStoreDetails);
+                    // Bounded: health is asked precisely when Outlook may be unresponsive,
+                    // so it must report that quickly rather than join it. Exceeding the
+                    // budget degrades this block; it never fails the report.
+                    IReadOnlyList<ComStoreDetail> stores = _gateway.Run(GetStoreDetails, HealthProbeBudgetMs);
                     storesReachable = stores.Count;
                     storeNames = stores.Select(s => s.DisplayName).ToList();
                     if (stores.Count == 0)
@@ -3162,8 +3183,33 @@ namespace OutlookAI.Core.Services
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
-                    problems.Add("Outlook is running but the COM attach failed (" + ex.GetType().Name + ").");
+                    problems.Add("Outlook is running but did not answer within "
+                        + (HealthProbeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
+                        + "s (" + ex.GetType().Name + "). It may be busy, showing a dialog, or not responding; "
+                        + "search still returns indexed results meanwhile.");
                 }
+            }
+
+            // Supervision state, read AFTER the probe above: the probe may itself have
+            // replaced a faulted child, and reading first would report state=faulted in the
+            // same breath as a store list the new child just fetched.
+            ComHostDiagnostics comHost = _gateway.GetDiagnostics();
+            if (comHost.RestartCount > 0)
+            {
+                problems.Add("The Outlook COM host has been restarted "
+                    + comHost.RestartCount.ToString(CultureInfo.InvariantCulture)
+                    + " time(s) this session after Outlook stopped answering.");
+            }
+
+            if (!string.IsNullOrEmpty(comHost.LastFailure))
+            {
+                problems.Add("Last COM host failure: " + comHost.LastFailure);
+            }
+
+            if (!string.IsNullOrEmpty(comHost.InjectedFault))
+            {
+                problems.Add("A TEST FAULT is injected into the COM host (" + comHost.InjectedFault
+                    + "). This is not a real failure; unset OUTLOOKAI_COMHOST_FAULT to clear it.");
             }
 
             if (mutexHeld)
@@ -3273,6 +3319,7 @@ namespace OutlookAI.Core.Services
                     ComConnected = _gateway.ProbeConnected(),
                     StoresReachable = storesReachable,
                     Stores = storeNames,
+                    ComHost = comHost,
                 },
                 Index = new IndexHealthView
                 {

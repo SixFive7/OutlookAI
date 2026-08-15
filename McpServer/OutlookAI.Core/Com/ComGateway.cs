@@ -180,6 +180,27 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
+        /// Runs with an explicit budget. This implementation OWNS the COM session in its
+        /// own process and therefore cannot enforce one: a blocked COM call is not
+        /// cancellable, and killing the caller is not an option when the caller is us.
+        /// The budget is honoured only by the out-of-process gateway, which can enforce it
+        /// by ending the child. Accepted and ignored here so the two are substitutable.
+        /// </summary>
+        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds)
+        {
+            return Run(operation);
+        }
+
+        /// <inheritdoc />
+        public ComHostDiagnostics GetDiagnostics()
+        {
+            return new ComHostDiagnostics(
+                mode: "in-process",
+                state: IsConnected ? "ready" : "none",
+                processId: System.Diagnostics.Process.GetCurrentProcess().Id);
+        }
+
+        /// <summary>
         /// Returns the live session, pinging a held one first and reconnecting when the
         /// ping fails. Serialized: concurrent callers queue here while a cold Outlook
         /// start is in progress.

@@ -138,6 +138,11 @@ namespace OutlookAI.ComHost.Host
 
             try
             {
+                // Test-only, and a no-op unless OUTLOOKAI_COMHOST_FAULT is set. Applied
+                // before the call reaches Outlook so the timeout/kill/respawn path is
+                // exercisable on a machine with no Outlook at all.
+                ComHostFaultInjection.Apply(request.Operation);
+
                 object? result = method.Invoke(_target, arguments);
                 JsonElement? encoded = null;
                 if (method.ReturnType != typeof(void) && result != null)
