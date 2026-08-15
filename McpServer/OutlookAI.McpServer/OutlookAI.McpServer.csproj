@@ -11,12 +11,12 @@
 
   <ItemGroup>
     <!--
-      Official MCP C# SDK, pinned (v3.MD Phase 0 / risk register). 1.4.1 = latest
-      stable on nuget.org as of 2026-07-23 (2.0.0 is still preview). Fallback if the
-      SDK ever becomes unusable: hand-rolled stdio JSON-RPC (~200 LOC, spec stable) -
-      the T3 conformance test already speaks raw JSON-RPC and would carry over as-is.
+      Official MCP C# SDK. 2.2.0 = latest stable on nuget.org as of 2026-08-16.
+      Not held back: track latest. Fallback if the SDK ever becomes unusable:
+      hand-rolled stdio JSON-RPC (~200 LOC, spec stable) - the T3 conformance test
+      already speaks raw JSON-RPC and would carry over as-is.
     -->
-    <PackageReference Include="ModelContextProtocol" Version="1.4.1" />
+    <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
   </ItemGroup>
 
