@@ -17,8 +17,12 @@ namespace OutlookAI.Core.Com
             int? processId = null,
             int restartCount = 0,
             string? lastFailure = null,
-            string? injectedFault = null)
+            string? injectedFault = null,
+            bool unresponsive = false,
+            int consecutiveTimeouts = 0)
         {
+            Unresponsive = unresponsive;
+            ConsecutiveTimeouts = consecutiveTimeouts;
             Mode = mode;
             State = state;
             ProcessId = processId;
@@ -48,6 +52,16 @@ namespace OutlookAI.Core.Com
         /// be explainable afterwards, or the recovery hides the fault.
         /// </summary>
         public string? LastFailure { get; }
+
+        /// <summary>
+        /// True while requests needing Outlook are being refused immediately because it
+        /// has repeatedly failed to answer. Self-clearing: Outlook is re-probed after a
+        /// cooldown and any success closes it.
+        /// </summary>
+        public bool Unresponsive { get; }
+
+        /// <summary>Consecutive operation timeouts; 0 once Outlook answers again.</summary>
+        public int ConsecutiveTimeouts { get; }
 
         /// <summary>
         /// Set only when a test fault is configured. Reported so an injected failure can

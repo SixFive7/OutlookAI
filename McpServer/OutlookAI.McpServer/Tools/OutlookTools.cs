@@ -663,6 +663,13 @@ public static class OutlookTools
             return Error("Cancelled", ex.Message,
                 "The operation was cancelled before it completed. Retry; if it repeats, check outlook_health.");
         }
+        catch (ComHostUnresponsiveException ex)
+        {
+            return Error("OutlookUnresponsive", ex.Message,
+                "This answered immediately rather than waiting, because Outlook has already failed to respond several "
+                + "times. search still returns indexed mail. Outlook is re-checked automatically and this clears itself "
+                + "once it answers; restarting Outlook fixes it at once. outlook_health shows the current state.");
+        }
         catch (ComHostTimeoutException ex)
         {
             return Error("Timeout", ex.Message,

@@ -49,6 +49,8 @@ namespace OutlookAI.ComHost.Supervision
         private int _generation;
         private string? _lastFailureMessage;
         private bool _childHasServed;
+        private int _consecutiveTimeouts;
+        private long _lastTimeoutTimestamp;
         private bool _disposed;
 
         internal ComHostSupervisor(bool allowStartingOutlook)
@@ -64,6 +66,14 @@ namespace OutlookAI.ComHost.Supervision
 
         /// <summary>How many times the child has been replaced this process lifetime.</summary>
         internal int RestartCount => Volatile.Read(ref _restartCount);
+
+        /// <summary>Consecutive operation timeouts; 0 once Outlook answers again.</summary>
+        internal int ConsecutiveTimeouts => Volatile.Read(ref _consecutiveTimeouts);
+
+        /// <summary>Whether COM requests are currently being failed fast because Outlook is not answering.</summary>
+        internal bool IsUnresponsive => ComHostPolicy.DecideBreaker(new BreakerInput(
+            Volatile.Read(ref _consecutiveTimeouts),
+            MillisecondsSince(Volatile.Read(ref _lastTimeoutTimestamp)))) != BreakerVerdict.Closed;
 
         /// <summary>The child's PID, or null when no child is running. Used by tests to prove a respawn happened.</summary>
         internal int? ChildProcessId
@@ -109,6 +119,64 @@ namespace OutlookAI.ComHost.Supervision
             CancellationToken cancellationToken)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+
+            BreakerVerdict verdict = ComHostPolicy.DecideBreaker(new BreakerInput(
+                Volatile.Read(ref _consecutiveTimeouts),
+                MillisecondsSince(Volatile.Read(ref _lastTimeoutTimestamp))));
+
+            if (verdict == BreakerVerdict.Open)
+            {
+                // Fail in microseconds rather than spending another full budget to
+                // rediscover what the last two requests established.
+                throw new ComHostUnresponsiveException(Volatile.Read(ref _consecutiveTimeouts));
+            }
+
+            if (verdict == BreakerVerdict.HalfOpen && !await ProbeAliveAsync(cancellationToken).ConfigureAwait(false))
+            {
+                throw new ComHostUnresponsiveException(Volatile.Read(ref _consecutiveTimeouts));
+            }
+
+            return await InvokeCoreAsync(operation, arguments, operationClass, deadlineOverrideMilliseconds, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// One cheap liveness probe, used to decide whether a wedged Outlook has come
+        /// back. Deliberately GetProfileName on the health budget rather than the caller's
+        /// real request: re-probing with a full 120 s operation would make every cooldown
+        /// expiry cost two minutes again, which is the cost this whole mechanism exists to
+        /// avoid.
+        /// </summary>
+        private async Task<bool> ProbeAliveAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                _ = await InvokeCoreAsync(
+                        nameof(OutlookAI.Core.Com.IOutlookSession.GetProfileName),
+                        null,
+                        ComHostOperationClass.HealthProbe,
+                        ComHostPolicy.HealthProbeDeadlineMilliseconds,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private async Task<ComHostInvocationResult> InvokeCoreAsync(
+            string operation,
+            object? arguments,
+            ComHostOperationClass operationClass,
+            long? deadlineOverrideMilliseconds,
+            CancellationToken cancellationToken)
+        {
 
             long deadline = ComHostPolicy.DeadlineFor(operationClass, deadlineOverrideMilliseconds);
 
@@ -174,6 +242,9 @@ namespace OutlookAI.ComHost.Supervision
             }
 
             Volatile.Write(ref _childHasServed, true);
+
+            // Any answer at all means Outlook is talking again.
+            Volatile.Write(ref _consecutiveTimeouts, 0);
             return new ComHostInvocationResult(response.Result, response.Outputs);
         }
 
@@ -215,6 +286,9 @@ namespace OutlookAI.ComHost.Supervision
                         //    and report the vaguer cause, hiding both that we ended it and
                         //    why.
                         // 3. Kill last. It is the slowest step and nothing waits on it.
+                        // Not `_ =` here: the enclosing lambda's parameter is named _.
+                        Interlocked.Increment(ref _consecutiveTimeouts);
+                        Volatile.Write(ref _lastTimeoutTimestamp, Stopwatch.GetTimestamp());
                         BeginReplacement($"'{pending.Operation}' exceeded its {pending.DeadlineMilliseconds} ms budget; the COM host was restarted.");
                         pending.Completion.TrySetException(
                             new ComHostTimeoutException(pending.Operation, pending.DeadlineMilliseconds));
@@ -459,12 +533,26 @@ namespace OutlookAI.ComHost.Supervision
 
             // Everything still outstanding dies with the connection. Failing them
             // explicitly is the whole point: silence is the bug being fixed.
+            //
+            // Say WHY, not just what. The COM host serves requests serially, so when one
+            // request wedges and is reclaimed, its innocent siblings die with it - and
+            // "the host stopped" leaves the caller with no idea that something else was
+            // at fault or that retrying is reasonable.
+            string? cause;
+            lock (_stateLock)
+            {
+                cause = _lastFailureMessage;
+            }
+
             foreach (KeyValuePair<long, PendingRequest> entry in _pending.ToArray())
             {
                 if (_pending.TryRemove(entry.Key, out PendingRequest? pending))
                 {
-                    _ = pending.Completion.TrySetException(new ComHostUnavailableException(
-                        $"The Outlook COM host stopped before '{pending.Operation}' completed."));
+                    string message = string.IsNullOrEmpty(cause)
+                        ? $"The Outlook COM host stopped before '{pending.Operation}' completed."
+                        : $"'{pending.Operation}' was interrupted because the Outlook COM host was restarted: {cause} "
+                          + "This request itself was not at fault; retry it.";
+                    _ = pending.Completion.TrySetException(new ComHostUnavailableException(message));
                 }
             }
         }

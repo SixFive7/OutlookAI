@@ -184,6 +184,19 @@ namespace OutlookAI.Core.Services
         /// report an unresponsive Outlook, so it must never wait the ordinary operation
         /// budget to discover one.
         /// </summary>
+        /// <summary>
+        /// Time budget for the freshness sweep.
+        /// <para>
+        /// Much shorter than an ordinary operation, because the sweep is an ENHANCEMENT:
+        /// search already has its indexed answer in hand before the sweep runs, and the
+        /// tool's own contract calls search "sub-second and cheap". Measured healthy on
+        /// this machine at 0.5-6 s; measured against a wedged Outlook it spent the full
+        /// 120 s operation budget before degrading, which made every search feel broken
+        /// even though the answer was already computed and waiting.
+        /// </para>
+        /// </summary>
+        public const int SweepBudgetMs = 30_000;
+
         public const int HealthProbeBudgetMs = 5_000;
 
         /// <summary>Per-query index timeout used by health only.</summary>
@@ -662,8 +675,10 @@ namespace OutlookAI.Core.Services
                 ComSweepResult sweepResult;
                 try
                 {
-                    sweepResult = _gateway.Run(s => s.SweepFoldersNewerThan(
-                        gapStart, SweepPerFolderCap, includeBodies: true, request.Store, sweepFolderPath, sweepRecursive));
+                    sweepResult = _gateway.Run(
+                    s => s.SweepFoldersNewerThan(
+                        gapStart, SweepPerFolderCap, includeBodies: true, request.Store, sweepFolderPath, sweepRecursive),
+                    SweepBudgetMs);
                 }
                 catch (OutlookUnavailableException ex)
                 {

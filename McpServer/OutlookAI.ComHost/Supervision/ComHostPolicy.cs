@@ -62,6 +62,24 @@ namespace OutlookAI.ComHost.Supervision
         bool ChildAlive,
         bool ClientCancelled);
 
+    /// <summary>What to do about an Outlook that has repeatedly failed to answer.</summary>
+    internal enum BreakerVerdict
+    {
+        /// <summary>Outlook is behaving; send the request.</summary>
+        Closed = 0,
+
+        /// <summary>Outlook is known unresponsive and the cooldown has not elapsed; fail immediately.</summary>
+        Open = 1,
+
+        /// <summary>Cooldown elapsed; run one cheap liveness probe before committing a full request.</summary>
+        HalfOpen = 2,
+    }
+
+    /// <summary>Inputs to <see cref="ComHostPolicy.DecideBreaker"/>.</summary>
+    internal readonly record struct BreakerInput(
+        int ConsecutiveTimeouts,
+        long MillisecondsSinceLastTimeout);
+
     /// <summary>
     /// The supervision decisions, as pure total functions of their inputs.
     /// <para>
@@ -135,6 +153,48 @@ namespace OutlookAI.ComHost.Supervision
         {
             return consecutiveStartFailures >= StartFailureBackoffThreshold
                 && millisecondsSinceLastStartFailure < StartBackoffMilliseconds;
+        }
+
+        /// <summary>Consecutive operation timeouts before the parent stops sending full requests.</summary>
+        internal const int UnresponsiveTimeoutThreshold = 2;
+
+        /// <summary>How long to keep failing fast before re-probing Outlook.</summary>
+        internal const long UnresponsiveCooldownMilliseconds = 30_000;
+
+        /// <summary>
+        /// Decides whether to send a request at all, given how Outlook has been behaving.
+        /// <para>
+        /// Bounding each call individually is necessary but not sufficient. Against an
+        /// Outlook that is persistently wedged, every request independently pays its full
+        /// budget - measured on this machine at 120 s for search, list_accounts and
+        /// list_folders - and each one spawns and kills a child to learn what the previous
+        /// one already established. The tenth search in a row should not cost two minutes
+        /// to rediscover that Outlook is not answering.
+        /// </para>
+        /// <para>
+        /// So the supervisor remembers. After
+        /// <see cref="UnresponsiveTimeoutThreshold"/> consecutive timeouts it fails COM
+        /// requests immediately for <see cref="UnresponsiveCooldownMilliseconds"/>, then
+        /// allows one cheap liveness probe. Any success closes it again, so a user who
+        /// restarts Outlook is picked up within one cooldown rather than having to wait
+        /// for a full-budget request to succeed.
+        /// </para>
+        /// <para>
+        /// Crucially this makes SEARCH good rather than merely survivable: with the
+        /// breaker open the freshness sweep fails in microseconds, so search returns its
+        /// indexed results immediately with advice, instead of stalling two minutes first.
+        /// </para>
+        /// </summary>
+        internal static BreakerVerdict DecideBreaker(BreakerInput input)
+        {
+            if (input.ConsecutiveTimeouts < UnresponsiveTimeoutThreshold)
+            {
+                return BreakerVerdict.Closed;
+            }
+
+            return input.MillisecondsSinceLastTimeout >= UnresponsiveCooldownMilliseconds
+                ? BreakerVerdict.HalfOpen
+                : BreakerVerdict.Open;
         }
 
         /// <summary>Decides the fate of a request that has not yet answered.</summary>

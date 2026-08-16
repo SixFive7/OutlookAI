@@ -121,7 +121,9 @@ namespace OutlookAI.ComHost.Client
                 processId: _supervisor.ChildProcessId,
                 restartCount: _supervisor.RestartCount,
                 lastFailure: _supervisor.LastFailureMessage,
-                injectedFault: Host.ComHostFaultInjection.IsActive ? Host.ComHostFaultInjection.Description : null);
+                injectedFault: Host.ComHostFaultInjection.IsActive ? Host.ComHostFaultInjection.Description : null,
+                unresponsive: _supervisor.IsUnresponsive,
+                consecutiveTimeouts: _supervisor.ConsecutiveTimeouts);
         }
 
         /// <inheritdoc />

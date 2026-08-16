@@ -126,6 +126,31 @@ namespace OutlookAI.ComHost.Supervision
     }
 
     /// <summary>
+    /// Raised immediately, without contacting Outlook, while Outlook is known to be
+    /// unresponsive.
+    /// <para>
+    /// Derives from <see cref="TimeoutException"/> so every layer that already degrades
+    /// gracefully on a deadline breach - notably the freshness sweep, which falls back to
+    /// index-only results - treats this identically, and reports its message rather than a
+    /// type name.
+    /// </para>
+    /// </summary>
+    public sealed class ComHostUnresponsiveException : TimeoutException
+    {
+        /// <summary>Creates the exception.</summary>
+        public ComHostUnresponsiveException(int consecutiveTimeouts)
+            : base($"Outlook has failed to answer {consecutiveTimeouts} request(s) in a row, so requests that need it "
+                 + "are being refused immediately instead of waiting. Outlook is being re-checked periodically and this "
+                 + "clears by itself once it responds; restarting Outlook fixes it immediately.")
+        {
+            ConsecutiveTimeouts = consecutiveTimeouts;
+        }
+
+        /// <summary>How many consecutive timeouts led to this.</summary>
+        public int ConsecutiveTimeouts { get; }
+    }
+
+    /// <summary>
     /// Raised when the COM host could not be started, or died and is in start backoff.
     /// </summary>
     public sealed class ComHostUnavailableException : Exception

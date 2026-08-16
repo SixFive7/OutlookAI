@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using OutlookAI.ComHost.Supervision;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T3;
@@ -209,6 +210,60 @@ public sealed class ComHostSupervisionCiTests
         // And the server itself stays usable.
         JsonElement signatures = await CallRawAsync(client, "list_signatures", new { });
         Assert.True(PayloadOf(signatures).TryGetProperty("signatures", out _));
+    }
+
+    [Fact]
+    public async Task RepeatedTimeouts_StopCostingTheFullBudget()
+    {
+        // Bounding each call is necessary but not sufficient. Measured against a genuinely
+        // wedged Outlook on 2026-08-16: search, list_accounts and list_folders each burned
+        // their full 120 s budget, independently, every single time - so the tenth request
+        // in a row still took two minutes to rediscover what the first had established.
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
+            TimeSpan.FromSeconds(180), Fault("hang:GetAccounts"));
+
+        // Two timeouts to open the breaker.
+        for (int i = 0; i < ComHostPolicy.UnresponsiveTimeoutThreshold; i++)
+        {
+            JsonElement timedOut = await CallRawAsync(client, "list_accounts", new { });
+            Assert.True(timedOut.GetProperty("isError").GetBoolean());
+        }
+
+        Stopwatch elapsed = Stopwatch.StartNew();
+        JsonElement result = await CallRawAsync(client, "list_accounts", new { });
+        elapsed.Stop();
+
+        Assert.True(result.GetProperty("isError").GetBoolean());
+        Assert.Equal("OutlookUnresponsive", PayloadOf(result).GetProperty("error").GetProperty("type").GetString());
+
+        // The point of the whole mechanism: this must be effectively instant, not another
+        // budget. Generous bound so a loaded CI box cannot make it flaky - the real
+        // measurement is milliseconds against seconds.
+        Assert.True(
+            elapsed.Elapsed < TimeSpan.FromSeconds(2),
+            $"a known-unresponsive Outlook must be reported immediately, not re-discovered; took {elapsed.Elapsed.TotalSeconds:F1}s");
+    }
+
+    [Fact]
+    public async Task WithTheBreakerOpen_HealthStillReportsAndSaysWhy()
+    {
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
+            TimeSpan.FromSeconds(180), Fault("hang:GetAccounts"));
+
+        for (int i = 0; i < ComHostPolicy.UnresponsiveTimeoutThreshold; i++)
+        {
+            _ = await CallRawAsync(client, "list_accounts", new { });
+        }
+
+        JsonElement health = PayloadOf(await CallRawAsync(client, "outlook_health", new { }));
+        JsonElement comHost = health.GetProperty("outlook").GetProperty("comHost");
+
+        // Health must never be the tool that hides this: if requests are being refused
+        // outright, the report has to say so and say why, or the state is invisible.
+        Assert.True(
+            comHost.GetProperty("unresponsive").GetBoolean(),
+            $"health must disclose that COM requests are being refused. comHost={comHost.GetRawText()}");
+        Assert.True(comHost.GetProperty("consecutiveTimeouts").GetInt32() >= ComHostPolicy.UnresponsiveTimeoutThreshold);
     }
 
     private static async Task<int> RestartCountAsync(McpStdioClient client)

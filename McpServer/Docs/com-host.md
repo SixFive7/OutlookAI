@@ -100,6 +100,44 @@ Failure of a request is not failure of the server: the child is killed, the call
 structured `Timeout` error, and the next call spawns a fresh child. Repeated start
 failures trigger a backoff so a broken machine does not become a spawn loop.
 
+## Remembering, not just bounding
+
+Bounding each call is necessary but not sufficient. Measured against a genuinely wedged
+Outlook on 2026-08-16, with per-call bounds already in place:
+
+| tool | latency |
+| --- | --- |
+| `list_signatures` (no COM) | 0.0 s |
+| `outlook_health` | 5.8 s |
+| `list_accounts` | **120.2 s** |
+| `search` | **120.2 s** |
+
+Every request independently paid its full budget and spawned a child to rediscover what
+the previous one had already established. Fifteen times better than 1800 s, and still bad:
+the tenth search in a row cost two minutes to learn nothing new.
+
+So the supervisor remembers. After two consecutive timeouts it refuses COM requests
+immediately for 30 s, then allows one **cheap** liveness probe — `GetProfileName` on the
+5 s health budget, not the caller's real request, because re-probing with a full operation
+would make every cooldown expiry cost two minutes again. Any success closes it, so a user
+who restarts Outlook is picked up automatically.
+
+The freshness sweep also got its own, much shorter budget (30 s rather than 120 s). It is
+an *enhancement*: search already holds its indexed answer before the sweep runs, and the
+tool's own description promises "sub-second and cheap". Healthy sweeps measure 0.5–6 s.
+
+Same machine, same wedge, after:
+
+| tool | before | after |
+| --- | --- | --- |
+| `outlook_health` | 5.8 s | 6.1 s, then **0.1 s** |
+| `search` | 120.2 s | 30.3 s, then **0.1 s** (3 indexed hits, `sweep.performed: false`) |
+| `list_accounts` | 120.2 s | **0.0 s** |
+| `list_folders` | — | **0.0 s** |
+
+Verified not to latch: after the cooldown a 5.2 s probe ran, failed, and re-opened —
+rather than either giving up permanently or paying a full budget again.
+
 ## Lifetime
 
 Two independent guards, because the failure they prevent — an orphaned process holding

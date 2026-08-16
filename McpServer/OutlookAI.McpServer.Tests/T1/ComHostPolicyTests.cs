@@ -124,6 +124,73 @@ public sealed class ComHostPolicyTests
         Assert.Equal(expected, ComHostPolicy.IsInStartBackoff(failures, sinceMs));
     }
 
+    // ------------------------------------------------------------------ DecideBreaker
+
+    [Fact]
+    public void Breaker_StartsClosed()
+    {
+        Assert.Equal(BreakerVerdict.Closed, ComHostPolicy.DecideBreaker(new BreakerInput(0, long.MaxValue)));
+    }
+
+    [Fact]
+    public void Breaker_ToleratesASingleTimeout()
+    {
+        // One timeout is not evidence of a wedged Outlook - a single slow operation, a
+        // cold start behind a big OST, a transient stall. Opening on the first would make
+        // the server refuse work it could have done.
+        Assert.Equal(BreakerVerdict.Closed, ComHostPolicy.DecideBreaker(new BreakerInput(1, 0)));
+    }
+
+    [Fact]
+    public void Breaker_OpensOnRepeatedTimeouts()
+    {
+        BreakerVerdict verdict = ComHostPolicy.DecideBreaker(
+            new BreakerInput(ComHostPolicy.UnresponsiveTimeoutThreshold, 0));
+
+        // Measured on a genuinely wedged Outlook: search, list_accounts and list_folders
+        // each burned their full 120 s budget, independently, every time. Bounding each
+        // call is necessary but not sufficient - the server has to remember.
+        Assert.Equal(BreakerVerdict.Open, verdict);
+    }
+
+    [Fact]
+    public void Breaker_StaysOpenForTheWholeCooldown()
+    {
+        Assert.Equal(
+            BreakerVerdict.Open,
+            ComHostPolicy.DecideBreaker(new BreakerInput(5, ComHostPolicy.UnresponsiveCooldownMilliseconds - 1)));
+    }
+
+    [Fact]
+    public void Breaker_GoesHalfOpenWhenTheCooldownElapses()
+    {
+        // It must re-probe rather than latch: a user who restarts Outlook has to be picked
+        // up automatically, without restarting the server.
+        Assert.Equal(
+            BreakerVerdict.HalfOpen,
+            ComHostPolicy.DecideBreaker(new BreakerInput(5, ComHostPolicy.UnresponsiveCooldownMilliseconds)));
+    }
+
+    [Fact]
+    public void Breaker_StaysHalfOpenIndefinitelyUntilSomethingSucceeds()
+    {
+        // Long after the cooldown it is still HalfOpen, never Open again by the passage of
+        // time alone. Only an actual probe outcome moves it: success resets the count to
+        // zero, failure re-stamps the clock.
+        Assert.Equal(
+            BreakerVerdict.HalfOpen,
+            ComHostPolicy.DecideBreaker(new BreakerInput(99, ComHostPolicy.UnresponsiveCooldownMilliseconds * 100)));
+    }
+
+    [Fact]
+    public void Breaker_CooldownIsShortEnoughToBeUnnoticeable()
+    {
+        // The cost of a stale-open breaker is a user waiting after fixing Outlook. Keep it
+        // well under a minute, and far below the operation budget it exists to avoid.
+        Assert.True(ComHostPolicy.UnresponsiveCooldownMilliseconds <= 60_000);
+        Assert.True(ComHostPolicy.UnresponsiveCooldownMilliseconds < ComHostPolicy.DefaultOperationDeadlineMilliseconds);
+    }
+
     // ---------------------------------------------------------------- DecideInFlight
 
     [Fact]
