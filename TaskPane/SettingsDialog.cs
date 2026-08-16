@@ -44,6 +44,17 @@ namespace OutlookAI.TaskPane
         private bool _disposedCustom;
 
         /// <summary>
+        /// Whether the two conditional status lines belong on screen. Held here rather than
+        /// read back from <see cref="Control.Visible"/>, which answers "is it on screen right
+        /// now" — false for every child while the form itself has not been shown. The layout
+        /// runs once inside the constructor, before that, and asking the control there would
+        /// reserve no room for a line that is about to appear and open the Claude Code group
+        /// underneath it.
+        /// </summary>
+        private bool _showRestart;
+        private bool _showGpo;
+
+        /// <summary>
         /// What a manual registration would name, refreshed by <see cref="RefreshFromState"/>.
         /// Cached in a field so the theme handler can redraw the status line without probing
         /// the disk again.
@@ -137,26 +148,25 @@ namespace OutlookAI.TaskPane
             MinimizeBox = false;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(470, 803);
+            // The width is fixed; the height is whatever the laid-out content turns out to
+            // need, and PerformDialogLayout sets it before this constructor returns.
+            ClientSize = new Size(DialogWidth, 0);
 
-            int margin = 12;
-            int innerWidth = ClientSize.Width - 2 * margin;
+            // Positions and sizes are NOT set here: PerformDialogLayout owns every coordinate
+            // in this dialog, so there is exactly one place that decides how tall a label has
+            // to be and where the next control starts.
 
             lblHeader = new Label
             {
                 Name = "lblHeader",
                 Text = "OutlookAI keeps these Outlook settings applied: fast local search, a fully cached " +
                        "mailbox (sync slider = All), and enough OST size headroom for it.",
-                Location = new Point(margin, 10),
-                Size = new Size(innerWidth, 32),
             };
 
             chkMaster = new CheckBox
             {
                 Name = "chkMaster",
                 Text = "Manage Outlook tuning",
-                Location = new Point(margin, 46),
-                Size = new Size(innerWidth, 20),
             };
 
             // --- Search group ---
@@ -164,29 +174,21 @@ namespace OutlookAI.TaskPane
             {
                 Name = "grpSearch",
                 Text = "Search",
-                Location = new Point(margin, 74),
-                Size = new Size(innerWidth, 158),
             };
             chkSearch = new CheckBox
             {
                 Name = "chkSearch",
                 Text = "Keep local search tuning applied",
-                Location = new Point(10, 20),
-                Size = new Size(innerWidth - 20, 18),
             };
             lblSearchValues = new Label
             {
                 Name = "lblSearchValues",
-                Location = new Point(10, 42),
-                Size = new Size(innerWidth - 20, 74),
             };
             lblSearchWarning = new Label
             {
                 Name = "lblSearchWarning",
                 Text = "Turning this off restores Outlook's online search: slower, capped results, and " +
                        "'show me' results may no longer match what the agent finds.",
-                Location = new Point(10, 120),
-                Size = new Size(innerWidth - 20, 32),
             };
             grpSearch.Controls.Add(chkSearch);
             grpSearch.Controls.Add(lblSearchValues);
@@ -197,21 +199,15 @@ namespace OutlookAI.TaskPane
             {
                 Name = "grpCaching",
                 Text = "Full caching (sync slider = All)",
-                Location = new Point(margin, 238),
-                Size = new Size(innerWidth, 175),
             };
             chkCaching = new CheckBox
             {
                 Name = "chkCaching",
                 Text = "Keep full Cached Mode sync applied",
-                Location = new Point(10, 20),
-                Size = new Size(innerWidth - 20, 18),
             };
             lblCachingValues = new Label
             {
                 Name = "lblCachingValues",
-                Location = new Point(10, 42),
-                Size = new Size(innerWidth - 20, 125),
             };
             grpCaching.Controls.Add(chkCaching);
             grpCaching.Controls.Add(lblCachingValues);
@@ -221,39 +217,32 @@ namespace OutlookAI.TaskPane
             {
                 Name = "grpOst",
                 Text = "OST size headroom",
-                Location = new Point(margin, 419),
-                Size = new Size(innerWidth, 90),
             };
             chkOst = new CheckBox
             {
                 Name = "chkOst",
                 Text = "Keep raised OST size limits applied (100 GB max)",
-                Location = new Point(10, 20),
-                Size = new Size(innerWidth - 20, 18),
             };
             lblOstValues = new Label
             {
                 Name = "lblOstValues",
-                Location = new Point(10, 42),
-                Size = new Size(innerWidth - 20, 40),
             };
             grpOst.Controls.Add(chkOst);
             grpOst.Controls.Add(lblOstValues);
 
+            // Both of these are normally hidden, and the layout gives a hidden one no room at
+            // all: the old fixed coordinates reserved 62px for them whether they were on
+            // screen or not, which is the empty band that used to sit under the OST group.
             lblRestart = new Label
             {
                 Name = "lblRestart",
                 Text = "Restart Outlook to apply pending changes.",
-                Location = new Point(margin, 517),
-                Size = new Size(innerWidth, 18),
                 Visible = false,
             };
 
             lblGpo = new Label
             {
                 Name = "lblGpo",
-                Location = new Point(margin, 537),
-                Size = new Size(innerWidth, 30),
                 Visible = false,
             };
 
@@ -262,45 +251,33 @@ namespace OutlookAI.TaskPane
             {
                 Name = "grpClaude",
                 Text = "Mail server in Claude Code",
-                Location = new Point(margin, 571),
-                Size = new Size(innerWidth, 186),
             };
             chkGlobalMcp = new CheckBox
             {
                 Name = "chkGlobalMcp",
                 Text = "Make available in all my Claude Code projects",
-                Location = new Point(10, 20),
-                Size = new Size(innerWidth - 20, 18),
             };
             lblGlobalMcpHelp = new Label
             {
                 Name = "lblGlobalMcpHelp",
                 Text = "Registers the mail server in your personal Claude Code configuration, so every " +
                        "project you open can use it. Turning this off removes that entry again.",
-                Location = new Point(26, 40),
-                Size = new Size(innerWidth - 36, 30),
             };
             // Always visible: "connected and pointing at the right place" is worth stating,
             // not just its absence.
             lblMcp = new Label
             {
                 Name = "lblMcp",
-                Location = new Point(10, 74),
-                Size = new Size(innerWidth - 20, 64),
             };
             btnAddProject = new Button
             {
                 Name = "btnAddProject",
                 Text = "Add to a specific project…",
-                Location = new Point(10, 146),
-                Size = new Size(176, 26),
             };
             btnCopyCommand = new Button
             {
                 Name = "btnCopyCommand",
                 Text = "Copy CLI command",
-                Location = new Point(194, 146),
-                Size = new Size(176, 26),
             };
             grpClaude.Controls.Add(chkGlobalMcp);
             grpClaude.Controls.Add(lblGlobalMcpHelp);
@@ -312,15 +289,11 @@ namespace OutlookAI.TaskPane
             {
                 Name = "btnApply",
                 Text = "Apply now",
-                Location = new Point(ClientSize.Width - margin - 170, 767),
-                Size = new Size(84, 26),
             };
             btnClose = new Button
             {
                 Name = "btnClose",
                 Text = "Close",
-                Location = new Point(ClientSize.Width - margin - 80, 767),
-                Size = new Size(80, 26),
             };
 
             Controls.Add(lblHeader);
@@ -363,6 +336,247 @@ namespace OutlookAI.TaskPane
             ThemeService.ThemeChanged += OnThemeChanged;
 
             RefreshFromState();
+        }
+
+        // ===== Layout =====
+        //
+        // The dialog is laid out in code, top to bottom, exactly as it always was — with one
+        // rule changed: a wrapped label's height is MEASURED from its text instead of being
+        // written down. The shipped dialog wrote it down, and wrote down a value with no
+        // slack whatsoever: 30px for the Claude Code help text, which needs exactly two 15px
+        // lines at 96 DPI. On a display scaled to 125% the same text needs three 20px lines
+        // (60px), so its last line — "...removes that entry again." — had nowhere to render
+        // and was cut off. Measuring, and flowing everything below from the measured bottom,
+        // is what stops that happening again the next time the wording, the font or the
+        // display scale changes.
+
+        private const int DialogWidth = 470;
+        private const int FormMargin = 12;
+        private const int HeaderTop = 10;
+        private const int GroupPadX = 10;        // left/right inset of a group's contents
+        private const int GroupFirstRow = 20;    // first row inside a group, clear of its caption
+        private const int RowGap = 4;            // between rows
+        private const int HelpTextGap = 2;       // a help line hugs the control it explains
+        private const int HelpTextIndent = 26;   // aligned with a check box's caption
+        private const int GroupSpacing = 6;      // between one group and the next
+        private const int GroupBottomPad = 8;    // below the last row inside a group
+        private const int GroupButtonPad = 12;   // ...when that last row is buttons
+        private const int ButtonGap = 8;         // around a row of buttons
+        private const int DialogBottomPad = 10;
+
+        /// <summary>
+        /// Lays the dialog out from the top down and sizes the form to the result. Cheap, and
+        /// safe to call as often as the content changes — which is the point: it runs after
+        /// every refresh and every theme change, so a longer status line, a reworded help
+        /// text or a scaled display makes the dialog taller instead of cutting text off.
+        /// Never throws; a layout that failed would leave the last good one on screen.
+        /// </summary>
+        private void PerformDialogLayout()
+        {
+            SuspendLayout();
+            try
+            {
+                // Absolute child coordinates and a scrolled viewport do not mix, so start from
+                // the top. Only ever relevant in the scrolling case below.
+                if (AutoScroll)
+                    AutoScrollPosition = new Point(0, 0);
+
+                int contentHeight = FlowControls(DialogWidth);
+
+                // Growing to fit the text is only a fix while the buttons stay reachable, so
+                // the dialog never grows past the screen it will open on. Beyond that it
+                // scrolls — and the flow runs again, narrower by the scroll bar, so a vertical
+                // one cannot summon a horizontal one.
+                Rectangle workingArea = IsHandleCreated
+                    ? Screen.FromControl(this).WorkingArea
+                    : Screen.PrimaryScreen.WorkingArea;
+                int chrome = Math.Max(0, Height - ClientSize.Height);
+                int maxClientHeight = Math.Max(300, workingArea.Height - chrome - 2 * FormMargin);
+
+                if (contentHeight > maxClientHeight)
+                {
+                    AutoScroll = true;
+                    FlowControls(DialogWidth - SystemInformation.VerticalScrollBarWidth);
+                    ClientSize = new Size(DialogWidth, maxClientHeight);
+                }
+                else
+                {
+                    AutoScroll = false;
+                    ClientSize = new Size(DialogWidth, contentHeight);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("Settings layout: " + ex.Message);
+            }
+            finally
+            {
+                ResumeLayout(true);
+            }
+        }
+
+        /// <summary>
+        /// Positions every control for a dialog <paramref name="layoutWidth"/> pixels wide and
+        /// returns the client height that arrangement needs. Pure geometry: it decides nothing
+        /// about what is shown, it only honours it — a hidden status line takes no space.
+        /// </summary>
+        private int FlowControls(int layoutWidth)
+        {
+            int inner = layoutWidth - 2 * FormMargin;
+            int groupInner = inner - 2 * GroupPadX;
+            int y = HeaderTop;
+
+            // The last argument to PlaceLabel is a FLOOR, not a height: the size that label
+            // had when the dialog was hand-arranged, kept so the familiar proportions survive
+            // and a shorter status line does not make the whole dialog jump. Text that needs
+            // more than the floor gets more.
+
+            y = PlaceLabel(lblHeader, FormMargin, y, inner, 32) + RowGap;
+
+            chkMaster.Location = new Point(FormMargin, y);
+            chkMaster.Size = new Size(inner, RowHeight(20));
+            y = chkMaster.Bottom + ButtonGap;
+
+            // --- Search ---
+            int row = PlaceCheck(chkSearch, GroupFirstRow, groupInner) + RowGap;
+            row = PlaceLabel(lblSearchValues, GroupPadX, row, groupInner, 74) + RowGap;
+            row = PlaceLabel(lblSearchWarning, GroupPadX, row, groupInner, 32);
+            y = PlaceGroup(grpSearch, y, inner, row + GroupBottomPad) + GroupSpacing;
+
+            // --- Full caching ---
+            row = PlaceCheck(chkCaching, GroupFirstRow, groupInner) + RowGap;
+            row = PlaceLabel(lblCachingValues, GroupPadX, row, groupInner, 125);
+            y = PlaceGroup(grpCaching, y, inner, row + GroupBottomPad) + GroupSpacing;
+
+            // --- OST headroom ---
+            row = PlaceCheck(chkOst, GroupFirstRow, groupInner) + RowGap;
+            row = PlaceLabel(lblOstValues, GroupPadX, row, groupInner, 40);
+            y = PlaceGroup(grpOst, y, inner, row + GroupBottomPad) + GroupSpacing;
+
+            // The two conditional status lines cost nothing while they are off, which is what
+            // closes the gap between the OST group and the one below it. They are positioned
+            // either way, so switching one on can never flash it at the top-left corner
+            // before the next layout catches up.
+            int statusBottom = PlaceLabel(lblRestart, FormMargin, y, inner, 18);
+            if (_showRestart)
+                y = statusBottom + RowGap;
+            statusBottom = PlaceLabel(lblGpo, FormMargin, y, inner, 30);
+            if (_showGpo)
+                y = statusBottom + RowGap;
+
+            // --- Mail server in Claude Code ---
+            row = PlaceCheck(chkGlobalMcp, GroupFirstRow, groupInner) + HelpTextGap;
+            // THE defect this layout exists for: this label's text needs two lines at 96 DPI
+            // and three on a scaled display, and it used to be given a flat 30px either way.
+            row = PlaceLabel(lblGlobalMcpHelp, HelpTextIndent, row,
+                             inner - HelpTextIndent - GroupPadX, 30) + RowGap;
+            row = PlaceLabel(lblMcp, GroupPadX, row, groupInner, 64) + ButtonGap;
+
+            // Two buttons sharing a row: matched in size, grown for whichever caption needs
+            // the most room, and never wider than half the group between them.
+            Size add = ButtonSize(btnAddProject, 176, 26);
+            Size copy = ButtonSize(btnCopyCommand, 176, 26);
+            var projectButton = new Size(
+                Math.Min((groupInner - ButtonGap) / 2, Math.Max(add.Width, copy.Width)),
+                Math.Max(add.Height, copy.Height));
+            btnAddProject.Size = projectButton;
+            btnCopyCommand.Size = projectButton;
+            btnAddProject.Location = new Point(GroupPadX, row);
+            btnCopyCommand.Location = new Point(btnAddProject.Right + ButtonGap, row);
+            y = PlaceGroup(grpClaude, y, inner, btnAddProject.Bottom + GroupButtonPad) + ButtonGap;
+
+            btnApply.Size = ButtonSize(btnApply, 84, 26);
+            btnClose.Size = ButtonSize(btnClose, 80, 26);
+            btnClose.Location = new Point(layoutWidth - FormMargin - btnClose.Width, y);
+            btnApply.Location = new Point(btnClose.Left - ButtonGap - btnApply.Width, y);
+
+            return btnClose.Bottom + DialogBottomPad;
+        }
+
+        /// <summary>
+        /// Puts <paramref name="label"/> at (<paramref name="x"/>, <paramref name="y"/>),
+        /// <paramref name="width"/> wide and as tall as its text needs there — never shorter
+        /// than <paramref name="minHeight"/>, the height the dialog shipped with, so labels
+        /// whose text already fits keep their familiar proportions and the dialog does not
+        /// resize itself every time a status line happens to get shorter. Returns the Y just
+        /// below it, which is what the next control flows from.
+        /// </summary>
+        private static int PlaceLabel(Label label, int x, int y, int width, int minHeight)
+        {
+            label.Location = new Point(x, y);
+            label.Size = new Size(width, Math.Max(minHeight, MeasureLabelHeight(label, width)));
+            return label.Bottom;
+        }
+
+        /// <summary>
+        /// How tall <paramref name="label"/>'s current text is once wrapped at
+        /// <paramref name="width"/>, measured with the font it will actually paint with rather
+        /// than the font someone had in mind while writing the coordinates down.
+        /// </summary>
+        private static int MeasureLabelHeight(Label label, int width)
+        {
+            if (width <= 0)
+                return 0;
+            try
+            {
+                // An unbounded height asks "how tall, wrapped at this width?". The two extra
+                // pixels are slack: the shipped help label needed exactly the 30px it was
+                // given, and a label with no slack is one font update away from clipping.
+                Size needed = TextRenderer.MeasureText(
+                    label.Text ?? "",
+                    label.Font,
+                    new Size(width, int.MaxValue),
+                    TextFormatFlags.WordBreak);
+                return needed.Height + 2;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("Settings measure: " + ex.Message);
+                return label.Height;
+            }
+        }
+
+        /// <summary>Places a group's check box on its own row and returns the Y below it.</summary>
+        private int PlaceCheck(CheckBox check, int y, int width)
+        {
+            check.Location = new Point(GroupPadX, y);
+            check.Size = new Size(width, RowHeight(18));
+            return check.Bottom;
+        }
+
+        private static int PlaceGroup(GroupBox group, int y, int width, int height)
+        {
+            group.Location = new Point(FormMargin, y);
+            group.Size = new Size(width, height);
+            return group.Bottom;
+        }
+
+        /// <summary>
+        /// A single-line row's height: what it was designed as, or the font's line height
+        /// where that is taller — the case on a scaled display, where the font grows and
+        /// these coordinates do not.
+        /// </summary>
+        private int RowHeight(int designHeight)
+        {
+            return Math.Max(designHeight, Font.Height + 2);
+        }
+
+        /// <summary>
+        /// A button's designed size, grown wherever its caption no longer fits inside it.
+        /// </summary>
+        private static Size ButtonSize(Button button, int designWidth, int designHeight)
+        {
+            Size preferred;
+            try
+            {
+                preferred = button.GetPreferredSize(Size.Empty);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("Settings button size: " + ex.Message);
+                preferred = Size.Empty;
+            }
+            return new Size(Math.Max(designWidth, preferred.Width), Math.Max(designHeight, preferred.Height));
         }
 
         private void OnToggleChanged(object sender, EventArgs e)
@@ -614,6 +828,8 @@ namespace OutlookAI.TaskPane
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine("Settings refresh: " + ex.Message);
+                // The Claude Code line above was still repainted, so lay out around it.
+                PerformDialogLayout();
                 return;
             }
 
@@ -633,7 +849,8 @@ namespace OutlookAI.TaskPane
                 lblCachingValues.Text = BuildGroupText(snap, OutlookTuningService.GroupCaching);
                 lblOstValues.Text = BuildGroupText(snap, OutlookTuningService.GroupOst);
 
-                lblRestart.Visible = snap.RestartNeeded;
+                _showRestart = snap.RestartNeeded;
+                lblRestart.Visible = _showRestart;
 
                 if (snap.PolicyConflicts.Count > 0)
                 {
@@ -647,17 +864,23 @@ namespace OutlookAI.TaskPane
                         names.Append(v.Entry.ValueName);
                     }
                     lblGpo.Text = "Managed by your organization's policy (left unchanged): " + names;
-                    lblGpo.Visible = true;
+                    _showGpo = true;
                 }
                 else
                 {
-                    lblGpo.Visible = false;
+                    _showGpo = false;
                 }
+
+                lblGpo.Visible = _showGpo;
             }
             finally
             {
                 _updating = false;
             }
+
+            // Last, and always: every label above may have just changed length, and the two
+            // status lines may have just appeared or gone.
+            PerformDialogLayout();
         }
 
         private static string BuildGroupText(OutlookTuningService.TuningSnapshot snap, string groupId)
@@ -736,6 +959,10 @@ namespace OutlookAI.TaskPane
                     btn.ForeColor = ThemeService.ButtonText;
                 }
             }
+
+            // RefreshMcpLine above rewrote the status line, and a theme switch is also the
+            // moment a font substitution would land: re-measure rather than assume.
+            PerformDialogLayout();
         }
 
         protected override void Dispose(bool disposing)
