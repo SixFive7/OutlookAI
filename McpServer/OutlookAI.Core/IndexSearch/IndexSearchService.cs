@@ -175,10 +175,10 @@ namespace OutlookAI.Core.IndexSearch
         /// Probes the newest indexed DateReceived (optionally scoped to one store/folder)
         /// against the current clock.
         /// </summary>
-        public IndexStalenessReport GetStaleness(string? scope = null)
+        public IndexStalenessReport GetStaleness(string? scope = null, int? commandTimeoutSeconds = null)
         {
             string sql = WsSqlBuilder.BuildNewestReceivedProbe(scope);
-            IReadOnlyList<IReadOnlyDictionary<string, object?>> rows = _client.ExecuteRows(sql, 1);
+            IReadOnlyList<IReadOnlyDictionary<string, object?>> rows = _client.ExecuteRows(sql, 1, commandTimeoutSeconds);
 
             DateTime? newest = null;
             if (rows.Count > 0 && rows[0].TryGetValue("System.Message.DateReceived", out object? value)
@@ -265,7 +265,7 @@ namespace OutlookAI.Core.IndexSearch
         /// small samples - use <see cref="TryDiscoverStoreScopeByAddress"/> for stores the
         /// sample misses (the 2000-row pull measured 552 ms in the section-5 probes).
         /// </summary>
-        public IReadOnlyList<StoreScopeInfo> DiscoverStoreScopes(int sampleSize = 2000)
+        public IReadOnlyList<StoreScopeInfo> DiscoverStoreScopes(int sampleSize = 2000, int? commandTimeoutSeconds = null)
         {
             string sql = WsSqlBuilder.BuildStoreDiscoverySample(sampleSize);
             IReadOnlyList<IReadOnlyDictionary<string, object?>> rows = _client.ExecuteRows(sql, sampleSize);

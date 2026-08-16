@@ -170,9 +170,35 @@ public sealed class LiveSweepScopeTests
                 $"folder-scoped sweep: scope='{folderScoped.Sweep.Scope}' folders={folderScoped.Sweep.FoldersSwept} "
                 + $"({folderScoped.Sweep.ElapsedMs} ms) folders=[{string.Join(", ", folderScoped.Sweep.Folders!)}]");
 
+            // The sweep must have SEEN the rule-filed mail. This is the regression guard,
+            // and it holds regardless of how quickly Windows Search catches up.
+            Assert.True(
+                folderScoped.Sweep.ItemsSeen >= 1,
+                $"the folder-scoped sweep must have seen the rule-filed mail; itemsSeen={folderScoped.Sweep.ItemsSeen}");
+
             HitSummary hit = Assert.Single(folderScoped.Hits, h => h.Subject == seedSubject);
-            Assert.Equal("live", hit.Source);
-            _output.WriteLine("THE regression: rule-filed mail found by the folder-scoped freshness sweep");
+
+            // Deliberately NOT Assert.Equal("live", hit.Source).
+            //
+            // That asserted the seed was still UNINDEXED at this moment, which is a race
+            // against the Windows Search indexer, not a property of the sweep. It failed
+            // on 2026-08-16 during a 15-minute full live run - the indexer simply got
+            // there first - while this test's own output showed the sweep working
+            // perfectly. A test that goes red when the product is right trains people to
+            // ignore red.
+            //
+            // The merge is what makes the weaker-looking form still strict: when the seed
+            // is in BOTH tiers the index copy wins the hit and the sweep's copy is counted
+            // as a duplicate. So "live, or index with a duplicate" covers exactly the two
+            // legitimate outcomes, and a sweep that missed the folder produces neither -
+            // it yields an index-only hit with no duplicate, which fails here.
+            Assert.True(
+                hit.Source == "live" || folderScoped.Sweep.Duplicates >= 1,
+                $"the sweep must have found the rule-filed mail, live or as a merge duplicate; "
+                + $"source={hit.Source} duplicates={folderScoped.Sweep.Duplicates} itemsSeen={folderScoped.Sweep.ItemsSeen}");
+            _output.WriteLine(
+                $"THE regression: rule-filed mail found by the folder-scoped freshness sweep "
+                + $"(source={hit.Source}, duplicates={folderScoped.Sweep.Duplicates})");
 
             // --- cache-key correctness, live: the folder-scoped sweep just populated the
             // cache; a store-wide search within the TTL must NOT be served that narrow

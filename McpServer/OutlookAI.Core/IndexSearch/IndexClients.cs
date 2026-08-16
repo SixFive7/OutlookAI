@@ -27,7 +27,12 @@ namespace OutlookAI.Core.IndexSearch
         /// case-insensitive column-name -> value maps. WS-SQL recordsets are forward-only;
         /// rows are drained eagerly.
         /// </summary>
-        IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(string sql, int maxRows);
+        /// <param name="commandTimeoutSeconds">
+        /// Per-query timeout. Defaults to <see cref="OleDbIndexClient.DefaultCommandTimeoutSeconds"/>.
+        /// outlook_health passes a much shorter one: it must answer while the machine is
+        /// struggling, and a saturated indexer is exactly when it gets asked.
+        /// </param>
+        IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(string sql, int maxRows, int? commandTimeoutSeconds = null);
     }
 
     /// <summary>Primary client: System.Data.OleDb over the Search.CollatorDSO provider.</summary>
@@ -40,7 +45,10 @@ namespace OutlookAI.Core.IndexSearch
         public IndexProviderKind Provider => IndexProviderKind.OleDb;
 
         /// <inheritdoc />
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(string sql, int maxRows)
+        /// <summary>Default per-query timeout for index queries.</summary>
+        public const int DefaultCommandTimeoutSeconds = 30;
+
+        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(string sql, int maxRows, int? commandTimeoutSeconds = null)
         {
             if (sql == null)
             {
@@ -53,7 +61,7 @@ namespace OutlookAI.Core.IndexSearch
                 connection.Open();
                 using (OleDbCommand command = new OleDbCommand(sql, connection))
                 {
-                    command.CommandTimeout = 30;
+                    command.CommandTimeout = commandTimeoutSeconds ?? DefaultCommandTimeoutSeconds;
                     using (OleDbDataReader reader = command.ExecuteReader())
                     {
                         int fieldCount = reader.FieldCount;
@@ -92,7 +100,7 @@ namespace OutlookAI.Core.IndexSearch
         public IndexProviderKind Provider => IndexProviderKind.AdodbCom;
 
         /// <inheritdoc />
-        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(string sql, int maxRows)
+        public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(string sql, int maxRows, int? commandTimeoutSeconds = null)
         {
             if (sql == null)
             {

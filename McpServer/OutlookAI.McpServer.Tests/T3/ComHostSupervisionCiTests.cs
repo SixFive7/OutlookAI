@@ -110,7 +110,19 @@ public sealed class ComHostSupervisionCiTests
         Assert.True(
             comHost.TryGetProperty("lastFailure", out JsonElement lastFailure),
             $"a restart must carry its explanation. comHost={reported}");
-        Assert.Contains("GetAccounts", lastFailure.GetString()!, StringComparison.Ordinal);
+        Assert.False(
+            string.IsNullOrWhiteSpace(lastFailure.GetString()),
+            $"the explanation must not be blank. comHost={reported}");
+
+        // Deliberately NOT asserting that the explanation names GetAccounts. lastFailure
+        // holds the LATEST failure, and health's own store probe is a COM call too - on a
+        // machine where Outlook is genuinely unresponsive (which is exactly when someone
+        // runs this) that probe times out first and overwrites it. Pinning the operation
+        // name here made the test fail for a true and unrelated reason.
+        //
+        // The operation-specific attribution is asserted where it actually belongs, and
+        // where nothing can overwrite it: in the error returned to the caller, by
+        // WedgedCall_FailsWithinItsBudgetInsteadOfHangingForever.
 
         // An injected fault must never be mistakeable for a real one when reading health.
         Assert.Contains("hang:GetAccounts", comHost.GetProperty("injectedFault").GetString()!, StringComparison.Ordinal);

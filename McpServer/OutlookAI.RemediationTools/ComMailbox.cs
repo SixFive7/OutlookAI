@@ -13,11 +13,24 @@ namespace OutlookAI.RemediationTools;
 /// </summary>
 public static class ComMailbox
 {
-    /// <summary>Default-folder ids: Drafts, Inbox, Sent Items, Deleted Items (3 LAST - purge order).</summary>
-    public static readonly int[] SweepFolderIds = { 16, 6, 5, 3 };
+    /// <summary>
+    /// Default-folder ids: Drafts, Inbox, Sent Items, OUTBOX, Deleted Items
+    /// (3 LAST - purge order: deleting from any other folder soft-moves the item INTO
+    /// Deleted Items, so it must be swept after them or the moved copies survive).
+    /// <para>
+    /// Outbox (4) was missing until 2026-08-16, and the omission was invisible because
+    /// nothing pinned this set. The live suite's own sweep DOES cover Outbox, but it
+    /// deletes only items in its per-run EntryID allowlist - correctly, that is the S3
+    /// guard - so a tagged item left in an Outbox by an earlier run was reachable by
+    /// nothing. One had been sitting in the test hub's Outbox since 2026-07-30. An item
+    /// in an Outbox is not inert: it can attempt to send, and it blocks the graceful
+    /// Application.Quit() that S7 requires an empty Outbox for.
+    /// </para>
+    /// </summary>
+    public static readonly int[] SweepFolderIds = { 16, 6, 5, 4, 3 };
 
     /// <summary>Hub-only sweep set including the designated Archive folder (39). Never business stores.</summary>
-    public static readonly int[] HubSweepFolderIdsWithArchive = { 16, 6, 5, 39, 3 };
+    public static readonly int[] HubSweepFolderIdsWithArchive = { 16, 6, 5, 4, 39, 3 };
 
     /// <summary>One folder's remediation counts (audit view).</summary>
     public sealed record FolderCounts(string Store, int FolderId, string FolderName, int Total, int Tagged);

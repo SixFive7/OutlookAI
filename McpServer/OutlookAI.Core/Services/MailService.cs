@@ -186,6 +186,12 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public const int HealthProbeBudgetMs = 5_000;
 
+        /// <summary>Per-query index timeout used by health only.</summary>
+        public const int HealthIndexTimeoutSeconds = 4;
+
+        /// <summary>Overall budget for the per-store index freshness rows in health.</summary>
+        public const int HealthPerStoreIndexBudgetMs = 8_000;
+
         /// <summary>Default directory attachments are saved to when the caller names none.</summary>
         public static string DefaultAttachmentDirectory =>
             Path.Combine(SharedStateDirectory, "scratch", "attachments");
@@ -3164,6 +3170,7 @@ namespace OutlookAI.Core.Services
 
 
             // Outlook + stores (attach-only while running; never a cold start).
+            bool comProbeFailed = false;
             int? storesReachable = null;
             List<string>? storeNames = null;
             if (outlookRunning)
@@ -3183,6 +3190,7 @@ namespace OutlookAI.Core.Services
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
+                    comProbeFailed = true;
                     problems.Add("Outlook is running but did not answer within "
                         + (HealthProbeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
                         + "s (" + ex.GetType().Name + "). It may be busy, showing a dialog, or not responding; "
@@ -3228,14 +3236,23 @@ namespace OutlookAI.Core.Services
             {
                 IndexSearchService index = _index.Value;
                 provider = index.Provider.ToString();
-                IndexStalenessReport staleness = index.GetStaleness();
+
+                // Short per-query timeout, for the same reason the COM probe has one: a
+                // saturated Windows Search indexer is precisely when health gets asked,
+                // and the default 30 s per query across a global probe plus one per store
+                // would let this block alone run into minutes.
+                IndexStalenessReport staleness = index.GetStaleness(commandTimeoutSeconds: HealthIndexTimeoutSeconds);
                 newestIndexed = staleness.NewestIndexedReceivedUtc;
                 ageMinutes = staleness.Age?.TotalMinutes;
 
                 // The unordered discovery sample misses tiny idle stores (Phase-1 fact
                 // 5); when Outlook is already running, its store list closes the gap via
                 // targeted per-address discovery. Never STARTS Outlook here.
-                if (outlookRunning)
+                // Skipped when the probe above already timed out: Outlook is demonstrably
+                // not answering right now, and this step is an ENRICHMENT whose result is
+                // optional. Asking again only costs the caller another full budget to
+                // learn what we just learned.
+                if (outlookRunning && !comProbeFailed)
                 {
                     try
                     {
@@ -3248,9 +3265,21 @@ namespace OutlookAI.Core.Services
                 }
 
                 perStore = new List<StoreStaleness>();
+                System.Diagnostics.Stopwatch perStoreClock = System.Diagnostics.Stopwatch.StartNew();
                 foreach (StoreScopeInfo scopeInfo in GetCatalog())
                 {
-                    IndexStalenessReport scoped = index.GetStaleness(scopeInfo.StorePrefix);
+                    // Overall budget as well as a per-query one: a profile with many
+                    // stores multiplies even a short timeout. Reporting fewer rows is a
+                    // fine outcome; taking minutes to report all of them is not.
+                    if (perStoreClock.ElapsedMilliseconds > HealthPerStoreIndexBudgetMs)
+                    {
+                        advice.Add("Per-store index freshness is incomplete: the index did not answer quickly enough for "
+                            + "every store. The global figure above is still accurate.");
+                        break;
+                    }
+
+                    IndexStalenessReport scoped = index.GetStaleness(
+                        scopeInfo.StorePrefix, commandTimeoutSeconds: HealthIndexTimeoutSeconds);
                     perStore.Add(new StoreStaleness
                     {
                         Store = scopeInfo.StoreDisplayName,
@@ -3687,9 +3716,22 @@ namespace OutlookAI.Core.Services
                 "Unknown id '" + id + "'. Pass a hit id from a previous search/thread call in this session, or a full EntryID hex string.");
         }
 
+        /// <summary>
+        /// Enriches the index-derived store catalog from Outlook's own store list, to catch
+        /// tiny idle stores the unordered discovery sample misses.
+        /// <para>
+        /// Called ONLY from <see cref="Health"/>, and bounded by the same short probe
+        /// budget as the rest of it. It was unbounded until 2026-08-16, which quietly
+        /// undid health's whole non-blocking guarantee: against an unresponsive Outlook
+        /// this one best-effort ENRICHMENT step spent the full 120 s operation budget, and
+        /// health took 126 s to report - measured - while the store probe beside it
+        /// correctly gave up after 5 s. A step whose result is optional must never cost
+        /// more than the step whose result is the point.
+        /// </para>
+        /// </summary>
         private void EnsureCatalogCoverageFromCom()
         {
-            IReadOnlyList<ComStoreDetail> stores = _gateway.Run(GetStoreDetails);
+            IReadOnlyList<ComStoreDetail> stores = _gateway.Run(GetStoreDetails, HealthProbeBudgetMs);
             foreach (ComStoreDetail store in stores)
             {
                 if (store.DisplayName.IndexOf('@') < 0)

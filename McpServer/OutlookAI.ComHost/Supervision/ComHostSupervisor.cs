@@ -113,10 +113,19 @@ namespace OutlookAI.ComHost.Supervision
             long deadline = ComHostPolicy.DeadlineFor(operationClass, deadlineOverrideMilliseconds);
 
             // The first operation on a fresh child also pays for establishing the COM
-            // session, which may cold-start OUTLOOK.EXE. Charging it only the ordinary
-            // budget would make a legitimate cold start look like a wedge - and the short
-            // health-probe budget would make it certain.
-            if (!Volatile.Read(ref _childHasServed) && deadline < ComHostPolicy.ConnectFloorMilliseconds)
+            // session, which may cold-start OUTLOOK.EXE, so it gets a wider floor than the
+            // ordinary budget - otherwise a legitimate cold start looks like a wedge.
+            //
+            // But ONLY when the caller expressed no opinion. An explicit budget is a
+            // deliberate statement of intent and outranks the floor. This was wrong when
+            // first written and outlook_health paid for it: its explicit 5 s probe was
+            // silently widened to the 90 s floor, and because health makes two gateway
+            // calls it could block for ~180 s - against a wedged Outlook, measured at
+            // 200 s+ on 2026-08-16. The one tool that must always answer was the one made
+            // to wait longest.
+            if (deadlineOverrideMilliseconds is not > 0
+                && !Volatile.Read(ref _childHasServed)
+                && deadline < ComHostPolicy.ConnectFloorMilliseconds)
             {
                 deadline = ComHostPolicy.ConnectFloorMilliseconds;
             }

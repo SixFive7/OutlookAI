@@ -13,6 +13,56 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// </summary>
 public class RemediationRulesTests
 {
+    // ---------------------------------------------------------- purge folder sets
+
+    [Fact]
+    public void PurgeSweep_CoversTheOutbox()
+    {
+        // Regression guard, 2026-08-16. The Outbox was missing from both purge sets, and
+        // nothing pinned them, so nothing failed. The live suite's own sweep covers the
+        // Outbox but deletes only items in its per-run EntryID allowlist (the S3 guard),
+        // so a tagged item left there by an EARLIER run was reachable by nothing at all.
+        // One sat in the test hub's Outbox from 2026-07-30 to 2026-08-16.
+        Assert.Contains(4, ComMailbox.SweepFolderIds);
+        Assert.Contains(4, ComMailbox.HubSweepFolderIdsWithArchive);
+    }
+
+    [Fact]
+    public void PurgeSweep_CoversEveryFolderATestCanWriteTo()
+    {
+        // Drafts(16), Inbox(6), Sent Items(5), Outbox(4), Deleted Items(3).
+        foreach (int folderId in new[] { 16, 6, 5, 4, 3 })
+        {
+            Assert.Contains(folderId, ComMailbox.SweepFolderIds);
+            Assert.Contains(folderId, ComMailbox.HubSweepFolderIdsWithArchive);
+        }
+
+        // The hub set additionally covers its designated Archive.
+        Assert.Contains(39, ComMailbox.HubSweepFolderIdsWithArchive);
+        Assert.DoesNotContain(39, ComMailbox.SweepFolderIds);
+    }
+
+    [Fact]
+    public void PurgeSweep_VisitsDeletedItemsLast()
+    {
+        // Load-bearing ordering: deleting from any other folder SOFT-moves the item into
+        // Deleted Items. Sweeping Deleted Items first would leave every one of those
+        // moved copies behind, and the purge would never reach stable zero.
+        Assert.Equal(3, ComMailbox.SweepFolderIds[^1]);
+        Assert.Equal(3, ComMailbox.HubSweepFolderIdsWithArchive[^1]);
+    }
+
+    [Fact]
+    public void PurgeSweep_ListsEachFolderOnce()
+    {
+        // A duplicated id would double-delete and, worse, make the stable-zero loop
+        // disagree with itself about what it had already covered.
+        Assert.Equal(ComMailbox.SweepFolderIds.Length, ComMailbox.SweepFolderIds.Distinct().Count());
+        Assert.Equal(
+            ComMailbox.HubSweepFolderIdsWithArchive.Length,
+            ComMailbox.HubSweepFolderIdsWithArchive.Distinct().Count());
+    }
+
     [Fact]
     public void IsTagged_MatchesFullTagOrdinally()
     {

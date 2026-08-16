@@ -63,6 +63,15 @@ namespace OutlookAI.ComHost.Client
                 return false;
             }
 
+            // No host, no session - answer immediately. Starting one here would be wrong
+            // twice over: it contradicts the in-process gateway's contract ("never
+            // reconnects - probing must not start Outlook"), and it would let a liveness
+            // PROBE cold-start Outlook and block for as long as that takes.
+            if (_supervisor.State != ComHostState.Ready)
+            {
+                return false;
+            }
+
             try
             {
                 // Bounded by the health-probe budget: this is asked precisely when Outlook
