@@ -1,3 +1,5 @@
+using OutlookAI.Core.Com;
+
 namespace OutlookAI.ComHost.Supervision
 {
     /// <summary>Lifecycle state of the COM child as the parent understands it.</summary>
@@ -80,6 +82,28 @@ namespace OutlookAI.ComHost.Supervision
         int ConsecutiveTimeouts,
         long MillisecondsSinceLastTimeout);
 
+    /// <summary>What Outlook's externally observable state implies for a request.</summary>
+    internal enum LivenessVerdict
+    {
+        /// <summary>Outlook is up and pumping - go ahead.</summary>
+        Proceed = 0,
+
+        /// <summary>Outlook is up but not answering. Fail immediately; a COM call would not return.</summary>
+        Hung = 1,
+
+        /// <summary>Outlook is coming up. Tell the caller to retry shortly rather than blocking it.</summary>
+        Starting = 2,
+
+        /// <summary>Outlook is not running and may be started now.</summary>
+        MayStart = 3,
+
+        /// <summary>
+        /// Outlook is not running, but we tried to start one very recently. Starting again
+        /// now is the churn that appears to wedge it - wait instead.
+        /// </summary>
+        StartSuppressed = 4,
+    }
+
     /// <summary>
     /// The supervision decisions, as pure total functions of their inputs.
     /// <para>
@@ -153,6 +177,95 @@ namespace OutlookAI.ComHost.Supervision
         {
             return consecutiveStartFailures >= StartFailureBackoffThreshold
                 && millisecondsSinceLastStartFailure < StartBackoffMilliseconds;
+        }
+
+        /// <summary>
+        /// Minimum gap between attempts to start Outlook.
+        /// <para>
+        /// This is the anti-churn guard, and it exists because of a specific root-cause
+        /// finding on 2026-08-16. The wedged Outlook was one WE started
+        /// (<c>OUTLOOK.EXE -Embedding</c>, parent svchost - i.e. COM activation), and the
+        /// event log showed two Outlook starts 39 seconds apart, the second of which hung
+        /// after loading add-ins and never made a single network call.
+        /// </para>
+        /// <para>
+        /// The suspected mechanism is our own doing: a timeout kills the COM host, that
+        /// was the last COM client of an Outlook we had started headlessly, so Outlook
+        /// begins shutting down - and the very next request activates it again while the
+        /// previous instance is still exiting. Starting Outlook on top of an exiting one
+        /// is a well-known way to get a half-initialised, wedged process.
+        /// </para>
+        /// </summary>
+        internal const long AutostartCooldownMilliseconds = 20_000;
+
+        /// <summary>How long to tell a caller to wait while Outlook is starting.</summary>
+        internal const int StartingRetryAfterSeconds = 15;
+
+        /// <summary>How long to tell a caller to wait while Outlook is unresponsive.</summary>
+        internal const int UnresponsiveRetryAfterSeconds = 30;
+
+        /// <summary>
+        /// Decides what Outlook's externally observed state means for a request, before any
+        /// COM is attempted.
+        /// <para>
+        /// Asking Windows first is close to free and replaces a 30-120 s discovery with a
+        /// microsecond one: it already knows whether a window's thread is servicing its
+        /// message queue.
+        /// </para>
+        /// </summary>
+        internal static LivenessVerdict DecideLiveness(
+            OutlookLivenessState liveness,
+            long millisecondsSinceLastStartAttempt,
+            bool startingOutlookAllowed)
+        {
+            switch (liveness)
+            {
+                case OutlookLivenessState.Responsive:
+                    return LivenessVerdict.Proceed;
+
+                case OutlookLivenessState.Hung:
+                    return LivenessVerdict.Hung;
+
+                case OutlookLivenessState.Starting:
+                    return LivenessVerdict.Starting;
+
+                case OutlookLivenessState.NotRunning:
+                default:
+                    if (!startingOutlookAllowed)
+                    {
+                        // Caller maps this to the existing "may not start Outlook" refusal.
+                        return LivenessVerdict.StartSuppressed;
+                    }
+
+                    return millisecondsSinceLastStartAttempt < AutostartCooldownMilliseconds
+                        ? LivenessVerdict.StartSuppressed
+                        : LivenessVerdict.MayStart;
+            }
+        }
+
+        /// <summary>Retry guidance, in seconds, for a verdict that asks the caller to come back.</summary>
+        internal static int RetryAfterSecondsFor(LivenessVerdict verdict, long millisecondsSinceLastStartAttempt)
+        {
+            switch (verdict)
+            {
+                case LivenessVerdict.Starting:
+                    return StartingRetryAfterSeconds;
+
+                case LivenessVerdict.StartSuppressed:
+                    long remaining = AutostartCooldownMilliseconds - millisecondsSinceLastStartAttempt;
+                    if (remaining < 1_000)
+                    {
+                        remaining = 1_000;
+                    }
+
+                    return (int)((remaining + 999) / 1000);
+
+                case LivenessVerdict.Hung:
+                    return UnresponsiveRetryAfterSeconds;
+
+                default:
+                    return 0;
+            }
         }
 
         /// <summary>Consecutive operation timeouts before the parent stops sending full requests.</summary>

@@ -321,10 +321,13 @@ namespace OutlookAI.Core.Services
                 }
                 else if (sweep.Error != null)
                 {
-                    advice.Add("Freshness sweep unavailable (" + sweep.Error + "); results are index-only and may lag the last "
-                        + DescribeAge(staleness) + " of mail. " + (ComGateway.IsInstallerMutexHeld()
+                    advice.Add("INCOMPLETE RESULTS - TELL THE USER: these are indexed results only and may be missing mail "
+                        + "from roughly the last " + DescribeAge(staleness) + ". The live check against Outlook could not "
+                        + "run (" + sweep.Error + "). Everything already indexed is here and correct; only very recent "
+                        + "mail may be absent. " + (ComGateway.IsInstallerMutexHeld()
                             ? "An add-in update is in progress - retry shortly (D17)."
-                            : "Retry later, check outlook_health, or search again with exhaustive:true plus store + folder/after bounds for an index-free COM search."));
+                            : "Retry shortly, check outlook_health, or search again with exhaustive:true plus store + "
+                              + "folder/after bounds for an index-free COM search."));
                 }
                 else if (sweep.Performed && sweep.FoldersSwept == 0 && request.Folder != null)
                 {
@@ -383,10 +386,17 @@ namespace OutlookAI.Core.Services
                     + "so this list may be short of matches. Narrow with store/folder/after, or lower top.");
             }
 
+            // The live check either ran or it did not. Say so in a field, not only in prose:
+            // a result that looks complete but silently lags recent mail is the one failure
+            // here that can mislead rather than merely inconvenience.
+            bool freshnessMissing = sweep != null && !sweep.Performed;
+
             return new SearchOutcome
             {
                 Hits = summaries,
                 Truncated = truncated,
+                Degraded = freshnessMissing ? true : (bool?)null,
+                Freshness = freshnessMissing ? "index-only" : "live",
                 IndexElapsedMs = indexResult.ElapsedMilliseconds,
                 Sweep = sweep,
                 Scope = DescribeSearchScope(folderScope, request),
@@ -3183,6 +3193,23 @@ namespace OutlookAI.Core.Services
             bool mutexHeld = ComGateway.IsInstallerMutexHeld();
             List<string> problems = new List<string>();
 
+            // Windows' own verdict on Outlook, obtained without COM. Costs microseconds,
+            // cannot block, and stays truthful when every COM-shaped thing is stuck - so
+            // health can state plainly what is wrong instead of inferring it from its own
+            // failures.
+            OutlookLivenessState liveness = OutlookLiveness.Probe(out string livenessDetail);
+            if (liveness == OutlookLivenessState.Hung)
+            {
+                problems.Add("Outlook is running but is NOT RESPONDING (" + livenessDetail + "). Windows reports its "
+                    + "windows as hung, so anything needing Outlook is refused immediately rather than left waiting. "
+                    + "search still returns indexed mail. Restarting Outlook clears this.");
+            }
+            else if (liveness == OutlookLivenessState.Starting)
+            {
+                problems.Add("Outlook is still starting up. Requests needing it return retry guidance instead of "
+                    + "waiting; search returns indexed mail meanwhile.");
+            }
+
 
             // Outlook + stores (attach-only while running; never a cold start).
             bool comProbeFailed = false;
@@ -3206,10 +3233,18 @@ namespace OutlookAI.Core.Services
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
                     comProbeFailed = true;
-                    problems.Add("Outlook is running but did not answer within "
-                        + (HealthProbeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
-                        + "s (" + ex.GetType().Name + "). It may be busy, showing a dialog, or not responding; "
-                        + "search still returns indexed results meanwhile.");
+
+                    // Only claim a wait when there actually was one. When the liveness
+                    // check above already found Outlook hung or starting, this call was
+                    // refused in microseconds - saying it "did not answer within 5s" would
+                    // be a second, contradictory account of the same fact.
+                    if (liveness == OutlookLivenessState.Responsive || liveness == OutlookLivenessState.NotRunning)
+                    {
+                        problems.Add("Outlook is running but did not answer within "
+                            + (HealthProbeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
+                            + "s (" + ex.GetType().Name + "). It may be busy, showing a dialog, or not responding; "
+                            + "search still returns indexed results meanwhile.");
+                    }
                 }
             }
 
@@ -3361,6 +3396,10 @@ namespace OutlookAI.Core.Services
                     // PROBED liveness (SF-1 fix): never report a dead held session as
                     // connected; the probe also releases a dead session's refs.
                     ComConnected = _gateway.ProbeConnected(),
+                    Responding = liveness == OutlookLivenessState.NotRunning
+                        ? (bool?)null
+                        : liveness == OutlookLivenessState.Responsive,
+                    State = OutlookLiveness.Describe(liveness),
                     StoresReachable = storesReachable,
                     Stores = storeNames,
                     ComHost = comHost,

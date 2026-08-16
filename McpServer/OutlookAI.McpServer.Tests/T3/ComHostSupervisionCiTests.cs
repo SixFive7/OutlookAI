@@ -28,6 +28,13 @@ public sealed class ComHostSupervisionCiTests
     {
         ["OUTLOOKAI_COMHOST_FAULT"] = spec,
         ["OUTLOOKAI_COMHOST_DEADLINE_MS"] = DeadlineMs,
+
+        // These tests are about the machinery BELOW the liveness gate - deadlines, kills,
+        // respawns, the breaker. The gate sits in front of all of it and, by design,
+        // refuses instantly when Outlook is absent or hung, which is exactly the state of
+        // a CI box and was the state of the dev machine these were written on. Forcing the
+        // observed state keeps the tests deterministic and testing what they claim to.
+        ["OUTLOOKAI_COMHOST_LIVENESS"] = "Responsive",
     };
 
     private static async Task<JsonElement> CallRawAsync(McpStdioClient client, string tool, object arguments)

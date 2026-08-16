@@ -137,17 +137,59 @@ namespace OutlookAI.ComHost.Supervision
     /// </summary>
     public sealed class ComHostUnresponsiveException : TimeoutException
     {
-        /// <summary>Creates the exception.</summary>
-        public ComHostUnresponsiveException(int consecutiveTimeouts)
+        /// <summary>Creates the exception after repeated timeouts.</summary>
+        public ComHostUnresponsiveException(int consecutiveTimeouts, int retryAfterSeconds)
             : base($"Outlook has failed to answer {consecutiveTimeouts} request(s) in a row, so requests that need it "
                  + "are being refused immediately instead of waiting. Outlook is being re-checked periodically and this "
                  + "clears by itself once it responds; restarting Outlook fixes it immediately.")
         {
             ConsecutiveTimeouts = consecutiveTimeouts;
+            RetryAfterSeconds = retryAfterSeconds;
         }
 
-        /// <summary>How many consecutive timeouts led to this.</summary>
+        /// <summary>
+        /// Creates the exception from a direct observation - Windows itself reporting
+        /// Outlook's windows as hung - rather than from accumulated timeouts.
+        /// </summary>
+        public ComHostUnresponsiveException(string observation, int retryAfterSeconds)
+            : base($"Outlook is running but not responding ({observation}), so requests that need it are being refused "
+                 + "immediately rather than waiting for a call that would not return. This is detected directly from "
+                 + "Windows, not guessed. It clears by itself once Outlook responds; restarting Outlook fixes it now.")
+        {
+            RetryAfterSeconds = retryAfterSeconds;
+        }
+
+        /// <summary>How many consecutive timeouts led to this, when that is what led to it.</summary>
         public int ConsecutiveTimeouts { get; }
+
+        /// <summary>How long the caller should wait before retrying.</summary>
+        public int RetryAfterSeconds { get; }
+    }
+
+    /// <summary>
+    /// Raised immediately when Outlook is starting up, instead of making the caller wait
+    /// for it.
+    /// <para>
+    /// A cold Outlook start can take tens of seconds. Blocking a tool call for that long
+    /// is indistinguishable, from the caller's side, from the hang this whole design
+    /// exists to remove - so the caller is told what is happening and roughly how long to
+    /// wait, and can do something useful meanwhile. Derives from
+    /// <see cref="TimeoutException"/> so the freshness sweep degrades to index-only
+    /// results rather than failing the search.
+    /// </para>
+    /// </summary>
+    public sealed class ComHostStartingException : TimeoutException
+    {
+        /// <summary>Creates the exception.</summary>
+        public ComHostStartingException(int retryAfterSeconds, string reason)
+            : base($"Outlook is starting up ({reason}); this answered straight away rather than making you wait for it. "
+                 + $"Retry in about {retryAfterSeconds} seconds.")
+        {
+            RetryAfterSeconds = retryAfterSeconds;
+        }
+
+        /// <summary>How long the caller should wait before retrying.</summary>
+        public int RetryAfterSeconds { get; }
     }
 
     /// <summary>

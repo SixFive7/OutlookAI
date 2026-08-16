@@ -320,6 +320,21 @@ namespace OutlookAI.Core.Services
     /// <summary>Search outcome (search tool payload).</summary>
     public sealed class SearchOutcome
     {
+        /// <summary>
+        /// True when this result is NOT fully fresh - the live Outlook check could not run,
+        /// so mail that arrived since the last index update may be missing.
+        /// <para>
+        /// Deliberately a blunt top-level boolean as well as prose in <c>advice</c>. The
+        /// same fact used to live only in an advice sentence and in sweep.performed, which
+        /// is easy to skim past; a result that LOOKS complete but is not is the one failure
+        /// mode here that can mislead a reader rather than merely inconvenience them.
+        /// </para>
+        /// </summary>
+        public bool? Degraded { get; set; }
+
+        /// <summary>"live" when the freshness sweep ran, "index-only" when it could not.</summary>
+        public string? Freshness { get; set; }
+
         /// <summary>Merged hits, newest first.</summary>
         public IReadOnlyList<HitSummary> Hits { get; set; } = Array.Empty<HitSummary>();
 
@@ -1086,6 +1101,20 @@ namespace OutlookAI.Core.Services
 
         /// <summary>True when this server holds a COM session that Outlook ANSWERED just now (probed liveness, SF-1).</summary>
         public bool ComConnected { get; set; }
+
+        /// <summary>
+        /// Whether Outlook is servicing its message queue, according to Windows itself -
+        /// not to us. False means COM calls into it would not return.
+        /// <para>
+        /// This is judged with a Win32 check that costs microseconds and cannot block, so
+        /// it is trustworthy even when everything COM-shaped is stuck. Null when Outlook is
+        /// not running.
+        /// </para>
+        /// </summary>
+        public bool? Responding { get; set; }
+
+        /// <summary>"not running", "starting", "responsive" or "not responding".</summary>
+        public string? State { get; set; }
 
         /// <summary>Store count reachable over COM (null when Outlook is not running - health never starts it).</summary>
         public int? StoresReachable { get; set; }

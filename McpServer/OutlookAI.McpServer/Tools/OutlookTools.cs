@@ -77,6 +77,12 @@ public static class OutlookTools
         + "The response's sweep block reports what was covered. The sweep is cached ~10 s, "
         + "so rapid follow-up searches run at index speed. If it cannot run, "
         + "index results are returned with a warning in advice - a search never fails for that reason.\n\n"
+        + "DEGRADED RESULTS: when the live check cannot run (Outlook closed, starting, or not responding) the "
+        + "response carries degraded=true and freshness=\"index-only\" instead of \"live\". Everything already "
+        + "indexed is present and correct; only mail from roughly the last few minutes may be missing. This is a "
+        + "SUCCESSFUL result, not an error - but SAY SO TO THE USER when degraded is true, because an answer that "
+        + "looks complete and quietly is not is worse than a visible failure. advice spells out the reason and the "
+        + "remedy; outlook_health gives the full picture.\n\n"
         + "FOLDER SCOPE: folder covers that folder AND its subfolders by default in every mode; pass "
         + "include_subfolders=false for that one folder alone. Delegate/shared mailboxes are indexed WITHOUT "
         + "their folder nesting, so a folder scope there matches by folder NAME: if the subfolder set cannot be "
@@ -251,6 +257,10 @@ public static class OutlookTools
         + "per store - the index only advances while Outlook runs), Windows Search (WSearch) service state, audit-log "
         + "writability, OutlookAI tuning state (incl. the effective UI search backend), and the add-in installer mutex. "
         + "Also reports comHost: Outlook is driven from a separate helper process this server can restart, and this "
+        + "Reports outlook.responding and outlook.state (not running / starting / responsive / not responding), "
+        + "judged from Windows itself rather than by attempting a call - so it stays truthful and instant even when "
+        + "Outlook is wedged. responding=false means anything needing Outlook is refused immediately, deliberately, "
+        + "and restarting Outlook clears it. "
         + "block gives its state, pid, restartCount and lastFailure. A restartCount above zero means Outlook stopped "
         + "answering that many times and was recovered from - lastFailure names what timed out. This report is bounded "
         + "(the COM probe gives up after 5 s) so it always answers, even while Outlook is unresponsive - which is "
@@ -663,12 +673,21 @@ public static class OutlookTools
             return Error("Cancelled", ex.Message,
                 "The operation was cancelled before it completed. Retry; if it repeats, check outlook_health.");
         }
+        catch (ComHostStartingException ex)
+        {
+            return Error("OutlookStarting", ex.Message,
+                "Nothing is wrong. Outlook was not running (or is still coming up) and is being started in the "
+                + "background; this returned at once instead of making you wait. Retry after the stated delay. search "
+                + "works meanwhile and returns indexed mail.",
+                retryAfterSeconds: ex.RetryAfterSeconds);
+        }
         catch (ComHostUnresponsiveException ex)
         {
             return Error("OutlookUnresponsive", ex.Message,
-                "This answered immediately rather than waiting, because Outlook has already failed to respond several "
-                + "times. search still returns indexed mail. Outlook is re-checked automatically and this clears itself "
-                + "once it answers; restarting Outlook fixes it at once. outlook_health shows the current state.");
+                "This answered immediately instead of waiting on a call that would not return. TELL THE USER Outlook is "
+                + "not responding and that restarting Outlook fixes it now. search still returns indexed mail meanwhile. "
+                + "Outlook is re-checked automatically, so this also clears by itself. outlook_health shows the state.",
+                retryAfterSeconds: ex.RetryAfterSeconds);
         }
         catch (ComHostTimeoutException ex)
         {
@@ -738,12 +757,18 @@ public static class OutlookTools
     /// nothing that already read it breaks; the flag and the structured copy are additive.
     /// </para>
     /// </summary>
-    private static CallToolResult Error(string type, string message, string? advice, string? reason = null)
+    private static CallToolResult Error(
+        string type,
+        string message,
+        string? advice,
+        string? reason = null,
+        int? retryAfterSeconds = null)
     {
-        // 'reason' is the machine-readable refusal code (send/draft refusals). It is
-        // omitted for everything else by the null-ignoring serializer, so the existing
-        // error shape is unchanged for every other failure.
-        var payload = new { error = new { type, reason, message, advice } };
+        // 'reason' is the machine-readable refusal code (send/draft refusals), and
+        // 'retryAfterSeconds' is machine-readable retry guidance for the transient states
+        // (Outlook starting, Outlook unresponsive). Both are omitted for everything else
+        // by the null-ignoring serializer, so the existing error shape is unchanged.
+        var payload = new { error = new { type, reason, message, advice, retryAfterSeconds } };
         return new CallToolResult
         {
             IsError = true,

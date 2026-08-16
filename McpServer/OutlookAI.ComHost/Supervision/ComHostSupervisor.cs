@@ -4,6 +4,7 @@ using System.IO.Pipes;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using OutlookAI.ComHost.Protocol;
+using OutlookAI.Core.Com;
 
 namespace OutlookAI.ComHost.Supervision
 {
@@ -51,6 +52,9 @@ namespace OutlookAI.ComHost.Supervision
         private bool _childHasServed;
         private int _consecutiveTimeouts;
         private long _lastTimeoutTimestamp;
+        private long _lastStartAttemptTimestamp;
+        private int _warmUpInFlight;
+        private string _lastLivenessDetail = string.Empty;
         private bool _disposed;
 
         internal ComHostSupervisor(bool allowStartingOutlook)
@@ -69,6 +73,21 @@ namespace OutlookAI.ComHost.Supervision
 
         /// <summary>Consecutive operation timeouts; 0 once Outlook answers again.</summary>
         internal int ConsecutiveTimeouts => Volatile.Read(ref _consecutiveTimeouts);
+
+        /// <summary>Outlook's externally observed state, judged without COM.</summary>
+        internal OutlookLivenessState Liveness => OutlookLiveness.Probe();
+
+        /// <summary>Detail behind the last liveness observation, for health output.</summary>
+        internal string LivenessDetail
+        {
+            get
+            {
+                lock (_stateLock)
+                {
+                    return _lastLivenessDetail;
+                }
+            }
+        }
 
         /// <summary>Whether COM requests are currently being failed fast because Outlook is not answering.</summary>
         internal bool IsUnresponsive => ComHostPolicy.DecideBreaker(new BreakerInput(
@@ -120,6 +139,8 @@ namespace OutlookAI.ComHost.Supervision
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
 
+            GateOutlookLiveness();
+
             BreakerVerdict verdict = ComHostPolicy.DecideBreaker(new BreakerInput(
                 Volatile.Read(ref _consecutiveTimeouts),
                 MillisecondsSince(Volatile.Read(ref _lastTimeoutTimestamp))));
@@ -128,16 +149,133 @@ namespace OutlookAI.ComHost.Supervision
             {
                 // Fail in microseconds rather than spending another full budget to
                 // rediscover what the last two requests established.
-                throw new ComHostUnresponsiveException(Volatile.Read(ref _consecutiveTimeouts));
+                throw new ComHostUnresponsiveException(
+                    Volatile.Read(ref _consecutiveTimeouts), ComHostPolicy.UnresponsiveRetryAfterSeconds);
             }
 
             if (verdict == BreakerVerdict.HalfOpen && !await ProbeAliveAsync(cancellationToken).ConfigureAwait(false))
             {
-                throw new ComHostUnresponsiveException(Volatile.Read(ref _consecutiveTimeouts));
+                throw new ComHostUnresponsiveException(
+                    Volatile.Read(ref _consecutiveTimeouts), ComHostPolicy.UnresponsiveRetryAfterSeconds);
             }
 
             return await InvokeCoreAsync(operation, arguments, operationClass, deadlineOverrideMilliseconds, cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Consults Windows about Outlook before spending anything on COM.
+        /// <para>
+        /// Three things fall out of one free check. A hung Outlook is refused instantly
+        /// instead of after a 30-120 s budget. A starting Outlook produces retry guidance
+        /// instead of a long block. And a not-running Outlook is started at most once per
+        /// cooldown, which is the anti-churn guard: the 2026-08-16 root-cause analysis
+        /// found the wedged instance was one we had started, 39 seconds after starting a
+        /// previous one, most likely activating Outlook while the prior instance was still
+        /// exiting.
+        /// </para>
+        /// </summary>
+        /// <summary>
+        /// Test-only override of the liveness probe, e.g. <c>responsive</c>.
+        /// <para>
+        /// Needed because the gate is now so effective that it hides the paths beneath it:
+        /// on a machine where Outlook is genuinely hung, the gate refuses instantly and the
+        /// injected-fault tests for the timeout / kill / respawn machinery never execute.
+        /// Forcing the observed state keeps those tests deterministic wherever they run.
+        /// </para>
+        /// </summary>
+        internal const string LivenessOverrideVariable = "OUTLOOKAI_COMHOST_LIVENESS";
+
+        private static readonly OutlookLivenessState? LivenessOverride = ReadLivenessOverride();
+
+        private static OutlookLivenessState? ReadLivenessOverride()
+        {
+            string? raw = Environment.GetEnvironmentVariable(LivenessOverrideVariable);
+            return Enum.TryParse(raw, ignoreCase: true, out OutlookLivenessState parsed) ? parsed : null;
+        }
+
+        private void GateOutlookLiveness()
+        {
+            OutlookLivenessState liveness = OutlookLiveness.Probe(out string detail);
+            if (LivenessOverride is OutlookLivenessState forced)
+            {
+                liveness = forced;
+                detail = "forced by " + LivenessOverrideVariable;
+            }
+            lock (_stateLock)
+            {
+                _lastLivenessDetail = detail;
+            }
+
+            long sinceStart = MillisecondsSince(Volatile.Read(ref _lastStartAttemptTimestamp));
+            LivenessVerdict verdict = ComHostPolicy.DecideLiveness(liveness, sinceStart, _allowStartingOutlook);
+            int retryAfter = ComHostPolicy.RetryAfterSecondsFor(verdict, sinceStart);
+
+            switch (verdict)
+            {
+                case LivenessVerdict.Proceed:
+                    return;
+
+                case LivenessVerdict.Hung:
+                    RecordFailure($"Outlook is not responding ({detail}); requests needing it are refused immediately.");
+                    throw new ComHostUnresponsiveException(detail, retryAfter);
+
+                case LivenessVerdict.Starting:
+                    BeginWarmUp();
+                    throw new ComHostStartingException(retryAfter, detail);
+
+                case LivenessVerdict.StartSuppressed:
+                    if (!_allowStartingOutlook)
+                    {
+                        throw new ComHostUnavailableException(
+                            "Outlook is not running and may not be started right now (the OutlookAI installer is running, "
+                            + "or autostart is disabled). Retry shortly.");
+                    }
+
+                    throw new ComHostStartingException(retryAfter, "a start was attempted moments ago");
+
+                case LivenessVerdict.MayStart:
+                default:
+                    Volatile.Write(ref _lastStartAttemptTimestamp, Stopwatch.GetTimestamp());
+                    BeginWarmUp();
+                    throw new ComHostStartingException(
+                        ComHostPolicy.StartingRetryAfterSeconds, "Outlook was not running and is being started");
+            }
+        }
+
+        /// <summary>
+        /// Starts the COM host and warms up its Outlook connection in the background, so
+        /// no caller ever waits out a cold start. At most one warm-up runs at a time.
+        /// </summary>
+        private void BeginWarmUp()
+        {
+            if (Interlocked.CompareExchange(ref _warmUpInFlight, 1, 0) != 0)
+            {
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    _ = await InvokeCoreAsync(
+                            nameof(OutlookAI.Core.Com.IOutlookSession.GetProfileName),
+                            null,
+                            ComHostOperationClass.Connect,
+                            null,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // A failed warm-up is not an error in itself: the caller was already
+                    // told to retry, and the next attempt re-evaluates from scratch.
+                }
+                finally
+                {
+                    Volatile.Write(ref _warmUpInFlight, 0);
+                }
+            });
         }
 
         /// <summary>

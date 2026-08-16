@@ -138,6 +138,61 @@ Same machine, same wedge, after:
 Verified not to latch: after the cooldown a 5.2 s probe ran, failed, and re-opened —
 rather than either giving up permanently or paying a full budget again.
 
+## Asking Windows first
+
+Bounding calls, then remembering across them, still left every *first* encounter with an
+unavailable Outlook paying real time. The cheapest fix turned out to need no COM at all.
+
+Windows already tracks whether a window's owning thread is servicing its message queue,
+and answers in microseconds through `IsHungAppWindow`. `OutlookLiveness` reads it and
+classifies Outlook as **not running / starting / responsive / not responding**, before any
+COM is attempted. Three things fall out of that one free check:
+
+- **Hung** - refuse instantly. No child spawned, no budget spent, no kill needed.
+- **Starting** - return retry guidance (`OutlookStarting`, `retryAfterSeconds`) instead of
+  blocking a caller for a cold start that can take a minute and a half. Outlook is warmed
+  up in the background so the retry lands on a ready session.
+- **Not running** - start Outlook at most once per 20 s cooldown. This is the **anti-churn
+  guard**, and it exists because of the root cause below.
+
+Measured against the same wedged Outlook, first call, no warm-up:
+
+| tool | originally | per-call bounds | + breaker | + liveness |
+| --- | --- | --- | --- | --- |
+| `outlook_health` | 126 s | 5.8 s | 5.8 s | **0.6 s** |
+| `search` | 120 s | 120 s | 30 s | **0.2 s** |
+| `list_accounts` | 120 s | 120 s | 120 s | **0.04 s** |
+
+Over 70 sequential and 12 concurrent calls against that wedge, **no COM host was spawned
+at all** and Outlook was never restarted.
+
+## Root cause: we were wedging Outlook ourselves
+
+Analysis of a live wedge on 2026-08-16 found the process was `OUTLOOK.EXE -Embedding`
+with parent `svchost.exe` - i.e. **COM-activated by us**, not launched by the user. It had
+burned 1.34 s of CPU, made no network calls at all, and stopped immediately after loading
+add-ins; the event log showed **two Outlook starts 39 seconds apart**, the second never
+completing startup.
+
+The suspected mechanism is our own doing: a timeout kills the COM host, that host was the
+last COM client of an Outlook *we* had started headlessly, so Outlook begins shutting down
+- and the very next request activates it again while the previous instance is still
+exiting. Starting Outlook on top of an exiting one is a well-known way to get a
+half-initialised, wedged process.
+
+Hence the cooldown. The breaker helps here too, by removing the rapid kill/respawn cycle
+that produced the churn. This is inference from strong evidence, not proof: confirming it
+needs a native stack, and no debugger is installed on that machine.
+
+## Degraded results are stated, not implied
+
+When the live check cannot run, `search` still **succeeds** and returns its indexed answer
+- discarding results we already hold would be the worse failure, and `isError` would
+invite clients to throw them away. It carries `degraded: true` and
+`freshness: "index-only"` alongside prose opening with `INCOMPLETE RESULTS - TELL THE
+USER`. A result that looks complete and quietly is not is the one failure mode here that
+misleads a reader rather than merely inconveniencing them.
+
 ## Lifetime
 
 Two independent guards, because the failure they prevent — an orphaned process holding
