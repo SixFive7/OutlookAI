@@ -76,17 +76,20 @@ Source: "Redist\vstor_redist.exe"; Flags: dontcopy
 ; without guessing from its own assembly location (which sits under Application Files\<ver>\
 ; when installed, but directly in bin\Release for a developer build).
 ;
-; uninsdeletekey, not uninsdeletevalue: uninstall must take the WHOLE Software\OutlookAI key,
-; including the two subkeys the add-in creates at runtime and that setup itself never writes -
-; Tuning (with its Desired\ and Applied\ children) and Mcp. Nothing but OutlookAI's own
-; bookkeeping lives under this key, so removing it loses no user data.
+; uninsdeletevalue, not uninsdeletekey: uninstall removes ONLY setup's own InstallDir value and
+; leaves the rest of Software\OutlookAI standing. This reverses what v3.1.0 did, deliberately.
+; The key stopped being pure bookkeeping when Prompts arrived: it now holds user-authored
+; content - edited prompt text and the custom quick-button set - next to the Tuning (with its
+; Desired\ and Applied\ children) and Mcp subkeys the add-in writes at runtime. Deleting a
+; user's own prompts on uninstall would be data loss with no export path, so all settings
+; survive an uninstall and are still there after a reinstall.
 ; It deliberately does NOT reach the values the add-in writes into Outlook's own hives
 ; (Office\16.0\Outlook\{Search, Cached Mode, PST} and the Policies mirror of Cached Mode):
 ; that is the user's Outlook configuration, and uninstalling never reverts it - see
 ; Services\OutlookTuningService.cs and the README.
 ; Only the uninstaller acts on this. A /SILENT auto-update re-runs setup and never runs the
-; uninstaller, so tuning and registration state survive updates untouched.
-Root: HKCU; Subkey: "Software\OutlookAI"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletekey
+; uninstaller, so every setting survives updates untouched either way.
+Root: HKCU; Subkey: "Software\OutlookAI"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletevalue
 
 ; Register add-in with Outlook.
 ; `|vstolocal` = load in place, no ClickOnce. The VSTO runtime then resolves the add-in

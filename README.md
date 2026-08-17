@@ -18,6 +18,7 @@ An AI-powered email assistant for Microsoft Outlook: a VSTO add-in with an AI wr
   - [Instruction-Based Drafting and Editing](#instruction-based-drafting-and-editing)
   - [Context Awareness](#context-awareness)
   - [Iterative Refinement](#iterative-refinement)
+  - [Editable Prompts and Quick Buttons](#editable-prompts-and-quick-buttons)
   - [Outlook Tuning and Settings](#outlook-tuning-and-settings)
   - [Dark Mode](#dark-mode)
   - [Automatic Updates](#automatic-updates)
@@ -50,7 +51,7 @@ An AI-powered email assistant for Microsoft Outlook: a VSTO add-in with an AI wr
 
 ### Quick Actions
 
-One-click buttons to transform your email draft instantly:
+One-click buttons to transform your email draft instantly. These six are what a fresh install ships with; you can rename them, change what each one asks for, delete the ones you never use and add your own - see [Editable Prompts and Quick Buttons](#editable-prompts-and-quick-buttons).
 
 | Button | What it does |
 |---|---|
@@ -90,6 +91,23 @@ When using **Edit current draft**, each AI interaction is recorded in an edit hi
 4. "Make the tone more formal"
 
 Each step builds on the last, with full context of the conversation.
+
+### Editable Prompts and Quick Buttons
+
+Every instruction OutlookAI sends to the AI is yours to change. **OutlookAI Settings** is one resizable window with tabs, two of which are yours to edit:
+
+- **Buttons** - the sidebar's quick-action set, in the order it appears. Rename a button, rewrite the instruction behind it, reorder, delete any of them (including the six shipped ones), or add your own. A button *is* its name: rename one and you have a different button, so renaming a shipped button turns it into a custom one. Each shipped button has its own **Reset to default**, and the list has a **Restore default buttons** for putting all six back.
+- **Prompts** - the four prompts that wrap every request: the always-sent preamble (role, untrusted-content rules, output contract, and the rule to leave no trace of AI in wording or characters), the reply rules added when there is a quoted thread, the signature rule added when a signature is present, and the signature-selection prompt. Each has its own **Restore default**.
+
+Prompt and button edits are held until you press **Apply now**, so closing without saving discards them. The tuning tick boxes on the other tabs still apply the moment you click them, as they always have.
+
+Nothing is stored until you change something, and only your changes are stored. Anything you have not touched keeps following the shipped default, so improvements to the built-in prompts still reach you; anything you have edited stays exactly as you wrote it. Edits apply to the next action - no Outlook restart - and every open compose window picks them up at once.
+
+The editor will warn you if an edited preamble no longer tells the AI to ignore instructions hidden inside a draft or quoted thread, or no longer demands plain text with no markdown or HTML. Those warnings are advice, not a veto: the first protects you from a malicious email steering the assistant, the second is what keeps code fences and tags out of your mail. You can save anyway.
+
+Your prompts and buttons live in `HKCU\Software\OutlookAI\Prompts` and **survive an uninstall**, so reinstalling keeps them.
+
+These prompts govern the writing sidebar. Mail that an AI assistant drafts through the [MCP server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) is a separate path, and the tools there deliberately carry no writing instructions in their schema - see [McpServer/README.md](McpServer/README.md).
 
 ### Outlook Tuning and Settings
 
@@ -273,10 +291,10 @@ The compose sidebar is focused on email composition assistance. The following ar
 
 - **No model selection** — Hard-coded to Claude Opus 4.6. There is no UI to choose a different model.
 - **No request cancellation** — Once an action is submitted, it runs until completion or times out after 2 minutes. There is no cancel button.
-- **No AI preferences UI** — The [Settings dialog](#outlook-tuning-and-settings) covers Outlook tuning only; the AI behavior itself is built-in.
+- **No per-account or per-recipient prompts** — Prompt text and the quick-button set are one shared configuration; they cannot vary by mail account, recipient or folder.
 - **No preview before applying** — AI results are written directly into the email draft. There is no intermediate preview/accept/reject step.
 - **No undo** — Standard Ctrl+Z in the Outlook editor may work for simple cases, but there is no dedicated undo for AI operations.
-- **No saved prompts or templates** — Instructions must be typed each time.
+- **No saved one-off instructions** — Quick buttons hold instructions you reuse (see [Editable Prompts and Quick Buttons](#editable-prompts-and-quick-buttons)), but the free-text instruction box itself keeps no history or templates, so a one-off instruction must be typed each time.
 - **No reading or summarizing received emails in the sidebar** — The sidebar only works in compose mode (new, reply, forward). Reading, searching, and summarizing received mail is what the [MCP server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) provides, through an agent like Claude Code.
 - **No attachment awareness in the sidebar** — The sidebar AI does not see email attachments (agents can read them via the MCP server's `save_attachment`).
 - **No HTML or rich-text formatting control** — The AI returns plain text. Formatting is handled by Outlook's editor.
@@ -327,7 +345,7 @@ The compose sidebar is focused on email composition assistance. The following ar
 5. The **AI Assistant** button appears in the ribbon on compose windows
 6. The [mail server](#mcp-server-mail-search-reading-and-drafting-for-ai-agents) is installed alongside the add-in, but nothing is registered with Claude Code until you choose where. Outlook asks you shortly after it starts whether to make it available in all your Claude Code projects; you can also decide — or change your mind — in **OutlookAI Settings** on the Mail ribbon, under **Mail server in Claude Code**, where **Add to a specific project…** covers a single project instead. See [Setup and Registration](#setup-and-registration). (Upgrading from an earlier version? Your existing registration is kept, the tick box starts on, and you are asked nothing.)
 
-The installer registers the add-in directly via the Windows registry and installs the signing certificate to your Trusted Publishers store. Everything lands under `%LOCALAPPDATA%\OutlookAI\Setup` — the add-in at the top level, the mail server in the `McpServer` subfolder — and no admin rights are needed for the install itself. To uninstall, use Add/Remove Programs.
+The installer registers the add-in directly via the Windows registry and installs the signing certificate to your Trusted Publishers store. Everything lands under `%LOCALAPPDATA%\OutlookAI\Setup` — the add-in at the top level, the mail server in the `McpServer` subfolder — and no admin rights are needed for the install itself. To uninstall, use Add/Remove Programs. Uninstalling leaves your OutlookAI settings in the registry - your prompts, your quick buttons, your Outlook tuning preferences and the mail-server registration state - so a reinstall picks up where you left off, and your own prompt text is never thrown away. Your Outlook configuration itself is never reverted either.
 
 ### Building from Source
 
@@ -362,7 +380,7 @@ The task pane automatically appears when you open a compose window. It resets it
 ### Using Quick Actions
 
 1. Write your email draft in the Outlook editor
-2. Click any Quick Action button (Proofread, Revise, Shorten, Lengthen, Formal, or Friendly)
+2. Click any Quick Action button - the six shipped ones are Proofread, Revise, Shorten, Lengthen, Formal and Friendly, plus whatever you have added or renamed yourself
 3. The AI reads your current draft, processes it, and replaces the draft text with the result
 4. Your signature and quoted thread are preserved automatically
 
@@ -422,7 +440,7 @@ This gives the zero-latency benefit of a persistent process with the simplicity 
 - CLI arguments: `-p - --output-format json --max-turns 1 --model "claude-opus-4-6"`
 - Timeout: 2 minutes per request
 - Output: JSON response parsed for the `result` field (with `text` field as fallback for older CLI versions)
-- The system prompt instructs Claude to return plain text only — no markdown, no HTML, no code fences
+- By default the system prompt instructs Claude to return plain text only — no markdown, no HTML, no code fences. That instruction is editable (see [Editable Prompts and Quick Buttons](#editable-prompts-and-quick-buttons)); the editor warns before you save a preamble that drops it, because it is what keeps fences and tags out of your mail
 
 ---
 
