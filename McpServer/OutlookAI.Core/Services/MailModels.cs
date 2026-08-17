@@ -1096,6 +1096,19 @@ namespace OutlookAI.Core.Services
         /// <summary>Installed classic-Outlook build (OUTLOOK.EXE file version; null when not found).</summary>
         public string? Version { get; set; }
 
+        /// <summary>
+        /// Office MAJOR whose registry hive this server reads: "16.0" (Outlook 2016 through
+        /// Microsoft 365), "15.0" (2013) or "17.0" (the next one). A different fact from
+        /// <see cref="Version"/>, which is the installed build.
+        /// <para>
+        /// NULL when none of the supported majors is registered - and that null is the whole
+        /// point of the field: registry-backed answers (accounts, signature defaults, the
+        /// Outlook search settings) then read a fallback hive and can come back empty on a
+        /// perfectly healthy Outlook. problems says so in words when this is absent.
+        /// </para>
+        /// </summary>
+        public string? OfficeVersion { get; set; }
+
         /// <summary>True while the add-in installer holds the OutlookAISetup mutex (D17: COM tools retry later).</summary>
         public bool InstallerMutexHeld { get; set; }
 

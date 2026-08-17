@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text.Json;
+using OutlookAI.Core.Services;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T3;
@@ -72,7 +74,9 @@ public sealed class DraftOptionsCiToolShapeTests
         Assert.Contains("threading", hint, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("ConversationIndex", hint, StringComparison.Ordinal);
         Assert.Contains("conversationTopicPreserved", hint, StringComparison.Ordinal);
-        Assert.Contains("255", hint, StringComparison.Ordinal);
+        // From the WIRE, and derived: the cap in the hint is the one the service enforces.
+        Assert.Contains(
+            MailService.SubjectCharsCap.ToString(CultureInfo.InvariantCulture), hint, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -157,7 +161,7 @@ public sealed class DraftOptionsCiToolShapeTests
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
         await client.PrimeWritingRulesGateAsync();
 
-        string tooLong = new('x', 256);
+        string tooLong = new('x', MailService.SubjectCharsCap + 1);
         object arguments = toolName == "forward_draft"
             ? new { id = "h424242", body = "b", to = "a@b.example", display = false, subject = tooLong }
             : (object)new { id = "h424242", body = "b", display = false, subject = tooLong };

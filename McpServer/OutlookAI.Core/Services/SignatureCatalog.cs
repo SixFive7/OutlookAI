@@ -199,7 +199,8 @@ namespace OutlookAI.Core.Services
         /// </summary>
         private static IReadOnlyList<IReadOnlyDictionary<string, object?>> ReadProfileAccountValueSets()
         {
-            const string outlookRoot = OutlookProfileRegistry.OutlookRootKeyPath;
+            // Not a const any more: the Office major in the Outlook root is detected at runtime.
+            string outlookRoot = OutlookProfileRegistry.OutlookRootKeyPath;
             const string accountsSubKey = OutlookProfileRegistry.AccountsSubKeyName;
 
             List<IReadOnlyDictionary<string, object?>> sets = new List<IReadOnlyDictionary<string, object?>>();

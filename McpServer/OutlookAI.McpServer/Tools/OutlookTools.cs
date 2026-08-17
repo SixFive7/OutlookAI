@@ -20,8 +20,8 @@ namespace OutlookAI.McpServer.Tools;
 /// <para>
 /// Note what this process does NOT hold any more: a COM session, a pumped STA thread, or
 /// any Outlook reference. Those live in the OutlookAI.ComHost child, which exists so a
-/// wedged Outlook call can be reclaimed by killing it (Docs/com-host.md). Everything here
-/// is either pure computation or a bounded round trip.
+/// wedged Outlook call can be reclaimed by killing it (see "Why two processes" in
+/// McpServer/README.md). Everything here is either pure computation or a bounded round trip.
 /// </para>
 /// </summary>
 internal static class ServerRuntime
@@ -258,24 +258,40 @@ public static class OutlookTools
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ArchiveMail(ids));
     }
 
+    // This tool's whole job is to RETURN a rich payload, so the description only has to get
+    // an agent to call it and to read the answer. Everything that explained what a value
+    // MEANS moved out to where the payload already states it: outlook.state carries the
+    // liveness wording itself, problems spells out a hung Outlook, a COM host restart and
+    // its lastFailure, a stopped WSearch and an unwritable audit log, and advice carries the
+    // index-freshness guidance including that search covers a gap with its own sweep. Kept
+    // deliberately small because the client truncates descriptions at 2 KB silently and
+    // mid-sentence; this one had reached 80% of that, and a later insertion had already
+    // landed mid-sentence inside the comHost paragraph, splitting it in two.
+    // DescriptionBudgetCiTests measures it from the wire.
+    //
+    // officeVersion follows that same rule and is why it is only NAMED here: the field costs
+    // eight words in the coverage list plus four in the degradation list, and the sentence
+    // explaining what an absent one implies lives in HealthReporting.NoOfficeVersionProblem,
+    // which the payload already carries whenever it applies. Measured after that addition:
+    // 1445 of the 2048 client cap, 91 below the 1536 warn line.
     [McpServerTool(Name = "outlook_health")]
-    [Description("One-call Outlook + mail-server health and freshness report: Outlook running + installed version, whether it "
-        + "runs headless (no window, tray icon only - the autostart state; a normal Outlook launch promotes it), probed COM "
-        + "session liveness (comConnected), store reachability, index freshness (newest indexed mail vs clock, globally AND "
-        + "per store - the index only advances while Outlook runs), Windows Search (WSearch) service state, audit-log "
-        + "writability, OutlookAI tuning state (incl. the effective UI search backend), and the add-in installer mutex. "
-        + "Also reports comHost: Outlook is driven from a separate helper process this server can restart, and this "
-        + "Reports outlook.responding and outlook.state (not running / starting / responsive / not responding), "
-        + "judged from Windows itself rather than by attempting a call - so it stays truthful and instant even when "
-        + "Outlook is wedged. responding=false means anything needing Outlook is refused immediately, deliberately, "
-        + "and restarting Outlook clears it. "
-        + "block gives its state, pid, restartCount and lastFailure. A restartCount above zero means Outlook stopped "
-        + "answering that many times and was recovered from - lastFailure names what timed out. This report is bounded "
-        + "(the COM probe gives up after 5 s) so it always answers, even while Outlook is unresponsive - which is "
-        + "exactly when it is worth calling. "
-        + "Read-only - attaches to Outlook only when it is already running, NEVER starts it. status=ok means all "
-        + "dependencies are available; problems lists each degradation; advice carries freshness guidance (search covers "
-        + "any index gap automatically with its COM sweep - this tool only reports).")]
+    [Description("One-call, read-only health and freshness report covering everything this server depends on: Outlook "
+        + "itself (running, installed version, its Office registry major as officeVersion, probed COM session liveness, "
+        + "reachable stores, whether it runs headless "
+        + "- tray icon only, no window, which a normal Outlook launch promotes - and the state/responding pair Windows "
+        + "itself answers for rather than a call attempt), the helper process this server drives Outlook through and "
+        + "can restart (comHost: state, pid, restartCount, lastFailure), index freshness globally and per store, the "
+        + "Windows Search (WSearch) service, audit-log writability, the OutlookAI tuning state incl. the effective UI "
+        + "search backend, and the add-in installer mutex.\n\n"
+        + "Attaches only to an Outlook that is ALREADY running and NEVER starts one, and it is bounded (the COM probe "
+        + "gives up after 5 s) - so it answers even while Outlook is wedged, which is exactly when it is worth "
+        + "calling.\n\n"
+        + "READING IT: status=ok means every dependency is available; otherwise status=degraded and problems names each "
+        + "degradation in words - Outlook not responding (anything needing it is then refused immediately rather than "
+        + "left waiting, and restarting Outlook clears that), a COM host restart and what wedged it, a stopped WSearch, "
+        + "an unwritable audit log, no supported Office version (registry answers then read EMPTY). advice carries the "
+        + "freshness guidance. Read both and relay whatever concerns the "
+        + "user.")]
     public static async Task<CallToolResult> OutlookHealth(CancellationToken cancellationToken = default)
     {
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.Health());

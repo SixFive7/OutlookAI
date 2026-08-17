@@ -58,7 +58,14 @@ namespace OutlookAI.Services
     /// </summary>
     internal static class McpRegistrationService
     {
-        internal const string McpKeyPath = @"Software\OutlookAI\Mcp";
+        /// <summary>
+        /// The key this service owns. Its path, and every value name written under it, live in
+        /// <see cref="AddInServerContract"/>: the MCP server's <c>outlook_health</c> reads this
+        /// key to report what the last reconcile did, and that key IS the contract between the
+        /// two components. One definition compiled into both, rather than a comment on each side
+        /// claiming to mirror the other.
+        /// </summary>
+        internal const string McpKeyPath = AddInServerContract.McpKeyPath;
         internal const string InstallDirValueName = "InstallDir";
         private const string AppKeyPath = @"Software\OutlookAI";
 
@@ -73,10 +80,20 @@ namespace OutlookAI.Services
         /// user does not want this" and "the user has not been asked yet", and only the first
         /// of those may be acted on. See <see cref="McpRegistrationDecision.Decide"/>.
         /// </summary>
-        internal const string GlobalRegistrationValueName = "GlobalRegistrationEnabled";
+        internal const string GlobalRegistrationValueName = AddInServerContract.McpGlobalRegistrationValueName;
 
-        // Status codes. Also written to HKCU so the MCP server can report them in
-        // outlook_health without having to guess what the add-in did.
+        // Status codes. Also written to HKCU (AddInServerContract.McpStatusValueName) so the MCP
+        // server can report them in outlook_health without having to guess what the add-in did.
+        //
+        // Note what is and is not enforced. The server surfaces this string VERBATIM as
+        // registration.addInStatus and never compares it against anything, so NO COMPILATION can
+        // notice a rename - the add-in goes on writing, the server goes on reporting, and only
+        // the published meaning is wrong. The only other place these values appear is the list in
+        // McpServer/README.md, and since that is Markdown it cannot read a C# constant either -
+        // so check-pinned-constants.ps1 #7 compares the two as a SET, in both directions, exactly
+        // as #6 does for the server's own registration.status vocabulary. Adding or renaming a
+        // code here therefore fails the build until that list is updated to match. (Before #7
+        // existed, awaiting_choice had been added here and never published there.)
         internal const string StatusOk = "ok";
         internal const string StatusHealed = "healed";
         internal const string StatusDisabled = "not_registered_by_choice";
@@ -186,13 +203,13 @@ namespace OutlookAI.Services
             {
                 return new RegistrationSnapshot
                 {
-                    Status = ReadString("Status") ?? StatusError,
-                    Detail = ReadString("Detail") ?? "",
-                    ResolvedServerPath = ReadString("ResolvedServerPath"),
-                    RegisteredCommand = ReadString("Command"),
-                    Healed = ReadDword("Healed") == 1,
+                    Status = ReadString(AddInServerContract.McpStatusValueName) ?? StatusError,
+                    Detail = ReadString(AddInServerContract.McpDetailValueName) ?? "",
+                    ResolvedServerPath = ReadString(AddInServerContract.McpResolvedServerPathValueName),
+                    RegisteredCommand = ReadString(AddInServerContract.McpCommandValueName),
+                    Healed = ReadDword(AddInServerContract.McpHealedValueName) == 1,
                     GlobalRegistrationEnabled = ReadDword(GlobalRegistrationValueName) == 1,
-                    LastReconcileUtc = ReadString("LastReconcileUtc"),
+                    LastReconcileUtc = ReadString(AddInServerContract.McpLastReconcileUtcValueName),
                 };
             }
             catch (Exception ex)
@@ -748,9 +765,17 @@ namespace OutlookAI.Services
 
         // ===== Paths and probes =====
 
+        /// <summary>
+        /// The user-scope configuration file. The file name comes from
+        /// <see cref="AddInServerContract"/> because the MCP server reads the very same file to
+        /// report whether the registration names it - see
+        /// <c>HealthReporting.TryReadRegisteredCommand</c>, which resolves it the same way.
+        /// </summary>
         internal static string ClaudeConfigPath()
         {
-            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude.json");
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                AddInServerContract.ClaudeConfigFileName);
         }
 
         /// <summary>
@@ -918,7 +943,7 @@ namespace OutlookAI.Services
             if (entry == null)
                 return null;
             object command;
-            return entry.TryGetValue("command", out command) ? command as string : null;
+            return entry.TryGetValue(AddInServerContract.CommandProperty, out command) ? command as string : null;
         }
 
         /// <summary>The <c>outlookai</c> member's value, whatever shape it is; false when there is none.</summary>
@@ -984,7 +1009,7 @@ namespace OutlookAI.Services
             }
 
             object command;
-            entry.TryGetValue("command", out command);
+            entry.TryGetValue(AddInServerContract.CommandProperty, out command);
             string text = command as string;
             if (string.IsNullOrEmpty(text))
                 return McpRegistrationDecision.EntryState.Foreign;
@@ -1061,7 +1086,7 @@ namespace OutlookAI.Services
                 return string.Equals(type as string, "stdio", StringComparison.OrdinalIgnoreCase);
 
             object command;
-            if (!entry.TryGetValue("command", out command) || string.IsNullOrEmpty(command as string))
+            if (!entry.TryGetValue(AddInServerContract.CommandProperty, out command) || string.IsNullOrEmpty(command as string))
                 return false;
 
             return !entry.ContainsKey("url") && !entry.ContainsKey("httpUrl");
@@ -1144,7 +1169,7 @@ namespace OutlookAI.Services
             entry.Remove("headers");
 
             entry["type"] = "stdio";
-            entry["command"] = command;
+            entry[AddInServerContract.CommandProperty] = command;
             if (!entry.ContainsKey("args"))
                 entry["args"] = new object[0];
             if (!entry.ContainsKey("env"))
@@ -1354,12 +1379,15 @@ namespace OutlookAI.Services
             {
                 if (key == null)
                     return;
-                key.SetValue("Status", snap.Status ?? "", RegistryValueKind.String);
-                key.SetValue("Detail", snap.Detail ?? "", RegistryValueKind.String);
-                key.SetValue("Command", snap.RegisteredCommand ?? "", RegistryValueKind.String);
-                key.SetValue("ResolvedServerPath", snap.ResolvedServerPath ?? "", RegistryValueKind.String);
-                key.SetValue("Healed", snap.Healed ? 1 : 0, RegistryValueKind.DWord);
-                key.SetValue("LastReconcileUtc", snap.LastReconcileUtc ?? "", RegistryValueKind.String);
+                // Value names from the shared contract: outlook_health reads these four by name
+                // (Status, ResolvedServerPath, Healed, LastReconcileUtc), and Detail/Command are
+                // part of the same documented key.
+                key.SetValue(AddInServerContract.McpStatusValueName, snap.Status ?? "", RegistryValueKind.String);
+                key.SetValue(AddInServerContract.McpDetailValueName, snap.Detail ?? "", RegistryValueKind.String);
+                key.SetValue(AddInServerContract.McpCommandValueName, snap.RegisteredCommand ?? "", RegistryValueKind.String);
+                key.SetValue(AddInServerContract.McpResolvedServerPathValueName, snap.ResolvedServerPath ?? "", RegistryValueKind.String);
+                key.SetValue(AddInServerContract.McpHealedValueName, snap.Healed ? 1 : 0, RegistryValueKind.DWord);
+                key.SetValue(AddInServerContract.McpLastReconcileUtcValueName, snap.LastReconcileUtc ?? "", RegistryValueKind.String);
             }
         }
 

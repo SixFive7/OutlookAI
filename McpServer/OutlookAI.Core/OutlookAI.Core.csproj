@@ -27,6 +27,31 @@
     <PackageReference Include="System.Data.OleDb" Version="10.0.10" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      The values the add-in and this server have to agree about: the two HKCU keys the add-in
+      writes and HealthReporting reads, and the Claude Code configuration file one repairs and the
+      other reports on. The add-in is net48/VSTO and cannot be referenced from here, so the FILE
+      is shared instead - the same trick PromptDefaults/PromptStore use for OutlookAI.McpServer
+      and McpConfigEditor uses for the test project. Constants only, and internal on purpose: a
+      public type in a file linked into two assemblies that see each other is CS0436, an error
+      under TreatWarningsAsErrors. Anything the server must expose is re-exported by
+      HealthReporting's own public constants.
+    -->
+    <Compile Include="..\..\Services\AddInServerContract.cs" Link="Linked\AddInServerContract.cs" />
+    <!--
+      And the Office major versions the product supports, plus the probe that finds which one is
+      actually installed. Linked for the same reason and under the same rules (internal, C# 7.3,
+      no nullable annotations): the server used to hardcode 16.0 in the Outlook Search key, that
+      key's Policies mirror and the whole profile registry, so on Outlook 2013 or a future 17.0 it
+      read hives Outlook never writes and reported empty signatures, empty accounts and no search
+      settings - indistinguishable from a broken install. Sharing the FILE rather than
+      reimplementing the list is what makes both halves probe the same versions in the same order.
+      OutlookProfileRegistry re-exports what callers outside Core need.
+    -->
+    <Compile Include="..\..\Services\OfficeVersions.cs" Link="Linked\OfficeVersions.cs" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
     <!-- dynamic (late-bound Outlook/ADODB COM) needs the C# runtime binder on .NET Framework. -->
     <Reference Include="Microsoft.CSharp" />

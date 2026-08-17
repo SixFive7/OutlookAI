@@ -30,7 +30,6 @@ namespace OutlookAI.Core.Services
         private const int EmailLocateToleranceSeconds = 5;
         private const int AttachmentLocateToleranceSeconds = 120;
         private const int DedupeToleranceSeconds = 15;
-        private const int SweepPerFolderCap = 200;
 
         /// <summary>
         /// Soft budget handed to <c>ExhaustiveScan</c>, and the number the "results are
@@ -61,6 +60,27 @@ namespace OutlookAI.Core.Services
         /// (section-12 compact-payload discipline).
         /// </summary>
         public const int SweptFolderListCap = 12;
+
+        /// <summary>
+        /// Items ONE folder may contribute to a freshness sweep.
+        /// <para>
+        /// The sweep reads newest-first, so hitting this cap drops the OLDEST
+        /// not-yet-indexed mail in that folder - which is exactly why it is not a silent
+        /// cap. The affected folders are named in the response sweep block
+        /// (<see cref="SweepInfo.ItemCappedFolders"/>, carried up from
+        /// <see cref="ComSweepResult.ItemCappedFolders"/> by <c>ApplySweepCounters</c>) and
+        /// in an advice line that quotes this number (<c>AddSweepCoverageAdvice</c>) - the
+        /// same shape the folder cap, the time budget and the top clamp already use.
+        /// </para>
+        /// <para>
+        /// Public so T1 pins it with every other payload cap: it was the one cap in this
+        /// file declared privately and pinned by nothing, so creep here was the single cap
+        /// change no test would have caught. The VALUE has no recorded measurement behind
+        /// it and is unchanged.
+        /// </para>
+        /// </summary>
+        public const int SweepPerFolderCap = 200;
+
         private const double VeryStaleAdviceMinutes = 720; // 12 h - suggest exhaustive:true
         private static readonly TimeSpan SweepSafetyMargin = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan EmptyIndexSweepWindow = TimeSpan.FromDays(7);
@@ -140,6 +160,21 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Cap on unresolvable addresses echoed back by the draft tools (batch A, A2).</summary>
         public const int UnresolvedRecipientsCap = 20;
+
+        /// <summary>
+        /// Longest subject the draft tools accept, in characters.
+        /// <para>
+        /// The VALUE is inherited and unchanged: it is what the draft paths have always
+        /// refused above, and no measurement or rationale was ever recorded for it. What is
+        /// fixed here is the DUPLICATION - it was three bare <c>255</c> literals (new,
+        /// derived, update) plus the number a FOURTH time as prose in the derived-subject
+        /// tool hint, which is the shape that goes stale unnoticed. The check now lives in
+        /// one place (<see cref="RequireSubjectWithinCap"/>) and T1
+        /// <c>BudgetCompositionTests</c> derives the hint's phrase from this constant, so a
+        /// changed cap fails the build instead of leaving the tool surface lying.
+        /// </para>
+        /// </summary>
+        public const int SubjectCharsCap = 255;
 
         /// <summary>
         /// Shortest string accepted as a raw EntryID hex id, in hex characters. Two per byte
@@ -1633,6 +1668,23 @@ namespace OutlookAI.Core.Services
         // ------------------------------------------------------------------ drafts (Phase 4, v3.MD L4/D4)
 
         /// <summary>
+        /// The subject-length gate for every draft path, in ONE place - and the only place
+        /// the number reaches an agent's eyes, so the message quotes
+        /// <see cref="SubjectCharsCap"/> rather than restating it. The cap is inclusive: a
+        /// subject of exactly <see cref="SubjectCharsCap"/> characters is accepted.
+        /// </summary>
+        private static void RequireSubjectWithinCap(string? subject, string parameterName)
+        {
+            if (subject != null && subject.Length > SubjectCharsCap)
+            {
+                throw new ArgumentException(
+                    "subject is too long (max " + SubjectCharsCap.ToString(CultureInfo.InvariantCulture)
+                    + " characters).",
+                    parameterName);
+            }
+        }
+
+        /// <summary>
         /// Creates a new draft in <paramref name="account"/>'s Drafts folder with that
         /// account's identity and signature (v3.MD section 3 mechanics), optionally
         /// displayed for the user (D4 default). Never sends. Audit-logged (load-bearing).
@@ -1669,10 +1721,7 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("subject is required.", nameof(subject));
             }
 
-            if (subject!.Length > 255)
-            {
-                throw new ArgumentException("subject is too long (max 255 characters).", nameof(subject));
-            }
+            RequireSubjectWithinCap(subject, nameof(subject));
 
             ComDraftBody draftBody = ResolveDraftBody(body, bodyHtml, "the signature", out IReadOnlyList<string> htmlAdjustments);
             IReadOnlyList<DraftAttachmentFile> files = DraftAttachments.Validate(attachments);
@@ -1870,10 +1919,7 @@ namespace OutlookAI.Core.Services
             ComDraftBody draftBody = ResolveDraftBody(body, bodyHtml, "the quoted mail", out IReadOnlyList<string> htmlAdjustments);
             IReadOnlyList<DraftAttachmentFile> files = DraftAttachments.Validate(attachments);
 
-            if (subject != null && subject.Length > 255)
-            {
-                throw new ArgumentException("subject is too long (max 255 characters).", nameof(subject));
-            }
+            RequireSubjectWithinCap(subject, nameof(subject));
 
             ComSignatureOverride? signatureOverride = ResolveSignatureOverride(signature);
             ComDraftOptions options = new(
@@ -2177,10 +2223,7 @@ namespace OutlookAI.Core.Services
                     "subject must not be blank - omit it to keep the draft's current subject.", nameof(subject));
             }
 
-            if (subject != null && subject.Length > 255)
-            {
-                throw new ArgumentException("subject is too long (max 255 characters).", nameof(subject));
-            }
+            RequireSubjectWithinCap(subject, nameof(subject));
 
             IReadOnlyList<string>? toList = to == null ? null : Text.HtmlBodyComposer.SplitRecipients(to);
             IReadOnlyList<string>? ccList = cc == null ? null : Text.HtmlBodyComposer.SplitRecipients(cc);
@@ -3325,6 +3368,16 @@ namespace OutlookAI.Core.Services
                     + "waiting; search returns indexed mail meanwhile.");
             }
 
+            // Which Office hive every registry-backed answer below is coming out of. Reported
+            // FIRST among the registry problems because it is the one that explains the others:
+            // an unsupported major makes accounts, signature defaults and the search settings all
+            // read empty at once, which is otherwise indistinguishable from a broken install.
+            string? officeVersion = HealthReporting.DetectedOfficeVersion();
+            if (officeVersion == null)
+            {
+                problems.Add(HealthReporting.NoOfficeVersionProblem);
+            }
+
 
             // Outlook + stores (attach-only while running; never a cold start).
             bool comProbeFailed = false;
@@ -3512,6 +3565,9 @@ namespace OutlookAI.Core.Services
                     // re-read here so a just-promoted Outlook reports false (SF-3).
                     Headless = outlookRunning ? HealthReporting.TryGetOutlookHeadless() : null,
                     Version = HealthReporting.TryGetOutlookVersion(),
+                    // Null exactly when no supported Office major is registered - the state
+                    // NoOfficeVersionProblem above spells out.
+                    OfficeVersion = officeVersion,
                     InstallerMutexHeld = mutexHeld,
                     // PROBED liveness (SF-1 fix): never report a dead held session as
                     // connected; the probe also releases a dead session's refs.

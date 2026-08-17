@@ -5,6 +5,12 @@ using System.IO;
 
 using Microsoft.Win32;
 
+// The one definition of everything the add-in and this server have to agree about: the HKCU keys
+// the add-in writes and this file reads, and the Claude Code configuration both of them look at.
+// Services\AddInServerContract.cs is LINKED into this project (see OutlookAI.Core.csproj), so
+// these are not copies of the add-in's constants - they are the add-in's constants.
+using Contract = global::OutlookAI.Services.AddInServerContract;
+
 namespace OutlookAI.Core.Services
 {
     /// <summary>
@@ -16,14 +22,51 @@ namespace OutlookAI.Core.Services
     /// </summary>
     public static class HealthReporting
     {
-        /// <summary>Registry path of the add-in's tuning state (mirrors OutlookTuningService.TuningKeyPath).</summary>
-        public const string TuningKeyPath = @"Software\OutlookAI\Tuning";
+        /// <summary>
+        /// Registry path of the add-in's tuning state. NOT a copy of the add-in's constant - the
+        /// same one: <c>Services\AddInServerContract.cs</c> is compiled into this assembly as well
+        /// as into the add-in, so there is nothing here to keep in step. This member stays public
+        /// only because the contract type is internal (CS0436 - see that file's header) and
+        /// callers outside Core name this one.
+        /// </summary>
+        public const string TuningKeyPath = Contract.TuningKeyPath;
 
-        /// <summary>User-hive Outlook search key carrying DisableServerAssistedSearch (D22; the tuning Search group writes here).</summary>
-        public const string OutlookSearchUserKeyPath = @"Software\Microsoft\Office\16.0\Outlook\Search";
+        /// <summary>
+        /// User-hive Outlook search key carrying DisableServerAssistedSearch (D22; the tuning
+        /// Search group writes here). Aimed at the Office major this machine actually has - it
+        /// was a hardcoded 16.0, which read a non-existent hive on Outlook 2013 or a future 17.0
+        /// and reported the resulting nothing as "server-assisted", the default.
+        /// </summary>
+        public static readonly string OutlookSearchUserKeyPath =
+            BuildOutlookSearchUserKeyPath(OutlookProfileRegistry.OfficeVersion);
 
         /// <summary>Policy-hive Outlook search key - authoritative over the user hive when its value exists (ADMX-managed).</summary>
-        public const string OutlookSearchPolicyKeyPath = @"Software\Policies\Microsoft\Office\16.0\Outlook\Search";
+        public static readonly string OutlookSearchPolicyKeyPath =
+            BuildOutlookSearchPolicyKeyPath(OutlookProfileRegistry.OfficeVersion);
+
+        /// <summary>
+        /// The user-hive search key for an arbitrary Office major (pure, so the 15.0 and 17.0
+        /// shapes are assertable on a machine that has neither).
+        /// </summary>
+        public static string BuildOutlookSearchUserKeyPath(string officeVersion)
+        {
+            return OutlookProfileRegistry.BuildOutlookRootKeyPath(officeVersion) + @"\Search";
+        }
+
+        /// <summary>
+        /// The policy-hive mirror of the key above. Built here rather than from
+        /// <c>OutlookProfileRegistry</c> because it lives under a different root: the add-in
+        /// never writes or reads the Policies hive, so this asymmetry is the server's alone.
+        /// </summary>
+        public static string BuildOutlookSearchPolicyKeyPath(string officeVersion)
+        {
+            if (officeVersion == null)
+            {
+                throw new ArgumentNullException(nameof(officeVersion));
+            }
+
+            return @"Software\Policies\Microsoft\Office\" + officeVersion + @"\Outlook\Search";
+        }
 
         /// <summary>uiSearchBackend value: Outlook UI search queries the local SystemIndex - the same corpus agent search uses.</summary>
         public const string UiSearchBackendLocal = "local";
@@ -67,22 +110,24 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentNullException(nameof(readValue));
             }
 
-            if (AsBool(readValue("Initialized")) != true)
+            // Every value name below comes from the shared contract file the add-in's
+            // OutlookTuningService writes with, so a rename cannot land on one side only.
+            if (AsBool(readValue(Contract.TuningInitializedValueName)) != true)
             {
                 return new TuningHealthView { Managed = false };
             }
 
-            string? conflicts = readValue("PolicyConflicts") as string;
+            string? conflicts = readValue(Contract.TuningPolicyConflictsValueName) as string;
             return new TuningHealthView
             {
                 Managed = true,
-                Enabled = AsBool(readValue("Enabled")),
-                SearchEnabled = AsBool(readValue("SearchEnabled")),
-                CachingEnabled = AsBool(readValue("CachingEnabled")),
-                OstEnabled = AsBool(readValue("OstEnabled")),
-                RestartNeeded = AsBool(readValue("RestartNeeded")),
+                Enabled = AsBool(readValue(Contract.TuningEnabledValueName)),
+                SearchEnabled = AsBool(readValue(Contract.TuningSearchEnabledValueName)),
+                CachingEnabled = AsBool(readValue(Contract.TuningCachingEnabledValueName)),
+                OstEnabled = AsBool(readValue(Contract.TuningOstEnabledValueName)),
+                RestartNeeded = AsBool(readValue(Contract.TuningRestartNeededValueName)),
                 PolicyConflicts = string.IsNullOrWhiteSpace(conflicts) ? null : conflicts,
-                LastReconcileUtc = readValue("LastReconcileUtc") as string,
+                LastReconcileUtc = readValue(Contract.TuningLastReconcileUtcValueName) as string,
             };
         }
 
@@ -271,10 +316,73 @@ namespace OutlookAI.Core.Services
             }
         }
 
+        // ===== Office major version =====
+        // Not the same fact as TryGetOutlookVersion above, and the two are worth telling apart.
+        // That one is the installed BUILD (OUTLOOK.EXE's file version, e.g. 16.0.14332.20255);
+        // this one is the registry HIVE MAJOR - which Software\Microsoft\Office\<major>\ subtree
+        // every registry-backed answer in this server is read out of. The server used to assume
+        // 16.0 for all of them, so a 15.0 or 17.0 machine got empty accounts, empty signature
+        // defaults and a default-looking search setting, with nothing anywhere saying why.
+
+        /// <summary>
+        /// The Office major this machine has, or null when NONE of the supported majors is
+        /// registered. Detected once per process (see
+        /// <see cref="OutlookProfileRegistry.DetectedOfficeVersion"/>); never throws.
+        /// </summary>
+        public static string? DetectedOfficeVersion()
+        {
+            try
+            {
+                return OutlookProfileRegistry.DetectedOfficeVersion;
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The same detection driven by a caller-supplied "does this HKCU key exist?" predicate
+        /// (pure, T1-tested exactly the way <see cref="ReadTuningState"/> is). This machine has a
+        /// single Office version installed, so the 15.0, 17.0 and nothing-found branches have no
+        /// other way of being exercised without a second Outlook.
+        /// </summary>
+        public static string? DetectOfficeVersion(Func<string, bool> outlookKeyExists)
+        {
+            return OutlookProfileRegistry.DetectOfficeVersion(outlookKeyExists);
+        }
+
+        /// <summary>
+        /// The <c>problems</c> line for a machine where none of the supported Office majors is
+        /// registered. Assembled from the supported list and the hive actually being read, so it
+        /// cannot go stale when a version is added, and it says the one thing this tool exists to
+        /// say: the empty answers are not a broken profile, they are the wrong hive.
+        /// </summary>
+        public static readonly string NoOfficeVersionProblem =
+            "No supported Office version is registered on this machine: none of "
+            + string.Join(", ", OutlookProfileRegistry.SupportedOfficeVersions)
+            + @" has an HKCU\Software\Microsoft\Office\<version>\Outlook key. Everything this server reads from "
+            + "the registry (accounts, per-account signature defaults, the Outlook search settings reported here) "
+            + "is therefore being read from " + OutlookProfileRegistry.OutlookRootKeyPath + " as a fallback and can "
+            + "come back EMPTY even though Outlook itself is working. If this Outlook is newer than the versions "
+            + "listed above, this product needs that version added; otherwise Outlook has not written its profile "
+            + "key yet, which a normal Outlook start fixes.";
+
         // ===== MCP registration (Phase 8) =====
 
-        /// <summary>Registry path of the add-in's registration state (mirrors McpRegistrationService.McpKeyPath).</summary>
-        public const string McpRegistrationKeyPath = @"Software\OutlookAI\Mcp";
+        /// <summary>
+        /// Registry path of the add-in's registration state - the same constant the add-in's
+        /// <c>McpRegistrationService</c> writes with, from the linked contract file, not a mirror
+        /// of it. Public for the same reason as <see cref="TuningKeyPath"/>.
+        /// </summary>
+        public const string McpRegistrationKeyPath = Contract.McpKeyPath;
+
+        // The registration.status vocabulary. These five strings are also PUBLISHED - README.md
+        // lists them for agents and McpServer/README.md explains each one - and Markdown cannot
+        // read a C# constant, so .github/scripts/check-pinned-constants.ps1 (#6) compares the two
+        // rather than leaving it to memory. Note this set is the SERVER's own verdict about
+        // ~/.claude.json; the add-in's own status codes (McpRegistrationService.Status*, surfaced
+        // here verbatim as AddInStatus) are a different vocabulary for a different field.
 
         /// <summary>registration.status: the registered command IS the running executable.</summary>
         public const string RegistrationOk = "ok";
@@ -332,8 +440,12 @@ namespace OutlookAI.Core.Services
         /// the only safe reading for a value about to be compared against a real file.
         ///
         /// The add-in's <c>McpConfigEditor.ExpandEnvironmentReferences</c> is the same rule on
-        /// the writing side. The two are deliberately separate because Core takes no add-in
-        /// dependency, and they cannot drift apart unnoticed because
+        /// the writing side. This one stays a second IMPLEMENTATION rather than a shared file -
+        /// unlike the constants in <c>AddInServerContract</c>, which Core now links - because the
+        /// two signatures differ where it matters: this one is nullable-annotated and defaults its
+        /// lookup to the process environment, the add-in's takes a required non-nullable lookup,
+        /// and reconciling them would change a public surface on both sides for no behavioural
+        /// gain. They cannot drift apart unnoticed because
         /// <c>EnvironmentExpansionParityTests</c> runs ONE shared corpus through BOTH
         /// implementations and asserts they agree character for character. That claim used to
         /// be made here and was false: each side had its own suite with its own fixture
@@ -451,10 +563,12 @@ namespace OutlookAI.Core.Services
                 {
                     if (key != null)
                     {
-                        view.AddInStatus = key.GetValue("Status") as string;
-                        view.AddInLastReconcileUtc = key.GetValue("LastReconcileUtc") as string;
-                        view.AddInResolvedServerPath = key.GetValue("ResolvedServerPath") as string;
-                        object? healed = key.GetValue("Healed");
+                        // Value names from the shared contract - the add-in's Persist() writes
+                        // these very constants.
+                        view.AddInStatus = key.GetValue(Contract.McpStatusValueName) as string;
+                        view.AddInLastReconcileUtc = key.GetValue(Contract.McpLastReconcileUtcValueName) as string;
+                        view.AddInResolvedServerPath = key.GetValue(Contract.McpResolvedServerPathValueName) as string;
+                        object? healed = key.GetValue(Contract.McpHealedValueName);
                         if (healed is int healedInt)
                         {
                             view.AddInHealed = healedInt != 0;
@@ -484,9 +598,11 @@ namespace OutlookAI.Core.Services
             readable = true;
             try
             {
+                // Same file name, resolved the same way, as the add-in's
+                // McpRegistrationService.ClaudeConfigPath - from the shared contract.
                 string path = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    ".claude.json");
+                    Contract.ClaudeConfigFileName);
 
                 if (!File.Exists(path))
                 {
@@ -533,19 +649,22 @@ namespace OutlookAI.Core.Services
                 return null;
             }
 
-            int servers = FindMemberValue(json, i, "mcpServers");
+            // mcpServers / outlookai / command all come from the shared contract: the add-in
+            // WRITES these three names and this scanner READS them, so renaming our entry (which
+            // would deregister the server on every machine) can only ever be a one-place edit.
+            int servers = FindMemberValue(json, i, Contract.ServersProperty);
             if (servers < 0 || json[servers] != '{')
             {
                 return null;
             }
 
-            int entry = FindMemberValue(json, servers, "outlookai");
+            int entry = FindMemberValue(json, servers, Contract.ServerName);
             if (entry < 0 || json[entry] != '{')
             {
                 return null;
             }
 
-            int command = FindMemberValue(json, entry, "command");
+            int command = FindMemberValue(json, entry, Contract.CommandProperty);
             if (command < 0 || json[command] != '"')
             {
                 return null;

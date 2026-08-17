@@ -33,7 +33,16 @@
 
   <ItemGroup>
     <!-- Sequential collections: live tests share one Outlook and time COM operations;
-         parallel collections would also let the fresh-mode send race the oracle walk. -->
+         parallel collections would also let the fresh-mode send race the oracle walk.
+         diagnosticMessages is ON because the diagnostic channel is the ONLY one xunit
+         reports longRunningTestSeconds through: with it off, that setting was inert, and a
+         wedged test stayed indistinguishable from a slow one until the job timeout killed
+         the run without naming which test hung. Measured before switching it on: zero extra
+         output lines across the whole Category!=Live run (1284 tests), because no test in
+         that tier reaches the 120 s threshold and the long-running reports are the only
+         diagnostics this configuration emits - one line per hung test per 120 s elapsed.
+         The rationale lives here because xunit parses xunit.runner.json as strict JSON,
+         which cannot carry a comment. -->
     <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
@@ -45,6 +54,14 @@
          T1 suite can pin the code that actually ships rather than a re-implementation.
          The add-in itself is net48/VSTO and cannot be referenced from here. -->
     <Compile Include="..\..\Services\McpConfigEditor.cs" Link="Linked\McpConfigEditor.cs" />
+    <!-- McpConfigEditor takes its `mcpServers` / `outlookai` / `command` names from the shared
+         add-in-to-server contract, so that file has to be linked here too. It is safe to link
+         (unlike PromptStore below) precisely because it is INTERNAL: OutlookAI.Core compiles the
+         same file, and Core grants this assembly no InternalsVisibleTo, so Core's copy is
+         invisible here and the two cannot collide as CS0436. Making that type public - or linking
+         it into OutlookAI.McpServer, which DOES open its internals to this assembly - would break
+         the build immediately. -->
+    <Compile Include="..\..\Services\AddInServerContract.cs" Link="Linked\AddInServerContract.cs" />
     <!-- And the rules deciding WHEN the add-in may change that configuration by itself and
          when it must stop and ask the user instead. Linked for the same reason: acting on
          guessed intent is what destroys a registration someone set up on purpose, so the

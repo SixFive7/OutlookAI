@@ -52,6 +52,16 @@ public sealed class PayloadDisciplineTests
         // legibility aid for narrow scopes, not a payload every search carries.
         Assert.Equal(12, MailService.SweptFolderListCap);
         Assert.Equal(40, OutlookComSession.MaxScopedSweepFolders);
+
+        // The sweep's per-folder item cap. Pinned here because it was the one cap in the
+        // service that was private and covered by no test at all, which made it the only
+        // cap whose creep nothing would have noticed - and raising it silently is a COM
+        // cost change, while lowering it silently hides just-arrived mail.
+        Assert.Equal(200, MailService.SweepPerFolderCap);
+
+        // Longest accepted subject. Three copies of this literal in MailService plus a
+        // fourth as tool prose; see BudgetCompositionTests for the prose half.
+        Assert.Equal(255, MailService.SubjectCharsCap);
     }
 
     [Fact]

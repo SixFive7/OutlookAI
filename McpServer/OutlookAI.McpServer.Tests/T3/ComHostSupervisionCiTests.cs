@@ -7,7 +7,8 @@ namespace OutlookAI.McpServer.Tests.T3;
 
 /// <summary>
 /// End-to-end proof that a wedged Outlook call becomes a bounded, structured failure and
-/// that the server recovers - the whole point of the COM-host split (Docs/com-host.md).
+/// that the server recovers - the whole point of the COM-host split (see "Why two
+/// processes" in McpServer/README.md).
 /// <para>
 /// CI-safe, and that is not an accident. Faults are injected in the COM host BEFORE the
 /// call reaches Outlook, so the entire timeout / kill / respawn path runs on a machine

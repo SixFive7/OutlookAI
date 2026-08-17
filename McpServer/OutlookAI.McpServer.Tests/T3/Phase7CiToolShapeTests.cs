@@ -30,7 +30,12 @@ public sealed class Phase7CiToolShapeTests
 
         Assert.True(healthTool != null, "the outlook_health tool must be advertised");
         string description = healthTool!.Value.GetProperty("description").GetString()!;
-        Assert.Contains("never", description, StringComparison.OrdinalIgnoreCase); // never starts Outlook
+
+        // The read-only promise is the one fact here that NO payload field states, so the
+        // description is the only place it can reach an agent - pinned as the clause it
+        // actually is rather than as the bare word "never", which any sentence could satisfy.
+        Assert.Contains("read-only", description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("NEVER starts", description, StringComparison.Ordinal);
         Assert.Contains("Outlook", description, StringComparison.Ordinal);
         Assert.Contains("index", description, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("audit", description, StringComparison.OrdinalIgnoreCase);
@@ -65,6 +70,30 @@ public sealed class Phase7CiToolShapeTests
         else if (hasHeadless)
         {
             Assert.True(headless.ValueKind is JsonValueKind.True or JsonValueKind.False);
+        }
+
+        // Which Office registry hive every registry-backed answer in this report came out of.
+        // Present with one of the supported majors on a machine that has Outlook; OMITTED when
+        // none is registered - and in that case the report MUST say so in problems, because the
+        // symptom (empty accounts, empty signature defaults) is otherwise indistinguishable from
+        // a healthy machine with nothing configured. That is the whole reason for the field.
+        bool hasOfficeVersion = outlook.TryGetProperty("officeVersion", out JsonElement officeVersion)
+            && officeVersion.ValueKind is not JsonValueKind.Null;
+        if (hasOfficeVersion)
+        {
+            string? major = officeVersion.GetString();
+            Assert.True(major is "16.0" or "17.0" or "15.0", $"unexpected outlook.officeVersion '{major}'");
+        }
+        else
+        {
+            Assert.Equal("degraded", status);
+            bool explained = false;
+            foreach (JsonElement problem in report.GetProperty("problems").EnumerateArray())
+            {
+                explained |= problem.GetString()?.Contains("No supported Office version", StringComparison.Ordinal) == true;
+            }
+
+            Assert.True(explained, "officeVersion is absent but problems does not explain that no supported Office version was found");
         }
 
         JsonElement index = report.GetProperty("index");

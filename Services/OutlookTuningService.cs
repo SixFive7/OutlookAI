@@ -25,7 +25,13 @@ namespace OutlookAI.Services
     /// </summary>
     internal static class OutlookTuningService
     {
-        internal const string TuningKeyPath = @"Software\OutlookAI\Tuning";
+        /// <summary>
+        /// The key this service owns. The MCP server's <c>outlook_health</c> reads it to report
+        /// the tuning state, so the path and every value name under it live in
+        /// <see cref="AddInServerContract"/> - one definition, compiled into both, rather than a
+        /// comment on each side claiming to mirror the other.
+        /// </summary>
+        internal const string TuningKeyPath = AddInServerContract.TuningKeyPath;
         private const string DesiredKeyPath = TuningKeyPath + @"\Desired";
         private const string AppliedKeyPath = TuningKeyPath + @"\Applied";
 
@@ -174,11 +180,11 @@ namespace OutlookAI.Services
                     var conflicts = GetPolicyConflictsInternal();
                     var snapshot = new TuningSnapshot
                     {
-                        MasterEnabled = GetToggleInternal("Enabled"),
-                        SearchEnabled = GetToggleInternal("SearchEnabled"),
-                        CachingEnabled = GetToggleInternal("CachingEnabled"),
-                        OstEnabled = GetToggleInternal("OstEnabled"),
-                        RestartNeeded = ReadDword(TuningKeyPath, "RestartNeeded") == 1,
+                        MasterEnabled = GetToggleInternal(AddInServerContract.TuningEnabledValueName),
+                        SearchEnabled = GetToggleInternal(AddInServerContract.TuningSearchEnabledValueName),
+                        CachingEnabled = GetToggleInternal(AddInServerContract.TuningCachingEnabledValueName),
+                        OstEnabled = GetToggleInternal(AddInServerContract.TuningOstEnabledValueName),
+                        RestartNeeded = ReadDword(TuningKeyPath, AddInServerContract.TuningRestartNeededValueName) == 1,
                         Values = new List<ValueState>(),
                         PolicyConflicts = conflicts,
                     };
@@ -212,12 +218,12 @@ namespace OutlookAI.Services
 
         public static bool GetMasterEnabled()
         {
-            lock (_gate) { try { EnsureInitialized(); return GetToggleInternal("Enabled"); } catch { return true; } }
+            lock (_gate) { try { EnsureInitialized(); return GetToggleInternal(AddInServerContract.TuningEnabledValueName); } catch { return true; } }
         }
 
         public static void SetMasterEnabled(bool enabled)
         {
-            lock (_gate) { try { EnsureInitialized(); WriteDword(TuningKeyPath, "Enabled", enabled ? 1 : 0); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("SetMasterEnabled: " + ex.Message); } }
+            lock (_gate) { try { EnsureInitialized(); WriteDword(TuningKeyPath, AddInServerContract.TuningEnabledValueName, enabled ? 1 : 0); } catch (Exception ex) { System.Diagnostics.Debug.WriteLine("SetMasterEnabled: " + ex.Message); } }
         }
 
         public static bool GetGroupEnabled(string groupId)
@@ -232,7 +238,7 @@ namespace OutlookAI.Services
 
         public static bool GetRestartNeeded()
         {
-            lock (_gate) { try { return ReadDword(TuningKeyPath, "RestartNeeded") == 1; } catch { return false; } }
+            lock (_gate) { try { return ReadDword(TuningKeyPath, AddInServerContract.TuningRestartNeededValueName) == 1; } catch { return false; } }
         }
 
         /// <summary>
@@ -280,7 +286,7 @@ namespace OutlookAI.Services
                 {
                     EnsureInitialized();
 
-                    bool masterOn = GetToggleInternal("Enabled");
+                    bool masterOn = GetToggleInternal(AddInServerContract.TuningEnabledValueName);
                     bool wroteAny = false;
                     var conflicts = new List<string>();
 
@@ -321,15 +327,15 @@ namespace OutlookAI.Services
 
                     // Restart-needed bookkeeping (persisted so the dialog can show it and a
                     // later startup can clear it).
-                    bool restart = ReadDword(TuningKeyPath, "RestartNeeded") == 1;
+                    bool restart = ReadDword(TuningKeyPath, AddInServerContract.TuningRestartNeededValueName) == 1;
                     if (wroteAny)
                         restart = true;
                     else if (isStartup)
                         restart = false; // Outlook just booted with everything in sync.
-                    WriteDword(TuningKeyPath, "RestartNeeded", restart ? 1 : 0);
+                    WriteDword(TuningKeyPath, AddInServerContract.TuningRestartNeededValueName, restart ? 1 : 0);
 
-                    WriteString(TuningKeyPath, "PolicyConflicts", string.Join(";", conflicts));
-                    WriteString(TuningKeyPath, "LastReconcileUtc", DateTime.UtcNow.ToString("o"));
+                    WriteString(TuningKeyPath, AddInServerContract.TuningPolicyConflictsValueName, string.Join(";", conflicts));
+                    WriteString(TuningKeyPath, AddInServerContract.TuningLastReconcileUtcValueName, DateTime.UtcNow.ToString("o"));
 
                     result.WroteAny = wroteAny;
                     result.RestartNeeded = restart;
@@ -351,15 +357,15 @@ namespace OutlookAI.Services
             {
                 if (key == null)
                     return;
-                bool initialized = ReadDword(TuningKeyPath, "Initialized") == 1;
+                bool initialized = ReadDword(TuningKeyPath, AddInServerContract.TuningInitializedValueName) == 1;
                 if (!initialized)
                 {
-                    WriteDword(TuningKeyPath, "Enabled", 1);
-                    WriteDword(TuningKeyPath, "SearchEnabled", 1);
-                    WriteDword(TuningKeyPath, "CachingEnabled", 1);
-                    WriteDword(TuningKeyPath, "OstEnabled", 1);
-                    WriteDword(TuningKeyPath, "RestartNeeded", 0);
-                    WriteDword(TuningKeyPath, "Initialized", 1);
+                    WriteDword(TuningKeyPath, AddInServerContract.TuningEnabledValueName, 1);
+                    WriteDword(TuningKeyPath, AddInServerContract.TuningSearchEnabledValueName, 1);
+                    WriteDword(TuningKeyPath, AddInServerContract.TuningCachingEnabledValueName, 1);
+                    WriteDword(TuningKeyPath, AddInServerContract.TuningOstEnabledValueName, 1);
+                    WriteDword(TuningKeyPath, AddInServerContract.TuningRestartNeededValueName, 0);
+                    WriteDword(TuningKeyPath, AddInServerContract.TuningInitializedValueName, 1);
                 }
             }
             // Self-heal missing desired values (first run writes all of them).
@@ -387,10 +393,10 @@ namespace OutlookAI.Services
         {
             switch (groupId)
             {
-                case GroupSearch: return "SearchEnabled";
-                case GroupCaching: return "CachingEnabled";
-                case GroupOst: return "OstEnabled";
-                default: return "Enabled";
+                case GroupSearch: return AddInServerContract.TuningSearchEnabledValueName;
+                case GroupCaching: return AddInServerContract.TuningCachingEnabledValueName;
+                case GroupOst: return AddInServerContract.TuningOstEnabledValueName;
+                default: return AddInServerContract.TuningEnabledValueName;
             }
         }
 
@@ -405,7 +411,7 @@ namespace OutlookAI.Services
             var list = new List<string>();
             try
             {
-                string raw = ReadString(TuningKeyPath, "PolicyConflicts");
+                string raw = ReadString(TuningKeyPath, AddInServerContract.TuningPolicyConflictsValueName);
                 if (!string.IsNullOrEmpty(raw))
                 {
                     foreach (var part in raw.Split(';'))

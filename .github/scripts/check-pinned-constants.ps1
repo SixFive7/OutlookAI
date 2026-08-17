@@ -188,6 +188,77 @@ if ($csUrl -and $issUrl) {
     }
 }
 
+# ---------------------------------------------------------------------------------------------
+# 6. outlook_health's registration.status vocabulary.
+#    HealthReporting.Registration* == the values both READMEs publish for that field. The C#
+#    side is already one definition, and the add-in never sees these strings - it is the DOCS
+#    that are the second copy, and Markdown cannot read a C# constant. This is the field an
+#    agent is told to read to find out whether the server it is talking to is the registered
+#    one, so a renamed status leaves the published vocabulary describing a value the tool no
+#    longer emits, with nothing failing anywhere.
+#
+#    Two directions, deliberately split between the two files: the root README carries a clean
+#    "/"-separated list, so that one is compared as a SET (an ADDED status that nobody
+#    documented fails here); McpServer/README.md spells each value out with its own explanation
+#    in a table cell, so that one is checked for CONTAINMENT (a RENAMED status fails there).
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+$codeStatuses = Get-PinnedAll 'McpServer/OutlookAI.Core/Services/HealthReporting.cs' `
+    '(?m)^\s*public const string Registration[A-Za-z]+\s*=\s*"([^"]+)"\s*;' 'registration statuses (HealthReporting.cs)'
+$rootList = Get-Pinned 'README.md' `
+    '`status`\s*\(([^)]*)\)' 'registration statuses (README.md)'
+if ($codeStatuses -and $rootList) {
+    $rootStatuses = @([regex]::Matches($rootList, '`([^`]+)`') | ForEach-Object { $_.Groups[1].Value })
+    $left = (@($codeStatuses) | Sort-Object) -join ','
+    $right = (@($rootStatuses) | Sort-Object) -join ','
+    if ($left -cne $right) {
+        Fail "registration status vocabulary (README.md)" "HealthReporting emits {$left} but README.md documents {$right} for outlook_health's registration.status. An agent is told to read that field to learn whether this server is the registered one."
+    } else {
+        Pass "registration status vocabulary (README.md)" $left
+    }
+}
+$script:Checks++
+$serverRow = Get-Pinned 'McpServer/README.md' `
+    '(?m)^\|\s*`status`\s*\|(.+)$' 'registration statuses (McpServer/README.md)'
+if ($codeStatuses -and $serverRow) {
+    $missing = @(@($codeStatuses) | Where-Object { $serverRow -cnotmatch ('`' + [regex]::Escape($_) + '`') })
+    if ($missing.Count -gt 0) {
+        Fail "registration status vocabulary (McpServer/README.md)" "the registration.status row does not document $($missing -join ', ') - HealthReporting emits $((@($codeStatuses) | Sort-Object) -join ','). The field's own reference table has stopped describing what the tool returns."
+    } else {
+        Pass "registration status vocabulary (McpServer/README.md)" "all $(@($codeStatuses).Count) documented"
+    }
+}
+
+# ---------------------------------------------------------------------------------------------
+# 7. The ADD-IN's registration status vocabulary.
+#    McpRegistrationService.Status* == the list McpServer/README.md publishes for
+#    registration.addInStatus. A DIFFERENT vocabulary from #6, for a different field, and the one
+#    with weaker protection of the two: the server surfaces these strings VERBATIM (it never
+#    compares them against anything), so no compilation anywhere can notice a rename - the add-in
+#    keeps writing, the server keeps reporting, and only the published meaning is wrong. That is
+#    also why the docs are the second copy again: Markdown cannot read a C# constant.
+#
+#    Compared as a SET, in both directions, because both directions are real failures here: a
+#    RENAMED code leaves the README describing a value the add-in no longer writes, and an ADDED
+#    one (awaiting_choice was missing from this list until it was added by hand) leaves an agent
+#    reading a status the reference does not explain.
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+$addInStatuses = Get-PinnedAll 'Services/McpRegistrationService.cs' `
+    '(?m)^\s*internal const string Status[A-Za-z]+\s*=\s*"([^"]+)"\s*;' 'add-in status codes (McpRegistrationService.cs)'
+$addInDocList = Get-Pinned 'McpServer/README.md' `
+    'Status codes:\s*([^.]*)\.' 'add-in status codes (McpServer/README.md)'
+if ($addInStatuses -and $addInDocList) {
+    $docStatuses = @([regex]::Matches($addInDocList, '`([^`]+)`') | ForEach-Object { $_.Groups[1].Value })
+    $left = (@($addInStatuses) | Sort-Object) -join ','
+    $right = (@($docStatuses) | Sort-Object) -join ','
+    if ($left -cne $right) {
+        Fail "add-in status vocabulary (McpServer/README.md)" "McpRegistrationService writes {$left} but McpServer/README.md documents {$right} for outlook_health's registration.addInStatus. The server passes this string through untouched, so nothing else in the product can notice the difference."
+    } else {
+        Pass "add-in status vocabulary (McpServer/README.md)" $left
+    }
+}
+
 Write-Host ""
 if ($script:Failures.Count -gt 0) {
     foreach ($f in $script:Failures) {

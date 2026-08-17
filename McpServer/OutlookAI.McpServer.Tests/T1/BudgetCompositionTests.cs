@@ -74,6 +74,39 @@ public sealed class BudgetCompositionTests
     }
 
     /// <summary>
+    /// The subject cap is ONE number, and the tool surface quotes THAT number.
+    /// <para>
+    /// It was three <c>&gt; 255</c> literals in MailService plus the number a fourth time as
+    /// prose in the derived-subject hint, related by nothing - the same shape that produced a
+    /// "these are pinned" comment nothing pinned. A number in an attribute literal cannot be
+    /// interpolated from a <c>const int</c> in C#, so the only way to keep it honest is from
+    /// the outside: the phrase is built here from the constant, so changing
+    /// <see cref="MailService.SubjectCharsCap"/> without changing the hint fails and says so.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void SubjectCap_IsQuotedTruthfullyInTheToolSurface()
+    {
+        string expected = "Max " + MailService.SubjectCharsCap.ToString(CultureInfo.InvariantCulture) + " characters";
+
+        // Every tool that advertises the cap, so a hint added later cannot quote a stale one.
+        foreach (string tool in new[]
+                 {
+                     nameof(OutlookTools.ReplyDraft),
+                     nameof(OutlookTools.ReplyAllDraft),
+                     nameof(OutlookTools.ForwardDraft),
+                 })
+        {
+            string hint = ParameterDescription(tool, "subject");
+            Assert.True(
+                hint.Contains(expected, System.StringComparison.Ordinal),
+                $"{tool}'s 'subject' description must quote MailService.SubjectCharsCap "
+                + $"({MailService.SubjectCharsCap}) as \"{expected}\", because that is the length the service "
+                + $"actually enforces. The description reads: \"{hint}\"");
+        }
+    }
+
+    /// <summary>
     /// outlook_health's description quotes its COM probe budget, and that budget is the
     /// supervisor's own - not a third independent 5 000.
     /// </summary>

@@ -33,11 +33,17 @@ namespace OutlookAI.Services
     /// </summary>
     internal static class McpConfigEditor
     {
-        /// <summary>Server name under <c>mcpServers</c>, in both scopes.</summary>
-        internal const string ServerName = "outlookai";
+        /// <summary>
+        /// Server name under <c>mcpServers</c>, in both scopes. From
+        /// <see cref="AddInServerContract"/>: the MCP server reads this same member out of
+        /// <c>~/.claude.json</c> to answer "am I the server Claude Code is configured to spawn?",
+        /// so the write side and the read side share the one definition instead of each spelling
+        /// it out.
+        /// </summary>
+        internal const string ServerName = AddInServerContract.ServerName;
 
-        /// <summary>The top-level container both file shapes share.</summary>
-        internal const string ServersProperty = "mcpServers";
+        /// <summary>The top-level container both file shapes share; read by the server too.</summary>
+        internal const string ServersProperty = AddInServerContract.ServersProperty;
 
         /// <summary>Project-scope file name, at the root of the project folder.</summary>
         internal const string ProjectConfigFileName = ".mcp.json";
@@ -559,7 +565,7 @@ namespace OutlookAI.Services
                 return false;
 
             int commandMember, commandStart, commandEnd;
-            if (!TryFindMemberSpan(json, entryStart, "command", out commandMember, out commandStart, out commandEnd))
+            if (!TryFindMemberSpan(json, entryStart, AddInServerContract.CommandProperty, out commandMember, out commandStart, out commandEnd))
                 return false;
             if (json[commandStart] != '"')
                 return false;

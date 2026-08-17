@@ -11,7 +11,7 @@ namespace OutlookAI.Core.Com
     /// the TEST SEAM - <see cref="OutlookAI.Core.Services.MailService"/> depends on this
     /// rather than on a sealed COM class, so its logic is exercisable without a real
     /// Outlook. And it is the IPC CONTRACT - each method is one call across the pipe to
-    /// the killable COM host (see McpServer/Docs/com-host.md). Those turned out to be the
+    /// the killable COM host (see "Why two processes" in McpServer/README.md). Those turned out to be the
     /// same artifact, which is why they are one interface rather than two.
     /// </para>
     /// <para>

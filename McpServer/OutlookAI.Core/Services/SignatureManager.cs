@@ -75,13 +75,16 @@ namespace OutlookAI.Core.Services
 
     /// <summary>
     /// Live registry implementation over
-    /// HKCU\Software\Microsoft\Office\16.0\Outlook\Profiles\&lt;default profile&gt;\9375CFF0413111d3B88A00104B2A6676.
+    /// HKCU\Software\Microsoft\Office\&lt;major&gt;\Outlook\Profiles\&lt;default profile&gt;\9375CFF0413111d3B88A00104B2A6676,
+    /// where the major is whichever Office version this machine actually has
+    /// (<see cref="OutlookProfileRegistry.OfficeVersion"/> - it used to be a hardcoded 16.0).
     /// Writes are surgical: only the two known value names, only on subkeys that carry
     /// an SMTP-shaped "Account Name", never creating subkeys.
     /// </summary>
     public sealed class ProfileSignatureDefaultsStore : ISignatureDefaultsStore
     {
-        private const string OutlookRoot = OutlookProfileRegistry.OutlookRootKeyPath;
+        // static readonly, not const: the Office major in this path is detected at runtime now.
+        private static readonly string OutlookRoot = OutlookProfileRegistry.OutlookRootKeyPath;
         private const string AccountsSubKey = OutlookProfileRegistry.AccountsSubKeyName;
 
         /// <inheritdoc />

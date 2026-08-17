@@ -175,6 +175,10 @@
       <SubType>Code</SubType>
     </Compile>
 
+    <!-- The values the add-in and the .NET 10 mail server must agree about. This is the one
+         copy: McpServer\OutlookAI.Core\OutlookAI.Core.csproj LINKS this same file, and so does
+         the test project. See the file's own header for why it is constants only and internal. -->
+    <Compile Include="Services\AddInServerContract.cs" />
     <Compile Include="Services\ClaudeServices.cs" />
     <Compile Include="Services\McpConfigEditor.cs" />
     <Compile Include="Services\McpRegistrationDecision.cs" />
@@ -244,7 +248,15 @@
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- Include additional build rules for an Office application add-in. -->
   <Import Project="$(VSToolsPath)\OfficeTools\Microsoft.VisualStudio.Tools.Office.targets" Condition="'$(VSToolsPath)' != ''" />
-  <!-- This section defines VSTO properties that describe the host-changeable project properties. -->
+  <!-- This section defines VSTO properties that describe the host-changeable project properties.
+
+       The two 16.0 literals below are NOT the hardcoded-hive defect that Services\OfficeVersions.cs
+       exists to fix, and they are deliberately left alone. They are design-time only: OfficeVersion
+       selects the VSTO project flavour and DebugInfoExeName tells F5 which OUTLOOK.EXE to launch on
+       the DEVELOPER's machine. Nothing here is compiled into the add-in or read at run time, and
+       Visual Studio rewrites this block, so pointing it at a detected version would be both
+       meaningless and unstable. Runtime hive selection lives in OfficeVersions.DetectOutlookVersion,
+       shared with the MCP server. -->
   <ProjectExtensions>
     <VisualStudio>
       <FlavorProperties GUID="{BAA0C2D2-18E2-41B9-852F-F413020CAA33}">

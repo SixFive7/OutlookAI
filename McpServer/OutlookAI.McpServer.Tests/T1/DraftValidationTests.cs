@@ -50,7 +50,7 @@ public sealed class DraftValidationTests : IDisposable
     [Fact]
     public void NewDraft_RejectsOverlongSubject()
     {
-        string subject = new('x', 256);
+        string subject = new('x', MailService.SubjectCharsCap + 1);
         Assert.Throws<ArgumentException>(() =>
             _service.NewDraft("hub@example.com", "a@b.example", null, subject, "body", display: false));
     }
@@ -120,7 +120,7 @@ public sealed class DraftValidationTests : IDisposable
     public void UpdateDraft_OverlongSubject_IsRejected()
     {
         ArgumentException ex = Assert.Throws<ArgumentException>(
-            () => _service.UpdateDraft("h424242", subject: new string('s', 256), display: false));
+            () => _service.UpdateDraft("h424242", subject: new string('s', MailService.SubjectCharsCap + 1), display: false));
         Assert.Contains("too long", ex.Message, StringComparison.Ordinal);
     }
 
@@ -297,20 +297,29 @@ public sealed class DraftValidationTests : IDisposable
     public void DerivedDrafts_RejectOverlongSubjectOverride_BeforeAnyComWork(string kind)
     {
         ArgumentException ex = Assert.Throws<ArgumentException>(() =>
-            CallDerived(kind, subject: new string('x', 256), importance: null));
+            CallDerived(kind, subject: new string('x', MailService.SubjectCharsCap + 1), importance: null));
         Assert.Contains("subject", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // The message quotes the cap the service actually enforces, so an agent that hit it
+        // is told the real limit rather than a number someone typed once.
+        Assert.Contains(
+            "max " + MailService.SubjectCharsCap.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + " characters",
+            ex.Message,
+            StringComparison.Ordinal);
     }
 
     [Theory]
     [InlineData("reply")]
     [InlineData("replyall")]
     [InlineData("forward")]
-    public void DerivedDrafts_AcceptA255CharSubjectOverride_AndFailOnlyOnTheUnknownId(string kind)
+    public void DerivedDrafts_AcceptASubjectOverrideExactlyAtTheCap_AndFailOnlyOnTheUnknownId(string kind)
     {
-        // Proof that the length gate is 255-inclusive: the ONLY complaint left is the
-        // unknown hit id, which is resolved after validation and still before COM.
+        // Proof that the length gate is INCLUSIVE at MailService.SubjectCharsCap: the ONLY
+        // complaint left is the unknown hit id, which is resolved after validation and
+        // still before COM.
         ArgumentException ex = Assert.Throws<ArgumentException>(() =>
-            CallDerived(kind, subject: new string('x', 255), importance: null));
+            CallDerived(kind, subject: new string('x', MailService.SubjectCharsCap), importance: null));
         Assert.Contains("Unknown id", ex.Message, StringComparison.Ordinal);
     }
 
