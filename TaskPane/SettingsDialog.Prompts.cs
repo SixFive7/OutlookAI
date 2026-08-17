@@ -33,8 +33,6 @@ namespace OutlookAI.TaskPane
     {
         // ===== The sections, in the order they are shown =====
 
-        private const int SectionCount = 4;
-
         private static readonly PromptSection[] Sections =
         {
             PromptSection.Preamble,
@@ -42,6 +40,16 @@ namespace OutlookAI.TaskPane
             PromptSection.SignatureRule,
             PromptSection.SignatureSelection,
         };
+
+        /// <summary>
+        /// How many sections there are - asked of <see cref="Sections"/>, never stated. Two
+        /// constants encoding one fact is a trap with two ends: a fifth section added to the
+        /// array without bumping the count vanishes from the window, and a bumped count without
+        /// the array entry throws IndexOutOfRangeException the moment the tab loads. Declared
+        /// AFTER the array on purpose - static initialisers run in textual order, so the other
+        /// way round this reads 0.
+        /// </summary>
+        private static readonly int SectionCount = Sections.Length;
 
         /// <summary>Prompt for a button created by Add. Non-empty, because an empty one is rejected.</summary>
         private const string NewButtonPrompt =
@@ -1097,19 +1105,34 @@ namespace OutlookAI.TaskPane
             switch (section)
             {
                 case PromptSection.Preamble:
-                    // 12, not 10: the preamble is exactly 12 lines and the no-trace-of-AI
-                    // rule is the last of them, so a 10-line box hides the one line a user
-                    // is most likely to have come here to read.
-                    return 12;
+                    // Counted from the shipped text, not written down: the no-trace-of-AI rule
+                    // is the LAST line of the preamble and the one a user is most likely to have
+                    // come here to read, so the box shows the whole block rather than scrolling
+                    // that line out of sight. The hand-counted 12 this replaces would have
+                    // silently re-created exactly that fault the first time a 13th line was
+                    // added to PromptDefaults.Preamble.
+                    return LineCount(PromptDefaults.Preamble);
                 case PromptSection.ReplyRules:
                     return 3;
                 case PromptSection.SignatureRule:
                     return 3;
                 case PromptSection.SignatureSelection:
+                    // Deliberately fewer than the shipped text's line count: it is the longest
+                    // block by some way, it is the one section whose head is its whole point
+                    // (role, then untrusted-content warning), and a box tall enough for all of
+                    // it would push the rest of the tab off the window on a laptop screen.
                     return 10;
                 default:
                     return 6;
             }
+        }
+
+        /// <summary>Lines in a block of prompt text, however its line endings are spelled.</summary>
+        private static int LineCount(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return 1;
+            return PromptDefaults.Normalize(text).Split('\n').Length;
         }
 
         // ===== Small helpers =====

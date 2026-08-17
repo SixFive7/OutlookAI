@@ -23,6 +23,46 @@ namespace OutlookAI.Services
         private const string GitHubRepo = "OutlookAI";
         private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(10);
 
+        /// <summary>
+        /// How long the GitHub API call may take. Generous for a JSON GET, and deliberately
+        /// unchanged from the ambient <c>HttpClient.Timeout</c> it replaced - the client no
+        /// longer carries one, because an ambient timeout said nothing useful about the
+        /// installer download below (see <see cref="DownloadTimeout"/>).
+        /// </summary>
+        private static readonly TimeSpan ApiTimeout = TimeSpan.FromMinutes(5);
+
+        /// <summary>
+        /// Largest installer the updater will accept. Mirrored by the release workflow, which
+        /// names this constant and fails the release rather than shipping an asset the whole
+        /// installed base would silently refuse - see the "Create installer" step in
+        /// <c>.github/workflows/release.yml</c>, and the drift check in
+        /// <c>.github/scripts/check-pinned-constants.ps1</c> that compares the two.
+        /// </summary>
+        private const long MaxDownloadBytes = 50L * 1024 * 1024; // 50 MB
+
+        /// <summary>
+        /// Slowest transfer the updater will sit through. Only ever used to derive
+        /// <see cref="DownloadTimeout"/>; it is not enforced moment to moment.
+        /// </summary>
+        private const long MinDownloadBytesPerSecond = 64 * 1024; // 64 KB/s
+
+        /// <summary>
+        /// How long the installer download may take, DERIVED from the cap it guards rather
+        /// than guessed at: at <see cref="MinDownloadBytesPerSecond"/> the largest asset
+        /// <see cref="MaxDownloadBytes"/> allows still finishes inside it, so this can no
+        /// longer be exceeded by the very operation it is supposed to bound. The old fixed
+        /// five minutes demanded ~170 KB/s sustained of a 50 MB download or the update aborted.
+        /// </summary>
+        private static readonly TimeSpan DownloadTimeout =
+            TimeSpan.FromSeconds(MaxDownloadBytes / MinDownloadBytesPerSecond);
+
+        /// <summary>
+        /// How long the handed-off script waits after Outlook exits before running the
+        /// installer, giving Windows time to release the add-in DLLs. A guess, but a bounded
+        /// one: too short and the silent install fails, and the next check retries it.
+        /// </summary>
+        private const int InstallerGraceSeconds = 2;
+
         // Named because DescribeState has to tell "nothing to report" apart from every other
         // status, and a second spelling of the same words in a different file is a bug waiting.
         private const string StatusUpToDate = "up to date";
@@ -57,13 +97,49 @@ namespace OutlookAI.Services
         }
 
         /// <summary>
-        /// Whether a check is in flight right now — the ten-minute poll's, or one the user
-        /// asked for. Both version indicators read it, so a check started from the settings
+        /// Whether a check is in flight right now - the <see cref="PollInterval"/> poll's, or
+        /// one the user asked for. Both version indicators read it, so a check from the settings
         /// dialog shows up in the sidebar too.
         /// </summary>
         public static bool IsChecking
         {
             get { return Volatile.Read(ref _checking) != 0; }
+        }
+
+        /// <summary>
+        /// How often <see cref="Start"/> polls, spelled out for a human. Every sentence in the
+        /// product that says how often OutlookAI looks for an update builds itself from this,
+        /// rather than restating the number: the interval used to exist once in code and four
+        /// times in English, one of those on screen in a tooltip.
+        /// </summary>
+        public static string PollIntervalDescription
+        {
+            get { return DescribeInterval(PollInterval); }
+        }
+
+        /// <summary>
+        /// How often a version indicator has to re-read <see cref="VersionLine"/>. It lives
+        /// here rather than in either piece of UI for the same reason the wording does: the
+        /// sidebar and the settings dialog were ticking at the same rate by coincidence, in two
+        /// files, and one of them could have been changed without the other.
+        ///
+        /// One second, and that is deliberately faster than the once-a-minute rollover it
+        /// serves: the tick is also how a check started in the OTHER indicator becomes visible
+        /// here, so slowing it slows down a status line the user is watching. Both readers make
+        /// an unchanged tick free (neither repaints, and the dialog does not re-lay out), which
+        /// is what makes the rate affordable. <c>TODO.md</c> tracks replacing the polling half
+        /// of this with a StateChanged event, after which only the rollover needs a timer at
+        /// all and it can drop to 30-60s.
+        /// </summary>
+        public const int VersionLineTickMs = 1000;
+
+        private static string DescribeInterval(TimeSpan span)
+        {
+            int minutes = (int)Math.Round(span.TotalMinutes);
+            if (minutes >= 1)
+                return minutes == 1 ? "1 minute" : minutes + " minutes";
+            int seconds = (int)Math.Round(span.TotalSeconds);
+            return seconds == 1 ? "1 second" : seconds + " seconds";
         }
 
         /// <summary>
@@ -113,13 +189,19 @@ namespace OutlookAI.Services
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
             var client = new HttpClient();
             client.DefaultRequestHeaders.Add("User-Agent", "OutlookAI-Updater");
-            client.Timeout = TimeSpan.FromMinutes(5);
+            // No ambient timeout: every request below carries its own deadline as a
+            // CancellationToken instead. HttpClient.Timeout is the wrong tool for the installer
+            // download - that one is fetched with HttpCompletionOption.ResponseHeadersRead and
+            // the body is copied by hand, which is outside whatever the ambient timeout covers.
+            // Rather than depend on exactly where net48 draws that line, nothing here relies on
+            // it at all.
+            client.Timeout = Timeout.InfiniteTimeSpan;
             return client;
         }
 
         public static void Start()
         {
-            // Fire immediately, then every 10 minutes
+            // Fire immediately, then once per PollInterval.
             _timer = new Timer(_ => _ = RunCheckAsync(), null, TimeSpan.Zero, PollInterval);
         }
 
@@ -193,11 +275,15 @@ namespace OutlookAI.Services
                 Dictionary<string, object> release;
                 string newEtag = null;
                 using (var request = new HttpRequestMessage(HttpMethod.Get, apiUrl))
+                using (var apiCts = new CancellationTokenSource(ApiTimeout))
                 {
                     if (_etag != null)
                         request.Headers.IfNoneMatch.Add(new EntityTagHeaderValue(_etag));
 
-                    using (var response = await _httpClient.SendAsync(request))
+                    // Default completion option, so the whole JSON body is buffered inside this
+                    // call and the ReadAsStringAsync below is memory-only - which is what keeps
+                    // the API half fully inside ApiTimeout.
+                    using (var response = await _httpClient.SendAsync(request, apiCts.Token))
                     {
                         if (response.StatusCode == HttpStatusCode.NotModified)
                         {
@@ -293,33 +379,53 @@ namespace OutlookAI.Services
                 }
 
                 tempPath = Path.Combine(Path.GetTempPath(), "OutlookAI-" + Path.GetRandomFileName() + ".exe");
-                const long maxDownloadBytes = 50 * 1024 * 1024; // 50 MB
-                using (var response2 = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead))
+                using (var downloadCts = new CancellationTokenSource(DownloadTimeout))
+                using (var response2 = await _httpClient.GetAsync(
+                    downloadUrl, HttpCompletionOption.ResponseHeadersRead, downloadCts.Token))
                 {
                     response2.EnsureSuccessStatusCode();
                     var contentLength = response2.Content.Headers.ContentLength;
-                    if (contentLength.HasValue && contentLength.Value > maxDownloadBytes)
+                    if (contentLength.HasValue && contentLength.Value > MaxDownloadBytes)
                     {
                         LastError = "Installer download too large";
                         return;
                     }
-                    using (var src = await response2.Content.ReadAsStreamAsync())
-                    using (var dst = File.Create(tempPath))
+                    // Disposing the response tears down its content stream, which is what makes
+                    // a read that has stopped delivering bytes actually fail instead of waiting
+                    // forever. Without it a stalled socket hangs this copy loop, and because the
+                    // one-at-a-time guard is only released in the finally below, both version
+                    // indicators would sit on "checking..." for the rest of the session.
+                    using (downloadCts.Token.Register(() => { try { response2.Dispose(); } catch { } }))
                     {
-                        var buf = new byte[81920];
-                        long total = 0;
-                        int read;
-                        while ((read = await src.ReadAsync(buf, 0, buf.Length)) > 0)
+                        try
                         {
-                            total += read;
-                            if (total > maxDownloadBytes)
+                            using (var src = await response2.Content.ReadAsStreamAsync())
+                            using (var dst = File.Create(tempPath))
                             {
-                                dst.Close();
-                                File.Delete(tempPath);
-                                LastError = "Installer download too large";
-                                return;
+                                // The .NET default CopyTo buffer size.
+                                var buf = new byte[81920];
+                                long total = 0;
+                                int read;
+                                while ((read = await src.ReadAsync(buf, 0, buf.Length, downloadCts.Token)) > 0)
+                                {
+                                    total += read;
+                                    if (total > MaxDownloadBytes)
+                                    {
+                                        dst.Close();
+                                        File.Delete(tempPath);
+                                        LastError = "Installer download too large";
+                                        return;
+                                    }
+                                    await dst.WriteAsync(buf, 0, read, downloadCts.Token);
+                                }
                             }
-                            await dst.WriteAsync(buf, 0, read);
+                        }
+                        catch (Exception) when (downloadCts.IsCancellationRequested)
+                        {
+                            // The deadline fired and pulled the response out from under the
+                            // read. Whatever the stream threw on the way out names the
+                            // mechanism, not the problem - so report the problem.
+                            throw new OperationCanceledException(downloadCts.Token);
                         }
                     }
                 }
@@ -337,7 +443,7 @@ namespace OutlookAI.Services
                 // while one is still pending.
                 var installerArgs = "/SILENT /SP- /NOCANCEL /NORESTART /NORESTARTAPPLICATIONS";
                 var safePath = tempPath.Replace("'", "''");
-                var script = $"Get-Process outlook -ErrorAction SilentlyContinue | Wait-Process; Start-Sleep -Seconds 2; if (-not (Test-Path 'HKCU:\\Software\\Microsoft\\Office\\Outlook\\Addins\\OutlookAI')) {{ exit }}; Start-Process '{safePath}' -ArgumentList '{installerArgs}' -Wait";
+                var script = $"Get-Process outlook -ErrorAction SilentlyContinue | Wait-Process; Start-Sleep -Seconds {InstallerGraceSeconds}; if (-not (Test-Path 'HKCU:\\Software\\Microsoft\\Office\\Outlook\\Addins\\OutlookAI')) {{ exit }}; Start-Process '{safePath}' -ArgumentList '{installerArgs}' -Wait";
                 var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
                 _updateProcess = Process.Start(new ProcessStartInfo
                 {
@@ -349,6 +455,14 @@ namespace OutlookAI.Services
 
                 installerHandedOff = true;
                 Status = $"v{remoteVersion} ready - installs on close";
+            }
+            catch (OperationCanceledException)
+            {
+                // Only one thing cancels anything here: a deadline of ours expiring. Said
+                // plainly, because "The operation was canceled." on the update line tells a
+                // user nothing about which operation or why.
+                LastError = "Update check timed out.";
+                Status = null;
             }
             catch (Exception ex)
             {
@@ -373,6 +487,16 @@ namespace OutlookAI.Services
         // file, so we accept ONLY that specific "valid hash / untrusted root" result and then
         // pin the thumbprint. Every other outcome is rejected. Fail-closed: any error treats
         // the installer as unverified (auto-update stops; manual update still works).
+        //
+        // THE SAME 40 HEX CHARACTERS ARE IN OutlookAI.csproj AS ManifestCertificateThumbprint.
+        // Rotating the signing certificate has to change BOTH. The csproj half fails loudly at
+        // build time; this half fails closed and silently - every future installer is rejected
+        // as "not signed by the expected OutlookAI certificate" and auto-update stops across the
+        // entire installed base, with nothing to show for it but a line in the update-error
+        // label. So the two are compared mechanically rather than by memory:
+        // .github/scripts/check-pinned-constants.ps1 fails the build (and the release) when they
+        // drift, and the release workflow additionally checks both against the certificate it
+        // has just imported.
         private const string ExpectedCertThumbprint = "2578F7B869383572E751DD6B61B5374C55C6E995";
 
         private static bool VerifySignature(string path, out string error)

@@ -209,7 +209,10 @@ namespace OutlookAI.TaskPane
             this.Controls.Add(this.grpInstruction);
             this.Controls.Add(this.lblStatus);
             this.Name = "AITaskPane";
-            this.Size = new System.Drawing.Size(260, 500);
+            // DesignWidth, not a literal 260: PreferredHostWidth adds the host's chrome to this
+            // same number to work out how wide to make the CustomTaskPane, so the two must be
+            // the same number - the same bargain PaneMargin and QuickActionsDesignTop make above.
+            this.Size = new System.Drawing.Size(DesignWidth, 500);
             this.flowQuickActions.ResumeLayout(false);
             this.grpQuickActions.ResumeLayout(false);
             this.grpInstruction.ResumeLayout(false);

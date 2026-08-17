@@ -29,14 +29,40 @@ namespace OutlookAI.Services
         private const string DesiredKeyPath = TuningKeyPath + @"\Desired";
         private const string AppliedKeyPath = TuningKeyPath + @"\Applied";
 
-        private const string SearchKeyPath = @"Software\Microsoft\Office\16.0\Outlook\Search";
-        private const string CachedModePolicyKeyPath = @"Software\Policies\Microsoft\Office\16.0\Outlook\Cached Mode";
-        private const string CachedModeUserKeyPath = @"Software\Microsoft\Office\16.0\Outlook\Cached Mode";
-        private const string PstKeyPath = @"Software\Microsoft\Office\16.0\Outlook\PST";
+        /// <summary>
+        /// The Office major version whose hives these values are written into, detected once
+        /// per session. It used to be the literal "16.0" in all four paths below, which meant
+        /// that on Outlook 2013 (15.0) or a future 17.0 every write landed in a hive Outlook
+        /// never reads: the settings dialog showed every value as "(not set)" for ever,
+        /// RestartNeeded never cleared, and the user was told to restart Outlook indefinitely.
+        /// <see cref="OfficeVersions"/> is the one list of versions the whole add-in agrees on.
+        /// </summary>
+        private static readonly string OfficeVersion = OfficeVersions.DetectOutlookVersion();
+
+        private static readonly string SearchKeyPath =
+            @"Software\Microsoft\Office\" + OfficeVersion + @"\Outlook\Search";
+        private static readonly string CachedModePolicyKeyPath =
+            @"Software\Policies\Microsoft\Office\" + OfficeVersion + @"\Outlook\Cached Mode";
+        private static readonly string CachedModeUserKeyPath =
+            @"Software\Microsoft\Office\" + OfficeVersion + @"\Outlook\Cached Mode";
+        private static readonly string PstKeyPath =
+            @"Software\Microsoft\Office\" + OfficeVersion + @"\Outlook\PST";
 
         internal const string GroupSearch = "search";
         internal const string GroupCaching = "caching";
         internal const string GroupOst = "ost";
+
+        /// <summary>
+        /// The OST size cap, in the megabytes Outlook stores it as. Named because the settings
+        /// dialog's tick box has to say what the cap is, and a caption that spells the number
+        /// out by hand states a figure the product may no longer be applying - the desired
+        /// values live in the registry and are meant to be tunable. See
+        /// <see cref="DescribeOstMaxSize"/>, which the caption is built from.
+        /// </summary>
+        internal const string OstMaxEntryId = "ost.MaxLargeFileSize";
+        private const int OstMaxDefaultMb = 102400;   // 100 GB
+        private const int OstWarnDefaultMb = 96256;   // ~94 GB, Outlook's own warn-below-max gap
+        private const int MegabytesPerGigabyte = 1024;
 
         private static readonly object _gate = new object();
 
@@ -110,9 +136,9 @@ namespace OutlookAI.Services
             new TuningEntry("caching.user.SyncWindowSettingDays",                GroupCaching, CachedModeUserKeyPath,   "SyncWindowSettingDays",              0, false),
 
             // OST headroom (D25) — 100 GB max / ~94 GB warn so full caching never stalls at
-            // the default 50 GB cap.
-            new TuningEntry("ost.MaxLargeFileSize",  GroupOst, PstKeyPath, "MaxLargeFileSize",  102400, false),
-            new TuningEntry("ost.WarnLargeFileSize", GroupOst, PstKeyPath, "WarnLargeFileSize", 96256,  false),
+            // the default 50 GB cap. Outlook stores both as megabytes.
+            new TuningEntry(OstMaxEntryId,           GroupOst, PstKeyPath, "MaxLargeFileSize",  OstMaxDefaultMb,  false),
+            new TuningEntry("ost.WarnLargeFileSize", GroupOst, PstKeyPath, "WarnLargeFileSize", OstWarnDefaultMb, false),
         };
 
         internal static IReadOnlyList<TuningEntry> Entries
@@ -207,6 +233,40 @@ namespace OutlookAI.Services
         public static bool GetRestartNeeded()
         {
             lock (_gate) { try { return ReadDword(TuningKeyPath, "RestartNeeded") == 1; } catch { return false; } }
+        }
+
+        /// <summary>
+        /// The OST size cap this machine is actually being given, worded for a caption:
+        /// "100 GB". Read from the DESIRED value rather than from the shipped default, because
+        /// the desired numbers live in the registry and are meant to be tunable - a caption
+        /// with "100 GB" typed into it would go on saying so after somebody changed the number.
+        /// </summary>
+        public static string DescribeOstMaxSize()
+        {
+            int megabytes = OstMaxDefaultMb;
+            lock (_gate)
+            {
+                try
+                {
+                    foreach (var entry in Catalog)
+                    {
+                        if (entry.Id == OstMaxEntryId)
+                        {
+                            megabytes = ReadDesired(entry);
+                            break;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine("DescribeOstMaxSize: " + ex.Message);
+                }
+            }
+
+            double gigabytes = (double)megabytes / MegabytesPerGigabyte;
+            return gigabytes >= 1 && gigabytes == Math.Floor(gigabytes)
+                ? ((int)gigabytes).ToString(System.Globalization.CultureInfo.CurrentCulture) + " GB"
+                : megabytes.ToString(System.Globalization.CultureInfo.CurrentCulture) + " MB";
         }
 
         // ===== Core reconcile =====

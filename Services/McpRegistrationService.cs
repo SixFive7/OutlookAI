@@ -763,10 +763,11 @@ namespace OutlookAI.Services
             {
                 if (configExists)
                     return true;
-                string cli = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    @".local\bin\claude.exe");
-                return File.Exists(cli);
+                // The one spelling of that path, shared with the code that actually RUNS the
+                // CLI. Two spellings meant a move would fix the executing path - which fails
+                // loudly on the next click - and leave this one quietly reporting the wrong
+                // status in the settings dialog forever.
+                return File.Exists(ClaudeService.ClaudePath);
             }
             catch
             {
@@ -775,10 +776,18 @@ namespace OutlookAI.Services
         }
 
         /// <summary>
+        /// How far up from this assembly to look for {app}\McpServer\. An installed add-in
+        /// lives under {app}\Application Files\OutlookAI_x_y_z_w\, which is two levels, and a
+        /// developer build sits somewhere else again - so this is a search bound rather than a
+        /// statement about the layout. Running out of levels returns null, which every caller
+        /// already handles as "no server installed".
+        /// </summary>
+        private const int ServerSearchParentLevels = 4;
+
+        /// <summary>
         /// The installed server executable, or null when there isn't one. Prefers the install
-        /// directory the installer recorded; falls back to walking up from this assembly (an
-        /// installed add-in lives under {app}\Application Files\OutlookAI_x_y_z_w\, so {app}
-        /// is two levels up, but that layout is not worth hard-coding).
+        /// directory the installer recorded; falls back to walking up from this assembly, at
+        /// most <see cref="ServerSearchParentLevels"/> levels.
         /// </summary>
         internal static string ResolveInstalledServerPath()
         {
@@ -793,7 +802,7 @@ namespace OutlookAI.Services
                 }
 
                 string dir = Path.GetDirectoryName(typeof(McpRegistrationService).Assembly.Location);
-                for (int i = 0; i < 4 && !string.IsNullOrEmpty(dir); i++)
+                for (int i = 0; i < ServerSearchParentLevels && !string.IsNullOrEmpty(dir); i++)
                 {
                     string candidate = Path.Combine(dir, RelativeServerPath);
                     if (File.Exists(candidate))

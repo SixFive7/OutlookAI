@@ -10,6 +10,19 @@ namespace OutlookAI
 {
     public partial class ThisAddIn
     {
+        /// <summary>
+        /// The named mutex Inno Setup holds for the whole of an install, and the only signal
+        /// the add-in has that it is being replaced underneath itself.
+        ///
+        /// THE SAME NAME IS IN Installer.iss AS SetupMutex. Renaming one side evaporates the
+        /// guard with no error at all: the add-in initialises during a silent auto-update,
+        /// spins up the updater and warm-up processes, and the installer tears them down
+        /// mid-flight - exactly the failure this exists to prevent. The two are therefore
+        /// compared mechanically by .github/scripts/check-pinned-constants.ps1 rather than
+        /// left to a comment on one side.
+        /// </summary>
+        internal const string InstallerMutexName = "OutlookAISetup";
+
         private Outlook.Inspectors _inspectors;
         private Outlook.Explorers _explorers;
         private readonly List<Outlook.Explorer> _hookedExplorers = new List<Outlook.Explorer>();
@@ -90,7 +103,7 @@ namespace OutlookAI
 
         private void ThisAddIn_Startup(object sender, EventArgs e)
         {
-            // If the installer is mid-run it holds the "OutlookAISetup" mutex; skip all
+            // If the installer is mid-run it holds the InstallerMutexName mutex; skip all
             // startup work. Outlook can be reopened during a silent update install, and
             // initializing here would re-trigger the updater and spin up work that the
             // installer immediately tears down to swap the add-in files. The add-in
@@ -99,7 +112,7 @@ namespace OutlookAI
             try
             {
                 System.Threading.Mutex mutex;
-                installerRunning = System.Threading.Mutex.TryOpenExisting("OutlookAISetup", out mutex);
+                installerRunning = System.Threading.Mutex.TryOpenExisting(InstallerMutexName, out mutex);
                 mutex?.Dispose();
             }
             catch
@@ -350,7 +363,7 @@ namespace OutlookAI
 
                 var taskPaneControl = new AITaskPane(isInlineResponse: false, inspector: inspector);
                 var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", inspector);
-                customTaskPane.Width = 280;
+                customTaskPane.Width = taskPaneControl.PreferredHostWidth;
                 customTaskPane.VisibleChanged += TaskPane_VisibleChanged;
                 customTaskPane.Visible = true;
                 return true;
@@ -408,7 +421,7 @@ namespace OutlookAI
 
                 var taskPaneControl = new AITaskPane(isInlineResponse: true);
                 var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", explorer);
-                customTaskPane.Width = 280;
+                customTaskPane.Width = taskPaneControl.PreferredHostWidth;
                 customTaskPane.VisibleChanged += TaskPane_VisibleChanged;
                 customTaskPane.Visible = true;
             }
@@ -474,7 +487,7 @@ namespace OutlookAI
                         {
                             var taskPaneControl = new AITaskPane(isInlineResponse: false, inspector: asInspector);
                             var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", asInspector);
-                            customTaskPane.Width = 280;
+                            customTaskPane.Width = taskPaneControl.PreferredHostWidth;
                             customTaskPane.VisibleChanged += TaskPane_VisibleChanged;
                             customTaskPane.Visible = true;
                         }
@@ -499,7 +512,7 @@ namespace OutlookAI
                         {
                             var taskPaneControl = new AITaskPane(isInlineResponse: true);
                             var customTaskPane = this.CustomTaskPanes.Add(taskPaneControl, "AI Assistant", asExplorer);
-                            customTaskPane.Width = 280;
+                            customTaskPane.Width = taskPaneControl.PreferredHostWidth;
                             customTaskPane.VisibleChanged += TaskPane_VisibleChanged;
                             customTaskPane.Visible = true;
                         }

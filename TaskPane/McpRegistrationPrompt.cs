@@ -43,8 +43,22 @@ namespace OutlookAI.TaskPane
         /// <summary>Gap between later looks, for a background Outlook the user may still promote.</summary>
         private const int LaterLookDelayMs = 60000;
 
-        /// <summary>Total looks before the question is dropped for this session (~5 minutes).</summary>
-        private const int MaxLooks = 6;
+        /// <summary>
+        /// How long the question stays available for. THIS is the decision - roughly how long a
+        /// background Outlook might plausibly be promoted to a real window by a user who has
+        /// just started their day - and the look count below is derived from it.
+        /// </summary>
+        private const int LookWindowMs = 5 * 60 * 1000;
+
+        /// <summary>
+        /// Total looks before the question is dropped for this session: the first, plus however
+        /// many later ones fit in <see cref="LookWindowMs"/>, rounded up. Derived rather than
+        /// counted - this used to be a 6 with "(~5 minutes)" written beside it, a product
+        /// computed by hand from the two delays above that changing either would have falsified
+        /// in silence.
+        /// </summary>
+        private const int MaxLooks =
+            1 + (LookWindowMs - FirstLookDelayMs + LaterLookDelayMs - 1) / LaterLookDelayMs;
 
         private static Timer _timer;
         private static int _looks;

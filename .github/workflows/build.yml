@@ -20,6 +20,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Values that genuinely exist twice because the two sides are written in languages
+      # that cannot see each other - C# and MSBuild XML, C# and Inno Setup's Pascal, C# and
+      # a workflow step. First step in the job: it needs no toolchain and takes a second,
+      # and the thing it catches (a signing thumbprint rotated on one side only) otherwise
+      # fails closed and silently on every user's machine.
+      - name: Check pinned cross-file constants
+        shell: pwsh
+        run: .github/scripts/check-pinned-constants.ps1
+
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3
 

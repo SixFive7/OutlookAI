@@ -230,6 +230,14 @@ namespace OutlookAI.Services
         /// Where <c>ComposeSurface</c> parks a window it must keep off a human's screen.
         /// Mirrored (not referenced) because the add-in is net48 and cannot reference the
         /// .NET 10 server assembly; the two constants must stay in step.
+        ///
+        /// <para>
+        /// That is no longer only a comment. The T1 suite is the one compilation that can see
+        /// both numbers - it references the server assembly and compiles this file as a linked
+        /// source - and <c>ParkCoordinateMirrorTests</c> asserts they are equal. If they drift,
+        /// the MCP registration question is either put to a headless Outlook nobody can see, or
+        /// never asked at all.
+        /// </para>
         /// </summary>
         public const int ParkX = -32000;
 

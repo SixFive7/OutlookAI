@@ -21,6 +21,9 @@
 ; The MZ check in DownloadFile is what makes that safe - if it ever starts serving a page,
 ; setup now says so instead of running it.
 #define NetRuntime10Url "https://aka.ms/dotnet/10.0/dotnet-runtime-win-x64.exe"
+; Same URL as McpRegistrationService.DotnetRuntimeDownloadUrl - both send a user whose
+; runtime is missing to the same page, one from setup and one from OutlookAI Settings.
+; Compared by .github/scripts/check-pinned-constants.ps1.
 #define NetRuntime10ManualUrl "https://dotnet.microsoft.com/download/dotnet/10.0"
 
 [Setup]
@@ -40,6 +43,11 @@ OutputBaseFilename=OutlookAI-v{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 PrivilegesRequired=lowest
+; THE SAME NAME IS IN ThisAddIn.cs AS InstallerMutexName. The add-in opens this mutex at
+; startup and, if it exists, skips ALL startup work - which is what stops it re-triggering the
+; updater and spinning up processes that this installer then tears down mid-flight to swap the
+; add-in files. Rename one side and the guard evaporates with no error at all, so the two are
+; compared mechanically by .github/scripts/check-pinned-constants.ps1 rather than by memory.
 SetupMutex=OutlookAISetup
 CloseApplications=yes
 RestartApplications=no
@@ -106,7 +114,14 @@ Root: HKCU; Subkey: "Software\Microsoft\Office\Outlook\Addins\OutlookAI"; ValueT
 
 ; Keep Outlook from auto-disabling the add-in after a slow start or a crash. What matters
 ; for the exemption is that the value NAME (the add-in id) is present in this list; the DWORD
-; data is only a flag. Cover Outlook 2013 / 2016+ / future to match versions checked elsewhere.
+; data is only a flag. Cover Outlook 2013 / 2016+ / future.
+;
+; THE SET OF VERSIONS HERE MUST MATCH Services\OfficeVersions.cs (OfficeVersions.Supported),
+; which is the add-in's one list of the Office majors it knows about - the theme probe and the
+; Outlook tuning both work from it. The order does not matter here (all three are written); the
+; SET does, and .github/scripts/check-pinned-constants.ps1 compares the two rather than leaving
+; it to the comment that used to claim, without checking, that this "matched versions checked
+; elsewhere".
 Root: HKCU; Subkey: "Software\Microsoft\Office\16.0\Outlook\Resiliency\DoNotDisableAddinList"; ValueType: dword; ValueName: "OutlookAI"; ValueData: "1"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Microsoft\Office\15.0\Outlook\Resiliency\DoNotDisableAddinList"; ValueType: dword; ValueName: "OutlookAI"; ValueData: "1"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Microsoft\Office\17.0\Outlook\Resiliency\DoNotDisableAddinList"; ValueType: dword; ValueName: "OutlookAI"; ValueData: "1"; Flags: uninsdeletevalue
@@ -226,7 +241,15 @@ begin
   // from a source tree is left alone. The COM host is stopped FIRST: stopping the parent
   // first would orphan it briefly, and an orphan still holds the file we are about to
   // replace.
-  CmdLine := 'try { Get-CimInstance Win32_Process '
+  //
+  // -OperationTimeoutSec is not optional here. This Exec is synchronous
+  // (ewWaitUntilTerminated), it runs at ssInstall before any file is written, and the
+  // updater passes /NOCANCEL - so on a machine whose CIM/WMI service is wedged, an
+  // unbounded query hangs setup with no progress bar moving and no way for the user to
+  // stop it. Bounded, the worst case is that a stale server keeps running and the normal
+  // in-use handling from CloseApplications takes over, which is the same best-effort
+  // outcome every other failure here already has.
+  CmdLine := 'try { Get-CimInstance Win32_Process -OperationTimeoutSec 30 '
     + '| Where-Object { ($_.Name -eq ''OutlookAI.ComHost.exe'' -or $_.Name -eq ''OutlookAI.McpServer.exe'') '
     + '-and $_.ExecutablePath -and $_.ExecutablePath.StartsWith(''' + AppDir + ''', '
     + '[StringComparison]::OrdinalIgnoreCase) } '
@@ -281,8 +304,14 @@ begin
   Result := False;
   ErrorDetail := '';
 
+  // -TimeoutSec, for the same reason StopRunningMcpServers is bounded: this Exec is
+  // synchronous and setup has no cancel button on the auto-update path. Without it, a
+  // server that accepts the connection and then never answers leaves the installer waiting
+  // for ever. Ten minutes is far longer than the ~30 MB payload needs on any usable link,
+  // and the failure path is already gentle - the .NET runtime is needed only by the mail
+  // server, so a timeout reports itself and setup carries on.
   CmdLine := 'try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; '
-    + 'Invoke-WebRequest -Uri "' + Url + '" -OutFile "' + DestPath + '" -UseBasicParsing; '
+    + 'Invoke-WebRequest -Uri "' + Url + '" -OutFile "' + DestPath + '" -UseBasicParsing -TimeoutSec 600; '
     + 'exit 0 } catch { $_.Exception.Message | Out-File "' + DestPath + '.err" -Encoding utf8; exit 1 }';
 
   if not Exec('powershell.exe',

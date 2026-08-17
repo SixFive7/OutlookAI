@@ -115,7 +115,7 @@ namespace OutlookAI.Services
         {
             try
             {
-                foreach (var ver in new[] { "16.0", "17.0", "15.0" })
+                foreach (var ver in OfficeVersions.Supported)
                 {
                     using (var key = Registry.CurrentUser.OpenSubKey($@"SOFTWARE\Microsoft\Office\{ver}\Common"))
                     {
@@ -203,7 +203,7 @@ namespace OutlookAI.Services
         private static void WatchLoop(ManualResetEvent stop)
         {
             IntPtr hKey = IntPtr.Zero;
-            foreach (var ver in new[] { "16.0", "17.0", "15.0" })
+            foreach (var ver in OfficeVersions.Supported)
             {
                 if (RegOpenKeyEx(HKEY_CURRENT_USER, $@"SOFTWARE\Microsoft\Office\{ver}\Common", 0, KEY_NOTIFY, out hKey) == 0 && hKey != IntPtr.Zero)
                     break;

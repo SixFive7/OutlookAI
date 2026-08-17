@@ -44,6 +44,15 @@ jobs:
             exit 1
           }
 
+      # Before anything is built, stamped or published: a signing thumbprint rotated on one
+      # side only produces a release whose installers every installed copy silently refuses,
+      # and the only symptom is auto-update quietly stopping everywhere. Cheap and toolchain
+      # free, so it goes first. Checked again after the certificate is imported, against the
+      # certificate actually in use.
+      - name: Check pinned cross-file constants
+        shell: pwsh
+        run: .github/scripts/check-pinned-constants.ps1
+
       - name: Extract changelog
         id: changelog
         shell: pwsh
@@ -138,6 +147,12 @@ jobs:
           $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My
           Remove-Item $pfxPath
           Write-Host "Imported certificate: $($cert.Thumbprint)"
+          # The certificate this release will actually be signed with, against the thumbprint
+          # the shipped updater pins. Rotating the PFX secret without shipping the new
+          # thumbprint first produces installers that every installed copy refuses as "not
+          # signed by the expected OutlookAI certificate" - auto-update stops across the whole
+          # installed base and nothing anywhere says why. Fail here instead, before the build.
+          .github/scripts/check-pinned-constants.ps1 -ExpectedSigningThumbprint $cert.Thumbprint
           # Fail if the signing cert has expired; warn as it approaches expiry.
           $daysLeft = [int]($cert.NotAfter - (Get-Date)).TotalDays
           if ($daysLeft -lt 0) {
@@ -286,13 +301,16 @@ jobs:
           iscc /DMyAppVersion=${{ steps.version.outputs.FULL_VERSION }} Installer.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # The shipped auto-updater refuses any release asset larger than 50 MB
-          # (UpdateService.maxDownloadBytes) and would silently stop updating every
+          # (UpdateService.MaxDownloadBytes) and would silently stop updating every
           # installed copy. Fail the release here instead, while it is still fixable.
+          # The two 50s are compared by .github/scripts/check-pinned-constants.ps1, which
+          # runs at the top of this job - so this figure cannot quietly stop matching the
+          # cap it is supposed to be enforcing.
           $exe = Get-Item "OutlookAI-v${{ steps.version.outputs.FULL_VERSION }}.exe"
           $mb = [math]::Round($exe.Length / 1MB, 2)
           Write-Host "Installer size: ${mb} MB"
           if ($exe.Length -gt 50MB) {
-            Write-Error "Installer is ${mb} MB, over the auto-updater's 50 MB download cap. Raise UpdateService.maxDownloadBytes and ship that first."
+            Write-Error "Installer is ${mb} MB, over the auto-updater's 50 MB download cap. Raise UpdateService.MaxDownloadBytes and ship that first."
             exit 1
           }
 
