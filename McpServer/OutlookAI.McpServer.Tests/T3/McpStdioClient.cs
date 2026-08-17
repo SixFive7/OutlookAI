@@ -18,6 +18,7 @@ public sealed class McpStdioClient : IAsyncDisposable
     private readonly CancellationTokenSource _cts;
     private readonly Task<string> _stderrTask;
     private int _nextId;
+    private JsonElement _initializeResult;
 
     private McpStdioClient(Process server, CancellationTokenSource cts, Task<string> stderrTask)
     {
@@ -86,9 +87,17 @@ public sealed class McpStdioClient : IAsyncDisposable
             clientInfo = new { name = "OutlookAI.T3Client", version = "0.0.2" },
         });
         _ = init.GetProperty("result").GetProperty("protocolVersion");
+        client._initializeResult = init.GetProperty("result").Clone();
         await client.NotifyAsync("notifications/initialized");
         return client;
     }
+
+    /// <summary>
+    /// The <c>result</c> object of the initialize handshake, kept because the handshake
+    /// happens once and cannot be replayed on a live session - <c>instructions</c> and the
+    /// advertised capabilities are only ever on the wire here.
+    /// </summary>
+    public JsonElement InitializeResult => _initializeResult;
 
     /// <summary>The raw initialize result is re-fetchable via tools/list etc.; expose the process for asserts.</summary>
     public Process ServerProcess => _server;

@@ -55,62 +55,65 @@ public static class OutlookTools
         WriteIndented = false,
     };
 
+    // The tool description is capped by the CLIENT, not by the protocol: Claude Code
+    // truncates tool descriptions and server instructions at 2 KB each, positionally and
+    // silently, so a description that outgrows the cap loses its tail without any
+    // diagnostic. This one used to run to 3912 characters and the cut landed mid-word
+    // inside DEGRADED RESULTS, taking the rest of that instruction plus the folder-scope,
+    // results and exhaustive sections with it. What stays here is what a caller needs
+    // BEFORE the call (purpose, matching semantics) plus the one thing that is a shipped
+    // behaviour the agent must act on (degraded=true is a SUCCESS the user has to be told
+    // about). Everything that describes the ANSWER moved to where the answer already
+    // reports it - the advice/scope/sweep blocks - and everything that is per-argument
+    // how-to-call detail moved onto the arguments, which carry their own budgets.
+    // DescriptionBudgetCiTests measures all of it from the wire.
     [McpServerTool(Name = "search")]
-    [Description("Search locally indexed Outlook mail across all accounts, folders, and delegate mailboxes. "
+    [Description("Search locally indexed Outlook mail across all accounts, folders and delegate mailboxes. "
         + "Sub-second and cheap: iterate with refined terms instead of pulling large result sets.\n\n"
         + "MATCHING: query terms are whitespace-separated and ANDed; each term matches whole words, and the terms "
         + "may land in different parts of the mail - one in the subject, another in the body (search_in narrows "
-        + "matching to just the subject or just the body). Body includes "
-        + "attachment text of EVERY attachment type - documents, images, embedded messages, calendar invites, "
-        + "media - and those matches return as separate hits with isAttachmentHit=true "
-        + "(include_attachment_hits=false drops them; read on such a hit opens the parent mail). Sender and "
-        + "recipients are NOT matched by query terms - use from / to. Append * for prefix match (haproxy*). "
-        + "Allowed characters: letters, digits and @.-_'+ ; omit query entirely to filter only by "
-        + "from/to/date/flags.\n\n"
-        + "FRESHNESS: results always include mail that arrived after the last index update - the server sweeps it "
-        + "live through Outlook (autostarting it headless when needed) and merges it in. The sweep follows your "
-        + "scope: with folder set it covers that folder and its subfolders, otherwise Inbox, Sent Items, Deleted "
-        + "Items and Junk Email of the store(s) in scope (those four folders only, not their subfolders) - so for "
-        + "brand-new mail filed into any other folder, pass store + folder. "
-        + "The sweep matches subject and body only - attachment text is matched by the index alone, so a term "
-        + "living only inside an attachment is findable only once that mail is indexed. "
-        + "The response's sweep block reports what was covered. The sweep is cached ~10 s, "
-        + "so rapid follow-up searches run at index speed. If it cannot run, "
-        + "index results are returned with a warning in advice - a search never fails for that reason.\n\n"
+        + "this to one of them). Body matching also covers attachment text - see include_attachment_hits. Append "
+        + "* for prefix match (haproxy*). Allowed characters: letters, digits and @.-_'+ ; omit query entirely to "
+        + "filter only by from/to/date/flags. Sender and recipients are NOT matched by query terms - use "
+        + "from / to.\n\n"
+        + "FRESHNESS: results always include mail that arrived after the last index update: the server sweeps it "
+        + "live through Outlook (started headless when needed) and merges it in; the sweep block reports what "
+        + "that covered.\n\n"
         + "DEGRADED RESULTS: when the live check cannot run (Outlook closed, starting, or not responding) the "
         + "response carries degraded=true and freshness=\"index-only\" instead of \"live\". Everything already "
         + "indexed is present and correct; only mail from roughly the last few minutes may be missing. This is a "
         + "SUCCESSFUL result, not an error - but SAY SO TO THE USER when degraded is true, because an answer that "
         + "looks complete and quietly is not is worse than a visible failure. advice spells out the reason and the "
         + "remedy; outlook_health gives the full picture.\n\n"
-        + "FOLDER SCOPE: folder covers that folder AND its subfolders by default in every mode; pass "
-        + "include_subfolders=false for that one folder alone. Delegate/shared mailboxes are indexed WITHOUT "
-        + "their folder nesting, so a folder scope there matches by folder NAME: if the subfolder set cannot be "
-        + "built the search widens to the whole delegate mailbox and says so in advice, and if that mailbox has "
-        + "two folders with the same name the results can include both - advice says that too. The scope block "
-        + "in the response reports what was actually covered.\n\n"
-        + "RESULTS: each hit carries an id for read, thread, save_attachment, open_in_outlook, move_mail and "
-        + "archive_mail (ids are valid for this session). truncated=true means more matches exist beyond top "
-        + "(max 100) - narrow with store/folder/from/after rather than raising it. Read advice when present and "
-        + "relay it to the user when it concerns them: it is where every partial result, cap, skipped folder and "
-        + "widened scope is reported.\n\n"
-        + "EXHAUSTIVE: exhaustive=true bypasses the index and scans folders through Outlook instead - requires "
-        + "store plus folder and/or after, is far slower, and matches whole words in subject and body only (no "
-        + "attachment text). It follows include_subfolders like the other modes, so a folder scope walks the "
-        + "subtree - which on a big subtree can hit the 120 s budget; pass include_subfolders=false to scan just "
-        + "the named folder, and check foldersScanned/foldersSkipped plus advice for partial coverage. Use it "
-        + "when the index looks stale or wrong, or when completeness matters more than speed.")]
+        + "RESULTS: each hit's id feeds read, thread, save_attachment, open_in_outlook, move_mail and "
+        + "archive_mail (ids are valid for this session). Read advice whenever it is present and relay what "
+        + "concerns the user: every partial "
+        + "result, cap, skipped folder, widened scope and freshness gap is reported there, alongside the scope "
+        + "and sweep blocks.")]
     public static async Task<CallToolResult> Search(
         [Description("Free-text terms, whitespace-separated, ANDed. Each term may match in the subject or the body (see search_in). Letters/digits plus @.-_'+ only; trailing * for prefix. Omit to filter by sender/date only.")]
         string? query = null,
         [Description("Which part of the mail the query terms must match: subject_and_body (default), subject, or "
             + "body. Narrow it when a term is noisy in one of them.")]
         string? search_in = null,
-        [Description("true = bounded index-bypassing COM scan (requires store + folder and/or after). Default false: index + freshness sweep.")]
+        [Description("exhaustive=true bypasses the index and scans folders through Outlook instead - requires "
+            + "store plus folder and/or after, is far slower, and matches whole words in subject and body only "
+            + "(no attachment text). Default false: index + freshness sweep. It follows include_subfolders like "
+            + "the other modes, so a folder scope walks the subtree - which on a big subtree can hit the 120 s "
+            + "budget; pass include_subfolders=false to scan just the named folder, and check "
+            + "foldersScanned/foldersSkipped plus advice for partial coverage. Use it when the index looks stale "
+            + "or wrong, or when completeness matters more than speed.")]
         bool exhaustive = false,
         [Description("Store display name to search in (see list_accounts). Omit for all stores (required when exhaustive=true).")] string? store = null,
-        [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Requires store. "
-            + "Includes its subfolders unless include_subfolders=false.")] string? folder = null,
+        [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Requires "
+            + "store. Includes its subfolders unless include_subfolders=false. Delegate/shared mailboxes are "
+            + "indexed WITHOUT their folder nesting, so a folder scope there matches by folder NAME: the search "
+            + "widens to the whole delegate mailbox when the subfolder set cannot be built, and can return mail "
+            + "from a second folder with the same name elsewhere in that mailbox - advice says so whenever it "
+            + "happens, and the scope block reports what was actually covered. Setting folder also aims the "
+            + "freshness sweep at that folder and its subfolders; without it the sweep covers Inbox, Sent Items, "
+            + "Deleted Items and Junk Email of the store(s) in scope - those four folders only, not their "
+            + "subfolders - so for brand-new mail filed anywhere else, pass store + folder.")] string? folder = null,
         [Description("Whether folder covers its subfolders. Default true, in every mode. Set false to search that "
             + "one folder only - also the cheap way to keep an exhaustive scan bounded.")]
         bool include_subfolders = true,
@@ -120,11 +123,16 @@ public static class OutlookTools
         [Description("Only mail received before this instant (ISO 8601).")] string? before = null,
         [Description("true = unread mail only.")] bool? unread_only = null,
         [Description("Filter on attachment presence.")] bool? has_attachments = null,
-        [Description("Include attachment-CONTENT matches (any attachment type: documents, images, embedded "
-            + "messages, invites, media). Default true. Setting it false drops only those hits; ordinary "
-            + "subject/body matches, including the freshness sweep's, are unaffected.")]
+        [Description("Include attachment-CONTENT matches. Body matching covers EVERY attachment type - documents, "
+            + "images, embedded messages, calendar invites, media - and those matches come back as separate hits "
+            + "with isAttachmentHit=true (read on such a hit opens the parent mail). Default true. Setting it "
+            + "false drops only those hits; ordinary subject/body matches, including the freshness sweep's, are "
+            + "unaffected. The sweep matches subject and body only - attachment text is matched by the index "
+            + "alone, so a term living only inside an attachment is findable only once that mail is indexed.")]
         bool include_attachment_hits = true,
-        [Description("Max hits (1-100, default 25). Keep small - iterate instead.")] int top = 25,
+        [Description("Max hits (1-100, default 25). Keep small - iterate instead. truncated=true in the response "
+            + "means more matches exist beyond top: narrow with store/folder/from/after rather than raising it.")]
+        int top = 25,
         [Description("Snippet length per hit (0-1000, default 200; 0 = no snippets).")] int snippet_chars = 200,
         CancellationToken cancellationToken = default)
     {

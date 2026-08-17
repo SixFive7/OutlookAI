@@ -108,10 +108,17 @@ public sealed class Phase7CiToolShapeTests
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
         JsonElement list = await client.RoundTripAsync("tools/list", new { });
-        var descriptions = list.GetProperty("result").GetProperty("tools").EnumerateArray()
-            .ToDictionary(t => t.GetProperty("name").GetString()!, t => t.GetProperty("description").GetString()!);
+        var tools = list.GetProperty("result").GetProperty("tools").EnumerateArray()
+            .ToDictionary(t => t.GetProperty("name").GetString()!, t => t);
 
-        Assert.Contains("truncated", descriptions["search"], StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("truncated", descriptions["thread"], StringComparison.OrdinalIgnoreCase);
+        // search states the has-more contract on the 'top' argument that causes it
+        // (re-homed 2026-08-17: the tool description was over Claude Code's 2 KB client
+        // truncation cap, so its tail was being cut silently - see
+        // DescriptionBudgetCiTests). Same wire, same words, budgeted separately.
+        string searchTop = tools["search"].GetProperty("inputSchema").GetProperty("properties")
+            .GetProperty("top").GetProperty("description").GetString()!;
+        Assert.Contains("truncated", searchTop, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains("truncated", tools["thread"].GetProperty("description").GetString()!, StringComparison.OrdinalIgnoreCase);
     }
 }
