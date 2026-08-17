@@ -71,6 +71,34 @@ namespace OutlookAI.Services
 
         private static readonly HttpClient _httpClient = CreateHttpClient();
 
+        /// <summary>
+        /// THE CLOCK EVERY "HOW LONG AGO" HERE IS MEASURED AGAINST, and deliberately not the
+        /// wall clock. Wall clock answers "at what time"; it does not answer "how long since",
+        /// because it is free to move: a DST boundary, an NTP correction or somebody setting the
+        /// clock by hand all shift it, forwards or backwards. Measured against it, "checked 4m
+        /// ago" can read as an hour, as two days, or as a negative interval - which is what the
+        /// old <c>if (ago &lt; TimeSpan.Zero) ago = TimeSpan.Zero</c> clamp in
+        /// <see cref="DescribeState"/> was papering over.
+        ///
+        /// A <see cref="Stopwatch"/> only ever counts forwards, for exactly the lifetime this
+        /// measurement has: nothing here survives an Outlook restart, so a process-scoped clock
+        /// loses nothing. net48 has no <c>Environment.TickCount64</c>, and the 32-bit
+        /// <c>Environment.TickCount</c> wraps every ~49.7 days, which would trade a visible
+        /// wrong answer for a rare unreproducible one.
+        /// </summary>
+        private static readonly Stopwatch _sinceStart = Stopwatch.StartNew();
+
+        /// <summary>No check has completed yet - see <see cref="_checkedAtMs"/>.</summary>
+        private const long NeverChecked = -1;
+
+        /// <summary>
+        /// The <see cref="_sinceStart"/> reading at the moment the last check completed.
+        /// Read and written through <see cref="Interlocked"/> rather than marked volatile,
+        /// which C# does not allow on a 64-bit field and which would not stop a torn read in
+        /// 32-bit Outlook anyway.
+        /// </summary>
+        private static long _checkedAtMs = NeverChecked;
+
         private static volatile string _etag;
         private static Timer _timer;
         private static Process _updateProcess;
@@ -80,20 +108,56 @@ namespace OutlookAI.Services
         private static volatile string _lastError;
         private static volatile string _status;
 
+        /// <summary>
+        /// WHEN the last check completed, in wall clock, which is the right tool for an absolute
+        /// instant and the wrong one for an interval. How long AGO that was is measured from
+        /// <see cref="_sinceStart"/> instead - see <see cref="DescribeState"/>.
+        /// </summary>
         public static DateTime? LastChecked
         {
             get { var s = _lastChecked; return s == null ? (DateTime?)null : DateTime.ParseExact(s, "o", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind); }
-            private set { _lastChecked = value?.ToString("o"); }
+            private set
+            {
+                var text = value?.ToString("o");
+                if (_lastChecked == text)
+                    return;
+                _lastChecked = text;
+                RaiseStateChanged();
+            }
         }
         public static string LastError
         {
             get { return _lastError; }
-            private set { _lastError = value; }
+            private set
+            {
+                if (_lastError == value)
+                    return;
+                _lastError = value;
+                RaiseStateChanged();
+            }
         }
         public static string Status
         {
             get { return _status; }
-            private set { _status = value; }
+            private set
+            {
+                if (_status == value)
+                    return;
+                _status = value;
+                RaiseStateChanged();
+            }
+        }
+
+        /// <summary>
+        /// Records that a check has just completed: the wall-clock instant, for anyone who wants
+        /// to say WHEN, and the monotonic reading that "checked 4m ago" is measured from. Both
+        /// are taken here, one after the other, so the two can never describe different moments.
+        /// </summary>
+        private static void MarkChecked()
+        {
+            Interlocked.Exchange(ref _checkedAtMs, _sinceStart.ElapsedMilliseconds);
+            // Last, because its setter is what announces the pair.
+            LastChecked = DateTime.Now;
         }
 
         /// <summary>
@@ -104,6 +168,71 @@ namespace OutlookAI.Services
         public static bool IsChecking
         {
             get { return Volatile.Read(ref _checking) != 0; }
+        }
+
+        /// <summary>
+        /// Raised whenever anything a version indicator shows has moved: <see cref="Status"/>,
+        /// <see cref="LastError"/>, <see cref="LastChecked"/> or <see cref="IsChecking"/>. It
+        /// exists so the indicators can stop asking. They used to re-read <see cref="VersionLine"/>
+        /// once a second, per open compose window plus the settings dialog, purely to notice a
+        /// change that this class knew about the moment it happened.
+        ///
+        /// TWO THINGS A SUBSCRIBER MUST DO.
+        ///
+        /// It can arrive on ANY THREAD - the poll callback runs on a thread-pool thread, and
+        /// <see cref="CheckNowAsync"/>'s work runs on another - so a WinForms subscriber has to
+        /// marshal before it touches a control. <c>AITaskPane.OnUpdateStateChanged</c> and
+        /// <c>SettingsDialog.OnUpdateStateChanged</c> do it the same fire-and-forget
+        /// <c>BeginInvoke</c> way both already marshal a theme change.
+        ///
+        /// And it is STATIC, so every subscriber must detach on dispose. One <c>AITaskPane</c>
+        /// exists per open compose window; a subscription left behind roots that pane, and the
+        /// window behind it, for the life of the Outlook process.
+        ///
+        /// WHAT IT DOES NOT COVER is the passage of time. "checked 4m ago" becomes "5m ago"
+        /// with nothing in this class changing at all, which is why <see cref="VersionLineTickMs"/>
+        /// still exists.
+        /// </summary>
+        public static event EventHandler StateChanged;
+
+        /// <summary>
+        /// Fires <see cref="StateChanged"/>, isolating the subscribers from each other the same
+        /// way <c>ThemeService</c> does: one that throws must not stop the rest being told, and
+        /// must not escape into the poll timer's callback, where an unobserved exception on a
+        /// thread-pool thread takes Outlook down with it.
+        /// </summary>
+        private static void RaiseStateChanged()
+        {
+            var handler = StateChanged;
+            if (handler == null)
+                return;
+            foreach (EventHandler subscriber in handler.GetInvocationList())
+            {
+                try { subscriber(null, EventArgs.Empty); }
+                catch (Exception ex) { Debug.WriteLine("UpdateService.StateChanged: " + ex.Message); }
+            }
+        }
+
+        /// <summary>
+        /// Claims the one-at-a-time guard and announces it, or answers false because a check is
+        /// already running. The announcement is not optional: <see cref="IsChecking"/> is part of
+        /// what an indicator shows - "checking…" on the line, and both "Check for updates"
+        /// controls disabled - so a transition nobody is told about sits stale on screen until
+        /// the slow rollover tick happens to notice it.
+        /// </summary>
+        private static bool TryClaimCheck()
+        {
+            if (Interlocked.CompareExchange(ref _checking, 1, 0) != 0)
+                return false;
+            RaiseStateChanged();
+            return true;
+        }
+
+        /// <summary>Releases the guard claimed by <see cref="TryClaimCheck"/>, and announces that too.</summary>
+        private static void ReleaseCheck()
+        {
+            if (Interlocked.Exchange(ref _checking, 0) != 0)
+                RaiseStateChanged();
         }
 
         /// <summary>
@@ -118,20 +247,26 @@ namespace OutlookAI.Services
         }
 
         /// <summary>
-        /// How often a version indicator has to re-read <see cref="VersionLine"/>. It lives
-        /// here rather than in either piece of UI for the same reason the wording does: the
-        /// sidebar and the settings dialog were ticking at the same rate by coincidence, in two
-        /// files, and one of them could have been changed without the other.
+        /// How often a version indicator has to re-read <see cref="VersionLine"/> WITH NOTHING
+        /// HAVING HAPPENED. It lives here rather than in either piece of UI for the same reason
+        /// the wording does: the sidebar and the settings dialog were ticking at the same rate
+        /// by coincidence, in two files, and one of them could have been changed without the
+        /// other.
         ///
-        /// One second, and that is deliberately faster than the once-a-minute rollover it
-        /// serves: the tick is also how a check started in the OTHER indicator becomes visible
-        /// here, so slowing it slows down a status line the user is watching. Both readers make
-        /// an unchanged tick free (neither repaints, and the dialog does not re-lay out), which
-        /// is what makes the rate affordable. <c>TODO.md</c> tracks replacing the polling half
-        /// of this with a StateChanged event, after which only the rollover needs a timer at
-        /// all and it can drop to 30-60s.
+        /// It has exactly one job left, and it is not state. Every state change - a check
+        /// starting, finishing, failing, an update downloading - now arrives on
+        /// <see cref="StateChanged"/> the instant it happens, from whichever indicator or poll
+        /// caused it. What no event can announce is the passage of time: "checked 4m ago"
+        /// becomes "5m ago" because a minute went by, not because anything changed. So this is
+        /// the rollover tick, and nothing else.
+        ///
+        /// 30 seconds, which is the fast end of the 30-60s <c>TODO.md</c> asked for: the text it
+        /// serves has one-minute resolution, so half that period bounds how long a stale minute
+        /// can stay on screen, and a tick that finds nothing to say costs a string compare and
+        /// no layout in both readers. It was 1000 ms when it also had to notice state, which is
+        /// 60x the resolution of the only thing it now displays.
         /// </summary>
-        public const int VersionLineTickMs = 1000;
+        public const int VersionLineTickMs = 30000;
 
         private static string DescribeInterval(TimeSpan span)
         {
@@ -161,7 +296,6 @@ namespace OutlookAI.Services
         /// </summary>
         private static string DescribeState()
         {
-            var lastChecked = LastChecked;
             var error = LastError;
             var status = Status;
 
@@ -170,11 +304,15 @@ namespace OutlookAI.Services
                 return status;
             if (IsChecking)
                 return StatusChecking;
-            if (lastChecked == null)
+            var checkedAtMs = Interlocked.Read(ref _checkedAtMs);
+            if (checkedAtMs == NeverChecked)
                 return error != null ? null : StatusChecking;
 
-            var ago = DateTime.Now - lastChecked.Value;
-            if (ago < TimeSpan.Zero) ago = TimeSpan.Zero;
+            // Two readings of ONE monotonic clock, so this cannot come out negative. That is why
+            // the "if (ago < TimeSpan.Zero) ago = TimeSpan.Zero" clamp that used to sit here is
+            // gone rather than kept: it was never a rule about elapsed time, it was a patch over
+            // wall clock moving backwards underneath the subtraction.
+            var ago = TimeSpan.FromMilliseconds(_sinceStart.ElapsedMilliseconds - checkedAtMs);
             if (ago.TotalSeconds < 60)
                 return "checked just now";
             if (ago.TotalMinutes < 60)
@@ -245,7 +383,7 @@ namespace OutlookAI.Services
                 return Task.CompletedTask;
             }
 
-            if (Interlocked.CompareExchange(ref _checking, 1, 0) != 0)
+            if (!TryClaimCheck())
                 return Task.CompletedTask;
 
             try
@@ -257,7 +395,7 @@ namespace OutlookAI.Services
                 // Only reachable if the work could not even be queued, but releasing the guard
                 // here is what stops that being permanent: claimed and never released, it wedges
                 // the updater for the session and leaves both indicators stuck on "checking…".
-                Interlocked.Exchange(ref _checking, 0);
+                ReleaseCheck();
                 LastError = ex.Message;
                 return Task.CompletedTask;
             }
@@ -287,7 +425,7 @@ namespace OutlookAI.Services
                     {
                         if (response.StatusCode == HttpStatusCode.NotModified)
                         {
-                            LastChecked = DateTime.Now;
+                            MarkChecked();
                             LastError = null;
                             return;
                         }
@@ -298,7 +436,7 @@ namespace OutlookAI.Services
                             return;
                         }
 
-                        LastChecked = DateTime.Now;
+                        MarkChecked();
                         LastError = null;
 
                         newEtag = response.Headers.ETag?.Tag;
@@ -475,7 +613,7 @@ namespace OutlookAI.Services
                 {
                     try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
                 }
-                Interlocked.Exchange(ref _checking, 0);
+                ReleaseCheck();
             }
         }
 

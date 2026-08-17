@@ -123,10 +123,13 @@ namespace OutlookAI.TaskPane
         private readonly Button btnCheckUpdates;
 
         /// <summary>
-        /// Keeps "checked 4m ago" honest and picks up a check finishing. The rate is
-        /// <see cref="UpdateService.VersionLineTickMs"/>, shared with the sidebar's indicator so
-        /// the two cannot be tuned apart; <see cref="RefreshVersionLine"/> makes an unchanged
-        /// tick free, so this costs nothing while nothing is happening.
+        /// Keeps "checked 4m ago" honest, and nothing else - a check starting or finishing
+        /// arrives on <see cref="UpdateService.StateChanged"/> instead, which is why this ticks
+        /// at <see cref="UpdateService.VersionLineTickMs"/> = 30s rather than the 1s it needed
+        /// while it was also the only way to notice a state change. The rate is shared with the
+        /// sidebar's indicator so the two cannot be tuned apart, and
+        /// <see cref="RefreshVersionLine"/> makes an unchanged tick free, so this costs nothing
+        /// while nothing is happening.
         /// </summary>
         private readonly Timer _versionTimer;
 
@@ -485,14 +488,14 @@ namespace OutlookAI.TaskPane
             ApplyTheme();
             ThemeService.ThemeChanged += OnThemeChanged;
 
+            // Every update state change arrives on the event, from whichever indicator or poll
+            // caused it. The timer below is left with the one job no event can do.
+            UpdateService.StateChanged += OnUpdateStateChanged;
+
             // Only ever re-lays the window out when the line actually changed, which on most
             // ticks it has not: "checked 4m ago" turns over once a minute.
             _versionTimer = new Timer { Interval = UpdateService.VersionLineTickMs };
-            _versionTimer.Tick += (s, e) =>
-            {
-                if (RefreshVersionLine())
-                    RelayoutAfterTextChange();
-            };
+            _versionTimer.Tick += (s, e) => RefreshVersionLineAndRelayout();
             _versionTimer.Start();
 
             RefreshFromState();
@@ -1566,9 +1569,12 @@ namespace OutlookAI.TaskPane
         /// window replaces, a re-layout reset the scrolled viewport to the top, and the version
         /// line changes once a minute all on its own as "checked 4m ago" becomes 5m - so a free
         /// re-layout meant the dialog scrolled itself back to the top every minute while the user
-        /// was reading it. Here the line has a tab to itself and the layout is docked, but the
-        /// tick still runs once a second for the life of the window and there is no reason to
-        /// spend a full measure-and-arrange pass on a string that did not move. Never throws.
+        /// was reading it. Here the line has a tab to itself and the layout is docked, but a
+        /// rollover tick and an <see cref="UpdateService.StateChanged"/> refresh both still land
+        /// here unprompted for the life of the window, and there is no reason to spend a full
+        /// measure-and-arrange pass on a string that did not move. Callers go through
+        /// <see cref="RefreshVersionLineAndRelayout"/> so none of them can drop the gate.
+        /// Never throws.
         /// </summary>
         private bool RefreshVersionLine()
         {
@@ -1600,6 +1606,38 @@ namespace OutlookAI.TaskPane
                 Debug.WriteLine("Version line refresh: " + ex.Message);
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Repaints the version line and re-lays the window out only if
+        /// <see cref="RefreshVersionLine"/> says the GEOMETRY moved. EVERY UNPROMPTED REFRESH
+        /// GOES THROUGH HERE - the rollover tick, the <see cref="UpdateService.StateChanged"/>
+        /// event and the manual check - so none of them can be the one that forgets the gate and
+        /// re-lays the page the user is reading out from under them. (<c>RefreshFromState</c> is
+        /// the one deliberate exception: it re-lays the window out unconditionally at the end,
+        /// so the gate has nothing to decide.)
+        /// </summary>
+        private void RefreshVersionLineAndRelayout()
+        {
+            if (RefreshVersionLine())
+                RelayoutAfterTextChange();
+        }
+
+        /// <summary>
+        /// The update state moved. Marshalled the same fire-and-forget way
+        /// <see cref="OnThemeChanged"/> is, and for the same reason:
+        /// <see cref="UpdateService.StateChanged"/> is raised from the poll's thread-pool thread
+        /// and from the worker a manual check runs on.
+        ///
+        /// The event is static, so <see cref="Dispose(bool)"/> unhooking it is not optional.
+        /// </summary>
+        private void OnUpdateStateChanged(object sender, EventArgs e)
+        {
+            if (_disposedCustom || IsDisposed || !IsHandleCreated)
+                return;
+            try { BeginInvoke((Action)RefreshVersionLineAndRelayout); }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
         }
 
         /// <summary>
@@ -1649,8 +1687,7 @@ namespace OutlookAI.TaskPane
             if (_checkInFlight)
                 return;
             _checkInFlight = true;
-            if (RefreshVersionLine())
-                RelayoutAfterTextChange();
+            RefreshVersionLineAndRelayout();
 
             try
             {
@@ -1665,8 +1702,7 @@ namespace OutlookAI.TaskPane
                 // The await can outlive the window - RefreshVersionLine is a no-op once it has
                 // gone, and the flag is only read from here.
                 _checkInFlight = false;
-                if (RefreshVersionLine())
-                    RelayoutAfterTextChange();
+                RefreshVersionLineAndRelayout();
             }
         }
 
@@ -1935,9 +1971,10 @@ namespace OutlookAI.TaskPane
             if (disposing && !_disposedCustom)
             {
                 _disposedCustom = true;
-                // Static event: a subscription left behind roots this window for the life of the
+                // Static events: a subscription left behind roots this window for the life of the
                 // process, and there is one of these per Outlook session.
                 ThemeService.ThemeChanged -= OnThemeChanged;
+                UpdateService.StateChanged -= OnUpdateStateChanged;
                 try
                 {
                     if (_versionTimer != null)

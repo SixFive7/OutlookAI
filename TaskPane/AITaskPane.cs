@@ -46,13 +46,6 @@ namespace OutlookAI.TaskPane
         /// </summary>
         private const int AnswerExcerptChars = 60;
 
-        /// <summary>
-        /// Recipients included in the signature-selection prompt. A cap exists because the
-        /// prompt is sent whole and a distribution list would swamp it; the number is a
-        /// judgement about how many addresses still say something about the audience.
-        /// </summary>
-        private const int MaxRecipientsInPrompt = 20;
-
         private readonly bool _isInlineResponse;
         private Outlook.Inspector _owningInspector;
         private readonly Timer _versionTimer;
@@ -89,7 +82,17 @@ namespace OutlookAI.TaskPane
         // Debug: DebugClicksRequired clicks within DebugClickWindowSeconds to enable
         private bool _debug;
         private int _debugClickCount;
-        private DateTime _debugFirstClick;
+
+        /// <summary>
+        /// How long the current run of clicks has been going. A <see cref="Stopwatch"/> and not
+        /// a pair of <c>DateTime.Now</c> readings, because this is a DURATION: wall clock jumps
+        /// at a DST boundary, an NTP correction or a manual clock change, and subtracting two
+        /// readings across one of those makes the three-second window either enormous or
+        /// negative. Cosmetic here - it is an easter egg - but it is the same defect as the
+        /// update line's, and there is no reason to keep one instance of it.
+        /// </summary>
+        private readonly Stopwatch _debugClickWindow = new Stopwatch();
+
         private readonly StringBuilder _debugLog = new StringBuilder();
         private bool _lastStatusError;
 
@@ -122,11 +125,34 @@ namespace OutlookAI.TaskPane
             lblVersion.Click += lblVersion_Click;
             lblVersion.DoubleClick += lblVersion_Click;
 
+            // Every state change arrives on the event; the timer is only here for the one thing
+            // no event can announce, the "checked 4m ago" rollover. See VersionLineTickMs.
+            UpdateService.StateChanged += OnUpdateStateChanged;
             _versionTimer = new Timer();
             _versionTimer.Interval = UpdateService.VersionLineTickMs;
             _versionTimer.Tick += (s, ev) => UpdateVersionLabel();
             _versionTimer.Start();
             UpdateVersionLabel();
+        }
+
+        /// <summary>
+        /// The update state moved. Marshalled the same fire-and-forget way
+        /// <see cref="OnThemeChanged"/> marshals a theme switch, and for the same reason:
+        /// <see cref="UpdateService.StateChanged"/> is raised from the poll's thread-pool thread
+        /// and from the worker a manual check runs on, so it arrives on a thread with no business
+        /// touching controls, and a busy UI thread must not be able to stall the raiser.
+        ///
+        /// Like <see cref="OnPromptsChanged"/> this hooks a STATIC event, so
+        /// <see cref="DisposeCustomResources"/> unhooking it is not optional - there is one of
+        /// these panes per open compose window.
+        /// </summary>
+        private void OnUpdateStateChanged(object sender, EventArgs e)
+        {
+            if (_disposed || this.IsDisposed || !this.IsHandleCreated)
+                return;
+            try { this.BeginInvoke((Action)UpdateVersionLabel); }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
         }
 
         // The wording moved into UpdateService so this indicator and the one in OutlookAI
@@ -177,11 +203,10 @@ namespace OutlookAI.TaskPane
         {
             if (_debug) return;
 
-            var now = DateTime.Now;
-            if (_debugClickCount == 0 || (now - _debugFirstClick).TotalSeconds > DebugClickWindowSeconds)
+            if (_debugClickCount == 0 || _debugClickWindow.Elapsed.TotalSeconds > DebugClickWindowSeconds)
             {
                 _debugClickCount = 0;
-                _debugFirstClick = now;
+                _debugClickWindow.Restart();
             }
 
             _debugClickCount++;
@@ -968,9 +993,18 @@ namespace OutlookAI.TaskPane
         }
 
         /// <summary>
-        /// Compact "Name &lt;address&gt;" summary of the draft's recipients (capped) as
-        /// context for the signature choice. Empty when unavailable - the choice then
-        /// rests on draft/thread language alone.
+        /// Compact "Name &lt;address&gt;" summary of ALL of the draft's recipients, as context for
+        /// the signature choice. Empty when unavailable - the choice then rests on draft/thread
+        /// language alone.
+        ///
+        /// There is deliberately no cap. There was one, at 20, and it truncated in silence: a
+        /// mail to 40 people sent the model the first 20 with nothing to say the list had been
+        /// cut, so it reasoned about an audience that did not exist. The cap's stated reason was
+        /// that "a distribution list would swamp the prompt", which is not how Outlook models a
+        /// DL - an unexpanded list is ONE recipient here, its own name, and the user has to
+        /// expand it by hand to get the members. What is actually being budgeted is a handful of
+        /// short strings, next to a prompt that already carries the whole draft, the quoted
+        /// thread and an excerpt of every installed signature.
         /// </summary>
         private string GetRecipientSummary()
         {
@@ -984,7 +1018,7 @@ namespace OutlookAI.TaskPane
                 recipients = ((dynamic)item).Recipients;
                 int count = ((dynamic)recipients).Count;
                 var sb = new StringBuilder();
-                for (int i = 1; i <= count && i <= MaxRecipientsInPrompt; i++)
+                for (int i = 1; i <= count; i++)
                 {
                     object recipient = null;
                     try
@@ -1549,6 +1583,9 @@ namespace OutlookAI.TaskPane
             // compose window behind it - for the life of the Outlook process, once per window
             // ever opened.
             PromptStore.Changed -= OnPromptsChanged;
+            // Static for the same reason and with the same consequence: one pane per compose
+            // window, and a pane left subscribed is a pane that never goes away.
+            UpdateService.StateChanged -= OnUpdateStateChanged;
             grpQuickActions.SizeChanged -= grpQuickActions_SizeChanged;
             this.FontChanged -= AITaskPane_FontChanged;
             _versionTimer?.Stop();

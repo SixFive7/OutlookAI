@@ -35,38 +35,6 @@
   files. That gap was fixed in the same work — an in-place upgrade will not leave a stale
   COM host holding its own image open.
 
-- [ ] **Make the update indicators event-driven instead of polled.**
-  `UpdateService` is a static class whose background timer writes `volatile` fields, and it
-  raises nothing when they change. So both version indicators — `lblVersion` in
-  `TaskPane/AITaskPane.cs` and the "Version and updates" group in `TaskPane/SettingsDialog.cs`
-  — poll it on a 1-second `Windows.Forms.Timer` instead.
-
-  That tick is doing two jobs at once, and only one of them wants to be fast:
-  - **State changes** (`checking…` → `downloading v3.2…` → `ready - installs on close`)
-    should appear promptly, and today only do so because the poll is quick.
-  - **The relative time** ("checked 4m ago") changes at most once a minute, so for that the
-    poll runs roughly 60× more often than the resolution it displays.
-
-  Steps:
-  - [ ] Add a `StateChanged` event to `UpdateService`, raised whenever `LastChecked`,
-        `LastError` or `Status` changes. Note it can fire from a thread-pool thread (the
-        poll timer and `CheckNowAsync` both run off the UI thread), so subscribers must
-        marshal — `AITaskPane.InvokeOnUI` and the `BeginInvoke` pattern in
-        `SettingsDialog.OnThemeChanged` are the two existing examples.
-  - [ ] Subscribe both indicators, and unsubscribe on dispose. `SettingsDialog` is modeless
-        and single-instance; `AITaskPane` is created per inspector, so several can be live
-        at once and every one of them must detach.
-  - [ ] Keep a slow timer (30–60s) purely for the "4m ago → 5m ago" rollover. This part
-        genuinely cannot be event-driven: nothing in the service changes when a minute
-        passes. It is the reason the tick cannot be removed outright.
-  - [ ] Preserve the property `SettingsDialog.RefreshVersionLine` already has — it returns
-        whether the *geometry* changed, not whether the text did, so a repaint that needs no
-        re-layout cannot reset a scrolled dialog to the top. Any rework must keep that,
-        because `PerformDialogLayout` scrolls to the top by design (see the note below).
-
-  Not blocking anything: the current cost is a string compare and no layout, so this is
-  tidiness rather than a fix.
-
 - [ ] **Audit the codebase for other timers and time-based behaviour.** The update poll above
   was found by accident while adding the manual check; nothing has ever looked at the set as
   a whole. Worth one pass to find polls that should be events, intervals that no longer match
@@ -76,15 +44,17 @@
   - `Services/UpdateService.cs` — the 10-minute `System.Threading.Timer` poll, the 5-minute
     `HttpClient.Timeout`, and the `Get-Process outlook | Wait-Process; Start-Sleep -Seconds 2`
     in the handed-off installer script.
-  - `TaskPane/AITaskPane.cs` and `TaskPane/SettingsDialog.cs` — the 1-second version ticks.
   - `McpServer/` — the COM-host supervision and health paths carry several timeouts and
     back-off intervals (the wedged-Outlook work added re-check and cool-down periods).
 
   Things to check for specifically:
   - **`DateTime.Now` used for elapsed time.** It is wall-clock and can jump backwards over a
-    DST change or a clock sync. `UpdateService.DescribeState` already clamps a negative
-    interval to zero, which is a symptom of exactly this; `Stopwatch` is the right tool where
-    a duration is what is meant.
+    DST change or a clock sync. `Stopwatch` is the right tool where a duration is meant.
+    **Done for the add-in:** `UpdateService` measures "checked 4m ago" from a process-wide
+    `Stopwatch` (`_sinceStart` / `_checkedAtMs`) and the negative-interval clamp that was the
+    symptom is gone; `AITaskPane`'s debug-click window is a `Stopwatch` too. `LastChecked`
+    and the debug log's `HH:mm:ss` stamps stay wall-clock on purpose — those are absolute
+    instants, not durations. `McpServer/` has not been swept for this.
   - **Timers that outlive what they poll**, and any that are never disposed.
   - **Intervals chosen once and never revisited** against what they are actually waiting for.
 
