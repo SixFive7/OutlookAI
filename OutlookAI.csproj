@@ -196,6 +196,12 @@
     <Compile Include="TaskPane\SettingsDialog.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="TaskPane\SettingsDialog.Prompts.cs">
+      <DependentUpon>SettingsDialog.cs</DependentUpon>
+    </Compile>
+    <Compile Include="TaskPane\ThemedTabControl.cs">
+      <SubType>Component</SubType>
+    </Compile>
     <Compile Include="AddInAutomation.cs" />
     <Compile Include="Ribbon.cs" />
     <Compile Include="ThisAddIn.cs">
