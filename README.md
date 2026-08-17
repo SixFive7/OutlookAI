@@ -19,6 +19,7 @@ An AI-powered email assistant for Microsoft Outlook: a VSTO add-in with an AI wr
   - [Context Awareness](#context-awareness)
   - [Iterative Refinement](#iterative-refinement)
   - [Editable Prompts and Quick Buttons](#editable-prompts-and-quick-buttons)
+    - [Choosing the model](#choosing-the-model)
   - [Outlook Tuning and Settings](#outlook-tuning-and-settings)
   - [Dark Mode](#dark-mode)
   - [Automatic Updates](#automatic-updates)
@@ -100,6 +101,14 @@ Every instruction OutlookAI sends to the AI is yours to change. **OutlookAI Sett
 - **Prompts** - the four prompts that wrap every request: the always-sent preamble (role, untrusted-content rules, output contract, and the rule to leave no trace of AI in wording or characters), the reply rules added when there is a quoted thread, the signature rule added when a signature is present, and the signature-selection prompt. Each has its own **Restore default**.
 
 Prompt and button edits are held until you press **Apply now**, so closing without saving discards them. The tuning tick boxes on the other tabs still apply the moment you click them, as they always have.
+
+### Choosing the model
+
+The **Claude Code** tab has a **Model** group. Out of the box OutlookAI chooses nothing: it sends no `--model` argument, so Claude Code uses whatever you have configured - its own `model` setting, then `ANTHROPIC_MODEL`, then your account's default. That means OutlookAI follows your choice and picks up new Claude models without an update.
+
+To override it, pick a family alias (`opus`, `sonnet`, `haiku`, `fable`, `opusplan`, or an extended-context variant) - aliases always resolve to the newest model in that family, so the list cannot go stale. **Custom** lets you type a specific model id.
+
+Two things worth knowing. If you type an id OutlookAI does not recognise, it says it cannot verify what that model supports rather than guessing - it has no way to check. And if Claude Code rejects your choice, it warns and quietly answers on its own default instead; OutlookAI surfaces that warning on the first reply it affects, so a silently substituted model does not go unnoticed.
 
 Nothing is stored until you change something, and only your changes are stored. Anything you have not touched keeps following the shipped default, so improvements to the built-in prompts still reach you; anything you have edited stays exactly as you wrote it. Edits apply to the next action - no Outlook restart - and every open compose window picks them up at once.
 
@@ -289,8 +298,8 @@ One rule for other automation on the machine: do not drive `Application.Quit()` 
 
 The compose sidebar is focused on email composition assistance. The following are **not** supported there:
 
-- **No model selection** — Hard-coded to Claude Opus 4.6. There is no UI to choose a different model.
-- **No request cancellation** — Once an action is submitted, it runs until completion or times out after 2 minutes. There is no cancel button.
+- **No request cancellation** — Once an action is submitted, it runs until completion or times out after 2 minutes (overridable in the registry). There is no cancel button.
+- **No verified model capability check** — OutlookAI can tell you it does not recognise a model id, but it cannot verify what a model supports. Capability data lives behind an Anthropic API key this product deliberately does not require.
 - **No per-account or per-recipient prompts** — Prompt text and the quick-button set are one shared configuration; they cannot vary by mail account, recipient or folder.
 - **No preview before applying** — AI results are written directly into the email draft. There is no intermediate preview/accept/reject step.
 - **No undo** — Standard Ctrl+Z in the Outlook editor may work for simple cases, but there is no dedicated undo for AI operations.
@@ -437,8 +446,8 @@ This gives the zero-latency benefit of a persistent process with the simplicity 
 
 **Technical details:**
 - CLI path: `%USERPROFILE%\.local\bin\claude.exe` — the native installer's location, which is the only path searched (PATH is not consulted)
-- CLI arguments: `-p - --output-format json --max-turns 1 --model "claude-opus-4-6"`
-- Timeout: 2 minutes per request
+- CLI arguments: `-p - --output-format json --max-turns 1`, with ` --model "<value>"` appended only when you have chosen a model in [OutlookAI Settings](#outlook-tuning-and-settings). With no choice stored, no `--model` argument is sent at all and Claude Code resolves the model itself - its own `model` setting, then `ANTHROPIC_MODEL`, then your account default
+- Timeout: 2 minutes per request (overridable via `HKCU\Software\OutlookAI\RequestTimeoutSeconds`)
 - Output: JSON response parsed for the `result` field (with `text` field as fallback for older CLI versions)
 - By default the system prompt instructs Claude to return plain text only — no markdown, no HTML, no code fences. That instruction is editable (see [Editable Prompts and Quick Buttons](#editable-prompts-and-quick-buttons)); the editor warns before you save a preamble that drops it, because it is what keeps fences and tags out of your mail
 

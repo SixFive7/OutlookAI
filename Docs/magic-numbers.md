@@ -172,7 +172,7 @@ worked around without waiting for a release.
 
 | Value | Type | Default | Effect |
 |---|---|---|---|
-| `HKCU\Software\OutlookAI\Model` | String | absent -> `claude-opus-4-6` | the model the CLI is asked for. Accepted only if it is letters, digits, dots, dashes and underscores - it goes inside a quoted `--model "..."` argument, and anything else falls back to the default rather than being passed on |
+| `HKCU\Software\OutlookAI\Model` | String | absent -> **no `--model` argument at all**, so Claude Code resolves the model itself | the model the CLI is asked for. Written by the Model group on the Claude Code settings tab: a picked alias applies immediately, a typed id commits on Enter, on leaving the box, on Apply now and on close. Accepted only if it is letters, digits, dots, dashes, underscores and square brackets (the last for `opus[1m]` / `sonnet[1m]`) - it goes inside a quoted `--model "..."` argument, and anything else is refused rather than passed on. No model id is hardcoded anywhere any more |
 | `HKCU\Software\OutlookAI\RequestTimeoutSeconds` | DWORD | absent -> `120` | seconds one request may take; clamped to 10 - 3600, so a typo cannot disable the cap or make it useless |
 
 ---
