@@ -22,12 +22,7 @@ namespace OutlookAI.TaskPane
         {
             this.lblTitle = new System.Windows.Forms.Label();
             this.grpQuickActions = new System.Windows.Forms.GroupBox();
-            this.btnProofread = new System.Windows.Forms.Button();
-            this.btnRevise = new System.Windows.Forms.Button();
-            this.btnShorten = new System.Windows.Forms.Button();
-            this.btnLengthen = new System.Windows.Forms.Button();
-            this.btnFormal = new System.Windows.Forms.Button();
-            this.btnFriendly = new System.Windows.Forms.Button();
+            this.flowQuickActions = new System.Windows.Forms.FlowLayoutPanel();
             this.btnSelectSignature = new System.Windows.Forms.Button();
             this.grpInstruction = new System.Windows.Forms.GroupBox();
             this.txtPrompt = new System.Windows.Forms.TextBox();
@@ -39,6 +34,7 @@ namespace OutlookAI.TaskPane
             this.lnkUpdateError = new System.Windows.Forms.LinkLabel();
             this.lnkCheckUpdates = new System.Windows.Forms.LinkLabel();
             this.grpQuickActions.SuspendLayout();
+            this.flowQuickActions.SuspendLayout();
             this.grpInstruction.SuspendLayout();
             this.SuspendLayout();
 
@@ -52,75 +48,46 @@ namespace OutlookAI.TaskPane
             this.lblTitle.Text = "AI Writing Assistant";
 
             // grpQuickActions
+            // Only the WIDTH is set here: it anchors to the pane, so it has to start out right.
+            // The height is whatever the buttons inside end up needing and is computed by
+            // LayoutPane(), which also places everything below this group. The 56 below is what
+            // that comes to with no quick buttons at all, so the value here is never a lie.
             this.grpQuickActions.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
-            this.grpQuickActions.Controls.Add(this.btnProofread);
-            this.grpQuickActions.Controls.Add(this.btnRevise);
-            this.grpQuickActions.Controls.Add(this.btnShorten);
-            this.grpQuickActions.Controls.Add(this.btnLengthen);
-            this.grpQuickActions.Controls.Add(this.btnFormal);
-            this.grpQuickActions.Controls.Add(this.btnFriendly);
+            this.grpQuickActions.Controls.Add(this.flowQuickActions);
             this.grpQuickActions.Controls.Add(this.btnSelectSignature);
             this.grpQuickActions.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
-            this.grpQuickActions.Location = new System.Drawing.Point(10, 40);
+            // Named, not a literal: UiScale reads this back to recover the factor
+            // AutoScaleMode.Font applied, so the two have to be the same number.
+            this.grpQuickActions.Location = new System.Drawing.Point(PaneMargin, QuickActionsDesignTop);
             this.grpQuickActions.Name = "grpQuickActions";
-            this.grpQuickActions.Size = new System.Drawing.Size(240, 122);
+            this.grpQuickActions.Size = new System.Drawing.Size(240, 56);
             this.grpQuickActions.TabIndex = 0;
             this.grpQuickActions.TabStop = false;
             this.grpQuickActions.Text = "Quick Actions (Edit Current Email)";
 
-            // btnProofread
-            this.btnProofread.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.btnProofread.Location = new System.Drawing.Point(10, 22);
-            this.btnProofread.Size = new System.Drawing.Size(70, 28);
-            this.btnProofread.Text = "Proofread";
-            this.btnProofread.UseVisualStyleBackColor = true;
-            this.btnProofread.Click += new System.EventHandler(this.btnProofread_Click);
-
-            // btnRevise
-            this.btnRevise.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.btnRevise.Location = new System.Drawing.Point(85, 22);
-            this.btnRevise.Size = new System.Drawing.Size(70, 28);
-            this.btnRevise.Text = "Revise";
-            this.btnRevise.UseVisualStyleBackColor = true;
-            this.btnRevise.Click += new System.EventHandler(this.btnRevise_Click);
-
-            // btnShorten
-            this.btnShorten.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.btnShorten.Location = new System.Drawing.Point(160, 22);
-            this.btnShorten.Size = new System.Drawing.Size(70, 28);
-            this.btnShorten.Text = "Shorten";
-            this.btnShorten.UseVisualStyleBackColor = true;
-            this.btnShorten.Click += new System.EventHandler(this.btnShorten_Click);
-
-            // btnLengthen
-            this.btnLengthen.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.btnLengthen.Location = new System.Drawing.Point(10, 55);
-            this.btnLengthen.Size = new System.Drawing.Size(70, 28);
-            this.btnLengthen.Text = "Lengthen";
-            this.btnLengthen.UseVisualStyleBackColor = true;
-            this.btnLengthen.Click += new System.EventHandler(this.btnLengthen_Click);
-
-            // btnFormal
-            this.btnFormal.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.btnFormal.Location = new System.Drawing.Point(85, 55);
-            this.btnFormal.Size = new System.Drawing.Size(70, 28);
-            this.btnFormal.Text = "Formal";
-            this.btnFormal.UseVisualStyleBackColor = true;
-            this.btnFormal.Click += new System.EventHandler(this.btnFormal_Click);
-
-            // btnFriendly
-            this.btnFriendly.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.btnFriendly.Location = new System.Drawing.Point(160, 55);
-            this.btnFriendly.Size = new System.Drawing.Size(70, 28);
-            this.btnFriendly.Text = "Friendly";
-            this.btnFriendly.UseVisualStyleBackColor = true;
-            this.btnFriendly.Click += new System.EventHandler(this.btnFriendly_Click);
+            // flowQuickActions
+            // Host for the quick-action buttons. There are no buttons here because there is no
+            // fixed set of them any more: the pane builds one per entry in the user's saved button
+            // list (PromptStore) every time that list changes. Wrapping the buttons onto as many
+            // rows as they need is this panel's job, which is what lets a caption of any length
+            // and any button count lay out without a hard-coded grid to outgrow.
+            this.flowQuickActions.AutoSize = false;
+            this.flowQuickActions.FlowDirection = System.Windows.Forms.FlowDirection.LeftToRight;
+            this.flowQuickActions.Margin = new System.Windows.Forms.Padding(0);
+            this.flowQuickActions.Name = "flowQuickActions";
+            this.flowQuickActions.Padding = new System.Windows.Forms.Padding(0);
+            this.flowQuickActions.TabIndex = 0;
+            this.flowQuickActions.WrapContents = true;
 
             // btnSelectSignature
+            // Location and width come from LayoutPane(): it sits directly under the last row of
+            // quick buttons, and there is no telling from here how many rows that is.
             this.btnSelectSignature.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
             this.btnSelectSignature.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.btnSelectSignature.Location = new System.Drawing.Point(10, 88);
+            this.btnSelectSignature.Location = new System.Drawing.Point(PaneMargin, GroupTopInset);
+            this.btnSelectSignature.Name = "btnSelectSignature";
             this.btnSelectSignature.Size = new System.Drawing.Size(220, 26);
+            this.btnSelectSignature.TabIndex = 1;
             this.btnSelectSignature.Text = "Select the best signature";
             this.btnSelectSignature.UseVisualStyleBackColor = true;
             this.btnSelectSignature.Click += new System.EventHandler(this.btnSelectSignature_Click);
@@ -132,7 +99,10 @@ namespace OutlookAI.TaskPane
             this.grpInstruction.Controls.Add(this.btnEditDraft);
             this.grpInstruction.Controls.Add(this.btnEditSelection);
             this.grpInstruction.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
-            this.grpInstruction.Location = new System.Drawing.Point(10, 167);
+            // Y comes from LayoutPane(), measured off the bottom of the quick-action group. The
+            // literal that used to be here was derived from that group's old fixed height, so a
+            // seventh button clipped and a taller group overlapped this one.
+            this.grpInstruction.Location = new System.Drawing.Point(PaneMargin, 0);
             this.grpInstruction.Name = "grpInstruction";
             this.grpInstruction.Size = new System.Drawing.Size(240, 170);
             this.grpInstruction.TabIndex = 1;
@@ -178,7 +148,8 @@ namespace OutlookAI.TaskPane
             this.lblStatus.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
             this.lblStatus.AutoEllipsis = true;
             this.lblStatus.Font = new System.Drawing.Font("Segoe UI", 8F);
-            this.lblStatus.Location = new System.Drawing.Point(10, 342);
+            // Y comes from LayoutPane(), same reason as grpInstruction above.
+            this.lblStatus.Location = new System.Drawing.Point(PaneMargin, 0);
             this.lblStatus.Name = "lblStatus";
             this.lblStatus.Size = new System.Drawing.Size(240, 32);
             this.lblStatus.Visible = false;
@@ -226,6 +197,10 @@ namespace OutlookAI.TaskPane
             // the update error (only when there is one), then the action, then the version —
             // the action next to the version it acts on, with the transient notice floating
             // above the pair rather than pushing them apart.
+            //
+            // That is also why the quick-action buttons are built inside grpQuickActions rather
+            // than added to this collection at runtime: appending to this.Controls after the
+            // footer would silently reorder it.
             this.Controls.Add(this.lnkUpdateError);
             this.Controls.Add(this.lnkCheckUpdates);
             this.Controls.Add(this.lblVersion);
@@ -235,6 +210,7 @@ namespace OutlookAI.TaskPane
             this.Controls.Add(this.lblStatus);
             this.Name = "AITaskPane";
             this.Size = new System.Drawing.Size(260, 500);
+            this.flowQuickActions.ResumeLayout(false);
             this.grpQuickActions.ResumeLayout(false);
             this.grpInstruction.ResumeLayout(false);
             this.grpInstruction.PerformLayout();
@@ -246,12 +222,7 @@ namespace OutlookAI.TaskPane
 
         private System.Windows.Forms.Label lblTitle;
         private System.Windows.Forms.GroupBox grpQuickActions;
-        private System.Windows.Forms.Button btnProofread;
-        private System.Windows.Forms.Button btnRevise;
-        private System.Windows.Forms.Button btnShorten;
-        private System.Windows.Forms.Button btnLengthen;
-        private System.Windows.Forms.Button btnFormal;
-        private System.Windows.Forms.Button btnFriendly;
+        private System.Windows.Forms.FlowLayoutPanel flowQuickActions;
         private System.Windows.Forms.Button btnSelectSignature;
         private System.Windows.Forms.GroupBox grpInstruction;
         private System.Windows.Forms.TextBox txtPrompt;
