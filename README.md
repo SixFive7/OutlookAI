@@ -143,7 +143,7 @@ The dialog also carries a **Mail server in Claude Code** section — where the [
 
 The task pane automatically matches your Outlook theme:
 
-- Detects the Office theme from the registry (`UI Theme` key under `HKCU\SOFTWARE\Microsoft\Office\16.0\Common`)
+- Detects the Office theme from the registry (`UI Theme` key under `HKCU\SOFTWARE\Microsoft\Office\<version>\Common`, for the Office version actually installed)
 - Falls back to the Windows system theme (`AppsUseLightTheme` under `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize`)
 - Applies a full dark color palette to all UI elements — buttons, text fields, labels, borders, status indicators — when dark mode is detected
 
