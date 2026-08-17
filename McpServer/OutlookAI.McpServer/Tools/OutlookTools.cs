@@ -389,24 +389,6 @@ public static class OutlookTools
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ShowSearchResults(query, scope, store, folder));
     }
 
-    /// <summary>
-    /// The "no trace of AI" directive, appended to every parameter that carries text
-    /// the recipient will read (body and body_html on all five drafting tools). Both halves of
-    /// the rule are load-bearing: wording (stock LLM phrasing) and characters (an em dash or a
-    /// curly quote in an Outlook mail is the single most recognisable tell). Deliberately terse
-    /// because it is emitted on the wire once per body parameter - the exhaustive version lives
-    /// in the add-in's own prompt, which is sent once per request.
-    /// </summary>
-    private const string HumanVoiceHint = " ENSURE THERE IS NO TRACE OF AI, BOTH IN WORDING AND CHARACTER USE - the body must "
-        + "read as the user's own writing. Characters: plain ASCII punctuation only - a hyphen (-) "
-        + "where you would reach for an em or en dash, straight quotes (' and \") never curly ones, three dots (...) never a "
-        + "single ellipsis character, no emoji or arrows, and in HTML no &mdash;/&ndash;/&hellip;/&rsquo;/&ldquo; entities. "
-        + "No stock AI phrasing: avoid \"I hope this email finds you well\", \"I wanted to reach out\", \"delve\", \"leverage\", "
-        + "\"streamline\", \"seamless\", \"robust\", \"in today's fast-paced world\", the \"it's not just X, it's Y\" "
-        + "construction, and paragraphs opening with \"Moreover\"/\"Furthermore\"/\"Additionally\". Vary sentence length, skip "
-        + "the closing paragraph that restates the mail, add no heading or bullet list the user did not ask for, and never "
-        + "mention or hint that AI wrote it.";
-
     private const string CcHint = "Cc recipient address(es), separated by ';' or ','. ADDED to the recipients Outlook already "
         + "put on the draft - existing recipients are never replaced. Addresses that do not resolve are reported back in "
         + "unresolvedRecipients (they stay on the draft for the user to fix), never dropped silently.";
@@ -429,8 +411,7 @@ public static class OutlookTools
         + "unsupported tag. Also removed: event handlers (on*), id/name/class attributes, and CSS that loads or executes anything. "
         + "Malformed markup is REPAIRED, not rejected - unclosed and mis-nested tags are closed, stray '<' is escaped, a stray "
         + "<li>/<tr>/<td> gets the list or table it needs. Everything that was changed comes back in htmlAdjustments, so read that "
-        + "field. VERIFY THE RESULT with read include_html=true - read's plain text hides layout problems."
-        + HumanVoiceHint;
+        + "field. VERIFY THE RESULT with read include_html=true - read's plain text hides layout problems.";
 
     private const string AttachmentsHint = "Files to attach, as ABSOLUTE paths on this machine (e.g. "
         + "\"C:\\\\Users\\\\me\\\\Documents\\\\offer.pdf\"). Any readable file is allowed - there is no folder restriction. "
@@ -456,7 +437,7 @@ public static class OutlookTools
         [Description("To recipient address(es), separated by ';' or ','.")] string to,
         [Description("Subject line.")] string subject,
         [Description("Plain-text body. Placed ABOVE the account's signature. Use body_html instead when the message needs formatting "
-            + "(headings, bold, lists, tables); exactly one of body or body_html is required." + HumanVoiceHint)]
+            + "(headings, bold, lists, tables); exactly one of body or body_html is required.")]
         string? body = null,
         [Description(BodyHtmlHint)] string? body_html = null,
         [Description(CcHint)] string? cc = null,
@@ -483,7 +464,7 @@ public static class OutlookTools
     public static async Task<CallToolResult> ReplyDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
         [Description("Plain-text reply body. Placed ABOVE the quoted original. Use body_html instead when the reply needs formatting; "
-            + "exactly one of body or body_html is required." + HumanVoiceHint)]
+            + "exactly one of body or body_html is required.")]
         string? body = null,
         [Description(BodyHtmlHint)] string? body_html = null,
         [Description(CcHint)] string? cc = null,
@@ -509,7 +490,7 @@ public static class OutlookTools
     public static async Task<CallToolResult> ReplyAllDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
         [Description("Plain-text reply body. Placed ABOVE the quoted original. Use body_html instead when the reply needs formatting; "
-            + "exactly one of body or body_html is required." + HumanVoiceHint)]
+            + "exactly one of body or body_html is required.")]
         string? body = null,
         [Description(BodyHtmlHint)] string? body_html = null,
         [Description(CcHint)] string? cc = null,
@@ -536,7 +517,7 @@ public static class OutlookTools
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to forward.")] string id,
         [Description("To recipient address(es), separated by ';' or ','.")] string to,
         [Description("Plain-text body. Placed ABOVE the forwarded mail. Use body_html instead when the message needs formatting; "
-            + "exactly one of body or body_html is required." + HumanVoiceHint)]
+            + "exactly one of body or body_html is required.")]
         string? body = null,
         [Description(BodyHtmlHint)] string? body_html = null,
         [Description(CcHint)] string? cc = null,
@@ -577,7 +558,7 @@ public static class OutlookTools
         [Description("The draft to revise: the entryId a draft tool returned (preferred), or a hit id of a saved, UNSENT draft.")]
         string id,
         [Description("New plain-text body. REPLACES your text in the draft region only - the signature and any quoted "
-            + "original survive. Omit to leave the body alone; exactly one of body or body_html may be supplied." + HumanVoiceHint)]
+            + "original survive. Omit to leave the body alone; exactly one of body or body_html may be supplied.")]
         string? body = null,
         [Description(BodyHtmlHint)] string? body_html = null,
         [Description("New subject line. Omit to keep the current one. On a reply/forward draft the threading is preserved "
