@@ -180,6 +180,9 @@
     <Compile Include="Services\McpRegistrationDecision.cs" />
     <Compile Include="Services\McpRegistrationService.cs" />
     <Compile Include="Services\OutlookTuningService.cs" />
+    <Compile Include="Services\PromptDefaults.cs" />
+    <Compile Include="Services\PromptLint.cs" />
+    <Compile Include="Services\PromptStore.cs" />
     <Compile Include="Services\SignatureStore.cs" />
     <Compile Include="Services\ThemeService.cs" />
     <Compile Include="Services\UpdateService.cs" />

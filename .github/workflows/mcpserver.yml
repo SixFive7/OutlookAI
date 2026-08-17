@@ -15,6 +15,9 @@ on:
       # here can break this workflow even though these files live with the add-in.
       - 'Services/McpConfigEditor.cs'
       - 'Services/McpRegistrationDecision.cs'
+      - 'Services/PromptDefaults.cs'
+      - 'Services/PromptStore.cs'
+      - 'Services/PromptLint.cs'
       - '.github/workflows/mcpserver.yml'
   pull_request:
     paths:
@@ -23,6 +26,9 @@ on:
       # here can break this workflow even though these files live with the add-in.
       - 'Services/McpConfigEditor.cs'
       - 'Services/McpRegistrationDecision.cs'
+      - 'Services/PromptDefaults.cs'
+      - 'Services/PromptStore.cs'
+      - 'Services/PromptLint.cs'
       - '.github/workflows/mcpserver.yml'
   workflow_dispatch:
 

@@ -50,6 +50,15 @@
          guessed intent is what destroys a registration someone set up on purpose, so the
          decision matrix is pinned as the shipped code rather than as a copy of it. -->
     <Compile Include="..\..\Services\McpRegistrationDecision.cs" Link="Linked\McpRegistrationDecision.cs" />
+    <!-- The user-editable prompt store and the built-in prompt text. Linked for the same
+         reason again: these ARE the prompts the add-in sends, and the store's override-only
+         rule (an absent value means "use the code default", so nothing shipped is ever copied
+         to disk and frozen there) is invisible until it breaks. Framework-neutral, and the
+         registry sits behind IPromptRegistry so the T1 suite exercises the rules against a
+         fabricated store instead of the developer's own HKCU. -->
+    <Compile Include="..\..\Services\PromptDefaults.cs" Link="Linked\PromptDefaults.cs" />
+    <Compile Include="..\..\Services\PromptStore.cs" Link="Linked\PromptStore.cs" />
+    <Compile Include="..\..\Services\PromptLint.cs" Link="Linked\PromptLint.cs" />
   </ItemGroup>
 
   <ItemGroup>
