@@ -186,7 +186,7 @@ namespace OutlookAI.Core.Com
         /// The budget is honoured only by the out-of-process gateway, which can enforce it
         /// by ending the child. Accepted and ignored here so the two are substitutable.
         /// </summary>
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds)
+        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
         {
             return Run(operation);
         }

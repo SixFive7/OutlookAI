@@ -78,7 +78,15 @@ namespace OutlookAI.ComHost
             }
         }
 
-        private const int ConnectTimeoutMs = 30_000;
+        /// <summary>
+        /// The child's half of the pipe handshake. Shared with the parent's
+        /// (<c>ComHostPolicy.HandshakeBudgetMilliseconds</c>) rather than declared as a
+        /// second 30 s: it is ONE handshake, and two ends of one protocol each owning their
+        /// own literal is how the two halves drift apart. The parent may use LESS than this
+        /// when the triggering operation's deadline is shorter - it is the side that tears
+        /// down, so the child only needs the ceiling.
+        /// </summary>
+        private const int ConnectTimeoutMs = ComOperationBudgets.HandshakeBudgetMs;
 
         /// <summary>
         /// Exits if the parent disappears. The job object already covers the normal case;

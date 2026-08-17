@@ -24,7 +24,6 @@ namespace OutlookAI.ComHost.Supervision
     internal sealed class ComHostSupervisor : IDisposable
     {
         private const string ChildExeName = "OutlookAI.ComHost.exe";
-        private const int ReadyTimeoutMilliseconds = 30_000;
 
         private readonly bool _allowStartingOutlook;
         private readonly SemaphoreSlim _startLock = new SemaphoreSlim(1, 1);
@@ -135,6 +134,7 @@ namespace OutlookAI.ComHost.Supervision
             object? arguments,
             ComHostOperationClass operationClass,
             long? deadlineOverrideMilliseconds,
+            bool allowConnectFloor,
             CancellationToken cancellationToken)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -159,7 +159,8 @@ namespace OutlookAI.ComHost.Supervision
                     Volatile.Read(ref _consecutiveTimeouts), ComHostPolicy.UnresponsiveRetryAfterSeconds);
             }
 
-            return await InvokeCoreAsync(operation, arguments, operationClass, deadlineOverrideMilliseconds, cancellationToken)
+            return await InvokeCoreAsync(
+                    operation, arguments, operationClass, deadlineOverrideMilliseconds, allowConnectFloor, cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -263,6 +264,7 @@ namespace OutlookAI.ComHost.Supervision
                             null,
                             ComHostOperationClass.Connect,
                             null,
+                            allowConnectFloor: false,
                             CancellationToken.None)
                         .ConfigureAwait(false);
                 }
@@ -294,6 +296,7 @@ namespace OutlookAI.ComHost.Supervision
                         null,
                         ComHostOperationClass.HealthProbe,
                         ComHostPolicy.HealthProbeDeadlineMilliseconds,
+                        allowConnectFloor: false,
                         cancellationToken)
                     .ConfigureAwait(false);
                 return true;
@@ -313,6 +316,7 @@ namespace OutlookAI.ComHost.Supervision
             object? arguments,
             ComHostOperationClass operationClass,
             long? deadlineOverrideMilliseconds,
+            bool allowConnectFloor,
             CancellationToken cancellationToken)
         {
 
@@ -322,20 +326,31 @@ namespace OutlookAI.ComHost.Supervision
             // session, which may cold-start OUTLOOK.EXE, so it gets a wider floor than the
             // ordinary budget - otherwise a legitimate cold start looks like a wedge.
             //
-            // But ONLY when the caller expressed no opinion. An explicit budget is a
-            // deliberate statement of intent and outranks the floor. This was wrong when
-            // first written and outlook_health paid for it: its explicit 5 s probe was
-            // silently widened to the 90 s floor, and because health makes two gateway
-            // calls it could block for ~180 s - against a wedged Outlook, measured at
-            // 200 s+ on 2026-08-16. The one tool that must always answer was the one made
-            // to wait longest.
-            if (deadlineOverrideMilliseconds is not > 0
+            // But ONLY when the caller expressed no opinion, or explicitly opted in. An
+            // explicit budget is a deliberate statement of intent and outranks the floor.
+            // This was wrong when first written and outlook_health paid for it: its
+            // explicit 5 s probe was silently widened to the 90 s floor, and because health
+            // makes two gateway calls it could block for ~180 s - against a wedged Outlook,
+            // measured at 200 s+ on 2026-08-16. The one tool that must always answer was
+            // the one made to wait longest.
+            //
+            // The opt-in exists because the OTHER explicit-budget caller wanted the
+            // opposite: the freshness sweep's 30 s is a budget for the SWEEP, and
+            // suppressing the floor meant that on a fresh host the first search had to fit
+            // the COM attach and the whole sweep into it. Where attaching to a large OST
+            // takes longer than 30 s that sweep could never succeed - every attempt timed
+            // out, killed the host, bumped the restart count and blamed the sweep.
+            if ((deadlineOverrideMilliseconds is not > 0 || allowConnectFloor)
                 && !Volatile.Read(ref _childHasServed)
                 && deadline < ComHostPolicy.ConnectFloorMilliseconds)
             {
                 deadline = ComHostPolicy.ConnectFloorMilliseconds;
             }
-            await EnsureStartedAsync(cancellationToken).ConfigureAwait(false);
+
+            // The child-start handshake used to sit entirely outside the deadline system.
+            // It is now bounded by this operation's own deadline (floored, so a test that
+            // shortens the budget does not start failing on child startup instead).
+            await EnsureStartedAsync(ComHostPolicy.HandshakeBudgetFor(deadline), cancellationToken).ConfigureAwait(false);
 
             long id = Interlocked.Increment(ref _nextId);
             PendingRequest pending = new PendingRequest(operation, deadline);
@@ -437,7 +452,7 @@ namespace OutlookAI.ComHost.Supervision
                     TaskScheduler.Default);
         }
 
-        private async Task EnsureStartedAsync(CancellationToken cancellationToken)
+        private async Task EnsureStartedAsync(long handshakeBudgetMilliseconds, CancellationToken cancellationToken)
         {
             DispatchVerdict verdict = ComHostPolicy.DecideDispatch(new DispatchInput(
                 _state,
@@ -473,7 +488,7 @@ namespace OutlookAI.ComHost.Supervision
                     return;
                 }
 
-                await StartChildAsync(cancellationToken).ConfigureAwait(false);
+                await StartChildAsync(handshakeBudgetMilliseconds, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -481,7 +496,7 @@ namespace OutlookAI.ComHost.Supervision
             }
         }
 
-        private async Task StartChildAsync(CancellationToken cancellationToken)
+        private async Task StartChildAsync(long handshakeBudgetMilliseconds, CancellationToken cancellationToken)
         {
             TearDownChild();
             Volatile.Write(ref _childHasServed, false);
@@ -547,11 +562,16 @@ namespace OutlookAI.ComHost.Supervision
 
             DrainStandardError(child);
 
+            // ONE budget across BOTH halves of the handshake. Each half used to get a full
+            // 30 s of its own, so a slow child start could cost 60 s before any deadline
+            // applied at all - outside the deadline system, and unshortenable by
+            // OUTLOOKAI_COMHOST_DEADLINE_MS. The handshake is one thing; it gets one clock.
+            Stopwatch handshake = Stopwatch.StartNew();
             try
             {
                 using CancellationTokenSource connectCts =
                     CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, childCts.Token);
-                connectCts.CancelAfter(ReadyTimeoutMilliseconds);
+                connectCts.CancelAfter(TimeSpan.FromMilliseconds(handshakeBudgetMilliseconds));
                 await pipe.WaitForConnectionAsync(connectCts.Token).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -560,7 +580,7 @@ namespace OutlookAI.ComHost.Supervision
                 // once masked a disposed-pipe race for several test runs, because the
                 // message asserted a cause rather than reporting one.
                 string reason = ex is OperationCanceledException
-                    ? $"the COM host did not connect within {ReadyTimeoutMilliseconds} ms"
+                    ? $"the COM host did not connect within {handshakeBudgetMilliseconds} ms"
                     : $"the COM host connection failed to establish ({ex.GetType().Name}: {ex.Message})";
                 NoteStartFailure(reason);
                 TearDownChild();
@@ -569,9 +589,15 @@ namespace OutlookAI.ComHost.Supervision
 
             _ = Task.Run(() => ReadLoopAsync(pipe, generation, childCts.Token), CancellationToken.None);
 
+            long readyBudget = handshakeBudgetMilliseconds - handshake.ElapsedMilliseconds;
+            if (readyBudget < 1)
+            {
+                readyBudget = 1;
+            }
+
             try
             {
-                await ready.Task.WaitAsync(TimeSpan.FromMilliseconds(ReadyTimeoutMilliseconds), cancellationToken)
+                await ready.Task.WaitAsync(TimeSpan.FromMilliseconds(readyBudget), cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception ex)

@@ -48,11 +48,31 @@ namespace OutlookAI.ComHost.Client
             ParameterInfo[] parameters = targetMethod.GetParameters();
             Dictionary<string, object?> arguments = BuildArguments(parameters, args);
 
+            ComHostOperationClass operationClass = ClassifyOperation(targetMethod.Name);
+
+            // Shrink this call to what is left of the enclosing operation's AGGREGATE
+            // budget. Without it, a lambda that makes many contract calls got a full
+            // deadline for each and the operation as a whole was unbounded.
+            long callDeadline = ComHostPolicy.DeadlineFor(
+                operationClass, ComHostRequestContext.DeadlineOverrideMilliseconds);
+            long effectiveDeadline = ComHostPolicy.EffectiveDeadlineMilliseconds(
+                callDeadline, ComHostRequestContext.RemainingAggregateMilliseconds);
+            if (effectiveDeadline <= 0)
+            {
+                // The AGGREGATE is what ran out, not this call's own budget, so the message
+                // says so: the earlier round trips of this same operation spent it.
+                throw new TimeoutException(
+                    $"The Outlook operation ran out of its overall time budget before '{targetMethod.Name}' could be sent "
+                    + "to the COM host - earlier steps of the same operation used it up. Results are incomplete; narrow "
+                    + "the request (fewer ids, a smaller folder scope) and try again.");
+            }
+
             ComHostInvocationResult invocation = _supervisor.InvokeAsync(
                     targetMethod.Name,
                     arguments.Count == 0 ? null : arguments,
-                    ClassifyOperation(targetMethod.Name),
-                    ComHostRequestContext.DeadlineOverrideMilliseconds,
+                    operationClass,
+                    effectiveDeadline,
+                    ComHostRequestContext.AllowConnectFloor,
                     ComHostRequestContext.Token)
                 .GetAwaiter()
                 .GetResult();

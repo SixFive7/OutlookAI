@@ -1,4 +1,7 @@
+using System.Globalization;
 using System.Text.Json;
+
+using OutlookAI.Core.Services;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T3;
@@ -180,8 +183,9 @@ public sealed class SearchSchemaCiTests
         int degradedEnd = description.IndexOf("outlook_health gives the full picture", StringComparison.Ordinal);
         Assert.True(degradedEnd >= 0, "the degraded-results instruction must be intact");
         Assert.True(
-            degradedEnd < 2048,
-            $"the degraded-results instruction must land inside the client's 2 KB truncation budget; it ends at {degradedEnd}");
+            degradedEnd < DescriptionBudgetCiTests.ClientTruncationBudget,
+            "the degraded-results instruction must land inside the client's truncation budget "
+            + $"({DescriptionBudgetCiTests.ClientTruncationBudget}); it ends at {degradedEnd}");
 
         // D47: the freshness tier's REACH belongs to the flag that governs attachment
         // hits. The sweep reads Subject/Body through COM and never opens an attachment,
@@ -255,7 +259,13 @@ public sealed class SearchSchemaCiTests
         Assert.Contains("exhaustive=true", exhaustiveDescription, StringComparison.Ordinal);
         Assert.Contains("no attachment text", exhaustiveDescription, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("follows include_subfolders", exhaustiveDescription, StringComparison.Ordinal);
-        Assert.Contains("120 s", exhaustiveDescription, StringComparison.Ordinal);
+
+        // DERIVED from the constant, not a copy of the prose. This assertion used to read
+        // Assert.Contains("120 s", ...) and pinned only the sentence: change the budget and
+        // the test stayed green while the description lied to the agent about it. The
+        // constant is public for exactly this reason.
+        string budgetPhrase = (MailService.ExhaustiveTimeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture) + " s";
+        Assert.Contains(budgetPhrase, exhaustiveDescription, StringComparison.Ordinal);
         Assert.Contains("foldersScanned/foldersSkipped", exhaustiveDescription, StringComparison.Ordinal);
 
         // The retired asymmetry claims (soak fix 14's wording) must not survive.

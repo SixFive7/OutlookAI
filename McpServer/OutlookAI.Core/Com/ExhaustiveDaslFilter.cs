@@ -43,7 +43,13 @@ namespace OutlookAI.Core.Com
         private const string BodyProp = "\"urn:schemas:httpmail:textdescription\"";
         private const string DateReceivedProp = "\"urn:schemas:httpmail:datereceived\"";
         private const string MessageClassProp = "\"http://schemas.microsoft.com/mapi/proptag/0x001A001E\"";
-        private const int MaxTermLength = 128;
+
+        /// <summary>
+        /// Longest accepted search term. THE SAME limit the index tier enforces, not a
+        /// second copy of it: the two modes answer the same user query and must agree on
+        /// which terms are valid.
+        /// </summary>
+        private const int MaxTermLength = IndexSearch.WsSqlBuilder.MaxTermLength;
 
         /// <summary>
         /// Builds the full restriction. At least the mail-only message-class clause is

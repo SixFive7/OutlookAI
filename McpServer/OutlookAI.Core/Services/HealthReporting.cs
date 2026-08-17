@@ -327,13 +327,18 @@ namespace OutlookAI.Core.Services
         /// <summary>
         /// Expands the <c>${VAR}</c> and <c>${VAR:-default}</c> forms Claude Code documents
         /// for <c>command</c>, <c>args</c> and <c>env</c> (pure when given a
-        /// <paramref name="lookup"/>; T1-pinned). Anything else — a bare <c>$</c>, an
-        /// unterminated or empty <c>${}</c> — is literal text and is copied through, which is
+        /// <paramref name="lookup"/>; T1-pinned). Anything else - a bare <c>$</c>, an
+        /// unterminated or empty <c>${}</c> - is literal text and is copied through, which is
         /// the only safe reading for a value about to be compared against a real file.
         ///
         /// The add-in's <c>McpConfigEditor.ExpandEnvironmentReferences</c> is the same rule on
-        /// the writing side; the two are deliberately separate because Core takes no add-in
-        /// dependency, and both are pinned so they cannot drift apart unnoticed.
+        /// the writing side. The two are deliberately separate because Core takes no add-in
+        /// dependency, and they cannot drift apart unnoticed because
+        /// <c>EnvironmentExpansionParityTests</c> runs ONE shared corpus through BOTH
+        /// implementations and asserts they agree character for character. That claim used to
+        /// be made here and was false: each side had its own suite with its own fixture
+        /// literals and nothing ever fed one input to both, even though the test project
+        /// already compiles the add-in file.
         /// </summary>
         public static string ExpandEnvironmentReferences(string? value, Func<string, string?>? lookup = null)
         {

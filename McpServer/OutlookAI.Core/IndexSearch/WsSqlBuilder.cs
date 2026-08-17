@@ -72,7 +72,17 @@ namespace OutlookAI.Core.IndexSearch
         /// <summary>Hard ceiling on the emitted <c>SELECT TOP</c> (also bounds the post-filter over-fetch).</summary>
         public const int MaxTop = 5000;
 
-        private const int MaxTermLength = 128;
+        /// <summary>
+        /// Longest accepted search term, in characters. Public because it is the definition
+        /// of a valid TERM for the whole product, not a detail of the index statement: the
+        /// COM tier's <c>ExhaustiveDaslFilter</c> derives its own limit from this one.
+        /// <para>
+        /// They were two private 128s. Raising either alone would have made indexed and
+        /// exhaustive search disagree about which terms are valid - a term accepted by one
+        /// mode and rejected by the other, for the same query, with nothing to notice it.
+        /// </para>
+        /// </summary>
+        public const int MaxTermLength = 128;
 
         /// <summary>
         /// Hard ceiling on <see cref="IndexQuery.FolderPathsAnyOf"/> literals in one

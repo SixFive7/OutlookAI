@@ -40,7 +40,7 @@ namespace OutlookAI.Core.Com
 
         /// <summary>
         /// Runs <paramref name="operation"/> with an explicit time budget instead of the
-        /// default one.
+        /// default one. The budget bounds the whole lambda, not each round trip inside it.
         /// <para>
         /// Exists for <c>outlook_health</c>. Health is asked precisely when Outlook may be
         /// unresponsive, so it must not spend the ordinary two-minute budget discovering
@@ -48,7 +48,19 @@ namespace OutlookAI.Core.Com
         /// ignores the budget, having no way to enforce one.
         /// </para>
         /// </summary>
-        T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds);
+        /// <param name="allowConnectFloor">
+        /// Whether the budget covers this operation's OWN work only, leaving the host free
+        /// to add its cold-start connect allowance on the first call.
+        /// <para>
+        /// Default false, which is what health needs: an explicit short budget must not be
+        /// widened by anything, because a wedged Outlook is exactly when health is asked.
+        /// The freshness sweep needs the opposite - its budget is for the SWEEP, and
+        /// charging the COM attach to it meant the first search on a fresh host had to fit
+        /// both into 30 s, so on a machine where attaching to a large OST takes longer than
+        /// that the sweep could never succeed at all.
+        /// </para>
+        /// </param>
+        T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false);
 
         /// <summary>How Outlook is being reached, and the health of that path.</summary>
         ComHostDiagnostics GetDiagnostics();

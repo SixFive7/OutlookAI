@@ -199,8 +199,8 @@ namespace OutlookAI.Core.Services
         /// </summary>
         private static IReadOnlyList<IReadOnlyDictionary<string, object?>> ReadProfileAccountValueSets()
         {
-            const string outlookRoot = @"Software\Microsoft\Office\16.0\Outlook";
-            const string accountsSubKey = "9375CFF0413111d3B88A00104B2A6676";
+            const string outlookRoot = OutlookProfileRegistry.OutlookRootKeyPath;
+            const string accountsSubKey = OutlookProfileRegistry.AccountsSubKeyName;
 
             List<IReadOnlyDictionary<string, object?>> sets = new List<IReadOnlyDictionary<string, object?>>();
             using RegistryKey? outlook = Registry.CurrentUser.OpenSubKey(outlookRoot);

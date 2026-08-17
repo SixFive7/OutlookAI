@@ -92,21 +92,41 @@ namespace OutlookAI.ComHost.Client
         }
 
         /// <inheritdoc />
+        /// <remarks>
+        /// The lambda gets an AGGREGATE budget, not just a per-call one. Each contract call
+        /// inside it is one bounded round trip, and an operation that makes several - hit
+        /// location makes 1 + up to 3 + N, the archive path walks every store - previously
+        /// gave each of them a full budget and so had no bound of its own. The aggregate is
+        /// the same ordinary operation deadline, measured from here across the whole lambda,
+        /// so it follows <c>OUTLOOKAI_COMHOST_DEADLINE_MS</c> like everything else.
+        /// </remarks>
         public T Run<T>(Func<IOutlookSession, T> operation)
         {
             ArgumentNullException.ThrowIfNull(operation);
             ObjectDisposedException.ThrowIf(_disposed, this);
 
-            return operation(_session);
+            using (ComHostRequestContext.Enter(
+                ComHostRequestContext.Token,
+                deadlineOverrideMilliseconds: null,
+                aggregateBudgetMilliseconds: ComHostPolicy.DeadlineFor(ComHostOperationClass.Operation, null)))
+            {
+                return operation(_session);
+            }
         }
 
         /// <inheritdoc />
-        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds)
+        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
         {
             ArgumentNullException.ThrowIfNull(operation);
             ObjectDisposedException.ThrowIf(_disposed, this);
 
-            using (ComHostRequestContext.Enter(ComHostRequestContext.Token, budgetMilliseconds))
+            // The explicit budget bounds the whole lambda as well as each call in it:
+            // health asking for 5 s means 5 s of health, not 5 s per round trip.
+            using (ComHostRequestContext.Enter(
+                ComHostRequestContext.Token,
+                deadlineOverrideMilliseconds: budgetMilliseconds,
+                aggregateBudgetMilliseconds: budgetMilliseconds,
+                allowConnectFloor: allowConnectFloor))
             {
                 return operation(_session);
             }

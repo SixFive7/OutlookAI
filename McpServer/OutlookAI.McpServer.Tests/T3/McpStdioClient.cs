@@ -42,6 +42,12 @@ public sealed class McpStdioClient : IAsyncDisposable
     /// is only observable by actually exceeding a budget, and waiting out the real
     /// two-minute one in every such test would make the suite unusable.
     /// </param>
+    /// <summary>
+    /// The MCP revision this client speaks, and the one every T3 assertion is written
+    /// against. Sent in <c>initialize</c> and compared against what the server answers.
+    /// </summary>
+    public const string ProtocolVersion = "2025-06-18";
+
     public static async Task<McpStdioClient> StartAndInitializeAsync(
         TimeSpan? timeout = null,
         IReadOnlyDictionary<string, string>? environment = null)
@@ -82,11 +88,26 @@ public sealed class McpStdioClient : IAsyncDisposable
 
         JsonElement init = await client.RoundTripAsync("initialize", new
         {
-            protocolVersion = "2025-06-18",
+            protocolVersion = ProtocolVersion,
             capabilities = new { },
             clientInfo = new { name = "OutlookAI.T3Client", version = "0.0.2" },
         });
-        _ = init.GetProperty("result").GetProperty("protocolVersion");
+
+        // COMPARED, not merely fetched. This used to be `_ = init...GetProperty(...)`, which
+        // asserted the field EXISTS and nothing more: a server that negotiated a different
+        // protocol version passed every T3 test silently, while a real client would have
+        // disconnected. The whole T3 tier is a conformance suite, so the one field that says
+        // which conformance is being claimed has to be checked.
+        string negotiated = init.GetProperty("result").GetProperty("protocolVersion").GetString()
+            ?? throw new InvalidOperationException("The server's initialize result carried no protocolVersion string.");
+        if (!string.Equals(negotiated, ProtocolVersion, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"MCP protocol version mismatch: this client speaks '{ProtocolVersion}' and the server negotiated "
+                + $"'{negotiated}'. Every T3 assertion below is written against '{ProtocolVersion}'. Either the SDK was "
+                + "upgraded to a newer revision (update this client and re-read the T3 expectations against it), or the "
+                + "server is answering with a version it does not implement.");
+        }
         client._initializeResult = init.GetProperty("result").Clone();
         await client.NotifyAsync("notifications/initialized");
         return client;

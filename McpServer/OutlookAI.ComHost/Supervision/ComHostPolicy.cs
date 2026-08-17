@@ -127,22 +127,119 @@ namespace OutlookAI.ComHost.Supervision
         /// Budget for an ordinary COM operation. Generous - a first search against a cold
         /// multi-store profile legitimately takes seconds, and a full-profile freshness
         /// sweep can take longer - but finite, which is the entire point.
+        /// <para>
+        /// Derived from <see cref="ComOperationBudgets"/> rather than written here, because
+        /// the service layer sizes its INNER budgets against this number and cannot see
+        /// this assembly (Core has no dependency on ComHost). Two literals that happen to
+        /// agree is what produced the exhaustive-scan composition defect.
+        /// </para>
         /// </summary>
-        internal const long DefaultOperationDeadlineMilliseconds = 120_000;
+        internal const long DefaultOperationDeadlineMilliseconds = ComOperationBudgets.OperationDeadlineMs;
 
         /// <summary>
         /// Budget for establishing the COM session (which may cold-start OUTLOOK.EXE).
         /// Measured on a healthy machine 2026-08-15: attach + health 1.0 s, cold search
         /// 6.2 s. A large OST on a slow disk is far slower, hence the wide margin.
         /// </summary>
-        internal const long ConnectDeadlineMilliseconds = 90_000;
+        internal const long ConnectDeadlineMilliseconds = ComOperationBudgets.ConnectDeadlineMs;
 
         /// <summary>
         /// Budget for the health probe. Short on purpose: outlook_health must answer even
         /// when Outlook is wedged, because that is precisely when it is asked. Exceeding
         /// this degrades the report, it never fails it.
+        /// <para>
+        /// The service layer's <c>MailService.HealthProbeBudgetMs</c> is the same constant,
+        /// not a second copy of 5 000.
+        /// </para>
         /// </summary>
-        internal const long HealthProbeDeadlineMilliseconds = 5_000;
+        internal const long HealthProbeDeadlineMilliseconds = ComOperationBudgets.HealthProbeDeadlineMs;
+
+        /// <summary>
+        /// Ceiling on the COM host pipe handshake - the parent's wait for the child to
+        /// connect AND report ready, shared with the child's own wait for the parent's pipe
+        /// (<c>Program.ConnectTimeoutMs</c>). One handshake, one number.
+        /// </summary>
+        internal const long HandshakeBudgetMilliseconds = ComOperationBudgets.HandshakeBudgetMs;
+
+        /// <summary>
+        /// Floor under the handshake budget when the operation's own deadline is shorter.
+        /// <para>
+        /// The handshake used to sit entirely outside the deadline system: it was consumed
+        /// TWICE (once waiting for the pipe, once waiting for the ready event), so a slow
+        /// child start could cost 60 s before any budget applied, and
+        /// <see cref="DeadlineVariable"/> could not shorten it. It is now one shared budget
+        /// that follows the operation deadline - but never below this floor, because
+        /// starting a fresh .NET child on a loaded box legitimately takes seconds and the
+        /// only caller that sets a shorter deadline is the test suite, which is testing the
+        /// timeout path rather than the start path.
+        /// </para>
+        /// </summary>
+        internal const long HandshakeFloorMilliseconds = 10_000;
+
+        /// <summary>
+        /// Floor under any deadline actually sent to the child. A remaining aggregate of a
+        /// few milliseconds must not turn into a deadline that kills a perfectly healthy
+        /// host before it can answer; below this the caller is told the aggregate is
+        /// exhausted instead.
+        /// </summary>
+        internal const long MinimumDispatchDeadlineMilliseconds = 1_000;
+
+        /// <summary>
+        /// How long the child start handshake may take, given the deadline of the operation
+        /// that triggered it. Pure so T1 can pin the boundaries.
+        /// </summary>
+        internal static long HandshakeBudgetFor(long operationDeadlineMilliseconds)
+        {
+            if (operationDeadlineMilliseconds <= HandshakeFloorMilliseconds)
+            {
+                return HandshakeFloorMilliseconds;
+            }
+
+            return operationDeadlineMilliseconds < HandshakeBudgetMilliseconds
+                ? operationDeadlineMilliseconds
+                : HandshakeBudgetMilliseconds;
+        }
+
+        /// <summary>
+        /// The deadline one contract call may actually use, given its own budget and how
+        /// much of the enclosing operation's AGGREGATE budget is left.
+        /// <para>
+        /// The per-call deadline bounds ONE round trip. A gateway operation is a lambda
+        /// that may make many - hit location makes 1 + up to 3 + N, the archive path walks
+        /// every store - and before this each of those independently got a full budget, so
+        /// the operation as a whole had no bound at all. The aggregate is measured from the
+        /// start of the lambda and shrinks every call after it.
+        /// </para>
+        /// <para>
+        /// Returns 0 to mean "the aggregate is spent, do not dispatch": a sub-second
+        /// deadline would kill a healthy host rather than bound a wedged one, so anything
+        /// below <see cref="MinimumDispatchDeadlineMilliseconds"/> is reported as exhausted.
+        /// A null aggregate means no enclosing operation declared one.
+        /// </para>
+        /// <para>
+        /// The surviving aggregate is rounded UP to a whole second before it clamps.
+        /// Every budget in this system is expressed in whole seconds, and the timeout
+        /// message quotes the deadline back to a human ("exceeded its 4000 ms budget"): a
+        /// first call must not be told 3 999 merely because a millisecond of its own
+        /// aggregate has elapsed since the lambda started. The slack this concedes is under
+        /// one second per call, against a defect measured in whole extra budgets.
+        /// </para>
+        /// </summary>
+        internal static long EffectiveDeadlineMilliseconds(long callDeadlineMilliseconds, long? remainingAggregateMilliseconds)
+        {
+            if (remainingAggregateMilliseconds is not { } remaining)
+            {
+                return callDeadlineMilliseconds;
+            }
+
+            if (remaining < MinimumDispatchDeadlineMilliseconds)
+            {
+                return 0;
+            }
+
+            long wholeSeconds = ((remaining + 999) / 1000) * 1000;
+            return wholeSeconds < callDeadlineMilliseconds ? wholeSeconds : callDeadlineMilliseconds;
+        }
 
         /// <summary>Decides whether a tool call can be dispatched to the child.</summary>
         internal static DispatchVerdict DecideDispatch(DispatchInput input)

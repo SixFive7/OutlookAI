@@ -45,8 +45,14 @@ public sealed class DescriptionBudgetCiTests
     /// differently or not at all. The number is pinned here because Claude Code is this
     /// server's primary client and because the failure it produces is silent.
     /// </para>
+    /// <para>
+    /// <c>internal</c>, not private: <c>SearchSchemaCiTests</c> asserts that the search
+    /// tool's degraded-results instruction lands inside this budget, and it used to do so
+    /// against its own bare <c>2048</c> in another file of the same assembly. Two copies of
+    /// one client's undocumented cap, and only one of them carried the explanation.
+    /// </para>
     /// </summary>
-    private const int ClientTruncationBudget = 2048;
+    internal const int ClientTruncationBudget = 2048;
 
     /// <summary>
     /// Warn-only tier. Something sitting at 1600 of 2048 is one added paragraph from being

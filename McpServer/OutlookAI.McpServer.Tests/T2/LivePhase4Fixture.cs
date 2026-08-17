@@ -153,8 +153,13 @@ internal static class SignatureConfigProbe
     {
         try
         {
+            // Addresses from OutlookProfileRegistry, not a fourth hand-typed copy of the
+            // accounts GUID. The profile NAME stays a literal - "Outlook" is this machine's
+            // default profile, and a fixture that guessed it would be worse, not better.
             using RegistryKey? profiles = Registry.CurrentUser.OpenSubKey(
-                @"Software\Microsoft\Office\16.0\Outlook\Profiles\Outlook\9375CFF0413111d3B88A00104B2A6676");
+                OutlookProfileRegistry.OutlookRootKeyPath
+                + "\\" + OutlookProfileRegistry.ProfilesSubKeyName
+                + "\\Outlook\\" + OutlookProfileRegistry.AccountsSubKeyName);
             if (profiles == null)
             {
                 return (null, null);

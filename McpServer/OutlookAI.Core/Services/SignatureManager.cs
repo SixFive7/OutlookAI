@@ -81,8 +81,8 @@ namespace OutlookAI.Core.Services
     /// </summary>
     public sealed class ProfileSignatureDefaultsStore : ISignatureDefaultsStore
     {
-        private const string OutlookRoot = @"Software\Microsoft\Office\16.0\Outlook";
-        private const string AccountsSubKey = "9375CFF0413111d3B88A00104B2A6676";
+        private const string OutlookRoot = OutlookProfileRegistry.OutlookRootKeyPath;
+        private const string AccountsSubKey = OutlookProfileRegistry.AccountsSubKeyName;
 
         /// <inheritdoc />
         public IReadOnlyList<SignatureDefaultsRow> ReadAccounts()

@@ -1941,6 +1941,12 @@ namespace OutlookAI.Core.Com
             return result;
         }
 
+        /// <summary>Pumped wait between re-reads of a just-created Explorer whose CurrentFolder still reads empty.</summary>
+        private const int ExplorerFolderSettleDelayMs = 250;
+
+        /// <summary>How many times an empty CurrentFolder is re-read before the state is reported as-is.</summary>
+        private const int ExplorerFolderSettleAttempts = 6;
+
         /// <summary>
         /// goto_folder backbone: resolves the store-relative folder path (empty path:
         /// the store's Inbox, falling back to its root folder), makes sure a VISIBLE
@@ -1981,10 +1987,19 @@ namespace OutlookAI.Core.Com
 
                     // A just-created window (headless cold start) can report an empty
                     // CurrentFolder for a beat while it initializes - retry briefly.
+                    //
+                    // PUMPED, and that is load-bearing (soak fix 21, PumpedStaRunner
+                    // remarks): this runs inside a _runner.Run work item on the pumped STA
+                    // thread, and a plain Thread.Sleep there blocks the very message queue
+                    // the just-created Explorer needs in order to finish initializing. The
+                    // state being waited for could not change during the wait, so the six
+                    // attempts were 1.5 s of guaranteed-stale reads.
                     ComExplorerState state = SnapshotExplorer(explorer!);
-                    for (int attempt = 0; attempt < 6 && string.IsNullOrEmpty(state.CurrentFolderPath); attempt++)
+                    for (int attempt = 0;
+                        attempt < ExplorerFolderSettleAttempts && string.IsNullOrEmpty(state.CurrentFolderPath);
+                        attempt++)
                     {
-                        Thread.Sleep(250);
+                        PumpedStaRunner.PumpedWait(ExplorerFolderSettleDelayMs);
                         state = SnapshotExplorer(explorer!);
                     }
 
@@ -6019,7 +6034,11 @@ namespace OutlookAI.Core.Com
             }
         }
 
-        /// <summary>Delay before the one-shot recipient re-snapshot of a fresh draft (degraded-instance window, soak 2026-07-24).</summary>
+        /// <summary>
+        /// Delay before the one-shot recipient re-snapshot of a fresh draft
+        /// (degraded-instance window, soak 2026-07-24). Waited PUMPED - see
+        /// <see cref="ResnapshotIfRecipientsEmpty"/>.
+        /// </summary>
         private const int RecipientResnapshotDelayMs = 1500;
 
         /// <summary>
@@ -6046,7 +6065,15 @@ namespace OutlookAI.Core.Com
                 return info;
             }
 
-            Thread.Sleep(RecipientResnapshotDelayMs);
+            // PUMPED, and that is the whole point of the wait (soak fix 21,
+            // PumpedStaRunner remarks). Both callers run this inside a _runner.Run work
+            // item on the pumped STA thread, and the state being waited for - Outlook
+            // finishing its reconcile so the item stops answering object-returning probes
+            // with nothing - is precisely the class of settling that an unpumped
+            // Thread.Sleep makes impossible: it blocks this thread's message queue, so
+            // Outlook cannot complete what it was asked and the re-snapshot 1.5 s later
+            // reads exactly what the first one did.
+            PumpedStaRunner.PumpedWait(RecipientResnapshotDelayMs);
             dynamic ns = _namespace!;
             object? reopened = null;
             try

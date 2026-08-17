@@ -129,8 +129,14 @@ namespace OutlookAI.Core.IndexSearch
             return new IndexSearchService(IndexClientFactory.CreateAuto(out providerReport));
         }
 
-        /// <summary>Runs one search; see <see cref="WsSqlBuilder.Build"/> for the emitted shape.</summary>
-        public IndexSearchResult Search(IndexQuery query)
+        /// <summary>
+        /// Runs one search; see <see cref="WsSqlBuilder.Build"/> for the emitted shape.
+        /// <paramref name="commandTimeoutSeconds"/> defaults to
+        /// <see cref="OleDbIndexClient.DefaultCommandTimeoutSeconds"/>; callers with a
+        /// tool-level budget above them pass their own, so one saturated-indexer query
+        /// cannot consume a budget that was meant for the whole call.
+        /// </summary>
+        public IndexSearchResult Search(IndexQuery query, int? commandTimeoutSeconds = null)
         {
             if (query == null)
             {
@@ -143,7 +149,7 @@ namespace OutlookAI.Core.IndexSearch
             int sqlTop = IndexRowFilter.ComputeSqlTop(query.Top, query.Scope != null, WsSqlBuilder.MaxTop);
             string sql = WsSqlBuilder.Build(query, sqlTop);
             Stopwatch stopwatch = Stopwatch.StartNew();
-            IReadOnlyList<IReadOnlyDictionary<string, object?>> rows = _client.ExecuteRows(sql, sqlTop);
+            IReadOnlyList<IReadOnlyDictionary<string, object?>> rows = _client.ExecuteRows(sql, sqlTop, commandTimeoutSeconds);
             stopwatch.Stop();
 
             List<IndexHit> hits = new List<IndexHit>(Math.Min(rows.Count, query.Top));
@@ -191,10 +197,10 @@ namespace OutlookAI.Core.IndexSearch
         }
 
         /// <summary>True when at least one indexed item exists under <paramref name="scope"/>.</summary>
-        public bool ScopeHasAnyItem(string scope)
+        public bool ScopeHasAnyItem(string scope, int? commandTimeoutSeconds = null)
         {
             string sql = WsSqlBuilder.BuildScopeExistenceProbe(scope);
-            return _client.ExecuteRows(sql, 1).Count > 0;
+            return _client.ExecuteRows(sql, 1, commandTimeoutSeconds).Count > 0;
         }
 
         /// <summary>
@@ -203,10 +209,10 @@ namespace OutlookAI.Core.IndexSearch
         /// zero-row guard uses this to tell "this folder holds no match" apart from "this
         /// folder path matched nothing in the index" (v3.MD constraint C7).
         /// </summary>
-        public bool FolderScopeHasAnyItem(string? scope, IReadOnlyList<string>? folderPaths)
+        public bool FolderScopeHasAnyItem(string? scope, IReadOnlyList<string>? folderPaths, int? commandTimeoutSeconds = null)
         {
             string sql = WsSqlBuilder.BuildFolderScopeExistenceProbe(scope, folderPaths);
-            return _client.ExecuteRows(sql, 1).Count > 0;
+            return _client.ExecuteRows(sql, 1, commandTimeoutSeconds).Count > 0;
         }
 
         /// <summary>
@@ -217,7 +223,7 @@ namespace OutlookAI.Core.IndexSearch
         /// account (per-column CONTAINS, index-backed, ~60 ms) and taking the store
         /// prefix of hits whose store display name equals the address.
         /// </summary>
-        public StoreScopeInfo? TryDiscoverStoreScopeByAddress(string smtpAddress)
+        public StoreScopeInfo? TryDiscoverStoreScopeByAddress(string smtpAddress, int? commandTimeoutSeconds = null)
         {
             if (string.IsNullOrWhiteSpace(smtpAddress))
             {
@@ -232,7 +238,7 @@ namespace OutlookAI.Core.IndexSearch
 
             foreach (IndexQuery probe in probes)
             {
-                foreach (IndexHit hit in Search(probe).Hits)
+                foreach (IndexHit hit in Search(probe, commandTimeoutSeconds).Hits)
                 {
                     if (hit.StorePrefix == null
                         || !string.Equals(hit.StoreDisplayName, smtpAddress, StringComparison.OrdinalIgnoreCase))
@@ -244,7 +250,7 @@ namespace OutlookAI.Core.IndexSearch
                     try
                     {
                         string delegateProbe = WsSqlBuilder.BuildScopeExistenceProbe(hit.StorePrefix + "/1");
-                        hasDelegates = _client.ExecuteRows(delegateProbe, 1).Count > 0;
+                        hasDelegates = _client.ExecuteRows(delegateProbe, 1, commandTimeoutSeconds).Count > 0;
                     }
                     catch (Exception ex) when (ex is not OutOfMemoryException)
                     {
@@ -264,11 +270,18 @@ namespace OutlookAI.Core.IndexSearch
         /// SCOPE='&lt;prefix&gt;/1' to detect delegate subtrees. A busy store can dominate
         /// small samples - use <see cref="TryDiscoverStoreScopeByAddress"/> for stores the
         /// sample misses (the 2000-row pull measured 552 ms in the section-5 probes).
+        /// <para>
+        /// <paramref name="commandTimeoutSeconds"/> reaches BOTH statements - the sample and
+        /// the per-store delegate probe. It was declared and then passed to neither, so
+        /// outlook_health's 8 s per-store index budget silently escaped to the 30 s default
+        /// on every one of them; on a delegate-heavy profile with a saturated indexer the
+        /// tool whose whole promise is answering fast could spend minutes here.
+        /// </para>
         /// </summary>
         public IReadOnlyList<StoreScopeInfo> DiscoverStoreScopes(int sampleSize = 2000, int? commandTimeoutSeconds = null)
         {
             string sql = WsSqlBuilder.BuildStoreDiscoverySample(sampleSize);
-            IReadOnlyList<IReadOnlyDictionary<string, object?>> rows = _client.ExecuteRows(sql, sampleSize);
+            IReadOnlyList<IReadOnlyDictionary<string, object?>> rows = _client.ExecuteRows(sql, sampleSize, commandTimeoutSeconds);
 
             Dictionary<string, (string DisplayName, int Count)> byPrefix =
                 new Dictionary<string, (string, int)>(StringComparer.OrdinalIgnoreCase);
@@ -301,7 +314,7 @@ namespace OutlookAI.Core.IndexSearch
                 try
                 {
                     string probe = WsSqlBuilder.BuildScopeExistenceProbe(entry.Key + "/1");
-                    hasDelegates = _client.ExecuteRows(probe, 1).Count > 0;
+                    hasDelegates = _client.ExecuteRows(probe, 1, commandTimeoutSeconds).Count > 0;
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {

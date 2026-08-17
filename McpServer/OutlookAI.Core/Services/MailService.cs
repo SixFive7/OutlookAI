@@ -31,7 +31,21 @@ namespace OutlookAI.Core.Services
         private const int AttachmentLocateToleranceSeconds = 120;
         private const int DedupeToleranceSeconds = 15;
         private const int SweepPerFolderCap = 200;
-        private const int ExhaustiveTimeBudgetMs = 120_000;
+
+        /// <summary>
+        /// Soft budget handed to <c>ExhaustiveScan</c>, and the number the "results are
+        /// partial" advice quotes.
+        /// <para>
+        /// DERIVED, never a literal: it used to be its own <c>120_000</c> and so equalled
+        /// the COM host's hard operation deadline exactly. An inner budget equal to its
+        /// outer one can never degrade gracefully - the scan stops only once elapsed has
+        /// PASSED the budget and then still has to serialize its result set back over the
+        /// pipe, while the watchdog fires at <c>&gt;=</c>. So the documented partial-results
+        /// outcome was unreachable whenever the scan actually ran long: the caller got a
+        /// Timeout, the COM host was killed, and two of those open the breaker for 30 s.
+        /// </para>
+        /// </summary>
+        public const int ExhaustiveTimeBudgetMs = ComOperationBudgets.ChildWorkBudgetMs;
 
         /// <summary>
         /// What a non-folder-scoped sweep covers, echoed in the sweep block so an agent
@@ -52,11 +66,23 @@ namespace OutlookAI.Core.Services
         private static readonly TimeSpan EmptyIndexSweepWindow = TimeSpan.FromDays(7);
 
         /// <summary>
+        /// How long Outlook's store list is reused before it is re-read over COM. Both
+        /// per-store caches share this one value - see <see cref="FolderPathCacheTtl"/>.
+        /// </summary>
+        private static readonly TimeSpan StoreDetailsCacheTtl = TimeSpan.FromMinutes(5);
+
+        /// <summary>
         /// How long a store's COM folder-path list is reused. Only DELEGATE folder scopes
         /// need it (the flat index namespace has to be mapped back onto the real tree), so
-        /// this keeps a per-search COM walk off the hot path. Matches the store-details TTL.
+        /// this keeps a per-search COM walk off the hot path.
+        /// <para>
+        /// It IS the store-details TTL, not a second copy of five minutes that a comment
+        /// claimed matched it. The two caches describe the same profile from two angles and
+        /// a search that mixes a fresh store list with a five-minute-old folder list (or the
+        /// reverse) sees a profile that never existed.
+        /// </para>
         /// </summary>
-        private static readonly TimeSpan FolderPathCacheTtl = TimeSpan.FromMinutes(5);
+        private static readonly TimeSpan FolderPathCacheTtl = StoreDetailsCacheTtl;
 
         // ------------------------------------------------------------ payload caps
         // Section 12 compact-payload discipline, reviewed in Phase 7: every list a tool
@@ -114,6 +140,13 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Cap on unresolvable addresses echoed back by the draft tools (batch A, A2).</summary>
         public const int UnresolvedRecipientsCap = 20;
+
+        /// <summary>
+        /// Shortest string accepted as a raw EntryID hex id, in hex characters. Two per byte
+        /// of <see cref="Mapi.EntryIdCodec.MessageEntryIdLength"/> - the shortest entry id
+        /// that can carry the flags, store UID and node id a MAPI entry id is made of.
+        /// </summary>
+        public const int MinRawEntryIdHexChars = Mapi.EntryIdCodec.MessageEntryIdLength * 2;
 
         /// <summary>
         /// Folders per list_folders page (section 12 discipline bound; real profiles fit
@@ -180,11 +213,6 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// Time budget for health's COM probe. Short by design: outlook_health exists to
-        /// report an unresponsive Outlook, so it must never wait the ordinary operation
-        /// budget to discover one.
-        /// </summary>
-        /// <summary>
         /// Time budget for the freshness sweep.
         /// <para>
         /// Much shorter than an ordinary operation, because the sweep is an ENHANCEMENT:
@@ -194,16 +222,77 @@ namespace OutlookAI.Core.Services
         /// 120 s operation budget before degrading, which made every search feel broken
         /// even though the answer was already computed and waiting.
         /// </para>
+        /// <para>
+        /// It is a budget for the SWEEP, and the sweep call passes allowConnectFloor so the
+        /// COM host may still add its cold-start connect allowance on a fresh host. Without
+        /// that the very first search had to fit the COM attach AND the whole sweep into
+        /// 30 s - on a machine where attaching to a large OST takes longer than that (the
+        /// reason ConnectDeadlineMilliseconds is 90 s at all) the sweep could never succeed:
+        /// every attempt timed out, killed the host, bumped the restart count and blamed the
+        /// sweep.
+        /// </para>
         /// </summary>
         public const int SweepBudgetMs = 30_000;
 
-        public const int HealthProbeBudgetMs = 5_000;
+        /// <summary>
+        /// Time budget for health's COM probe. Short by design: outlook_health exists to
+        /// report an unresponsive Outlook, so it must never wait the ordinary operation
+        /// budget to discover one. Shared with the supervisor's own health-probe deadline
+        /// rather than declared as a second 5 000.
+        /// </summary>
+        public const int HealthProbeBudgetMs = ComOperationBudgets.HealthProbeDeadlineMs;
 
         /// <summary>Per-query index timeout used by health only.</summary>
         public const int HealthIndexTimeoutSeconds = 4;
 
-        /// <summary>Overall budget for the per-store index freshness rows in health.</summary>
+        /// <summary>
+        /// Overall budget for health's WHOLE index block: the global freshness probe, the
+        /// COM-assisted catalog enrichment and the per-store rows.
+        /// <para>
+        /// It used to cover only the per-store loop, so the two steps in front of it -
+        /// catalog discovery and the per-address enrichment searches - ran outside the
+        /// budget they were meant to be inside, on the 30 s default per query. A profile
+        /// with many stores multiplies even a short timeout. Reporting fewer rows is a fine
+        /// outcome; taking minutes to report all of them is not.
+        /// </para>
+        /// </summary>
         public const int HealthPerStoreIndexBudgetMs = 8_000;
+
+        /// <summary>
+        /// Per-query index timeout on the SEARCH path.
+        /// <para>
+        /// Search's own description promises "sub-second and cheap", and one search is
+        /// several index statements plus the freshness sweep. On
+        /// <see cref="OleDbIndexClient.DefaultCommandTimeoutSeconds"/> each of those
+        /// statements could take 30 s on its own, so the composed worst case had no relation
+        /// to what the tool advertises. Measured healthy on this machine at 60-550 ms, so
+        /// this is roughly 27x headroom: exceeding it means the indexer is saturated, and
+        /// search says so and degrades rather than waiting twice as long to say the same
+        /// thing.
+        /// </para>
+        /// </summary>
+        public const int SearchIndexTimeoutSeconds = 15;
+
+        /// <summary>
+        /// The tool-level wall-clock shape of one indexed search, stated as a relationship
+        /// rather than as an unrelated literal: index statement plus freshness sweep. Pinned
+        /// against the COM host's operation deadline so the two cannot drift into a search
+        /// that outlives the budget its own sweep runs under.
+        /// </summary>
+        public const int SearchBudgetMs = (SearchIndexTimeoutSeconds * 1000) + SweepBudgetMs;
+
+        /// <summary>
+        /// Aggregate budget for one move_mail / archive_mail batch.
+        /// <para>
+        /// Each item is 2-3 gateway calls, each bounded on its own, and up to
+        /// <see cref="MoveIdsCap"/> items ran with no bound across the batch and no
+        /// cancellation checkpoint between them - a theoretical 150 round trips at a full
+        /// operation deadline each. Items still attempted after this elapses are reported as
+        /// not attempted, exactly like the audit-log short circuit beside it, so a partial
+        /// batch stays legible and every EntryID that did move is still returned.
+        /// </para>
+        /// </summary>
+        public const int MoveBatchBudgetMs = ComOperationBudgets.OperationDeadlineMs;
 
         /// <summary>Default directory attachments are saved to when the caller names none.</summary>
         public static string DefaultAttachmentDirectory =>
@@ -280,8 +369,8 @@ namespace OutlookAI.Core.Services
                 Top = top + 1,
             };
 
-            IndexSearchResult indexResult = _index.Value.Search(query);
-            IndexStalenessReport staleness = _index.Value.GetStaleness();
+            IndexSearchResult indexResult = _index.Value.Search(query, SearchIndexTimeoutSeconds);
+            IndexStalenessReport staleness = _index.Value.GetStaleness(commandTimeoutSeconds: SearchIndexTimeoutSeconds);
 
             bool truncated = indexResult.Hits.Count > top;
             List<HitSummary> summaries = new List<HitSummary>(Math.Min(indexResult.Hits.Count, top));
@@ -476,12 +565,12 @@ namespace OutlookAI.Core.Services
 
             try
             {
-                if (_index.Value.FolderScopeHasAnyItem(folderScope.Scope, folderScope.FolderPaths))
+                if (_index.Value.FolderScopeHasAnyItem(folderScope.Scope, folderScope.FolderPaths, SearchIndexTimeoutSeconds))
                 {
                     return;
                 }
 
-                if (_index.Value.FolderScopeHasAnyItem(folderScope.StoreScope, null))
+                if (_index.Value.FolderScopeHasAnyItem(folderScope.StoreScope, null, SearchIndexTimeoutSeconds))
                 {
                     advice.Add(FolderScopeResolver.DescribeUnresolvedFolder(request.Folder, request.Store!));
                 }
@@ -688,7 +777,8 @@ namespace OutlookAI.Core.Services
                     sweepResult = _gateway.Run(
                     s => s.SweepFoldersNewerThan(
                         gapStart, SweepPerFolderCap, includeBodies: true, request.Store, sweepFolderPath, sweepRecursive),
-                    SweepBudgetMs);
+                    SweepBudgetMs,
+                    allowConnectFloor: true);
                 }
                 catch (OutlookUnavailableException ex)
                 {
@@ -909,7 +999,7 @@ namespace OutlookAI.Core.Services
             double? ageMinutes = null;
             try
             {
-                IndexStalenessReport staleness = _index.Value.GetStaleness();
+                IndexStalenessReport staleness = _index.Value.GetStaleness(commandTimeoutSeconds: SearchIndexTimeoutSeconds);
                 newestIndexed = staleness.NewestIndexedReceivedUtc;
                 ageMinutes = staleness.Age?.TotalMinutes;
             }
@@ -1206,13 +1296,15 @@ namespace OutlookAI.Core.Services
                     }
                 }
 
-                IndexSearchResult result = _index.Value.Search(new IndexQuery
-                {
-                    Scope = scope,
-                    Kinds = KindFilter.EmailOnly,
-                    ConversationIdEquals = conversationId,
-                    Top = top + 1, // Over-fetch by one: definite has-more flag.
-                });
+                IndexSearchResult result = _index.Value.Search(
+                    new IndexQuery
+                    {
+                        Scope = scope,
+                        Kinds = KindFilter.EmailOnly,
+                        ConversationIdEquals = conversationId,
+                        Top = top + 1, // Over-fetch by one: definite has-more flag.
+                    },
+                    SearchIndexTimeoutSeconds);
                 if (result.Hits.Count > 0)
                 {
                     bool indexTruncated = result.Hits.Count > top;
@@ -2676,6 +2768,15 @@ namespace OutlookAI.Core.Services
 
         // ------------------------------------------------------------------ move + archive (D39, S1 v2)
 
+        /// <summary>
+        /// Per-item reason when the batch ran out of <see cref="MoveBatchBudgetMs"/>. Same
+        /// shape as the audit-log short circuit: nothing is silently dropped, the items that
+        /// did move still carry their new EntryIDs, and the remedy is a smaller batch.
+        /// </summary>
+        internal const string BatchBudgetExhaustedMessage =
+            "Not attempted: the batch ran out of its time budget. The items above were processed - re-issue the rest "
+            + "as a smaller batch.";
+
         /// <summary>Maximum ids per move_mail/archive_mail call (T1-pinned).</summary>
         public const int MoveIdsCap = 50;
 
@@ -2710,11 +2811,18 @@ namespace OutlookAI.Core.Services
             List<MoveItemView> items = new List<MoveItemView>(requestIds.Count);
             List<string> createdFolders = new List<string>();
             bool auditBroken = false;
+            Stopwatch batchClock = Stopwatch.StartNew();
             foreach (string id in requestIds)
             {
                 if (auditBroken)
                 {
                     items.Add(FailedItem(id, "Not attempted: the audit log is unavailable (every move must be audited)."));
+                    continue;
+                }
+
+                if (batchClock.ElapsedMilliseconds > MoveBatchBudgetMs)
+                {
+                    items.Add(FailedItem(id, BatchBudgetExhaustedMessage));
                     continue;
                 }
 
@@ -2754,11 +2862,18 @@ namespace OutlookAI.Core.Services
                 new Dictionary<string, (ComArchiveFolderInfo?, string?)>(StringComparer.OrdinalIgnoreCase);
             List<MoveItemView> items = new List<MoveItemView>(requestIds.Count);
             bool auditBroken = false;
+            Stopwatch batchClock = Stopwatch.StartNew();
             foreach (string id in requestIds)
             {
                 if (auditBroken)
                 {
                     items.Add(FailedItem(id, "Not attempted: the audit log is unavailable (every move must be audited)."));
+                    continue;
+                }
+
+                if (batchClock.ElapsedMilliseconds > MoveBatchBudgetMs)
+                {
+                    items.Add(FailedItem(id, BatchBudgetExhaustedMessage));
                     continue;
                 }
 
@@ -3287,6 +3402,12 @@ namespace OutlookAI.Core.Services
                 IndexSearchService index = _index.Value;
                 provider = index.Provider.ToString();
 
+                // ONE clock over the WHOLE index block, started before the first statement.
+                // It used to start after catalog discovery and the COM-assisted enrichment,
+                // so the two steps most able to run long were the two outside the budget
+                // that was supposed to bound them.
+                System.Diagnostics.Stopwatch indexClock = System.Diagnostics.Stopwatch.StartNew();
+
                 // Short per-query timeout, for the same reason the COM probe has one: a
                 // saturated Windows Search indexer is precisely when health gets asked,
                 // and the default 30 s per query across a global probe plus one per store
@@ -3306,7 +3427,7 @@ namespace OutlookAI.Core.Services
                 {
                     try
                     {
-                        EnsureCatalogCoverageFromCom();
+                        EnsureCatalogCoverageFromCom(indexClock);
                     }
                     catch (Exception ex) when (ex is not OutOfMemoryException)
                     {
@@ -3315,13 +3436,12 @@ namespace OutlookAI.Core.Services
                 }
 
                 perStore = new List<StoreStaleness>();
-                System.Diagnostics.Stopwatch perStoreClock = System.Diagnostics.Stopwatch.StartNew();
-                foreach (StoreScopeInfo scopeInfo in GetCatalog())
+                foreach (StoreScopeInfo scopeInfo in GetCatalog(HealthIndexTimeoutSeconds))
                 {
                     // Overall budget as well as a per-query one: a profile with many
                     // stores multiplies even a short timeout. Reporting fewer rows is a
                     // fine outcome; taking minutes to report all of them is not.
-                    if (perStoreClock.ElapsedMilliseconds > HealthPerStoreIndexBudgetMs)
+                    if (indexClock.ElapsedMilliseconds > HealthPerStoreIndexBudgetMs)
                     {
                         advice.Add("Per-store index freshness is incomplete: the index did not answer quickly enough for "
                             + "every store. The global figure above is still accurate.");
@@ -3759,9 +3879,15 @@ namespace OutlookAI.Core.Services
                 return (cached.LocatedEntryId, storeId, cached.LocatedVia, stopwatch.ElapsedMilliseconds, id);
             }
 
-            // Raw EntryID hex (real Outlook EntryIDs are 70+ bytes = 140+ hex chars, but
-            // accept anything plausibly hex and long enough to not be a hit id).
-            if (id.Length >= 48 && id.Length % 2 == 0 && IsHex(id))
+            // Raw EntryID hex. The floor is DERIVED from the shortest structurally valid
+            // MAPI entry id rather than picked: EntryIdCodec.MessageEntryIdLength bytes
+            // (4 flag bytes + a 16-byte store UID + a 4-byte node id), two hex chars each.
+            // A real message EntryID is typically far longer - 70+ bytes, 140+ hex chars -
+            // but this is an ACCEPTANCE test, not a validation one: anything plausibly hex
+            // and longer than a hit id ("h7") is handed to Outlook, which is the authority
+            // on whether it opens. The comment used to claim 140 while the code said 48,
+            // three times looser than its own stated truth and with nothing pinning either.
+            if (id.Length >= MinRawEntryIdHexChars && id.Length % 2 == 0 && IsHex(id))
             {
                 return (id, null, "directEntryId", 0, null);
             }
@@ -3782,25 +3908,38 @@ namespace OutlookAI.Core.Services
         /// correctly gave up after 5 s. A step whose result is optional must never cost
         /// more than the step whose result is the point.
         /// </para>
+        /// <para>
+        /// Its INDEX half was still unbounded until the same rule was applied to it: two
+        /// searches plus a probe per '@'-named store, each falling through to the 30 s index
+        /// default. It now runs under health's index clock and stops the moment
+        /// <see cref="HealthPerStoreIndexBudgetMs"/> is spent - dropping an enrichment is
+        /// invisible in the report, where taking minutes is not.
+        /// </para>
         /// </summary>
-        private void EnsureCatalogCoverageFromCom()
+        private void EnsureCatalogCoverageFromCom(System.Diagnostics.Stopwatch indexClock)
         {
             IReadOnlyList<ComStoreDetail> stores = _gateway.Run(GetStoreDetails, HealthProbeBudgetMs);
             foreach (ComStoreDetail store in stores)
             {
+                if (indexClock.ElapsedMilliseconds > HealthPerStoreIndexBudgetMs)
+                {
+                    return;
+                }
+
                 if (store.DisplayName.IndexOf('@') < 0)
                 {
                     continue;
                 }
 
-                bool known = GetCatalog().Any(s =>
+                bool known = GetCatalog(HealthIndexTimeoutSeconds).Any(s =>
                     string.Equals(s.StoreDisplayName, store.DisplayName, StringComparison.OrdinalIgnoreCase));
                 if (known)
                 {
                     continue;
                 }
 
-                StoreScopeInfo? targeted = _index.Value.TryDiscoverStoreScopeByAddress(store.DisplayName);
+                StoreScopeInfo? targeted = _index.Value.TryDiscoverStoreScopeByAddress(
+                    store.DisplayName, HealthIndexTimeoutSeconds);
                 if (targeted != null)
                 {
                     InvalidateCatalog(targeted);
@@ -3810,7 +3949,7 @@ namespace OutlookAI.Core.Services
 
         private bool ProbeStoreInIndex(string displayName, bool isDelegate)
         {
-            IReadOnlyList<StoreScopeInfo> catalog = GetCatalog();
+            IReadOnlyList<StoreScopeInfo> catalog = GetCatalog(SearchIndexTimeoutSeconds);
             foreach (StoreScopeInfo scopeInfo in catalog)
             {
                 if (string.Equals(scopeInfo.StoreDisplayName, displayName, StringComparison.OrdinalIgnoreCase))
@@ -3825,7 +3964,7 @@ namespace OutlookAI.Core.Services
                 // subtree (Phase-1 fact 3).
                 foreach (StoreScopeInfo owner in catalog)
                 {
-                    if (_index.Value.ScopeHasAnyItem(owner.StorePrefix + "/1/" + displayName))
+                    if (_index.Value.ScopeHasAnyItem(owner.StorePrefix + "/1/" + displayName, SearchIndexTimeoutSeconds))
                     {
                         return true;
                     }
@@ -3836,7 +3975,7 @@ namespace OutlookAI.Core.Services
 
             if (displayName.IndexOf('@') >= 0)
             {
-                StoreScopeInfo? targeted = _index.Value.TryDiscoverStoreScopeByAddress(displayName);
+                StoreScopeInfo? targeted = _index.Value.TryDiscoverStoreScopeByAddress(displayName, SearchIndexTimeoutSeconds);
                 if (targeted != null)
                 {
                     InvalidateCatalog(targeted);
@@ -3869,13 +4008,13 @@ namespace OutlookAI.Core.Services
         /// </summary>
         private FolderScopeResolution ResolveFolderScope(string store, string? folder, bool includeSubfolders)
         {
-            IReadOnlyList<StoreScopeInfo> catalog = GetCatalog();
+            IReadOnlyList<StoreScopeInfo> catalog = GetCatalog(SearchIndexTimeoutSeconds);
             StoreScopeInfo? match = catalog.FirstOrDefault(s =>
                 string.Equals(s.StoreDisplayName, store, StringComparison.OrdinalIgnoreCase));
 
             if (match == null && store.IndexOf('@') >= 0)
             {
-                match = _index.Value.TryDiscoverStoreScopeByAddress(store);
+                match = _index.Value.TryDiscoverStoreScopeByAddress(store, SearchIndexTimeoutSeconds);
                 if (match != null)
                 {
                     InvalidateCatalog(match);
@@ -3894,7 +4033,7 @@ namespace OutlookAI.Core.Services
                 bool exists;
                 try
                 {
-                    exists = _index.Value.ScopeHasAnyItem(delegateScope);
+                    exists = _index.Value.ScopeHasAnyItem(delegateScope, SearchIndexTimeoutSeconds);
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
@@ -3956,14 +4095,31 @@ namespace OutlookAI.Core.Services
             return paths;
         }
 
-        private IReadOnlyList<StoreScopeInfo> GetCatalog()
+        /// <summary>
+        /// The store catalog, discovered once per process and then reused.
+        /// <para>
+        /// <paramref name="commandTimeoutSeconds"/> bounds the discovery statements when
+        /// this is the call that performs it. Whichever caller gets there first supplies the
+        /// timeout, which is why the two that can - search and health - both pass their own
+        /// rather than letting it fall through to the 30 s index default underneath a budget
+        /// measured in single-digit seconds.
+        /// </para>
+        /// </summary>
+        private IReadOnlyList<StoreScopeInfo> GetCatalog(int? commandTimeoutSeconds)
         {
             lock (_catalogLock)
             {
-                _catalog ??= _index.Value.DiscoverStoreScopes(2000);
+                _catalog ??= _index.Value.DiscoverStoreScopes(StoreDiscoverySampleSize, commandTimeoutSeconds);
                 return _catalog;
             }
         }
+
+        /// <summary>
+        /// Item URLs sampled to discover store scopes. The 2000-row pull measured 552 ms in
+        /// the section-5 probes; a busy store dominates smaller samples, and the tiny idle
+        /// ones it still misses are found by targeted per-address discovery instead.
+        /// </summary>
+        private const int StoreDiscoverySampleSize = 2000;
 
         private void InvalidateCatalog(StoreScopeInfo addition)
         {
@@ -3988,7 +4144,7 @@ namespace OutlookAI.Core.Services
         {
             lock (_catalogLock)
             {
-                if (_storeDetails == null || DateTime.UtcNow - _storeDetailsFetchedUtc > TimeSpan.FromMinutes(5))
+                if (_storeDetails == null || DateTime.UtcNow - _storeDetailsFetchedUtc > StoreDetailsCacheTtl)
                 {
                     _storeDetails = session.GetStoreDetails();
                     _storeDetailsFetchedUtc = DateTime.UtcNow;

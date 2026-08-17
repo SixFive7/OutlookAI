@@ -99,7 +99,7 @@ public static class OutlookTools
         [Description("exhaustive=true bypasses the index and scans folders through Outlook instead - requires "
             + "store plus folder and/or after, is far slower, and matches whole words in subject and body only "
             + "(no attachment text). Default false: index + freshness sweep. It follows include_subfolders like "
-            + "the other modes, so a folder scope walks the subtree - which on a big subtree can hit the 120 s "
+            + "the other modes, so a folder scope walks the subtree - which on a big subtree can hit the 105 s "
             + "budget; pass include_subfolders=false to scan just the named folder, and check "
             + "foldersScanned/foldersSkipped plus advice for partial coverage. Use it when the index looks stale "
             + "or wrong, or when completeness matters more than speed.")]
