@@ -180,24 +180,39 @@ public sealed class ComHostSupervisionCiTests
         // The 2026-08-15 machine had 18 orphaned server processes, one wedged holding
         // Outlook COM. Process-tree lifetime is enforced by a job object plus the child's
         // own parent watch, because a killed parent cannot run cleanup code.
+        // Whether a host exists at all depends on the machine, not on the code under test.
+        // Since 6f5a8b5 the liveness probe asks Windows whether Outlook is running BEFORE
+        // spending anything on COM, so on a box with Outlook closed - a CI runner, or a
+        // developer who has not started it - outlook_health answers without ever spawning
+        // the host. Asserting a pid there fails on the environment rather than on a defect,
+        // which is exactly the machine-dependence this tier avoids: it made the whole
+        // Category!=Live suite pass or fail according to whether Outlook happened to be up.
+        // So branch on the observed state and keep an assertion in both branches.
         int? childPid;
         await using (McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
             TimeSpan.FromSeconds(120), Fault("delay:1:GetAccounts")))
         {
             childPid = await ComHostPidAsync(client);
-            Assert.NotNull(childPid);
 
             bool exited = await client.CloseAndAwaitExitAsync(TimeSpan.FromSeconds(30));
             Assert.True(exited, "the server must exit when its stdin closes");
         }
 
+        if (childPid is null)
+        {
+            // No host was spawned, so nothing can have outlived the server and the
+            // stdin-close assertion above is all this run can honestly prove. Start Outlook
+            // to exercise the branch that matters.
+            return;
+        }
+
         // Give the kernel a moment to reap the job.
-        for (int attempt = 0; attempt < 50 && IsAlive(childPid!.Value); attempt++)
+        for (int attempt = 0; attempt < 50 && IsAlive(childPid.Value); attempt++)
         {
             await Task.Delay(100);
         }
 
-        Assert.False(IsAlive(childPid!.Value), $"COM host pid {childPid} outlived its server");
+        Assert.False(IsAlive(childPid.Value), $"COM host pid {childPid} outlived its server");
     }
 
     [Fact]
