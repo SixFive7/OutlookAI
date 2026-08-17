@@ -93,15 +93,41 @@ public sealed class OutlookAvailabilityCiTests
         bool degraded = payload.TryGetProperty("degraded", out JsonElement d) && d.GetBoolean();
         string freshness = payload.TryGetProperty("freshness", out JsonElement f) ? f.GetString()! : "live";
 
+        // THREE states, not two: the sweep ran and covered everything ("live"), it ran and
+        // covered part of its scope ("partial"), or it never ran ("index-only").
+        Assert.Contains(freshness, new[] { "live", "partial", "index-only" });
+
         // The two markers must agree with each other and with the sweep block. A result
         // that looks complete but silently lags recent mail is the one failure mode here
         // that misleads rather than merely inconveniences.
-        Assert.Equal(degraded, freshness == "index-only");
+        //
+        // Re-baselined from Assert.Equal(degraded, freshness == "index-only"): that read
+        // "degraded means the sweep did not run", which made a partially-covered sweep a
+        // NON-degraded result by definition and pinned exactly the lie this contract exists
+        // to prevent. What survives unchanged is the useful half - degraded is true iff the
+        // answer is not fully fresh - now stated against "live" rather than against one of
+        // the two ways of failing it.
+        Assert.Equal(degraded, freshness != "live");
 
         if (payload.TryGetProperty("sweep", out JsonElement sweep) &&
             sweep.TryGetProperty("performed", out JsonElement performed))
         {
-            Assert.Equal(!performed.GetBoolean(), degraded);
+            bool ran = performed.GetBoolean();
+            bool gapsReported = sweep.TryGetProperty("coverageGaps", out JsonElement gaps)
+                && gaps.ValueKind == JsonValueKind.Array
+                && gaps.GetArrayLength() > 0;
+
+            // A sweep that did not run is index-only, whatever else is in the block; a
+            // sweep that ran is degraded exactly when it reports coverage gaps, and the
+            // gap list is the machine-readable reason - so an agent never has to read prose
+            // to find out that an answer is partial.
+            Assert.Equal(!ran, freshness == "index-only");
+            Assert.False(!ran && gapsReported, "a sweep that never ran cannot report coverage gaps");
+            if (ran)
+            {
+                Assert.Equal(gapsReported, freshness == "partial");
+                Assert.Equal(gapsReported, degraded);
+            }
         }
 
         if (degraded)
@@ -109,7 +135,19 @@ public sealed class OutlookAvailabilityCiTests
             // And it must say so in words the model will relay, not only in a field.
             Assert.True(payload.TryGetProperty("advice", out JsonElement advice), "degraded results must carry advice");
             string joined = advice.GetRawText();
-            Assert.Contains("TELL THE USER", joined, StringComparison.Ordinal);
+
+            // "TELL THE USER" is the alarm the not-run case raises, and it stays pinned
+            // there. A partial sweep does not shout: its advice names the specific hole,
+            // what is missing because of it and how to close it, which is more actionable
+            // than an alarm - so what is required of it is that it says something at all.
+            if (freshness == "index-only")
+            {
+                Assert.Contains("TELL THE USER", joined, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Contains("Freshness sweep", joined, StringComparison.Ordinal);
+            }
         }
     }
 

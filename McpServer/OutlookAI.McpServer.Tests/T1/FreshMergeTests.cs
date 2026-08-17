@@ -294,4 +294,228 @@ public sealed class FreshMergeTests
         Assert.NotEqual(FreshMerge.RecipientFilterNotSweepable, FreshMerge.AttachmentContentNotSweepable);
         Assert.DoesNotContain(" ", FreshMerge.AttachmentContentNotSweepable, StringComparison.Ordinal);
     }
+
+    // ------------------------------------------------- freshness coverage (three states)
+    //
+    // THE DEFECT THIS SECTION PINS: degraded/freshness used to be set from sweep.performed
+    // alone, so a sweep that RAN and covered part of its scope - a folder it could not
+    // enumerate, a cap, a budget - reported freshness "live" with no degradation while
+    // advice said in prose that coverage was partial. An agent reading fields rather than
+    // prose, which is the sensible way to read a payload, was told a partial answer was
+    // complete. Every hole below is reachable only with a real mailbox (a folder tree that
+    // fails, truncates or runs long), so it is proven here on the payload block the COM
+    // layer fills in, which is where the classification actually happens.
+
+    private static SweepInfo Swept(int foldersSwept = 3)
+    {
+        return new SweepInfo { Performed = true, FoldersSwept = foldersSwept };
+    }
+
+    /// <summary>Every gap code declared on <see cref="FreshMerge"/>, read from the type itself.</summary>
+    private static IReadOnlyList<string> AllGapCodes()
+    {
+        return typeof(FreshMerge)
+            .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string) && f.Name.StartsWith("Gap", StringComparison.Ordinal))
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .ToList();
+    }
+
+    [Fact]
+    public void ASweepThatCoveredItsWholeScope_IsLive_AndReportsNoGaps()
+    {
+        SweepInfo sweep = Swept();
+        Assert.Null(FreshMerge.DescribeCoverageGaps(sweep));
+        Assert.Equal(FreshMerge.FreshnessLive, FreshMerge.ClassifyFreshness(sweep));
+    }
+
+    [Fact]
+    public void ASweepThatNeverRan_IsIndexOnly_AndIsNotReportedAsPartial()
+    {
+        // "Did not run" and "ran but covered part of it" are different states with
+        // different remedies; a sweep that never ran must not borrow the partial vocabulary.
+        SweepInfo sweep = new SweepInfo { Performed = false, Error = "OutlookUnavailable" };
+        Assert.Null(FreshMerge.DescribeCoverageGaps(sweep));
+        Assert.Equal(FreshMerge.FreshnessIndexOnly, FreshMerge.ClassifyFreshness(sweep));
+    }
+
+    [Fact]
+    public void NoSweepBlockAtAll_StaysLive_BecauseThatCallerAskedForIndexRows()
+    {
+        // The internal index-only escape hatch (SearchRequest.IndexOnly, not on the MCP
+        // tool): nothing was withheld, so nothing is degraded.
+        Assert.Equal(FreshMerge.FreshnessLive, FreshMerge.ClassifyFreshness(null));
+    }
+
+    /// <summary>
+    /// Every way a sweep that RAN can have covered less than its scope, paired with the
+    /// code it must report. Written as data rather than as one test per hole so the set
+    /// itself can be compared against the codes the type declares.
+    /// </summary>
+    private static List<(string Gap, SweepInfo Sweep)> CoverageHoles()
+    {
+        List<(string Gap, SweepInfo Sweep)> data = new();
+
+        // 1. The sweep ran but reached no folder at all - a whole-scope miss that was
+        //    silent in BOTH fields and prose whenever no folder was requested (a
+        //    store name that matches nothing is skipped without even a skip count).
+        data.Add((FreshMerge.GapNothingSwept, Swept(foldersSwept: 0)));
+
+        // 2. Folders whose item enumeration failed: no freshness coverage there at all.
+        data.Add((FreshMerge.GapFoldersFailed, new SweepInfo { Performed = true, FoldersSwept = 2, FoldersFailed = 1 }));
+
+        // 3. The subtree walk stopped at MaxScopedSweepFolders.
+        data.Add((FreshMerge.GapFolderCap, new SweepInfo { Performed = true, FoldersSwept = 40, FolderCapReached = true }));
+
+        // 4. The subtree walk stopped at ScopedSweepTimeBudgetMs.
+        data.Add((FreshMerge.GapTimeBudget, new SweepInfo { Performed = true, FoldersSwept = 7, TimeBudgetExceeded = true }));
+
+        // 5. The subtree walk refused folders past the depth guard.
+        data.Add((FreshMerge.GapDepthLimit, new SweepInfo { Performed = true, FoldersSwept = 9, DepthLimitReached = true }));
+
+        // 6. Folders skipped because they could not be resolved or enumerated.
+        data.Add((FreshMerge.GapFoldersSkipped, new SweepInfo { Performed = true, FoldersSwept = 3, FoldersSkipped = 2 }));
+
+        // 7. The per-folder item cap truncated a folder's window (newest-first, so the
+        //    OLDEST not-yet-indexed mail there is the part that is missing).
+        data.Add((
+            FreshMerge.GapItemCap,
+            new SweepInfo { Performed = true, FoldersSwept = 3, ItemCappedFolders = new[] { "alice@example.com/Inbox" } }));
+
+        return data;
+    }
+
+    [Fact]
+    public void EveryCoverageHole_MakesTheSweepPartial_AndNamesItself()
+    {
+        foreach ((string expectedGap, SweepInfo sweep) in CoverageHoles())
+        {
+            IReadOnlyList<string>? gaps = FreshMerge.DescribeCoverageGaps(sweep);
+            Assert.True(gaps != null, $"{expectedGap}: a sweep with this hole must report coverage gaps");
+            Assert.Contains(expectedGap, gaps!);
+
+            // The whole point: the machine-readable pair must say partial, not "live".
+            Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(sweep));
+        }
+    }
+
+    [Fact]
+    public void TheCoverageHoleSet_IsExactlyTheGapCodesDeclared_SoANewOneCannotBeAddedUntested()
+    {
+        List<string> covered = CoverageHoles().Select(row => row.Gap).OrderBy(c => c, StringComparer.Ordinal).ToList();
+        List<string> declared = AllGapCodes().OrderBy(c => c, StringComparer.Ordinal).ToList();
+        Assert.Equal(declared, covered);
+    }
+
+    [Fact]
+    public void SkippedFolders_AreNotReportedTwice_WhenABoundStoppedTheWalk()
+    {
+        // A bound refuses the folders it did not reach and COUNTS them as skipped, so
+        // reporting both would attribute a cap to unreadable folders. The bound's own code
+        // still fires, so the answer is still partial - nothing is lost by the suppression.
+        foreach (SweepInfo bounded in new[]
+                 {
+                     new SweepInfo { Performed = true, FoldersSwept = 40, FoldersSkipped = 12, FolderCapReached = true },
+                     new SweepInfo { Performed = true, FoldersSwept = 5, FoldersSkipped = 12, TimeBudgetExceeded = true },
+                     new SweepInfo { Performed = true, FoldersSwept = 5, FoldersSkipped = 12, DepthLimitReached = true },
+                 })
+        {
+            IReadOnlyList<string> gaps = FreshMerge.DescribeCoverageGaps(bounded)!;
+            Assert.DoesNotContain(FreshMerge.GapFoldersSkipped, gaps);
+            Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(bounded));
+        }
+    }
+
+    [Fact]
+    public void SeveralHolesAtOnce_AreAllReported()
+    {
+        SweepInfo sweep = new SweepInfo
+        {
+            Performed = true,
+            FoldersSwept = 40,
+            FoldersFailed = 2,
+            FolderCapReached = true,
+            ItemCappedFolders = new[] { "alice@example.com/Inbox" },
+        };
+
+        IReadOnlyList<string> gaps = FreshMerge.DescribeCoverageGaps(sweep)!;
+        Assert.Equal(
+            new[] { FreshMerge.GapFoldersFailed, FreshMerge.GapFolderCap, FreshMerge.GapItemCap },
+            gaps);
+    }
+
+    [Fact]
+    public void GapCodesAndFreshnessValues_AreDistinctMachineReadableTokens()
+    {
+        IReadOnlyList<string> codes = AllGapCodes();
+        Assert.Equal(codes.Count, codes.Distinct(StringComparer.Ordinal).Count());
+        foreach (string code in codes)
+        {
+            Assert.DoesNotContain(" ", code, StringComparison.Ordinal);
+            Assert.Equal(code.ToLowerInvariant(), code);
+        }
+
+        // The three freshness values stay distinct, and the two that already travelled on
+        // the wire keep their exact spelling - callers pin them.
+        Assert.Equal("live", FreshMerge.FreshnessLive);
+        Assert.Equal("index-only", FreshMerge.FreshnessIndexOnly);
+        Assert.Equal("partial", FreshMerge.FreshnessPartial);
+    }
+
+    // -------------------------------------------- every code earns one advice sentence
+
+    [Fact]
+    public void EveryGapCode_ProducesItsOwnAdviceSentence()
+    {
+        // Codes and prose are two renderings of one decision. A code with no sentence is a
+        // partial result an agent can see but not explain to the user; a sentence with no
+        // code is the original defect. This walks the codes declared on the type, so a new
+        // one added without prose fails here rather than shipping silent.
+        foreach (string code in AllGapCodes())
+        {
+            SweepInfo sweep = new SweepInfo
+            {
+                Performed = true,
+                FoldersSwept = 4,
+                FoldersFailed = 1,
+                FoldersSkipped = 2,
+                ItemCappedFolders = new[] { "alice@example.com/Inbox" },
+                CoverageGaps = new[] { code },
+            };
+
+            IReadOnlyList<string> advice = MailService.DescribeSweepCoverage(sweep, "12 minutes", folderScoped: false);
+            string line = Assert.Single(advice);
+            Assert.StartsWith("Freshness sweep", line, StringComparison.Ordinal);
+            Assert.DoesNotContain("no further detail available", line, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void TheTotalMissSentence_IsLeftToTheFolderScopedCaller_WhichNamesTheFolder()
+    {
+        SweepInfo sweep = new SweepInfo
+        {
+            Performed = true,
+            FoldersSwept = 0,
+            CoverageGaps = new[] { FreshMerge.GapNothingSwept },
+        };
+
+        Assert.Empty(MailService.DescribeSweepCoverage(sweep, "12 minutes", folderScoped: true));
+        Assert.Single(MailService.DescribeSweepCoverage(sweep, "12 minutes", folderScoped: false));
+    }
+
+    [Fact]
+    public void AnOmittedFolderList_IsReported_ButIsNotACoverageHole()
+    {
+        // The sweep covered those folders; only the LIST was dropped by its own cap. It
+        // must be said (no silent caps) and it must not make a complete answer partial.
+        SweepInfo sweep = new SweepInfo { Performed = true, FoldersSwept = 30, FolderListOmitted = true };
+        sweep.CoverageGaps = FreshMerge.DescribeCoverageGaps(sweep);
+
+        Assert.Null(sweep.CoverageGaps);
+        Assert.Equal(FreshMerge.FreshnessLive, FreshMerge.ClassifyFreshness(sweep));
+        Assert.Contains(
+            MailService.DescribeSweepCoverage(sweep, "12 minutes", folderScoped: false),
+            line => line.Contains("swept-folder list is omitted", StringComparison.Ordinal));
+    }
 }

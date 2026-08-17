@@ -20,8 +20,8 @@ namespace OutlookAI.McpServer.Tools;
 /// <para>
 /// Note what this process does NOT hold any more: a COM session, a pumped STA thread, or
 /// any Outlook reference. Those live in the OutlookAI.ComHost child, which exists so a
-/// wedged Outlook call can be reclaimed by killing it (see "Why two processes" in
-/// McpServer/README.md). Everything here is either pure computation or a bounded round trip.
+/// wedged Outlook call can be reclaimed by killing it (Docs/com-host.md). Everything here
+/// is either pure computation or a bounded round trip.
 /// </para>
 /// </summary>
 internal static class ServerRuntime
@@ -67,26 +67,37 @@ public static class OutlookTools
     // reports it - the advice/scope/sweep blocks - and everything that is per-argument
     // how-to-call detail moved onto the arguments, which carry their own budgets.
     // DescriptionBudgetCiTests measures all of it from the wire.
+    //
+    // DEGRADED RESULTS was rewritten when freshness gained its third value: it used to
+    // state degraded=true and freshness="index-only" as one fact, which stopped being true
+    // the moment a sweep that RAN but covered part of its scope also earned degraded=true.
+    // A sentence that pairs the flag with one specific value teaches the agent to read the
+    // value instead of the flag, so it now leads with what the flag MEANS and lists the two
+    // values under it. Rewritten inside the existing budget, not on top of it: the paragraph
+    // paid for the new state by dropping the parenthetical listing Outlook's states, which
+    // advice already spells out at runtime, and two words elsewhere. Measured from the wire
+    // at 1798 before and 1791 after.
     [McpServerTool(Name = "search")]
     [Description("Search locally indexed Outlook mail across all accounts, folders and delegate mailboxes. "
         + "Sub-second and cheap: iterate with refined terms instead of pulling large result sets.\n\n"
         + "MATCHING: query terms are whitespace-separated and ANDed; each term matches whole words, and the terms "
         + "may land in different parts of the mail - one in the subject, another in the body (search_in narrows "
         + "this to one of them). Body matching also covers attachment text - see include_attachment_hits. Append "
-        + "* for prefix match (haproxy*). Allowed characters: letters, digits and @.-_'+ ; omit query entirely to "
+        + "* for prefix match (haproxy*). Allowed characters: letters, digits and @.-_'+ ; omit query to "
         + "filter only by from/to/date/flags. Sender and recipients are NOT matched by query terms - use "
         + "from / to.\n\n"
         + "FRESHNESS: results always include mail that arrived after the last index update: the server sweeps it "
         + "live through Outlook (started headless when needed) and merges it in; the sweep block reports what "
         + "that covered.\n\n"
-        + "DEGRADED RESULTS: when the live check cannot run (Outlook closed, starting, or not responding) the "
-        + "response carries degraded=true and freshness=\"index-only\" instead of \"live\". Everything already "
-        + "indexed is present and correct; only mail from roughly the last few minutes may be missing. This is a "
+        + "DEGRADED RESULTS: degraded=true means NOT fully fresh - the live check could not run "
+        + "(freshness=\"index-only\") or it covered only part of its scope (freshness=\"partial\"; "
+        + "sweep.coverageGaps says which). Everything already "
+        + "indexed is present and correct; recent mail from the uncovered part may be missing. This is a "
         + "SUCCESSFUL result, not an error - but SAY SO TO THE USER when degraded is true, because an answer that "
         + "looks complete and quietly is not is worse than a visible failure. advice spells out the reason and the "
         + "remedy; outlook_health gives the full picture.\n\n"
         + "RESULTS: each hit's id feeds read, thread, save_attachment, open_in_outlook, move_mail and "
-        + "archive_mail (ids are valid for this session). Read advice whenever it is present and relay what "
+        + "archive_mail (ids last this session). Read advice whenever present and relay what "
         + "concerns the user: every partial "
         + "result, cap, skipped folder, widened scope and freshness gap is reported there, alongside the scope "
         + "and sweep blocks.")]

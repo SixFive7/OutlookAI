@@ -178,6 +178,18 @@ public sealed class SearchSchemaCiTests
         Assert.Contains("SAY SO TO THE USER when degraded is true", description, StringComparison.Ordinal);
         Assert.Contains("outlook_health", description, StringComparison.Ordinal);
 
+        // ...and BOTH ways to earn degraded=true, because the flag is now wider than the
+        // one value the old sentence paired it with. A description that names only
+        // "index-only" teaches an agent to test freshness for that string, which reads a
+        // partially-covered sweep - freshness="partial", the sweep RAN - as complete.
+        Assert.Contains("freshness=\"partial\"", description, StringComparison.Ordinal);
+        Assert.Contains("sweep.coverageGaps", description, StringComparison.Ordinal);
+        Assert.Contains("covered only part of its scope", description, StringComparison.Ordinal);
+
+        // The retired pairing must not come back: degraded=true no longer implies the live
+        // check failed to run.
+        Assert.DoesNotContain("when the live check cannot run", description, StringComparison.OrdinalIgnoreCase);
+
         // ... and it must survive the cut, not merely exist. A client that truncates at
         // 2 KB must still receive the whole instruction.
         int degradedEnd = description.IndexOf("outlook_health gives the full picture", StringComparison.Ordinal);

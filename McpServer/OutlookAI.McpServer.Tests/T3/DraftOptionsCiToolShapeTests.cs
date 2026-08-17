@@ -16,6 +16,13 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// </summary>
 public sealed class DraftOptionsCiToolShapeTests
 {
+    private readonly Xunit.Abstractions.ITestOutputHelper _output;
+
+    public DraftOptionsCiToolShapeTests(Xunit.Abstractions.ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
     private static readonly string[] AllDraftTools =
     [
         "new_draft", "reply_draft", "replyall_draft", "forward_draft",
@@ -154,22 +161,66 @@ public sealed class DraftOptionsCiToolShapeTests
         Assert.Contains("importance", error.GetProperty("message").GetString()!, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Every tool that enforces the 255-character subject cap, including update_draft -
+    /// which is not a "draft tool" in the sense the lists above use, but shares the gate.
+    /// </summary>
+    public static TheoryData<string> SubjectCapToolNames =>
+        Names(["new_draft", "reply_draft", "replyall_draft", "forward_draft", "update_draft"]);
+
     [Theory]
-    [MemberData(nameof(DerivedDraftToolNames))]
-    public async Task DerivedDraftTools_RejectOverlongSubjectOverride_AsAStructuredError(string toolName)
+    [MemberData(nameof(SubjectCapToolNames))]
+    public async Task DraftTools_RefuseAnOverlongSubject_WithAnErrorTheModelCanSelfCorrectFrom(string toolName)
     {
+        // The cap is taught by the ERROR, not by the subject argument's description (user
+        // decision: an over-long subject is rare, and every call would pay the description
+        // budget for it). That is only a fair trade while the refusal carries everything a
+        // retry needs, which is what this pins from the WIRE - the surface an agent
+        // actually meets. It reaches the model as a real tool error (isError plus this
+        // server's {"error": ...} shape), not as a protocol fault or a bare exception.
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
         await client.PrimeWritingRulesGateAsync();
 
-        string tooLong = new('x', MailService.SubjectCharsCap + 1);
-        object arguments = toolName == "forward_draft"
-            ? new { id = "h424242", body = "b", to = "a@b.example", display = false, subject = tooLong }
-            : (object)new { id = "h424242", body = "b", display = false, subject = tooLong };
+        int supplied = MailService.SubjectCharsCap + 57;
+        string tooLong = new('x', supplied);
+        object arguments = toolName switch
+        {
+            "new_draft" => new
+            {
+                account = "hub@example.com",
+                to = "a@b.example",
+                subject = tooLong,
+                body = "b",
+                display = false,
+            },
+            "forward_draft" => new { id = "h424242", body = "b", to = "a@b.example", display = false, subject = tooLong },
+            "update_draft" => new { id = "h424242", display = false, subject = tooLong },
+            _ => (object)new { id = "h424242", body = "b", display = false, subject = tooLong },
+        };
 
-        JsonElement result = await client.CallToolAsync(toolName, arguments);
-        JsonElement error = result.GetProperty("error");
+        (JsonElement payload, bool isError) = await client.CallToolWithIsErrorAsync(toolName, arguments);
+        _output.WriteLine($"{toolName} isError={isError} payload={payload.GetRawText()}");
+
+        Assert.True(isError, $"{toolName} must flag an over-long subject as a tool error");
+        JsonElement error = payload.GetProperty("error");
         Assert.Equal("InvalidArgument", error.GetProperty("type").GetString());
-        Assert.Contains("subject", error.GetProperty("message").GetString()!, StringComparison.OrdinalIgnoreCase);
+
+        string message = error.GetProperty("message").GetString()!;
+        Assert.Contains("subject", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "max " + MailService.SubjectCharsCap.ToString(CultureInfo.InvariantCulture) + " characters",
+            message,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            supplied.ToString(CultureInfo.InvariantCulture) + " characters supplied",
+            message,
+            StringComparison.Ordinal);
+        Assert.Contains("Nothing was created or changed", message, StringComparison.Ordinal);
+        Assert.Contains("call again", message, StringComparison.OrdinalIgnoreCase);
+
+        // Pre-COM, and provably so: this ran on a machine that may have no Outlook at all,
+        // and the answer is the validation error rather than an Outlook-state error.
+        Assert.DoesNotContain("Outlook", message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static TheoryData<string> Names(string[] names)

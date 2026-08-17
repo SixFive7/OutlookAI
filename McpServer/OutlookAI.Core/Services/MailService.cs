@@ -432,6 +432,11 @@ namespace OutlookAI.Core.Services
             if (!request.IndexOnly)
             {
                 sweep = RunGapSweep(request, terms, staleness, indexResult.Hits, summaries, snippetChars);
+
+                // The conclusion the counters add up to, computed ONCE and carried in the
+                // payload: it decides the advice below, the top-level freshness value and
+                // the degraded flag, so those three can never disagree with each other.
+                sweep.CoverageGaps = FreshMerge.DescribeCoverageGaps(sweep);
                 if (sweep.Error == FreshMerge.RecipientFilterNotSweepable)
                 {
                     advice.Add("Freshness sweep skipped: recipient ('to') filters cannot be matched by the sweep, so results are "
@@ -464,7 +469,7 @@ namespace OutlookAI.Core.Services
                         + DescribeAge(staleness) + " of mail. Check the path with list_folders.");
                 }
 
-                AddSweepCoverageAdvice(advice, sweep, staleness);
+                advice.AddRange(DescribeSweepCoverage(sweep, DescribeAge(staleness), request.Folder != null));
             }
 
             AddUnresolvedFolderAdvice(advice, folderScope, request, summaries.Count);
@@ -510,17 +515,19 @@ namespace OutlookAI.Core.Services
                     + "so this list may be short of matches. Narrow with store/folder/after, or lower top.");
             }
 
-            // The live check either ran or it did not. Say so in a field, not only in prose:
-            // a result that looks complete but silently lags recent mail is the one failure
-            // here that can mislead rather than merely inconvenience.
-            bool freshnessMissing = sweep != null && !sweep.Performed;
+            // Say the live check's outcome in a FIELD, not only in prose: a result that
+            // looks complete but silently lags recent mail is the one failure here that can
+            // mislead rather than merely inconvenience. Three states, because a sweep that
+            // ran and covered part of its scope is neither of the other two - it did run, so
+            // it is not "index-only", and it left mail unchecked, so it is not "live".
+            string freshness = FreshMerge.ClassifyFreshness(sweep);
 
             return new SearchOutcome
             {
                 Hits = summaries,
                 Truncated = truncated,
-                Degraded = freshnessMissing ? true : (bool?)null,
-                Freshness = freshnessMissing ? "index-only" : "live",
+                Degraded = freshness == FreshMerge.FreshnessLive ? (bool?)null : true,
+                Freshness = freshness,
                 IndexElapsedMs = indexResult.ElapsedMilliseconds,
                 Sweep = sweep,
                 Scope = DescribeSearchScope(folderScope, request),
@@ -620,73 +627,107 @@ namespace OutlookAI.Core.Services
         /// Narrates every freshness-coverage hole the sweep just reported. Before soak
         /// fix 15 all of these landed in the payload as bare integers with no advice
         /// branch anywhere - or, for a failed folder, were not reported at all.
+        /// <para>
+        /// Driven by <see cref="SweepInfo.CoverageGaps"/> rather than by its own copy of
+        /// the conditions: the codes and these sentences are then two renderings of ONE
+        /// decision (<see cref="FreshMerge.DescribeCoverageGaps"/>) instead of two lists
+        /// that have to be kept in step, and every code is guaranteed a sentence. That
+        /// pairing is what T1 pins - a gap the payload flags but the prose never explains
+        /// (or the reverse) is exactly the drift this shape removes.
+        /// </para>
+        /// <para>
+        /// Public and pure so T1 can exercise every hole without a mailbox: the states
+        /// below need a folder tree that fails, truncates or runs long, which no CI runner
+        /// has. <paramref name="indexAge"/> is the already-formatted staleness span, and
+        /// <paramref name="folderScoped"/> suppresses the total-miss sentence for a
+        /// folder-scoped search, whose caller emits a better one naming the folder.
+        /// </para>
         /// </summary>
-        private static void AddSweepCoverageAdvice(List<string> advice, SweepInfo sweep, IndexStalenessReport staleness)
+        public static IReadOnlyList<string> DescribeSweepCoverage(SweepInfo sweep, string indexAge, bool folderScoped)
         {
-            if (!sweep.Performed)
+            if (sweep == null)
             {
-                return;
+                throw new ArgumentNullException(nameof(sweep));
             }
 
-            if (sweep.FoldersFailed > 0)
+            List<string> advice = new List<string>();
+            foreach (string gap in sweep.CoverageGaps ?? Array.Empty<string>())
             {
-                advice.Add("Freshness sweep FAILED on " + sweep.FoldersFailed.ToString(CultureInfo.InvariantCulture)
-                    + " folder(s) - Outlook would not enumerate them, so mail that arrived there in the last "
-                    + DescribeAge(staleness) + " is missing from these results. Retry, or use exhaustive:true for that folder.");
+                switch (gap)
+                {
+                    case FreshMerge.GapNothingSwept:
+                        if (!folderScoped)
+                        {
+                            advice.Add("Freshness sweep covered NO folder at all, so nothing in this answer was checked "
+                                + "against live Outlook and it may lag the last " + indexAge + " of mail. Check the store "
+                                + "name with list_accounts; index results are unaffected.");
+                        }
+
+                        break;
+
+                    case FreshMerge.GapFoldersFailed:
+                        advice.Add("Freshness sweep FAILED on " + sweep.FoldersFailed.ToString(CultureInfo.InvariantCulture)
+                            + " folder(s) - Outlook would not enumerate them, so mail that arrived there in the last "
+                            + indexAge + " is missing from these results. Retry, or use exhaustive:true for that folder.");
+                        break;
+
+                    case FreshMerge.GapFolderCap:
+                        advice.Add("Freshness sweep stopped at its folder cap ("
+                            + OutlookComSession.MaxScopedSweepFolders.ToString(CultureInfo.InvariantCulture)
+                            + " folders visited), so deeper subfolders were never visited - index results still cover them, but "
+                            + "brand-new mail there may be missing. Scope the search to a narrower folder for full freshness coverage.");
+                        break;
+
+                    case FreshMerge.GapTimeBudget:
+                        advice.Add("Freshness sweep stopped at its "
+                            + (OutlookComSession.ScopedSweepTimeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
+                            + " s time budget after " + sweep.FoldersSwept.ToString(CultureInfo.InvariantCulture)
+                            + " folder(s), so the rest of the subtree has no freshness coverage - index results still cover it, "
+                            + "but brand-new mail there may be missing. Scope the search to a narrower folder, or pass "
+                            + "include_subfolders:false to sweep just the named folder.");
+                        break;
+
+                    case FreshMerge.GapDepthLimit:
+                        advice.Add("Freshness sweep refused to descend past its depth guard, so the deepest folders in this "
+                            + "subtree were never swept - a folder tree that deep is unusual enough to be worth checking with "
+                            + "list_folders. Index results still cover them.");
+                        break;
+
+                    case FreshMerge.GapFoldersSkipped:
+                        advice.Add("Freshness sweep skipped " + sweep.FoldersSkipped.ToString(CultureInfo.InvariantCulture)
+                            + " folder(s) it could not resolve or enumerate, so mail that arrived there in the last "
+                            + indexAge + " may be missing. Check paths with list_folders.");
+                        break;
+
+                    case FreshMerge.GapItemCap:
+                        advice.Add("Freshness sweep hit its per-folder cap of "
+                            + SweepPerFolderCap.ToString(CultureInfo.InvariantCulture) + " items in: "
+                            + string.Join(", ", sweep.ItemCappedFolders ?? Array.Empty<string>())
+                            + ". It reads newest-first, so the OLDEST not-yet-indexed mail in those folders is not covered - "
+                            + "narrow the window with 'after' or search those folders directly.");
+                        break;
+
+                    default:
+                        // A code with no sentence would be a silent partial result, which is
+                        // the whole defect this reporting exists to remove. T1 pins that
+                        // every code is handled, so this can only be reached by a code added
+                        // without its advice - say so rather than dropping it.
+                        advice.Add("Freshness sweep reported partial coverage (" + gap
+                            + ") with no further detail available; treat these results as incomplete.");
+                        break;
+                }
             }
 
-            if (sweep.ItemCappedFolders != null && sweep.ItemCappedFolders.Count > 0)
-            {
-                advice.Add("Freshness sweep hit its per-folder cap of "
-                    + SweepPerFolderCap.ToString(CultureInfo.InvariantCulture) + " items in: "
-                    + string.Join(", ", sweep.ItemCappedFolders)
-                    + ". It reads newest-first, so the OLDEST not-yet-indexed mail in those folders is not covered - "
-                    + "narrow the window with 'after' or search those folders directly.");
-            }
-
-            if (sweep.FolderCapReached == true)
-            {
-                advice.Add("Freshness sweep stopped at its folder cap ("
-                    + OutlookComSession.MaxScopedSweepFolders.ToString(CultureInfo.InvariantCulture)
-                    + " folders visited), so deeper subfolders were never visited - index results still cover them, but "
-                    + "brand-new mail there may be missing. Scope the search to a narrower folder for full freshness coverage.");
-            }
-
-            if (sweep.TimeBudgetExceeded == true)
-            {
-                advice.Add("Freshness sweep stopped at its "
-                    + (OutlookComSession.ScopedSweepTimeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
-                    + " s time budget after " + sweep.FoldersSwept.ToString(CultureInfo.InvariantCulture)
-                    + " folder(s), so the rest of the subtree has no freshness coverage - index results still cover it, "
-                    + "but brand-new mail there may be missing. Scope the search to a narrower folder, or pass "
-                    + "include_subfolders:false to sweep just the named folder.");
-            }
-
-            if (sweep.DepthLimitReached == true)
-            {
-                advice.Add("Freshness sweep refused to descend past its depth guard, so the deepest folders in this "
-                    + "subtree were never swept - a folder tree that deep is unusual enough to be worth checking with "
-                    + "list_folders. Index results still cover them.");
-            }
-
-            // Only when NO bound stopped the walk does a positive skip count mean what
-            // this message says; otherwise the skips are mostly folders the bound refused
-            // and this would misattribute them to unreadable folders.
-            if (sweep.FolderCapReached != true
-                && sweep.TimeBudgetExceeded != true
-                && sweep.DepthLimitReached != true
-                && sweep.FoldersSkipped > 0)
-            {
-                advice.Add("Freshness sweep skipped " + sweep.FoldersSkipped.ToString(CultureInfo.InvariantCulture)
-                    + " folder(s) it could not resolve or enumerate, so mail that arrived there in the last "
-                    + DescribeAge(staleness) + " may be missing. Check paths with list_folders.");
-            }
-
+            // Not a coverage hole: the sweep covered these folders, the payload just does
+            // not list them all. Reported for the same no-silent-caps reason, outside the
+            // gap set so it never marks a complete answer partial.
             if (sweep.FolderListOmitted == true)
             {
                 advice.Add("The swept-folder list is omitted above " + SweptFolderListCap.ToString(CultureInfo.InvariantCulture)
                     + " folders (payload discipline); sweep.foldersSwept is the true count.");
             }
+
+            return advice;
         }
 
         /// <summary>Compact scope block; present only for folder-scoped searches.</summary>
@@ -1672,16 +1713,40 @@ namespace OutlookAI.Core.Services
         /// the number reaches an agent's eyes, so the message quotes
         /// <see cref="SubjectCharsCap"/> rather than restating it. The cap is inclusive: a
         /// subject of exactly <see cref="SubjectCharsCap"/> characters is accepted.
+        /// <para>
+        /// This limit is taught by the ERROR, not by the tool schema: an over-long subject
+        /// is rare, and spending description budget on it would cost every call to warn
+        /// about a mistake almost none of them make. That is only a fair trade while the
+        /// error is one a model can self-correct from without a second question, which is
+        /// what <see cref="BuildOverlongSubjectMessage"/> owes it - the same contract as
+        /// the writing-rules gate, send's confirm-token refusal and the fail-closed
+        /// attachment validation, and it is pinned in T1 and over the wire in T3.
+        /// </para>
         /// </summary>
         private static void RequireSubjectWithinCap(string? subject, string parameterName)
         {
             if (subject != null && subject.Length > SubjectCharsCap)
             {
-                throw new ArgumentException(
-                    "subject is too long (max " + SubjectCharsCap.ToString(CultureInfo.InvariantCulture)
-                    + " characters).",
-                    parameterName);
+                throw new ArgumentException(BuildOverlongSubjectMessage(subject.Length), parameterName);
             }
+        }
+
+        /// <summary>
+        /// What an agent is told when a subject exceeds <see cref="SubjectCharsCap"/>: the
+        /// limit as a number, what was actually supplied (its LENGTH, never the subject
+        /// itself), the fact that nothing was written, and the retry that works.
+        /// <para>
+        /// Public because T1 pins those four properties against a future edit that shortens
+        /// this back to "invalid subject". Every draft path shares it, so no two of them can
+        /// answer the same mistake differently.
+        /// </para>
+        /// </summary>
+        public static string BuildOverlongSubjectMessage(int suppliedLength)
+        {
+            return "subject is too long: " + suppliedLength.ToString(CultureInfo.InvariantCulture)
+                + " characters supplied, max " + SubjectCharsCap.ToString(CultureInfo.InvariantCulture)
+                + " characters. Nothing was created or changed - call again with a subject of "
+                + SubjectCharsCap.ToString(CultureInfo.InvariantCulture) + " characters or fewer.";
         }
 
         /// <summary>

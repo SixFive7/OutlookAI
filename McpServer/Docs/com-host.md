@@ -190,7 +190,14 @@ When the live check cannot run, `search` still **succeeds** and returns its inde
 - discarding results we already hold would be the worse failure, and `isError` would
 invite clients to throw them away. It carries `degraded: true` and
 `freshness: "index-only"` alongside prose opening with `INCOMPLETE RESULTS - TELL THE
-USER`. A result that looks complete and quietly is not is the one failure mode here that
+USER`. `degraded: true` means "not fully fresh" and now has two shapes: the sweep did not
+run at all (`freshness: "index-only"`, above), or it ran and covered only part of its
+scope (`freshness: "partial"`, with `sweep.coverageGaps` naming which of the seven
+coverage holes fired - failed folders, the per-folder item cap, the folder cap, the time
+budget, the depth limit, skipped folders, or a sweep that swept nothing at all). Read the
+flag, not either value: a partial sweep used to report `freshness: "live"` with no
+degradation, so a caller reading fields rather than prose was told a partial answer was
+complete. A result that looks complete and quietly is not is the one failure mode here that
 misleads a reader rather than merely inconveniencing them.
 
 ## Lifetime

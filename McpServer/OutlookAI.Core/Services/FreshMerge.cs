@@ -20,6 +20,137 @@ namespace OutlookAI.Core.Services
         /// <summary>Sweep refusal: attachment CONTENT is matched by the index tier alone (D47).</summary>
         public const string AttachmentContentNotSweepable = "AttachmentContentNotSweepable";
 
+        /// <summary>Freshness verdict: the sweep ran and covered everything it was asked to.</summary>
+        public const string FreshnessLive = "live";
+
+        /// <summary>Freshness verdict: the sweep ran but left at least one coverage hole.</summary>
+        public const string FreshnessPartial = "partial";
+
+        /// <summary>Freshness verdict: the sweep did not run at all, so nothing was checked live.</summary>
+        public const string FreshnessIndexOnly = "index-only";
+
+        /// <summary>Coverage hole: the sweep ran but swept no folder whatsoever.</summary>
+        public const string GapNothingSwept = "nothing_swept";
+
+        /// <summary>Coverage hole: Outlook would not enumerate one or more folders.</summary>
+        public const string GapFoldersFailed = "folders_failed";
+
+        /// <summary>Coverage hole: the per-folder item cap truncated a folder's window.</summary>
+        public const string GapItemCap = "item_cap";
+
+        /// <summary>Coverage hole: the subtree walk stopped at its folder cap.</summary>
+        public const string GapFolderCap = "folder_cap";
+
+        /// <summary>Coverage hole: the subtree walk stopped at its time budget.</summary>
+        public const string GapTimeBudget = "time_budget";
+
+        /// <summary>Coverage hole: the subtree walk refused folders past its depth guard.</summary>
+        public const string GapDepthLimit = "depth_limit";
+
+        /// <summary>Coverage hole: folders were skipped because they could not be resolved or enumerated.</summary>
+        public const string GapFoldersSkipped = "folders_skipped";
+
+        /// <summary>
+        /// Every way a sweep that RAN can still have covered less than its scope, decided
+        /// in one pure place and pinned in T1 - the same shape as
+        /// <see cref="SweepRefusalReason"/>.
+        /// <para>
+        /// Returns null for a sweep that covered everything, and for one that never ran:
+        /// "did not run" is <see cref="FreshnessIndexOnly"/>, a different state with a
+        /// different remedy, and reporting it as a partial sweep would blur the two.
+        /// </para>
+        /// <para>
+        /// Order is severity-first (no coverage at all, then lost folders, then truncation)
+        /// because it is also the order the matching advice sentences are emitted in.
+        /// <see cref="GapFoldersSkipped"/> is deliberately suppressed once a BOUND stopped
+        /// the walk: the folders past a cap, a budget or the depth guard are counted as
+        /// skipped too, and reporting them a second time as unreadable would misattribute
+        /// them - the bound's own code already says what happened.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string>? DescribeCoverageGaps(SweepInfo sweep)
+        {
+            if (sweep == null)
+            {
+                throw new ArgumentNullException(nameof(sweep));
+            }
+
+            if (!sweep.Performed)
+            {
+                return null;
+            }
+
+            List<string> gaps = new List<string>();
+            if (sweep.FoldersSwept == 0)
+            {
+                gaps.Add(GapNothingSwept);
+            }
+
+            if (sweep.FoldersFailed > 0)
+            {
+                gaps.Add(GapFoldersFailed);
+            }
+
+            if (sweep.FolderCapReached == true)
+            {
+                gaps.Add(GapFolderCap);
+            }
+
+            if (sweep.TimeBudgetExceeded == true)
+            {
+                gaps.Add(GapTimeBudget);
+            }
+
+            if (sweep.DepthLimitReached == true)
+            {
+                gaps.Add(GapDepthLimit);
+            }
+
+            if (sweep.FolderCapReached != true
+                && sweep.TimeBudgetExceeded != true
+                && sweep.DepthLimitReached != true
+                && sweep.FoldersSkipped > 0)
+            {
+                gaps.Add(GapFoldersSkipped);
+            }
+
+            if (sweep.ItemCappedFolders != null && sweep.ItemCappedFolders.Count > 0)
+            {
+                gaps.Add(GapItemCap);
+            }
+
+            return gaps.Count == 0 ? null : gaps;
+        }
+
+        /// <summary>
+        /// The freshness verdict for one search, from its sweep block alone: three states,
+        /// not two (<see cref="FreshnessLive"/> / <see cref="FreshnessPartial"/> /
+        /// <see cref="FreshnessIndexOnly"/>). <c>degraded</c> is derived from it - anything
+        /// that is not <see cref="FreshnessLive"/> is degraded.
+        /// <para>
+        /// A null sweep means no sweep block exists at all, which only the internal
+        /// index-only escape hatch produces (<c>SearchRequest.IndexOnly</c>, not exposed on
+        /// the MCP tool). That caller asked for index rows and got exactly them, so nothing
+        /// was withheld and the verdict stays <see cref="FreshnessLive"/> - unchanged from
+        /// before this classification existed.
+        /// </para>
+        /// </summary>
+        public static string ClassifyFreshness(SweepInfo? sweep)
+        {
+            if (sweep == null)
+            {
+                return FreshnessLive;
+            }
+
+            if (!sweep.Performed)
+            {
+                return FreshnessIndexOnly;
+            }
+
+            IReadOnlyList<string>? gaps = DescribeCoverageGaps(sweep);
+            return gaps == null || gaps.Count == 0 ? FreshnessLive : FreshnessPartial;
+        }
+
         /// <summary>
         /// Why the freshness sweep cannot answer this request at all, or null when it can
         /// (D47 - the rule stated in ONE place, and pinned in T1).

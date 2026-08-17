@@ -227,7 +227,13 @@ public sealed class LiveDisconnectRecoveryTests
                     Assert.NotNull(degraded.Sweep.Error);
                     Assert.Contains("mutex", degraded.Sweep.Error!, StringComparison.OrdinalIgnoreCase);
                     Assert.NotNull(degraded.Advice);
-                    Assert.Contains(degraded.Advice!, a => a.Contains("Freshness sweep unavailable", StringComparison.OrdinalIgnoreCase));
+                    // Pins the CONTRACT of the not-run case - the advice must shout, and must name
+                    // the sweep as the thing that could not run - rather than a phrase. It used to
+                    // assert "Freshness sweep unavailable", which the shipped advice stopped saying
+                    // long before this line was last read, so the live tier carried a failure that
+                    // had nothing to do with the behaviour under test.
+                    Assert.Contains(degraded.Advice!, a => a.Contains("INCOMPLETE RESULTS - TELL THE USER", StringComparison.Ordinal));
+                    Assert.Contains(degraded.Advice!, a => a.Contains("live check against Outlook could not", StringComparison.OrdinalIgnoreCase));
                     Assert.Contains(degraded.Advice!, a => a.Contains("add-in update", StringComparison.OrdinalIgnoreCase));
                     Assert.False(degraded.Staleness.OutlookRunning, "staleness must reflect post-sweep reality (D34)");
                     Assert.Empty(Process.GetProcessesByName("OUTLOOK"));

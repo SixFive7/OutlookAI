@@ -234,6 +234,25 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public bool? TimeBudgetExceeded { get; set; }
 
+        /// <summary>
+        /// Every coverage hole this sweep left, as machine-readable codes
+        /// (<c>FreshMerge.Gap*</c>). Null when the sweep covered its whole scope, or when
+        /// it never ran (that is <c>freshness: "index-only"</c>, not a partial sweep).
+        /// <para>
+        /// The counters above each state ONE fact about the walk; this states the
+        /// CONCLUSION drawn from all of them, which is the thing a caller has to act on.
+        /// Until this existed, a sweep that hit a cap, lost a folder or ran out of time
+        /// reported the shortfall only as integers here and as prose in <c>advice</c>,
+        /// while the two top-level markers still said <c>degraded</c> absent and
+        /// <c>freshness: "live"</c> - so an agent reading fields rather than prose, which
+        /// is the sensible way to read a payload, was told a partial answer was complete.
+        /// Each code has exactly one advice sentence, emitted from this same list
+        /// (<see cref="MailService.DescribeSweepCoverage"/>), so the codes and the prose
+        /// cannot drift apart.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<string>? CoverageGaps { get; set; }
+
         /// <summary>Items in the window before term filtering.</summary>
         public int ItemsSeen { get; set; }
 
@@ -321,18 +340,34 @@ namespace OutlookAI.Core.Services
     public sealed class SearchOutcome
     {
         /// <summary>
-        /// True when this result is NOT fully fresh - the live Outlook check could not run,
-        /// so mail that arrived since the last index update may be missing.
+        /// True when this result is NOT fully fresh, so mail that arrived since the last
+        /// index update may be missing. Two ways to earn it: the live Outlook check could
+        /// not run at all (<see cref="Freshness"/> <c>"index-only"</c>), or it ran and
+        /// covered only part of what it was asked to (<c>"partial"</c> - see
+        /// <see cref="SweepInfo.CoverageGaps"/> for which holes).
         /// <para>
         /// Deliberately a blunt top-level boolean as well as prose in <c>advice</c>. The
         /// same fact used to live only in an advice sentence and in sweep.performed, which
         /// is easy to skim past; a result that LOOKS complete but is not is the one failure
         /// mode here that can mislead a reader rather than merely inconvenience them.
         /// </para>
+        /// <para>
+        /// The partial case was added later and WIDENED this flag rather than adding a
+        /// second one, because the sentence above was always its documented meaning - a
+        /// sweep that hit a cap or lost a folder is not fully fresh either. The widening
+        /// only ever turns false into true, so a caller that already keys on
+        /// <c>degraded == true</c> keeps working and simply stops being lied to. What such
+        /// a caller must NOT do is infer the reason from <c>freshness == "index-only"</c>:
+        /// that value still means, exactly as before, that the sweep never ran.
+        /// </para>
         /// </summary>
         public bool? Degraded { get; set; }
 
-        /// <summary>"live" when the freshness sweep ran, "index-only" when it could not.</summary>
+        /// <summary>
+        /// <c>"live"</c> when the freshness sweep ran and covered its whole scope,
+        /// <c>"partial"</c> when it ran but left coverage holes (see
+        /// <see cref="SweepInfo.CoverageGaps"/>), <c>"index-only"</c> when it could not run.
+        /// </summary>
         public string? Freshness { get; set; }
 
         /// <summary>Merged hits, newest first.</summary>

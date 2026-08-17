@@ -19,8 +19,7 @@ namespace OutlookAI.ComHost
     /// </para>
     /// <para>
     /// Consequently this process deliberately has NO internal timeouts on COM work. Its
-    /// only contract is: serve the pipe, and die quietly when told. See "Why two processes"
-    /// in McpServer/README.md.
+    /// only contract is: serve the pipe, and die quietly when told. See Docs/com-host.md.
     /// </para>
     /// </summary>
     internal static class Program

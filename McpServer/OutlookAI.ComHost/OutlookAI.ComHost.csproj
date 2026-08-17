@@ -3,7 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <!--
-      The killable COM child (see "Why two processes" in McpServer/README.md). net10.0-windows x64 to match the
+      The killable COM child (see Docs/com-host.md). net10.0-windows x64 to match the
       parent: the two exes publish into the SAME directory and share every dependency
       DLL, so the child costs ~163 KB on top of the parent rather than a second copy of
       the ~6 MB dependency set. That matters - the installer sits under a 50 MB updater

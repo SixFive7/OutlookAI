@@ -1,3 +1,5 @@
+using System.Globalization;
+
 using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 using Xunit;
@@ -53,6 +55,101 @@ public sealed class DraftValidationTests : IDisposable
         string subject = new('x', MailService.SubjectCharsCap + 1);
         Assert.Throws<ArgumentException>(() =>
             _service.NewDraft("hub@example.com", "a@b.example", null, subject, "body", display: false));
+    }
+
+    // ------------------------------------------------- the subject cap teaches by erroring
+    //
+    // new_draft does not advertise the 255-character cap on its subject argument, unlike
+    // the three derived tools: an over-long subject is rare, and the established pattern
+    // here is a refusal the model can self-correct from without asking - the same shape as
+    // the writing-rules gate, send's confirm-token refusal and the fail-closed attachment
+    // validation. That trade only holds while the error carries everything the retry needs,
+    // so what the description does not say is pinned here instead. The message used to be
+    // "subject is too long (max 255 characters)." - the limit but not the breach, so a
+    // model that had built the subject from a variable could not tell whether it had missed
+    // by one character or by a thousand.
+
+    /// <summary>Every draft path that enforces the cap, called with the same over-long subject.</summary>
+    private static readonly string[] SubjectCapPaths = { "new", "reply", "replyall", "forward", "update" };
+
+    private ArgumentException RejectOverlongSubject(string path, int length)
+    {
+        string subject = new('x', length);
+        return Assert.Throws<ArgumentException>(() =>
+        {
+            switch (path)
+            {
+                case "new":
+                    _service.NewDraft("hub@example.com", "a@b.example", null, subject, "body", display: false);
+                    break;
+                case "update":
+                    _service.UpdateDraft("h424242", subject: subject, display: false);
+                    break;
+                default:
+                    CallDerived(path, subject, importance: null);
+                    break;
+            }
+        });
+    }
+
+    [Fact]
+    public void OverlongSubject_IsRefusedWithAnErrorTheModelCanSelfCorrectFrom_OnEveryDraftPath()
+    {
+        int supplied = MailService.SubjectCharsCap + 57;
+        foreach (string path in SubjectCapPaths)
+        {
+            string message = RejectOverlongSubject(path, supplied).Message;
+
+            // 1. It names the argument at fault - a draft call carries several strings.
+            Assert.Contains("subject", message, StringComparison.OrdinalIgnoreCase);
+
+            // 2. The LIMIT, as a number, derived from the constant the service enforces.
+            Assert.Contains(
+                "max " + MailService.SubjectCharsCap.ToString(CultureInfo.InvariantCulture) + " characters",
+                message,
+                StringComparison.Ordinal);
+
+            // 3. What was WRONG with what was supplied, including how long it actually was.
+            //    Without this the model cannot tell a near miss from an order-of-magnitude
+            //    one, and cannot compute how much to cut.
+            Assert.Contains(
+                supplied.ToString(CultureInfo.InvariantCulture) + " characters supplied",
+                message,
+                StringComparison.Ordinal);
+
+            // 4. That nothing was written, and that the SAME call with a shorter subject
+            //    works - so the retry is obvious and needs no user round trip.
+            Assert.Contains("Nothing was created or changed", message, StringComparison.Ordinal);
+            Assert.Contains("call again", message, StringComparison.OrdinalIgnoreCase);
+
+            // The subject itself is never echoed: its LENGTH is the whole diagnosis, and an
+            // error is not a place to reflect content back.
+            Assert.DoesNotContain(new string('x', 40), message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void OverlongSubject_IsRefusedIdentically_ByEveryDraftPath()
+    {
+        // One gate, one sentence: four paths that disagree about the same mistake teach a
+        // model that the limit depends on which tool it picked.
+        string[] messages = SubjectCapPaths
+            .Select(path => RejectOverlongSubject(path, MailService.SubjectCharsCap + 1).Message)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        string only = Assert.Single(messages);
+        Assert.StartsWith(
+            MailService.BuildOverlongSubjectMessage(MailService.SubjectCharsCap + 1),
+            only,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OverlongSubject_ReportsTheLengthItWasActuallyGiven()
+    {
+        Assert.Contains("256 characters supplied", MailService.BuildOverlongSubjectMessage(256), StringComparison.Ordinal);
+        Assert.Contains("9001 characters supplied", MailService.BuildOverlongSubjectMessage(9001), StringComparison.Ordinal);
     }
 
     [Theory]
