@@ -149,6 +149,10 @@ public sealed class SoakToolSurfaceCiTests
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
 
+        // The first drafting call of a server process is answered with the user's writing
+        // rules instead of the work (WritingRulesGate); spend it before the real call.
+        await client.PrimeWritingRulesGateAsync();
+
         JsonElement result = await client.CallToolAsync("new_draft", new
         {
             account = "someone@example.com",

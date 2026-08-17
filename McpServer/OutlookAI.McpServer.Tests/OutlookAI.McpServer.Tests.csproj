@@ -50,14 +50,17 @@
          guessed intent is what destroys a registration someone set up on purpose, so the
          decision matrix is pinned as the shipped code rather than as a copy of it. -->
     <Compile Include="..\..\Services\McpRegistrationDecision.cs" Link="Linked\McpRegistrationDecision.cs" />
-    <!-- The user-editable prompt store and the built-in prompt text. Linked for the same
-         reason again: these ARE the prompts the add-in sends, and the store's override-only
-         rule (an absent value means "use the code default", so nothing shipped is ever copied
-         to disk and frozen there) is invisible until it breaks. Framework-neutral, and the
-         registry sits behind IPromptRegistry so the T1 suite exercises the rules against a
-         fabricated store instead of the developer's own HKCU. -->
-    <Compile Include="..\..\Services\PromptDefaults.cs" Link="Linked\PromptDefaults.cs" />
-    <Compile Include="..\..\Services\PromptStore.cs" Link="Linked\PromptStore.cs" />
+    <!-- The user-editable prompt store and the built-in prompt text are NOT linked here any
+         more: OutlookAI.McpServer now compiles those two files itself (its WritingRulesGate
+         hands the user's writing rules to agents), and this project references it, so the T1
+         suite reaches exactly the same source through InternalsVisibleTo. Linking them here as
+         well would compile a SECOND copy of every type into this assembly - the public
+         PromptSection then exists twice in one compilation, which is CS0436, an error under
+         TreatWarningsAsErrors. One compiled copy per type, and it is still the shipped file:
+         the store's override-only rule (an absent value means "use the code default", so
+         nothing shipped is ever copied to disk and frozen there) is invisible until it breaks,
+         and the registry sits behind IPromptRegistry so the T1 suite exercises the rules
+         against a fabricated store instead of the developer's own HKCU. -->
     <Compile Include="..\..\Services\PromptLint.cs" Link="Linked\PromptLint.cs" />
   </ItemGroup>
 

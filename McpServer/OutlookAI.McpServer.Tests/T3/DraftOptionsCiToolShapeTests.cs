@@ -118,6 +118,9 @@ public sealed class DraftOptionsCiToolShapeTests
     public async Task DraftTools_RejectUnknownImportance_AsAStructuredError_BeforeAnyComWork(string toolName)
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+        // The first drafting call of a server process is answered with the user's writing
+        // rules instead of the work (WritingRulesGate); spend it before the real call.
+        await client.PrimeWritingRulesGateAsync();
 
         object arguments = toolName switch
         {
@@ -152,6 +155,7 @@ public sealed class DraftOptionsCiToolShapeTests
     public async Task DerivedDraftTools_RejectOverlongSubjectOverride_AsAStructuredError(string toolName)
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+        await client.PrimeWritingRulesGateAsync();
 
         string tooLong = new('x', 256);
         object arguments = toolName == "forward_draft"

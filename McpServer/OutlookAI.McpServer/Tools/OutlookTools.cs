@@ -461,6 +461,12 @@ public static class OutlookTools
         [Description(AttachmentsHint)] string[]? attachments = null,
         CancellationToken cancellationToken = default)
     {
+        CallToolResult? writingRules = WritingRulesRejection(body, body_html);
+        if (writingRules != null)
+        {
+            return writingRules;
+        }
+
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.NewDraft(
             account, to, cc, subject, body, display, signature, bcc, importance, request_read_receipt, body_html, attachments));
     }
@@ -487,6 +493,12 @@ public static class OutlookTools
         [Description(AttachmentsHint)] string[]? attachments = null,
         CancellationToken cancellationToken = default)
     {
+        CallToolResult? writingRules = WritingRulesRejection(body, body_html);
+        if (writingRules != null)
+        {
+            return writingRules;
+        }
+
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ReplyDraft(
             id, body, replyAll: false, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html, attachments));
     }
@@ -513,6 +525,12 @@ public static class OutlookTools
         [Description(AttachmentsHint)] string[]? attachments = null,
         CancellationToken cancellationToken = default)
     {
+        CallToolResult? writingRules = WritingRulesRejection(body, body_html);
+        if (writingRules != null)
+        {
+            return writingRules;
+        }
+
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ReplyDraft(
             id, body, replyAll: true, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html, attachments));
     }
@@ -540,6 +558,12 @@ public static class OutlookTools
         [Description(AttachmentsHint)] string[]? attachments = null,
         CancellationToken cancellationToken = default)
     {
+        CallToolResult? writingRules = WritingRulesRejection(body, body_html);
+        if (writingRules != null)
+        {
+            return writingRules;
+        }
+
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ForwardDraft(
             id, body, to, display, signature, cc, bcc, subject, importance, request_read_receipt, body_html, attachments));
     }
@@ -596,6 +620,15 @@ public static class OutlookTools
         bool display = true,
         CancellationToken cancellationToken = default)
     {
+        // Gated only when this revision actually rewrites the body. Changing recipients, a
+        // subject, a signature or attachments is not writing, and refusing it to hand over
+        // rules about wording would be a rejection with nothing to act on.
+        CallToolResult? writingRules = WritingRulesRejection(body, body_html);
+        if (writingRules != null)
+        {
+            return writingRules;
+        }
+
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.UpdateDraft(
             id, body, body_html, subject, to, cc, bcc, importance, request_read_receipt, signature,
             attachments, remove_attachments, display));
@@ -641,6 +674,37 @@ public static class OutlookTools
         CancellationToken cancellationToken = default)
     {
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.Send(id, confirm_token, sent_on_behalf_of));
+    }
+
+    /// <summary>
+    /// The writing-rules gate in front of the five drafting tools: null to proceed, or the
+    /// rejection that hands the agent the user's own writing rules and asks for one retry.
+    /// See <see cref="WritingRulesGate"/> for why the rules travel in an error at all.
+    /// <para>
+    /// Called BEFORE <see cref="GuardAsync"/>, deliberately, and not from the service layer.
+    /// The decision is a registry read and a hash, so the rejection is instant, it is
+    /// identical whether Outlook is running, closed or wedged, and no COM host is started to
+    /// produce it - which is also what lets the CI tier exercise it on a runner with no
+    /// Outlook at all.
+    /// </para>
+    /// <para>
+    /// "Supplies a body" is any non-null body/body_html, blank included: a call that names the
+    /// parameter is a call that is writing, and whether the value is usable is the service
+    /// layer's judgement to make on the retry.
+    /// </para>
+    /// </summary>
+    private static CallToolResult? WritingRulesRejection(string? body, string? bodyHtml)
+    {
+        if (!WritingRulesGate.Shared.TryClaimDelivery(body != null || bodyHtml != null, out string rules))
+        {
+            return null;
+        }
+
+        return Error(
+            WritingRulesGate.ErrorType,
+            WritingRulesGate.RetryMessage,
+            WritingRulesGate.Clarification,
+            writingRules: rules);
     }
 
     /// <summary>
@@ -770,13 +834,16 @@ public static class OutlookTools
         string message,
         string? advice,
         string? reason = null,
-        int? retryAfterSeconds = null)
+        int? retryAfterSeconds = null,
+        string? writingRules = null)
     {
         // 'reason' is the machine-readable refusal code (send/draft refusals), and
         // 'retryAfterSeconds' is machine-readable retry guidance for the transient states
-        // (Outlook starting, Outlook unresponsive). Both are omitted for everything else
-        // by the null-ignoring serializer, so the existing error shape is unchanged.
-        var payload = new { error = new { type, reason, message, advice, retryAfterSeconds } };
+        // (Outlook starting, Outlook unresponsive). 'writingRules' carries the user's own
+        // writing prompt on the one error that exists to deliver it, and is last because it
+        // is the only field that runs to pages. All three are omitted for everything else by
+        // the null-ignoring serializer, so the existing error shape is unchanged.
+        var payload = new { error = new { type, reason, message, advice, retryAfterSeconds, writingRules } };
         return new CallToolResult
         {
             IsError = true,

@@ -29,6 +29,10 @@ public sealed class Phase4CiToolShapeTests
     public async Task NewDraft_BlankAccount_ReturnsStructuredErrorJson()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+        // The first drafting call of a server process is answered with the user's writing
+        // rules instead of the work (WritingRulesGate). Spend it here; the subject of this
+        // test is the argument validation behind it.
+        await client.PrimeWritingRulesGateAsync();
 
         JsonElement result = await client.CallToolAsync("new_draft", new
         {
@@ -48,6 +52,7 @@ public sealed class Phase4CiToolShapeTests
     public async Task NewDraft_NoRecipients_ReturnsStructuredErrorJson()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+        await client.PrimeWritingRulesGateAsync();
 
         JsonElement result = await client.CallToolAsync("new_draft", new
         {
@@ -65,6 +70,7 @@ public sealed class Phase4CiToolShapeTests
     public async Task ReplyDraft_UnknownHitId_ReturnsStructuredErrorJson()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+        await client.PrimeWritingRulesGateAsync();
 
         JsonElement result = await client.CallToolAsync("reply_draft", new
         {
@@ -82,6 +88,7 @@ public sealed class Phase4CiToolShapeTests
     public async Task ReplyAllDraft_BlankBody_ReturnsStructuredErrorJson()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+        await client.PrimeWritingRulesGateAsync();
 
         JsonElement result = await client.CallToolAsync("replyall_draft", new
         {
@@ -97,6 +104,7 @@ public sealed class Phase4CiToolShapeTests
     public async Task ForwardDraft_NoRecipients_ReturnsStructuredErrorJson()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+        await client.PrimeWritingRulesGateAsync();
 
         JsonElement result = await client.CallToolAsync("forward_draft", new
         {

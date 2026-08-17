@@ -55,6 +55,10 @@ public sealed class SoakBatchCCiToolShapeTests
     public async Task Attachments_RelativePath_IsRejectedBeforeAnyComWork_NamingThePath(string toolName)
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+        // The first drafting call of a server process is answered with the user's writing
+        // rules instead of the work (WritingRulesGate). These arguments carry a body, so spend
+        // that rejection first; the subject here is the attachment path check behind it.
+        await client.PrimeWritingRulesGateAsync();
 
         JsonElement result = await client.CallToolAsync(toolName, ArgumentsFor(toolName, new[] { "documents\\offer.pdf" }));
 
@@ -71,6 +75,7 @@ public sealed class SoakBatchCCiToolShapeTests
     public async Task Attachments_MissingFile_IsRejected_AndEveryBadPathIsNamed(string toolName)
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+        await client.PrimeWritingRulesGateAsync();
 
         string missingA = Path.Combine(Path.GetTempPath(), "outlookai-ci-absent-a.pdf");
         string missingB = Path.Combine(Path.GetTempPath(), "outlookai-ci-absent-b.pdf");
@@ -89,6 +94,7 @@ public sealed class SoakBatchCCiToolShapeTests
     public async Task Attachments_Directory_IsRejectedWithADirectorySpecificReason(string toolName)
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+        await client.PrimeWritingRulesGateAsync();
 
         JsonElement result = await client.CallToolAsync(
             toolName, ArgumentsFor(toolName, new[] { Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar) }));

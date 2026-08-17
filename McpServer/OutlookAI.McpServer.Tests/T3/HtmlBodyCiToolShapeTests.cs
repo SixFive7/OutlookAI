@@ -81,6 +81,9 @@ public sealed class HtmlBodyCiToolShapeTests
     public async Task SupplyingBothBodies_IsRejectedAsAStructuredError_NamingBoth(string toolName)
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+        // The first drafting call of a server process is answered with the user's writing
+        // rules instead of the work (WritingRulesGate); spend it before the real call.
+        await client.PrimeWritingRulesGateAsync();
 
         JsonElement result = await client.CallToolAsync(toolName, ArgumentsFor(toolName, body: "text", bodyHtml: "<p>x</p>"));
 
@@ -111,6 +114,7 @@ public sealed class HtmlBodyCiToolShapeTests
     public async Task BodyHtmlThatNormalizesToNothing_IsRejectedAsAStructuredError(string toolName)
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+        await client.PrimeWritingRulesGateAsync();
 
         JsonElement result = await client.CallToolAsync(
             toolName, ArgumentsFor(toolName, body: null, bodyHtml: "<script>alert(1)</script>"));

@@ -79,6 +79,11 @@ public sealed class Phase4LiveMcpToolShapeTests
             Assert.True(hitId != null, "seed mail not findable over stdio within 180 s");
             _output.WriteLine($"seed found over stdio: secondsAfterSend={(DateTime.UtcNow - sentUtc).TotalSeconds:F1}");
 
+            // The first drafting call of a server process is answered with the user's writing
+            // rules instead of the work (WritingRulesGate). Spend it here: the four golden
+            // shapes below are this test's subject, and its priming call cannot reach Outlook.
+            await client.PrimeWritingRulesGateAsync();
+
             // --- reply_draft / replyall_draft / forward_draft / new_draft golden shapes.
             JsonElement reply = await client.CallToolAsync("reply_draft", new
             {

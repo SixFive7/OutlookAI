@@ -196,6 +196,35 @@ public sealed class McpStdioClient : IAsyncDisposable
         return (doc.RootElement.Clone(), isError);
     }
 
+    /// <summary>
+    /// Spends this server process's one writing-rules rejection, so a test whose subject is
+    /// something else can assert on its own subject.
+    /// <para>
+    /// The server refuses the FIRST drafting call of every process on purpose and answers with
+    /// the user's writing rules attached (<c>WritingRulesGate</c>); the retry is what gets
+    /// through. Each of these tests spawns a fresh server, so each would otherwise meet that
+    /// rejection instead of the validation error, refusal or draft it came to check.
+    /// </para>
+    /// <para>
+    /// The priming call supplies BOTH body and body_html, which the tool layer rejects as
+    /// mutually exclusive before any COM work. So it costs one round trip and can never reach
+    /// Outlook - not even if the gate does not fire, which is a legitimate state (a user who
+    /// cleared their rules has none to deliver). Nothing is asserted here for that reason.
+    /// </para>
+    /// </summary>
+    public async Task PrimeWritingRulesGateAsync()
+    {
+        await CallToolWithIsErrorAsync("new_draft", new
+        {
+            account = "nobody@example.invalid",
+            to = "nobody@example.invalid",
+            subject = "writing-rules gate priming",
+            body = "priming",
+            body_html = "<p>priming</p>",
+            display = false,
+        });
+    }
+
     /// <summary>Calls a tool whose result is plain text (echo), returning the raw text.</summary>
     public async Task<string> CallToolRawTextAsync(string name, object arguments)
     {

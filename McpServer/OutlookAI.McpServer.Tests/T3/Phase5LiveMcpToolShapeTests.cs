@@ -45,6 +45,10 @@ public sealed class Phase5LiveMcpToolShapeTests
         {
             await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(TimeSpan.FromMinutes(10));
 
+            // The first drafting call of a server process is answered with the user's writing
+            // rules instead of the work (WritingRulesGate); spend it before the real draft.
+            await client.PrimeWritingRulesGateAsync();
+
             // Draft via the draft layer (D4 default path), display suppressed for tests.
             JsonElement draft = await client.CallToolAsync("new_draft", new
             {
