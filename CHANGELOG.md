@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Stop drafts reading like AI wrote them: every writing action in the sidebar, and every draft the mail server creates, is now instructed to leave no trace of AI in either wording or characters. No em dashes or curly quotes where you would have typed a hyphen or a straight quote, no "I hope this email finds you well" openers or stock words like "delve" and "seamless", no closing paragraph that repeats what the mail just said, and no headings or bullet lists you did not ask for.
 - Check for a new version yourself instead of waiting for OutlookAI to get round to it: there is now a "check for updates" link under the version in the writing sidebar, and a "Check for updates" button in OutlookAI Settings, so you no longer have to wait up to ten minutes for the next automatic check. Both say "checking…" while one is running - including one started from the other place - and go quiet again when it finishes.
 - Show the version and update state in OutlookAI Settings: a new "Version and updates" section tells you which version you are running and when OutlookAI last managed to look for a newer one, the same as the writing sidebar has always shown. When a check fails, the reason is written out in full here rather than hidden behind a link. Both indicators now take their wording from one place, so they cannot disagree.
 
