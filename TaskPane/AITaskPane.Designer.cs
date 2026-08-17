@@ -37,6 +37,7 @@ namespace OutlookAI.TaskPane
             this.lblStatus = new System.Windows.Forms.Label();
             this.lblVersion = new System.Windows.Forms.Label();
             this.lnkUpdateError = new System.Windows.Forms.LinkLabel();
+            this.lnkCheckUpdates = new System.Windows.Forms.LinkLabel();
             this.grpQuickActions.SuspendLayout();
             this.grpInstruction.SuspendLayout();
             this.SuspendLayout();
@@ -194,6 +195,18 @@ namespace OutlookAI.TaskPane
             this.lnkUpdateError.Visible = false;
             this.lnkUpdateError.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.lnkUpdateError_LinkClicked);
 
+            // lnkCheckUpdates
+            this.lnkCheckUpdates.Dock = System.Windows.Forms.DockStyle.Bottom;
+            this.lnkCheckUpdates.Font = new System.Drawing.Font("Segoe UI", 7F);
+            this.lnkCheckUpdates.LinkColor = Services.ThemeService.Accent;
+            this.lnkCheckUpdates.DisabledLinkColor = Services.ThemeService.SecondaryText;
+            this.lnkCheckUpdates.Name = "lnkCheckUpdates";
+            this.lnkCheckUpdates.Size = new System.Drawing.Size(260, 14);
+            this.lnkCheckUpdates.TabStop = false;
+            this.lnkCheckUpdates.Text = "check for updates";
+            this.lnkCheckUpdates.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+            this.lnkCheckUpdates.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.lnkCheckUpdates_LinkClicked);
+
             // lblVersion
             this.lblVersion.Dock = System.Windows.Forms.DockStyle.Bottom;
             this.lblVersion.Font = new System.Drawing.Font("Segoe UI", 7.5F);
@@ -207,7 +220,14 @@ namespace OutlookAI.TaskPane
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.AutoScroll = true;
             this.BackColor = Services.ThemeService.Background;
+            // These three are docked Bottom, and for those the order below is what decides
+            // which sits lowest: the LAST one added ends up outermost, hard against the bottom
+            // edge, and earlier ones stack upwards from it. So the footer reads, top to bottom,
+            // the update error (only when there is one), then the action, then the version —
+            // the action next to the version it acts on, with the transient notice floating
+            // above the pair rather than pushing them apart.
             this.Controls.Add(this.lnkUpdateError);
+            this.Controls.Add(this.lnkCheckUpdates);
             this.Controls.Add(this.lblVersion);
             this.Controls.Add(this.lblTitle);
             this.Controls.Add(this.grpQuickActions);
@@ -241,5 +261,6 @@ namespace OutlookAI.TaskPane
         private System.Windows.Forms.Label lblStatus;
         private System.Windows.Forms.Label lblVersion;
         private System.Windows.Forms.LinkLabel lnkUpdateError;
+        private System.Windows.Forms.LinkLabel lnkCheckUpdates;
     }
 }

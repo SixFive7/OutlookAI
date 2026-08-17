@@ -26,6 +26,7 @@ namespace OutlookAI.TaskPane
         private readonly GroupBox grpCaching;
         private readonly GroupBox grpOst;
         private readonly GroupBox grpClaude;
+        private readonly GroupBox grpVersion;
         private readonly Label lblHeader;
         private readonly Label lblSearchValues;
         private readonly Label lblSearchWarning;
@@ -35,13 +36,31 @@ namespace OutlookAI.TaskPane
         private readonly Label lblGpo;
         private readonly Label lblGlobalMcpHelp;
         private readonly Label lblMcp;
+        private readonly Label lblVersion;
+        private readonly Label lblUpdateError;
         private readonly Button btnAddProject;
         private readonly Button btnCopyCommand;
+        private readonly Button btnCheckUpdates;
         private readonly Button btnApply;
         private readonly Button btnClose;
 
+        /// <summary>
+        /// Keeps "checked 4m ago" honest and picks up a check finishing. One second, matching
+        /// the sidebar's indicator; <see cref="RefreshVersionLine"/> makes an unchanged tick
+        /// free, so this costs nothing while nothing is happening.
+        /// </summary>
+        private readonly Timer _versionTimer;
+
         private bool _updating;
         private bool _disposedCustom;
+
+        /// <summary>
+        /// Set between the user clicking "Check for updates" and that check completing. Held
+        /// separately from <see cref="UpdateService.IsChecking"/> so the button stays disabled
+        /// across the whole round trip, including a check that ended the instant it began —
+        /// a developer build, or one already running when the click landed.
+        /// </summary>
+        private bool _checkInFlight;
 
         /// <summary>
         /// Whether the two conditional status lines belong on screen. Held here rather than
@@ -53,6 +72,7 @@ namespace OutlookAI.TaskPane
         /// </summary>
         private bool _showRestart;
         private bool _showGpo;
+        private bool _showUpdateError;
 
         /// <summary>
         /// What a manual registration would name, refreshed by <see cref="RefreshFromState"/>.
@@ -285,6 +305,33 @@ namespace OutlookAI.TaskPane
             grpClaude.Controls.Add(btnAddProject);
             grpClaude.Controls.Add(btnCopyCommand);
 
+            // --- Version and updates: the sidebar's indicator, with room to say more ---
+            grpVersion = new GroupBox
+            {
+                Name = "grpVersion",
+                Text = "Version and updates",
+            };
+            // Text comes from UpdateService, so this line and the sidebar's always agree.
+            lblVersion = new Label
+            {
+                Name = "lblVersion",
+            };
+            // The sidebar has to hide the reason behind a link for want of space; here it fits,
+            // so it is simply on screen when there is one.
+            lblUpdateError = new Label
+            {
+                Name = "lblUpdateError",
+                Visible = false,
+            };
+            btnCheckUpdates = new Button
+            {
+                Name = "btnCheckUpdates",
+                Text = "Check for updates",
+            };
+            grpVersion.Controls.Add(lblVersion);
+            grpVersion.Controls.Add(lblUpdateError);
+            grpVersion.Controls.Add(btnCheckUpdates);
+
             btnApply = new Button
             {
                 Name = "btnApply",
@@ -304,6 +351,7 @@ namespace OutlookAI.TaskPane
             Controls.Add(lblRestart);
             Controls.Add(lblGpo);
             Controls.Add(grpClaude);
+            Controls.Add(grpVersion);
             Controls.Add(btnApply);
             Controls.Add(btnClose);
 
@@ -319,6 +367,7 @@ namespace OutlookAI.TaskPane
             chkGlobalMcp.CheckedChanged += OnGlobalMcpChanged;
             btnAddProject.Click += OnAddProject;
             btnCopyCommand.Click += OnCopyCommand;
+            btnCheckUpdates.Click += OnCheckForUpdates;
             btnApply.Click += (s, e) =>
             {
                 OutlookTuningService.ReconcileFromUi();
@@ -334,6 +383,16 @@ namespace OutlookAI.TaskPane
 
             ApplyTheme();
             ThemeService.ThemeChanged += OnThemeChanged;
+
+            // Only ever re-lays the dialog out when the line actually changed, which on most
+            // ticks it has not: "checked 4m ago" turns over once a minute.
+            _versionTimer = new Timer { Interval = 1000 };
+            _versionTimer.Tick += (s, e) =>
+            {
+                if (RefreshVersionLine())
+                    PerformDialogLayout();
+            };
+            _versionTimer.Start();
 
             RefreshFromState();
         }
@@ -483,7 +542,18 @@ namespace OutlookAI.TaskPane
             btnCopyCommand.Size = projectButton;
             btnAddProject.Location = new Point(GroupPadX, row);
             btnCopyCommand.Location = new Point(btnAddProject.Right + ButtonGap, row);
-            y = PlaceGroup(grpClaude, y, inner, btnAddProject.Bottom + GroupButtonPad) + ButtonGap;
+            y = PlaceGroup(grpClaude, y, inner, btnAddProject.Bottom + GroupButtonPad) + GroupSpacing;
+
+            // --- Version and updates ---
+            row = PlaceLabel(lblVersion, GroupPadX, GroupFirstRow, groupInner, 18) + RowGap;
+            // Positioned whether or not it is shown, and costing height only when it is —
+            // the same rule as the restart and policy lines above.
+            int errorBottom = PlaceLabel(lblUpdateError, GroupPadX, row, groupInner, 30);
+            if (_showUpdateError)
+                row = errorBottom + RowGap;
+            btnCheckUpdates.Size = ButtonSize(btnCheckUpdates, 176, 26);
+            btnCheckUpdates.Location = new Point(GroupPadX, row);
+            y = PlaceGroup(grpVersion, y, inner, btnCheckUpdates.Bottom + GroupButtonPad) + ButtonGap;
 
             btnApply.Size = ButtonSize(btnApply, 84, 26);
             btnClose.Size = ButtonSize(btnClose, 80, 26);
@@ -788,6 +858,95 @@ namespace OutlookAI.TaskPane
             }
         }
 
+        /// <summary>
+        /// Repaints the version line and the update-error line from <see cref="UpdateService"/>,
+        /// and returns whether the dialog now needs laying out again — which is NOT the same as
+        /// "the text changed". New text that wraps to the same number of lines occupies exactly
+        /// the same box, so it is simply painted and nothing below it moves.
+        ///
+        /// That distinction is the whole point at one tick per second. Re-laying the dialog out
+        /// resets a scrolled viewport to the top (absolute child coordinates and scrolling do
+        /// not mix, so <see cref="PerformDialogLayout"/> has to start from the top), and the
+        /// version line changes once a minute all on its own as "checked 4m ago" becomes 5m.
+        /// Doing that for free would mean a tall dialog scrolling itself back to the top every
+        /// minute while the user was reading it. Never throws.
+        /// </summary>
+        private bool RefreshVersionLine()
+        {
+            if (_disposedCustom || IsDisposed)
+                return false;
+            try
+            {
+                string line = UpdateService.VersionLine();
+                string error = UpdateService.LastError;
+                bool showError = !string.IsNullOrEmpty(error);
+                string errorText = showError ? "Last update check failed: " + error : "";
+
+                // Cheap and idempotent, so it is settled on every tick rather than only when
+                // the text moved: a check started from the sidebar disables this button too.
+                btnCheckUpdates.Enabled = !_checkInFlight && !UpdateService.IsChecking;
+
+                // A line appearing or disappearing always moves everything under it.
+                bool relayout = _showUpdateError != showError;
+
+                relayout |= SetLabelText(lblVersion, line, 18);
+                relayout |= SetLabelText(lblUpdateError, errorText, 30);
+
+                _showUpdateError = showError;
+                lblUpdateError.Visible = showError;
+                return relayout;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("Version line refresh: " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Sets <paramref name="label"/>'s text and answers whether that changed how much room
+        /// it needs — measured the same way <see cref="PlaceLabel"/> will measure it, against the
+        /// same <paramref name="minHeight"/> floor, so the two cannot disagree about whether a
+        /// re-layout is due.
+        /// </summary>
+        private static bool SetLabelText(Label label, string text, int minHeight)
+        {
+            if (label.Text == text)
+                return false;
+            int before = label.Height;
+            label.Text = text;
+            return Math.Max(minHeight, MeasureLabelHeight(label, label.Width)) != before;
+        }
+
+        // "Check for updates": the ten-minute poll, on demand. async void is what an event
+        // handler is, and it swallows everything — a failed check belongs on the error line
+        // above the button, not in a crash dialog.
+        private async void OnCheckForUpdates(object sender, EventArgs e)
+        {
+            if (_checkInFlight)
+                return;
+            _checkInFlight = true;
+            if (RefreshVersionLine())
+                PerformDialogLayout();
+
+            try
+            {
+                await UpdateService.CheckNowAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("Manual update check: " + ex.Message);
+            }
+            finally
+            {
+                // The await can outlive the dialog — RefreshVersionLine is a no-op once it has
+                // gone, and the flag is only read from here.
+                _checkInFlight = false;
+                if (RefreshVersionLine())
+                    PerformDialogLayout();
+            }
+        }
+
         private static bool IsMcpProblem(string status)
         {
             return status == McpRegistrationService.StatusNoRuntime
@@ -819,6 +978,8 @@ namespace OutlookAI.TaskPane
             }
 
             RefreshMcpLine();
+            // Result ignored on purpose: this method lays the dialog out at the end either way.
+            RefreshVersionLine();
 
             OutlookTuningService.TuningSnapshot snap;
             try
@@ -930,11 +1091,14 @@ namespace OutlookAI.TaskPane
             lblRestart.ForeColor = ThemeService.StatusError;
             lblGpo.ForeColor = ThemeService.SecondaryText;
             lblGlobalMcpHelp.ForeColor = ThemeService.SecondaryText;
+            // Matches the sidebar's version label, which is the same information.
+            lblVersion.ForeColor = ThemeService.SecondaryText;
+            lblUpdateError.ForeColor = ThemeService.StatusError;
             // Colour depends on the state, so let the refresh own it rather than pinning a
             // colour here that the next refresh would immediately overwrite.
             RefreshMcpLine();
 
-            foreach (var grp in new[] { grpSearch, grpCaching, grpOst, grpClaude })
+            foreach (var grp in new[] { grpSearch, grpCaching, grpOst, grpClaude, grpVersion })
                 grp.ForeColor = ThemeService.Text;
 
             foreach (var chk in new[] { chkMaster, chkSearch, chkCaching, chkOst, chkGlobalMcp })
@@ -943,7 +1107,7 @@ namespace OutlookAI.TaskPane
             foreach (var lbl in new[] { lblSearchValues, lblCachingValues, lblOstValues })
                 lbl.ForeColor = ThemeService.Text;
 
-            foreach (var btn in new[] { btnApply, btnClose, btnAddProject, btnCopyCommand })
+            foreach (var btn in new[] { btnApply, btnClose, btnAddProject, btnCopyCommand, btnCheckUpdates })
             {
                 if (ThemeService.IsDarkMode)
                 {
@@ -971,6 +1135,15 @@ namespace OutlookAI.TaskPane
             {
                 _disposedCustom = true;
                 ThemeService.ThemeChanged -= OnThemeChanged;
+                try
+                {
+                    _versionTimer?.Stop();
+                    _versionTimer?.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine("Settings dispose: " + ex.Message);
+                }
             }
             base.Dispose(disposing);
         }

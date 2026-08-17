@@ -22,6 +22,13 @@ namespace OutlookAI.Services
         private const string GitHubOwner = "SixFive7";
         private const string GitHubRepo = "OutlookAI";
         private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(10);
+
+        // Named because DescribeState has to tell "nothing to report" apart from every other
+        // status, and a second spelling of the same words in a different file is a bug waiting.
+        private const string StatusUpToDate = "up to date";
+        private const string StatusDeveloperBuild = "developer build";
+        private const string StatusChecking = "checking…";
+
         private static readonly HttpClient _httpClient = CreateHttpClient();
 
         private static volatile string _etag;
@@ -49,6 +56,58 @@ namespace OutlookAI.Services
             private set { _status = value; }
         }
 
+        /// <summary>
+        /// Whether a check is in flight right now — the ten-minute poll's, or one the user
+        /// asked for. Both version indicators read it, so a check started from the settings
+        /// dialog shows up in the sidebar too.
+        /// </summary>
+        public static bool IsChecking
+        {
+            get { return Volatile.Read(ref _checking) != 0; }
+        }
+
+        /// <summary>
+        /// The single line both version indicators show: "v3.1.0.325 - checked 4m ago", or what
+        /// the updater is busy with. It lives here rather than in either piece of UI so the
+        /// sidebar and the settings dialog cannot word the same state two different ways.
+        /// </summary>
+        public static string VersionLine()
+        {
+            var version = "v" + Assembly.GetExecutingAssembly().GetName().Version;
+            var state = DescribeState();
+            return state != null ? version + " - " + state : version;
+        }
+
+        /// <summary>
+        /// The part after the version: what the updater is doing, or how long ago it last
+        /// managed to ask. Null when there is nothing worth saying — a first check that failed,
+        /// where the error line carries it instead.
+        /// </summary>
+        private static string DescribeState()
+        {
+            var lastChecked = LastChecked;
+            var error = LastError;
+            var status = Status;
+
+            // An update being downloaded or waiting to install outranks everything below.
+            if (status != null && status != StatusUpToDate)
+                return status;
+            if (IsChecking)
+                return StatusChecking;
+            if (lastChecked == null)
+                return error != null ? null : StatusChecking;
+
+            var ago = DateTime.Now - lastChecked.Value;
+            if (ago < TimeSpan.Zero) ago = TimeSpan.Zero;
+            if (ago.TotalSeconds < 60)
+                return "checked just now";
+            if (ago.TotalMinutes < 60)
+                return $"checked {(int)ago.TotalMinutes}m ago";
+            if (ago.TotalHours < 24)
+                return $"checked {(int)ago.TotalHours}h ago";
+            return $"checked {(int)ago.TotalDays}d ago";
+        }
+
         private static HttpClient CreateHttpClient()
         {
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
@@ -61,7 +120,7 @@ namespace OutlookAI.Services
         public static void Start()
         {
             // Fire immediately, then every 10 minutes
-            _timer = new Timer(_ => _ = CheckForUpdateAsync(), null, TimeSpan.Zero, PollInterval);
+            _timer = new Timer(_ => _ = RunCheckAsync(), null, TimeSpan.Zero, PollInterval);
         }
 
         public static void Stop()
@@ -70,18 +129,62 @@ namespace OutlookAI.Services
             _timer = null;
         }
 
-        private static async Task CheckForUpdateAsync()
+        /// <summary>
+        /// Runs the check now instead of waiting out the rest of the poll interval, and
+        /// completes when that check is done. Safe to call from a UI click handler, and a
+        /// no-op while a check is already running — so an impatient second click costs nothing.
+        /// </summary>
+        public static Task CheckNowAsync()
+        {
+            return RunCheckAsync();
+        }
+
+        /// <summary>
+        /// Claims the one-at-a-time guard, then runs the check on a worker thread.
+        ///
+        /// The guard is claimed on the CALLING thread deliberately, which is why it moved out
+        /// of <see cref="CheckForUpdateAsync"/>: "Check for updates" repaints the instant this
+        /// returns, and a guard claimed only after the first await would leave that repaint
+        /// saying "checked 4m ago" about a check the user had just started.
+        ///
+        /// The worker thread matters too. Nothing below uses ConfigureAwait(false), so a check
+        /// started inline from a click handler would capture Outlook's message pump and resume
+        /// every continuation of a 50 MB download on the UI thread.
+        /// </summary>
+        private static Task RunCheckAsync()
         {
             // Developer/from-source builds carry the 99.99.99.0 placeholder (CI stamps the real
             // version at release). Never auto-update such a build, and skip the network check.
+            // Answered here, ahead of the guard: it is a return that never reaches the finally
+            // below, so inside the guarded region it would leak the guard and wedge the updater.
             if (Assembly.GetExecutingAssembly().GetName().Version.Major == 99)
             {
-                Status = "developer build";
-                return;
+                Status = StatusDeveloperBuild;
+                return Task.CompletedTask;
             }
 
             if (Interlocked.CompareExchange(ref _checking, 1, 0) != 0)
-                return;
+                return Task.CompletedTask;
+
+            try
+            {
+                return Task.Run((Func<Task>)CheckForUpdateAsync);
+            }
+            catch (Exception ex)
+            {
+                // Only reachable if the work could not even be queued, but releasing the guard
+                // here is what stops that being permanent: claimed and never released, it wedges
+                // the updater for the session and leaves both indicators stuck on "checking…".
+                Interlocked.Exchange(ref _checking, 0);
+                LastError = ex.Message;
+                return Task.CompletedTask;
+            }
+        }
+
+        // Entered with _checking already claimed by RunCheckAsync, and releases it in its
+        // finally. Never call it directly.
+        private static async Task CheckForUpdateAsync()
+        {
             string tempPath = null;
             bool installerHandedOff = false;
             try
@@ -143,7 +246,7 @@ namespace OutlookAI.Services
 
                 if (remoteVersion <= localVersion)
                 {
-                    Status = "up to date";
+                    Status = StatusUpToDate;
                     return;
                 }
 

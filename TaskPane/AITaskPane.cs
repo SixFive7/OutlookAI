@@ -34,6 +34,14 @@ namespace OutlookAI.TaskPane
         private readonly StringBuilder _debugLog = new StringBuilder();
         private bool _lastStatusError;
 
+        /// <summary>
+        /// Set between "check for updates" being clicked and that check completing. Held apart
+        /// from <see cref="UpdateService.IsChecking"/> so the link stays off across the whole
+        /// round trip, including a check that ended the instant it began — a developer build,
+        /// or one already running when the click landed.
+        /// </summary>
+        private bool _checkInFlight;
+
         public AITaskPane(bool isInlineResponse = false, Outlook.Inspector inspector = null)
         {
             _isInlineResponse = isInlineResponse;
@@ -53,36 +61,48 @@ namespace OutlookAI.TaskPane
             UpdateVersionLabel();
         }
 
+        // The wording moved into UpdateService so this indicator and the one in OutlookAI
+        // Settings cannot describe the same update state in two different ways.
         private void UpdateVersionLabel()
         {
             if (_disposed || IsDisposed) return;
 
-            var version = "v" + System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-            var lastChecked = UpdateService.LastChecked;
-            var error = UpdateService.LastError;
-            var status = UpdateService.Status;
+            // Debug mode takes the version label over as its copy button, so its text is left
+            // alone from then on. The timer is stopped by that point, but a manual check still
+            // comes back through here.
+            if (!_debug)
+                lblVersion.Text = UpdateService.VersionLine();
+            lnkUpdateError.Visible = UpdateService.LastError != null;
+            // Off while a check is running, wherever it was started from — including one
+            // started in the settings dialog.
+            lnkCheckUpdates.Enabled = !_checkInFlight && !UpdateService.IsChecking;
+        }
 
-            string suffix;
-            if (status != null && status != "up to date")
-                suffix = status;
-            else if (lastChecked == null)
-                suffix = error != null ? null : "checking…";
-            else
+        // "check for updates": the ten-minute poll, on demand, and the same trigger the
+        // "Version and updates" group in OutlookAI Settings offers. async void is what an event
+        // handler is, and it swallows everything — the outcome of a check belongs on the version
+        // line above, not in a crash dialog.
+        private async void lnkCheckUpdates_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
+        {
+            if (_checkInFlight)
+                return;
+            _checkInFlight = true;
+            UpdateVersionLabel();
+            try
             {
-                var ago = DateTime.Now - lastChecked.Value;
-                if (ago < TimeSpan.Zero) ago = TimeSpan.Zero;
-                if (ago.TotalSeconds < 60)
-                    suffix = "checked just now";
-                else if (ago.TotalMinutes < 60)
-                    suffix = $"checked {(int)ago.TotalMinutes}m ago";
-                else if (ago.TotalHours < 24)
-                    suffix = $"checked {(int)ago.TotalHours}h ago";
-                else
-                    suffix = $"checked {(int)ago.TotalDays}d ago";
+                await UpdateService.CheckNowAsync();
             }
-
-            lblVersion.Text = suffix != null ? $"{version} - {suffix}" : version;
-            lnkUpdateError.Visible = error != null;
+            catch (Exception ex)
+            {
+                DebugLog("CheckNow", null, ex.Message);
+            }
+            finally
+            {
+                // The await can outlive the pane — Outlook disposes it when the inspector
+                // closes. UpdateVersionLabel is a no-op by then.
+                _checkInFlight = false;
+                UpdateVersionLabel();
+            }
         }
 
         private void lblVersion_Click(object sender, EventArgs e)
@@ -969,6 +989,7 @@ namespace OutlookAI.TaskPane
             _toolTip.SetToolTip(btnEditDraft, "Edit the current draft based on your instruction.\nPreserves conversation history for iterative refinement.");
             _toolTip.SetToolTip(btnEditSelection, "Edit only the selected text based on your instruction.\nLeaves the rest of the draft unchanged.");
             _toolTip.SetToolTip(btnSelectSignature, "Let the AI pick the best of your installed signatures for this email\n(matching the language of the draft, thread, and recipients) and apply it.\nYour draft text and the quoted thread stay untouched.");
+            _toolTip.SetToolTip(lnkCheckUpdates, "Look for a newer version now, instead of waiting for the next\nautomatic check. OutlookAI checks every 10 minutes on its own.");
         }
 
         private void InvokeOnUI(Action action)
@@ -1008,6 +1029,8 @@ namespace OutlookAI.TaskPane
             lblTitle.ForeColor = ThemeService.Accent;
             lblVersion.ForeColor = ThemeService.SecondaryText;
             lnkUpdateError.LinkColor = ThemeService.LinkError;
+            lnkCheckUpdates.LinkColor = ThemeService.Accent;
+            lnkCheckUpdates.DisabledLinkColor = ThemeService.SecondaryText;
             if (lblStatus.Visible)
                 lblStatus.ForeColor = _lastStatusError ? ThemeService.StatusError : ThemeService.StatusSuccess;
 
