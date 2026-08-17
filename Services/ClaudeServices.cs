@@ -33,7 +33,57 @@ namespace OutlookAI.Services
 
     public static class ClaudeService
     {
-        private const string Model = "claude-opus-4-6";
+        /// <summary>
+        /// Where both machine settings live: HKCU\Software\OutlookAI, values <c>Model</c>
+        /// (string) and <c>RequestTimeoutSeconds</c> (DWORD).
+        ///
+        /// <c>Model</c> is now also what the settings window writes, and ABSENT IS THE DEFAULT:
+        /// no value means no <c>--model</c> argument, which is the documented way to let Claude
+        /// Code decide (its own <c>model</c> setting, then ANTHROPIC_MODEL, then the account
+        /// default). The timeout stays deliberately registry-only and undocumented in the UI -
+        /// it exists so a genuinely slow link can be worked around on the spot, not as a feature.
+        /// </summary>
+        private const string AppKeyPath = @"Software\OutlookAI";
+        private const string ModelValueName = "Model";
+        private const string RequestTimeoutValueName = "RequestTimeoutSeconds";
+
+        /// <summary>
+        /// Hard cap on one CLI request. One number, and every sentence that mentions it is
+        /// built from that number - the literal and the words "2 minutes" used to sit six lines
+        /// apart as two spellings of the same thing.
+        /// </summary>
+        private const int DefaultRequestTimeoutSeconds = 120;
+
+        /// <summary>Bounds on the override, so a typo cannot disable the cap or make it useless.</summary>
+        private const int MinRequestTimeoutSeconds = 10;
+        private const int MaxRequestTimeoutSeconds = 3600;
+
+        /// <summary>How long to wait for a warm-up process to prove a prerequisite is missing by exiting.</summary>
+        private const int WarmUpProbeMs = 1500;
+
+        /// <summary>How long <c>taskkill /T /F</c> gets before we fall back to Process.Kill.</summary>
+        private const int TaskKillWaitMs = 5000;
+
+        /// <summary>
+        /// How much raw CLI output an error message may quote. Bigger than
+        /// <see cref="ErrorTextExcerptChars"/> because this is unparsed JSON, where the useful
+        /// part is rarely at the front.
+        /// </summary>
+        private const int RawOutputExcerptChars = 500;
+
+        /// <summary>How much CLI stderr, or a CLI-reported failure, an error message may quote.</summary>
+        private const int ErrorTextExcerptChars = 300;
+
+        /// <summary>
+        /// How to install the CLI. Written once: two different error messages tell the user
+        /// this, and a second copy of an install command is a second thing to get wrong.
+        /// </summary>
+        private const string InstallInstructions =
+            "Install it by running this in PowerShell:\n" +
+            "  irm https://claude.ai/install.ps1 | iex\n\n" +
+            "Then sign in by running:\n" +
+            "  claude\n\n" +
+            "Then restart Outlook.";
 
         /// <summary>
         /// Head of the label for the three free-text buttons. Not a section: it is the one word
@@ -42,10 +92,282 @@ namespace OutlookAI.Services
         /// </summary>
         private const string DraftLabel = "Draft";
 
-        private static readonly string CliArgs = "-p - --output-format json --max-turns 1 --model \"" + Model + "\"";
-        private static readonly string ClaudePath = System.IO.Path.Combine(
+        /// <summary>
+        /// Where the Claude Code CLI is expected. Public within the assembly because
+        /// <see cref="McpRegistrationService"/> asks the same question ("is Claude Code
+        /// installed?") and used to spell the same path a second way - so a move would fix the
+        /// executing path, which fails loudly, and leave the detecting one quietly wrong.
+        /// </summary>
+        internal static readonly string ClaudePath = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".local", "bin", "claude.exe");
+
+        /// <summary>
+        /// Every request, minus the model. The model is APPENDED ONLY WHEN THE USER CHOSE ONE:
+        /// see <see cref="BuildCliArgs"/>. There is no shipped model id anywhere in this file
+        /// any more, and that is the point - a pinned id is a dated asset that outlives its
+        /// model, and leaving the argument out is what makes "absent" mean "whatever Claude Code
+        /// is configured to use" rather than "whatever we last shipped".
+        /// </summary>
+        private const string BaseCliArgs = "-p - --output-format json --max-turns 1";
+
+        private static readonly object _argsLock = new object();
+        private static string _cliArgs;
+
+        /// <summary>
+        /// The exact argument string a request is started with right now. Cached rather than
+        /// rebuilt per request, and invalidated by <see cref="SetConfiguredModel"/>, so a model
+        /// chosen in the settings window takes effect on the next request instead of the next
+        /// Outlook session.
+        ///
+        /// Internal because the settings window shows what will actually be sent, and the
+        /// offline harness proves it: a second place that spells these arguments out would be a
+        /// second place to get them wrong.
+        /// </summary>
+        internal static string CliArguments
+        {
+            get
+            {
+                lock (_argsLock)
+                {
+                    if (_cliArgs == null)
+                        _cliArgs = BuildCliArgs();
+                    return _cliArgs;
+                }
+            }
+        }
+
+        private static string BuildCliArgs()
+        {
+            string model = ConfiguredModel;
+            return model == null ? BaseCliArgs : BaseCliArgs + " --model \"" + model + "\"";
+        }
+
+        /// <summary>
+        /// The model the user chose, or NULL for "let Claude Code decide" - which is the default
+        /// and is stored as nothing at all. A stored value that could not be a model id is
+        /// treated as absent rather than passed on, because it would land inside a quoted
+        /// <c>--model "..."</c> argument (see <see cref="ModelCatalog.IsWellFormedModelId"/>).
+        /// </summary>
+        internal static string ConfiguredModel
+        {
+            get
+            {
+                string configured = ReadAppString(ModelValueName);
+                return ModelCatalog.IsWellFormedModelId(configured) ? configured.Trim() : null;
+            }
+        }
+
+        /// <summary>
+        /// Stores the chosen model, or clears it when <paramref name="model"/> is null or blank -
+        /// absent means "Claude Code decides". Returns whether the choice landed; a value that
+        /// could not be a model id is refused rather than written.
+        ///
+        /// It also drops any pre-warmed process, and that is not optional: a warm process is
+        /// already running with the arguments it was given, so re-reading the registry alone
+        /// would leave the very next request answering on the model the user just changed away
+        /// from - the one failure this whole setting exists to let them fix.
+        /// </summary>
+        internal static bool SetConfiguredModel(string model)
+        {
+            string trimmed = model == null ? string.Empty : model.Trim();
+            bool clearing = trimmed.Length == 0;
+            if (!clearing && !ModelCatalog.IsWellFormedModelId(trimmed))
+                return false;
+
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(AppKeyPath))
+                {
+                    if (key == null)
+                        return false;
+                    if (clearing)
+                        key.DeleteValue(ModelValueName, false);
+                    else
+                        key.SetValue(ModelValueName, trimmed, Microsoft.Win32.RegistryValueKind.String);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Model preference: " + ex.Message);
+                return false;
+            }
+
+            RefreshCliArgs();
+            return true;
+        }
+
+        /// <summary>
+        /// Rebuilds the argument string after the stored model changed, and - only when it really
+        /// did change - throws away the pre-warmed process and starts a fresh one. Also forgets
+        /// which model warning has already been shown: a different model is a different
+        /// situation, and the user is owed the warning again if the new choice also fails.
+        /// </summary>
+        private static void RefreshCliArgs()
+        {
+            string rebuilt = BuildCliArgs();
+            bool changed;
+            lock (_argsLock)
+            {
+                changed = !string.Equals(_cliArgs, rebuilt, StringComparison.Ordinal);
+                _cliArgs = rebuilt;
+            }
+            if (!changed)
+                return;
+
+            lock (_noticeLock)
+            {
+                _shownModelWarning = null;
+                _pendingModelNotice = null;
+            }
+            lock (_warmLock)
+            {
+                KillWarmProcess();
+            }
+            WarmUp();
+        }
+
+        /// <summary>
+        /// Seconds one request may take before the process tree is killed: the machine's
+        /// override, clamped, or <see cref="DefaultRequestTimeoutSeconds"/>. The timeout and the
+        /// message the user sees are both derived from this, so they cannot disagree.
+        /// </summary>
+        internal static int RequestTimeoutSeconds
+        {
+            get
+            {
+                int? configured = ReadAppDword(RequestTimeoutValueName);
+                if (!configured.HasValue)
+                    return DefaultRequestTimeoutSeconds;
+                if (configured.Value < MinRequestTimeoutSeconds) return MinRequestTimeoutSeconds;
+                if (configured.Value > MaxRequestTimeoutSeconds) return MaxRequestTimeoutSeconds;
+                return configured.Value;
+            }
+        }
+
+        /// <summary>
+        /// The timeout in the words the message uses - "2 minutes", "90 seconds". Whole minutes
+        /// are spelled as minutes because that is how a user reads a wait they are sitting through.
+        /// </summary>
+        private static string DescribeRequestTimeout(int seconds)
+        {
+            if (seconds >= 60 && seconds % 60 == 0)
+            {
+                int minutes = seconds / 60;
+                return minutes == 1 ? "1 minute" : minutes + " minutes";
+            }
+            return seconds == 1 ? "1 second" : seconds + " seconds";
+        }
+
+        private static string ReadAppString(string valueName)
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(AppKeyPath))
+                    return key?.GetValue(valueName) as string;
+            }
+            catch { return null; }
+        }
+
+        private static int? ReadAppDword(string valueName)
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(AppKeyPath))
+                    return key?.GetValue(valueName) as int?;
+            }
+            catch { return null; }
+        }
+
+        // ===== The silent fallback =====
+        //
+        // A model the CLI cannot serve does not fail. It prints a warning on stderr, runs the
+        // request on its own default instead, and exits 0 - so the user gets a perfectly good
+        // reply and never learns it came from a different model than the one they picked. That
+        // is the one failure this feature can produce that looks exactly like success, so the
+        // warning is kept and shown rather than discarded with the rest of a successful run's
+        // stderr. It is NOT an error: the request worked, and the pane says so.
+
+        private static readonly object _noticeLock = new object();
+
+        /// <summary>Waiting to be shown once, by whoever asks next.</summary>
+        private static string _pendingModelNotice;
+
+        /// <summary>The raw warning already surfaced this session, so it is not repeated.</summary>
+        private static string _shownModelWarning;
+
+        /// <summary>
+        /// Records a model warning printed by a run that SUCCEEDED. Shown once per distinct
+        /// warning per session: a bad pin produces the identical warning on every single
+        /// request, and a status line that says the same thing forever is one the user stops
+        /// reading. A DIFFERENT warning is a new thing to say and is shown.
+        /// </summary>
+        private static void NoteModelWarning(string stderr)
+        {
+            string warning = FindModelWarning(stderr);
+            if (warning == null)
+                return;
+            lock (_noticeLock)
+            {
+                if (string.Equals(warning, _shownModelWarning, StringComparison.Ordinal))
+                    return;
+                _shownModelWarning = warning;
+                _pendingModelNotice = DescribeModelWarning(warning);
+            }
+        }
+
+        /// <summary>
+        /// The pending model notice, and clears it - so the pane shows it once rather than
+        /// decorating every later reply with a warning about a request that already happened.
+        /// Null when there is nothing to say, which is the normal case.
+        /// </summary>
+        internal static string TakeModelNotice()
+        {
+            lock (_noticeLock)
+            {
+                string notice = _pendingModelNotice;
+                _pendingModelNotice = null;
+                return notice;
+            }
+        }
+
+        /// <summary>
+        /// The first stderr line that mentions the model. Matching on that word alone is
+        /// deliberate: the CLI's exact wording is not documented, and a precise pattern would
+        /// silently stop matching the day it is reworded - which is the same silence this exists
+        /// to break. A successful run normally prints nothing at all on stderr, so a false
+        /// positive costs one status line, once.
+        /// </summary>
+        private static string FindModelWarning(string stderr)
+        {
+            if (string.IsNullOrWhiteSpace(stderr))
+                return null;
+            foreach (string line in stderr.Split('\n'))
+            {
+                string trimmed = line.Trim();
+                if (trimmed.Length == 0)
+                    continue;
+                if (trimmed.IndexOf("model", StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                return Truncate(trimmed, ErrorTextExcerptChars);
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// The warning in the user's terms. Careful about what it asserts: we know the CLI said
+        /// something about the model and that the request nonetheless succeeded. We do not know
+        /// which model actually answered, so it says "may have" rather than claiming a fallback
+        /// we cannot see.
+        /// </summary>
+        private static string DescribeModelWarning(string warning)
+        {
+            string chosen = ConfiguredModel;
+            string opening = chosen == null
+                ? "Claude Code reported a problem with the model it was set to use"
+                : "Claude Code reported a problem with the model you chose (" + chosen + ")";
+            return opening + ", so this reply may have come from a different one. It said: " + warning;
+        }
 
         private static readonly object _warmLock = new object();
         private static Process _warmProcess;
@@ -105,8 +427,8 @@ namespace OutlookAI.Services
                 }
 
                 // Probe for immediate exit (missing prerequisites) OUTSIDE the lock so the
-                // up-to-1.5s wait never blocks Shutdown() (UI thread) or ExecutePrompt().
-                if (process.WaitForExit(1500) && process.HasExited)
+                // WarmUpProbeMs wait never blocks Shutdown() (UI thread) or ExecutePrompt().
+                if (process.WaitForExit(WarmUpProbeMs) && process.HasExited)
                 {
                     process.WaitForExit(); // flush async output handlers
                     var stderr = stderrBuilder.ToString();
@@ -449,13 +771,16 @@ namespace OutlookAI.Services
                         writer.Write(userMessage);
                 }
 
-                bool exited = process.WaitForExit(120_000);
+                int timeoutSeconds = RequestTimeoutSeconds;
+                bool exited = process.WaitForExit(timeoutSeconds * 1000);
                 if (!exited)
                 {
                     KillProcessTree(process);
                     // Pre-warm the next process for the next attempt
                     WarmUp();
-                    throw new Exception("Request timed out after 2 minutes. Please try again.");
+                    throw new Exception(
+                        "Request timed out after " + DescribeRequestTimeout(timeoutSeconds) +
+                        ". Please try again.");
                 }
 
                 // Flush async output buffers
@@ -473,6 +798,10 @@ namespace OutlookAI.Services
 
                 var stdout = stdoutBuilder.ToString().Trim();
                 var result = ParseResult(stdout);
+
+                // The run succeeded, so nothing here is an error - but a warning about the model
+                // printed on the way is the one thing a successful run can be hiding. Keep it.
+                NoteModelWarning(stderrBuilder.ToString());
 
                 // A successful run is positive proof prerequisites are OK; clear any stale gate.
                 _lastPrerequisiteError = null;
@@ -499,7 +828,7 @@ namespace OutlookAI.Services
                 process.StartInfo = new ProcessStartInfo
                 {
                     FileName = ClaudePath,
-                    Arguments = CliArgs,
+                    Arguments = CliArguments,
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardInput = true,
@@ -532,12 +861,7 @@ namespace OutlookAI.Services
             catch (Win32Exception)
             {
                 _lastPrerequisiteError =
-                    "Claude Code CLI was not found at " + ClaudePath + ".\n\n" +
-                    "Install it by running this in PowerShell:\n" +
-                    "  irm https://claude.ai/install.ps1 | iex\n\n" +
-                    "Then sign in by running:\n" +
-                    "  claude\n\n" +
-                    "Then restart Outlook.";
+                    "Claude Code CLI was not found at " + ClaudePath + ".\n\n" + InstallInstructions;
                 throw new Exception(_lastPrerequisiteError);
             }
         }
@@ -558,11 +882,11 @@ namespace OutlookAI.Services
             }
             catch (Exception ex)
             {
-                throw new Exception("Could not parse Claude response: " + ex.Message + "\nRaw output:\n" + Truncate(json, 500));
+                throw new Exception("Could not parse Claude response: " + ex.Message + "\nRaw output:\n" + Truncate(json, RawOutputExcerptChars));
             }
 
             if (parsed == null)
-                throw new Exception("Could not parse Claude response. Raw output:\n" + Truncate(json, 500));
+                throw new Exception("Could not parse Claude response. Raw output:\n" + Truncate(json, RawOutputExcerptChars));
 
             // The CLI exits 0 but sets is_error=true for failures it handled itself
             // (e.g. subtype "error_max_turns"); without this check the error envelope's
@@ -580,7 +904,7 @@ namespace OutlookAI.Services
             if (parsed.TryGetValue("text", out var text) && text is string textStr)
                 return textStr;
 
-            throw new Exception("Could not parse Claude response. Raw output:\n" + Truncate(json, 500));
+            throw new Exception("Could not parse Claude response. Raw output:\n" + Truncate(json, RawOutputExcerptChars));
         }
 
         private static string DescribeCliError(string subtype, string detail)
@@ -588,7 +912,7 @@ namespace OutlookAI.Services
             if (subtype == "error_max_turns")
                 return "Claude stopped before finishing (turn limit reached). Please simplify or rephrase the request and try again.";
             if (!string.IsNullOrWhiteSpace(detail))
-                return "Claude could not complete the request: " + Truncate(detail.Trim(), 300);
+                return "Claude could not complete the request: " + Truncate(detail.Trim(), ErrorTextExcerptChars);
             if (!string.IsNullOrWhiteSpace(subtype))
                 return "Claude could not complete the request (" + subtype + ").";
             return "Claude could not complete the request.";
@@ -607,12 +931,7 @@ namespace OutlookAI.Services
                        "Then restart Outlook.";
 
             if (lower.Contains("not recognized") || lower.Contains("not found") || lower.Contains("no such file"))
-                return "Claude Code CLI is not installed or not on PATH.\n\n" +
-                       "Install it by running this in PowerShell:\n" +
-                       "  irm https://claude.ai/install.ps1 | iex\n\n" +
-                       "Then sign in by running:\n" +
-                       "  claude\n\n" +
-                       "Then restart Outlook.";
+                return "Claude Code CLI is not installed or not on PATH.\n\n" + InstallInstructions;
 
             if (lower.Contains("unauthorized") || lower.Contains("not logged in")
                 || lower.Contains("auth required") || lower.Contains("not authenticated")
@@ -629,7 +948,7 @@ namespace OutlookAI.Services
             if (lower.Contains("overloaded") || lower.Contains("capacity"))
                 return "Claude is currently overloaded. Please try again in a moment.";
 
-            return "Claude Code error: " + Truncate(stderr.Trim(), 300);
+            return "Claude Code error: " + Truncate(stderr.Trim(), ErrorTextExcerptChars);
         }
 
         private static bool IsPrerequisiteError(string stderr)
@@ -673,7 +992,7 @@ namespace OutlookAI.Services
                         CreateNoWindow = true
                     }))
                     {
-                        killed = tk != null && tk.WaitForExit(5000) && tk.ExitCode == 0;
+                        killed = tk != null && tk.WaitForExit(TaskKillWaitMs) && tk.ExitCode == 0;
                     }
                     if (!killed && !proc.HasExited)
                         proc.Kill();

@@ -13,6 +13,46 @@ namespace OutlookAI.TaskPane
 {
     public partial class AITaskPane : UserControl
     {
+        /// <summary>
+        /// THE TWO WORD BOOKMARKS THE WHOLE PANE IS ANCHORED TO.
+        ///
+        /// Outlook puts <c>_MailAutoSig</c> around the signature it inserted and
+        /// <c>_MailOriginal</c> around the quoted thread, and the gap before the first of them
+        /// that exists IS the user's draft. Every read the pane makes and every write it
+        /// performs is positioned from these two names, on a real email - so a typo in one of
+        /// them does not fail, it silently reads or replaces the wrong region of somebody's
+        /// mail. They were hand-typed at ten separate call sites; now they are typed once.
+        /// </summary>
+        private const string BookmarkAutoSig = "_MailAutoSig";
+
+        /// <summary>The other half of <see cref="BookmarkAutoSig"/>: Outlook's quoted-thread marker.</summary>
+        private const string BookmarkOriginal = "_MailOriginal";
+
+        /// <summary>Clicks on the version line, within <see cref="DebugClickWindowSeconds"/>, that turn debug mode on.</summary>
+        private const int DebugClicksRequired = 7;
+
+        /// <summary>How long that run of clicks may take.</summary>
+        private const int DebugClickWindowSeconds = 3;
+
+        /// <summary>How much of a bookmark's text the debug log records.</summary>
+        private const int DebugBookmarkExcerptChars = 200;
+
+        /// <summary>How much of a draft, or of a model result, the debug log records.</summary>
+        private const int DebugTextExcerptChars = 300;
+
+        /// <summary>
+        /// How much of an unusable model answer is quoted back at the user. Short, because this
+        /// one goes on the status line rather than into a log.
+        /// </summary>
+        private const int AnswerExcerptChars = 60;
+
+        /// <summary>
+        /// Recipients included in the signature-selection prompt. A cap exists because the
+        /// prompt is sent whole and a distribution list would swamp it; the number is a
+        /// judgement about how many addresses still say something about the audience.
+        /// </summary>
+        private const int MaxRecipientsInPrompt = 20;
+
         private readonly bool _isInlineResponse;
         private Outlook.Inspector _owningInspector;
         private readonly Timer _versionTimer;
@@ -46,7 +86,7 @@ namespace OutlookAI.TaskPane
         // D38: "Select the best signature" needs at least one installed signature.
         private bool _signaturesAvailable;
 
-        // Debug: 7 clicks within 3 seconds to enable
+        // Debug: DebugClicksRequired clicks within DebugClickWindowSeconds to enable
         private bool _debug;
         private int _debugClickCount;
         private DateTime _debugFirstClick;
@@ -83,7 +123,7 @@ namespace OutlookAI.TaskPane
             lblVersion.DoubleClick += lblVersion_Click;
 
             _versionTimer = new Timer();
-            _versionTimer.Interval = 1000;
+            _versionTimer.Interval = UpdateService.VersionLineTickMs;
             _versionTimer.Tick += (s, ev) => UpdateVersionLabel();
             _versionTimer.Start();
             UpdateVersionLabel();
@@ -106,7 +146,7 @@ namespace OutlookAI.TaskPane
             lnkCheckUpdates.Enabled = !_checkInFlight && !UpdateService.IsChecking;
         }
 
-        // "check for updates": the ten-minute poll, on demand, and the same trigger the
+        // "check for updates": the UpdateService poll, on demand, and the same trigger the
         // "Version and updates" group in OutlookAI Settings offers. async void is what an event
         // handler is, and it swallows everything — the outcome of a check belongs on the version
         // line above, not in a crash dialog.
@@ -138,14 +178,14 @@ namespace OutlookAI.TaskPane
             if (_debug) return;
 
             var now = DateTime.Now;
-            if (_debugClickCount == 0 || (now - _debugFirstClick).TotalSeconds > 3)
+            if (_debugClickCount == 0 || (now - _debugFirstClick).TotalSeconds > DebugClickWindowSeconds)
             {
                 _debugClickCount = 0;
                 _debugFirstClick = now;
             }
 
             _debugClickCount++;
-            if (_debugClickCount >= 7)
+            if (_debugClickCount >= DebugClicksRequired)
             {
                 _debug = true;
                 _debugLog.Clear();
@@ -175,7 +215,7 @@ namespace OutlookAI.TaskPane
 
                     var bmks = doc.Bookmarks;
                     bmks.ShowHidden = true;
-                    foreach (var bmName in new[] { "_MailAutoSig", "_MailOriginal" })
+                    foreach (var bmName in new[] { BookmarkAutoSig, BookmarkOriginal })
                     {
                         if (bmks.Exists(bmName))
                         {
@@ -185,7 +225,7 @@ namespace OutlookAI.TaskPane
                             string text = range.Text ?? "";
                             ThisAddIn.ReleaseCom(range);
                             ThisAddIn.ReleaseCom(bmk);
-                            if (text.Length > 200) text = text.Substring(0, 200) + "...";
+                            text = Excerpt(text, DebugBookmarkExcerptChars);
                             _debugLog.AppendLine($"  {bmName}: [{start}, {end}] = {text}");
                         }
                         else
@@ -199,7 +239,7 @@ namespace OutlookAI.TaskPane
                     var draftRange = doc.Range(0, draftEnd);
                     string draft = draftRange.Text ?? "";
                     ThisAddIn.ReleaseCom(draftRange);
-                    if (draft.Length > 300) draft = draft.Substring(0, 300) + "...";
+                    draft = Excerpt(draft, DebugTextExcerptChars);
                     _debugLog.AppendLine($"  Draft [0, {draftEnd}]: {draft}");
                 }
 
@@ -254,6 +294,19 @@ namespace OutlookAI.TaskPane
         private const int MinQuickButtonHeight = 28;
         private const int QuickButtonPadding = 10;     // button chrome around its caption
 
+        /// <summary>
+        /// This control's design width, the same number <c>AITaskPane.Designer.cs</c> assigns
+        /// to <c>this.Size</c>. Named on both sides so the pane's own width and the width the
+        /// host is asked for cannot drift apart.
+        /// </summary>
+        internal const int DesignWidth = 260;
+
+        /// <summary>
+        /// What the CustomTaskPane adds around this control: its border and the docked pane's
+        /// own chrome. Measured once against the shipped 280-wide pane at 96 DPI.
+        /// </summary>
+        private const int TaskPaneChromeWidth = 20;
+
         /// <summary>Measuring a caption the way a Button paints it: wrapped, not clipped.</summary>
         private const TextFormatFlags QuickButtonMeasureFlags = TextFormatFlags.WordBreak;
 
@@ -275,7 +328,7 @@ namespace OutlookAI.TaskPane
         /// The rebuild itself, over a given set. Split from the store read above so the layout can
         /// be driven over button counts and caption lengths that whatever is in HKCU right now does
         /// not happen to cover - zero buttons, twenty of them, and a name at the store's
-        /// 64-character cap all have to come out laid out rather than clipped.
+        /// MaxButtonNameLength cap all have to come out laid out rather than clipped.
         /// </summary>
         private void RebuildQuickActions(IList<PromptButton> buttons)
         {
@@ -306,7 +359,7 @@ namespace OutlookAI.TaskPane
                 {
                     var btn = new Button();
                     // Wrap where the caption can be broken, ellipsis where it cannot. A name at the
-                    // store's 64-character cap with no spaces in it does not fit any button this
+                    // store's MaxButtonNameLength cap with no spaces in it does not fit any button this
                     // pane can offer at any width, so the honest end of that road is "MMMM..." plus
                     // a tooltip, not a caption sliced off mid-glyph.
                     btn.AutoEllipsis = true;
@@ -363,7 +416,7 @@ namespace OutlookAI.TaskPane
             try
             {
                 // A pass can invalidate its own input: making the group taller can push the pane
-                // past its height, and the scrollbar that then appears takes 17px off the client
+                // past its height, and the scrollbar that then appears takes its own width off the client
                 // width, which narrows this anchored group and changes how many buttons fit a row.
                 // That arrives re-entrantly, so it is recorded rather than acted on, and answered
                 // by running again. Capped, because a scrollbar that is needed at one width and
@@ -472,7 +525,7 @@ namespace OutlookAI.TaskPane
                     Math.Max(columnWidth, needed.Width + chrome));
 
                 // Re-measure at the width it actually got: a caption that wrapped onto a second
-                // line there needs a taller button, and a 64-character name (the store's cap)
+                // line there needs a taller button, and a name at the store's MaxButtonNameLength cap
                 // does exactly that.
                 int wrapped = MeasureCaption(btn, Math.Max(1, btn.Width - chrome)).Height + chrome;
                 if (wrapped > height)
@@ -503,6 +556,19 @@ namespace OutlookAI.TaskPane
         }
 
         /// <summary>
+        /// Text cut to a limit, with an ellipsis marking that it was cut. One helper rather than
+        /// four hand-written <c>Substring</c> expressions with four different literals in them:
+        /// the limits are now named constants at the top of the file, and the "..." that says a
+        /// cut happened cannot be forgotten at one site and not another.
+        /// </summary>
+        private static string Excerpt(string text, int maxLength)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length <= maxLength)
+                return text ?? string.Empty;
+            return text.Substring(0, maxLength) + "...";
+        }
+
+        /// <summary>
         /// The factor AutoScaleMode.Font applied to every literal in the Designer, read back off
         /// one of them. Values computed at runtime never went through that pass, so they have to be
         /// scaled by hand or a 125% display keeps 96 DPI paddings around text that grew by a
@@ -529,6 +595,23 @@ namespace OutlookAI.TaskPane
                 float scale = top / QuickActionsDesignTop;
                 return scale < 1f ? 1f : scale;
             }
+        }
+
+        /// <summary>
+        /// How wide the host CustomTaskPane should be made for this control, at the display
+        /// scaling actually in force.
+        ///
+        /// It used to be the bare literal 280, written out at four separate call sites and
+        /// scaled by nothing - the only user-visible geometry in the add-in that ignored
+        /// <see cref="UiScale"/>. At 150% display scaling the pane's CONTENTS grew by half
+        /// while the pane stayed 280 units wide, which is precisely the clipping the whole
+        /// LayoutPane/UiScale machinery exists to prevent. Derived here instead, from the
+        /// design width the Designer assigns plus the host's chrome, so there is one number
+        /// and it tracks the scale.
+        /// </summary>
+        internal int PreferredHostWidth
+        {
+            get { return Scaled(DesignWidth + TaskPaneChromeWidth, UiScale); }
         }
 
         private void grpQuickActions_SizeChanged(object sender, EventArgs e)
@@ -715,7 +798,7 @@ namespace OutlookAI.TaskPane
                     if (chosen == null)
                     {
                         string shown = answer ?? "";
-                        if (shown.Length > 60) shown = shown.Substring(0, 60) + "...";
+                        shown = Excerpt(shown, AnswerExcerptChars);
                         InvokeOnUI(() => ShowStatus("AI answered \"" + shown + "\", which matches no installed signature.", true));
                         return;
                     }
@@ -779,10 +862,10 @@ namespace OutlookAI.TaskPane
                 DebugLog("ApplySignature BEFORE", wordDoc);
 
                 int insertAt;
-                if (bookmarks.Exists("_MailAutoSig"))
+                if (bookmarks.Exists(BookmarkAutoSig))
                 {
                     // Replace: drop the marker, then the old signature content itself.
-                    var bmk = bookmarks["_MailAutoSig"];
+                    var bmk = bookmarks[BookmarkAutoSig];
                     var range = bmk.Range;
                     insertAt = range.Start;
                     bmk.Delete();
@@ -790,10 +873,10 @@ namespace OutlookAI.TaskPane
                     ThisAddIn.ReleaseCom(range);
                     ThisAddIn.ReleaseCom(bmk);
                 }
-                else if (bookmarks.Exists("_MailOriginal"))
+                else if (bookmarks.Exists(BookmarkOriginal))
                 {
                     // No signature region yet: insert directly ABOVE the quoted thread.
-                    var bmk = bookmarks["_MailOriginal"];
+                    var bmk = bookmarks[BookmarkOriginal];
                     var range = bmk.Range;
                     insertAt = range.Start;
                     ThisAddIn.ReleaseCom(range);
@@ -823,7 +906,7 @@ namespace OutlookAI.TaskPane
                 // Recreate the marker over the inserted content so Outlook and the
                 // pane's draft/signature/thread split keep working on this draft.
                 var newRange = wordDoc.Range(insertAt, newEnd);
-                bookmarks.Add("_MailAutoSig", newRange);
+                bookmarks.Add(BookmarkAutoSig, newRange);
                 ThisAddIn.ReleaseCom(newRange);
 
                 DebugLog("ApplySignature AFTER", wordDoc);
@@ -901,7 +984,7 @@ namespace OutlookAI.TaskPane
                 recipients = ((dynamic)item).Recipients;
                 int count = ((dynamic)recipients).Count;
                 var sb = new StringBuilder();
-                for (int i = 1; i <= count && i <= 20; i++)
+                for (int i = 1; i <= count && i <= MaxRecipientsInPrompt; i++)
                 {
                     object recipient = null;
                     try
@@ -1015,7 +1098,7 @@ namespace OutlookAI.TaskPane
                     actionLabel, _editHistory,
                     draftText, signatureText, threadText, selectedText);
 
-                DebugLog("Claude returned", extra: $"result ({result.Length} chars): {(result.Length > 300 ? result.Substring(0, 300) + "..." : result)}");
+                DebugLog("Claude returned", extra: $"result ({result.Length} chars): {Excerpt(result, DebugTextExcerptChars)}");
 
                 var capturedDoc = preAsyncDoc;
                 InvokeOnUI(() =>
@@ -1030,7 +1113,12 @@ namespace OutlookAI.TaskPane
                             Result = result
                         });
 
-                        ShowStatus("Done!", false);
+                        // A model warning the CLI printed on an otherwise successful run: the
+                        // request DID work, so this is not an error - but it is the one thing a
+                        // successful reply can be hiding, and ClaudeService only hands it over
+                        // once per session per distinct warning.
+                        string modelNotice = ClaudeService.TakeModelNotice();
+                        ShowStatus(modelNotice == null ? "Done!" : "Done - " + modelNotice, false);
                     }
                 });
             }
@@ -1090,18 +1178,18 @@ namespace OutlookAI.TaskPane
             var bookmarks = doc.Bookmarks;
             try
             {
-                if (bookmarks.Exists("_MailAutoSig"))
+                if (bookmarks.Exists(BookmarkAutoSig))
                 {
-                    var bmk = bookmarks["_MailAutoSig"];
+                    var bmk = bookmarks[BookmarkAutoSig];
                     var range = bmk.Range;
                     int pos = range.Start;
                     ThisAddIn.ReleaseCom(range);
                     ThisAddIn.ReleaseCom(bmk);
                     return pos;
                 }
-                if (bookmarks.Exists("_MailOriginal"))
+                if (bookmarks.Exists(BookmarkOriginal))
                 {
-                    var bmk = bookmarks["_MailOriginal"];
+                    var bmk = bookmarks[BookmarkOriginal];
                     var range = bmk.Range;
                     int pos = range.Start;
                     ThisAddIn.ReleaseCom(range);
@@ -1135,10 +1223,10 @@ namespace OutlookAI.TaskPane
             var bookmarks = doc.Bookmarks;
             try
             {
-                if (!bookmarks.Exists("_MailAutoSig"))
+                if (!bookmarks.Exists(BookmarkAutoSig))
                     return "";
 
-                var bmk = bookmarks["_MailAutoSig"];
+                var bmk = bookmarks[BookmarkAutoSig];
                 var range = bmk.Range;
                 string text = range.Text ?? "";
                 ThisAddIn.ReleaseCom(range);
@@ -1157,10 +1245,10 @@ namespace OutlookAI.TaskPane
             var bookmarks = doc.Bookmarks;
             try
             {
-                if (!bookmarks.Exists("_MailOriginal"))
+                if (!bookmarks.Exists(BookmarkOriginal))
                     return "";
 
-                var bmk = bookmarks["_MailOriginal"];
+                var bmk = bookmarks[BookmarkOriginal];
                 var range = bmk.Range;
                 string text = range.Text ?? "";
                 ThisAddIn.ReleaseCom(range);
@@ -1203,10 +1291,10 @@ namespace OutlookAI.TaskPane
                 ThisAddIn.ReleaseCom(contentRange);
                 int origBmkEnd = -1;
 
-                if (bookmarks.Exists("_MailAutoSig"))
-                    boundaryBookmark = "_MailAutoSig";
-                else if (bookmarks.Exists("_MailOriginal"))
-                    boundaryBookmark = "_MailOriginal";
+                if (bookmarks.Exists(BookmarkAutoSig))
+                    boundaryBookmark = BookmarkAutoSig;
+                else if (bookmarks.Exists(BookmarkOriginal))
+                    boundaryBookmark = BookmarkOriginal;
 
                 if (boundaryBookmark != null)
                 {
@@ -1330,7 +1418,11 @@ namespace OutlookAI.TaskPane
             _toolTip.SetToolTip(btnEditDraft, "Edit the current draft based on your instruction.\nPreserves conversation history for iterative refinement.");
             _toolTip.SetToolTip(btnEditSelection, "Edit only the selected text based on your instruction.\nLeaves the rest of the draft unchanged.");
             _toolTip.SetToolTip(btnSelectSignature, "Let the AI pick the best of your installed signatures for this email\n(matching the language of the draft, thread, and recipients) and apply it.\nYour draft text and the quoted thread stay untouched.");
-            _toolTip.SetToolTip(lnkCheckUpdates, "Look for a newer version now, instead of waiting for the next\nautomatic check. OutlookAI checks every 10 minutes on its own.");
+            // The interval is asked for, never restated: it used to be spelled out here in
+            // English, on screen, where changing PollInterval would have left it lying.
+            _toolTip.SetToolTip(lnkCheckUpdates,
+                "Look for a newer version now, instead of waiting for the next\nautomatic check. "
+                + "OutlookAI checks every " + UpdateService.PollIntervalDescription + " on its own.");
         }
 
         private void InvokeOnUI(Action action)

@@ -16,7 +16,7 @@ namespace OutlookAI.TaskPane
     /// FIVE TABS, and what is on them:
     ///   Outlook     - the master switch and the three Outlook tuning groups, plus the restart
     ///                 and group-policy status lines.
-    ///   Claude Code - where the mail server is registered, and its state.
+    ///   Claude Code - which model requests run on, and where the mail server is registered.
     ///   Prompts     - the five prompt sections every request is assembled from.
     ///   Buttons     - the quick buttons the compose sidebar shows, in order.
     ///   Updates     - the version line, the last check's error, and "Check for updates".
@@ -25,12 +25,15 @@ namespace OutlookAI.TaskPane
     ///
     ///  1. TWO COMMIT MODELS, ON PURPOSE, AND THE FOOTER SAYS SO. A tick box IS the decision, so
     ///     the tuning boxes and the Claude Code toggle write the moment they are clicked, exactly
-    ///     as they always have. Text being typed is not a decision: a half-typed prompt is not an
-    ///     instruction anybody meant to send, so the Prompts and Buttons tabs buffer into drafts
-    ///     and reach the registry only on "Apply now". That is why the footer is Apply now +
-    ///     Close and NOT Apply/Cancel: with instant-apply tick boxes one tab away, a global
-    ///     Cancel would be a lie about what it undoes. Closing with unsaved prompt edits asks
-    ///     once, through <see cref="ConfirmDiscard"/>.
+    ///     as they always have. So does picking a model from the list - a chosen list entry is
+    ///     the same shape of decision as a ticked box. Text being typed is not a decision: a
+    ///     half-typed prompt is not an instruction anybody meant to send, so the Prompts and
+    ///     Buttons tabs buffer into drafts and reach the registry only on "Apply now". The
+    ///     custom model id sits between the two and is treated as text: it writes when the box
+    ///     is left, when Enter is pressed, on Apply now, and on close, never per keystroke.
+    ///     That is why the footer is Apply now + Close and NOT Apply/Cancel: with instant-apply
+    ///     tick boxes one tab away, a global Cancel would be a lie about what it undoes. Closing
+    ///     with unsaved prompt edits asks once, through <see cref="ConfirmDiscard"/>.
     ///
     ///  2. ENTER TYPES A NEWLINE. <see cref="Form.AcceptButton"/> is deliberately null - with a
     ///     default button, Enter in any of the six multi-line editors would press it instead of
@@ -97,6 +100,14 @@ namespace OutlookAI.TaskPane
 
         // ===== Claude Code tab =====
 
+        private readonly GroupBox grpModel;
+        private readonly Label lblModelHelp;
+        private readonly ComboBox cmbModel;
+        private readonly Label lblModelIdCaption;
+        private readonly TextBox txtModel;
+        private readonly Label lblModelNote;
+        private readonly Label lblModelState;
+
         private readonly GroupBox grpClaude;
         private readonly CheckBox chkGlobalMcp;
         private readonly Label lblGlobalMcpHelp;
@@ -112,9 +123,10 @@ namespace OutlookAI.TaskPane
         private readonly Button btnCheckUpdates;
 
         /// <summary>
-        /// Keeps "checked 4m ago" honest and picks up a check finishing. One second, matching
-        /// the sidebar's indicator; <see cref="RefreshVersionLine"/> makes an unchanged tick
-        /// free, so this costs nothing while nothing is happening.
+        /// Keeps "checked 4m ago" honest and picks up a check finishing. The rate is
+        /// <see cref="UpdateService.VersionLineTickMs"/>, shared with the sidebar's indicator so
+        /// the two cannot be tuned apart; <see cref="RefreshVersionLine"/> makes an unchanged
+        /// tick free, so this costs nothing while nothing is happening.
         /// </summary>
         private readonly Timer _versionTimer;
 
@@ -281,7 +293,11 @@ namespace OutlookAI.TaskPane
             grpCaching = NewGroup("grpCaching", "Full caching (sync slider = All)",
                                   chkCaching, lblCachingValues);
 
-            chkOst = NewCheck("chkOst", "Keep raised OST size limits applied (100 GB max)");
+            // The cap is read from the tuning service rather than typed in here: the desired
+            // numbers live in the registry and are meant to be tunable, so a hand-written
+            // "100 GB" would go on claiming a limit the product had stopped applying.
+            chkOst = NewCheck("chkOst",
+                "Keep raised OST size limits applied (" + OutlookTuningService.DescribeOstMaxSize() + " max)");
             lblOstValues = NewLabel("", LabelRole.Body, wrap: true);
             lblOstValues.Name = "lblOstValues";
             grpOst = NewGroup("grpOst", "OST size headroom", chkOst, lblOstValues);
@@ -297,7 +313,63 @@ namespace OutlookAI.TaskPane
             lblGpo.Name = "lblGpo";
             lblGpo.Visible = false;
 
-            // --- Claude Code tab ---
+            // --- Claude Code tab: the model ---
+            // First on the tab because it is the setting a user is most likely to have opened
+            // this window to change; the mail-server group below is one-time setup that mostly
+            // reports its own state.
+            lblModelHelp = NewLabel(
+                "Which model OutlookAI asks for. Left on the default it asks for nothing in "
+                + "particular, so Claude Code uses whatever it is set up to use - your own "
+                + "choice, and any model released later, without an OutlookAI update.",
+                LabelRole.Secondary, wrap: true);
+            lblModelHelp.Name = "lblModelHelp";
+
+            cmbModel = new ComboBox
+            {
+                Name = "cmbModel",
+                // DropDownList, not DropDown: the free-text case has its own box below, and a
+                // combo that is both a list and an editor makes "what did I actually choose"
+                // impossible to answer from a glance.
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Anchor = AnchorStyles.Left | AnchorStyles.Top,
+                // Names, not model ids, so the list cannot go stale - see ModelCatalog.
+                FormattingEnabled = false,
+                // Owner-drawn because this is the ONE control in this window that ignores the
+                // BackColor the theme walk gives it: the area showing the selected entry is
+                // painted by the OS, which in dark mode drew a white field with white text on
+                // it. Measured, not guessed - see ReadModelPickerPixels in the render harness.
+                DrawMode = DrawMode.OwnerDrawFixed,
+            };
+            foreach (ModelChoice choice in ModelCatalog.BuildChoices())
+                cmbModel.Items.Add(choice);
+
+            lblModelIdCaption = NewLabel("Model id", LabelRole.Body, wrap: false);
+            lblModelIdCaption.Name = "lblModelIdCaption";
+
+            txtModel = new TextBox
+            {
+                Name = "txtModel",
+                Anchor = AnchorStyles.Left | AnchorStyles.Top,
+                // Only live for the Custom entry, so an id cannot be typed into a box that is
+                // not the thing being sent.
+                Enabled = false,
+            };
+
+            // Hidden unless there is something true to say - see RefreshModelLines. It never
+            // claims a model cannot do something; it says OutlookAI cannot vouch for it.
+            lblModelNote = NewLabel("", LabelRole.Warning, wrap: true);
+            lblModelNote.Name = "lblModelNote";
+            lblModelNote.Visible = false;
+
+            // The honesty line: the argument that will actually be sent, in full.
+            lblModelState = NewLabel("", LabelRole.Secondary, wrap: true);
+            lblModelState.Name = "lblModelState";
+
+            grpModel = NewGroup("grpModel", "Model",
+                                lblModelHelp, cmbModel, lblModelIdCaption, txtModel,
+                                lblModelNote, lblModelState);
+
+            // --- Claude Code tab: the mail server ---
             chkGlobalMcp = NewCheck("chkGlobalMcp", "Make available in all my Claude Code projects");
             lblGlobalMcpHelp = NewLabel(
                 "Registers the mail server in your personal Claude Code configuration, so every "
@@ -337,7 +409,7 @@ namespace OutlookAI.TaskPane
                 NewScroller("outlookPage", NewStack("outlookStack",
                     lblHeader, chkMaster, grpSearch, grpCaching, grpOst, lblRestart, lblGpo)));
             _tabClaude = NewPage("Claude Code", "tabClaude",
-                NewScroller("claudePage", NewStack("claudeStack", grpClaude)));
+                NewScroller("claudePage", NewStack("claudeStack", grpModel, grpClaude)));
             _tabPrompts = NewPage("Prompts", "tabPrompts", BuildSectionsPage());
             _tabButtons = NewPage("Buttons", "tabButtons", BuildButtonsPage());
             _tabUpdates = NewPage("Updates", "tabUpdates",
@@ -389,6 +461,14 @@ namespace OutlookAI.TaskPane
             // Deliberately NOT OnToggleChanged: this one owns a different service, and
             // toggling it must not drag the Outlook tuning reconcile along with it.
             chkGlobalMcp.CheckedChanged += OnGlobalMcpChanged;
+            cmbModel.SelectedIndexChanged += OnModelChoiceChanged;
+            cmbModel.DrawItem += OnDrawModelChoice;
+            // Three ways to finish typing an id, and none of them is a keystroke: leaving the
+            // box, pressing Enter in it, and Apply now (plus closing the window, in
+            // OnFormClosing). TextChanged only re-reads the note, which writes nothing.
+            txtModel.Leave += (s, e) => CommitCustomModel();
+            txtModel.KeyDown += OnModelIdKeyDown;
+            txtModel.TextChanged += OnModelIdEdited;
             btnAddProject.Click += OnAddProject;
             btnCopyCommand.Click += OnCopyCommand;
             btnCheckUpdates.Click += OnCheckForUpdates;
@@ -407,7 +487,7 @@ namespace OutlookAI.TaskPane
 
             // Only ever re-lays the window out when the line actually changed, which on most
             // ticks it has not: "checked 4m ago" turns over once a minute.
-            _versionTimer = new Timer { Interval = 1000 };
+            _versionTimer = new Timer { Interval = UpdateService.VersionLineTickMs };
             _versionTimer.Tick += (s, e) =>
             {
                 if (RefreshVersionLine())
@@ -734,8 +814,22 @@ namespace OutlookAI.TaskPane
                         found.Padding = new Padding(pad, gap, pad, gap);
                 }
 
-                foreach (GroupBox group in new[] { grpSearch, grpCaching, grpOst, grpClaude, grpVersion })
+                foreach (GroupBox group in new[] { grpSearch, grpCaching, grpOst, grpModel, grpClaude, grpVersion })
                     group.Margin = new Padding(0, 0, 0, gap);
+
+                // The picker is a fixed, scaled width rather than docked: full width on a wide
+                // window would make a one-line choice look like a paragraph, and the drop-down
+                // is given extra room of its own so a long label is never the reason an entry
+                // is unreadable.
+                cmbModel.Width = Scaled(360);
+                cmbModel.DropDownWidth = Scaled(440);
+                cmbModel.Margin = new Padding(0, 0, 0, gap);
+                lblModelHelp.Margin = new Padding(0, 0, 0, gap);
+                lblModelIdCaption.Margin = new Padding(0, 0, 0, 0);
+                txtModel.Width = Scaled(280);
+                txtModel.Margin = new Padding(0, Scaled(2), 0, gap);
+                lblModelNote.Margin = new Padding(0, 0, 0, gap);
+                lblModelState.Margin = new Padding(0, 0, 0, 0);
 
                 lblHeader.Margin = new Padding(0, 0, 0, gap);
                 chkMaster.Margin = new Padding(0, 0, 0, gap);
@@ -911,6 +1005,11 @@ namespace OutlookAI.TaskPane
         /// </summary>
         private void OnApplyNow(object sender, EventArgs e)
         {
+            // A model id still in the box counts as asked for: "Apply now" is the one button on
+            // this window that means "do the thing I typed", so it lands before the refresh
+            // below reads the stored value back.
+            CommitCustomModel();
+
             // Same button, same promise as before: re-check the Outlook tuning AND the
             // mail-server registration, so a drift the user just fixed (installing the runtime,
             // say) is picked up without restarting Outlook. Neither throws out of its public
@@ -977,6 +1076,13 @@ namespace OutlookAI.TaskPane
                 e.Cancel = true;
                 return;
             }
+
+            // Not part of the discard question, and deliberately on the other side of it: the
+            // model box is instant-apply text, so closing the window is the last chance to take
+            // what is in it. A focus change would normally have committed it already; this is
+            // for the case where the window closes while the box still has focus.
+            CommitCustomModel();
+
             base.OnFormClosing(e);
         }
 
@@ -1023,6 +1129,256 @@ namespace OutlookAI.TaskPane
                 Cursor = Cursors.Default;
             }
             RefreshFromState();
+        }
+
+        // ===== Model =====
+        //
+        // Instant-apply, like everything else on this tab: a picked list entry IS the decision,
+        // so it writes now. The exception is the custom id, which is typed - see rule 1 in the
+        // class comment. Nothing here is ever buffered into the prompt drafts, so nothing here
+        // is part of the unsaved-changes question.
+
+        private void OnModelChoiceChanged(object sender, EventArgs e)
+        {
+            if (_updating)
+                return;
+
+            var choice = cmbModel.SelectedItem as ModelChoice;
+            if (choice == null)
+                return;
+
+            if (choice.Kind == ModelChoiceKind.Custom)
+            {
+                // Picking "Custom" stores NOTHING. It opens the box; what is typed there is the
+                // decision, and it is not made yet. Whatever was stored before stays stored
+                // until it is, so the pane keeps working on the model it already had.
+                txtModel.Enabled = true;
+                RefreshModelLines();
+                RelayoutAfterTextChange();
+                try
+                {
+                    txtModel.Focus();
+                    txtModel.SelectAll();
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine("Model focus: " + ex.Message);
+                }
+                return;
+            }
+
+            txtModel.Enabled = false;
+            // Alias, or the deferring default whose Alias is null and therefore clears the value.
+            ClaudeService.SetConfiguredModel(choice.Alias);
+            RefreshModelLines();
+            RelayoutAfterTextChange();
+        }
+
+        /// <summary>
+        /// Paints one picker entry, in the closed control and in the dropped-down list alike.
+        ///
+        /// This exists because <see cref="ApplyThemeTo"/> cannot reach a ComboBox: it takes the
+        /// BackColor it is given and then lets the OS draw the entry anyway, which in dark mode
+        /// produced a white field. Themed by ROLE like everything else - the field colour for an
+        /// entry, the accent for the one the mouse or keyboard is on.
+        /// </summary>
+        private void OnDrawModelChoice(object sender, DrawItemEventArgs e)
+        {
+            try
+            {
+                bool highlighted = (e.State & DrawItemState.Selected) == DrawItemState.Selected
+                                   && (e.State & DrawItemState.ComboBoxEdit) != DrawItemState.ComboBoxEdit;
+                Color back = highlighted ? ThemeService.Accent : ThemeService.TextBoxBackground;
+                // White on both accent shades, and the only place in this window that needs a
+                // colour the theme does not carry: an accent is a background, and neither
+                // Text nor ButtonText is guaranteed to be legible on one.
+                Color fore = highlighted ? Color.White : ThemeService.Text;
+
+                using (var brush = new SolidBrush(back))
+                    e.Graphics.FillRectangle(brush, e.Bounds);
+
+                if (e.Index >= 0 && e.Index < cmbModel.Items.Count)
+                {
+                    TextRenderer.DrawText(
+                        e.Graphics,
+                        Convert.ToString(cmbModel.Items[e.Index]),
+                        e.Font ?? Font,
+                        e.Bounds,
+                        fore,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+                        | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis);
+                }
+
+                e.DrawFocusRectangle();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Model item draw: " + ex.Message);
+            }
+        }
+
+        private void OnModelIdEdited(object sender, EventArgs e)
+        {
+            if (_updating)
+                return;
+            // Typing only re-reads the advice. Nothing is written, and nothing is claimed about
+            // a half-typed id beyond whether it could be one at all.
+            RefreshModelLines();
+            RelayoutAfterTextChange();
+        }
+
+        private void OnModelIdKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode != Keys.Enter)
+                return;
+            // Enter is the other way to say "that is the id". Handled here rather than left to a
+            // default button, because this form deliberately has none, and an unhandled Enter in
+            // a single-line box makes Windows beep.
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            CommitCustomModel();
+        }
+
+        /// <summary>
+        /// Stores what the custom box holds, if it holds a usable model id. Called when the box
+        /// loses focus, on Enter, from "Apply now", and from the window closing - never per
+        /// keystroke, because "claude-op" is not a model anybody meant to choose.
+        ///
+        /// A BLANK BOX DOES NOT CLEAR THE STORED MODEL. Clearing is what the first list entry is
+        /// for, one click away and labelled; emptying a text box is at least as likely to be
+        /// somebody halfway through retyping.
+        /// </summary>
+        private void CommitCustomModel()
+        {
+            if (_updating || _disposedCustom || IsDisposed)
+                return;
+
+            var choice = cmbModel.SelectedItem as ModelChoice;
+            if (choice == null || choice.Kind != ModelChoiceKind.Custom)
+                return;
+
+            string typed = txtModel.Text == null ? "" : txtModel.Text.Trim();
+            if (typed.Length == 0 || !ModelCatalog.IsWellFormedModelId(typed))
+            {
+                // The note already says why nothing was stored.
+                RefreshModelLines();
+                RelayoutAfterTextChange();
+                return;
+            }
+
+            // Unchanged means untouched: writing it again would throw away a perfectly good
+            // pre-warmed process for nothing.
+            if (!string.Equals(typed, ClaudeService.ConfiguredModel, StringComparison.Ordinal))
+                ClaudeService.SetConfiguredModel(typed);
+
+            RefreshModelLines();
+            RelayoutAfterTextChange();
+        }
+
+        /// <summary>
+        /// Puts the stored choice on screen: the matching list entry, or Custom with the id in
+        /// the box when it is not one of the aliases. Absent means the first entry, which is the
+        /// shipped default and stores nothing.
+        /// </summary>
+        private void LoadModelFromStore()
+        {
+            string stored = ClaudeService.ConfiguredModel;
+
+            _updating = true;
+            try
+            {
+                int index = 0;
+                if (stored != null)
+                {
+                    // Custom unless an alias claims it. Ordinal-ignore-case: the aliases are
+                    // lower case and a hand-edited registry value need not be.
+                    index = cmbModel.Items.Count - 1;
+                    for (int i = 0; i < cmbModel.Items.Count; i++)
+                    {
+                        var choice = cmbModel.Items[i] as ModelChoice;
+                        if (choice == null || choice.Kind != ModelChoiceKind.Alias)
+                            continue;
+                        if (string.Equals(choice.Alias, stored, StringComparison.OrdinalIgnoreCase))
+                        {
+                            index = i;
+                            break;
+                        }
+                    }
+                }
+
+                cmbModel.SelectedIndex = index;
+                bool custom = index == cmbModel.Items.Count - 1;
+                txtModel.Enabled = custom;
+                if (custom && stored != null)
+                    txtModel.Text = stored;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Model load: " + ex.Message);
+            }
+            finally
+            {
+                _updating = false;
+            }
+
+            RefreshModelLines();
+        }
+
+        /// <summary>
+        /// The two lines under the picker: what will actually be sent, and the one honest thing
+        /// there is to say about a hand-typed id.
+        ///
+        /// The state line quotes the ARGUMENT, not a friendly paraphrase, because the whole
+        /// point of the default is that no argument is sent and a paraphrase would hide exactly
+        /// that. The note appears only for the custom box - an alias is not a model id and is
+        /// not checked against the known families, because Claude Code resolves it and the
+        /// families list has nothing to say about it.
+        /// </summary>
+        private void RefreshModelLines()
+        {
+            try
+            {
+                string stored = ClaudeService.ConfiguredModel;
+                string sending = stored == null
+                    ? "OutlookAI sends no --model argument, so Claude Code picks."
+                    : "OutlookAI sends: --model \"" + stored + "\"";
+
+                string note = null;
+                string pending = null;
+                var choice = cmbModel.SelectedItem as ModelChoice;
+                if (choice != null && choice.Kind == ModelChoiceKind.Custom)
+                {
+                    string typed = txtModel.Text == null ? "" : txtModel.Text.Trim();
+                    if (typed.Length == 0)
+                        note = null;
+                    else if (!ModelCatalog.IsWellFormedModelId(typed))
+                        note = ModelCatalog.MalformedModelNote;
+                    else if (!ModelCatalog.IsKnownFamily(typed))
+                        note = ModelCatalog.UnverifiedModelNote;
+
+                    // Says out loud that a typed id has not landed yet. Without it the box and
+                    // the line below it read as a contradiction - the box showing one model, the
+                    // line naming another - when in fact one is a decision and one is not made.
+                    if (ModelCatalog.IsWellFormedModelId(typed)
+                        && !string.Equals(typed, stored, StringComparison.Ordinal))
+                    {
+                        pending = "Press Enter, or click outside the box, to start using \""
+                                  + typed + "\" - for now, "
+                                  + (stored == null
+                                      ? "no --model argument is sent and Claude Code picks."
+                                      : "OutlookAI still sends --model \"" + stored + "\".");
+                    }
+                }
+
+                SetLabel(lblModelState, pending == null ? sending : pending);
+
+                SetLabel(lblModelNote, note == null ? "" : note);
+                lblModelNote.Visible = note != null;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Model lines: " + ex.Message);
+            }
         }
 
         // Project scope: writes/merges .mcp.json in a folder the user picks. Never throws
@@ -1285,7 +1641,7 @@ namespace OutlookAI.TaskPane
             }
         }
 
-        // "Check for updates": the ten-minute poll, on demand. async void is what an event
+        // "Check for updates": the UpdateService poll, on demand. async void is what an event
         // handler is, and it swallows everything - a failed check belongs on the error line
         // above the button, not in a crash dialog.
         private async void OnCheckForUpdates(object sender, EventArgs e)
@@ -1338,6 +1694,10 @@ namespace OutlookAI.TaskPane
             {
                 _updating = false;
             }
+
+            // Its own guarded block for the same reason: a registry read that failed must not
+            // leave the model picker showing a choice nobody made. It manages _updating itself.
+            LoadModelFromStore();
 
             RefreshMcpLine();
             // Result ignored on purpose: this method re-lays the window out at the end either way.
@@ -1506,6 +1866,17 @@ namespace OutlookAI.TaskPane
                     textBox.BorderStyle = ThemeService.IsDarkMode
                         ? BorderStyle.FixedSingle
                         : BorderStyle.Fixed3D;
+                }
+
+                // A ComboBox ignores BackColor entirely while it is painted by the visual style,
+                // so dark mode also has to take the painting off it. FlatStyle.Flat is what
+                // makes the colour it is given the colour it draws.
+                var combo = control as ComboBox;
+                if (combo != null)
+                {
+                    combo.BackColor = ThemeService.TextBoxBackground;
+                    combo.ForeColor = ThemeService.Text;
+                    combo.FlatStyle = ThemeService.IsDarkMode ? FlatStyle.Flat : FlatStyle.Standard;
                 }
 
                 var listBox = control as ListBox;

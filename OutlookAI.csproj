@@ -1,4 +1,4 @@
-﻿<Project ToolsVersion="18.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project ToolsVersion="18.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <!--
     This section defines project-level properties.
@@ -179,6 +179,8 @@
     <Compile Include="Services\McpConfigEditor.cs" />
     <Compile Include="Services\McpRegistrationDecision.cs" />
     <Compile Include="Services\McpRegistrationService.cs" />
+    <Compile Include="Services\ModelCatalog.cs" />
+    <Compile Include="Services\OfficeVersions.cs" />
     <Compile Include="Services\OutlookTuningService.cs" />
     <Compile Include="Services\PromptDefaults.cs" />
     <Compile Include="Services\PromptLint.cs" />
@@ -229,6 +231,14 @@
     <ManifestKeyFile>OutlookAI.pfx</ManifestKeyFile>
   </PropertyGroup>
   <PropertyGroup>
+    <!-- THE SAME 40 HEX CHARACTERS ARE IN Services\UpdateService.cs AS ExpectedCertThumbprint,
+         where they pin the certificate every downloaded installer must be signed by. Rotating
+         the signing certificate has to change BOTH: this one fails loudly at build time, while
+         the updater's copy fails closed and SILENTLY - every future installer is rejected and
+         auto-update stops across the whole installed base, with nothing to show for it but a
+         line in the update-error label. .github\scripts\check-pinned-constants.ps1 compares the
+         two on every build and every release, and the release workflow additionally checks both
+         against the certificate it has just imported. -->
     <ManifestCertificateThumbprint>2578F7B869383572E751DD6B61B5374C55C6E995</ManifestCertificateThumbprint>
   </PropertyGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
