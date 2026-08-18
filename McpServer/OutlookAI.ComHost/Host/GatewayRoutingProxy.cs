@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using OutlookAI.Core.Com;
 
 namespace OutlookAI.ComHost.Host
@@ -21,10 +22,10 @@ namespace OutlookAI.ComHost.Host
     /// </summary>
     public class GatewayRoutingProxy : DispatchProxy
     {
-        private ComGateway _gateway = null!;
+        private IComGateway _gateway = null!;
 
         /// <summary>Creates a proxy routing <see cref="IOutlookSession"/> calls through <paramref name="gateway"/>.</summary>
-        public static IOutlookSession Create(ComGateway gateway)
+        public static IOutlookSession Create(IComGateway gateway)
         {
             ArgumentNullException.ThrowIfNull(gateway);
 
@@ -42,7 +43,55 @@ namespace OutlookAI.ComHost.Host
                 throw new ArgumentNullException(nameof(targetMethod));
             }
 
-            return _gateway.Run<object?>(session => targetMethod.Invoke(session, args));
+            // Test-only, and a no-op unless OUTLOOKAI_COMHOST_FAULT names a session fault.
+            // It stands in for the session ITSELF rather than for Outlook, which is what
+            // makes the child-side error path reachable on a machine with no Outlook.
+            if (ComHostFaultInjection.TrySessionFault(targetMethod.Name, out IOutlookSession? faulted))
+            {
+                return InvokeSession(targetMethod, faulted!, args);
+            }
+
+            return _gateway.Run<object?>(session => InvokeSession(targetMethod, session, args));
+        }
+
+        /// <summary>
+        /// Calls one contract method on the session and rethrows what the SESSION threw,
+        /// never the reflection wrapper around it.
+        /// <para>
+        /// <see cref="MethodBase.Invoke(object, object[])"/> wraps whatever the target
+        /// throws in a <see cref="TargetInvocationException"/> whose own message is the
+        /// content-free "Exception has been thrown by the target of an invocation." Letting
+        /// that wrapper escape cost two distinct things, and both were live defects:
+        /// </para>
+        /// <para>
+        /// 1. <c>ComGateway.Run</c> keys its one-shot rebuild on the exception TYPE
+        /// (RPC_E_DISCONNECTED and friends). Every call arrived wrapped, so the filter never
+        /// matched and the disconnect recovery was dead code in this process.
+        /// </para>
+        /// <para>
+        /// 2. <c>ComHostServer</c> reflects too, so the wrapper was wrapped a second time.
+        /// It peels one layer, put the INNER wrapper on the wire, and every deliberate error
+        /// the session raises - "Folder 'X' was not found in store 'Y' ... use list_folders
+        /// for paths" among them - reached the agent as that one useless sentence. Nothing
+        /// noticed until a probe happened to hit it on 2026-08-18.
+        /// </para>
+        /// <para>
+        /// <see cref="ExceptionDispatchInfo"/> rather than <c>throw ex.InnerException</c>:
+        /// the latter resets the stack to this line and discards every frame inside the
+        /// session, which is the only record of where the failure actually happened.
+        /// </para>
+        /// </summary>
+        private static object? InvokeSession(MethodInfo targetMethod, IOutlookSession session, object?[]? args)
+        {
+            try
+            {
+                return targetMethod.Invoke(session, args);
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException != null)
+            {
+                ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+                throw; // Unreachable - Throw() does not return, but the compiler cannot know.
+            }
         }
     }
 }

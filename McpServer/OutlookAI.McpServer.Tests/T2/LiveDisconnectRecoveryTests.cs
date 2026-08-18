@@ -30,6 +30,18 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// counts (user idle >= 3 min, zero open Inspectors, every Outbox empty) - otherwise
 /// the test skips; never kill. Side benefit: a full-suite run now ENDS with Outlook
 /// headless (D33) instead of leaving the show-me Explorer open.
+///
+/// EVERY WAIT IN HERE IS BOUNDED, and that is a safety property rather than a tidiness
+/// one. On 2026-08-18 this test ran 22.5 minutes and was still going: its polls were all
+/// bounded, but the service and gateway calls BETWEEN them were not, and in the live tier
+/// they cannot be - the in-process ComGateway accepts a budget and documents that it
+/// cannot enforce one, because a blocked COM call is not cancellable and killing the
+/// caller is not an option when the caller is us. So the run was stopped by hand, which
+/// skipped the fixture teardown, which is what left 7 tagged items sitting in a real
+/// mailbox. An unbounded live test is worse than a failing one: it burns the run AND it
+/// loses the artifact sweep. Every blocking step now goes through ScenarioClock.Step and
+/// every condition through ScenarioClock.WaitUntil, so the failure names the step, its
+/// budget, and the state observed when it expired.
 /// </summary>
 [Collection("LiveLifecycle")]
 [Trait("Category", "Live")]
@@ -51,8 +63,19 @@ public sealed class LiveDisconnectRecoveryTests
 
         // Two independent ref holders, like the day-1 incident shape.
         using ComGateway independentGateway = new();
-        _ = service.ListAccounts();
-        int stores = independentGateway.Run(s => ((OutlookComSession)s).GetStores().Count);
+
+        string lastHealth = "not probed yet";
+        ScenarioClock clock = new ScenarioClock(
+            _output,
+            () => "OUTLOOK.EXE processes=" + Process.GetProcessesByName("OUTLOOK").Length
+                + ", visible Outlook windows=" + WindowProbe.VisibleOutlookWindows().Count
+                + ", independent gateway IsConnected=" + independentGateway.IsConnected
+                + ", last health reading: " + lastHealth);
+
+        _ = clock.Step("first service call (list_accounts)", service.ListAccounts);
+        int stores = clock.Step(
+            "count stores through the independent gateway",
+            () => independentGateway.Run(s => ((OutlookComSession)s).GetStores().Count));
         Assert.True(stores > 0);
 
         // Wiring pin: the Quit-sink advise must keep succeeding (defense-in-depth; the
@@ -60,7 +83,8 @@ public sealed class LiveDisconnectRecoveryTests
         Assert.True(independentGateway.QuitSinkActive == true,
             "Application Quit sink failed to advise on the pumped STA");
 
-        HealthOutcome before = service.Health();
+        HealthOutcome before = clock.Step("health with a live session", service.Health);
+        lastHealth = Describe(before);
         Assert.True(before.Outlook.Running);
         Assert.True(before.Outlook.ComConnected, "probed comConnected must be true with a live session");
 
@@ -79,14 +103,18 @@ public sealed class LiveDisconnectRecoveryTests
                 return;
             }
 
-            IReadOnlyList<ComInspectorInfo> inspectors = independentGateway.Run(s => ((OutlookComSession)s).GetOpenInspectors());
+            IReadOnlyList<ComInspectorInfo> inspectors = clock.Step(
+                "count open Inspector windows (S7 safety count)",
+                () => independentGateway.Run(s => ((OutlookComSession)s).GetOpenInspectors()));
             if (inspectors.Count > 0)
             {
                 _output.WriteLine($"SKIP: {inspectors.Count} open Inspector window(s) (possible unsent compose) - not closing anything.");
                 return;
             }
 
-            int outboxItems = independentGateway.Run(s => ((OutlookComSession)s).CountOutboxItems());
+            int outboxItems = clock.Step(
+                "count Outbox items (S7 safety count)",
+                () => independentGateway.Run(s => ((OutlookComSession)s).CountOutboxItems()));
             if (outboxItems != 0)
             {
                 _output.WriteLine($"SKIP: {outboxItems} Outbox item(s) (or count unavailable) - not closing anything.");
@@ -102,15 +130,26 @@ public sealed class LiveDisconnectRecoveryTests
             // D49: the parked windows are no longer the only thing holding Outlook up -
             // a live session pins it with an invisible Explorer. Wait for the windows to
             // go, then relinquish the pin, or Outlook will (correctly) refuse to exit.
-            _ = PollUntil(() => WindowProbe.VisibleOutlookWindows().Count == 0, TimeSpan.FromSeconds(60));
-            _ = independentGateway.Run(s => ((OutlookComSession)s).TryCloseInvisibleExplorers());
+            // Advisory: proceed either way, the pin release below is what matters.
+            _ = clock.TryWaitUntil(
+                "the pre-existing Outlook windows have closed",
+                () => WindowProbe.VisibleOutlookWindows().Count == 0,
+                TimeSpan.FromSeconds(60));
+            _ = clock.Step(
+                "release the lifetime pin on the pre-existing instance",
+                () => independentGateway.Run(s => ((OutlookComSession)s).TryCloseInvisibleExplorers()));
 
-            bool preExited = PollUntil(() => Process.GetProcessesByName("OUTLOOK").Length == 0, TimeSpan.FromSeconds(120));
-            Assert.True(preExited, "Outlook did not exit within 120 s of closing its parked windows (safety counts were clean)");
+            clock.WaitUntil(
+                "the pre-existing Outlook has exited after its parked windows were closed gracefully "
+                + "(the S7 safety counts were clean)",
+                () => Process.GetProcessesByName("OUTLOOK").Length == 0,
+                TimeSpan.FromSeconds(120));
             _output.WriteLine("windowed Outlook exited after graceful close; re-autostarting headless for the scenario");
 
             // Fresh headless Outlook for the actual scenario (D17 autostart).
-            _ = independentGateway.Run(s => ((OutlookComSession)s).GetStores().Count);
+            _ = clock.Step(
+                "re-autostart Outlook headless for the scenario",
+                () => independentGateway.Run(s => ((OutlookComSession)s).GetStores().Count));
             baselineWindows = WindowProbe.VisibleOutlookWindows();
             if (baselineWindows.Count != 0)
             {
@@ -120,30 +159,26 @@ public sealed class LiveDisconnectRecoveryTests
         }
 
         // Promote with ONE window of our own via the sanctioned goto surface (hub store).
-        ComExplorerState? explorerState = independentGateway.Run(s =>
-        {
-            ComExplorerState? state = s.TryGotoFolder(_fixture.Hub, null, out string? error);
-            Assert.True(state != null, "TryGotoFolder failed: " + (error ?? "unknown"));
-            return state;
-        });
+        ComExplorerState? explorerState = clock.Step(
+            "promote Outlook with one Explorer window (goto hub)",
+            () => independentGateway.Run(s =>
+            {
+                ComExplorerState? state = s.TryGotoFolder(_fixture.Hub, null, out string? error);
+                Assert.True(state != null, "TryGotoFolder failed: " + (error ?? "unknown"));
+                return state;
+            }));
         _output.WriteLine($"promoted: explorer on '{explorerState!.CurrentFolderPath}'");
 
         IntPtr ourWindow = IntPtr.Zero;
-        DateTime windowDeadline = DateTime.UtcNow.AddSeconds(15);
-        while (DateTime.UtcNow < windowDeadline && ourWindow == IntPtr.Zero)
-        {
-            IReadOnlyList<IntPtr> now = WindowProbe.VisibleOutlookWindows();
-            IntPtr fresh = now.FirstOrDefault(h => !baselineWindows.Contains(h));
-            if (fresh != IntPtr.Zero)
+        IReadOnlyList<IntPtr> baseline = baselineWindows;
+        clock.WaitUntil(
+            "the Explorer window we just promoted to become visible",
+            () =>
             {
-                ourWindow = fresh;
-                break;
-            }
-
-            Thread.Sleep(250);
-        }
-
-        Assert.True(ourWindow != IntPtr.Zero, "the promoted Explorer window never became visible");
+                ourWindow = WindowProbe.VisibleOutlookWindows().FirstOrDefault(h => !baseline.Contains(h));
+                return ourWindow != IntPtr.Zero;
+            },
+            TimeSpan.FromSeconds(15));
 
         IReadOnlyList<IntPtr> beforeClose = WindowProbe.VisibleOutlookWindows();
         if (beforeClose.Count != 1)
@@ -164,8 +199,10 @@ public sealed class LiveDisconnectRecoveryTests
         // where update_draft's com_failure and the three RPC_S_SERVER_UNAVAILABLE suite
         // failures came from. A live session now holds an invisible Explorer, so Outlook
         // returns to the window-less state the product prefers (D33) instead of dying.
-        bool windowGone = PollUntil(() => WindowProbe.VisibleOutlookWindows().Count == 0, TimeSpan.FromSeconds(30));
-        Assert.True(windowGone, "our window did not close");
+        clock.WaitUntil(
+            "the Explorer window we posted WM_CLOSE to has gone",
+            () => WindowProbe.VisibleOutlookWindows().Count == 0,
+            TimeSpan.FromSeconds(30));
         Thread.Sleep(3000); // well past the measured ~1-2 s forced-shutdown window
         Assert.True(
             Process.GetProcessesByName("OUTLOOK").Length > 0,
@@ -176,23 +213,30 @@ public sealed class LiveDisconnectRecoveryTests
 
         // Now relinquish the pin, which is the ONLY thing still keeping Outlook alive -
         // otherwise the disconnect scenario below cannot be staged at all any more.
-        int closedExplorers = independentGateway.Run(s => ((OutlookComSession)s).TryCloseInvisibleExplorers());
+        int closedExplorers = clock.Step(
+            "release the lifetime pin so Outlook can exit",
+            () => independentGateway.Run(s => ((OutlookComSession)s).TryCloseInvisibleExplorers()));
         _output.WriteLine($"released the lifetime pin ({closedExplorers} invisible Explorer(s) closed)");
 
         // (1) Background release: the independent gateway receives NO calls - only the
         // process-exit watcher can flip IsConnected (the sharp SF-2 assert).
-        bool refsReleased = PollUntil(() => !independentGateway.IsConnected, TimeSpan.FromSeconds(45));
-        Assert.True(refsReleased, "held COM refs were not released within 45 s of the Outlook exit (SF-2 watcher regression)");
+        clock.WaitUntil(
+            "the independent gateway released its held COM refs by itself (SF-2 process-exit watcher)",
+            () => !independentGateway.IsConnected,
+            TimeSpan.FromSeconds(45));
         _output.WriteLine("independent gateway released its session (background watcher)");
 
         // (2) Full exit, no zombie (measured ~1-2 s on this machine; generous cap).
-        bool exited = PollUntil(() => Process.GetProcessesByName("OUTLOOK").Length == 0, TimeSpan.FromSeconds(120));
-        Assert.True(exited, "OUTLOOK.EXE did not exit within 120 s of its last window closing");
+        clock.WaitUntil(
+            "OUTLOOK.EXE has exited after losing its last window and its pin",
+            () => Process.GetProcessesByName("OUTLOOK").Length == 0,
+            TimeSpan.FromSeconds(120));
         _output.WriteLine("OUTLOOK.EXE exited cleanly");
 
         // (3) SF-1 shape on the service surface: probed comConnected never reports a
         // dead held session; headless is omitted when not running.
-        HealthOutcome after = service.Health();
+        HealthOutcome after = clock.Step("health with Outlook stopped", service.Health);
+        lastHealth = Describe(after);
         Assert.False(after.Outlook.Running);
         Assert.False(after.Outlook.ComConnected, "comConnected reported a dead session as connected (SF-1 regression)");
         Assert.Null(after.Outlook.Headless);
@@ -214,13 +258,15 @@ public sealed class LiveDisconnectRecoveryTests
                 else
                 {
                     service.ClearSweepCache(); // A <10 s-old cached sweep would mask the degradation path.
-                    SearchOutcome degraded = service.Search(new SearchRequest
-                    {
-                        Query = "oaimcpDegradationProbe" + _fixture.RunMarker,
-                        Store = _fixture.Hub,
-                        Top = 5,
-                        SnippetChars = 0,
-                    });
+                    SearchOutcome degraded = clock.Step(
+                        "degraded search while the installer mutex is held (D34)",
+                        () => service.Search(new SearchRequest
+                        {
+                            Query = "oaimcpDegradationProbe" + _fixture.RunMarker,
+                            Store = _fixture.Hub,
+                            Top = 5,
+                            SnippetChars = 0,
+                        }));
 
                     Assert.NotNull(degraded.Sweep);
                     Assert.False(degraded.Sweep!.Performed, "the sweep must degrade while the installer mutex is held");
@@ -250,29 +296,185 @@ public sealed class LiveDisconnectRecoveryTests
         }
 
         // (4) Recovery: the next COM-needing call reattaches via D17 autostart - headless (D33).
-        AccountsOutcome reattached = service.ListAccounts();
+        // This is the step the 2026-08-18 run was inside when it was stopped, and the one
+        // most likely to block without ever returning: it cold-starts OUTLOOK.EXE through
+        // Activator.CreateInstance on the Outlook.Application ProgID, which has no timeout
+        // of its own and cannot be given one from this side.
+        AccountsOutcome reattached = clock.Step("reattach: list_accounts must re-autostart Outlook", service.ListAccounts);
         Assert.True(reattached.Accounts.Count > 0);
-        HealthOutcome healed = service.Health();
+        HealthOutcome healed = clock.Step("health after the reattach", service.Health);
+        lastHealth = Describe(healed);
         Assert.True(healed.Outlook.Running);
         Assert.True(healed.Outlook.ComConnected);
         Assert.True(healed.Outlook.Headless == true, "D17 re-autostart must come up headless (D33)");
-        _output.WriteLine("gateway reattached: Outlook re-autostarted headless");
+        _output.WriteLine($"gateway reattached: Outlook re-autostarted headless ({clock.Spent})");
     }
 
-    private static bool PollUntil(Func<bool> condition, TimeSpan timeout)
+    /// <summary>One health reading, short enough to sit inside a failure message.</summary>
+    private static string Describe(HealthOutcome health)
     {
-        DateTime deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (condition())
-            {
-                return true;
-            }
+        return $"running={health.Outlook.Running} comConnected={health.Outlook.ComConnected} "
+            + $"headless={health.Outlook.Headless?.ToString() ?? "null"}";
+    }
 
-            Thread.Sleep(500);
+    /// <summary>
+    /// The scenario's clock, its budget, and the diagnosis it produces when either runs out.
+    /// <para>
+    /// Two numbers, both derived from figures the project already committed to rather than
+    /// invented here.
+    /// </para>
+    /// <para>
+    /// <b>Per step: 180 s</b> - one <see cref="LiveInboxArrival.DeadlineSeconds"/>, which is
+    /// the live tier's own allowance for the slowest real thing it waits on (a mail crossing
+    /// a real mail server). It is also 1.5x <c>ComOperationBudgets.OperationDeadlineMs</c>
+    /// (120 s), the point at which the product itself declares a single Outlook operation
+    /// wedged and reclaims the COM host. So no step here is bounded more tightly than either
+    /// rule the codebase already lives by, and a slow-but-working machine cannot trip it:
+    /// nothing this test asks for is a mail round trip, and everything it asks for is one
+    /// operation the shipped product would have abandoned an entire minute earlier.
+    /// </para>
+    /// <para>
+    /// <b>Whole scenario: 900 s</b> - five of those. The test's own condition waits already
+    /// account for 393 s in the worst case (60 + 120 + 15 + 30 + 3 + 45 + 120), and on top of
+    /// that it drives two full Outlook exits, two cold starts, a degraded search and three
+    /// health reports. 900 s leaves well over 250 s of headroom above a plausible slow-machine
+    /// run, and still fails in two thirds of the time the 2026-08-18 run had already burned
+    /// when it was stopped by hand.
+    /// </para>
+    /// <para>
+    /// A step that expires ABANDONS its worker thread, deliberately. The thread is inside a
+    /// COM call that nothing in this process can cancel - that is precisely why the product
+    /// moved COM into a killable child, and precisely what the in-process gateway used here
+    /// documents that it cannot do. Abandoning one pool thread is the cheaper of the two
+    /// available outcomes; the other one is the whole run hanging and the artifact sweep
+    /// never running.
+    /// </para>
+    /// </summary>
+    private sealed class ScenarioClock
+    {
+        private static readonly TimeSpan StepBudget = TimeSpan.FromSeconds(LiveInboxArrival.DeadlineSeconds);
+        private static readonly TimeSpan ScenarioBudget = TimeSpan.FromSeconds(5 * LiveInboxArrival.DeadlineSeconds);
+
+        private readonly Stopwatch _clock = Stopwatch.StartNew();
+        private readonly ITestOutputHelper _output;
+        private readonly Func<string> _observe;
+
+        internal ScenarioClock(ITestOutputHelper output, Func<string> observe)
+        {
+            _output = output;
+            _observe = observe;
         }
 
-        return condition();
+        /// <summary>Elapsed scenario time, for the success log.</summary>
+        internal string Spent => $"{_clock.Elapsed.TotalSeconds:F0} s of the {ScenarioBudget.TotalSeconds:F0} s budget";
+
+        private TimeSpan Remaining
+        {
+            get
+            {
+                TimeSpan left = ScenarioBudget - _clock.Elapsed;
+                return left > TimeSpan.Zero ? left : TimeSpan.Zero;
+            }
+        }
+
+        /// <summary>
+        /// Runs one blocking COM or service call under a bound, and fails naming it when it
+        /// does not come back.
+        /// <para>
+        /// The body runs on a pool thread, which is where the shipped server runs these calls
+        /// too (<c>OutlookTools.GuardAsync</c> wraps every tool in <c>Task.Run</c>), so this
+        /// changes no apartment behaviour: the COM work funnels onto the session's own pumped
+        /// STA thread either way.
+        /// </para>
+        /// </summary>
+        internal T Step<T>(string what, Func<T> body)
+        {
+            TimeSpan budget = StepBudget < Remaining ? StepBudget : Remaining;
+            _output.WriteLine($"[{_clock.Elapsed.TotalSeconds,5:F0}s] {what} (up to {budget.TotalSeconds:F0} s)");
+            if (budget <= TimeSpan.Zero)
+            {
+                throw new TimeoutException(Expired(what, TimeSpan.Zero, "could not even be started - the scenario budget was already spent"));
+            }
+
+            Stopwatch step = Stopwatch.StartNew();
+            Task<T> work = Task.Run(body);
+            Task finished = Task.WhenAny(work, Task.Delay(budget)).GetAwaiter().GetResult();
+            if (!ReferenceEquals(finished, work))
+            {
+                throw new TimeoutException(Expired(what, step.Elapsed, $"never returned (bound {budget.TotalSeconds:F0} s)"));
+            }
+
+            // Not Task.Wait: that would re-wrap a genuine assertion failure inside an
+            // AggregateException and bury the message the test meant to report.
+            return work.GetAwaiter().GetResult();
+        }
+
+        /// <summary>Polls until <paramref name="probe"/> is true, or fails naming the condition.</summary>
+        internal void WaitUntil(string condition, Func<bool> probe, TimeSpan timeout)
+        {
+            if (!Poll(condition, probe, timeout, out TimeSpan budget, out TimeSpan waited))
+            {
+                throw new TimeoutException(
+                    Expired(condition, waited, $"was still not true after {budget.TotalSeconds:F0} s"));
+            }
+        }
+
+        /// <summary>
+        /// The same wait, reported rather than asserted, for the one condition this test
+        /// proceeds past either way.
+        /// </summary>
+        internal bool TryWaitUntil(string condition, Func<bool> probe, TimeSpan timeout)
+        {
+            return Poll(condition, probe, timeout, out _, out _);
+        }
+
+        /// <summary>
+        /// The poll itself. It reports the budget it actually used rather than letting the
+        /// caller recompute one - by the time a wait has failed, Remaining has shrunk by
+        /// exactly the amount that wait took, so a recomputed number would understate the
+        /// bound in the very message written to explain it.
+        /// <para>
+        /// Every probe passed in here reads Windows or a local flag, never COM, so the poll
+        /// cannot itself become the thing that hangs.
+        /// </para>
+        /// </summary>
+        private bool Poll(string condition, Func<bool> probe, TimeSpan timeout, out TimeSpan budget, out TimeSpan waited)
+        {
+            budget = timeout < Remaining ? timeout : Remaining;
+            _output.WriteLine($"[{_clock.Elapsed.TotalSeconds,5:F0}s] waiting until {condition} (up to {budget.TotalSeconds:F0} s)");
+
+            Stopwatch poll = Stopwatch.StartNew();
+            while (poll.Elapsed < budget)
+            {
+                if (probe())
+                {
+                    waited = poll.Elapsed;
+                    return true;
+                }
+
+                Thread.Sleep(500);
+            }
+
+            bool last = probe();
+            waited = poll.Elapsed;
+            return last;
+        }
+
+        /// <summary>
+        /// The failure text. It names the condition that was still unmet, what was spent
+        /// reaching it, and the state observed at that moment - because a bound whose message
+        /// is "timed out" has not removed the debugging cost, only moved it to whoever reads
+        /// the next run.
+        /// </summary>
+        private string Expired(string what, TimeSpan spent, string why)
+        {
+            string message =
+                $"live disconnect scenario stalled waiting for: {what}. It {why}; "
+                + $"{spent.TotalSeconds:F0} s spent here, {_clock.Elapsed.TotalSeconds:F0} s of the "
+                + $"{ScenarioBudget.TotalSeconds:F0} s scenario budget. Observed: {_observe()}.";
+            _output.WriteLine(message);
+            return message;
+        }
     }
 
     /// <summary>Visible top-level Outlook windows (class rctrl_renwnd32) + WM_CLOSE poster.</summary>

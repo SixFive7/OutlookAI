@@ -1,5 +1,7 @@
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using OutlookAI.ComHost.Host;
 using OutlookAI.ComHost.Protocol;
 using OutlookAI.Core.Com;
 using Xunit;
@@ -273,5 +275,124 @@ public sealed class ComHostProtocolTests
         Assert.Equal("COMException", read.Error!.Type);
         Assert.Equal(unchecked((int)0x80010108), read.Error.HResult);
         Assert.Equal("not_created_by_this_server", read.Error.Reason);
+    }
+
+    // ------------------------------------------------- what the CHILD puts on the wire
+    //
+    // The three tests above pin that a faithful error survives the wire. They cannot see
+    // the defect found on 2026-08-18, which was one step earlier: the child was FILLING IN
+    // that error from a reflection wrapper, so a perfectly transmitted frame carried
+    // "TargetInvocationException" / "Exception has been thrown by the target of an
+    // invocation." / no HRESULT / no reason. Every deliberate error the session raises read
+    // the same, and the parent's exception-type mapping was unreachable in production.
+
+    [Fact]
+    public void AFailureFromTheSession_CrossesTheRoutingProxyAsItself()
+    {
+        // The routing proxy calls the session by reflection. Reflection wraps; the wrapper
+        // must not escape, or the type and HRESULT the wire cares about are gone before the
+        // wire is ever reached.
+        IOutlookSession failing = ComHostFaultInjection.FaultingSession.Create("com");
+        RecordingGateway gateway = new RecordingGateway(failing);
+        IOutlookSession proxy = GatewayRoutingProxy.Create(gateway);
+
+        COMException thrown = Assert.Throws<COMException>(() => proxy.GetProfileName());
+
+        Assert.Equal(ComHostFaultInjection.SessionComMessage, thrown.Message);
+        Assert.Equal(ComHostFaultInjection.SessionComHResult, thrown.HResult);
+    }
+
+    [Fact]
+    public void TheGatewaySeesTheRealFailure_SoItsDisconnectRebuildStillFires()
+    {
+        // ComGateway.Run rebuilds a dead session exactly once, and decides whether to by
+        // testing the exception it catches around the SAME call this records. Wrapped, that
+        // test could never match: a TargetInvocationException is neither a COMException nor
+        // an InvalidComObjectException, and carries no HRESULT to compare. So the one-shot
+        // disconnect recovery was dead code inside the COM host, silently, for as long as
+        // the wrapper escaped. Asserting the observed type and HRESULT rather than calling
+        // the predicate keeps this a test of what happens, not a copy of the rule.
+        IOutlookSession failing = ComHostFaultInjection.FaultingSession.Create("com");
+        RecordingGateway gateway = new RecordingGateway(failing);
+        IOutlookSession proxy = GatewayRoutingProxy.Create(gateway);
+
+        _ = Assert.Throws<COMException>(() => proxy.GetProfileName());
+
+        Assert.NotNull(gateway.Observed);
+        COMException observed = Assert.IsType<COMException>(gateway.Observed);
+        Assert.Equal(ComHostFaultInjection.SessionComHResult, observed.HResult);
+    }
+
+    [Fact]
+    public void UnwrappingAFailure_KeepsTheStackItWasThrownWith()
+    {
+        // The unwrap is done with ExceptionDispatchInfo rather than `throw ex.InnerException`
+        // precisely so this stays true. The stack inside the session is the only record of
+        // WHERE a failure happened; a rethrow that resets it trades one kind of blindness
+        // for another, and the COM host writes uncaught failures to stderr with their full
+        // stack for exactly this reason.
+        IOutlookSession failing = ComHostFaultInjection.FaultingSession.Create("folder");
+        IOutlookSession proxy = GatewayRoutingProxy.Create(new RecordingGateway(failing));
+
+        InvalidOperationException thrown = Assert.Throws<InvalidOperationException>(() => proxy.GetProfileName());
+
+        Assert.Equal(ComHostFaultInjection.SessionFolderMessage, thrown.Message);
+        Assert.Contains(
+            nameof(ComHostFaultInjection.FaultingSession),
+            thrown.StackTrace ?? string.Empty,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A gateway that runs the operation and remembers what came back out of it - standing
+    /// in for the position <c>ComGateway.Run</c>'s exception filter occupies, without
+    /// needing an Outlook to connect to.
+    /// </summary>
+    private sealed class RecordingGateway : IComGateway
+    {
+        private readonly IOutlookSession _session;
+
+        internal RecordingGateway(IOutlookSession session)
+        {
+            _session = session;
+        }
+
+        public event Action? OutlookGone
+        {
+            add { }
+            remove { }
+        }
+
+        internal Exception? Observed { get; private set; }
+
+        public bool IsConnected => true;
+
+        public bool? QuitSinkActive => null;
+
+        public bool ProbeConnected() => true;
+
+        public T Run<T>(Func<IOutlookSession, T> operation)
+        {
+            try
+            {
+                return operation(_session);
+            }
+            catch (Exception ex)
+            {
+                Observed = ex;
+                throw;
+            }
+        }
+
+        public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
+        {
+            return Run(operation);
+        }
+
+        public ComHostDiagnostics GetDiagnostics() => new ComHostDiagnostics("in-process", "ready");
+
+        public void Dispose()
+        {
+        }
     }
 }

@@ -158,12 +158,11 @@ namespace OutlookAI.ComHost.Host
                     Outputs = CollectOutputs(method, arguments),
                 };
             }
-            catch (TargetInvocationException ex) when (ex.InnerException != null)
-            {
-                return FromException(request.Id, ex.InnerException);
-            }
             catch (Exception ex)
             {
+                // No TargetInvocationException case of its own: FromException peels the
+                // whole chain. One unwrap rule, in one place - two of them is how the
+                // second stops matching the first.
                 return FromException(request.Id, ex);
             }
         }
@@ -236,19 +235,52 @@ namespace OutlookAI.ComHost.Host
 
         private static ComHostResponse FromException(long id, Exception ex)
         {
-            string? reason = TryReadReason(ex);
+            Exception actual = Unwrap(ex);
+            string? reason = TryReadReason(actual);
             return new ComHostResponse
             {
                 Id = id,
                 Ok = false,
                 Error = new ComHostError
                 {
-                    Type = ex.GetType().Name,
-                    Message = ex.Message,
-                    HResult = ex is COMException com ? com.HResult : null,
+                    Type = actual.GetType().Name,
+                    Message = actual.Message,
+                    HResult = actual is COMException com ? com.HResult : null,
                     Reason = reason,
                 },
             };
+        }
+
+        /// <summary>
+        /// Peels reflection wrappers off a failure before it becomes the wire error.
+        /// <para>
+        /// This is the LAST point at which a wrapper can be caught: past here, Type,
+        /// Message, HResult and Reason are all that survive, and every one of them is read
+        /// off the exception handed in. A <see cref="TargetInvocationException"/> answers
+        /// them with "TargetInvocationException", "Exception has been thrown by the target
+        /// of an invocation.", null and null - which is precisely the four-way loss that
+        /// hid a good, specific, actionable message from every caller until 2026-08-18.
+        /// </para>
+        /// <para>
+        /// The routing proxy now unwraps its own hop, so in a correct build this loop runs
+        /// once (for this method's own reflective dispatch) and no further. It is written as
+        /// a loop anyway because the failure it guards against is silent: a reflective layer
+        /// added anywhere below would re-flatten everything and break no test that does not
+        /// specifically look for it. The depth cap only stops a self-referential chain from
+        /// spinning; nothing legitimate approaches it.
+        /// </para>
+        /// </summary>
+        private static Exception Unwrap(Exception ex)
+        {
+            const int MaxDepth = 8;
+            Exception current = ex;
+            int depth = 0;
+            while (depth++ < MaxDepth && current is TargetInvocationException { InnerException: { } inner })
+            {
+                current = inner;
+            }
+
+            return current;
         }
 
         /// <summary>

@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
+using OutlookAI.ComHost.Host;
 using OutlookAI.ComHost.Supervision;
 using Xunit;
 
@@ -286,6 +288,72 @@ public sealed class ComHostSupervisionCiTests
             comHost.GetProperty("unresponsive").GetBoolean(),
             $"health must disclose that COM requests are being refused. comHost={comHost.GetRawText()}");
         Assert.True(comHost.GetProperty("consecutiveTimeouts").GetInt32() >= ComHostPolicy.UnresponsiveTimeoutThreshold);
+    }
+
+    [Fact]
+    public async Task AnErrorRaisedInsideTheHost_ReachesTheCallerWithItsOwnMessage()
+    {
+        // The 2026-08-18 defect, end to end. An exhaustive search naming a folder that does
+        // not exist came back as ComHostRemoteException: "Exception has been thrown by the
+        // target of an invocation." - the message of a reflection wrapper, not of the
+        // failure. The good message the session builds ("Folder 'X' was not found in store
+        // 'Y' ... Use list_folders for paths") was constructed, thrown, and then discarded
+        // at the process boundary, on the primary store and on a delegate store alike.
+        //
+        // The wrapper was earned twice: the routing proxy calls the session by reflection,
+        // and the host dispatches by reflection, so the host peeled one layer and shipped
+        // the other. That means it was never one message that was lost - EVERY deliberate
+        // error raised inside the session read the same, and the parent's whole
+        // exception-type mapping was unreachable.
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
+            TimeSpan.FromSeconds(120), Fault($"{ComHostFaultInjection.SessionThrowKind}:folder:GetAccounts"));
+
+        JsonElement result = await CallRawAsync(client, "list_accounts", new { });
+        Assert.True(result.GetProperty("isError").GetBoolean());
+
+        JsonElement error = PayloadOf(result).GetProperty("error");
+        string type = error.GetProperty("type").GetString()!;
+        string message = error.GetProperty("message").GetString()!;
+
+        // The message is the caller's whole diagnosis, so it is asserted first and in full.
+        Assert.Equal(ComHostFaultInjection.SessionFolderMessage, message);
+
+        // And the failure this replaces, named explicitly - a future reflective layer
+        // anywhere on this path would silently reintroduce it.
+        Assert.DoesNotContain("target of an invocation", message, StringComparison.OrdinalIgnoreCase);
+
+        // The TYPE has to cross too, not only the text: the tool layer branches on it to
+        // choose the error payload, so a flattened type downgrades every mapped failure to
+        // an anonymous one even when the message happens to survive.
+        Assert.Equal(nameof(InvalidOperationException), type);
+        Assert.NotEqual("ComHostRemoteException", type);
+        Assert.NotEqual("TargetInvocationException", type);
+    }
+
+    [Fact]
+    public async Task AComFailureInsideTheHost_KeepsItsTypeAndHresult()
+    {
+        // The same crossing, for the payload the machinery reads rather than the human. A
+        // COMException's HRESULT is what ComGateway keys its disconnect rebuild on and what
+        // the tool layer reports as ComFailure; a TargetInvocationException carries neither,
+        // so a genuine RPC_E_DISCONNECTED stopped being recognisable as one.
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
+            TimeSpan.FromSeconds(120), Fault($"{ComHostFaultInjection.SessionThrowKind}:com:GetAccounts"));
+
+        JsonElement result = await CallRawAsync(client, "list_accounts", new { });
+        Assert.True(result.GetProperty("isError").GetBoolean());
+
+        JsonElement error = PayloadOf(result).GetProperty("error");
+        Assert.Equal("ComFailure", error.GetProperty("type").GetString());
+
+        // Guard renders a COM failure as "<TypeName> 0x<HRESULT>", so both halves of the
+        // reconstruction are visible in one string.
+        string message = error.GetProperty("message").GetString()!;
+        Assert.Contains(nameof(System.Runtime.InteropServices.COMException), message, StringComparison.Ordinal);
+        Assert.Contains(
+            string.Format(CultureInfo.InvariantCulture, "0x{0:X8}", ComHostFaultInjection.SessionComHResult),
+            message,
+            StringComparison.Ordinal);
     }
 
     private static async Task<int> RestartCountAsync(McpStdioClient client)

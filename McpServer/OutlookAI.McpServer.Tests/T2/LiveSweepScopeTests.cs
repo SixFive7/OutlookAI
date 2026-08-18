@@ -356,7 +356,8 @@ public sealed class LiveSweepScopeTests
     /// </summary>
     private string WaitForInboxSeed(string seedSubject)
     {
-        DateTime deadline = DateTime.UtcNow.AddSeconds(240);
+        const int DeadlineSeconds = 240;
+        DateTime deadline = DateTime.UtcNow.AddSeconds(DeadlineSeconds);
         while (DateTime.UtcNow < deadline)
         {
             ComWalkedItem? seed = _fixture.VerifySession.WalkStoreMailItems(Hub).FirstOrDefault(i =>
@@ -370,7 +371,12 @@ public sealed class LiveSweepScopeTests
             Thread.Sleep(3000);
         }
 
-        throw new TimeoutException("Seed mail did not arrive in the hub Inbox within 120 s.");
+        // The bound and the number in the message come from one constant on purpose: this
+        // said "within 120 s" while waiting 240, so anyone reading the failure was told the
+        // wrong thing about the only fact the failure carried.
+        throw new TimeoutException(
+            $"Seed mail '{seedSubject}' did not arrive in the hub Inbox within {DeadlineSeconds} s "
+            + "(index-independent COM walk of the hub store).");
     }
 
     private static string Stem(string term)
