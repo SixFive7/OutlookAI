@@ -968,7 +968,8 @@ namespace OutlookAI.Core.Com
             IReadOnlyList<string>? itemCappedFolders = null,
             bool folderCapReached = false,
             bool depthLimitReached = false,
-            bool timeBudgetExceeded = false)
+            bool timeBudgetExceeded = false,
+            int foldersAbsent = 0)
         {
             Items = items;
             FoldersSwept = foldersSwept;
@@ -979,6 +980,7 @@ namespace OutlookAI.Core.Com
             FolderCapReached = folderCapReached;
             DepthLimitReached = depthLimitReached;
             TimeBudgetExceeded = timeBudgetExceeded;
+            FoldersAbsent = foldersAbsent;
         }
 
         /// <summary>Items received/sent at or after the sweep start.</summary>
@@ -987,8 +989,23 @@ namespace OutlookAI.Core.Com
         /// <summary>Folders that were swept.</summary>
         public int FoldersSwept { get; }
 
-        /// <summary>Folders that could not be resolved or enumerated (or fell past the folder cap).</summary>
+        /// <summary>
+        /// Folders that could not be resolved or enumerated (or fell past the folder cap) -
+        /// every one of them a coverage hole. A default folder the store simply does not
+        /// HAVE is not one of these; it is counted in <see cref="FoldersAbsent"/>.
+        /// </summary>
         public int FoldersSkipped { get; }
+
+        /// <summary>
+        /// Default folders the stores in scope do not have at all (a data file with no Junk
+        /// Email, say). Reported so the arithmetic stays checkable -
+        /// <c>FoldersSwept + FoldersSkipped + FoldersAbsent</c> covers the whole folder set
+        /// the sweep set out to walk - and NOT as a coverage hole: nothing can arrive in a
+        /// folder that does not exist, so absence hides no mail. Always 0 for a
+        /// folder-scoped sweep, which is asked for a NAMED folder and reports one that does
+        /// not resolve as skipped.
+        /// </summary>
+        public int FoldersAbsent { get; }
 
         /// <summary>
         /// The swept folders as <c>store/store-relative path</c>, so a caller can report

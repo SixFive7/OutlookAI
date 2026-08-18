@@ -47,7 +47,12 @@ namespace OutlookAI.Core.Services
         /// <summary>Coverage hole: the subtree walk refused folders past its depth guard.</summary>
         public const string GapDepthLimit = "depth_limit";
 
-        /// <summary>Coverage hole: folders were skipped because they could not be resolved or enumerated.</summary>
+        /// <summary>
+        /// Coverage hole: folders were skipped because they could not be resolved or
+        /// enumerated. A default folder the store does not HAVE is not one of these - it is
+        /// counted in <see cref="SweepInfo.FoldersAbsent"/> and raises nothing, because a
+        /// folder that does not exist cannot be hiding mail.
+        /// </summary>
         public const string GapFoldersSkipped = "folders_skipped";
 
         /// <summary>
@@ -66,6 +71,13 @@ namespace OutlookAI.Core.Services
         /// the walk: the folders past a cap, a budget or the depth guard are counted as
         /// skipped too, and reporting them a second time as unreadable would misattribute
         /// them - the bound's own code already says what happened.
+        /// </para>
+        /// <para>
+        /// <see cref="SweepInfo.FoldersAbsent"/> is read by NO branch here, on purpose. A
+        /// default folder the store does not have is not a hole in the coverage: there is
+        /// nothing behind it to cover. Counting absence as a skip made every non-folder-
+        /// scoped search on a profile with such a store report <c>degraded: true</c> and
+        /// <c>freshness: "partial"</c> - a flag that cries wolf is worse than no flag.
         /// </para>
         /// </summary>
         public static IReadOnlyList<string>? DescribeCoverageGaps(SweepInfo sweep)

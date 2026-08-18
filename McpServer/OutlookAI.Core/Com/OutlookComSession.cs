@@ -1363,6 +1363,99 @@ namespace OutlookAI.Core.Com
             (6, "inbox"), (5, "sent"), (3, "deleted"), (23, "junk"),
         };
 
+        /// <summary>How a store answered when asked for one of its default folders.</summary>
+        public enum DefaultFolderResolution
+        {
+            /// <summary>The folder came back and can be swept.</summary>
+            Resolved = 0,
+
+            /// <summary>
+            /// The store genuinely HAS no default folder of that type (a data file with no
+            /// Junk Email, for instance). NOT a coverage gap: there is nothing there to
+            /// cover, nothing can arrive there, and nothing is missing from the answer.
+            /// </summary>
+            Absent = 1,
+
+            /// <summary>
+            /// The store has such a folder but would not hand it over. A real coverage gap:
+            /// mail may be sitting in it unseen, so it stays a skipped folder.
+            /// </summary>
+            Unreadable = 2,
+        }
+
+        /// <summary>
+        /// Classifies ONE <c>Store.GetDefaultFolder</c> answer, as a PURE function so all
+        /// three outcomes can be pinned in T1 - making the call needs a real mailbox, the
+        /// same split as <see cref="DecideSweepWalk"/>.
+        /// <para>
+        /// The signal is the documented RETURN VALUE, not the error. Store.GetDefaultFolder
+        /// (Office VBA reference, "Return value"): "If the default folder of the requested
+        /// type does not exist, GetDefaultFolder returns Null (Nothing in Visual Basic)" -
+        /// so a store that simply has no Junk Email folder answers null and raises nothing,
+        /// while a folder that exists but cannot be opened fails the call. Hence null =
+        /// <see cref="DefaultFolderResolution.Absent"/>, a COM-call failure =
+        /// <see cref="DefaultFolderResolution.Unreadable"/>.
+        /// </para>
+        /// <para>
+        /// A thrown error is deliberately NEVER read as absence, however much its HRESULT
+        /// looks like "not found": that is the fail-safe direction, because misreading a
+        /// failure as absence would silently drop a folder whose mail really is missing
+        /// from the answer, while misreading absence as a failure only over-reports - which
+        /// is the defect this classification exists to remove.
+        /// </para>
+        /// <para>
+        /// <paramref name="failure"/> is the COM-call failure the caller caught (see
+        /// <see cref="IsComCallFailure"/>), or null when the call returned. Anything that is
+        /// not a COM-call failure is not passed here at all - it propagates and degrades the
+        /// whole sweep, exactly as before.
+        /// </para>
+        /// </summary>
+        public static DefaultFolderResolution ClassifyDefaultFolder(object? folder, Exception? failure)
+        {
+            if (failure != null)
+            {
+                return DefaultFolderResolution.Unreadable;
+            }
+
+            return folder == null ? DefaultFolderResolution.Absent : DefaultFolderResolution.Resolved;
+        }
+
+        /// <summary>
+        /// STA-side resolution of one of a store's default folders, kept separate from the
+        /// verdict itself (<see cref="ClassifyDefaultFolder"/>) so the rule lives in one
+        /// pure, testable place. <paramref name="folder"/> is set only for
+        /// <see cref="DefaultFolderResolution.Resolved"/>, so the caller releases exactly
+        /// what it received.
+        /// <para>
+        /// <paramref name="store"/> is typed <c>object</c> rather than <c>dynamic</c> on
+        /// purpose: a dynamic argument makes the CALL itself late-bound, and this one
+        /// carries an <c>out</c> parameter. Only the COM member invoke below needs the
+        /// runtime binder.
+        /// </para>
+        /// </summary>
+        private static DefaultFolderResolution ResolveDefaultFolder(object store, int olDefaultFolderId, out object? folder)
+        {
+            folder = null;
+            object? resolved = null;
+            Exception? failure = null;
+            try
+            {
+                resolved = ((dynamic)store).GetDefaultFolder(olDefaultFolderId);
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                failure = ex;
+            }
+
+            DefaultFolderResolution resolution = ClassifyDefaultFolder(resolved, failure);
+            if (resolution == DefaultFolderResolution.Resolved)
+            {
+                folder = resolved;
+            }
+
+            return resolution;
+        }
+
         /// <summary>
         /// Fresh-mode gap sweep (v3.MD D19): enumerates the folders a search covers for
         /// items received/sent at or after <paramref name="sinceUtc"/>. Items are opened
@@ -1381,6 +1474,15 @@ namespace OutlookAI.Core.Com
         /// <para>
         /// Never throws for a missing folder/store: an unresolvable scope is reported as
         /// a skipped folder so search degrades gracefully (D34) instead of failing.
+        /// </para>
+        /// <para>
+        /// A default folder the store does NOT HAVE is counted apart from that, in
+        /// <see cref="ComSweepResult.FoldersAbsent"/>: it is not a skip and not a coverage
+        /// gap, because no mail can be sitting in a folder that does not exist. The two
+        /// were one number until the coverage codes made <c>folders_skipped</c> degrade a
+        /// search, at which point every search on a profile holding one store without a
+        /// Junk Email or Deleted Items folder reported itself degraded. See
+        /// <see cref="ClassifyDefaultFolder"/> for the signal that separates them.
         /// </para>
         /// </summary>
         public ComSweepResult SweepFoldersNewerThan(
@@ -1411,6 +1513,11 @@ namespace OutlookAI.Core.Com
                 List<ComMailBrief> items = new List<ComMailBrief>();
                 List<string> sweptFolders = new List<string>();
                 int skipped = 0;
+
+                // Default folders the stores in scope do not have. Only the default-folder
+                // path can produce these - a folder-scoped sweep was asked for a NAMED
+                // folder, and a named folder that does not resolve is a skip.
+                int absent = 0;
 
                 if (folderPath != null && folderPath.Count > 0)
                 {
@@ -1456,7 +1563,26 @@ namespace OutlookAI.Core.Com
                                 object? folder = null;
                                 try
                                 {
-                                    folder = store.GetDefaultFolder(folderId);
+                                    DefaultFolderResolution resolution =
+                                        ResolveDefaultFolder((object)store, folderId, out folder);
+                                    if (resolution == DefaultFolderResolution.Absent)
+                                    {
+                                        // This store HAS no such folder, so no mail can be
+                                        // sitting in it: not a skip, not a gap, nothing to
+                                        // report. Counted only so the arithmetic still adds
+                                        // up to the folder set this sweep set out to cover.
+                                        absent++;
+                                        continue;
+                                    }
+
+                                    if (resolution == DefaultFolderResolution.Unreadable)
+                                    {
+                                        // The folder is there and would not open - mail may
+                                        // be sitting in it unseen, which IS a coverage gap.
+                                        skipped++;
+                                        continue;
+                                    }
+
                                     string label = DescribeSweptFolder(storeName, folder!, folderKind);
                                     SweepOutcome outcome = SweepFolder(
                                         ns, folder!, storeName, storeId, folderKind, sinceUtc, perFolderCap, includeBodies, items);
@@ -1478,7 +1604,10 @@ namespace OutlookAI.Core.Com
                                 }
                                 catch (Exception ex) when (IsComCallFailure(ex))
                                 {
-                                    // Store without that default folder (some delegate caches) - skip.
+                                    // The folder RESOLVED and then failed - it could not be
+                                    // named or its table would not open. A folder that is
+                                    // there but unreadable has no freshness coverage, so it
+                                    // stays a skip (absence is handled above, at resolution).
                                     skipped++;
                                 }
                                 finally
@@ -1501,7 +1630,7 @@ namespace OutlookAI.Core.Com
                 return new ComSweepResult(
                     items, sweptFolders.Count, skipped, sweptFolders,
                     tally.Failed, tally.ItemCapped, tally.FolderCapReached,
-                    tally.DepthLimitReached, tally.TimeBudgetExceeded);
+                    tally.DepthLimitReached, tally.TimeBudgetExceeded, absent);
             });
         }
 

@@ -197,8 +197,24 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public bool? FolderListOmitted { get; set; }
 
-        /// <summary>Folders skipped (unresolvable, unenumerable, or past the folder cap of a scoped sweep).</summary>
+        /// <summary>
+        /// Folders skipped (unresolvable, unenumerable, or past the folder cap of a scoped
+        /// sweep) - each one a hole where fresh mail may be hiding. A default folder the
+        /// store does not HAVE is not counted here (see <see cref="FoldersAbsent"/>):
+        /// counting it here made every search on a profile with such a store report itself
+        /// degraded over a folder that cannot hold anything.
+        /// </summary>
         public int FoldersSkipped { get; set; }
+
+        /// <summary>
+        /// Default folders the store(s) in scope do not have (a data file with no Junk
+        /// Email, say). Present so the coverage arithmetic is checkable against the four
+        /// folders <see cref="Scope"/> names - swept plus skipped plus absent - and
+        /// deliberately NOT a coverage gap: it raises no gap code, adds no advice and never
+        /// degrades the search, because a folder that does not exist cannot be holding
+        /// mail. Null when every folder in scope exists, which is the usual case.
+        /// </summary>
+        public int? FoldersAbsent { get; set; }
 
         /// <summary>
         /// Folders whose item enumeration FAILED, so they have no freshness coverage at

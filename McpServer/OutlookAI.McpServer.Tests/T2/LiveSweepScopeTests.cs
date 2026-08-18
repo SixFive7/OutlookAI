@@ -286,10 +286,19 @@ public sealed class LiveSweepScopeTests
         ComSweepResult hubSweep = _fixture.VerifySession.SweepFoldersNewerThan(
             DateTime.UtcNow.AddMinutes(-15), perFolderCap: 50, includeBodies: false, onlyStoreDisplayName: Hub);
 
-        Assert.Equal(OutlookComSession.DefaultSweepFolderKinds.Count, hubSweep.FoldersSwept + hubSweep.FoldersSkipped);
+        // Every folder in the set is accounted for, in one of three ways: swept, skipped
+        // (there and unreadable - a coverage hole) or absent (the store has no such default
+        // folder - nothing to cover, and NOT a hole). Absence used to be counted as a skip,
+        // which made every non-folder-scoped search on such a profile report itself
+        // degraded; the sum is what proves the split loses nothing.
+        Assert.Equal(
+            OutlookComSession.DefaultSweepFolderKinds.Count,
+            hubSweep.FoldersSwept + hubSweep.FoldersSkipped + hubSweep.FoldersAbsent);
         Assert.Equal(hubSweep.FoldersSwept, hubSweep.SweptFolders.Count);
         Assert.All(hubSweep.SweptFolders, f => Assert.StartsWith(Hub + "/", f, StringComparison.OrdinalIgnoreCase));
-        _output.WriteLine($"hub default sweep folders: [{string.Join(", ", hubSweep.SweptFolders)}] skipped={hubSweep.FoldersSkipped}");
+        _output.WriteLine(
+            $"hub default sweep folders: [{string.Join(", ", hubSweep.SweptFolders)}] "
+            + $"skipped={hubSweep.FoldersSkipped} absent={hubSweep.FoldersAbsent}");
 
         // All stores, timed: this runs on EVERY unscoped search, so it has to stay cheap.
         System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
@@ -300,7 +309,7 @@ public sealed class LiveSweepScopeTests
         Assert.True(allStores.FoldersSwept >= hubSweep.FoldersSwept);
         _output.WriteLine(
             $"all-stores default sweep: {allStores.FoldersSwept} folders swept, {allStores.FoldersSkipped} skipped, "
-            + $"{clock.ElapsedMilliseconds} ms");
+            + $"{allStores.FoldersAbsent} absent (stores without that default folder), {clock.ElapsedMilliseconds} ms");
         Assert.True(clock.ElapsedMilliseconds < 5000,
             $"the always-on default sweep took {clock.ElapsedMilliseconds} ms - far outside its measured budget");
     }

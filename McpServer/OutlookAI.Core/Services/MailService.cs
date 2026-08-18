@@ -1657,12 +1657,19 @@ namespace OutlookAI.Core.Services
         /// ones added by soak fix 15 (failed folders, per-folder item truncation, folder
         /// cap, and whether the folder LIST was dropped by its own cap). Every one of
         /// these was previously either absent or indistinguishable from success.
+        /// <para>
+        /// <see cref="SweepInfo.FoldersAbsent"/> travels with them but is the one counter
+        /// that is NOT a shortfall: it explains why a store contributed three folders
+        /// instead of four without claiming anything was lost, so it is carried only when
+        /// non-zero and never reaches <see cref="FreshMerge.DescribeCoverageGaps"/>.
+        /// </para>
         /// </summary>
         private static void ApplySweepCounters(SweepInfo info, ComSweepResult result, string? store)
         {
             info.FoldersSwept = result.FoldersSwept;
             info.FoldersSkipped = result.FoldersSkipped;
             info.FoldersFailed = result.FoldersFailed;
+            info.FoldersAbsent = result.FoldersAbsent > 0 ? result.FoldersAbsent : (int?)null;
             info.Folders = DescribeSweptFolders(result, store);
             info.FolderListOmitted = info.Folders == null && result.SweptFolders.Count > SweptFolderListCap
                 ? true
