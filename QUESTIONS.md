@@ -34,23 +34,6 @@ workflow autonomously regardless - the project's own rules make that an explicit
 
 ---
 
-## Q3 - Whether `search` should stay this close to the cap
-
-`search` is at 1791 of 2048 - 87%, inside the guardrail's warn tier. It is the most-used tool and
-its description is doing real work. Two others sit in the tier as well: `update_draft` at 1593 and
-`outlook_health`, which was brought down to 1337 today.
-
-**Options.** Leave it and accept that any future addition to `search` must first remove something;
-trim it further now toward a comfortable margin; or raise the warn threshold so it stops flagging.
-
-**Recommendation.** Leave it. The remaining text is what a caller needs before the call plus the one
-instruction it must act on afterwards, and the warn tier doing its job is not a reason to silence
-it. Raising the threshold to stop a true warning would be the wrong move.
-
-**Default if unanswered.** Leave it, and let the warn tier keep flagging it on every CI run.
-
----
-
 ## Q5 - I reversed a decision that was made deliberately hours earlier
 
 `e706315` established that a default folder a store does not HAVE is not a coverage gap, and its
@@ -142,6 +125,33 @@ physically cannot reach a class, that is a coverage fact to report, not a filter
 
 Answers move here with the date and the reasoning, so a future reader sees not just what was chosen
 but why, and what the alternative was.
+
+### 2026-08-18 - Q3 ANSWERED: no warn tier at all, fail only on what actually truncates
+
+The question was whether `search` should sit at 87% of the cap. The maintainer rejected the framing,
+and rightly: **"I want to fail the build the instant a change means something becomes too big. I want
+to allow everything that fits without getting truncated. I want no warnings for something
+approaching a limit."**
+
+That kills the 75% warn tier outright. The argument for it was early notice on a silent cliff - the
+server cannot detect its own truncation, so noticing before crossing is the only defence, and
+`search` had once reached 3912 characters precisely because nothing flagged the growth. The argument
+against is stronger: a warning that fires on three strings every single run, none of which will ever
+change, is wallpaper. It trains everyone to ignore the channel, which makes it worse than nothing on
+the day it matters.
+
+Consequences, both following from "allow everything that fits":
+
+- **The 75% warn tier is removed.** No approaching-a-limit output at all.
+- **The house cap on parameter descriptions goes too.** Measurement established the client does not
+  truncate them at any length - 20,000 characters arrive intact - so they always fit, and a rule that
+  rejects text the client delivers whole is exactly what the maintainer ruled out. Sizes are still
+  REPORTED, because that is the number a future per-tool bucket would be judged against, and the
+  re-measure trigger stays documented.
+- **What still fails the build:** a tool description or the server instructions exceeding 2048 UTF-16
+  code units, which is the boundary the client was measured to cut at.
+
+`search` at 1791 is therefore simply fine, and stops being flagged forever.
 
 ### 2026-08-18 - Q4 ANSWERED and shipped: per-store sweep windows for unscoped searches
 
