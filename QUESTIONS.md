@@ -75,3 +75,27 @@ it. Raising the threshold to stop a true warning would be the wrong move.
 
 Answers move here with the date and the reasoning, so a future reader sees not just what was chosen
 but why, and what the alternative was.
+
+### 2026-08-18, autonomous - a measured defect jumped the queue
+
+The overnight sweep measurements found that DASL date literals are emitted as `MM/dd/yyyy` while
+Outlook parses them in the machine locale, which here is day-first. On any date whose day is 12 or
+lower - about 40% of days - the day and month swap silently. Measured consequences: an `exhaustive`
+search for 1-5 August returned 48 items from April and May; a sweep window starting 5 September was
+read as 9 May, blew the 30 s budget and killed the COM host; and a 7-day empty-index window opened
+today would be read as a future date, so the sweep selects nothing while reporting `foldersSwept: 4`
+and `freshness: "live"`.
+
+I moved this ahead of the four fixes you approved, without asking, because it produces silently wrong
+search results and the alternative was leaving it in place for hours. If you would have sequenced it
+differently, that is the call to correct.
+
+### 2026-08-18, autonomous - three sweep constants kept, with evidence
+
+`SweepSafetyMargin` (10 min), `EmptyIndexSweepWindow` (7 days) and `SweepPerFolderCap` (200) were all
+marked "Open - needs measurement". All three are now **Kept - defensible**, measured over 43 sweep
+samples and 177 index-frontier probes on the real profile; the numbers and their spread are in
+`Docs/magic-numbers.md`. Two honest gaps are recorded there rather than papered over: the 7-day
+window's cost is a prediction from a measured cost model rather than an observed sweep, because the
+window cannot be widened through the shipped tools; and indexing latency could only be sampled during
+one overnight hour, so its spread is a floor rather than the whole picture.
