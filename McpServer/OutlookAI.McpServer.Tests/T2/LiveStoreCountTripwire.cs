@@ -15,6 +15,12 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// constructor (a throw there fails the whole collection), and the last-ordered fixture
 /// calls <see cref="Verify"/> in Dispose.
 /// </para>
+/// <para>
+/// Being that single funnel, it is also where <see cref="LiveOutlookPreflight"/> gates the
+/// tier on Outlook actually responding - and it needs the gate for its own sake, since the
+/// <c>OutlookComSession.Connect</c> below is the call that hung for 10 and then 15 minutes
+/// on 2026-08-18.
+/// </para>
 /// </summary>
 public static class LiveStoreCountTripwire
 {
@@ -71,6 +77,14 @@ public static class LiveStoreCountTripwire
         ArgumentNullException.ThrowIfNull(settings);
         lock (Gate)
         {
+            // Health gate first, ahead of the early return and ahead of every COM call.
+            // This method is the single funnel all eight live collection fixtures pass
+            // through, and the OutlookComSession.Connect below is the exact line that sat
+            // for 10 and then 15 minutes against a wedged Outlook on 2026-08-18. Asked per
+            // collection rather than once per process because the probe costs microseconds
+            // and Outlook can wedge mid-suite as easily as before it.
+            LiveOutlookPreflight.Require();
+
             if (_baseline != null)
             {
                 return;
