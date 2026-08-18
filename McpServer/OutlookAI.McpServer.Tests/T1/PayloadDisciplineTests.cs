@@ -77,6 +77,21 @@ public sealed class PayloadDisciplineTests
         // cost change, while lowering it silently hides just-arrived mail.
         Assert.Equal(200, MailService.SweepPerFolderCap);
 
+        // The sweep's two BODY bounds, which are the only caps in this server applied on the
+        // COM side of the pipe - everything else here bounds what an agent sees, these bound
+        // what crosses. Raising either silently is a frame-size change; lowering either
+        // silently makes the freshness tier match less of a mail than it says it does.
+        Assert.Equal(500_000, OutlookComSession.SweepBodyCharsCap);
+        Assert.Equal(32L * 1024 * 1024, OutlookComSession.SweepBodyBytesBudget);
+
+        // The per-item ceiling IS read's hard body cap, and the equality is the whole
+        // justification for the number: BodyCharsCap is this product's existing answer to
+        // "the most body text of one mail we will ever move in one call", so a sweep body
+        // longer than it is longer than anything the read path will hand over either. Pinned
+        // rather than written as `= MailService.BodyCharsCap` so the reason stays visible and
+        // so the COM layer keeps no compile-time dependency on the service layer.
+        Assert.Equal(MailService.BodyCharsCap, OutlookComSession.SweepBodyCharsCap);
+
         // Longest accepted subject. Three copies of this literal in MailService plus a
         // fourth as tool prose; see BudgetCompositionTests for the prose half.
         Assert.Equal(255, MailService.SubjectCharsCap);

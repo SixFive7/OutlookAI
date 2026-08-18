@@ -380,6 +380,62 @@ public sealed class ComHostProtocolTests
     }
 
     [Fact]
+    public void ComSweepResult_CarriesTheBodyTruncationFactsAcrossTheWire()
+    {
+        // Both facts are measured in the CHILD, where the body bounds are applied, and both
+        // decide what the PARENT says. Lost on the hop, the per-item flag reads as "not cut"
+        // and the budget flag as "the per-item ceiling did it" - so a sweep that cut mail
+        // reports itself complete, which is the exact species of silence the bound was added
+        // WITH its reporting to avoid.
+        ComSweepResult original = new ComSweepResult(
+            new[] { CutBrief() },
+            foldersSwept: 4,
+            foldersSkipped: 0,
+            bodiesTruncated: 3,
+            bodyBudgetExhausted: true);
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComSweepResult? read = JsonSerializer.Deserialize<ComSweepResult>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Equal(3, read!.BodiesTruncated);
+        Assert.True(read.BodyBudgetExhausted);
+        Assert.True(Assert.Single(read.Items).BodyTruncated);
+    }
+
+    [Fact]
+    public void ComMailBrief_OmitsTheBodyTruncationFlagWhenNothingWasCut()
+    {
+        // The flag is nullable for frame size, which is the very thing the bound exists to
+        // control: an untruncated sweep of 800 items must carry this field zero times, not
+        // 800 times. Checked on the wire rather than asserted about the type.
+        string json = JsonSerializer.Serialize(CutBrief(cut: false), ComHostProtocol.Json);
+
+        Assert.DoesNotContain("bodyTruncated", json, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(JsonSerializer.Deserialize<ComMailBrief>(json, ComHostProtocol.Json)!.BodyTruncated);
+    }
+
+    private static ComMailBrief CutBrief(bool cut = true)
+    {
+        return new ComMailBrief(
+            "0000000000000000000000000000000000000000000000AB",
+            "alice@example.com",
+            "storeid",
+            "Inbox",
+            "inbox",
+            "A very long thread",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            "the first 500 000 characters of it",
+            null,
+            cut ? true : (bool?)null);
+    }
+
+    [Fact]
     public void ComMailBrief_CarriesTheMessageClassAcrossTheWire()
     {
         // The snapshot is taken in the CHILD and the class decides a payload field in the

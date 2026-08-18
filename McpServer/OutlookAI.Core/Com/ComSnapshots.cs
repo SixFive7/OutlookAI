@@ -356,8 +356,10 @@ namespace OutlookAI.Core.Com
             bool? hasAttachments,
             long? sizeBytes,
             string? body,
-            string? messageClass = null)
+            string? messageClass = null,
+            bool? bodyTruncated = null)
         {
+            BodyTruncated = bodyTruncated;
             EntryId = entryId;
             StoreDisplayName = storeDisplayName;
             StoreId = storeId;
@@ -412,6 +414,27 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Plain-text body - populated only when the sweep needs term matching.</summary>
         public string? Body { get; }
+
+        /// <summary>
+        /// True when <see cref="Body"/> is a PREFIX of the item's real body because the
+        /// sweep's body bounds cut it (<see cref="OutlookComSession.SweepBodyCharsCap"/> or
+        /// <see cref="OutlookComSession.SweepBodyBytesBudget"/>); null when the body arrived
+        /// whole, or when no body was asked for.
+        /// <para>
+        /// It rides on the ITEM rather than only on the sweep because the loss it describes
+        /// is per item and the thing that decides whether the loss cost anything - did this
+        /// item match the query terms - is decided per item too, one layer up
+        /// (<see cref="OutlookAI.Core.Services.FreshMerge.MatchesTerms"/>). A whole-sweep
+        /// counter could say "some body was cut" and could never say "and THAT is why you got
+        /// fewer hits".
+        /// </para>
+        /// <para>
+        /// Nullable rather than a plain bool for frame size, which is the very thing the cap
+        /// exists to bound: the serializer omits nulls, so an untruncated sweep of 800 items
+        /// carries this field zero times instead of 800 times.
+        /// </para>
+        /// </summary>
+        public bool? BodyTruncated { get; }
 
         /// <summary>
         /// PR_MESSAGE_CLASS as Outlook reports it (<c>IPM.Note</c>,
@@ -1166,8 +1189,12 @@ namespace OutlookAI.Core.Com
             IReadOnlyList<ComStoreSweepCounters>? perStore = null,
             int rowsUnreadable = 0,
             int storesUnnamed = 0,
-            IReadOnlyList<string>? itemCappedFoldersUnsorted = null)
+            IReadOnlyList<string>? itemCappedFoldersUnsorted = null,
+            int bodiesTruncated = 0,
+            bool bodyBudgetExhausted = false)
         {
+            BodiesTruncated = bodiesTruncated;
+            BodyBudgetExhausted = bodyBudgetExhausted;
             Items = items;
             FoldersSwept = foldersSwept;
             FoldersSkipped = foldersSkipped;
@@ -1197,6 +1224,34 @@ namespace OutlookAI.Core.Com
         /// </para>
         /// </summary>
         public int StoresUnnamed { get; }
+
+        /// <summary>
+        /// Items whose <see cref="ComMailBrief.Body"/> was cut to keep this answer inside the
+        /// frame the COM host can send. The whole-sweep total; the per-item flag is
+        /// <see cref="ComMailBrief.BodyTruncated"/> and it is the one that can be attributed.
+        /// <para>
+        /// Deliberately NOT attributed per store, unlike every counter beside it. The budget
+        /// is spent against ONE frame carrying every store the sweep visited, so an item cut
+        /// in store B was cut because store A's mail was already in the frame - the loss has
+        /// no single owner. What IS attributable is the per-item flag, and the payload's
+        /// store-scoped counters are built from that instead
+        /// (<c>MailService.RunGapSweep</c>).
+        /// </para>
+        /// </summary>
+        public int BodiesTruncated { get; }
+
+        /// <summary>
+        /// True when the whole-sweep body budget ran out, so items swept AFTER that point
+        /// carry little or none of their body. Distinct from the per-item ceiling, which cuts
+        /// one enormous mail and leaves every other item whole.
+        /// <para>
+        /// It is a separate fact because the remedies differ: a per-item cut means one mail is
+        /// bigger than the sweep will move and the remedy is to read that mail, while an
+        /// exhausted budget means the sweep as a whole carried more text than a frame holds
+        /// and the remedy is a narrower window, store or folder.
+        /// </para>
+        /// </summary>
+        public bool BodyBudgetExhausted { get; }
 
         /// <summary>Items received/sent at or after the sweep start.</summary>
         public IReadOnlyList<ComMailBrief> Items { get; }

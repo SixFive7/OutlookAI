@@ -421,12 +421,52 @@
   number that says whether 64 MB is right is now collectable from any running install - it was
   previously unmeasured, which is why the entry below argues from the caps instead.
 
-  **Still open - what to do about the size itself.** The refusal turns a dead host into a legible
-  failure; it does not stop the answer being too big. Four responses, unchanged and still
-  unanswered: **(b)** raise or lower `MaxFrameBytes`; **(c)** cap bodies at the COM layer so an
-  unsendable frame cannot be built; **(d)** chunk the sweep result across frames; or accept the
-  refusal as the whole answer and let callers narrow. The high-water mark is the evidence any of
-  those choices should rest on.
+  **Done - (c), chosen by the maintainer 2026-08-18: cap bodies at the COM layer, so a frame that
+  cannot be sent cannot be built.** (b) and (d) were the alternatives and were NOT chosen -
+  `MaxFrameBytes` is unchanged and the sweep result is still one frame. Two bounds, both in
+  `OutlookComSession`, both applied in `SnapshotBrief` where the body is read:
+  `SweepBodyCharsCap` (500 000 chars, = `MailService.BodyCharsCap`, the largest body window `read`
+  will ever return in one call) per ITEM, and `SweepBodyBytesBudget` (32 MiB, = `MaxFrameBytes / 2`)
+  across the whole sweep. The per-item cap alone provably cannot do the job: the item count is
+  4 folders x `SweepPerFolderCap` x every store, and the store count is unbounded, so 800 items at
+  500 000 chars is already ~400 MB of theoretical worst case on ONE store. What it does instead is
+  keep the budget FAIR - one enormous mail cannot spend it all and blind the sweep to everything
+  behind it. The budget is counted in encoded BYTES rather than characters because the pipe escapes
+  every non-ASCII character to six bytes: a character budget would have to be sized for that case
+  and would then bite at ~5.5 M characters, which an ordinary unindexed-PST sweep really reaches.
+
+  **The cut is never silent, and it is not a display truncation.** These bodies are matched against
+  (`FreshMerge.MatchesTerms`) and shown to nobody, so unlike `read`'s windowing - which pages and
+  loses nothing - a cut here can make a search MISS a real match. `ComMailBrief.BodyTruncated`
+  carries the fact per item; `sweep.itemsBodyCapped` and `sweep.itemsBodyCappedUnmatched` reach the
+  payload; the `body_cap` coverage code is raised on the INTERSECTION alone (cut AND unmatched),
+  since a cut body on an item that matched anyway cost nothing; `sweep.bodyBudgetExhausted` says
+  which bound cut, because the remedies differ. The two facts CAN be told apart and are; what
+  cannot be settled is whether the term really sat past the cut, since that needs the text the
+  bound refused to carry, so the sentence says "may be" and never "is". T1 `SweepBodyCapTests`
+  (18 tests) plus two wire round-trips in `ComHostProtocolTests`, mutation-checked with 13 separate
+  reverts, each disabling one decision.
+
+  **What remains reachable, stated rather than implied.** (i) The NON-body half of a frame is still
+  unbounded in the store count: per-item EntryIDs, StoreIDs, subjects and folder names are ~1-2 KB
+  each, so ~40 mounted stores each holding 200 items in all four arrival-path folders inside the
+  window would build an oversized frame carrying no body text at all. Never observed; the typed
+  refusal is the backstop. (ii) The byte budget is enforced against an OVER-estimate of the encoded
+  size (`EncodedBodyByteCeiling`), so it errs toward cutting early, never toward a frame that will
+  not send. (iii) The bound has only ever been exercised in T1 - see the live-profile item below.
+  (iv) `read` is DELIBERATELY not capped at the COM layer: `TryReadItem` still returns the whole
+  body, plus the whole `HTMLBody` when `include_html` is set, so one pathological mail could in
+  principle build an oversized `read` frame. Capping it there would break the one contract that
+  makes `read` lossless - `bodyTotalChars` is measured from the full body and `body_offset` pages
+  the whole of it, so a COM-side cut would make the total a lie and the tail unreachable. The
+  measured `read` payload is ~0.5 MB, 0.8% of the limit. The sweep was the case worth closing
+  because its size is driven by MAIL VOLUME rather than by one mail, and because its bodies are
+  never shown, so a cut there costs matching rather than reading.
+
+  **The other two frames that carry mail were checked and need nothing.** `ExhaustiveScan` and the
+  `thread` walk both snapshot briefs with `includeBody: false` - the exhaustive tier matches
+  server-side through DASL and the thread walk needs no body at all - so the sweep is the only
+  frame in this server that ever carried body text in bulk.
 
   **MEASURED 2026-08-18 on the real 5-store profile, with that high-water mark** (read-only:
   `outlook_health`, `list_accounts`, four searches; nothing created, moved or deleted). Largest
@@ -439,18 +479,21 @@
   worst case for an Exchange store. The residual risk narrows, and stays real: a fast LOCAL store
   absent from the index, where the window falls back to seven days, holding a lot of recent large
   mail - the archive/PST shape, and the one case this machine cannot produce, because the only
-  unindexed store to hand is the test VM's and it is empty. **Bearing on the options:** (b) is not
-  urgent on this evidence, and (c) is the one that would close the residual case outright.
+  unindexed store to hand is the test VM's and it is empty. **Bearing on the options:** (b) was not
+  urgent on this evidence, and (c) was the one that would close the residual case outright - which
+  is why (c) is what the maintainer chose (see above). The residual PST case is still the one this
+  machine cannot produce, so the new bounds have never been exercised against real mail.
   Incidentally, the timeout path was observed working on a real profile for the first time: no
   hang, host replaced, honest degraded answer naming the reason.
 
   **The limit is reachable by ordinary use - derived from the caps 2026-08-18, not measured.** One
   `SweepFoldersNewerThan` answer is a single frame and `MailService` calls it with
   `includeBodies: true`, so a frame carries 4 arrival-path folders x `SweepPerFolderCap` (200)
-  items per store, times every store in the profile. **The bodies are not capped at the COM
-  layer** - `SnapshotBrief` takes `item.Body` whole, and `BodyCharsDefault`/`BodyCharsCap` are
+  items per store, times every store in the profile. **The bodies were not capped at the COM
+  layer** - `SnapshotBrief` took `item.Body` whole, and `BodyCharsDefault`/`BodyCharsCap` are
   applied in `MailService`, on the FAR side of the frame: they bound what the agent sees, not what
-  crosses the pipe. That puts 64 MB at ~80 KB average body on a one-store profile, ~27 KB on three
+  crosses the pipe. **(They are capped there now - `SweepBodyCharsCap` / `SweepBodyBytesBudget`,
+  2026-08-18 - so the arithmetic below is the worst case as it WAS.)** That puts 64 MB at ~80 KB average body on a one-store profile, ~27 KB on three
   stores, ~16 KB on five. An 80 KB body is an ordinary long quoted thread. **And the path there is
   the unindexed-store case**: the sweep window is normally minutes wide, so 200-per-folder never
   fills, EXCEPT when a store is missing from the index and the window falls back to seven days. So
@@ -476,6 +519,28 @@
   `ExhaustiveScan` over a large window. That "low" is still a derivation rather than an
   observation; the high-water mark now accumulating in `outlook_health` is what will replace it,
   and until an install has been read it says nothing on its own.
+
+- [ ] **Verify the sweep's new body bounds against a live profile - T1 owns every decision above the COM call and none of the COM half.**
+  `SweepBodyCharsCap` / `SweepBodyBytesBudget` landed 2026-08-18 and are pinned by T1
+  `SweepBodyCapTests` (18 tests, mutation-checked). What T1 owns is the pure cut, the byte ceiling
+  against the real serializer, the frame-half invariant, the payload fields, the coverage code, the
+  advice split and the body-cache guarantee. What it cannot produce is a real `item.Body` big enough
+  to cut, so **no swept body has ever actually been truncated on this machine.**
+
+  - **What to confirm read-only, and it needs the shape the whole frame-size item is about:** a
+    LOCAL store (PST/archive) absent from the index, so the sweep window falls back to
+    `EmptyIndexSweepWindow`, holding enough recent large mail to move real body volume. Then an
+    ordinary `search` naming that store should report `comHost.largestFrameBytes` (in
+    `outlook_health`) well under `frameLimitBytes` with `framesRefusedTooLarge: 0`, and - only if
+    something really was cut - `sweep.itemsBodyCapped` with its advice sentence.
+  - **The two numbers worth measuring while that store is mounted**, because both are predictions
+    rather than observations: the largest frame such a sweep actually produces (to see how much of
+    the 32 MiB budget real mail uses), and the per-item cost of the body pass, which is one linear
+    scan of at most `SweepBodyCharsCap` characters per item on top of the COM `.Body` read that
+    produced it. The scan is expected to be noise next to the read; nothing has timed it.
+  - **Unverifiable without a mailbox that has one:** whether any real mail body exceeds 500 000
+    characters at all. If none ever does, the per-item cap is pure insurance and only the budget
+    can ever bite - which would be the good outcome and should be recorded as such.
 
 - [ ] **Verify the three folder-walk reporting fixes against a live profile - the COM half none of them can reach from T1.**
   G2, G3 and G4 of `Docs/completeness-gaps.md` were closed on 2026-08-18 and are pinned by T1

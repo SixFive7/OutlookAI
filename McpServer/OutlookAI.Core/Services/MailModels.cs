@@ -487,6 +487,66 @@ namespace OutlookAI.Core.Services
         public int ItemsSeen { get; set; }
 
         /// <summary>
+        /// Swept items in scope whose BODY was cut before it crossed the COM-host pipe
+        /// (<c>OutlookComSession.SweepBodyCharsCap</c> per item,
+        /// <c>OutlookComSession.SweepBodyBytesBudget</c> across the whole sweep). Null when
+        /// nothing was cut, which is every ordinary search.
+        /// <para>
+        /// A FACT, not a hole, and it raises no code on its own: these bodies are matched
+        /// against and never shown, so an item that was cut and matched anyway lost nothing.
+        /// <see cref="ItemsBodyCappedUnmatched"/> is the subset that could have cost a
+        /// result, and that is what <c>FreshMerge.GapBodyCap</c> reads. Reported beside it so
+        /// the ratio is legible: 1 of 1 and 1 of 400 mean very different things about how
+        /// close this profile runs to the bound.
+        /// </para>
+        /// <para>
+        /// Counted from the per-item <c>ComMailBrief.BodyTruncated</c> flags in the same loop
+        /// that applies the store scope, NOT from the sweep's whole-sweep total, so a cached
+        /// all-stores sweep serving a store-scoped search reports this store's cuts and not
+        /// another account's.
+        /// </para>
+        /// </summary>
+        public int? ItemsBodyCapped { get; set; }
+
+        /// <summary>
+        /// The subset of <see cref="ItemsBodyCapped"/> that then failed to match the query
+        /// terms - the only items where cutting the body can have cost a hit. Raises
+        /// <c>FreshMerge.GapBodyCap</c>. Null when there are none.
+        /// <para>
+        /// The two facts it is built from ARE separable and are separated: the cut is measured
+        /// in the COM layer, per item, and the match is decided here, for the same item. What
+        /// no measurement can settle is whether the term really sat past the cut, since that
+        /// needs the part of the body the bound refused to carry - so the field counts
+        /// candidates and the advice says "may be missing".
+        /// </para>
+        /// <para>
+        /// Structurally zero for a subject-only search (the body is never consulted) and for
+        /// a term-less one (everything matches), which is why the code cannot cry wolf on the
+        /// searches where a cut body is harmless.
+        /// </para>
+        /// </summary>
+        public int? ItemsBodyCappedUnmatched { get; set; }
+
+        /// <summary>
+        /// True when the whole-sweep body budget ran out, so items swept after that point
+        /// carried little or none of their body; null when only the per-item ceiling cut, or
+        /// when nothing was cut at all.
+        /// <para>
+        /// It changes the remedy, which is the only reason it is in the payload: a per-item
+        /// cut points at ONE enormous mail, which <c>read</c> can page in full, while an
+        /// exhausted budget points at the sweep's own breadth and is answered with a narrower
+        /// store, folder or window.
+        /// </para>
+        /// <para>
+        /// Carried only when this scope actually suffered a cut. The budget belongs to the
+        /// FRAME, which spans every store the sweep visited, so reporting it in a store-scoped
+        /// answer that lost nothing would import another account's condition - the
+        /// cross-store leak the per-store counters exist to prevent.
+        /// </para>
+        /// </summary>
+        public bool? BodyBudgetExhausted { get; set; }
+
+        /// <summary>
         /// <c>false</c> when this query's terms could have matched inside an attachment and
         /// the sweep cannot look there (gap B2); null when the question does not arise - a
         /// subject-only search, or one with no terms at all.

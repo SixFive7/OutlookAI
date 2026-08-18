@@ -39,6 +39,21 @@ reach both draft payloads. Reproduced in T1 `UnresolvedRecipientReportingTests` 
 5 drive the real mapping methods; mutation-checked - dropping the payload pair fails 2, forcing the
 sentence to null fails 2, and making the cap never report a cut fails 3).
 
+**The freshness sweep's mail bodies were unbounded until 2026-08-18, and that was a cap-shaped hole with no cap in it.**
+One `SweepFoldersNewerThan` answer is ONE frame with a hard 64 MB ceiling; `MailService` asks for it with
+`includeBodies: true`; `SnapshotBrief` took `item.Body` WHOLE. The two constants that bound body size,
+`BodyCharsDefault` and `BodyCharsCap`, live in `MailService` on the FAR side of that pipe, so they bounded what an
+agent SEES and never what crosses. Nothing was silent about a truncation, because nothing truncated - the failure
+mode was the opposite one: a frame too big to send, refused as a whole (and, before `0ee0cd0`, fatal to the COM
+host), on the profile shape with nothing left to narrow. The maintainer chose to cap at the COM layer so an
+unsendable frame cannot be built, rather than move `MaxFrameBytes` or chunk the result. The cap is the interesting
+part for THIS map: these bodies are matched against and never shown, so unlike `read`'s windowing - which pages and
+therefore loses nothing - a cut here can make a search MISS a real match. It is therefore reported like every other
+cap in the server, and the reporting is gated on the intersection that can actually cost a hit (cut AND unmatched)
+rather than on the cut, because a cut body on an item that matched anyway lost nothing and a code firing there would
+blunt the ones that fire rarely. Row in section 8; T1 `SweepBodyCapTests` (18 tests) plus two wire round-trips in
+`ComHostProtocolTests`, mutation-checked with 13 separate reverts, each disabling one decision.
+
 **A2, A3 and E1 were closed by `79c1827` on 2026-08-18 and this map did not say so** for the
 rest of that day, because that commit touched no row here. They were re-verified against the
 code and against T1 before being marked, rather than taken on the commit message's word - and
@@ -162,6 +177,7 @@ All paths relative to `c:\Source\SixFive7\OutlookAI\McpServer\`.
 | Exhaustive folder walk depth | 64 (`FolderWalkDepthGuard`) | `exhaustive.depthLimitReached` + `depth_limit` in `exhaustive.coverageGaps`, `freshness:"partial"`, `degraded:true`, and an advice sentence quoting the constant (F4). Before 2026-08-18 there was no bound to report: the walk recursed until the stack ran out and ended the COM host |
 | Sweep breadth (which folders the tier looks in at all) | 4 arrival-path folders per store, shallow | `sweep.scopeShape` (`default_folders` / `folder` / `folder_only`) beside the `sweep.scope` sentence, both from one classifier (E2). Deliberately no gap code and no `degraded`: it holds for nearly every search, and `ClassifyFreshness` would turn it into a permanent `partial` - the same reasoning as `sweep.attachmentTextCovered` |
 | `UnindexedStoreListCap` on `thread` | 12 (shared constant) | `live.storesWithoutIndexTruncated` + `live.storesWithoutIndexTotal`, and the `unindexed_store` advice sentence names the cap and the remainder (C4). One `MailService.CapUnindexedStoreList` cuts both this list and the sweep's |
+| Sweep body, per item and per sweep | 500 000 chars / 32 MiB (`OutlookComSession.SweepBodyCharsCap` / `SweepBodyBytesBudget`) | `sweep.itemsBodyCapped` counts the swept items whose body was cut, `sweep.itemsBodyCappedUnmatched` the subset that then failed the term match - the only ones a cut can have cost a hit - and that subset alone raises `body_cap` in `sweep.coverageGaps`, with `freshness: "partial"`, `degraded: true` and one advice sentence built from the same two numbers. `sweep.bodyBudgetExhausted` says WHICH bound cut, because the remedies differ (read one enormous mail, versus sweep fewer of them). The counts are taken inside the store filter, so a cached all-stores sweep cannot report another account's cuts; the flag rides per item on `ComMailBrief.BodyTruncated`. A cut body never reaches the read-path body cache, which is fed only from `ComItemDetail` - pinned behaviourally, since a truncated body cached as whole would be worse than the hole being closed |
 | `snippet_chars` | clamped 0-1000 | silent clamp, cosmetic |
 | Attachment text inside the freshness window | - | `sweep.attachmentTextCovered:false`, plus one advice sentence when the window held anything (B2). Deliberately not a coverage code: it holds for nearly every search, and `ClassifyFreshness` would turn it into a permanent `partial` |
 | A folder the index cannot address | - | `index.folderNotIndexed:true` plus the unresolved-folder advice sentence (G5); no `degraded`, because a genuinely new folder is indistinguishable from a path that does not resolve |

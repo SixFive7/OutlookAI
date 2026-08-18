@@ -431,6 +431,22 @@ public sealed class FreshMergeTests
                 FiltersUnevaluated = new[] { "unread_only" },
             }));
 
+        // 11. An item whose BODY was cut at the COM layer so one answer could not outgrow
+        //     the frame carrying it, AND which then failed to match the terms. Narrower
+        //     still than 10: the item was read, was inside the window and is in the sweep's
+        //     own result set - it simply may have matched in the part that was not carried.
+        //     Only the intersection raises it; a cut body on an item that matched anyway
+        //     cost nothing (SweepBodyCapTests pins that direction).
+        data.Add((
+            FreshMerge.GapBodyCap,
+            new SweepInfo
+            {
+                Performed = true,
+                FoldersSwept = 4,
+                ItemsBodyCapped = 3,
+                ItemsBodyCappedUnmatched = 2,
+            }));
+
         return data;
     }
 
@@ -648,6 +664,8 @@ public sealed class FreshMergeTests
                 ItemsFilterUnreadable = 2,
                 FiltersUnevaluated = new[] { "unread_only" },
                 ItemCappedFolders = new[] { "alice@example.com/Inbox" },
+                ItemsBodyCapped = 3,
+                ItemsBodyCappedUnmatched = 2,
                 CoverageGaps = new[] { code },
             };
 

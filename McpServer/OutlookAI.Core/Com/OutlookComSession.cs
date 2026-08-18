@@ -1427,6 +1427,197 @@ namespace OutlookAI.Core.Com
         /// </summary>
         public const int ScopedSweepTimeBudgetMs = 2_000;
 
+        /// <summary>
+        /// Longest body a single swept item may carry across the COM-host pipe. Anything past
+        /// it is dropped and the item is marked <see cref="ComMailBrief.BodyTruncated"/>.
+        /// <para>
+        /// WHY A CAP HERE AT ALL. One <c>SweepFoldersNewerThan</c> answer is ONE frame, and
+        /// the frame has a hard ceiling (<c>ComHostProtocol.MaxFrameBytes</c>, 64 MB). The two
+        /// caps that bound body size - <c>MailService.BodyCharsDefault</c> and
+        /// <c>MailService.BodyCharsCap</c> - are applied on the FAR side of that pipe, so they
+        /// bound what an agent SEES and not what crosses; the sweep took <c>item.Body</c>
+        /// whole. A frame too big to send used to end the COM host and now returns a typed
+        /// refusal, which is legible but is still no answer, and the caller it refuses is the
+        /// one with nothing left to narrow: a store the index has never seen, whose window
+        /// falls back to <c>MailService.EmptyIndexSweepWindow</c>.
+        /// </para>
+        /// <para>
+        /// WHAT IT COSTS, stated plainly because it is a real cost. These bodies are shown to
+        /// nobody - they exist so the sweep can match query terms
+        /// (<c>FreshMerge.MatchesTerms</c>) - so this is NOT a display truncation like
+        /// <c>read</c>'s windowing, which loses nothing because it pages. A term that appears
+        /// only past this cap, in mail that arrived since the index frontier, will not be
+        /// matched. That is why the cut is reported per item and why the payload states the
+        /// one number that matters: how many CUT items failed to match.
+        /// </para>
+        /// <para>
+        /// WHY 500 000. It is <c>MailService.BodyCharsCap</c>, the largest body window
+        /// <c>read</c> will ever hand back in one call, and the two are pinned equal in T1
+        /// rather than written as one expression so the reason stays visible. That constant is
+        /// this product's existing answer to "the most body text of one mail we will ever
+        /// move at once", and the evidence around it agrees: <c>Docs/com-host.md</c> records a
+        /// <c>read</c> legitimately returning ~0.5 MB, and an ordinary long quoted thread
+        /// measures ~80 KB, so the cap sits at the top of the observed range and roughly 6x
+        /// above the ordinary worst case. A body past it is a mail nobody here has seen.
+        /// </para>
+        /// <para>
+        /// It is NOT what keeps the frame legal, and cannot be: the item count is 4 folders x
+        /// <c>MailService.SweepPerFolderCap</c> x every store in the profile, and the profile's
+        /// store count is unbounded, so no per-item ceiling bounds the total. That is
+        /// <see cref="SweepBodyBytesBudget"/>'s job. What this one does is keep the budget
+        /// FAIR: without it a single enormous mail would spend the whole budget and blind the
+        /// sweep to every item behind it.
+        /// </para>
+        /// </summary>
+        public const int SweepBodyCharsCap = 500_000;
+
+        /// <summary>
+        /// Encoded bytes of mail body one sweep answer may carry in total. Once it is spent,
+        /// further items carry only as much body as is left (possibly none) and are marked
+        /// <see cref="ComMailBrief.BodyTruncated"/>.
+        /// <para>
+        /// WHY A SECOND BOUND. The per-item ceiling above cannot bound the frame, because the
+        /// number of items is itself unbounded (4 arrival-path folders x 200 items x however
+        /// many stores the profile mounts). At the per-item ceiling alone, 800 items is
+        /// already ~400 MB of theoretical worst case on ONE store. So the accumulation bound
+        /// is the one that makes an unsendable frame unbuildable, and the per-item ceiling is
+        /// what stops one mail eating it.
+        /// </para>
+        /// <para>
+        /// WHY 32 MiB. It is exactly half of <c>ComHostProtocol.MaxFrameBytes</c>, pinned to
+        /// it in T1 because Core cannot reference the pipe's assembly. Half, rather than a
+        /// figure closer to the limit, because a sweep frame is not only bodies: every item
+        /// also carries an EntryID and a StoreID (long hex strings), a subject, a sender, a
+        /// folder and a store name, which run to roughly 1-2 KB per item - about 16 MB at the
+        /// 8 000 items a folder-scoped sweep can reach. Bodies take half, everything else has
+        /// the other half, and the remainder is margin.
+        /// </para>
+        /// <para>
+        /// COUNTED IN BYTES, not characters, and that is the whole reason it is generous
+        /// enough to be unreachable in normal use. The pipe's serializer escapes every
+        /// non-ASCII character as <c>\uXXXX</c>, so one character costs anywhere from 1 to 6
+        /// bytes depending on the language the mail is written in. A character budget would
+        /// have to be set for the 6-byte case and would then bite at ~5.5 M characters, which
+        /// an ordinary unindexed-PST sweep (800 items, ~10 KB bodies) really can reach. In
+        /// bytes it bites at ~18 M characters of ordinary Latin prose and correspondingly
+        /// earlier for CJK or Cyrillic mail - which is right, because those frames genuinely
+        /// are that much bigger.
+        /// </para>
+        /// </summary>
+        public const long SweepBodyBytesBudget = 32L * 1024 * 1024;
+
+        /// <summary>
+        /// A CEILING on the bytes <paramref name="text"/> will occupy inside a JSON frame -
+        /// never an under-estimate, which is the only property that matters here.
+        /// <para>
+        /// The pipe serializes with <c>JavaScriptEncoder.Default</c>, which emits ASCII
+        /// letters, digits and spaces verbatim and escapes everything else as <c>\uXXXX</c>.
+        /// Six bytes is the ceiling for ANY single UTF-16 code unit under that encoder,
+        /// surrogate pairs included (two escapes for two code units), and UTF-8 never exceeds
+        /// it either. So counting 1 for the plainly-safe set and 6 for the rest can only
+        /// over-state the cost - by ~70% on English prose, which is paid for in the budget's
+        /// sizing rather than by guessing more precisely.
+        /// </para>
+        /// <para>
+        /// The safe set is deliberately narrower than the encoder's real allow list. Matching
+        /// the encoder exactly would tie this bound to an implementation detail of a library
+        /// that is free to escape MORE in a future version, and an estimate that becomes an
+        /// under-estimate is the one failure mode this function may not have.
+        /// </para>
+        /// <para>Pure and public so T1 can check it against what the real serializer emits.</para>
+        /// </summary>
+        public static long EncodedBodyByteCeiling(string? text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return 0;
+            }
+
+            long bytes = 0;
+            for (int i = 0; i < text!.Length; i++)
+            {
+                bytes += EncodedCharByteCeiling(text[i]);
+            }
+
+            return bytes;
+        }
+
+        /// <summary>
+        /// Cuts one swept body down to what the sweep's two bounds still allow, and says
+        /// whether it cut anything.
+        /// <para>
+        /// The bounds are applied in one pass with an early exit, so a body is never scanned
+        /// past the point where the budget runs out - and the per-item ceiling is applied
+        /// first, so one gigantic mail cannot spend the whole budget before the pass begins.
+        /// </para>
+        /// <para>
+        /// <paramref name="truncated"/> is measured against the ORIGINAL length, so it is true
+        /// whenever the caller receives a prefix - whichever bound did it. Which bound it was
+        /// is a sweep-level fact (<see cref="ComSweepResult.BodyBudgetExhausted"/>), because
+        /// the budget is a property of the frame rather than of any one item.
+        /// </para>
+        /// <para>Pure and public so T1 pins both bounds and their interaction without a mailbox.</para>
+        /// </summary>
+        public static string? CapSweepBody(
+            string? body, long bytesRemaining, out long bytesSpent, out bool truncated)
+        {
+            bytesSpent = 0;
+            truncated = false;
+            if (string.IsNullOrEmpty(body))
+            {
+                return body;
+            }
+
+            int limit = Math.Min(body!.Length, SweepBodyCharsCap);
+            long spent = 0;
+            int kept = 0;
+            while (kept < limit)
+            {
+                long cost = EncodedCharByteCeiling(body[kept]);
+                if (spent + cost > bytesRemaining)
+                {
+                    break;
+                }
+
+                spent += cost;
+                kept++;
+            }
+
+            bytesSpent = spent;
+            truncated = kept < body.Length;
+            return kept == body.Length ? body : body.Substring(0, kept);
+        }
+
+        /// <summary>
+        /// Which of the two body bounds cut a body, from the prefix that survived it. True
+        /// means the whole-sweep budget was the binding one; false means the per-item ceiling.
+        /// <para>
+        /// A prefix that reaches <see cref="SweepBodyCharsCap"/> exactly can only have been cut
+        /// by that ceiling, because reaching it means the budget paid for every character up
+        /// to it. Any shorter prefix means the budget ran out first. Only meaningful for a
+        /// body that <see cref="CapSweepBody"/> actually cut.
+        /// </para>
+        /// <para>
+        /// A named rule rather than an inline comparison because it decides which REMEDY the
+        /// caller is given, and the two remedies point in opposite directions: read one mail,
+        /// or sweep fewer of them.
+        /// </para>
+        /// </summary>
+        public static bool BodyCutByBudget(string? keptBody)
+        {
+            return (keptBody?.Length ?? 0) < SweepBodyCharsCap;
+        }
+
+        /// <summary>Bytes one UTF-16 code unit can cost inside a JSON string (see <see cref="EncodedBodyByteCeiling"/>).</summary>
+        private static int EncodedCharByteCeiling(char c)
+        {
+            bool plainAscii = (c >= 'a' && c <= 'z')
+                || (c >= 'A' && c <= 'Z')
+                || (c >= '0' && c <= '9')
+                || c == ' ';
+            return plainAscii ? 1 : 6;
+        }
+
         /// <summary>Whether a folder-scoped sweep's subtree walk may visit a folder, and if not, why.</summary>
         public enum SweepWalkVerdict
         {
@@ -1679,7 +1870,9 @@ namespace OutlookAI.Core.Com
                                 tally.RowsUnreadable),
                         },
                         rowsUnreadable: tally.RowsUnreadable,
-                        itemCappedFoldersUnsorted: tally.ItemCappedUnsorted);
+                        itemCappedFoldersUnsorted: tally.ItemCappedUnsorted,
+                        bodiesTruncated: tally.BodiesTruncated,
+                        bodyBudgetExhausted: tally.BodyBudgetExhausted);
                 }
 
                 // The counters, attributed to the store they happened in. The scalar
@@ -1765,6 +1958,7 @@ namespace OutlookAI.Core.Com
                                     SweepOutcome outcome = SweepFolder(
                                         ns, folder!, storeName, storeId, folderKind,
                                         WindowFor(windows, storeName, sinceUtc), perFolderCap, includeBodies, items,
+                                        tally,
                                         out int rowsUnreadable,
                                         out bool sortApplied);
 
@@ -1839,7 +2033,8 @@ namespace OutlookAI.Core.Com
                     items, sweptFolders.Count, skipped, sweptFolders,
                     tally.Failed, tally.ItemCapped, tally.FolderCapReached,
                     tally.DepthLimitReached, tally.TimeBudgetExceeded, absent, perStore,
-                    tally.RowsUnreadable, storesUnnamed, tally.ItemCappedUnsorted);
+                    tally.RowsUnreadable, storesUnnamed, tally.ItemCappedUnsorted,
+                    tally.BodiesTruncated, tally.BodyBudgetExhausted);
             });
         }
 
@@ -1962,6 +2157,53 @@ namespace OutlookAI.Core.Com
 
             /// <summary>The subtree walk stopped on <see cref="ScopedSweepTimeBudgetMs"/>.</summary>
             internal bool TimeBudgetExceeded { get; set; }
+
+            /// <summary>
+            /// Encoded body bytes this sweep may still spend
+            /// (<see cref="SweepBodyBytesBudget"/>). Mutable state on the tally for the same
+            /// reason every other bound here is: the sweep reaches folders through two
+            /// different walks and a value threaded back up through their return types is how
+            /// a bound goes missing.
+            /// </summary>
+            internal long BodyBytesRemaining { get; set; } = SweepBodyBytesBudget;
+
+            /// <summary>Items whose body was cut by either body bound.</summary>
+            internal int BodiesTruncated { get; set; }
+
+            /// <summary>
+            /// True once <see cref="BodyBytesRemaining"/> was the bound that cut, rather than
+            /// the per-item ceiling. Latched, like every other bound on this tally: it changes
+            /// what the advice tells the caller to do about it.
+            /// </summary>
+            internal bool BodyBudgetExhausted { get; set; }
+
+            /// <summary>
+            /// Applies both body bounds to one snapshot's body and records what it cost.
+            /// Kept on the tally so the spend and the counters cannot be updated in one place
+            /// and forgotten in another - which is exactly how a cap becomes silent.
+            /// </summary>
+            internal string? SpendOnBody(string? body, out bool truncated)
+            {
+                long before = BodyBytesRemaining;
+                string? kept = CapSweepBody(body, before, out long spent, out truncated);
+                BodyBytesRemaining = before - spent;
+                if (!truncated)
+                {
+                    return kept;
+                }
+
+                BodiesTruncated++;
+
+                // WHICH bound cut, from the one rule that decides it. Latched, not counted:
+                // once the budget has been the binding bound it stays reported, because the
+                // remedy it points at is about the sweep and not about any single item.
+                if (BodyCutByBudget(kept))
+                {
+                    BodyBudgetExhausted = true;
+                }
+
+                return kept;
+            }
         }
 
         /// <summary>
@@ -2155,6 +2397,7 @@ namespace OutlookAI.Core.Com
                 string label = storeName + "/" + relativePath;
                 SweepOutcome outcome = SweepFolder(
                     ns, folderObject, storeName, storeId, null, sinceUtc, perFolderCap, includeBodies, items,
+                    tally,
                     out int rowsUnreadable,
                     out bool sortApplied);
                 tally.RowsUnreadable += rowsUnreadable;
@@ -7429,6 +7672,7 @@ namespace OutlookAI.Core.Com
             int cap,
             bool includeBodies,
             List<ComMailBrief> results,
+            SweepTally tally,
             out int rowsUnreadable,
             out bool sortApplied)
         {
@@ -7514,7 +7758,8 @@ namespace OutlookAI.Core.Com
                         ComMailBrief brief;
                         try
                         {
-                            brief = SnapshotBrief(ns, member!, folderKind, folderName, includeBodies, storeName, storeId);
+                            brief = SnapshotBrief(
+                                ns, member!, folderKind, folderName, includeBodies, storeName, storeId, tally);
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
@@ -7553,7 +7798,8 @@ namespace OutlookAI.Core.Com
             string? folderName,
             bool includeBody,
             string? storeNameHint = null,
-            string? storeIdHint = null)
+            string? storeIdHint = null,
+            SweepTally? bodyBudget = null)
         {
             dynamic item = itemObject;
             string entryId = (string)item.EntryID;
@@ -7652,10 +7898,21 @@ namespace OutlookAI.Core.Com
                 }
             }
 
+            // The body, and the only place in this server where one is BOUNDED before it
+            // crosses the process boundary. Everywhere else a body is read for a caller that
+            // asked for it by id; here it is read for term matching over a whole sweep, and
+            // one sweep is one frame (see SweepBodyCharsCap / SweepBodyBytesBudget). A cut is
+            // never silent: it rides on the item as BodyTruncated and is counted on the sweep.
             string? body = null;
+            bool? bodyTruncated = null;
             if (includeBody)
             {
                 body = TryGetString(() => (string?)item.Body);
+                if (bodyBudget != null)
+                {
+                    body = bodyBudget.SpendOnBody(body, out bool cut);
+                    bodyTruncated = cut ? true : (bool?)null;
+                }
             }
 
             return new ComMailBrief(
@@ -7672,7 +7929,8 @@ namespace OutlookAI.Core.Com
                 hasAttachments,
                 size,
                 body,
-                messageClass);
+                messageClass,
+                bodyTruncated);
         }
 
         private ComItemDetail SnapshotDetail(object itemObject, bool includeHeaders, bool includeBody, bool includeHtml = false)

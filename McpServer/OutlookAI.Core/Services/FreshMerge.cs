@@ -178,6 +178,38 @@ namespace OutlookAI.Core.Services
         public const string GapFilterUnreadable = "filter_unreadable";
 
         /// <summary>
+        /// Coverage hole: a swept item's BODY was cut before it crossed the COM-host pipe
+        /// (<see cref="OutlookComSession.SweepBodyCharsCap"/> per item,
+        /// <see cref="OutlookComSession.SweepBodyBytesBudget"/> across the sweep), AND that
+        /// item then failed to match the query terms. A term sitting past the cut would not
+        /// have been seen, so the item may be a hit this answer does not contain.
+        /// <para>
+        /// THE TRIGGER IS THE INTERSECTION, and that is the whole design of this code. A cut
+        /// body on its own costs nothing: these bodies are shown to nobody - they exist only
+        /// so <see cref="MatchesTerms"/> can run over mail newer than the index - so an item
+        /// that was cut and MATCHED anyway lost nothing at all, and raising a hole over it
+        /// would be the cry-wolf trap <see cref="SweepInfo.ScopeShape"/> and
+        /// <see cref="SweepInfo.AttachmentTextCovered"/> are both built to avoid. What the
+        /// two facts can never say between them is whether the term really was past the cut,
+        /// because settling that means reading the rest of the body, which is precisely what
+        /// the bound refuses to move. So the wording is "may be missing", never "is".
+        /// </para>
+        /// <para>
+        /// It cannot fire on a subject-only search, and does not: with <c>search_in</c> set
+        /// to subject the body is never consulted, so a cut body cannot change the verdict.
+        /// It cannot fire on a term-less search either, since every item matches.
+        /// </para>
+        /// <para>
+        /// The remedy differs by which bound cut, so the advice reads
+        /// <see cref="SweepInfo.BodyBudgetExhausted"/>: a per-item cut means one enormous mail
+        /// is bigger than the sweep will carry, and <c>read</c> pages the whole of it; an
+        /// exhausted budget means the sweep as a whole carried more text than one frame holds,
+        /// and the remedy is a narrower store, folder or window.
+        /// </para>
+        /// </summary>
+        public const string GapBodyCap = "body_cap";
+
+        /// <summary>
         /// Coverage hole: the live conversation walk stopped at the requested member cap,
         /// so it did not see the whole conversation. Unlike a search's <c>top</c>, which
         /// caps a date-SORTED match set, the walk reads the conversation table in Outlook's
@@ -543,6 +575,15 @@ namespace OutlookAI.Core.Services
             if (sweep.ItemsFilterUnreadable > 0)
             {
                 gaps.Add(GapFilterUnreadable);
+            }
+
+            // Narrowest of them all, and last for that reason: this one sits inside an item
+            // that WAS read and IS in the sweep's own result set. Gated on the intersection
+            // rather than on the cut, because a body cut off an item that matched anyway cost
+            // the answer nothing (see GapBodyCap).
+            if (sweep.ItemsBodyCappedUnmatched > 0)
+            {
+                gaps.Add(GapBodyCap);
             }
 
             return gaps.Count == 0 ? null : gaps;

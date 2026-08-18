@@ -1303,6 +1303,29 @@ namespace OutlookAI.Core.Services
                             + "see them and judge them yourself; index results are unaffected.");
                         break;
 
+                    case FreshMerge.GapBodyCap:
+                        // Both halves are read from the payload rather than restated: the two
+                        // counts, and which bound did the cutting. The sentence deliberately
+                        // says "may be" - see FreshMerge.GapBodyCap for why nothing here can
+                        // say more than that.
+                        advice.Add("Freshness sweep matched only the first "
+                            + OutlookComSession.SweepBodyCharsCap.ToString(CultureInfo.InvariantCulture)
+                            + " characters of "
+                            + (sweep.ItemsBodyCapped ?? 0).ToString(CultureInfo.InvariantCulture)
+                            + " just-arrived item(s) - a mail body is capped on its way back from Outlook so one "
+                            + "answer cannot outgrow what the connection can carry. "
+                            + (sweep.ItemsBodyCappedUnmatched ?? 0).ToString(CultureInfo.InvariantCulture)
+                            + " of them did not match your terms, so a term appearing only in the part that was "
+                            + "cut would have been missed and those items MAY be hits this answer does not have. "
+                            + (sweep.BodyBudgetExhausted == true
+                                ? "The sweep as a whole carried more body text than one answer holds, so later items "
+                                  + "kept little or none of theirs: narrow the search with store, folder or 'after' so "
+                                  + "fewer items are swept."
+                                : "These are individually enormous mails; read one with 'read' (its body pages via "
+                                  + "body_offset) to search it in full.")
+                            + " Anything already indexed is matched in full and is unaffected.");
+                        break;
+
                     default:
                         // A code with no sentence would be a silent partial result, which is
                         // the whole defect this reporting exists to remove. T1 pins that
@@ -1985,6 +2008,15 @@ namespace OutlookAI.Core.Services
 
             List<ComMailBrief> filtered = new List<ComMailBrief>();
             HashSet<string> unevaluatedFilters = new HashSet<string>(StringComparer.Ordinal);
+
+            // The COM layer bounds each swept body so a frame too big to send cannot be built
+            // (OutlookComSession.SweepBodyCharsCap / SweepBodyBytesBudget). A cut body can
+            // only ever cost a hit where the terms actually go against the body, so that
+            // condition is evaluated once here rather than per item - and where it is false,
+            // the cut is free and no code is raised for it.
+            bool termsReachTheBody = terms != null && terms.Count > 0 && request.SearchIn != SearchIn.SubjectOnly;
+            int bodiesCapped = 0;
+            int bodiesCappedUnmatched = 0;
             foreach (ComMailBrief item in sweptItems)
             {
                 if (request.Store != null
@@ -1994,8 +2026,26 @@ namespace OutlookAI.Core.Services
                 }
 
                 info.ItemsSeen++;
+
+                // Counted INSIDE the store filter above, so a cached all-stores sweep serving
+                // a store-scoped request reports this store's cuts rather than the sweep's.
+                bool bodyCut = item.BodyTruncated == true;
+                if (bodyCut)
+                {
+                    bodiesCapped++;
+                }
+
                 if (!FreshMerge.MatchesTerms(item, terms, request.SearchIn))
                 {
+                    // The one case a body cut can have cost a result: this item was cut AND
+                    // did not match. Whether the term really sat past the cut is exactly what
+                    // the un-carried remainder would have answered, so this counts candidates
+                    // and the advice says "may be".
+                    if (bodyCut && termsReachTheBody)
+                    {
+                        bodiesCappedUnmatched++;
+                    }
+
                     continue;
                 }
 
@@ -2073,6 +2123,20 @@ namespace OutlookAI.Core.Services
             // Reported in the request's own parameter order, so the names read as the
             // remedy they are: drop the one named and the dropped items come back.
             info.FiltersUnevaluated = OrderUnevaluatedFilters(unevaluatedFilters);
+
+            // The body bounds, reported from the per-item flags this loop just read rather
+            // than from the sweep's whole-sweep totals - the same store-attribution rule
+            // ApplySweepCounters applies to every other counter, and the reason those totals
+            // are deliberately not copied across (ComSweepResult.BodiesTruncated).
+            info.ItemsBodyCapped = bodiesCapped > 0 ? bodiesCapped : (int?)null;
+            info.ItemsBodyCappedUnmatched = bodiesCappedUnmatched > 0 ? bodiesCappedUnmatched : (int?)null;
+
+            // WHICH bound cut is a fact about the frame, so it comes from the sweep result -
+            // but it is only carried when this scope actually lost something, so a
+            // store-scoped answer never reports a budget another account's mail exhausted.
+            info.BodyBudgetExhausted = bodiesCapped > 0 && effectiveResult.BodyBudgetExhausted
+                ? true
+                : (bool?)null;
 
             IReadOnlyList<ComMailBrief> freshOnly = FreshMerge.SelectFreshOnly(
                 filtered, indexHits, DedupeToleranceSeconds, out int duplicates);
