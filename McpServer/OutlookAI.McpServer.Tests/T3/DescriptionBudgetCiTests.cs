@@ -24,10 +24,18 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// </para>
 /// <para>
 /// That same measurement showed <c>inputSchema.properties[*].description</c> is NOT capped by
-/// the client at any length. This file still budgets those, at
-/// <see cref="HouseParameterBudget"/> - a HOUSE limit with its own reasoning, kept as a
-/// separate constant from the measured client cap precisely so nobody later cites it as
-/// client behaviour.
+/// the client at any length. They are therefore MEASURED AND REPORTED HERE, NEVER FAILED:
+/// failing a build over text the client delivers whole would reject a description that
+/// arrives intact, which is a false failure however tidy the number looks. The sizes stay in
+/// the table because they are the evidence a future client bump would be re-read against.
+/// </para>
+/// <para>
+/// There is no warn tier either, and its absence is a decision rather than an omission. A
+/// threshold below the cap fires on strings that arrive whole, every run, forever - three of
+/// them here, none of which will ever change - which trains a reader to skip the channel on
+/// the day it finally carries a real cut. The rule this file implements is the narrow one:
+/// fail the instant something would be truncated, allow everything that fits, warn about
+/// nothing.
 /// </para>
 /// <para>
 /// So the measurement is taken FROM THE WIRE, not from source constants: these
@@ -104,34 +112,6 @@ public sealed class DescriptionBudgetCiTests
     internal const int ClientTruncationBudget = 2048;
 
     /// <summary>
-    /// The budget applied to every <c>inputSchema.properties[*].description</c>. A HOUSE
-    /// LIMIT - the client does not cap these at all.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The same 2026-08-18 capture put 2,600 characters and then 20,000 characters through a
-    /// parameter description intact. The documentation's silence about <c>inputSchema</c> is
-    /// accurate rather than an omission, and this guardrail's earlier application of 2048 here
-    /// was an extrapolation - now known to have been unnecessary.
-    /// </para>
-    /// <para>
-    /// Kept anyway, at the same value, for two reasons. It floats with a client version this
-    /// project neither controls nor gets a signal about, so a release that starts cutting
-    /// schemas should find us already inside the limit rather than find us in production. And
-    /// this server's schema has exactly the shape that would suffer worst: <c>BodyHtmlHint</c>
-    /// is ONE constant reused across five drafting tools, so a single over-long shared
-    /// parameter description would not be one silent truncation but five.
-    /// </para>
-    /// <para>
-    /// It is a separate named constant, not a second use of
-    /// <see cref="ClientTruncationBudget"/>, so the label survives the next reader: a failure
-    /// on this budget is a house-style failure, and citing it as documented client behaviour
-    /// would be wrong.
-    /// </para>
-    /// </remarks>
-    private const int HouseParameterBudget = 2048;
-
-    /// <summary>
     /// What a cut looks like when it reaches the model: the published string's exact prefix,
     /// then this literal - U+2026 HORIZONTAL ELLIPSIS, space, <c>[truncated]</c> - 13 UTF-16
     /// code units, so a cut string arrives at <see cref="TruncatedStringLength"/>.
@@ -154,23 +134,16 @@ public sealed class DescriptionBudgetCiTests
     internal static readonly int TruncatedStringLength = ClientTruncationBudget + ClientTruncationMarker.Length;
 
     /// <summary>
-    /// Warn-only tier. Something sitting at 1600 of 2048 is one added paragraph from being
-    /// cut, and the cut lands without a diagnostic - so the run says so out loud while it
-    /// is still cheap to fix, without failing a build over a description that currently
-    /// arrives intact.
+    /// The budget a surface is judged against, or <c>null</c> for a surface the client was
+    /// measured not to cut. Only two surfaces have a budget at all, because only two are
+    /// truncated; a parameter description is measured, printed and never judged.
+    /// <para>
+    /// A nullable return rather than a large sentinel on purpose: a sentinel would still be a
+    /// number, and every reader downstream would have to know which number means "no limit".
+    /// </para>
     /// </summary>
-    private const double WarnFraction = 0.75;
-
-    /// <summary>
-    /// The budget a surface is judged against: the measured client cap for the two surfaces
-    /// the client actually cuts, the house limit for the one it does not. The two are equal
-    /// today; the split exists so either can move without implying the other, and so a
-    /// failure message can say which kind of limit was crossed.
-    /// </summary>
-    private static int BudgetFor(string surface) =>
-        surface == "parameter" ? HouseParameterBudget : ClientTruncationBudget;
-
-    private static int WarnThresholdFor(int budget) => (int)(budget * WarnFraction);
+    private static int? BudgetFor(string surface) =>
+        surface == "parameter" ? null : ClientTruncationBudget;
 
     private readonly ITestOutputHelper _output;
 
@@ -182,8 +155,9 @@ public sealed class DescriptionBudgetCiTests
     /// <summary>
     /// Every description on the wire - the initialize result's <c>instructions</c>, every
     /// tool <c>description</c>, and every parameter <c>description</c> nested anywhere inside
-    /// an <c>inputSchema</c> - fits its budget: the measured client cap for the first two,
-    /// the house limit for the third.
+    /// an <c>inputSchema</c> - is measured and reported. The first two are failed the instant
+    /// they cross the measured client cap; the third has no cap to cross, so it is only ever
+    /// reported.
     /// </summary>
     [Fact]
     public async Task EveryDescriptionOnTheWire_FitsTheClientTruncationBudget()
@@ -223,21 +197,27 @@ public sealed class DescriptionBudgetCiTests
             + string.Join(", ", carryingMarker.Select(s => $"{s.Surface} '{s.Label}'")));
 
         // The predicate is the measured one: cut when length > 2048, so exactly 2048 passes.
+        // A surface with no budget (parameter descriptions, which the client does not cut) is
+        // not a pass here - it is not a candidate at all.
         List<WireString> overBudget = measured
-            .Where(s => s.Measured > s.Budget)
-            .OrderByDescending(s => s.Measured - s.Budget)
+            .Where(s => s.Budget is int budget && s.Measured > budget)
+            .OrderByDescending(s => s.Measured - s.Budget!.Value)
             .ToList();
 
         Assert.True(overBudget.Count == 0, DescribeOverBudget(overBudget));
     }
 
     /// <summary>
-    /// Writes the whole measured surface, largest first, plus the warn-tier callouts.
-    /// Emitted on every run - a passing run is exactly when this table is worth having,
-    /// because it shows how much head-room is left before the next paragraph gets cut.
+    /// Writes the whole measured surface, largest first. Emitted on every run, and a passing
+    /// run is exactly when it is worth having: it is the only record of how large each string
+    /// actually is, which is the number a future client bump gets re-read against.
     /// <para>
-    /// UTF-8 bytes are still in the table but are no longer budgeted against anything. The
-    /// client counts UTF-16 code units and never bytes (measured 2026-08-18, see
+    /// It reports and it does not judge. Nothing here says a string is close to anything -
+    /// see the type doc for why a threshold below the cap is worse than no threshold.
+    /// </para>
+    /// <para>
+    /// UTF-8 bytes are in the table but budgeted against nothing. The client counts UTF-16
+    /// code units and never bytes (measured 2026-08-18, see
     /// <see cref="ClientTruncationBudget"/>), so a byte column is information - useful if a
     /// future client is ever found to count differently - and not a limit.
     /// </para>
@@ -245,81 +225,55 @@ public sealed class DescriptionBudgetCiTests
     private void ReportTable(IReadOnlyList<WireString> measured)
     {
         _output.WriteLine(
-            $"MCP description budget, in UTF-16 code units (string.Length): {ClientTruncationBudget} for "
-            + $"instructions and tool descriptions (MEASURED Claude Code 2.1.234 truncation, 2026-08-18); "
-            + $"{HouseParameterBudget} for parameter descriptions (HOUSE limit - the client does not cap "
-            + $"these at all). Warn at {WarnFraction:P0} of whichever applies. UTF-8 bytes shown for "
-            + "information only: the client never counts them.");
+            $"MCP description sizes, in UTF-16 code units (string.Length). Budget: {ClientTruncationBudget} "
+            + "for the initialize instructions and each tool description (MEASURED Claude Code 2.1.234 "
+            + "truncation, 2026-08-18). Parameter descriptions are measured and reported but have NO budget: "
+            + "the same capture put 20,000 characters through one intact. UTF-8 bytes shown for information "
+            + "only: the client never counts them.");
         _output.WriteLine(
             "If a cut ever happens it is invisible here and visible to the model: the string arrives as a "
             + $"{ClientTruncationBudget}-unit prefix plus the marker \"{ClientTruncationMarker}\", "
             + $"{TruncatedStringLength} units in total. That marker is what to grep a transcript for.");
         _output.WriteLine(string.Empty);
-        _output.WriteLine($"{"units",6}  {"bytes",6}  {"budget",6}  {"%",5}  surface     name");
 
-        foreach (WireString entry in measured.OrderByDescending(s => s.Measured).ThenBy(s => s.Label, StringComparer.Ordinal))
+        IReadOnlyList<string> rows = TableRows(measured);
+        foreach (string row in rows)
         {
-            _output.WriteLine(
-                $"{entry.Measured,6}  {entry.Utf8Bytes,6}  {entry.Budget,6}  "
-                + $"{entry.PercentOfBudget,4:F0}%  {entry.Surface,-10}  {entry.Label}");
+            _output.WriteLine(row);
         }
 
-        List<WireString> warnings = measured
-            .Where(s => s.Measured >= WarnThresholdFor(s.Budget) && s.Measured <= s.Budget)
-            .OrderByDescending(s => s.PercentOfBudget)
-            .ToList();
-
-        _output.WriteLine(string.Empty);
-        if (warnings.Count == 0)
-        {
-            _output.WriteLine($"WARN TIER: nothing is above {WarnFraction:P0} of its budget.");
-            return;
-        }
-
-        var warningLines = new List<string>();
-        foreach (WireString warning in warnings)
-        {
-            // A parameter over the warn line is not the same event as a tool description over
-            // it: one is approaching a limit this project chose, the other a limit the client
-            // enforces. Saying which keeps the house limit from being read as client behaviour
-            // in the one place a maintainer is most likely to meet it.
-            string consequence = warning.Surface == "parameter"
-                ? "The client does NOT cut parameter descriptions (measured 2026-08-18, 2.1.234) - this is "
-                  + "the house limit, kept so a client release that starts cutting schemas finds us already "
-                  + "inside it."
-                : "It still arrives intact, but the client truncates silently and mid-sentence - move detail "
-                  + "into the runtime payload before it crosses.";
-
-            string line =
-                $"WARNING: {warning.Surface} '{warning.Label}' is {warning.Measured} units of {warning.Budget} "
-                + $"({warning.PercentOfBudget:F0}% of budget, {warning.Budget - warning.Measured} left). "
-                + consequence;
-            warningLines.Add(line);
-            _output.WriteLine(line);
-
-            // Also on the test host's stderr: ITestOutputHelper reaches an IDE runner, the
-            // TRX log and `--logger "console;verbosity=detailed"`, but VSTest's default
-            // console reporter prints a passing test's output nowhere.
-            Console.Error.WriteLine(line);
-        }
-
-        PublishToCiJobSummary(warningLines);
+        PublishToCiJobSummary(rows);
     }
 
     /// <summary>
-    /// The warn tier only earns its keep if a PASSING run shows it, and `dotnet test` at
-    /// its default verbosity shows a passing test's output nowhere at all. On GitHub
-    /// Actions the job summary is the channel that does not need the whole suite switched
-    /// to a verbose logger, so the warnings are written there when CI provides it. Purely
-    /// additive and best-effort: no CI, or an unwritable summary file, changes nothing.
+    /// The size table as text, header first. One renderer for both channels, so the CI
+    /// summary cannot drift from what the test log says.
     /// </summary>
-    private static void PublishToCiJobSummary(IReadOnlyList<string> warningLines)
+    private static IReadOnlyList<string> TableRows(IReadOnlyList<WireString> measured)
     {
-        if (warningLines.Count == 0)
+        var rows = new List<string> { $"{"units",6}  {"bytes",6}  {"budget",6}  surface     name" };
+
+        foreach (WireString entry in measured.OrderByDescending(s => s.Measured).ThenBy(s => s.Label, StringComparer.Ordinal))
         {
-            return;
+            // "none" rather than a blank or a dash: a surface with no budget is a measured
+            // fact about this client, not a column somebody forgot to fill in.
+            string budget = entry.Budget is int b ? b.ToString(CultureInfo.InvariantCulture) : "none";
+            rows.Add($"{entry.Measured,6}  {entry.Utf8Bytes,6}  {budget,6}  {entry.Surface,-10}  {entry.Label}");
         }
 
+        return rows;
+    }
+
+    /// <summary>
+    /// The size table only earns its keep if a PASSING run shows it, and `dotnet test` at its
+    /// default verbosity shows a passing test's output nowhere at all. On GitHub Actions the
+    /// job summary is the channel that does not need the whole suite switched to a verbose
+    /// logger, so the table is written there when CI provides it - collapsed, because it is a
+    /// record to consult and not a thing to act on. Purely additive and best-effort: no CI, or
+    /// an unwritable summary file, changes nothing.
+    /// </summary>
+    private static void PublishToCiJobSummary(IReadOnlyList<string> rows)
+    {
         string? summaryPath = Environment.GetEnvironmentVariable("GITHUB_STEP_SUMMARY");
         if (string.IsNullOrWhiteSpace(summaryPath))
         {
@@ -329,17 +283,23 @@ public sealed class DescriptionBudgetCiTests
         try
         {
             var summary = new StringBuilder();
-            summary.AppendLine("### MCP description budget");
+            summary.AppendLine("<details><summary>MCP description sizes (UTF-16 code units)</summary>");
             summary.AppendLine();
             summary.AppendLine(
-                $"Inside budget ({ClientTruncationBudget} UTF-16 code units for instructions and tool "
-                + $"descriptions - measured Claude Code 2.1.234 truncation; {HouseParameterBudget} for "
-                + $"parameter descriptions - house limit), but past the {WarnFraction:P0} warn line:");
+                $"Budget {ClientTruncationBudget} for the initialize instructions and each tool description "
+                + "(measured Claude Code 2.1.234 truncation, 2026-08-18). Parameter descriptions are not cut "
+                + "by the client at any length, so they are reported without a budget. The run fails only on "
+                + "a string that would actually be truncated.");
             summary.AppendLine();
-            foreach (string line in warningLines)
+            summary.AppendLine("```");
+            foreach (string row in rows)
             {
-                summary.Append("- ").AppendLine(line);
+                summary.AppendLine(row);
             }
+
+            summary.AppendLine("```");
+            summary.AppendLine();
+            summary.AppendLine("</details>");
 
             File.AppendAllText(summaryPath, summary.ToString());
         }
@@ -358,19 +318,15 @@ public sealed class DescriptionBudgetCiTests
 
         foreach (WireString entry in overBudget)
         {
-            string consequence = entry.Surface == "parameter"
-                ? $"HOUSE limit of {HouseParameterBudget} - the client does not cut parameter descriptions "
-                  + "(measured 2026-08-18, Claude Code 2.1.234), so nothing is being lost today; the limit is "
-                  + "kept because it floats with a client version we do not control"
-                : $"MEASURED client cap of {ClientTruncationBudget} - Claude Code cuts this silently and "
-                  + "mid-sentence, and everything past the cut never reaches the model";
+            // Only budgeted surfaces reach here, so the budget is present by construction.
+            int budget = entry.Budget!.Value;
 
             message.AppendLine(
                 $"  {entry.Surface} '{entry.Label}': {entry.Measured} units "
                 + $"({entry.Utf8Bytes} UTF-8 bytes, which the client never counts) - "
-                + $"{entry.Measured - entry.Budget} OVER the {consequence}. "
-                + $"({entry.PercentOfBudget:F0}% of budget.) "
-                + $"The cut would land at: \"...{Excerpt(entry.Text, entry.Budget)}\"");
+                + $"{entry.Measured - budget} OVER the MEASURED client cap of {budget}. Claude Code cuts "
+                + "this silently and mid-sentence, and everything past the cut never reaches the model. "
+                + $"The cut would land at: \"...{Excerpt(entry.Text, budget)}\"");
         }
 
         message.AppendLine("Shorten the description, or move the detail into the tool's runtime payload");
@@ -518,9 +474,10 @@ public sealed class DescriptionBudgetCiTests
         /// </summary>
         public int Measured => Text.Length;
 
-        /// <summary>Which budget applies to this surface - see <see cref="BudgetFor"/>.</summary>
-        public int Budget => BudgetFor(Surface);
-
-        public double PercentOfBudget => Measured * 100.0 / Budget;
+        /// <summary>
+        /// Which budget applies to this surface, or null where the client does not cut at
+        /// all - see <see cref="BudgetFor"/>.
+        /// </summary>
+        public int? Budget => BudgetFor(Surface);
     }
 }

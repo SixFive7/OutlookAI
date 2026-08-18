@@ -208,11 +208,15 @@ because the cut is client-side. Not a model's recollection of what it received -
 FALSE failures - it rejected text the client delivers whole - and on today's surface it changed
 nothing at all: all 132 wire strings are pure ASCII, so no measured size moved and the warn tier is
 unchanged (`search` 1791, `update_draft` 1593). The guard is now right rather than accidentally
-harmless. The 2048 applied to parameter descriptions is **kept but relabelled** as
+harmless. The 2048 applied to parameter descriptions was **kept but relabelled** as
 `HouseParameterBudget`, a separate constant with its own reasoning: it floats with a client version
 we do not control and get no signal about, and `BodyHtmlHint` is one constant reused across five
 drafting tools, so one over-long shared parameter description would be five silent truncations the
-day a release starts cutting schemas. The marker is recorded as `ClientTruncationMarker` - not as a
+day a release starts cutting schemas. **That last part is superseded by Q3 above** - the maintainer
+ruled that a limit which rejects text the client delivers whole is a false failure whatever the
+future risk, so `HouseParameterBudget` is gone and parameter sizes are reported without a budget;
+the re-measure trigger it was guarding is documented rather than enforced. The rest of this record
+stands. The marker is recorded as `ClientTruncationMarker` - not as a
 detector, which is impossible, but because it is the string a human greps for in a transcript when
 something looks cut - and the guard now also fails if a shipped description ever CONTAINS it, which
 would mean already-truncated text was copied back into source.
