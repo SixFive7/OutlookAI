@@ -115,27 +115,57 @@
   Diagnostic logs: `C:\Users\jori\Downloads\tmp-aitrace\live-run4.txt` (the 22-minute test, with
   the long-running-test diagnostics that named it) and `cleanup-sweep.txt` (the fixture-setup hang).
 
-- [ ] **IN FLIGHT 2026-08-18 09:00 - live tier: subset PASSES, full tier does not. Read this first.**
+- [x] **RESOLVED 2026-08-18 11:45 - the live tier was never hanging. I misread it, twice.**
 
-  **New evidence, all from 2026-08-18 08:45-09:00, which overturns yesterday's hypothesis:**
-  - **Outlook COM is healthy.** A bounded out-of-process probe attached and read `Stores.Count = 5`
-    instantly. The "poisoned COM state" theory from the overnight notes is WRONG.
-  - **The short subset now passes end to end.** `--filter FullyQualifiedName~LiveSweepScope` under
-    `--blame-hang`: `[preflight] Outlook responsive (0 of 5 UI windows hung) - live tier may run.`,
-    `[tripwire] baseline: 5 stores, 148 mail folders, 12495 ms.`, tests passed, `hub reconciled: 5
-    baseline folders, all item counts back at pre-run values`, exit 0.
-  - **The FULL tier still hung** at `A total of 1 test files matched` for 19 minutes earlier the same
-    hour, with the preflight in place and Outlook responding.
+  The full tier takes **26.8 minutes** and passes: 107 tests, 107 passed, under
+  `--blame-hang --blame-hang-timeout 4m --logger "console;verbosity=normal"`. The two runs called
+  hangs on 2026-08-18 (aborted at 10 and 15 minutes) were healthy runs killed early.
 
-  **So the hang is NOT the shared tripwire and NOT a wedged Outlook.** It is something in a
-  collection the subset does not touch. The next diagnostic is to run the tier collection by
-  collection under `--blame-hang --blame-hang-timeout 4m` (that flag works and produces a sequence
-  file when a hang is real) and find which fixture stalls. Do NOT run the whole tier blind again -
-  it costs 20 minutes and produces no information.
+  **Both pieces of evidence behind that diagnosis were worthless, and it is worth knowing why:**
+  - **Silence.** `dotnet test` at default verbosity prints NOTHING for a passing test. A healthy
+    27-minute run and a wedged one produce byte-identical output until the summary.
+  - **"No COM host process."** The live fixtures use the IN-PROCESS `ComGateway`, so they never spawn
+    `OutlookAI.ComHost.exe` at all. Its absence was normal, and I read it as proof of a stall.
 
-  **Artifacts:** 7 tagged items (6 Drafts, 1 Outbox) were left by an aborted run. The subset run above
-  reported the hub reconciled, so they may now be swept - VERIFY with a read-only `search` for
-  `OutlookAI-McpTest` before assuming either way.
+  The cost was not theoretical: aborting the first of those runs skipped the artifact sweep and left
+  7 tagged items in a real mailbox, and I then wrote a reproducible-hang finding and a maintainer
+  question around a defect that did not exist.
+
+  **What was real, and stays:** the 22.5-minute `LiveDisconnectRecoveryTests` stall on 2026-08-17,
+  which the long-running-test diagnostics named. The bounds added to it and the preflight gate are
+  both worth having on their own merits - the preflight now reports
+  `[preflight] Outlook responsive (0 of 5 UI windows hung)` per collection.
+
+  **Rule for the next person, including me: never diagnose a live-tier hang without
+  `--logger "console;verbosity=normal"`.** Run it verbose and read what it is doing before touching
+  anything.
+
+- [ ] **The store-count tripwire cannot tell the user apart from the tests, and says so loudly.**
+  (2026-08-18) The 26.8-minute run above passed all 107 tests and then FAILED at teardown:
+
+  ```
+  STORE COUNT TRIPWIRE: the live tier changed mailboxes it may not touch.
+    ITEMS LOST: store 'info@voipfabric.com' folder 'Inbox' 168 -> 161 (-7).
+    ITEMS LOST: store 'Jan van Linge' folder 'Ongewenste e-mail' 1 -> 0 (-1).
+    ITEMS LOST: store 'Jan van Linge' folder 'Postvak IN' 52 -> 50 (-2).
+  ```
+
+  **Evidence that the tests did not do it:** `StoreWriteAllowlist` throws in code on any write aimed
+  outside the designated hub and never fired; all 107 tests passed; the artifact sweep reported
+  `taggedArtifacts=0` for all three accounts. **Evidence for ordinary activity:** this was the first
+  live run taken while the maintainer was actively using the machine, a 27-minute window covers mail
+  read, deleted and rule-filed, a junk folder going 1 to 0 is what junk expiry looks like, and the
+  tripwire separately noted a `Deleted Items (self-pruning)` folder appearing, which is Outlook's own
+  auto-prune.
+
+  **Unresolved, and it is a design gap rather than an incident:** the tripwire compares raw counts and
+  cannot distinguish the user from the suite. It is deliberately fail-closed, which is right - but it
+  means the live tier cannot be run on an actively used machine without a false alarm, and a real
+  alarm would look identical. Directions: record per-item EntryIDs for the small stores rather than
+  counts; or capture the count deltas the suite itself could plausibly cause and subtract them; or
+  require the machine to be idle, which is what the S7 quit-when-safe guard already does for a
+  different purpose. **Nobody should trust a green tripwire on a busy machine either** - that is the
+  half of this nobody has looked at.
 
 - [ ] **PENDING TASK - process `C:\Source\SixFive7\BrowserAI\.work	runcation-prompt-for-sibling-project.md`.**
   The maintainer asked for this at 09:00 on 2026-08-18. It is expected to be the portable
