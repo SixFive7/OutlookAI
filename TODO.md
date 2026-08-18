@@ -90,10 +90,27 @@
   that night, after the budget-composition work. Evidence for caution: nothing else changed on the
   machine, and the second hang is in a path the first abort could plausibly have poisoned.
 
-  **Suggested first step:** restart Outlook cleanly, then run the short subset alone. If it passes,
-  the hangs were abort fallout and the disconnect test needs its own bound. If it still hangs at
-  fixture setup on a fresh Outlook, it is a real defect in the COM attach path and the diff to
-  bisect is small.
+  **UPDATE, 04:40 - the fixture-setup hang is REPRODUCIBLE.** A third attempt (the full live tier,
+  after the disconnect test was given bounds) sat **15 minutes** at `A total of 1 test files
+  matched`, again without ever spawning a COM host. Two independent attempts, same symptom, same
+  place - so this is not a one-off.
+
+  **What that does and does not tell us.** Outlook has been up continuously since 03:05 UTC, which
+  is BEFORE the abort - so the poisoned-COM-state hypothesis is still the leading one and is NOT
+  ruled out by the reproduction. What IS ruled out: the disconnect test itself (this run never
+  reached any test) and the new bounds (they cannot fire before setup).
+
+  **Why it was not chased further tonight.** Diagnosing it needs Outlook restarted cleanly, and the
+  safety envelope allows a graceful quit only when the Outbox is empty - it is not, because of the
+  artifacts above. That is a genuine deadlock for an unattended session: the mailbox cannot be swept
+  without a live run, the live run needs a clean COM state, and the clean COM state needs a restart
+  the Outbox forbids. It needs a human at the machine, which is where it now sits.
+
+  **Suggested first step, in this order:** close Outlook by hand (or let it send the one Outbox
+  item, then close it), start it fresh, then run the short subset alone. If it passes, both hangs
+  were abort fallout and the sweep will clear the artifacts on the next full run. If it still hangs
+  at fixture setup on a freshly started Outlook, it is a real defect in the COM attach path - and
+  the diff to bisect is small, since the tier ran 106/107 clean earlier the same night.
 
   Diagnostic logs: `C:\Users\jori\Downloads\tmp-aitrace\live-run4.txt` (the 22-minute test, with
   the long-running-test diagnostics that named it) and `cleanup-sweep.txt` (the fixture-setup hang).
