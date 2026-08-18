@@ -58,6 +58,22 @@
   - **Timers that outlive what they poll**, and any that are never disposed.
   - **Intervals chosen once and never revisited** against what they are actually waiting for.
 
+- [ ] **A useful error message never reaches the caller.** An `exhaustive` search naming a
+  folder that does not exist comes back as an opaque
+  `ComHostRemoteException: "Exception has been thrown by the target of an invocation."`
+  instead of the message the code takes trouble to write:
+  `"Folder 'X' was not found in store 'Y' (...). Use list_folders for paths."`
+  (`OutlookComSession.cs`, the exhaustive scan's folder resolution). Reproduced 2026-08-18 on
+  a primary store and on a delegate store, before and after the DASL date fix, so it is
+  independent of that work.
+
+  It is a reflection-invocation wrapper swallowing the inner exception's message somewhere on
+  the COM-host pipe, which means the diagnosis is "where does the wrapper lose it", not "write
+  a better message" - the good message already exists. Worth checking whether OTHER deliberate,
+  actionable errors from inside the COM host reach callers intact, because this one does not
+  and nothing noticed until a probe happened to hit it. An agent that cannot tell "no such
+  folder" from "something went wrong" retries blindly instead of calling `list_folders`.
+
 - [ ] **Retire v3 planning ignores** — once the local v3 planning files (`v3.MD`, `Docs/v3-probes/`) are no longer needed:
   - [ ] remove the "v3 planning documents" section at the bottom of `.gitignore`
   - [ ] delete the local plan-doc backup folder (location documented in v3.MD §0.8 D16 on the machine that holds it)
