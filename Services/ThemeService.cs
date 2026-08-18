@@ -111,31 +111,111 @@ namespace OutlookAI.Services
             }
         }
 
+        /// <summary>Office's per-user "Office Theme" value, under the Common key of the Office
+        /// major that is actually installed.</summary>
+        private const string UiThemeValueName = "UI Theme";
+
         private static bool DetectDarkMode()
+        {
+            return DecideDarkMode(OfficeVersions.HasOutlookKey, ReadUiTheme, WindowsAppsAreDark);
+        }
+
+        /// <summary>
+        /// The whole light/dark decision, with the registry replaced by three functions so the
+        /// branches this machine cannot produce - an Office major other than the installed one, a
+        /// detected Office with no Common key, and nothing detected at all - are reachable
+        /// without a second Office install.
+        /// <paramref name="outlookKeyExists"/> is the
+        /// <see cref="OfficeVersions.TryDetectOutlookVersion(Func{string, bool}, out string)"/>
+        /// seam. <paramref name="readUiTheme"/> is handed the FULL HKCU path of the Common key
+        /// and returns its <c>UI Theme</c> value, or null when the key or the value is absent.
+        /// None of the three may throw.
+        /// </summary>
+        internal static bool DecideDarkMode(
+            Func<string, bool> outlookKeyExists,
+            Func<string, object> readUiTheme,
+            Func<bool> windowsAppsAreDark)
+        {
+            string themeKeyPath;
+            if (TryGetOfficeThemeKeyPath(outlookKeyExists, out themeKeyPath))
+            {
+                bool? officeSaysDark = OfficeThemeIsDark(readUiTheme(themeKeyPath));
+                if (officeSaysDark.HasValue)
+                    return officeSaysDark.Value;
+            }
+
+            // DELIBERATE FALLBACK, and it answers three different questions with one value: no
+            // Office major was detected, the detected one has no Common key, or Office is set to
+            // "use system" (6). All three mean Office has no opinion of its own, and the Windows
+            // app mode is then the RIGHT answer rather than a shrug - it is precisely what Office
+            // itself follows for 6. What we no longer do is read SOME OTHER major's Common key
+            // because it happened to open first: that answered confidently with a setting
+            // belonging to an Office that is not the one running, which is the silent-wrong-read
+            // shape rather than this deliberate one.
+            return windowsAppsAreDark();
+        }
+
+        /// <summary>
+        /// The HKCU Common key whose UI Theme applies, chosen from the Office version actually
+        /// installed rather than from whichever supported major's key opens first. False means
+        /// detection found no Office at all; <paramref name="keyPath"/> is empty then, because
+        /// there is nothing to read and nothing to watch.
+        /// </summary>
+        internal static bool TryGetOfficeThemeKeyPath(Func<string, bool> outlookKeyExists, out string keyPath)
+        {
+            string version;
+            if (!OfficeVersions.TryDetectOutlookVersion(outlookKeyExists, out version))
+            {
+                // Detection hands back OfficeVersions.Fallback here, and this caller deliberately
+                // discards it. OutlookTuningService has to write SOMEWHERE and so must take the
+                // guess; a read that has a better source available (Windows) should not read
+                // 16.0's theme on a machine we could not prove runs 16.0.
+                keyPath = string.Empty;
+                return false;
+            }
+
+            keyPath = OfficeVersions.CommonKeyPath(version);
+            return true;
+        }
+
+        /// <summary>
+        /// Office "Office Theme" values: 0=Colorful, 3=Dark Gray, 4=Black, 5=White, 6=use system.
+        /// Only Black is a true dark surface; Colorful/Dark Gray/White keep a light content area.
+        /// Null means "Office has no opinion" - 6, a non-int value, or anything unrecognised -
+        /// and sends the caller to the Windows app mode.
+        /// </summary>
+        internal static bool? OfficeThemeIsDark(object uiTheme)
+        {
+            if (uiTheme is int themeValue)
+            {
+                if (themeValue == 4)
+                    return true;
+                if (themeValue == 0 || themeValue == 3 || themeValue == 5)
+                    return false;
+            }
+
+            return null;
+        }
+
+        /// <summary>Live UI Theme read. Null - "no opinion" - for a missing key, a missing value
+        /// or any registry failure, because <see cref="DecideDarkMode"/> takes seams that do not
+        /// throw.</summary>
+        private static object ReadUiTheme(string commonKeyPath)
         {
             try
             {
-                foreach (var ver in OfficeVersions.Supported)
+                using (var key = Registry.CurrentUser.OpenSubKey(commonKeyPath))
                 {
-                    using (var key = Registry.CurrentUser.OpenSubKey($@"SOFTWARE\Microsoft\Office\{ver}\Common"))
-                    {
-                        var theme = key?.GetValue("UI Theme");
-                        if (theme is int themeValue)
-                        {
-                            // Office "Office Theme" values: 0=Colorful, 3=Dark Gray, 4=Black,
-                            // 5=White, 6=use system. Only "Black" is a true dark surface;
-                            // Colorful/Dark Gray/White keep a light content area. 6 (and any
-                            // other value) falls through to the Windows app-mode check below.
-                            if (themeValue == 4)
-                                return true;
-                            if (themeValue == 0 || themeValue == 3 || themeValue == 5)
-                                return false;
-                        }
-                    }
+                    return key == null ? null : key.GetValue(UiThemeValueName);
                 }
             }
-            catch { }
+            catch { return null; }
+        }
 
+        /// <summary>Live Windows app-mode read: AppsUseLightTheme 0 = dark. Absent or unreadable
+        /// counts as light, which is what this add-in has always defaulted to.</summary>
+        private static bool WindowsAppsAreDark()
+        {
             try
             {
                 using (var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
@@ -198,18 +278,65 @@ namespace OutlookAI.Services
             if (joined) { try { stop?.Dispose(); } catch { } }
         }
 
+        /// <summary>
+        /// Gives up the watch state from the watcher thread itself, for the two cases where there
+        /// is nothing to subscribe to. Only if this thread is still the CURRENT watcher: a
+        /// StopWatching that already ran, or a later StartWatching, owns the state instead and
+        /// must not have it torn out from under it. Whoever clears the state disposes the event,
+        /// and both do it holding nothing else, so the two cannot race over it.
+        /// Leaving _watching set here would be the worse bug of the two available: StartWatching
+        /// would refuse for the rest of the session to start a watcher that never existed.
+        /// </summary>
+        private static void ReleaseWatchState(ManualResetEvent stop)
+        {
+            ManualResetEvent toDispose = null;
+            lock (_watchGate)
+            {
+                if (_watching && ReferenceEquals(_stopWatch, stop))
+                {
+                    _watching = false;
+                    _watchThread = null;
+                    _stopWatch = null;
+                    toDispose = stop;
+                }
+            }
+            if (toDispose != null) { try { toDispose.Dispose(); } catch { } }
+        }
+
         // Receives the stop-event as a captured local so it never reads a field that
         // StopWatching may have nulled (avoids a WaitAny(null) crash on this background thread).
         private static void WatchLoop(ManualResetEvent stop)
         {
-            IntPtr hKey = IntPtr.Zero;
-            foreach (var ver in OfficeVersions.Supported)
+            // Watch the Common key of the Office that is actually installed - the same key
+            // DetectDarkMode reads, from the same detection, so the watcher cannot end up
+            // subscribed to a hive the reader ignores. It used to take whichever supported
+            // major's Common key opened first, which on a machine carrying a left-over Common
+            // from an earlier Office would have watched a key nothing writes any more: the theme
+            // dropdown would then appear to do nothing until the next restart.
+            string themeKeyPath = string.Empty;
+            bool detected;
+            try { detected = TryGetOfficeThemeKeyPath(OfficeVersions.HasOutlookKey, out themeKeyPath); }
+            catch { detected = false; }
+
+            if (!detected)
             {
-                if (RegOpenKeyEx(HKEY_CURRENT_USER, $@"SOFTWARE\Microsoft\Office\{ver}\Common", 0, KEY_NOTIFY, out hKey) == 0 && hKey != IntPtr.Zero)
-                    break;
-                hKey = IntPtr.Zero;
+                // No Office detected, so there is no Office theme to follow: Detect() answers
+                // from the Windows app mode in this state, and SystemEvents.UserPreferenceChanged
+                // already carries changes to THAT. Nothing was opened, so nothing leaks - but the
+                // watch state has to go back, or the add-in spends the session believing a
+                // watcher is running.
+                ReleaseWatchState(stop);
+                return;
             }
-            if (hKey == IntPtr.Zero) return;
+
+            IntPtr hKey;
+            if (RegOpenKeyEx(HKEY_CURRENT_USER, themeKeyPath, 0, KEY_NOTIFY, out hKey) != 0 || hKey == IntPtr.Zero)
+            {
+                // Office is installed but has never written its Common key. A failed
+                // RegOpenKeyEx assigns no handle, so there is nothing to close here either.
+                ReleaseWatchState(stop);
+                return;
+            }
 
             try
             {
@@ -226,7 +353,15 @@ namespace OutlookAI.Services
                     }
                 }
             }
-            finally { RegCloseKey(hKey); }
+            finally
+            {
+                RegCloseKey(hKey);
+                // Covers the other way out of that loop: RegNotifyChangeKeyValue failing, which
+                // ends the watch just as finally as a failed open did. A no-op on the ordinary
+                // shutdown path, where StopWatching already owns the state and disposes the
+                // event itself once it has joined this thread.
+                ReleaseWatchState(stop);
+            }
         }
     }
 }

@@ -85,6 +85,29 @@ namespace OutlookAI.Services
         }
 
         /// <summary>
+        /// HKCU path of Office's shared <c>Common</c> key for one Office major - the SIBLING of
+        /// <see cref="OutlookKeyPath"/>, not a child of it. The Office UI theme lives there
+        /// (<c>UI Theme</c>), so the add-in's <c>ThemeService</c> builds its path from here and
+        /// picks the version the same way everything else does: from the detection, not from
+        /// whichever supported major's key happens to open first.
+        /// <para>
+        /// The sibling relationship is why that old first-key-wins loop was latent rather than
+        /// live. <c>Installer.iss</c> manufactures an <c>...\Office\&lt;major&gt;\Outlook</c> key
+        /// for EVERY supported major (see <see cref="InstallerFootprintSubKeyName"/>), which is
+        /// exactly what made the key-exists probe useless - but it writes nothing under
+        /// <c>Common</c>, so our own footprint cannot manufacture a phantom <c>Common</c>.
+        /// Measured on this developer machine (2026-08-18): <c>Common</c> existed for 16.0 only,
+        /// while phantom 15.0 and 17.0 <c>Outlook</c> keys were both present. On a machine that
+        /// has ever run two Office majors - an upgrade that left 15.0's <c>Common</c> behind -
+        /// the phantom is real and so was the bug.
+        /// </para>
+        /// </summary>
+        internal static string CommonKeyPath(string version)
+        {
+            return @"Software\Microsoft\Office\" + version + @"\Common";
+        }
+
+        /// <summary>
         /// The Office major version this Outlook is running as, or <see cref="Fallback"/> when
         /// none is detected. Convenience over <see cref="TryDetectOutlookVersion(out string)"/>
         /// for the callers that only need a hive to write into.
@@ -208,8 +231,13 @@ namespace OutlookAI.Services
         /// Live registry predicate: is there a REAL Outlook hive at this HKCU path? Deliberately
         /// not a bare key-exists check - see <see cref="InstallerFootprintSubKeyName"/> for why
         /// that answer would be yes for every supported major on every machine we ship to.
+        /// <para>
+        /// Internal rather than private so a caller that wants the seam-shaped overload above can
+        /// hand it the REAL probe (the add-in's <c>ThemeService</c> does) instead of writing a
+        /// second live predicate that could drift from this one.
+        /// </para>
         /// </summary>
-        private static bool HasOutlookKey(string keyPath)
+        internal static bool HasOutlookKey(string keyPath)
         {
             using (var key = Registry.CurrentUser.OpenSubKey(keyPath))
             {
