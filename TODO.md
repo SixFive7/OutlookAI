@@ -333,6 +333,20 @@
         return a short answer flagged with `index.candidatesExhausted` - loud, but the guarantee
         then rests on a query that never runs.
 
+  **PARTIAL ANSWER, measured 2026-08-18 on this machine, directly against `Search.CollatorDSO`
+  (three read-only SELECTs, no Outlook, no mailbox).** Under `ORDER BY System.Message.DateReceived
+  DESC` over a predicate matching the whole index, the first 25 rows were **all dated** - and on a
+  developer machine files vastly outnumber mail, so had undated rows sorted FIRST the block would
+  have been entirely undated. Under `ASC` the first 25 were the oldest mail rather than undated
+  rows, so they are not sorting lowest either. **The `1601-01-01 00:00:00` floor literal was
+  accepted and returned rows.** So the displacement refetch should essentially never fire, and the
+  guard is free in practice. Two readings fit the data and it cannot separate them: the provider
+  may exclude rows lacking the ORDER BY property from an ordered result, or place them last in both
+  directions - both give the same answer here, but they are different facts. **This does NOT close
+  the item:** the statements carried no `SCOPE='mapi...'`, so they ran over the general SystemIndex
+  namespace rather than the one the product uses. Full write-up and the exact statements are in the
+  session trace folder under Downloads (`tmp-aitrace/nullorder-finding.md`).
+
 - [x] **DONE 2026-08-18 15:12 against `2d28957` - Re-run the ten store-scope probes on the unindexed-PST machine.** The A4 fix (a `store`
   scope resolved against the profile Outlook has rather than against the index) is pinned in T1
   against stand-in index clients whose store catalog is empty, and against one that omits a store
@@ -358,6 +372,23 @@
 
 - [ ] **An answer too big to frame kills the COM host instead of being refused.** Found by the
   boundary audit on 2026-08-18; not fixed, because the fix is not the small one it looks like.
+
+  **The limit is reachable by ordinary use - derived from the caps 2026-08-18, not measured.** One
+  `SweepFoldersNewerThan` answer is a single frame and `MailService` calls it with
+  `includeBodies: true`, so a frame carries 4 arrival-path folders x `SweepPerFolderCap` (200)
+  items per store, times every store in the profile. **The bodies are not capped at the COM
+  layer** - `SnapshotBrief` takes `item.Body` whole, and `BodyCharsDefault`/`BodyCharsCap` are
+  applied in `MailService`, on the FAR side of the frame: they bound what the agent sees, not what
+  crosses the pipe. That puts 64 MB at ~80 KB average body on a one-store profile, ~27 KB on three
+  stores, ~16 KB on five. An 80 KB body is an ordinary long quoted thread. **And the path there is
+  the unindexed-store case**: the sweep window is normally minutes wide, so 200-per-folder never
+  fills, EXCEPT when a store is missing from the index and the window falls back to seven days. So
+  the more degraded the index, the larger the frame, and the frame bursting kills the subsystem
+  that was compensating for the degraded index. Adds two options beside the recorded ones: cap
+  bodies at the COM layer so an unsendable frame cannot be built, or chunk the sweep result. The
+  measurement is also cheaper than the entry assumes - a high-water counter on the encode path,
+  read back through `outlook_health`, accumulates real evidence with no 64 MB allocation test.
+  Write-up in the session trace folder under Downloads (`tmp-aitrace/frame-size-analysis.md`).
 
   `ComHostProtocol.EncodeFrame` refuses a payload over `MaxFrameBytes` (64 MB) by throwing
   `ComHostProtocolException` - a deliberate, specific, actionable failure. But it is thrown from
