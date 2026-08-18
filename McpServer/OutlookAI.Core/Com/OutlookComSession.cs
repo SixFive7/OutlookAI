@@ -7050,7 +7050,7 @@ namespace OutlookAI.Core.Com
                     // folder-scoped exhaustive scan was unconditionally shallow while the
                     // index tier's folder scope was recursive).
                     bool recurse = folderPath == null || folderPath.Count == 0 || includeSubfolders;
-                    ScanFolderTree(_namespace!, scanRoot, storeDisplayName, storeId, recurse, state);
+                    ScanFolderTree(_namespace!, scanRoot, storeDisplayName, storeId, recurse, state, depth: 0);
                 }
                 finally
                 {
@@ -7069,17 +7069,47 @@ namespace OutlookAI.Core.Com
                     state.Truncated,
                     state.TimedOut,
                     state.RowsDropped,
-                    state.RowsUnreadable);
+                    state.RowsUnreadable,
+                    state.DepthLimitReached);
             });
         }
 
+        /// <summary>
+        /// Walks one store's (or one folder's) subtree, filtering every mail folder it
+        /// reaches. <paramref name="depth"/> is 0 at the scanned root and bounds the
+        /// recursion at <see cref="FolderWalkDepthGuard"/>, exactly as
+        /// <see cref="DecideSweepWalk"/> bounds the sweep's walk and <c>CollectFolders</c>
+        /// bounds the listing walk.
+        /// <para>
+        /// GAP F4, and it had two halves. The crash half: this was the last unbounded
+        /// recursion over Outlook's folder graph, and a cyclic or pathological tree is a
+        /// <c>StackOverflowException</c>, which .NET does not let anyone catch - it takes the
+        /// COM host down with it, which the parent reports as Outlook having gone away, and
+        /// two of those open the breaker for 30 s. The guard is one comparison.
+        /// </para>
+        /// <para>
+        /// The reporting half is why it is not just one comparison. Stopping the walk without
+        /// saying so would make this mode - the one a caller picks BECAUSE completeness
+        /// matters - go quiet about a subtree it never opened, which is the whole species of
+        /// defect this area keeps closing. So the stop LATCHES on the scan state, rides out
+        /// on the result, and reaches the payload as <c>exhaustive.depthLimitReached</c> plus
+        /// the <c>depth_limit</c> coverage code the sweep's walk already uses - same token,
+        /// same meaning, one vocabulary.
+        /// </para>
+        /// <para>
+        /// It bounds this subtree only; siblings are still walked. A tree deep enough to hit
+        /// 64 is already broken, but a walk that abandoned the remaining accounts over one
+        /// bad folder would lose far more than it saved.
+        /// </para>
+        /// </summary>
         private void ScanFolderTree(
             dynamic ns,
             object folderObject,
             string storeName,
             string storeId,
             bool recurse,
-            ExhaustiveScanState state)
+            ExhaustiveScanState state,
+            int depth)
         {
             // The deadline is evaluated PER FOLDER, not only inside the per-row drain:
             // a folder whose filter matches zero rows never entered the drain loop, so a
@@ -7087,6 +7117,16 @@ namespace OutlookAI.Core.Com
             // timedOut stayed false (soak fix 15).
             if (state.CheckDeadline() || state.ShouldStop)
             {
+                return;
+            }
+
+            // Same guard and same comparison as the other two walks, so "too deep" means one
+            // thing in this server. Checked before the folder is filtered rather than before
+            // it is descended into: the folder AT the offending depth is not scanned either,
+            // and saying so is what the latch is for.
+            if (depth > FolderWalkDepthGuard)
+            {
+                state.DepthLimitReached = true;
                 return;
             }
 
@@ -7126,7 +7166,7 @@ namespace OutlookAI.Core.Com
                     try
                     {
                         child = folderCollection[i];
-                        ScanFolderTree(ns, child!, storeName, storeId, true, state);
+                        ScanFolderTree(ns, child!, storeName, storeId, true, state, depth + 1);
                     }
                     finally
                     {
@@ -7311,6 +7351,14 @@ namespace OutlookAI.Core.Com
             internal bool Truncated { get; set; }
 
             internal bool TimedOut { get; set; }
+
+            /// <summary>
+            /// Latched when the walk refused a subtree past
+            /// <see cref="FolderWalkDepthGuard"/> (gap F4). Deliberately NOT part of
+            /// <see cref="ShouldStop"/>: the bound is per subtree, and every sibling branch
+            /// is still worth walking.
+            /// </summary>
+            internal bool DepthLimitReached { get; set; }
 
             internal bool ShouldStop => Truncated || TimedOut;
 

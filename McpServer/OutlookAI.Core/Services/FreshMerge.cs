@@ -197,6 +197,37 @@ namespace OutlookAI.Core.Services
         public const string ThreadGapUnwalkedStore = "unwalked_store";
 
         /// <summary>
+        /// Coverage hole: the profile holds a store the local index has no mail for, and the
+        /// live walk did not cover it either - so whether this conversation reaches into it
+        /// cannot be established by any tier this lookup has.
+        /// <para>
+        /// THE SILENT HALF OF GAP C4, and it is silent for a reason worth stating.
+        /// <see cref="ThreadGapUnwalkedStore"/> is raised from the stores the INDEX ROWS for
+        /// this conversation name, so it can only ever fire for a store the index knows.
+        /// Point it at the unindexed-PST profile the A-group work is about and it says
+        /// nothing at all: the index has no rows from that store to name, the walk covered
+        /// one other store, and half a conversation can be missing with the payload reading
+        /// <c>freshness: "live"</c>.
+        /// </para>
+        /// <para>
+        /// It is deliberately a WEAKER claim than its sibling. <c>unwalked_store</c> says the
+        /// conversation demonstrably has members elsewhere; this one says the question could
+        /// not be asked, which is a different thing to relay and the reason it is a second
+        /// code rather than a widening of the first. Both have the same remedy - call
+        /// <c>thread</c> again with an <c>id</c> from the store in question - because both
+        /// are answered by walking that store's own conversation graph.
+        /// </para>
+        /// <para>
+        /// The verdict per store is the same pure <c>MailService.StoresMissingFromIndex</c>
+        /// that closed A3 and A1's residue: only a PROBE's "no" counts, absence from the
+        /// discovery catalog is never evidence, and a store that could not be settled is
+        /// reported neither way. So this code means "there is a store here neither tier can
+        /// see", never "a store we could not check".
+        /// </para>
+        /// </summary>
+        public const string ThreadGapUnindexedStore = "unindexed_store";
+
+        /// <summary>
         /// Exhaustive-scan coverage hole: the scan's wall-clock budget stopped it, so the
         /// folders it had not reached yet were never opened. Deliberately the SAME token the
         /// freshness sweep uses (<see cref="GapTimeBudget"/>) - the hole is the same hole,
@@ -209,6 +240,20 @@ namespace OutlookAI.Core.Services
         /// open. Same token as the sweep's (<see cref="GapFoldersSkipped"/>), same reason.
         /// </summary>
         public const string ScanGapFoldersSkipped = GapFoldersSkipped;
+
+        /// <summary>
+        /// Exhaustive-scan coverage hole: a subtree was refused for sitting deeper than the
+        /// folder-walk depth guard, so its folders were never opened (gap F4). The SAME token
+        /// the sweep's walk uses (<see cref="GapDepthLimit"/>) - one bound, one name, one
+        /// remedy - because it is literally the same guard at the same number.
+        /// <para>
+        /// New in the sense that this walk had no bound to report: it recursed without one,
+        /// so a cyclic folder graph ended the COM host process rather than truncating an
+        /// answer. Adding the guard without this code would have replaced a crash with a
+        /// silent hole, which in the mode chosen FOR completeness is the worse of the two.
+        /// </para>
+        /// </summary>
+        public const string ScanGapDepthLimit = GapDepthLimit;
 
         /// <summary>
         /// Exhaustive-scan coverage hole: the result cap stopped the walk partway through
@@ -543,6 +588,11 @@ namespace OutlookAI.Core.Services
                 gaps.Add(ScanGapFoldersSkipped);
             }
 
+            if (exhaustive.DepthLimitReached)
+            {
+                gaps.Add(ScanGapDepthLimit);
+            }
+
             if (exhaustive.RowsUnreadable > 0)
             {
                 gaps.Add(ScanGapRowsUnreadable);
@@ -708,12 +758,77 @@ namespace OutlookAI.Core.Services
                 }
             }
 
+            // Read off the block rather than recomputed here, exactly as the sweep's
+            // no_index_frontier is read off SweepInfo.IndexFrontierMissing: establishing it
+            // needs Outlook's store list and an index probe per store, neither of which
+            // belongs in a pure classifier. The RULE that turns those into this list is pure
+            // and lives in UnwalkedUnindexedStores.
+            if (live.StoresWithoutIndex != null && live.StoresWithoutIndex.Count > 0)
+            {
+                gaps.Add(ThreadGapUnindexedStore);
+            }
+
             if (live.MemberCapReached)
             {
                 gaps.Add(ThreadGapMemberCap);
             }
 
             return gaps.Count == 0 ? null : gaps;
+        }
+
+        /// <summary>
+        /// Which of the stores the index holds no mail for were left OUTSIDE this
+        /// conversation walk - the rule behind <see cref="ThreadGapUnindexedStore"/>, pure so
+        /// T1 pins it without a profile, an index or a mailbox.
+        /// <para>
+        /// The anchor's own store is excluded, and that exclusion is the whole substance of
+        /// the rule: Outlook enumerated the conversation THERE, member by member, so its
+        /// coverage of that store is complete whatever the index does or does not hold. An
+        /// unindexed store that happens to be the one walked is therefore not a hole, and
+        /// reporting it would fire this code on every single-store PST profile - the
+        /// cry-wolf failure that makes a completeness flag worthless.
+        /// </para>
+        /// <para>
+        /// Nothing is claimed when the walk did not run, returned no members, or could not
+        /// name the store it covered. All three leave <c>AnchorStore</c> unusable, so the
+        /// exclusion above cannot be applied - and a list built without it would name the
+        /// very store that WAS walked, which is worse than saying nothing. "Did not run" has
+        /// its own state (<see cref="FreshnessIndexOnly"/>) with its own remedy, and a
+        /// zero-member walk is judged the same way <see cref="DescribeThreadCoverageGaps"/>
+        /// already judges it for <see cref="ThreadGapUnwalkedStore"/>.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string> UnwalkedUnindexedStores(
+            ThreadLiveInfo live,
+            IReadOnlyList<string>? storesWithoutIndex)
+        {
+            if (live == null)
+            {
+                throw new ArgumentNullException(nameof(live));
+            }
+
+            if (!live.Performed
+                || live.MembersWalked <= 0
+                || string.IsNullOrEmpty(live.AnchorStore)
+                || storesWithoutIndex == null
+                || storesWithoutIndex.Count == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            List<string> unwalked = new List<string>(storesWithoutIndex.Count);
+            foreach (string store in storesWithoutIndex)
+            {
+                if (string.IsNullOrEmpty(store)
+                    || string.Equals(store, live.AnchorStore, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                unwalked.Add(store);
+            }
+
+            return unwalked;
         }
 
         /// <summary>

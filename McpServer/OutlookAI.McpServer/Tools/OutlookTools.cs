@@ -137,7 +137,10 @@ public static class OutlookTools
             + "happens, and the scope block reports what was actually covered. Setting folder also aims the "
             + "freshness sweep at that folder and its subfolders; without it the sweep covers Inbox, Sent Items, "
             + "Deleted Items and Junk Email of the store(s) in scope - those four folders only, not their "
-            + "subfolders - so for brand-new mail filed anywhere else, pass store + folder.")] string? folder = null,
+            + "subfolders - so for brand-new mail filed anywhere else, pass store + folder. Branch on "
+            + "sweep.scopeShape rather than on the sweep.scope sentence: default_folders means exactly that "
+            + "shallow four-folder set, folder means the named folder plus its subtree, folder_only means the "
+            + "named folder alone.")] string? folder = null,
         [Description("Whether folder covers its subfolders. Default true, in every mode. Set false to search that "
             + "one folder only - also the cheap way to keep an exhaustive scan bounded.")]
         bool include_subfolders = true,
@@ -454,12 +457,19 @@ public static class OutlookTools
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.ShowSearchResults(query, scope, store, folder));
     }
 
+    // The cap on unresolvedRecipients is named here WITHOUT its number, deliberately: an
+    // attribute argument has to be a compile-time constant, so a digit written here could
+    // not be derived from MailService.UnresolvedRecipientsCap and would be a second copy
+    // free to drift. The flag pair is the thing an agent has to read anyway, and it carries
+    // the real total.
     private const string CcHint = "Cc recipient address(es), separated by ';' or ','. ADDED to the recipients Outlook already "
         + "put on the draft - existing recipients are never replaced. Addresses that do not resolve are reported back in "
-        + "unresolvedRecipients (they stay on the draft for the user to fix), never dropped silently.";
+        + "unresolvedRecipients (they stay on the draft for the user to fix), never dropped silently. That list is CAPPED: "
+        + "check unresolvedRecipientsTruncated / unresolvedRecipientsTotal before telling the user it is all of them.";
 
     private const string BccHint = "Bcc recipient address(es), separated by ';' or ','. ADDED to the draft like cc; other "
-        + "recipients never see them. Unresolvable addresses come back in unresolvedRecipients.";
+        + "recipients never see them. Unresolvable addresses come back in unresolvedRecipients (capped - see "
+        + "unresolvedRecipientsTruncated / unresolvedRecipientsTotal).";
 
     private const string ImportanceHint = "Message importance: 'low', 'normal' or 'high'. Omit for Outlook's default (normal).";
 

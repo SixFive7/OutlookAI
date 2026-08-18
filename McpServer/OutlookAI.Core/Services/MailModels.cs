@@ -289,8 +289,34 @@ namespace OutlookAI.Core.Services
         /// Items, Junk Email)"</c> = those folders in the searched store, or in every
         /// store when the search is not store-scoped. Lets an agent see the freshness
         /// coverage of its query.
+        /// <para>
+        /// A SENTENCE, so branch on <see cref="ScopeShape"/> instead - this one is rendered
+        /// from that token (<see cref="MailService.DescribeSweepScope"/>) and the two cannot
+        /// describe different breadths.
+        /// </para>
         /// </summary>
         public string? Scope { get; set; }
+
+        /// <summary>
+        /// The same breadth as <see cref="Scope"/>, as a token software can act on:
+        /// <c>default_folders</c>, <c>folder</c> or <c>folder_only</c>
+        /// (<see cref="MailService.ClassifySweepScope"/>, gap E2). Null exactly when
+        /// <see cref="Scope"/> is - a sweep that was refused or could not run planned no
+        /// coverage to describe.
+        /// <para>
+        /// <c>default_folders</c> is the one that carries a warning: it means Inbox, Sent
+        /// Items, Deleted Items and Junk Email of the store(s) in scope and NOT their
+        /// subfolders, so mail a server-side rule filed into a subfolder before the indexer
+        /// reached it is covered by neither tier. The remedy is a folder scope, which sweeps
+        /// that folder's whole subtree.
+        /// </para>
+        /// <para>
+        /// Deliberately NOT a coverage code and never <c>degraded</c>: this shape holds for
+        /// nearly every search, and a flag that fires always devalues the ones that fire
+        /// rarely (the reasoning <see cref="AttachmentTextCovered"/> is built on).
+        /// </para>
+        /// </summary>
+        public string? ScopeShape { get; set; }
 
         /// <summary>Folders swept.</summary>
         public int FoldersSwept { get; set; }
@@ -538,6 +564,21 @@ namespace OutlookAI.Core.Services
 
         /// <summary>True when the time budget stopped the scan (results may be incomplete).</summary>
         public bool TimedOut { get; set; }
+
+        /// <summary>
+        /// True when the scan refused one or more subtrees for sitting deeper than
+        /// <c>OutlookComSession.FolderWalkDepthGuard</c>, so those folders were never opened
+        /// (<see cref="FreshMerge.ScanGapDepthLimit"/>, gap F4).
+        /// <para>
+        /// The walk had NO depth bound at all until 2026-08-18, which made a cyclic or
+        /// pathological folder graph an uncatchable <c>StackOverflowException</c> that ended
+        /// the COM host - reported to the caller as Outlook having disappeared. The bound is
+        /// the one the sweep walk and the folder-listing walk already use; this flag is what
+        /// keeps hitting it from being the silent truncation those two were fixed for
+        /// (gaps G3/G4).
+        /// </para>
+        /// </summary>
+        public bool DepthLimitReached { get; set; }
 
         /// <summary>
         /// Rows the scan examined and did not admit, for ANY reason - the same counter, with
@@ -1131,6 +1172,36 @@ namespace OutlookAI.Core.Services
         public long ElapsedMs { get; set; }
 
         /// <summary>
+        /// Stores the profile HAS, the local index holds no mail for, and this walk did not
+        /// cover - so a member of this conversation sitting in one of them is in NEITHER
+        /// tier (<see cref="FreshMerge.ThreadGapUnindexedStore"/>, gap C4's silent half).
+        /// Null when there are none.
+        /// <para>
+        /// The same fact <c>search</c> reports as <c>sweep.storesWithoutIndex</c>, said here
+        /// because it changes the answer here too: Outlook walks a conversation inside ONE
+        /// store, and every other store is index-only for this lookup.
+        /// </para>
+        /// <para>
+        /// CAPPED at <see cref="MailService.UnindexedStoreListCap"/> - the same cap, from the
+        /// same constant, the sweep's list carries. See
+        /// <see cref="StoresWithoutIndexTruncated"/> and <see cref="StoresWithoutIndexTotal"/>.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<string>? StoresWithoutIndex { get; set; }
+
+        /// <summary>
+        /// True when <see cref="StoresWithoutIndex"/> lists fewer stores than were found;
+        /// null when it is complete.
+        /// </summary>
+        public bool? StoresWithoutIndexTruncated { get; set; }
+
+        /// <summary>
+        /// How many such stores were found, when that is more than the list shows. Null
+        /// otherwise - the list is then its own total.
+        /// </summary>
+        public int? StoresWithoutIndexTotal { get; set; }
+
+        /// <summary>
         /// Coverage holes of this lookup, in the same vocabulary as
         /// <see cref="SweepInfo.CoverageGaps"/> (<see cref="FreshMerge.DescribeThreadCoverageGaps"/>).
         /// Null when the answer is whole.
@@ -1572,8 +1643,39 @@ namespace OutlookAI.Core.Services
         /// Addresses Outlook could NOT resolve against the address book (present only
         /// when there are any). They stay on the draft - the user can fix them in the
         /// compose window - but they are never dropped silently (batch A, A2).
+        /// <para>
+        /// CAPPED at <see cref="MailService.UnresolvedRecipientsCap"/>. Check
+        /// <see cref="UnresolvedRecipientsTruncated"/> before reporting this list as the
+        /// complete set of failures.
+        /// </para>
         /// </summary>
         public IReadOnlyList<string>? UnresolvedRecipients { get; set; }
+
+        /// <summary>
+        /// True when <see cref="UnresolvedRecipients"/> lists fewer addresses than failed to
+        /// resolve; null when it is complete. The has-more half of the cap, and the half that
+        /// was missing: the list was cut at
+        /// <see cref="MailService.UnresolvedRecipientsCap"/> with nothing saying so, on the
+        /// one surface where a short list is acted on rather than merely read - the remedy
+        /// for an unresolved address is to ask the user about it, so an address past the cap
+        /// was never mentioned to anybody.
+        /// </summary>
+        public bool? UnresolvedRecipientsTruncated { get; set; }
+
+        /// <summary>
+        /// How many addresses failed to resolve in total, when that is more than the list
+        /// shows. Null otherwise - the list is then its own total, exactly as
+        /// <see cref="RecipientsTotal"/> works for the resolved list.
+        /// </summary>
+        public int? UnresolvedRecipientsTotal { get; set; }
+
+        /// <summary>
+        /// What to do about a CUT unresolved list, present only with
+        /// <see cref="UnresolvedRecipientsTruncated"/>
+        /// (<see cref="MailService.DescribeUnresolvedRecipientCap"/>). Rendered from the same
+        /// two values as the fields above, so the sentence and the fields cannot disagree.
+        /// </summary>
+        public string? UnresolvedRecipientsAdvice { get; set; }
 
         /// <summary>
         /// Only present when a derived draft's subject was overridden: whether the
@@ -1687,8 +1789,25 @@ namespace OutlookAI.Core.Services
         /// <summary>Real recipient count before capping (present only when capped).</summary>
         public int? RecipientsTotal { get; set; }
 
-        /// <summary>Addresses Outlook could not resolve; they stay on the draft.</summary>
+        /// <summary>
+        /// Addresses Outlook could not resolve; they stay on the draft. Capped at
+        /// <see cref="MailService.UnresolvedRecipientsCap"/> - check
+        /// <see cref="UnresolvedRecipientsTruncated"/> before reporting it as complete.
+        /// </summary>
         public IReadOnlyList<string>? UnresolvedRecipients { get; set; }
+
+        /// <summary>True when the unresolved list was cut by the cap; null when it is whole.</summary>
+        public bool? UnresolvedRecipientsTruncated { get; set; }
+
+        /// <summary>How many addresses failed to resolve, when that is more than the list shows.</summary>
+        public int? UnresolvedRecipientsTotal { get; set; }
+
+        /// <summary>
+        /// What to do about a cut unresolved list, present only with
+        /// <see cref="UnresolvedRecipientsTruncated"/>. Same sentence, same source values, as
+        /// the draft creators emit - one cap, one wording, whichever tool hit it.
+        /// </summary>
+        public string? UnresolvedRecipientsAdvice { get; set; }
 
         /// <summary>Only when the subject was replaced: whether threading survived it (A3).</summary>
         public bool? ConversationTopicPreserved { get; set; }

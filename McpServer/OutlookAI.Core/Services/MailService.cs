@@ -56,6 +56,91 @@ namespace OutlookAI.Core.Services
             "default folders (Inbox, Sent Items, Deleted Items, Junk Email)";
 
         /// <summary>
+        /// <see cref="SweepInfo.ScopeShape"/> when the sweep covered the arrival-path default
+        /// folders of the store(s) in scope - four folders per store, and NOT their
+        /// subfolders (gap E2).
+        /// </summary>
+        public const string SweepScopeDefaultFolders = "default_folders";
+
+        /// <summary>
+        /// <see cref="SweepInfo.ScopeShape"/> when the sweep followed a folder scope, subtree
+        /// included. Deliberately the token <c>SearchScopeInfo.Shape</c> already uses for the
+        /// same breadth, so an agent learns one vocabulary for "which folders".
+        /// </summary>
+        public const string SweepScopeFolder = "folder";
+
+        /// <summary>
+        /// <see cref="SweepInfo.ScopeShape"/> when the sweep followed a folder scope with
+        /// <c>include_subfolders: false</c>. Same token as <c>SearchScopeInfo.Shape</c>'s.
+        /// </summary>
+        public const string SweepScopeFolderOnly = "folder_only";
+
+        /// <summary>
+        /// Which folders a sweep set out to cover, as a token software can branch on - gap
+        /// E2, and the reason it is a token rather than a code or a flag is worth having in
+        /// one place.
+        /// <para>
+        /// THE HOLE. The default set is four arrival-path folders per store and it does not
+        /// descend, so mail a server-side rule files into a subfolder BEFORE the indexer
+        /// reaches it is in neither tier - not in the index, which has not seen it, and not
+        /// in the sweep, which does not look there. Rules filing mail is ordinary rather than
+        /// exotic, which makes this the likeliest of the remaining holes to be hit. The fact
+        /// was in the payload, but only as <see cref="SweepInfo.Scope"/>: an English sentence,
+        /// so the only way to branch on it was to compare against a sentence, which is not a
+        /// contract anybody can rely on.
+        /// </para>
+        /// <para>
+        /// IT RAISES NO COVERAGE CODE AND DOES NOT DEGRADE THE SEARCH, on the B2 precedent
+        /// and for the same arithmetic: <c>default_folders</c> is the shape of nearly every
+        /// search anyone runs, and <see cref="FreshMerge.ClassifyFreshness"/> derives
+        /// <c>partial</c> from the code list, so a code here would make almost every answer
+        /// permanently degraded and devalue the codes that fire rarely. What is missing is
+        /// also not a hole in what the sweep was ASKED to do - it is the breadth of the tier
+        /// itself, which is a fact to read rather than an alarm to raise. An agent that needs
+        /// a subfolder covered live passes <c>folder</c>, and the tool description says so.
+        /// </para>
+        /// <para>
+        /// Pure, and the ONE source of both renderings: <see cref="DescribeSweepScope"/>
+        /// turns the token into the sentence, so the field and the prose cannot drift into
+        /// describing different breadths.
+        /// </para>
+        /// </summary>
+        public static string ClassifySweepScope(bool folderScoped, bool includeSubfolders)
+        {
+            if (!folderScoped)
+            {
+                // The flag is meaningless without a folder: the default set is shallow by
+                // construction (SweepFolder, not SweepFolderTree), so include_subfolders
+                // cannot widen it and must not be allowed to imply that it did.
+                return SweepScopeDefaultFolders;
+            }
+
+            return includeSubfolders ? SweepScopeFolder : SweepScopeFolderOnly;
+        }
+
+        /// <summary>
+        /// The human rendering of a <see cref="ClassifySweepScope"/> token - what
+        /// <see cref="SweepInfo.Scope"/> has always carried, now computed FROM the token
+        /// rather than beside it. Pure, so T1 pins that every token has a sentence and that
+        /// the sentences are the ones callers already read.
+        /// </summary>
+        public static string DescribeSweepScope(string shape)
+        {
+            return shape switch
+            {
+                SweepScopeFolder => "folder",
+                SweepScopeFolderOnly => "folder (no subfolders)",
+                SweepScopeDefaultFolders => DefaultSweepScopeDescription,
+
+                // A token with no sentence would be a breadth the payload names and the prose
+                // cannot explain. T1 pins that every declared token is handled, so this is
+                // reachable only by a token added without its wording - say so rather than
+                // returning something that reads as a real scope.
+                _ => "unknown sweep scope (" + shape + ")",
+            };
+        }
+
+        /// <summary>
         /// Above this many swept folders the sweep block reports the count only - the
         /// list exists to make a narrow scope legible, not to bloat every payload
         /// (section-12 compact-payload discipline).
@@ -857,23 +942,69 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentNullException(nameof(sweep));
             }
 
-            IReadOnlyList<string>? stores = sweep.StoresWithoutIndex;
-            if (stores == null || stores.Count <= UnindexedStoreListCap)
+            sweep.StoresWithoutIndex = CapUnindexedStoreList(
+                sweep.StoresWithoutIndex, out int total, out bool truncated);
+            sweep.StoresWithoutIndexTruncated = truncated ? true : (bool?)null;
+            sweep.StoresWithoutIndexTotal = truncated ? total : (int?)null;
+        }
+
+        /// <summary>
+        /// How a list of stores the index holds nothing for is SAID, wherever it is said -
+        /// the sweep's <c>no_index_frontier</c> sentence and the conversation walk's
+        /// <c>unindexed_store</c> one. Null for an empty list, so each caller supplies its
+        /// own wording for "we know it happened and cannot name the stores".
+        /// <para>
+        /// The truncation clause is the substance. A capped list read aloud as "store A,
+        /// store B" claims to be the whole set, which is a quieter lie than the unbounded
+        /// list the cap replaced (Q7b) - so the remainder is counted, the cap is quoted from
+        /// its constant rather than restated, and the payload field carrying the true total
+        /// is named. That field differs per block, which is the one thing
+        /// <paramref name="totalFieldPath"/> exists for.
+        /// </para>
+        /// </summary>
+        public static string? DescribeUnindexedStoreList(
+            IReadOnlyList<string>? stores, bool truncated, int? total, string totalFieldPath)
+        {
+            if (stores == null || stores.Count == 0)
             {
-                sweep.StoresWithoutIndexTruncated = null;
-                sweep.StoresWithoutIndexTotal = null;
-                return;
+                return null;
+            }
+
+            string named = "store(s) " + string.Join(", ", stores);
+            if (!truncated)
+            {
+                return named;
+            }
+
+            return named + " and " + ((total ?? stores.Count) - stores.Count).ToString(CultureInfo.InvariantCulture)
+                + " more (list capped at " + UnindexedStoreListCap.ToString(CultureInfo.InvariantCulture)
+                + "; " + totalFieldPath + " is the true count)";
+        }
+
+        /// <summary>
+        /// The list half of <see cref="ApplyUnindexedStoreCap"/>, pure and shared, so the
+        /// sweep block and the conversation walk's block
+        /// (<see cref="ThreadLiveInfo.StoresWithoutIndex"/>) cut the same list the same way
+        /// at the same number. Two blocks applying one cap by two copies of the code is how
+        /// the pair drifts.
+        /// </summary>
+        public static IReadOnlyList<string>? CapUnindexedStoreList(
+            IReadOnlyList<string>? stores, out int total, out bool truncated)
+        {
+            total = stores?.Count ?? 0;
+            truncated = total > UnindexedStoreListCap;
+            if (!truncated)
+            {
+                return stores;
             }
 
             List<string> capped = new List<string>(UnindexedStoreListCap);
             for (int i = 0; i < UnindexedStoreListCap; i++)
             {
-                capped.Add(stores[i]);
+                capped.Add(stores![i]);
             }
 
-            sweep.StoresWithoutIndexTotal = stores.Count;
-            sweep.StoresWithoutIndex = capped;
-            sweep.StoresWithoutIndexTruncated = true;
+            return capped;
         }
 
         /// <summary>
@@ -1073,20 +1204,11 @@ namespace OutlookAI.Core.Services
                 {
                     case FreshMerge.GapNoIndexFrontier:
                         advice.Add("Freshness sweep is the ONLY tier covering "
-                            + (sweep.StoresWithoutIndex != null && sweep.StoresWithoutIndex.Count > 0
-                                ? "store(s) " + string.Join(", ", sweep.StoresWithoutIndex)
-                                    // The sentence must never claim the list is the whole set
-                                    // (Q7b): naming 12 of 30 stores and stopping reads as
-                                    // "these twelve", which is a quieter lie than the
-                                    // unbounded list it replaced.
-                                    + (sweep.StoresWithoutIndexTruncated == true
-                                        ? " and " + ((sweep.StoresWithoutIndexTotal ?? sweep.StoresWithoutIndex.Count)
-                                                - sweep.StoresWithoutIndex.Count).ToString(CultureInfo.InvariantCulture)
-                                            + " more (list capped at "
-                                            + UnindexedStoreListCap.ToString(CultureInfo.InvariantCulture)
-                                            + "; sweep.storesWithoutIndexTotal is the true count)"
-                                        : string.Empty)
-                                : "this profile")
+                            + (DescribeUnindexedStoreList(
+                                sweep.StoresWithoutIndex,
+                                sweep.StoresWithoutIndexTruncated == true,
+                                sweep.StoresWithoutIndexTotal,
+                                "sweep.storesWithoutIndexTotal") ?? "this profile")
                             + ": the local index holds no mail there, so there was no frontier to sweep up to and the "
                             + "window fell back to the last "
                             + EmptyIndexSweepWindow.TotalDays.ToString("F0", CultureInfo.InvariantCulture)
@@ -1294,6 +1416,15 @@ namespace OutlookAI.Core.Services
                             + " folder(s) Outlook would not filter or enumerate (of "
                             + (exhaustive.FoldersScanned + exhaustive.FoldersSkipped).ToString(CultureInfo.InvariantCulture)
                             + " reached) - mail in them is NOT covered by these results.");
+                        break;
+
+                    case FreshMerge.ScanGapDepthLimit:
+                        advice.Add("The scan refused folders deeper than "
+                            + Com.OutlookComSession.FolderWalkDepthGuard.ToString(CultureInfo.InvariantCulture)
+                            + " levels and never opened them, so mail in them is NOT covered by these results. A real "
+                            + "mailbox is nowhere near that deep, so this points at a damaged or looping folder tree "
+                            + "rather than at the bound being too low - list_folders on this store shows where. Scan "
+                            + "the subtree directly with folder set to a path inside it.");
                         break;
 
                     case FreshMerge.ScanGapRowsUnreadable:
@@ -1718,9 +1849,16 @@ namespace OutlookAI.Core.Services
             // The default folder set is shallow by construction (SweepFolder, not
             // SweepFolderTree), so only a folder-scoped sweep can honor the flag.
             bool sweepRecursive = folderKey != null && request.IncludeSubfolders;
-            info.Scope = folderKey == null
-                ? DefaultSweepScopeDescription
-                : sweepRecursive ? "folder" : "folder (no subfolders)";
+
+            // Gap E2. The token and the sentence are set in ONE statement from ONE classifier,
+            // so the branchable field and the prose describe the same breadth by construction.
+            // Both stay paired with the sweep that was PLANNED - a refused or failed sweep
+            // returns before this and carries neither, because "it covered the default
+            // folders" is a claim about coverage, and those paths covered nothing. That is
+            // the one way this differs from B2's attachmentTextCovered, which survives every
+            // early return precisely because it states a capability rather than a coverage.
+            info.ScopeShape = ClassifySweepScope(folderKey != null, request.IncludeSubfolders);
+            info.Scope = DescribeSweepScope(info.ScopeShape);
 
             // D34 sweep cache: rapid-fire iterative searches reuse one sweep for up to
             // ~10 s (keyed on the frontier-derived window base + store scope + folder
@@ -2425,6 +2563,7 @@ namespace OutlookAI.Core.Services
                 FoldersSkipped = scan.FoldersSkipped,
                 Truncated = scan.Truncated,
                 TimedOut = scan.TimedOut,
+                DepthLimitReached = scan.DepthLimitReached,
                 RowsDropped = scan.RowsDropped,
                 RowsUnreadable = scan.RowsUnreadable,
                 ItemsFilterUnreadable = scanItemsFilterUnreadable,
@@ -2865,6 +3004,14 @@ namespace OutlookAI.Core.Services
                 indexStores.Add(FreshMerge.ResolveHitStore(hit));
             }
 
+            // C4's silent half, and it has to come BEFORE the codes are computed because
+            // they are read off the block. The index rows above can only ever reveal a store
+            // the INDEX knows, so on the profile shape this product keeps meeting - one
+            // indexed mailbox plus a data file Windows Search has never opened - a
+            // conversation reaching into that data file produced no rows to compare and
+            // nothing said the walk had covered one store of two.
+            NoteThreadStoresWithoutIndex(live);
+
             live.CoverageGaps = FreshMerge.DescribeThreadCoverageGaps(live, indexStores);
             string freshness = FreshMerge.ClassifyThreadFreshness(live, indexStores);
 
@@ -3015,6 +3162,62 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
+        /// Names the stores neither tier covered for this conversation (gap C4's silent
+        /// half), by the SAME rule the sweep names them with: Outlook's own store list,
+        /// probed store by store, verdict from the pure <see cref="StoresMissingFromIndex"/>.
+        /// Reusing it is the point - "the index holds nothing for this store" already means
+        /// one thing in this server, and a second rule for <c>thread</c> would be a second
+        /// thing to keep true.
+        /// <para>
+        /// THE HOLE IT CLOSES. <c>unwalked_store</c> is raised from the stores this
+        /// conversation's INDEX ROWS name, so it is blind exactly where the index is: on a
+        /// mixed profile the walk covers the anchor's store, the data file contributes no
+        /// rows to compare against, and half a conversation can be missing under
+        /// <c>freshness: "live"</c>. This pass asks Outlook instead of asking the index about
+        /// itself.
+        /// </para>
+        /// <para>
+        /// The gate below is a COST decision, not the rule: a walk that did not run or found
+        /// nothing would be answered "nothing to report" by
+        /// <see cref="FreshMerge.UnwalkedUnindexedStores"/> anyway, which is where the rule
+        /// lives and where it is pinned - the gate only avoids paying for probes whose answer
+        /// cannot be used. What it costs when it does run is one store-list read and one
+        /// probe per store, both from the <see cref="StoreDetailsCacheTtl"/> caches the
+        /// search path already fills, under <see cref="StoreIndexProbeBudgetMs"/>; a store
+        /// left unprobed answers null and is reported neither way, because silence here means
+        /// "not established" and never "indexed".
+        /// </para>
+        /// </summary>
+        private void NoteThreadStoresWithoutIndex(ThreadLiveInfo live)
+        {
+            if (!live.Performed || live.MembersWalked <= 0 || string.IsNullOrEmpty(live.AnchorStore))
+            {
+                return;
+            }
+
+            Stopwatch clock = Stopwatch.StartNew();
+            IReadOnlyList<string> missing = StoresMissingFromIndex(
+                TryGetProfileStoreNames(),
+
+                // No catalog short-circuit here: unlike the sweep, this path has no per-store
+                // frontier map in hand, so every store is settled by its own probe.
+                indexKnownStores: null,
+                store => clock.ElapsedMilliseconds > StoreIndexProbeBudgetMs
+                    ? (bool?)null
+                    : StoreHasIndexRows(store));
+
+            IReadOnlyList<string> unwalked = FreshMerge.UnwalkedUnindexedStores(live, missing);
+            if (unwalked.Count == 0)
+            {
+                return;
+            }
+
+            live.StoresWithoutIndex = CapUnindexedStoreList(unwalked, out int total, out bool truncated);
+            live.StoresWithoutIndexTruncated = truncated ? true : (bool?)null;
+            live.StoresWithoutIndexTotal = truncated ? total : (int?)null;
+        }
+
+        /// <summary>
         /// One content-free token for a failed conversation walk (S4: never a subject, never
         /// a body). <c>OutlookUnavailableException</c> and <c>TimeoutException</c> carry
         /// messages the product wrote - they already name what failed and what was done
@@ -3119,6 +3322,21 @@ namespace OutlookAI.Core.Services
                             + "' only - Outlook walks a conversation inside one store - while this conversation also has "
                             + "members in another account. Those are indexed results, so a reply that arrived there "
                             + "moments ago may be missing; call thread again with an id from that account to check it live.");
+                        break;
+
+                    case FreshMerge.ThreadGapUnindexedStore:
+                        advice.Add("INCOMPLETE CONVERSATION - TELL THE USER: the local index holds no mail for "
+                            + (DescribeUnindexedStoreList(
+                                live.StoresWithoutIndex,
+                                live.StoresWithoutIndexTruncated == true,
+                                live.StoresWithoutIndexTotal,
+                                "live.storesWithoutIndexTotal") ?? "part of this profile")
+                            + ", and Outlook walks a conversation inside ONE store (here '"
+                            + (live.AnchorStore ?? "?")
+                            + "'), so a member sitting there is covered by NEITHER tier. Whether this conversation "
+                            + "reaches into it cannot be established from here - it is not that the members were "
+                            + "checked and found absent. Call thread again with an id from that account to walk it "
+                            + "live, or search it with exhaustive:true.");
                         break;
 
                     case FreshMerge.ThreadGapMemberCap:
@@ -4005,6 +4223,8 @@ namespace OutlookAI.Core.Services
             IReadOnlyList<DraftAttachmentFile> attachments)
         {
             IReadOnlyList<RecipientView> recipients = CapRecipients(created.Draft.Recipients, out int total, out bool truncated);
+            IReadOnlyList<string>? unresolved = CapUnresolvedRecipients(
+                created.UnresolvedRecipients, out int unresolvedTotal, out bool unresolvedTruncated);
 
             // Attachments come from the SAVED item, never from the request (the A4
             // round-trip discipline): what the agent is told is what Outlook holds.
@@ -4035,9 +4255,10 @@ namespace OutlookAI.Core.Services
                 Recipients = recipients,
                 RecipientsTruncated = truncated ? true : (bool?)null,
                 RecipientsTotal = truncated ? total : (int?)null,
-                UnresolvedRecipients = created.UnresolvedRecipients.Count > 0
-                    ? created.UnresolvedRecipients.Take(UnresolvedRecipientsCap).ToList()
-                    : null,
+                UnresolvedRecipients = unresolved,
+                UnresolvedRecipientsTruncated = unresolvedTruncated ? true : (bool?)null,
+                UnresolvedRecipientsTotal = unresolvedTruncated ? unresolvedTotal : (int?)null,
+                UnresolvedRecipientsAdvice = DescribeUnresolvedRecipientCap(unresolvedTotal, unresolvedTruncated),
                 ConversationTopicPreserved = created.ConversationTopicPreserved,
                 Importance = ImportanceName(created.Draft.Importance) is string name && name != "normal" ? name : null,
                 ReadReceiptRequested = created.Draft.ReadReceiptRequested ? true : (bool?)null,
@@ -4413,6 +4634,8 @@ namespace OutlookAI.Core.Services
             IReadOnlyList<string> requestedRemovals)
         {
             IReadOnlyList<RecipientView> recipients = CapRecipients(updated.Draft.Recipients, out int total, out bool truncated);
+            IReadOnlyList<string>? unresolved = CapUnresolvedRecipients(
+                updated.UnresolvedRecipients, out int unresolvedTotal, out bool unresolvedTruncated);
             IReadOnlyList<AttachmentView> attachmentViews = CapAttachments(
                 VerifiedAttachments(updated.Draft, updated.Attachments), out int _, out bool _);
             IReadOnlyList<string>? notRemoved = requestedRemovals
@@ -4434,9 +4657,10 @@ namespace OutlookAI.Core.Services
                 Recipients = recipients,
                 RecipientsTruncated = truncated ? true : (bool?)null,
                 RecipientsTotal = truncated ? total : (int?)null,
-                UnresolvedRecipients = updated.UnresolvedRecipients.Count > 0
-                    ? updated.UnresolvedRecipients.Take(UnresolvedRecipientsCap).ToList()
-                    : null,
+                UnresolvedRecipients = unresolved,
+                UnresolvedRecipientsTruncated = unresolvedTruncated ? true : (bool?)null,
+                UnresolvedRecipientsTotal = unresolvedTruncated ? unresolvedTotal : (int?)null,
+                UnresolvedRecipientsAdvice = DescribeUnresolvedRecipientCap(unresolvedTotal, unresolvedTruncated),
                 ConversationTopicPreserved = updated.ConversationTopicPreserved,
                 Importance = ImportanceName(updated.Draft.Importance) is string name && name != "normal" ? name : null,
                 ReadReceiptRequested = updated.Draft.ReadReceiptRequested ? true : (bool?)null,
@@ -5200,6 +5424,70 @@ namespace OutlookAI.Core.Services
                 .Take(truncated ? RecipientsCap : total)
                 .Select(r => new RecipientView { Kind = r.Kind, Name = r.Name, Address = r.Address })
                 .ToList();
+        }
+
+        /// <summary>
+        /// Caps the UNRESOLVABLE address list at <see cref="UnresolvedRecipientsCap"/> and
+        /// says what the cap hid - the has-more pair <see cref="CapRecipients"/> two
+        /// properties away has always carried and this list did not.
+        /// <para>
+        /// WHY IT MATTERS MORE HERE THAN ON THE RESOLVED LIST, which is what made a silent
+        /// <c>Take(20)</c> the wrong shape on the drafting surface. The resolved list is
+        /// context: the draft holds the recipients whether or not the payload lists them all,
+        /// and the operations that matter (the send hash, the identity checks, transport)
+        /// always read the full COM-side list. An UNRESOLVED address is the opposite - it is
+        /// a defect the agent is expected to ACT on, by asking the user about each one, and a
+        /// short list read as complete means the addresses past the cap are never mentioned
+        /// to anybody. The draft then goes out, or fails to, with a fault its own report
+        /// declared absent.
+        /// </para>
+        /// <para>
+        /// Returns null for an empty list, because that is what the payload wants: an absent
+        /// field for "nothing failed to resolve" rather than an empty array to be
+        /// interpreted. <paramref name="total"/> and <paramref name="truncated"/> are still
+        /// set, so a caller never has to infer either from the returned list's length - which
+        /// is exactly the inference this pair exists to remove.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string>? CapUnresolvedRecipients(
+            IReadOnlyList<string>? unresolved, out int total, out bool truncated)
+        {
+            total = unresolved?.Count ?? 0;
+            truncated = total > UnresolvedRecipientsCap;
+            if (total == 0)
+            {
+                return null;
+            }
+
+            return unresolved!.Take(truncated ? UnresolvedRecipientsCap : total).ToList();
+        }
+
+        /// <summary>
+        /// What a caller is told when the unresolvable-address list was cut, or null when it
+        /// was not. Pure, and it reads the SAME two values the payload fields are set from,
+        /// so the count in the sentence and the count in the field cannot disagree.
+        /// <para>
+        /// It quotes <see cref="UnresolvedRecipientsCap"/> rather than restating 20: a cap
+        /// named in prose beside a constant nothing compares it with is how the two drift
+        /// (the shape <c>SubjectCharsCap</c> was fixed into).
+        /// </para>
+        /// </summary>
+        public static string? DescribeUnresolvedRecipientCap(int total, bool truncated)
+        {
+            if (!truncated)
+            {
+                return null;
+            }
+
+            return "Outlook could not resolve " + total.ToString(CultureInfo.InvariantCulture)
+                + " of this draft's addresses, and unresolvedRecipients names only the first "
+                + UnresolvedRecipientsCap.ToString(CultureInfo.InvariantCulture) + " - the other "
+                + (total - UnresolvedRecipientsCap).ToString(CultureInfo.InvariantCulture)
+                + " are on the draft and are NOT listed here. Do not tell the user this list is all of them. "
+                + "Every one of them stays on the draft and will fail on send; open_in_outlook shows the user "
+                + "the whole recipient line, and re-setting the recipients with update_draft in batches of "
+                + UnresolvedRecipientsCap.ToString(CultureInfo.InvariantCulture)
+                + " or fewer names each batch's failures in full.";
         }
 
         /// <summary>

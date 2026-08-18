@@ -171,10 +171,14 @@ public sealed class ThreadFreshnessTests
         ThreadLiveInfo capped = Walked();
         capped.MemberCapReached = true;
 
+        ThreadLiveInfo unindexed = Walked(store: "alice@example.com");
+        unindexed.StoresWithoutIndex = new[] { "Archive 2019.pst" };
+
         List<string> raised = new List<string>();
         raised.AddRange(FreshMerge.DescribeThreadCoverageGaps(capped, new[] { "alice@example.com" })!);
         raised.AddRange(FreshMerge.DescribeThreadCoverageGaps(
             Walked(store: "alice@example.com"), new[] { "shared@example.com" })!);
+        raised.AddRange(FreshMerge.DescribeThreadCoverageGaps(unindexed, new[] { "alice@example.com" })!);
 
         Assert.Equal(
             AllThreadGapCodes().OrderBy(c => c, System.StringComparer.Ordinal).ToList(),
@@ -379,6 +383,11 @@ public sealed class ThreadFreshnessTests
             (FreshMerge.ScanGapTimeBudget, new ExhaustiveInfo { FoldersScanned = 4, TimedOut = true }),
             (FreshMerge.ScanGapResultCap, new ExhaustiveInfo { FoldersScanned = 4, Truncated = true }),
             (FreshMerge.ScanGapFoldersSkipped, new ExhaustiveInfo { FoldersScanned = 4, FoldersSkipped = 9 }),
+
+            // Gap F4: the walk refused a subtree past the depth guard, so those folders were
+            // never opened. New here because this walk had no bound at all to report - it
+            // recursed until the stack ran out and took the COM host with it.
+            (FreshMerge.ScanGapDepthLimit, new ExhaustiveInfo { FoldersScanned = 4, DepthLimitReached = true }),
             (FreshMerge.ScanGapRowsUnreadable, new ExhaustiveInfo { FoldersScanned = 4, RowsDropped = 5, RowsUnreadable = 5 }),
             (
                 FreshMerge.ScanGapFilterUnreadable,

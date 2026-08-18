@@ -426,7 +426,8 @@ public sealed class ComHostProtocolTests
             truncated: false,
             timedOut: false,
             rowsDropped: 28,
-            rowsUnreadable: 3);
+            rowsUnreadable: 3,
+            depthLimitReached: true);
 
         string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
         ComExhaustiveResult? read = JsonSerializer.Deserialize<ComExhaustiveResult>(json, ComHostProtocol.Json);
@@ -434,6 +435,11 @@ public sealed class ComHostProtocolTests
         Assert.NotNull(read);
         Assert.Equal(28, read!.RowsDropped);
         Assert.Equal(3, read.RowsUnreadable);
+
+        // The depth guard latches in the CHILD (gap F4), so a flag that does not survive the
+        // hop is a truncated scan reported as complete - the exact shape ComFolderTree's
+        // bounds were fixed for one test below.
+        Assert.True(read.DepthLimitReached);
     }
 
     [Fact]

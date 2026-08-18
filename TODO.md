@@ -544,6 +544,58 @@
   not answer. It was accepted on the standing rule that completeness outranks speed, so the number
   is worth having rather than worth acting on.
 
+- [ ] **Decide F2: the exhaustive scan truncates in ARBITRARY tree order, and there is no way to page past it.**
+  The worst row left in `Docs/completeness-gaps.md`, and it is a design change rather than a
+  reporting one, so it is the maintainer's call rather than an agent's. The scan never sorts the
+  folder table (`Com/OutlookComSession.cs`, no `t.Sort` on the scan path - contrast the sweep, which
+  sorts newest-first), so when `maxItems` stops the walk what is missing is whole folders nobody
+  opened, chosen by whatever order the tree came in. `truncated: true` and `result_cap` say the
+  answer is short and the advice already refuses to say "raise top", because `top` is capped at 100
+  and re-running re-walks the same tree and stops in the same place. So it is honestly REPORTED and
+  genuinely UNACTIONABLE, which is why closing it needs a decision:
+  - **(a) order the walk** - a stable, documented traversal order (stores by display name, then
+    depth-first with siblings by name, i.e. what `list_folders` already promises) makes the
+    truncation reproducible and lets a caller narrow by folder with confidence. It does not make
+    the answer complete, and it does not sort by DATE, which is what a caller usually wants.
+  - **(b) order the items** - sort each folder's table newest-first as the sweep does, so the cap
+    keeps the newest matches across the folders it reached. Costs a `Sort` per folder, changes what
+    a capped scan returns, and still says nothing about folders never opened.
+  - **(c) make it resumable** - a continuation token carrying the walk position, so a capped scan
+    can be paged. The most useful and the most work; it also needs a stable order (a), so (a) is a
+    prerequisite rather than an alternative.
+  - **(d) leave it** - the mode is for correctness over speed and the remedy in the advice (a
+    tighter `folder`/`after` bound) does work; the cost is that "narrow it yourself" is the only
+    answer for a large store.
+
+  Nothing shipped on 2026-08-18 constrains this choice: the depth guard added to `ScanFolderTree`
+  (gap F4) bounds the recursion and latches a flag, and it neither imposes nor forbids an order -
+  a sorted walk visits the same folders at the same depths. The one thing worth knowing before
+  choosing: `exhaustive.depthLimitReached` and `result_cap` are independent, so an ordered walk
+  would still need both.
+
+- [ ] **Verify the exhaustive scan's depth guard against a live profile - the half of F4 that T1 cannot reach.**
+  F4 was closed on 2026-08-18 and is pinned by T1 `ScanDepthAndSweepScopeTests` end to end from
+  `ComExhaustiveResult` to the payload, plus the process-boundary round trip in
+  `ComHostProtocolTests`. What no test executes is the guard itself: `if (depth > FolderWalkDepthGuard)`
+  needs a folder tree more than 64 levels deep, which no CI runner and no real mailbox has. The same
+  shape as H2's `sortApplied`, and the same cheap substitute applies - a temporary build with the
+  guard lowered to 2 or 3, then one read-only `exhaustive: true` search of a store with any nesting
+  at all, confirming `exhaustive.depthLimitReached: true`, `depth_limit` in
+  `exhaustive.coverageGaps`, `freshness: "partial"`, `degraded: true`, and an advice sentence
+  naming the guard's value. Worth pairing with the lowered-cap build the G3/G4 item above already
+  asks for; both are read-only and neither needs a mailbox write.
+
+- [ ] **Settle C5 (`Docs/completeness-gaps.md`) - `thread`'s `store` narrows the evidence its own coverage code is computed from.**
+  Found while closing C4 and recorded rather than fixed, because the fix changes which rows come
+  back. A `store` on `thread` scopes the index query, and the store is auto-derived from the
+  referenced hit when the caller passes `id` without `conversation_id` - so on those call shapes the
+  index rows can only ever name one store and `unwalked_store` cannot fire, leaving a member in a
+  second INDEXED account both absent and unreported. C4's fix covers the unindexed half of this
+  (it reads Outlook's store list rather than the index rows). The candidate directions and their
+  trade-offs are on the C5 row; the coherent one is to stop scoping the conversation query at all,
+  since `thread`'s `store` is documented as a speed hint rather than a filter - which is exactly
+  C3's own reasoning for allowing it to widen.
+
 - [ ] **Retire v3 planning ignores** — once the local v3 planning files (`v3.MD`, `Docs/v3-probes/`) are no longer needed:
   - [ ] remove the "v3 planning documents" section at the bottom of `.gitignore`
   - [ ] delete the local plan-doc backup folder (location documented in v3.MD §0.8 D16 on the machine that holds it)

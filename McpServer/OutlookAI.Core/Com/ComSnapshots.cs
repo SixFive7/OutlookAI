@@ -488,7 +488,8 @@ namespace OutlookAI.Core.Com
             bool truncated,
             bool timedOut,
             int rowsDropped = 0,
-            int rowsUnreadable = 0)
+            int rowsUnreadable = 0,
+            bool depthLimitReached = false)
         {
             Items = items;
             FoldersScanned = foldersScanned;
@@ -499,6 +500,7 @@ namespace OutlookAI.Core.Com
             TimedOut = timedOut;
             RowsDropped = rowsDropped;
             RowsUnreadable = rowsUnreadable;
+            DepthLimitReached = depthLimitReached;
         }
 
         /// <summary>Matched mail items with their REAL EntryIDs.</summary>
@@ -536,6 +538,16 @@ namespace OutlookAI.Core.Com
         /// class filter is the mode working as designed.
         /// </summary>
         public int RowsUnreadable { get; }
+
+        /// <summary>
+        /// True when the walk refused at least one subtree for being deeper than
+        /// <c>OutlookComSession.FolderWalkDepthGuard</c>, so those folders were never
+        /// filtered (gap F4). The guard exists because an unbounded recursion over a cyclic
+        /// folder graph is a <c>StackOverflowException</c> that no <c>catch</c> can reach and
+        /// that ends the COM host process; the FLAG exists because a bound this mode hits
+        /// silently would be the completeness defect the mode is chosen to avoid.
+        /// </summary>
+        public bool DepthLimitReached { get; }
     }
 
     /// <summary>How a derived draft is created from its source mail (v3.MD section 3: threading ONLY via these).</summary>
