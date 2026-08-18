@@ -189,8 +189,8 @@ public sealed class LiveSearchInTests
         _output.WriteLine($"derived hub terms: subjectOnly.len={subjectOnlyTerm.Length} bodyOnly.len={bodyOnlyTerm.Length}");
 
         // Default scope is the union - both terms must be found by a plain query.
-        Assert.True(CountRows(index, hub.StorePrefix, new[] { subjectOnlyTerm }, SearchIn.SubjectAndBody, null, KindFilter.EmailOnly) > 0);
-        Assert.True(CountRows(index, hub.StorePrefix, new[] { bodyOnlyTerm }, SearchIn.SubjectAndBody, null, KindFilter.EmailOnly) > 0);
+        Assert.True(CountRows(index, hub.StorePrefix, new[] { subjectOnlyTerm }, SearchIn.SubjectAndBody, null, KindFilter.MailKindOnly) > 0);
+        Assert.True(CountRows(index, hub.StorePrefix, new[] { bodyOnlyTerm }, SearchIn.SubjectAndBody, null, KindFilter.MailKindOnly) > 0);
 
         // --- tool tier (index + freshness sweep merged, D34)
         AssertToolTierSeparation(subjectOnlyTerm, expectedInSubjectScope: true);
@@ -296,7 +296,7 @@ public sealed class LiveSearchInTests
         IReadOnlyList<string>? terms,
         SearchIn searchIn,
         string? from,
-        KindFilter kinds = KindFilter.EmailAndDocuments)
+        KindFilter kinds = KindFilter.MessagesAndAttachments)
     {
         return index.Search(new IndexQuery
         {
@@ -357,8 +357,8 @@ public sealed class LiveSearchInTests
 
         foreach (string candidate in candidates)
         {
-            int inOwnField = CountRows(index, hub.StorePrefix, new[] { candidate }, ownScope, null, KindFilter.EmailOnly);
-            int inOtherField = CountRows(index, hub.StorePrefix, new[] { candidate }, otherScope, null, KindFilter.EmailOnly);
+            int inOwnField = CountRows(index, hub.StorePrefix, new[] { candidate }, ownScope, null, KindFilter.MailKindOnly);
+            int inOtherField = CountRows(index, hub.StorePrefix, new[] { candidate }, otherScope, null, KindFilter.MailKindOnly);
             if (inOwnField > 0 && inOtherField == 0)
             {
                 _output.WriteLine($"index-confirmed {(subjectSide ? "subject" : "body")}-only term: own={inOwnField} other={inOtherField}");

@@ -153,7 +153,7 @@ public sealed class LiveDecodeVerifyTests
         IndexHit? hit = _fixture.Service.Search(new IndexQuery
         {
             Scope = _fixture.GetScope(_fixture.Settings.ExpectedStoreDisplayNames[0]).StorePrefix,
-            Kinds = KindFilter.EmailOnly,
+            Kinds = KindFilter.MailKindOnly,
             Top = 1,
         }).Hits.FirstOrDefault();
         Assert.NotNull(hit);
@@ -178,7 +178,7 @@ public sealed class LiveDecodeVerifyTests
             IndexSearchResult result = _fixture.Service.Search(new IndexQuery
             {
                 Scope = scope.StorePrefix,
-                Kinds = KindFilter.DocumentsOnly,
+                Kinds = KindFilter.AttachmentsOnly,
                 Top = 25,
             });
             attachmentHits.AddRange(result.Hits.Where(h =>
@@ -282,7 +282,7 @@ public sealed class LiveDecodeVerifyTests
             IndexSearchResult result = _fixture.Service.Search(new IndexQuery
             {
                 Scope = scope.StorePrefix,
-                Kinds = KindFilter.EmailOnly,
+                Kinds = KindFilter.MailKindOnly,
                 Top = perStore * 2,
             });
             foreach (IndexHit hit in result.Hits)
@@ -306,7 +306,7 @@ public sealed class LiveDecodeVerifyTests
             IndexSearchResult extra = _fixture.Service.Search(new IndexQuery
             {
                 Scope = biggest.StorePrefix,
-                Kinds = KindFilter.EmailOnly,
+                Kinds = KindFilter.MailKindOnly,
                 Top = SampleTarget * 4,
             });
             foreach (IndexHit hit in extra.Hits)

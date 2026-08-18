@@ -7048,10 +7048,22 @@ namespace OutlookAI.Core.Com
                             continue;
                         }
 
-                        int itemClass;
+                        // THE ITEM-CLASS GATE IS GONE (gap B3, maintainer decision
+                        // 2026-08-18). It read Class and dropped everything that was not
+                        // olMailItem, which is how the mode that exists FOR completeness
+                        // came to be the only tier that could not find a bounce report.
+                        // Class no longer excludes anything in any tier
+                        // (Mapi.MailItemAdmission); the folder type still does, and that is
+                        // where mail lives rather than a filter on what mail is.
+                        //
+                        // Snapshotting is guarded because this loop now meets item types it
+                        // never used to: a snapshot that throws would otherwise escape to
+                        // the folder-level catch and lose the REST of the folder as one
+                        // "skipped" - trading a widened answer for a narrower one.
+                        ComMailBrief brief;
                         try
                         {
-                            itemClass = (int)((dynamic)member!).Class;
+                            brief = SnapshotBrief(ns, member!, null, folderName, false, storeName, storeId);
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
@@ -7060,18 +7072,7 @@ namespace OutlookAI.Core.Com
                             continue;
                         }
 
-                        if (itemClass != OlMailItemClass)
-                        {
-                            // A FILTER, not a failure: this scan admits IPM.Note mail only,
-                            // so meeting requests, NDRs, receipts and posts land here. It is
-                            // counted (the tier-asymmetry question needs the number) and
-                            // raises nothing - a flag that fires on the mode working as
-                            // designed is a flag nobody reads.
-                            state.RowsDropped++;
-                            continue;
-                        }
-
-                        state.Items.Add(SnapshotBrief(ns, member!, null, folderName, false, storeName, storeId));
+                        state.Items.Add(brief);
                         if (state.Items.Count >= state.MaxItems)
                         {
                             state.Truncated = true;
@@ -7257,7 +7258,23 @@ namespace OutlookAI.Core.Com
                             continue;
                         }
 
-                        results.Add(SnapshotBrief(ns, member!, folderKind, folderName, includeBodies, storeName, storeId));
+                        // The sweep has never filtered by item class and still does not - it
+                        // is the tier the other two were unified UP to (gap B3). The guard
+                        // is the same one the exhaustive scan gained: a snapshot that throws
+                        // used to escape to the folder-level catch and turn the whole folder
+                        // into SweepOutcome.Failed, losing the rows already read with it.
+                        ComMailBrief brief;
+                        try
+                        {
+                            brief = SnapshotBrief(ns, member!, folderKind, folderName, includeBodies, storeName, storeId);
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            rowsUnreadable++;
+                            continue;
+                        }
+
+                        results.Add(brief);
                         taken++;
                     }
                     finally
@@ -7292,6 +7309,12 @@ namespace OutlookAI.Core.Com
         {
             dynamic item = itemObject;
             string entryId = (string)item.EntryID;
+            // Read on every snapshot since class stopped narrowing the tiers (gap B3): it is
+            // the only thing that tells a caller a hit is a bounce report or a meeting
+            // request rather than mail. One extra late-bound read beside the eight already
+            // here, and it never fails the snapshot - PR_MESSAGE_CLASS is mandatory on a
+            // MAPI message, so a null here means the item itself is unreadable.
+            string? messageClass = TryGetString(() => (string?)item.MessageClass);
             string? subject = TryGetString(() => (string?)item.Subject);
             DateTime? received = TryGetDateTime(() => (DateTime)item.ReceivedTime);
             string? senderName = TryGetString(() => (string?)item.SenderName);
@@ -7388,7 +7411,8 @@ namespace OutlookAI.Core.Com
                 isRead,
                 hasAttachments,
                 size,
-                body);
+                body,
+                messageClass);
         }
 
         private ComItemDetail SnapshotDetail(object itemObject, bool includeHeaders, bool includeBody, bool includeHtml = false)

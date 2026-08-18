@@ -8,6 +8,7 @@ using System.Linq;
 
 using OutlookAI.Core.Com;
 using OutlookAI.Core.IndexSearch;
+using OutlookAI.Core.Mapi;
 
 namespace OutlookAI.Core.Services
 {
@@ -60,6 +61,28 @@ namespace OutlookAI.Core.Services
         /// (section-12 compact-payload discipline).
         /// </summary>
         public const int SweptFolderListCap = 12;
+
+        /// <summary>
+        /// Stores <see cref="SweepInfo.StoresWithoutIndex"/> names before it reports a count
+        /// instead (Q7b). DERIVED from <see cref="SweptFolderListCap"/> rather than a second
+        /// 12: both bound a name list inside the same sweep block for the same
+        /// compact-payload reason, and two independent numbers doing one job is how a pair
+        /// starts drifting. Twelve is far above any real profile's unindexed-store count, so
+        /// this is a guard against a pathological shape, not a routine cut.
+        /// <para>
+        /// Public so T1 pins it beside every other payload cap - it exists because this list
+        /// was the one that had no cap at all.
+        /// </para>
+        /// </summary>
+        public const int UnindexedStoreListCap = SweptFolderListCap;
+
+        /// <summary>
+        /// Distinct item classes the "not ordinary mail" advice names before it trails off.
+        /// Small because the sentence is a heads-up, not an inventory: the per-hit
+        /// <c>itemClass</c> fields are the complete answer and are right there. Public so
+        /// T1 pins it with the other payload caps - a cap in prose is still a cap.
+        /// </summary>
+        public const int NonMailClassAdviceCap = 4;
 
         /// <summary>
         /// Items ONE folder may contribute to a freshness sweep.
@@ -447,9 +470,12 @@ namespace OutlookAI.Core.Services
                 FolderPathsAnyOf = folderScope?.FolderPaths,
                 Terms = terms.Count > 0 ? terms : null,
                 SearchIn = request.SearchIn,
+                // Message rows of EVERY item class in both message-bearing shapes (gap B3):
+                // meeting requests, NDRs, receipts and posts are mail a user asks about by
+                // name, and the freshness sweep beside this query has always returned them.
                 Kinds = request.AttachmentHitsOnly
-                    ? KindFilter.DocumentsOnly
-                    : request.IncludeAttachmentHits ? KindFilter.EmailAndDocuments : KindFilter.EmailOnly,
+                    ? KindFilter.AttachmentsOnly
+                    : request.IncludeAttachmentHits ? KindFilter.MessagesAndAttachments : KindFilter.MessagesOnly,
                 SenderContains = request.From,
                 RecipientContains = request.To,
                 ReceivedOnOrAfterUtc = request.AfterUtc,
@@ -486,6 +512,12 @@ namespace OutlookAI.Core.Services
             SweepInfo? sweep = null;
             List<string> advice = new List<string>();
 
+            // Hoisted out of the sweep block below because the staleness block needs it too
+            // (Q7a): it is the EARLIEST per-store frontier the sweep planner measured, which
+            // is the answer to "how far behind is the worst store" and the number the
+            // freshness advice has already been quoting.
+            DateTime? oldestPerStoreFrontierUtc = null;
+
             // The folder bound is reported BEFORE anything else: an agent that gets a
             // widened or name-matched delegate scope must see that first (constraints
             // C2/C3). The zero-row guard (C7) runs AFTER the sweep instead - the freshness
@@ -498,6 +530,13 @@ namespace OutlookAI.Core.Services
                 sweep = RunGapSweep(
                     request, terms, staleness, indexResult.Hits, summaries, snippetChars,
                     out DateTime? widestFrontierUtc);
+                oldestPerStoreFrontierUtc = widestFrontierUtc;
+
+                // Before anything reads the list: the coverage advice below JOINS these
+                // names into a sentence, so an uncapped list would reach the caller twice
+                // over (Q7b). Applied here rather than inside the sweep because the sweep
+                // adds to the list in two places and this is the first point past both.
+                ApplyUnindexedStoreCap(sweep);
 
                 // The exposure these sentences quote is the OLDEST frontier in scope, not the
                 // profile-wide one. Now that the sweep opens a window per store, an unscoped
@@ -586,11 +625,19 @@ namespace OutlookAI.Core.Services
 
             AddTopClampAdvice(advice, request.Top, top);
 
+            // After the list is sorted and trimmed: it describes what the caller GETS, not
+            // what the tiers passed through.
+            string? nonMailAdvice = DescribeNonMailHits(summaries);
+            if (nonMailAdvice != null)
+            {
+                advice.Add(nonMailAdvice);
+            }
+
             if (indexResult.CandidatesExhausted)
             {
-                // The index tier admits rows in code (attachment rows of every kind, mail
-                // messages only) over an over-fetched candidate list. Running out of
-                // candidates is the one way that could hide matches - say so (D42).
+                // The index tier admits rows in code over an over-fetched candidate list.
+                // Running out of candidates is the one way that could hide matches - say so
+                // (D42), in a FIELD as well as here since 2026-08-18 (gap G6).
                 advice.Add("The index tier ran out of candidate rows while filtering non-mail entries, "
                     + "so this list may be short of matches. Narrow with store/folder/after, or lower top.");
             }
@@ -610,10 +657,18 @@ namespace OutlookAI.Core.Services
                 Freshness = freshness,
                 IndexElapsedMs = indexResult.ElapsedMilliseconds,
                 Sweep = sweep,
+                Index = new IndexTierInfo
+                {
+                    RowsScanned = indexResult.RowsScanned,
+                    RowsDropped = indexResult.RowsDropped,
+                    CandidatesExhausted = indexResult.CandidatesExhausted ? true : (bool?)null,
+                },
                 Scope = DescribeSearchScope(folderScope, request),
                 Staleness = new StalenessInfo
                 {
                     NewestIndexedUtc = staleness.NewestIndexedReceivedUtc,
+                    OldestStoreFrontierUtc = OldestStoreFrontier(
+                        request.Store != null, staleness.NewestIndexedReceivedUtc, oldestPerStoreFrontierUtc),
                     AgeMinutes = staleness.Age?.TotalMinutes,
                     OutlookRunning = outlookRunning,
                 },
@@ -650,6 +705,86 @@ namespace OutlookAI.Core.Services
         public static string? StalenessScopeFor(FolderScopeResolution? folderScope)
         {
             return folderScope?.StoreScope;
+        }
+
+        /// <summary>
+        /// The value of <c>staleness.oldestStoreFrontierUtc</c> (Q7a): how far behind the
+        /// WORST store in this search's scope is, or null when no per-store frontier was
+        /// measured.
+        /// <para>
+        /// A store-scoped search has exactly one store in scope, so its own frontier
+        /// (<paramref name="scopeFrontierUtc"/>) is both the newest and the oldest, and the
+        /// two staleness fields agree by construction. That is deliberate rather than
+        /// redundant: a caller reading only the new field gets a true answer on every search
+        /// shape instead of having to know which shape it asked for.
+        /// </para>
+        /// <para>
+        /// An unscoped search reports the earliest of the per-store frontiers the sweep
+        /// planner measured, and reports NOTHING when it measured none - a profile-wide
+        /// maximum is not an "oldest store" and substituting it would put a number in the
+        /// field that no store's index actually stands at. Absence therefore means "not
+        /// measured", which is why this is a nullable answer rather than a fallback chain.
+        /// </para>
+        /// <para>
+        /// Pure and public so T1 pins all three branches: the alternatives (always the
+        /// maximum, or the maximum as a fallback) are one line away and neither is
+        /// distinguishable from this at the call site.
+        /// </para>
+        /// </summary>
+        public static DateTime? OldestStoreFrontier(
+            bool storeScoped, DateTime? scopeFrontierUtc, DateTime? oldestPerStoreFrontierUtc)
+        {
+            return storeScoped ? scopeFrontierUtc : oldestPerStoreFrontierUtc;
+        }
+
+        /// <summary>
+        /// Applies <see cref="UnindexedStoreListCap"/> to <see cref="SweepInfo.StoresWithoutIndex"/>
+        /// and reports the cut (Q7b).
+        /// <para>
+        /// This list was the only one in the server with no bound - in the payload AND in
+        /// the <c>no_index_frontier</c> advice sentence, which joins the names into prose -
+        /// so a profile of many unindexed data files would have printed its whole store list
+        /// twice per search. That is an omission rather than a design choice: every other
+        /// cap here is named, applied and reported.
+        /// </para>
+        /// <para>
+        /// The list is TRUNCATED rather than dropped, which is where it differs from
+        /// <see cref="SweepInfo.Folders"/>: a swept-folder list is a legibility aid and is
+        /// worth nothing in part, whereas each unindexed store NAME is separately actionable
+        /// (search it with <c>exhaustive:true</c>), so the first few keep their whole value.
+        /// The order is the order the stores were found, which is the sweep's store order -
+        /// stable, and not a ranking, so the flags below are the only honest way to say
+        /// there are more.
+        /// </para>
+        /// <para>
+        /// Pure and public: T1 pins the cap, the flags and the advice sentence together,
+        /// over a payload shape that needs a profile full of unindexed PSTs to produce.
+        /// </para>
+        /// </summary>
+        public static void ApplyUnindexedStoreCap(SweepInfo sweep)
+        {
+            if (sweep == null)
+            {
+                throw new ArgumentNullException(nameof(sweep));
+            }
+
+            IReadOnlyList<string>? stores = sweep.StoresWithoutIndex;
+            if (stores == null || stores.Count <= UnindexedStoreListCap)
+            {
+                sweep.StoresWithoutIndexTruncated = null;
+                sweep.StoresWithoutIndexTotal = null;
+                return;
+            }
+
+            List<string> capped = new List<string>(UnindexedStoreListCap);
+            for (int i = 0; i < UnindexedStoreListCap; i++)
+            {
+                capped.Add(stores[i]);
+            }
+
+            sweep.StoresWithoutIndexTotal = stores.Count;
+            sweep.StoresWithoutIndex = capped;
+            sweep.StoresWithoutIndexTruncated = true;
         }
 
         /// <summary>
@@ -801,6 +936,17 @@ namespace OutlookAI.Core.Services
                         advice.Add("Freshness sweep is the ONLY tier covering "
                             + (sweep.StoresWithoutIndex != null && sweep.StoresWithoutIndex.Count > 0
                                 ? "store(s) " + string.Join(", ", sweep.StoresWithoutIndex)
+                                    // The sentence must never claim the list is the whole set
+                                    // (Q7b): naming 12 of 30 stores and stopping reads as
+                                    // "these twelve", which is a quieter lie than the
+                                    // unbounded list it replaced.
+                                    + (sweep.StoresWithoutIndexTruncated == true
+                                        ? " and " + ((sweep.StoresWithoutIndexTotal ?? sweep.StoresWithoutIndex.Count)
+                                                - sweep.StoresWithoutIndex.Count).ToString(CultureInfo.InvariantCulture)
+                                            + " more (list capped at "
+                                            + UnindexedStoreListCap.ToString(CultureInfo.InvariantCulture)
+                                            + "; sweep.storesWithoutIndexTotal is the true count)"
+                                        : string.Empty)
                                 : "this profile")
                             + ": the local index holds no mail there, so there was no frontier to sweep up to and the "
                             + "window fell back to the last "
@@ -981,6 +1127,80 @@ namespace OutlookAI.Core.Services
             }
 
             return advice;
+        }
+
+        /// <summary>
+        /// One sentence when a result set contains something other than ordinary mail, and
+        /// nothing at all when it does not.
+        /// <para>
+        /// This is where the widening announces itself (gap B3). All three tiers now admit
+        /// every item class, so a search can return a bounce report, a read receipt, a
+        /// meeting request or - from the index tier, which has no folder-type column to
+        /// narrow by - a calendar or contact item. That is the answer being MORE complete,
+        /// not less, so it degrades nothing and raises no coverage code; but an agent
+        /// relaying "you have 4 mails about the invoice" when one of them is a delivery
+        /// receipt is relaying something false, and nothing else in the payload would have
+        /// told it.
+        /// </para>
+        /// <para>
+        /// It is emitted from the hits themselves rather than from a counter, so it can
+        /// never disagree with the <c>itemClass</c> fields beside it, and it costs exactly
+        /// nothing on the ordinary search where every hit is mail. The tool description says
+        /// none of this: it is 1791 of its 2048 client-truncation units and this is a fact
+        /// about ONE answer, which is what advice is for.
+        /// </para>
+        /// <para>
+        /// Pure and public so T1 pins it - the states it describes need a mailbox holding
+        /// meeting requests and NDRs to produce naturally.
+        /// </para>
+        /// </summary>
+        public static string? DescribeNonMailHits(IReadOnlyList<HitSummary>? hits)
+        {
+            if (hits == null || hits.Count == 0)
+            {
+                return null;
+            }
+
+            int count = 0;
+            bool omitted = false;
+            List<string> classes = new List<string>();
+            foreach (HitSummary hit in hits)
+            {
+                if (hit == null || hit.ItemClass == null)
+                {
+                    continue;
+                }
+
+                count++;
+                if (classes.Contains(hit.ItemClass, StringComparer.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // The "..." has to mean something was actually left out. Deriving it from
+                // "the list is full" would make it fire on EXACTLY the cap, which is a
+                // has-more flag that lies - the shape this whole payload discipline exists
+                // to prevent.
+                if (classes.Count >= NonMailClassAdviceCap)
+                {
+                    omitted = true;
+                    continue;
+                }
+
+                classes.Add(hit.ItemClass);
+            }
+
+            if (count == 0)
+            {
+                return null;
+            }
+
+            return count.ToString(CultureInfo.InvariantCulture)
+                + " of these hits are not ordinary mail (" + string.Join(", ", classes)
+                + (omitted ? ", ..." : string.Empty)
+                + ") - every search tier returns bounce reports, read receipts, meeting requests and posts "
+                + "alongside mail, and each such hit carries itemClass (a 'kind:' value means the index "
+                + "inferred it rather than reading it). Say which is which if you relay a count.";
         }
 
         /// <summary>Compact scope block; present only for folder-scoped searches.</summary>
@@ -1844,6 +2064,15 @@ namespace OutlookAI.Core.Services
             exhaustive.CoverageGaps = FreshMerge.DescribeExhaustiveCoverageGaps(exhaustive);
             advice.AddRange(DescribeExhaustiveCoverage(exhaustive, top));
 
+            // The same sentence the merged path emits, from the same helper: this tier
+            // gained the most from the widening (it was the only one that could not find a
+            // bounce report at all), so it is the last place that should stay quiet about it.
+            string? scanNonMailAdvice = DescribeNonMailHits(summaries);
+            if (scanNonMailAdvice != null)
+            {
+                advice.Add(scanNonMailAdvice);
+            }
+
             AddTopClampAdvice(advice, request.Top, top);
 
             // Staleness is best-effort context here: exhaustive works even when the
@@ -2207,9 +2436,11 @@ namespace OutlookAI.Core.Services
                         Scope = scope,
                         // C2: message rows of EVERY item class, not 'email' alone. A meeting
                         // request and its acceptances share the mail's ConversationID and
-                        // index as 'calendar', so EmailOnly dropped real members of the
-                        // conversation this tool exists to return whole.
-                        Kinds = KindFilter.MessagesAnyClass,
+                        // index as 'calendar', so a kind-narrowed query dropped real members
+                        // of the conversation this tool exists to return whole. Since B3 it
+                        // is the same shape `search` uses, minus the attachment rows a
+                        // conversation has no use for.
+                        Kinds = KindFilter.MessagesOnly,
                         ConversationIdEquals = conversationId,
                         Top = top + 1, // Over-fetch by one: definite has-more flag.
                     },
@@ -5192,6 +5423,10 @@ namespace OutlookAI.Core.Services
                 IsAttachmentHit = hit.IsAttachmentHit,
                 AttachmentFileName = hit.AttachmentFileName,
                 ConversationId = hit.ConversationId,
+                // Present only when this row is not ordinary mail. The index never opens the
+                // item, so what it can say is the row's System.Kind, marked as such (gap B3
+                // widened this tier to admit message rows of every class).
+                ItemClass = MailItemAdmission.DescribeIndexRowClass(hit.Kinds, hit.IsAttachmentHit),
             };
         }
 
@@ -5230,6 +5465,10 @@ namespace OutlookAI.Core.Services
                 HasAttachments = item.HasAttachments,
                 IsAttachmentHit = false,
                 ConversationId = null,
+                // The real MAPI class, and only when it is not ordinary mail: this tier
+                // opened the item, so it can name a bounce report or a meeting request
+                // outright rather than guessing from a kind.
+                ItemClass = MailItemAdmission.DescribeComItemClass(item.MessageClass),
             };
         }
 

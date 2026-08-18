@@ -444,17 +444,21 @@ public sealed class ThreadFreshnessTests
     }
 
     [Fact]
-    public void RowsDroppedForTheirItemClass_AreCounted_ButRaiseNothing()
+    public void RowsDroppedWithoutFailures_AreCounted_ButRaiseNothing()
     {
-        // The distinction that keeps this flag from crying wolf, and the measurement gap B3
-        // needs: the scan admits IPM.Note only, so meeting requests, NDRs, receipts and posts
-        // are DROPPED by design. Counted, because "40 rows matched and 12 came back" is a
-        // fact about the answer - but never a coverage hole, because it is the mode working
-        // as specified. rowsDropped minus rowsUnreadable is exactly that number.
-        ExhaustiveInfo byClassOnly = new ExhaustiveInfo { FoldersScanned = 4, RowsDropped = 28, RowsUnreadable = 0 };
+        // The distinction that keeps this flag from crying wolf. rowsDropped is every row
+        // not admitted and never a coverage hole on its own; rowsUnreadable is the failure
+        // subset and is the half that makes a scan partial.
+        //
+        // Its difference from rowsUnreadable USED to be the item-class filter, which is the
+        // measurement gap B3 asked for - and B3's answer removed the filter, so on a real
+        // scan that difference is now zero by construction. The shape is still pinned
+        // because the classifier must keep reading the two numbers separately: a future
+        // non-failure drop would otherwise silently start degrading every scan that met one.
+        ExhaustiveInfo droppedNotLost = new ExhaustiveInfo { FoldersScanned = 4, RowsDropped = 28, RowsUnreadable = 0 };
 
-        Assert.Null(FreshMerge.DescribeExhaustiveCoverageGaps(byClassOnly));
-        Assert.Equal(FreshMerge.FreshnessLive, FreshMerge.ClassifyExhaustiveFreshness(byClassOnly));
+        Assert.Null(FreshMerge.DescribeExhaustiveCoverageGaps(droppedNotLost));
+        Assert.Equal(FreshMerge.FreshnessLive, FreshMerge.ClassifyExhaustiveFreshness(droppedNotLost));
 
         // And a scan that lost rows to FAILURE is partial even when it covered every folder.
         ExhaustiveInfo lostRows = new ExhaustiveInfo { FoldersScanned = 4, RowsDropped = 28, RowsUnreadable = 2 };

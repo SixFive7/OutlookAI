@@ -81,7 +81,7 @@ public sealed class LiveFolderScopeTests
                 {
                     Scope = delegateRoot,
                     FolderPathsAnyOf = new[] { rootPath + "/" + candidateLeaf },
-                    Kinds = KindFilter.EmailOnly,
+                    Kinds = KindFilter.MailKindOnly,
                     Top = 5000,
                 });
 
@@ -102,7 +102,7 @@ public sealed class LiveFolderScopeTests
             int oldRows = DrainCount(index, new IndexQuery
             {
                 Scope = oldShape,
-                Kinds = KindFilter.EmailAndDocuments,
+                Kinds = KindFilter.MessagesAndAttachments,
                 Top = 5000,
             });
             Assert.Equal(0, oldRows);
@@ -232,14 +232,14 @@ public sealed class LiveFolderScopeTests
             System.Diagnostics.Stopwatch probe = System.Diagnostics.Stopwatch.StartNew();
             int deepRows = DrainCount(index, new IndexQuery
             {
-                Scope = deep.Scope, Kinds = KindFilter.EmailAndDocuments, Top = 5000,
+                Scope = deep.Scope, Kinds = KindFilter.MessagesAndAttachments, Top = 5000,
             });
             long deepMs = probe.ElapsedMilliseconds;
 
             probe.Restart();
             int ownRows = DrainCount(index, new IndexQuery
             {
-                Scope = own.Scope, FolderPathsAnyOf = own.FolderPaths, Kinds = KindFilter.EmailAndDocuments, Top = 5000,
+                Scope = own.Scope, FolderPathsAnyOf = own.FolderPaths, Kinds = KindFilter.MessagesAndAttachments, Top = 5000,
             });
             long ownMs = probe.ElapsedMilliseconds;
 
@@ -271,7 +271,7 @@ public sealed class LiveFolderScopeTests
         // Attachment rows survive the narrowing - the reason DIRECTORY= is not used.
         int shallowDocs = DrainCount(index, new IndexQuery
         {
-            Scope = shallow.Scope, FolderPathsAnyOf = shallow.FolderPaths, Kinds = KindFilter.DocumentsOnly, Top = 5000,
+            Scope = shallow.Scope, FolderPathsAnyOf = shallow.FolderPaths, Kinds = KindFilter.AttachmentsOnly, Top = 5000,
         });
         _output.WriteLine($"[{store}] '{parent.Path}' attachment-content rows inside the narrowed scope: {shallowDocs}");
 

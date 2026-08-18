@@ -36,8 +36,16 @@ namespace OutlookAI.Core.Com
     /// <see cref="SearchIn"/> (D40 - the same three scopes the index tier offers).
     /// A trailing '*' marks a prefix stem and is matched via LIKE substring in BOTH
     /// engines (ci_phrasematch is whole-word and would miss the stem's continuations).
-    /// Every filter carries an IPM.Note message-class clause so only mail items are
-    /// enumerated.
+    /// <para>
+    /// IT NO LONGER CARRIES A MESSAGE-CLASS FILTER (audit gap B3, maintainer decision
+    /// 2026-08-18). Every filter used to open with <c>PR_MESSAGE_CLASS like 'IPM.Note%'</c>,
+    /// which quietly made the one mode chosen FOR completeness the only tier blind to
+    /// bounce reports and read receipts (<c>REPORT.IPM.Note.*</c>), meeting requests and
+    /// their responses, posts and sharing invitations - while the freshness sweep beside it
+    /// returned all of them. Item class no longer excludes anything anywhere; see
+    /// <see cref="OutlookAI.Core.Mapi.MailItemAdmission"/> for the rule and why it is
+    /// stated in one place.
+    /// </para>
     /// </summary>
     public static class ExhaustiveDaslFilter
     {
@@ -47,6 +55,20 @@ namespace OutlookAI.Core.Com
         private const string MessageClassProp = "\"http://schemas.microsoft.com/mapi/proptag/0x001A001E\"";
 
         /// <summary>
+        /// The predicate used when there is nothing else to restrict on: it matches every
+        /// item class, so it narrows nothing.
+        /// <para>
+        /// PR_MESSAGE_CLASS is mandatory on every MAPI message, so <c>like '%'</c> over it
+        /// is true for every row a mail folder can hand back - deliberately the SAME column
+        /// the removed filter used, because that column is the one already proven to be
+        /// present, selectable and filterable on every folder this scan opens. It is public
+        /// so T1 can pin the shape: a predicate that silently stopped matching would empty
+        /// out exactly the unbounded folder scan that has no terms to fall back on.
+        /// </para>
+        /// </summary>
+        public const string AdmitEveryClassClause = MessageClassProp + " like '%'";
+
+        /// <summary>
         /// Longest accepted search term. THE SAME limit the index tier enforces, not a
         /// second copy of it: the two modes answer the same user query and must agree on
         /// which terms are valid.
@@ -54,9 +76,10 @@ namespace OutlookAI.Core.Com
         private const int MaxTermLength = IndexSearch.WsSqlBuilder.MaxTermLength;
 
         /// <summary>
-        /// Builds the full restriction. At least the mail-only message-class clause is
-        /// always present, so the result is a valid non-empty filter even without terms
-        /// or date bounds (the CALLER enforces the exhaustive-mode bounding rules).
+        /// Builds the full restriction. Always a valid non-empty filter, even without terms
+        /// or date bounds (the CALLER enforces the exhaustive-mode bounding rules): with
+        /// nothing to restrict on it emits <see cref="AdmitEveryClassClause"/>, which
+        /// selects every item in the folder.
         /// </summary>
         public static string Build(
             IReadOnlyList<string>? terms,
@@ -70,10 +93,7 @@ namespace OutlookAI.Core.Com
                 throw new ArgumentException("sinceUtc must lie before beforeUtc.", nameof(sinceUtc));
             }
 
-            List<string> clauses = new List<string>
-            {
-                MessageClassProp + " like 'IPM.Note%'",
-            };
+            List<string> clauses = new List<string>();
 
             if (sinceUtc.HasValue)
             {
@@ -94,6 +114,16 @@ namespace OutlookAI.Core.Com
                         engine,
                         searchIn));
                 }
+            }
+
+            if (clauses.Count == 0)
+            {
+                // A folder-scoped scan with no terms and no dates ("show me this folder")
+                // is a legal call, and `@SQL=` with no predicate is not a restriction
+                // Outlook accepts. The class clause used to fill this slot by accident of
+                // being a filter; now that it is gone, the slot needs a predicate that
+                // excludes nothing.
+                return "@SQL=(" + AdmitEveryClassClause + ")";
             }
 
             StringBuilder sql = new StringBuilder("@SQL=");

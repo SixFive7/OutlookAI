@@ -271,11 +271,43 @@ public sealed class ComHostProtocolTests
     }
 
     [Fact]
+    public void ComMailBrief_CarriesTheMessageClassAcrossTheWire()
+    {
+        // The snapshot is taken in the CHILD and the class decides a payload field in the
+        // PARENT (`itemClass`). Since the tiers stopped filtering by class (gap B3) this is
+        // the only thing that tells a caller a hit is a bounce report rather than mail, so
+        // losing it on the hop would return the widened result set with no way to read it -
+        // silently, because a null class is indistinguishable from ordinary mail on the wire.
+        ComMailBrief original = new ComMailBrief(
+            "0000000000000000000000000000000000000000000000AB",
+            "alice@example.com",
+            "storeid",
+            "Inbox",
+            "inbox",
+            "Undeliverable: Invoice",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            "REPORT.IPM.Note.NDR");
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComMailBrief? read = JsonSerializer.Deserialize<ComMailBrief>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Equal("REPORT.IPM.Note.NDR", read!.MessageClass);
+    }
+
+    [Fact]
     public void ComExhaustiveResult_CarriesItsDroppedRowCountsAcrossTheWire()
     {
-        // The scan runs in the child too (gap F5). Both numbers matter and they mean
-        // different things: rowsUnreadable makes the scan partial, rowsDropped minus
-        // rowsUnreadable is the item-class filter and raises nothing.
+        // The scan runs in the child too (gap F5). Both numbers still cross the wire, and
+        // their DIFFERENCE was the item-class filter gap B3 was about - which is now zero by
+        // construction, because the scan admits every class. rowsUnreadable is what makes a
+        // scan partial; rowsDropped stays the total and raises nothing.
         ComExhaustiveResult original = new ComExhaustiveResult(
             Array.Empty<ComMailBrief>(),
             foldersScanned: 12,

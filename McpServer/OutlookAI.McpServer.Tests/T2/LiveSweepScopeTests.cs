@@ -397,7 +397,7 @@ public sealed class LiveSweepScopeTests
             Scope = scope.StorePrefix,
             Terms = terms,
             SearchIn = searchIn,
-            Kinds = KindFilter.EmailOnly,
+            Kinds = KindFilter.MailKindOnly,
             Top = 5000,
         }).Hits;
     }

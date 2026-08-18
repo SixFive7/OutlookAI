@@ -75,12 +75,27 @@ field itself still reports the maximum - because narrowing it would make `search
 report different numbers for the same profile. Options: leave it; add
 `staleness.oldestStoreFrontierUtc`; or change the field's meaning and update health to match.
 *Recommendation: add the second field.* It answers the question without making two tools disagree.
-**ANSWERED 2026-08-18: do this.**
+**ANSWERED 2026-08-18: do this. SHIPPED** - `staleness.oldestStoreFrontierUtc`, beside the unchanged
+`staleness.newestIndexedUtc`. Store-scoped search: the same value as the existing field, because one
+store is in scope and its frontier is both the newest and the oldest - emitted rather than omitted so a
+caller reading only the new field gets a true answer on every search shape. Unscoped: the earliest of
+the per-store frontiers the sweep planner already measures, which is the figure the freshness advice has
+been quoting all along. Absent when no per-store frontier was measured at all (an exhaustive search, or
+an unscoped one whose store catalog could not be read); absence means "not measured", never "no lag" -
+substituting the profile maximum there would put a number in the field that no store's index stands at.
+Decided by the pure `MailService.OldestStoreFrontier`, all three branches pinned in T1.
 
 **(b) The unindexed-store list is uncapped.** Every other list in this server has a cap and a has-more
 flag. A profile with many unindexed PSTs would list them all, in the payload and in an advice
 sentence. *Recommendation: cap it like the others* - the principle is already settled here, this is
-just an omission. **ANSWERED 2026-08-18: do this.**
+just an omission. **ANSWERED 2026-08-18: do this. SHIPPED** - `MailService.UnindexedStoreListCap`,
+derived from `SweptFolderListCap` (12) rather than written as a second 12, since both bound a name list
+in the same sweep block for the same reason. The list is TRUNCATED rather than dropped, which is where
+it differs from the swept-folder list: a folder list is a legibility aid and is worth nothing in part,
+while each unindexed store NAME is separately actionable. Reported as `sweep.storesWithoutIndexTruncated`
+and `sweep.storesWithoutIndexTotal`, and the `no_index_frontier` advice sentence names the cap and the
+remainder too - capping the payload alone would have left the whole list in the prose an agent relays to
+the user. T1 pins the cap, both flags, and both wordings of the sentence.
 
 **(c) `notNeeded` now costs one ordinary sweep** in a narrow case: an unscoped search bounded to mail
 older than the frontier but newer than the fallback runs a sweep where it previously did no COM work.
@@ -120,6 +135,48 @@ reaches no payload, so whatever is decided, the count of what a tier refused sho
 admission rule is one rule in one place, as inclusive as each tier can be made - NDRs, read receipts,
 meeting requests and post items included - rather than three different narrowings. Where a tier
 physically cannot reach a class, that is a coverage fact to report, not a filter to leave implicit.
+
+**SHIPPED 2026-08-18.** The rule lives in `McpServer/OutlookAI.Core/Mapi/MailItemAdmission.cs` and it is
+that **an item's class never excludes it**; what bounds a search is the folder it looks in. It is
+written as a method that cannot return false, so a future narrowing has to delete a call site and a T1
+assertion, both of which say what is being given up - rather than quietly adding a class test next to an
+item loop, which is how the three tiers drifted apart in the first place.
+
+*An allowlist of "mail-ish" classes was considered and rejected*, and one fact decides it: the
+SystemIndex carries no message-class column at all, so an allowlist could only ever be enforced in the
+COM tiers - replacing one asymmetry with another, in the same payload, for the same query. Unifying
+UPWARDS to the widest of the three (the sweep, which never filtered) is the only shape that leaves the
+tiers agreeing.
+
+- **Freshness sweep**: unchanged. It is the tier the other two were unified to.
+- **Exhaustive scan**: the `PR_MESSAGE_CLASS like 'IPM.Note%'` clause and the `Class == 43` gate are
+  both gone. It now returns bounce reports, read receipts, meeting requests and responses, posts and
+  sharing invitations - the mode chosen BECAUSE completeness matters is no longer the one blind to "did
+  my mail bounce?". Where a scan has no terms and no dates to restrict on it emits a predicate that
+  matches every class, because `@SQL=` with no predicate is not a restriction Outlook accepts.
+- **Index tier**: message-level rows are admitted whatever their `System.Kind`. `KindFilter` was renamed
+  with the rule (`MessagesAndAttachments` / `MessagesOnly` / `AttachmentsOnly`, plus `MailKindOnly`
+  which only store discovery uses), because names carrying the old narrowing would be the same defect
+  one level down.
+
+**What each tier still cannot reach, reported rather than implicit.** The COM tiers only enter folders
+whose `DefaultItemType` is `olMailItem` - unchanged, and not a class filter: it is where mail lives. The
+index tier has no folder-type column and no message-class column, so it cannot draw that same line: its
+widening also admits the calendar and contact items of folders the COM tiers never open. That is
+over-return rather than under-return, which is the direction the standing rule prefers, and it is
+visible - every hit that is not ordinary mail carries `itemClass`, and one advice sentence names the
+count and the classes when an answer holds any.
+
+**The counts of what a tier refused now surface.** `index.rowsScanned` / `index.rowsDropped` /
+`index.candidatesExhausted` are a new block on `SearchOutcome` (the last of those also closes audit gap
+G6). Adding it had previously been declined on the `search` description budget; that cost does not
+exist - the client cap is per string, a payload block needs no description text, and `search` measures
+1791 units before and after the change. On the exhaustive side, `rowsDropped` minus `rowsUnreadable` was
+exactly this item-class filter, so that difference is now **zero by construction** - which is the
+machine-checkable statement that the tier admits every class.
+
+**Not verified here**: that a real meeting request, NDR or read receipt comes back from all three tiers
+on a live profile. That needs the live tier, which this work did not run.
 
 ## Decision log
 

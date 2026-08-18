@@ -296,10 +296,15 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
-    public void Build_EmailOnly_WhenAttachmentHitsExcluded()
+    public void Build_MailKindOnly_IsTheOnlyShapeThatStillNarrowsByKind()
     {
+        // The store-DISCOVERY probe, and nothing else. It used to be what `search` emitted
+        // when include_attachment_hits was false, which is how message-level meeting
+        // requests were dropped from searches while the sweep beside them returned all of
+        // them (gap B3). Discovery keeps it because it needs a row it is certain is mail in
+        // order to read a store prefix off it.
         var query = BaseQuery();
-        query.Kinds = KindFilter.EmailOnly;
+        query.Kinds = KindFilter.MailKindOnly;
 
         string sql = WsSqlBuilder.Build(query);
 
@@ -308,13 +313,13 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
-    public void Build_DocumentsOnly_EmitsNoKindPredicateUnderAScope()
+    public void Build_AttachmentsOnly_EmitsNoKindPredicateUnderAScope()
     {
         // attachment_hits_only used to mean Kind='document', which is exactly the filter
         // that dropped 709 of 3,139 attachment rows. It now means "every /at= row",
         // decided by IndexRowFilter.
         var query = BaseQuery();
-        query.Kinds = KindFilter.DocumentsOnly;
+        query.Kinds = KindFilter.AttachmentsOnly;
 
         string sql = WsSqlBuilder.Build(query);
 
@@ -322,15 +327,22 @@ public sealed class WsSqlBuilderTests
     }
 
     /// <summary>
-    /// Gap C2: the thread tier must not narrow by kind at all. Under a mapi SCOPE the
-    /// namespace is the guard; unscoped, the enumerated kind list keeps the provider
-    /// selective and IndexRowFilter is the correctness guarantee in both cases.
+    /// Gap C2, then gap B3: no SEARCH shape narrows by kind any more, and this is the shape
+    /// `search` emits when attachment hits are excluded as well as the one `thread` uses.
+    /// Under a mapi SCOPE the namespace is the guard; unscoped, the enumerated kind list
+    /// keeps the provider selective and IndexRowFilter is the correctness guarantee in both
+    /// cases.
+    /// <para>
+    /// THIS ASSERTION CHANGED with B3 and the change is the decision: the same call used to
+    /// emit <c>System.Kind='email'</c>, so a meeting request in the searched folder never
+    /// reached the post-filter at all.
+    /// </para>
     /// </summary>
     [Fact]
-    public void Build_MessagesAnyClass_EmitsNoKindPredicateUnderAScope()
+    public void Build_MessagesOnly_EmitsNoKindPredicateUnderAScope()
     {
         var query = BaseQuery();
-        query.Kinds = KindFilter.MessagesAnyClass;
+        query.Kinds = KindFilter.MessagesOnly;
 
         string sql = WsSqlBuilder.Build(query);
 
@@ -338,11 +350,11 @@ public sealed class WsSqlBuilderTests
     }
 
     [Fact]
-    public void Build_MessagesAnyClass_Unscoped_StillEnumeratesKinds()
+    public void Build_MessagesOnly_Unscoped_StillEnumeratesKinds()
     {
         string sql = WsSqlBuilder.Build(new IndexQuery
         {
-            Kinds = KindFilter.MessagesAnyClass,
+            Kinds = KindFilter.MessagesOnly,
             ConversationIdEquals = "ABCDEF0123456789",
         });
 

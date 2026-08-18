@@ -14,7 +14,7 @@ public sealed class WsSqlBuilderPhase2Tests
         string sql = WsSqlBuilder.Build(new IndexQuery
         {
             Scope = SyntheticScope,
-            Kinds = KindFilter.EmailOnly,
+            Kinds = KindFilter.MailKindOnly,
             ConversationIdEquals = "ABCDEF0123456789",
             Top = 50,
         });
@@ -29,7 +29,7 @@ public sealed class WsSqlBuilderPhase2Tests
     {
         string sql = WsSqlBuilder.Build(new IndexQuery
         {
-            Kinds = KindFilter.EmailOnly,
+            Kinds = KindFilter.MailKindOnly,
             ConversationIdEquals = "abc'def",
         });
 
@@ -52,7 +52,7 @@ public sealed class WsSqlBuilderPhase2Tests
         string sql = WsSqlBuilder.Build(new IndexQuery
         {
             Scope = SyntheticScope,
-            Kinds = KindFilter.EmailOnly,
+            Kinds = KindFilter.MailKindOnly,
             OrderBy = IndexOrder.SizeDescending,
             Top = 25,
         });
@@ -68,7 +68,7 @@ public sealed class WsSqlBuilderPhase2Tests
     [Fact]
     public void DefaultOrder_RemainsDateReceivedDescending()
     {
-        string sql = WsSqlBuilder.Build(new IndexQuery { Kinds = KindFilter.EmailOnly });
+        string sql = WsSqlBuilder.Build(new IndexQuery { Kinds = KindFilter.MailKindOnly });
         Assert.EndsWith("ORDER BY System.Message.DateReceived DESC", sql, StringComparison.Ordinal);
     }
 }

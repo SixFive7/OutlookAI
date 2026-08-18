@@ -263,7 +263,8 @@ namespace OutlookAI.Core.Com
             bool? isRead,
             bool? hasAttachments,
             long? sizeBytes,
-            string? body)
+            string? body,
+            string? messageClass = null)
         {
             EntryId = entryId;
             StoreDisplayName = storeDisplayName;
@@ -278,6 +279,7 @@ namespace OutlookAI.Core.Com
             HasAttachments = hasAttachments;
             SizeBytes = sizeBytes;
             Body = body;
+            MessageClass = messageClass;
         }
 
         /// <summary>Real (object-model) EntryID hex string.</summary>
@@ -318,6 +320,21 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Plain-text body - populated only when the sweep needs term matching.</summary>
         public string? Body { get; }
+
+        /// <summary>
+        /// PR_MESSAGE_CLASS as Outlook reports it (<c>IPM.Note</c>,
+        /// <c>REPORT.IPM.Note.NDR</c>, <c>IPM.Schedule.Meeting.Request</c>, ...); null when
+        /// the read failed.
+        /// <para>
+        /// Read since the tiers stopped filtering by class (gap B3): the COM tiers now
+        /// return bounce reports, receipts, meeting requests and posts alongside mail, and a
+        /// result set a caller cannot tell apart is the tidiness half of the price this
+        /// decision accepted. It is paid HERE - by saying what each hit is - rather than by
+        /// narrowing the answer back down. Surfaces as <c>itemClass</c> on hits that are not
+        /// ordinary mail (<see cref="OutlookAI.Core.Mapi.MailItemAdmission.DescribeComItemClass"/>).
+        /// </para>
+        /// </summary>
+        public string? MessageClass { get; }
     }
 
     /// <summary>State snapshot of the active Outlook Explorer window (COM-free data).</summary>

@@ -96,7 +96,7 @@ public sealed class LiveCompletenessOracleTests
         IndexSearchResult result = _fixture.Service.Search(new IndexQuery
         {
             Scope = hubScope.StorePrefix,
-            Kinds = KindFilter.EmailOnly,
+            Kinds = KindFilter.MailKindOnly,
             Terms = new[] { term },
             SearchIn = SearchIn.SubjectAndBody,
             Top = 500,

@@ -7,8 +7,15 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// <summary>
 /// T1 shapes for the exhaustive-scan DASL builder (v3.MD section 0.6 Phase 3 /
 /// section 12): ci_phrasematch only in Restrict/GetTable shapes, LIKE fallback,
-/// prefix stems via LIKE in both engines, UTC date literals, quote escaping, and the
-/// always-present IPM.Note mail-only clause.
+/// prefix stems via LIKE in both engines, UTC date literals and quote escaping.
+/// <para>
+/// THE MAIL-ONLY CLAUSE IS GONE (gap B3, maintainer decision 2026-08-18). Every filter
+/// used to open with <c>PR_MESSAGE_CLASS like 'IPM.Note%'</c>, so the one search mode a
+/// caller reaches for BECAUSE completeness matters was the only one that could not find a
+/// bounce report, a read receipt, a meeting request or a post. The assertions that changed
+/// are marked where they changed; what replaces the clause is nothing at all, except in the
+/// one call that would otherwise emit an empty restriction.
+/// </para>
 /// </summary>
 public sealed class ExhaustiveDaslFilterTests
 {
@@ -23,7 +30,8 @@ public sealed class ExhaustiveDaslFilterTests
         string filter = ExhaustiveDaslFilter.Build(new[] { "factuur" }, null, null, ExhaustiveEngine.CiPhraseMatch);
 
         Assert.StartsWith("@SQL=", filter, StringComparison.Ordinal);
-        Assert.Contains("(" + MessageClass + " like 'IPM.Note%')", filter, StringComparison.Ordinal);
+        // CHANGED BY B3: this used to assert the presence of the IPM.Note clause.
+        Assert.DoesNotContain("IPM.Note", filter, StringComparison.Ordinal);
         Assert.Contains(Subject + " ci_phrasematch 'factuur' OR " + Body + " ci_phrasematch 'factuur'", filter, StringComparison.Ordinal);
         Assert.DoesNotContain(" like '%factuur%'", filter, StringComparison.Ordinal);
     }
@@ -44,8 +52,9 @@ public sealed class ExhaustiveDaslFilterTests
 
         Assert.Contains("ci_phrasematch 'alpha'", filter, StringComparison.Ordinal);
         Assert.Contains("ci_phrasematch 'beta'", filter, StringComparison.Ordinal);
-        // Three parenthesized clauses (message class + 2 terms) joined with AND.
-        Assert.Equal(2, CountOccurrences(filter, ") AND ("));
+        // CHANGED BY B3: two parenthesized term clauses joined with AND, where there used
+        // to be three because the message-class filter always led.
+        Assert.Equal(1, CountOccurrences(filter, ") AND ("));
     }
 
     [Fact]
@@ -109,11 +118,61 @@ public sealed class ExhaustiveDaslFilterTests
             ExhaustiveDaslFilter.Build(null, since, since, ExhaustiveEngine.Like));
     }
 
+    /// <summary>
+    /// The one place a message-class predicate survives, and it is not a filter: an
+    /// unbounded folder scan ("show me this folder") has nothing else to restrict on, and
+    /// <c>@SQL=</c> with no predicate is not a restriction Outlook accepts. PR_MESSAGE_CLASS
+    /// is mandatory on every MAPI message, so <c>like '%'</c> over it excludes nothing.
+    /// <para>
+    /// CHANGED BY B3: this call used to emit the real <c>like 'IPM.Note%'</c> filter, which
+    /// is why the shape needed replacing rather than deleting.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void NoTermsNoDates_StillEmitsMailOnlyClause()
+    public void NoTermsNoDates_EmitsAPredicateThatAdmitsEveryClass()
     {
         string filter = ExhaustiveDaslFilter.Build(null, null, null, ExhaustiveEngine.Like);
-        Assert.Equal("@SQL=(" + MessageClass + " like 'IPM.Note%')", filter);
+
+        Assert.Equal("@SQL=(" + MessageClass + " like '%')", filter);
+        Assert.Equal("@SQL=(" + ExhaustiveDaslFilter.AdmitEveryClassClause + ")", filter);
+        Assert.DoesNotContain("IPM.Note", filter, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And the corollary: as soon as there is anything to restrict on, no class predicate is
+    /// emitted at all. A tautology that leaked into every filter would be a wasted predicate
+    /// on every scan, and would read to the next person like the filter that was removed.
+    /// </summary>
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void AnyRealBound_MeansNoClassPredicateAtAll(bool withTerm, bool withDate)
+    {
+        string filter = ExhaustiveDaslFilter.Build(
+            withTerm ? new[] { "factuur" } : null,
+            withDate ? new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc) : (DateTime?)null,
+            null,
+            ExhaustiveEngine.Like);
+
+        Assert.DoesNotContain(MessageClass, filter, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The classes the removed filter dropped, spelled out: every one of them is now
+    /// admitted by every tier. Nothing in the emitted DASL mentions any of them, which is
+    /// the point - admission is decided by not asking.
+    /// </summary>
+    [Fact]
+    public void TheClassesTheOldFilterDropped_AreNoLongerNamedInAnyFilter()
+    {
+        foreach (ExhaustiveEngine engine in new[] { ExhaustiveEngine.CiPhraseMatch, ExhaustiveEngine.Like })
+        {
+            string filter = ExhaustiveDaslFilter.Build(new[] { "factuur" }, null, null, engine);
+            foreach (string dropped in OutlookAI.Core.Mapi.MailItemAdmission.ClassesTheOldFiltersDropped)
+            {
+                Assert.DoesNotContain(dropped, filter, StringComparison.OrdinalIgnoreCase);
+            }
+        }
     }
 
     [Fact]
@@ -194,8 +253,9 @@ public sealed class ExhaustiveDaslFilterTests
         string subjectOnly = ExhaustiveDaslFilter.Build(new[] { "fact*" }, null, null, ExhaustiveEngine.CiPhraseMatch, SearchIn.SubjectOnly);
         string bodyOnly = ExhaustiveDaslFilter.Build(new[] { "fact*" }, null, null, ExhaustiveEngine.CiPhraseMatch, SearchIn.BodyOnly);
 
-        Assert.Equal("@SQL=(" + MessageClass + " like 'IPM.Note%') AND (" + Subject + " like '%fact%')", subjectOnly);
-        Assert.Equal("@SQL=(" + MessageClass + " like 'IPM.Note%') AND (" + Body + " like '%fact%')", bodyOnly);
+        // CHANGED BY B3: both used to be prefixed with the IPM.Note class clause.
+        Assert.Equal("@SQL=(" + Subject + " like '%fact%')", subjectOnly);
+        Assert.Equal("@SQL=(" + Body + " like '%fact%')", bodyOnly);
     }
 
     [Fact]
@@ -204,7 +264,7 @@ public sealed class ExhaustiveDaslFilterTests
         string filter = ExhaustiveDaslFilter.Build(
             new[] { "alpha", "beta" }, null, null, ExhaustiveEngine.CiPhraseMatch, SearchIn.SubjectOnly);
 
-        Assert.Equal(2, CountOccurrences(filter, ") AND ("));
+        Assert.Equal(1, CountOccurrences(filter, ") AND ("));
         Assert.Equal(2, CountOccurrences(filter, "ci_phrasematch"));
     }
 

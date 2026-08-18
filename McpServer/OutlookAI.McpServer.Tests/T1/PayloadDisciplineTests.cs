@@ -53,6 +53,18 @@ public sealed class PayloadDisciplineTests
         Assert.Equal(12, MailService.SweptFolderListCap);
         Assert.Equal(40, OutlookComSession.MaxScopedSweepFolders);
 
+        // The unindexed-store list, which until 2026-08-18 had no cap at all (Q7b) - in the
+        // payload or in the advice sentence that joins the names into prose. Derived from
+        // the swept-folder cap rather than a second 12; StalenessAndUnindexedStoreTests
+        // pins the truncation flags and the sentence.
+        Assert.Equal(12, MailService.UnindexedStoreListCap);
+        Assert.Equal(MailService.SweptFolderListCap, MailService.UnindexedStoreListCap);
+
+        // Distinct item classes the "not ordinary mail" advice names before trailing off
+        // (gap B3). A cap in prose is still a cap; the per-hit itemClass fields are the
+        // complete answer beside it.
+        Assert.Equal(4, MailService.NonMailClassAdviceCap);
+
         // The sweep's per-folder item cap. Pinned here because it was the one cap in the
         // service that was private and covered by no test at all, which made it the only
         // cap whose creep nothing would have noticed - and raising it silently is a COM

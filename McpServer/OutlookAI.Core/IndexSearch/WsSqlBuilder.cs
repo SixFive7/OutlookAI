@@ -26,11 +26,12 @@ namespace OutlookAI.Core.IndexSearch
     /// <item>Multi-term queries AND ACROSS the columns (one pair per term), never inside
     /// one column - the in-column shape missed mail with one term in the subject and
     /// another in the body (soak fix 13).</item>
-    /// <item>Kind: 'email' narrows to messages; the attachment-bearing shapes emit NO
-    /// Kind predicate under a mapi SCOPE (the namespace is the guard) and an enumerated
-    /// kind list without one, because an attachment row carries the ATTACHMENT's kind -
-    /// 'document' alone dropped 22.6% of them. Admission is decided by IndexRowFilter
-    /// after the rows come back (v3.MD section 0.8 block (q)).</item>
+    /// <item>Kind: only the store-DISCOVERY shape narrows on it ('email'); every
+    /// search shape emits NO Kind predicate under a mapi SCOPE (the namespace is the
+    /// guard) and an enumerated kind list without one, because an attachment row carries
+    /// the ATTACHMENT's kind - 'document' alone dropped 22.6% of them - and since gap B3
+    /// a message row is admitted whatever its class. Admission is decided by
+    /// IndexRowFilter after the rows come back (v3.MD section 0.8 block (q)).</item>
     /// <item>No aggregates, no JOINs (unsupported in WS-SQL).</item>
     /// <item>Sender/recipient filters use per-column CONTAINS - Phase-1 probes measured
     /// equality/LIKE on FromAddress at 1-10 s (property scan) vs ~60 ms for CONTAINS. The
@@ -169,13 +170,13 @@ namespace OutlookAI.Core.IndexSearch
 
             switch (query.Kinds)
             {
-                case KindFilter.EmailOnly:
-                    // Messages only: 'email' is exactly the message-level kind.
+                case KindFilter.MailKindOnly:
+                    // Store discovery only: 'email' is exactly the message-level mail kind.
                     where.Add("System.Kind='email'");
                     break;
-                case KindFilter.DocumentsOnly:
-                case KindFilter.EmailAndDocuments:
-                case KindFilter.MessagesAnyClass:
+                case KindFilter.AttachmentsOnly:
+                case KindFilter.MessagesAndAttachments:
+                case KindFilter.MessagesOnly:
                     // Shapes that must not be narrowed by kind. An attachment-content row
                     // carries the ATTACHMENT's kind (picture / communication / calendar /
                     // music / video, not just document) and a message-level row carries its

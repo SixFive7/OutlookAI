@@ -76,7 +76,7 @@ public sealed class LiveExhaustiveSearchTests
         IndexSearchResult indexResult = index.Search(new IndexQuery
         {
             Scope = hubScope.StorePrefix,
-            Kinds = KindFilter.EmailOnly,
+            Kinds = KindFilter.MailKindOnly,
             Terms = new[] { term },
             SearchIn = SearchIn.SubjectAndBody,
             Top = 500,

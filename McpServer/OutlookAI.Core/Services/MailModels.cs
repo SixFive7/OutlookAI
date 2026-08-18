@@ -153,6 +153,29 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Conversation id for the thread tool.</summary>
         public string? ConversationId { get; set; }
+
+        /// <summary>
+        /// What this hit IS, when it is not ordinary mail - present only then, so it costs
+        /// nothing on the usual result and its presence is itself the signal.
+        /// <para>
+        /// It exists because the three search tiers stopped filtering by item class (gap
+        /// B3): bounce reports, read receipts, meeting requests, responses, posts and
+        /// sharing invitations now come back beside mail in every tier, and a widened result
+        /// set a caller cannot tell apart is worse than the narrow one it replaced.
+        /// </para>
+        /// <para>
+        /// TWO VOCABULARIES, ON PURPOSE, because the two kinds of tier know different
+        /// things. A hit from Outlook (<c>source</c> <c>live</c>/<c>exhaustive</c>/<c>com</c>)
+        /// carries the real MAPI message class - <c>REPORT.IPM.Note.NDR</c>,
+        /// <c>IPM.Schedule.Meeting.Request</c>. A hit from the index carries
+        /// <c>kind:&lt;System.Kind&gt;</c> instead (<c>kind:calendar</c>,
+        /// <c>kind:unknown</c>), because that tier never opens the item and reporting a bare
+        /// class name would claim an authority it does not have. The prefix is what keeps
+        /// the two apart at a glance;
+        /// <see cref="OutlookAI.Core.Mapi.MailItemAdmission"/> owns both renderings.
+        /// </para>
+        /// </summary>
+        public string? ItemClass { get; set; }
     }
 
     /// <summary>Freshness gap-sweep diagnostics attached to (non-exhaustive) search results.</summary>
@@ -235,8 +258,29 @@ namespace OutlookAI.Core.Services
         /// here because this is where it changes an answer: a store the index does not know
         /// is searchable only as far back as the fallback window reaches.
         /// </para>
+        /// <para>
+        /// CAPPED at <see cref="MailService.UnindexedStoreListCap"/> since 2026-08-18 (Q7b).
+        /// It was the one list in this server with no bound, in the payload and in its
+        /// advice sentence alike, which on a profile of many unindexed PSTs would have put
+        /// the whole store list in both. See <see cref="StoresWithoutIndexTruncated"/> and
+        /// <see cref="StoresWithoutIndexTotal"/> - a cap this server does not report is the
+        /// defect, not the cap.
+        /// </para>
         /// </summary>
         public IReadOnlyList<string>? StoresWithoutIndex { get; set; }
+
+        /// <summary>
+        /// True when <see cref="StoresWithoutIndex"/> lists fewer stores than were found;
+        /// null when it is complete. The has-more half of the cap, so a short list is never
+        /// mistaken for the whole set.
+        /// </summary>
+        public bool? StoresWithoutIndexTruncated { get; set; }
+
+        /// <summary>
+        /// How many stores were actually found without index rows, when that is more than
+        /// the list shows. Null otherwise - the list is then its own total.
+        /// </summary>
+        public int? StoresWithoutIndexTotal { get; set; }
 
         /// <summary>
         /// What the sweep covered, following the search scope (soak fix 13):
@@ -503,6 +547,54 @@ namespace OutlookAI.Core.Services
         public int? FolderNamesMatched { get; set; }
     }
 
+    /// <summary>
+    /// What the INDEX TIER did on this search: present on every non-exhaustive search,
+    /// absent on an exhaustive one, which bypasses the index by design.
+    /// <para>
+    /// It exists because these three numbers were computed on every search and reached
+    /// nobody. <c>IndexSearchResult.RowsDropped</c> was the count of what the tier refused,
+    /// and gap B3's whole complaint was that it never surfaced;
+    /// <see cref="CandidatesExhausted"/> was the one way the post-filter could hide matches
+    /// and said so only in an advice sentence (gap G6), which an agent reading fields rather
+    /// than prose - the sensible way to read a payload - never saw.
+    /// </para>
+    /// <para>
+    /// Adding it was previously declined on the grounds that the <c>search</c> tool
+    /// description could not afford to document it. Measurement settled that: the client cap
+    /// is per STRING, the description sits at 1791 of 2048 units, and a payload block needs
+    /// no description text at all - the block is self-describing and the README carries the
+    /// reference.
+    /// </para>
+    /// </summary>
+    public sealed class IndexTierInfo
+    {
+        /// <summary>Rows the SQL statement returned, before admission (the denominator of <see cref="RowsDropped"/>).</summary>
+        public int RowsScanned { get; set; }
+
+        /// <summary>
+        /// Rows the index tier examined and did not admit - deliberately the same name and
+        /// meaning as <see cref="ExhaustiveInfo.RowsDropped"/>, so the two tiers report one
+        /// counter shape rather than two vocabularies.
+        /// <para>
+        /// A DIAGNOSTIC, not a coverage hole: it raises nothing and never degrades a search.
+        /// What lands here is rows outside the mapi namespace (only reachable when the
+        /// statement has no SCOPE) and rows of the wrong shape for what was asked - an
+        /// attachment row under <c>include_attachment_hits: false</c>, a message row under
+        /// <c>attachment_hits_only</c>. Since gap B3 no message row is dropped for its item
+        /// class, in this tier or any other.
+        /// </para>
+        /// </summary>
+        public int RowsDropped { get; set; }
+
+        /// <summary>
+        /// True when the over-fetched candidate list ran out before enough rows were
+        /// admitted - the one way this tier's post-filter CAN hide matches, so unlike
+        /// <see cref="RowsDropped"/> it is worth acting on. Null otherwise (gap G6: it used
+        /// to be advice-only).
+        /// </summary>
+        public bool? CandidatesExhausted { get; set; }
+    }
+
     /// <summary>Index staleness snapshot attached to search results.</summary>
     public sealed class StalenessInfo
     {
@@ -534,6 +626,33 @@ namespace OutlookAI.Core.Services
         /// </para>
         /// </summary>
         public DateTime? NewestIndexedUtc { get; set; }
+
+        /// <summary>
+        /// The OLDEST index frontier among the stores this search covered - "how far behind
+        /// is the worst store in scope", which is the question
+        /// <see cref="NewestIndexedUtc"/> structurally cannot answer.
+        /// <para>
+        /// The two exist side by side rather than one replacing the other, and that is the
+        /// decision (Q7a, 2026-08-18). <see cref="NewestIndexedUtc"/> is a MAXIMUM and stays
+        /// one, because narrowing it to the worst store would make <c>search</c> and
+        /// <c>outlook_health</c> report different numbers for the same profile. A maximum
+        /// cannot bound anyone else's lag, though, so an unscoped search reporting it alone
+        /// says nothing about the account that is actually behind - which is exactly the
+        /// store whose recent mail is at risk.
+        /// </para>
+        /// <para>
+        /// Store-scoped search: the same value as <see cref="NewestIndexedUtc"/>, because
+        /// one store is in scope and its frontier is both the newest and the oldest.
+        /// Unscoped search: the earliest of the per-store frontiers the sweep planner
+        /// measured, i.e. the figure the freshness advice already quotes. Absent when no
+        /// per-store frontier was measured at all - an exhaustive search (no index scope by
+        /// design) or an unscoped search whose store catalog could not be read - and absence
+        /// means "not measured", never "no lag". A store the index holds nothing for has no
+        /// frontier to be oldest and is named in <see cref="SweepInfo.StoresWithoutIndex"/>
+        /// instead.
+        /// </para>
+        /// </summary>
+        public DateTime? OldestStoreFrontierUtc { get; set; }
 
         /// <summary>Age of the newest indexed mail in minutes.</summary>
         public double? AgeMinutes { get; set; }
@@ -612,6 +731,9 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Freshness-sweep diagnostics (absent on exhaustive searches).</summary>
         public SweepInfo? Sweep { get; set; }
+
+        /// <summary>Index-tier diagnostics (absent on exhaustive searches, which bypass the index).</summary>
+        public IndexTierInfo? Index { get; set; }
 
         /// <summary>Exhaustive-scan diagnostics (exhaustive searches only).</summary>
         public ExhaustiveInfo? Exhaustive { get; set; }

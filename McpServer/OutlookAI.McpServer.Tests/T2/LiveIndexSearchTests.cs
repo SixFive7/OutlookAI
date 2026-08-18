@@ -41,7 +41,7 @@ public sealed class LiveIndexSearchTests
     {
         IndexSearchResult result = _fixture.Service.Search(new IndexQuery
         {
-            Kinds = KindFilter.EmailOnly,
+            Kinds = KindFilter.MailKindOnly,
             Top = 5,
         });
 
@@ -59,7 +59,7 @@ public sealed class LiveIndexSearchTests
             IndexSearchResult result = _fixture.Service.Search(new IndexQuery
             {
                 Scope = scope.StorePrefix,
-                Kinds = KindFilter.EmailOnly,
+                Kinds = KindFilter.MailKindOnly,
                 Top = 5,
             });
 
@@ -107,7 +107,7 @@ public sealed class LiveIndexSearchTests
     {
         IndexSearchResult result = _fixture.Service.Search(new IndexQuery
         {
-            Kinds = KindFilter.EmailOnly,
+            Kinds = KindFilter.MailKindOnly,
             ReceivedOnOrAfterUtc = DateTime.UtcNow.AddDays(-30),
             Top = 10,
         });
@@ -125,14 +125,14 @@ public sealed class LiveIndexSearchTests
         IndexSearchResult unread = _fixture.Service.Search(new IndexQuery
         {
             Scope = scope.StorePrefix,
-            Kinds = KindFilter.EmailOnly,
+            Kinds = KindFilter.MailKindOnly,
             IsRead = false,
             Top = 5,
         });
         IndexSearchResult withAttachments = _fixture.Service.Search(new IndexQuery
         {
             Scope = scope.StorePrefix,
-            Kinds = KindFilter.EmailOnly,
+            Kinds = KindFilter.MailKindOnly,
             HasAttachments = true,
             Top = 5,
         });
@@ -152,7 +152,7 @@ public sealed class LiveIndexSearchTests
         IndexSearchResult recent = _fixture.Service.Search(new IndexQuery
         {
             Scope = scope.StorePrefix,
-            Kinds = KindFilter.EmailOnly,
+            Kinds = KindFilter.MailKindOnly,
             Top = 25,
         });
         List<string> candidates = recent.Hits
@@ -171,7 +171,7 @@ public sealed class LiveIndexSearchTests
                 filtered = _fixture.Service.Search(new IndexQuery
                 {
                     Scope = scope.StorePrefix,
-                    Kinds = KindFilter.EmailOnly,
+                    Kinds = KindFilter.MailKindOnly,
                     SenderContains = candidate,
                     Top = 5,
                 });

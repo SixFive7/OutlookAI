@@ -44,7 +44,20 @@ namespace OutlookAI.Core.IndexSearch
         /// <summary>Rows the statement returned before <see cref="IndexRowFilter"/> ran.</summary>
         public int RowsScanned { get; }
 
-        /// <summary>Rows the post-filter removed (non-mail namespace, or a non-mail message-level kind).</summary>
+        /// <summary>
+        /// Rows the statement offered and <see cref="IndexRowFilter"/> refused: rows outside
+        /// the mapi namespace (only reachable without a SCOPE), and rows of the wrong SHAPE
+        /// for the requested <see cref="KindFilter"/> - an attachment row under
+        /// <see cref="KindFilter.MessagesOnly"/>, a message row under
+        /// <see cref="KindFilter.AttachmentsOnly"/>.
+        /// <para>
+        /// It no longer counts message rows dropped for their item class, because no search
+        /// drops any (gap B3). It is the index tier's half of the counter the exhaustive
+        /// scan reports as <c>exhaustive.rowsDropped</c> - one counter shape across tiers -
+        /// and since 2026-08-18 it reaches the payload as <c>index.rowsDropped</c> instead
+        /// of dying here.
+        /// </para>
+        /// </summary>
         public int RowsDropped { get; }
 
         /// <summary>
@@ -238,8 +251,8 @@ namespace OutlookAI.Core.IndexSearch
 
             IndexQuery[] probes =
             {
-                new IndexQuery { Kinds = KindFilter.EmailOnly, RecipientContains = smtpAddress, Top = 50 },
-                new IndexQuery { Kinds = KindFilter.EmailOnly, SenderContains = smtpAddress, Top = 50 },
+                new IndexQuery { Kinds = KindFilter.MailKindOnly, RecipientContains = smtpAddress, Top = 50 },
+                new IndexQuery { Kinds = KindFilter.MailKindOnly, SenderContains = smtpAddress, Top = 50 },
             };
 
             foreach (IndexQuery probe in probes)

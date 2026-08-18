@@ -109,39 +109,52 @@ namespace OutlookAI.Core.IndexSearch
         }
     }
 
-    /// <summary>System.Kind filter shape - a query is never emitted without one (v3.MD section 12).</summary>
+    /// <summary>
+    /// Which ROW SHAPES an index query covers - message-level rows, attachment-content
+    /// rows, or both. A query is never emitted without one (v3.MD section 12).
+    /// <para>
+    /// THE NAMES CHANGED WITH THE RULE (gap B3, maintainer decision 2026-08-18). They used
+    /// to be <c>EmailAndDocuments</c> / <c>EmailOnly</c> / <c>DocumentsOnly</c> /
+    /// <c>MessagesAnyClass</c>, from a time when a message row had to be kind <c>email</c>
+    /// to be admitted at all. Item class no longer narrows any tier
+    /// (<see cref="OutlookAI.Core.Mapi.MailItemAdmission"/>), so those names would now
+    /// describe a filter that is gone - which is the same defect as <c>FromAddressContains</c>
+    /// matching names: a field name the next reader believes instead of the code.
+    /// </para>
+    /// </summary>
     public enum KindFilter
     {
         /// <summary>
-        /// <c>(System.Kind='email' OR System.Kind='document')</c>: messages plus indexed
-        /// attachment-content entries. The default - email-only queries miss
-        /// attachment-content hits (v3.MD section 12).
+        /// Message-level rows of EVERY item class plus attachment-content rows of every
+        /// kind - the widest shape there is, and what <c>search</c> asks for by default.
+        /// Emits no Kind predicate under a mapi SCOPE (the namespace is the guard) and the
+        /// enumerated kind list without one.
         /// </summary>
-        EmailAndDocuments = 0,
-
-        /// <summary><c>System.Kind='email'</c>: messages only (completeness-oracle parity mode).</summary>
-        EmailOnly = 1,
-
-        /// <summary><c>System.Kind='document'</c>: attachment-content entries only (probe R1 shape).</summary>
-        DocumentsOnly = 2,
+        MessagesAndAttachments = 0,
 
         /// <summary>
-        /// Message-level rows WHATEVER their item class - mail, meeting requests and
-        /// responses, NDRs, posts - and no attachment-content rows. Like the
-        /// attachment-bearing shapes it emits no Kind predicate under a mapi SCOPE and the
-        /// enumerated kind list without one; admission is
-        /// <see cref="IndexRowFilter.Keep"/>'s "not an attachment row" alone.
-        /// <para>
-        /// It exists for the <c>thread</c> tool (gap C2). A conversation is defined by
-        /// Outlook, not by item class: a meeting request and its acceptances carry the same
-        /// ConversationID as the mail around them and index as <c>calendar</c>, so
-        /// <see cref="EmailOnly"/> dropped exactly those members from a payload whose tool
-        /// description promises the FULL conversation. Search keeps <see cref="EmailOnly"/>
-        /// - there the caller asked for mail - but a thread member that Outlook puts in the
-        /// conversation belongs in the conversation.
-        /// </para>
+        /// Message-level rows of every item class, and no attachment-content rows: what
+        /// <c>search</c> asks for when <c>include_attachment_hits</c> is false, and what
+        /// <c>thread</c> always asks for (gap C2 - a meeting request carries the
+        /// surrounding mail's ConversationID and indexes as <c>calendar</c>, so a
+        /// kind-narrowed thread dropped real members of a conversation the tool promises
+        /// whole). Admission is <see cref="IndexRowFilter.Keep"/>'s "not an attachment row"
+        /// alone.
         /// </summary>
-        MessagesAnyClass = 3,
+        MessagesOnly = 1,
+
+        /// <summary>Attachment-content entries only, any kind (probe R1 shape / attachment_hits_only).</summary>
+        AttachmentsOnly = 2,
+
+        /// <summary>
+        /// <c>System.Kind='email'</c>: the one narrow shape left, and no search uses it.
+        /// It exists for store-scope DISCOVERY
+        /// (<see cref="IndexSearchService.TryDiscoverStoreScopeByAddress"/>), which needs a
+        /// row that is certainly a mail message in order to read a store prefix off it, and
+        /// for the completeness oracle's parity mode. Narrowing a user-facing search with
+        /// it is what gap B3 was.
+        /// </summary>
+        MailKindOnly = 3,
     }
 
     /// <summary>Result ordering for an index query.</summary>
@@ -197,8 +210,8 @@ namespace OutlookAI.Core.IndexSearch
         /// <summary>Where <see cref="Terms"/> are matched. Default: subject OR body/attachment content (D40/SF-6).</summary>
         public SearchIn SearchIn { get; set; } = SearchInValues.Default;
 
-        /// <summary>Which System.Kind values the query covers. Default: email plus documents.</summary>
-        public KindFilter Kinds { get; set; } = KindFilter.EmailAndDocuments;
+        /// <summary>Which row shapes the query covers. Default: every message row plus every attachment row.</summary>
+        public KindFilter Kinds { get; set; } = KindFilter.MessagesAndAttachments;
 
         /// <summary>
         /// Sender filter, matched with CONTAINS over the sender ADDRESS and the sender

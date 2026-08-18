@@ -390,7 +390,7 @@ public sealed class LiveAttachmentKindRecallTests
                 // Every one of them is admitted by the shipped shape...
                 Assert.All(
                     attachmentRows,
-                    r => Assert.True(IndexRowFilter.Keep(IndexRowMapper.Map(r), KindFilter.EmailAndDocuments)));
+                    r => Assert.True(IndexRowFilter.Keep(IndexRowMapper.Map(r), KindFilter.MessagesAndAttachments)));
 
                 // ...and they all map to ONE parent message URL.
                 List<string> parents = attachmentRows
