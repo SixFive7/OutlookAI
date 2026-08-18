@@ -19,6 +19,11 @@ namespace OutlookAI.ComHost.Host
     /// actually lives. The parent supervises the process; the gateway supervises the COM
     /// connection. Neither has to know about the other's failure mode.
     /// </para>
+    /// <para>
+    /// And because one call in, one call out is the shape here, this is also where the
+    /// rebuild is allowed or refused per operation: reads may be re-run against a rebuilt
+    /// session, writes may not (<see cref="ComSessionOperations"/>).
+    /// </para>
     /// </summary>
     public class GatewayRoutingProxy : DispatchProxy
     {
@@ -51,7 +56,23 @@ namespace OutlookAI.ComHost.Host
                 return InvokeSession(targetMethod, faulted!, args);
             }
 
-            return _gateway.Run<object?>(session => InvokeSession(targetMethod, session, args));
+            // This is the ONE place in the product where the disconnect rebuild may be asked
+            // for, and the only place it is safe to ask: the lambda below is exactly one
+            // contract call, and its name is in hand, so the decision can be made per
+            // operation instead of over an opaque multi-step lambda.
+            //
+            // It became load-bearing on 2026-08-18. Until the unwrap fix above, the rebuild
+            // had never once fired inside this process - every call arrived wrapped, so the
+            // filter never matched. Restoring it also restored a re-run of whatever the call
+            // was, and one of the things on this contract is TrySendDraft, whose confirm
+            // token is consumed on the parent before the call is ever sent. A re-run after
+            // RPC_S_CALL_FAILED - the HRESULT that means the call MAY ALREADY have executed -
+            // would therefore have sent a second copy with nothing left to stop it.
+            ComSessionRecovery recovery = ComSessionOperations.IsRetryable(targetMethod.Name)
+                ? ComSessionRecovery.RebuildOnce
+                : ComSessionRecovery.None;
+
+            return _gateway.Run<object?>(session => InvokeSession(targetMethod, session, args), recovery);
         }
 
         /// <summary>

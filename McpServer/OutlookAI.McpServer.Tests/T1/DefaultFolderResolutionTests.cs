@@ -224,10 +224,22 @@ public sealed class DefaultFolderResolutionTests
     }
 
     [Fact]
-    public void AStoreWithoutASingleDefaultFolder_IsStillReportedAsNoCoverage()
+    public void AStoreWithoutASingleDefaultFolder_SweepsNothing_AndIsNotDegradedForIt()
     {
-        // Absence is not a gap, but a sweep that ended up covering NOTHING is - the answer
-        // really was not checked against live Outlook, whatever the reason.
+        // This test used to assert the opposite, and the reversal is deliberate. It read:
+        // "absence is not a gap, but a sweep that ended up covering NOTHING is - the answer
+        // really was not checked against live Outlook, whatever the reason." The "whatever
+        // the reason" is the part that did not survive contact.
+        //
+        // While the counters were whole-sweep totals this shape needed a profile with no
+        // arrival-path folder ANYWHERE, which is close enough to nonexistent that saying
+        // "partial" cost nothing. Once the counters became per store (2026-08-18) the same
+        // arithmetic described an everyday store - a PST, an archive-only store, a shared
+        // mailbox mounted without the four defaults - and every search naming one came back
+        // degraded: true over four folders that cannot hold mail because they do not exist.
+        //
+        // The rule that survives is the one the absent counter was added for: the sweep
+        // covered everything in its scope, and its scope was empty. Nothing was withheld.
         SweepInfo sweep = new SweepInfo
         {
             Performed = true,
@@ -239,8 +251,52 @@ public sealed class DefaultFolderResolutionTests
 
         sweep.CoverageGaps = FreshMerge.DescribeCoverageGaps(sweep);
 
-        Assert.Contains(FreshMerge.GapNothingSwept, sweep.CoverageGaps!);
-        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(sweep));
+        Assert.Null(sweep.CoverageGaps);
+        Assert.Equal(FreshMerge.FreshnessLive, FreshMerge.ClassifyFreshness(sweep));
+        Assert.Empty(MailService.DescribeSweepCoverage(sweep, "12 minutes", folderScoped: false));
+    }
+
+    [Fact]
+    public void ASweepThatCoveredNothing_ForAnyReasonOtherThanAbsence_IsStillReportedAsNoCoverage()
+    {
+        // The guard on the reversal above. "Nothing swept" keeps its meaning everywhere it
+        // still has one: folders that exist and went uncovered, and a scope the sweep never
+        // reached at all (every counter zero - a store name that matches nothing).
+        SweepInfo unreadable = new SweepInfo
+        {
+            Performed = true,
+            Scope = MailService.DefaultSweepScopeDescription,
+            FoldersSwept = 0,
+            FoldersSkipped = OutlookComSession.DefaultSweepFolderKinds.Count,
+        };
+        unreadable.CoverageGaps = FreshMerge.DescribeCoverageGaps(unreadable);
+        Assert.Contains(FreshMerge.GapNothingSwept, unreadable.CoverageGaps!);
+        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(unreadable));
+
+        SweepInfo neverReached = new SweepInfo
+        {
+            Performed = true,
+            Scope = MailService.DefaultSweepScopeDescription,
+            FoldersSwept = 0,
+        };
+        neverReached.CoverageGaps = FreshMerge.DescribeCoverageGaps(neverReached);
+        Assert.Contains(FreshMerge.GapNothingSwept, neverReached.CoverageGaps!);
+        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(neverReached));
+
+        // And absence next to a real hole does not launder it: three folders missing, one
+        // unreadable, nothing swept - that one folder is still unaccounted for.
+        SweepInfo mixed = new SweepInfo
+        {
+            Performed = true,
+            Scope = MailService.DefaultSweepScopeDescription,
+            FoldersSwept = 0,
+            FoldersFailed = 1,
+            FoldersAbsent = OutlookComSession.DefaultSweepFolderKinds.Count - 1,
+        };
+        mixed.CoverageGaps = FreshMerge.DescribeCoverageGaps(mixed);
+        Assert.Contains(FreshMerge.GapNothingSwept, mixed.CoverageGaps!);
+        Assert.Contains(FreshMerge.GapFoldersFailed, mixed.CoverageGaps!);
+        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(mixed));
     }
 
     // --- a model of the shipped default-folder loop, driven by the pure classification ---

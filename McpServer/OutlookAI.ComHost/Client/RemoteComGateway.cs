@@ -115,6 +115,17 @@ namespace OutlookAI.ComHost.Client
         }
 
         /// <inheritdoc />
+        /// <remarks>
+        /// The recovery argument is accepted and ignored: this side has never had a re-run
+        /// to suppress. The classification it carries is honoured one process away, by the
+        /// COM host's routing proxy, where a single contract call is the unit being retried.
+        /// </remarks>
+        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery)
+        {
+            return Run(operation);
+        }
+
+        /// <inheritdoc />
         public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
         {
             ArgumentNullException.ThrowIfNull(operation);

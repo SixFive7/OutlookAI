@@ -232,6 +232,13 @@ namespace OutlookAI.Core.Services
         /// deliberately NOT a coverage gap: it raises no gap code, adds no advice and never
         /// degrades the search, because a folder that does not exist cannot be holding
         /// mail. Null when every folder in scope exists, which is the usual case.
+        /// <para>
+        /// It does one more job, and only <see cref="FreshMerge.DescribeCoverageGaps"/>
+        /// does it: when the scope's folders are ALL absent, <see cref="FoldersSwept"/> is
+        /// 0 and this counter is the only thing that says the sweep was complete rather
+        /// than empty-handed. Without it a store with no arrival-path folders reported
+        /// itself degraded on every search that named it.
+        /// </para>
         /// </summary>
         public int? FoldersAbsent { get; set; }
 

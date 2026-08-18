@@ -365,6 +365,9 @@ public sealed class ComHostProtocolTests
 
         internal Exception? Observed { get; private set; }
 
+        /// <summary>The recovery the caller asked for on the last <see cref="Run{T}"/>.</summary>
+        internal ComSessionRecovery? RequestedRecovery { get; private set; }
+
         public bool IsConnected => true;
 
         public bool? QuitSinkActive => null;
@@ -373,6 +376,12 @@ public sealed class ComHostProtocolTests
 
         public T Run<T>(Func<IOutlookSession, T> operation)
         {
+            return Run(operation, ComSessionRecovery.None);
+        }
+
+        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery)
+        {
+            RequestedRecovery = recovery;
             try
             {
                 return operation(_session);

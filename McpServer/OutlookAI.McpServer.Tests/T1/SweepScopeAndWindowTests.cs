@@ -10,7 +10,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
 /// The freshness block must describe THIS search - its store, its window, its frontier -
-/// and nothing else. Three defects, one theme, all of them visible to an agent through
+/// and nothing else. Four defects, one theme, all of them visible to an agent through
 /// <c>degraded</c>, which the search tool's own description tells it to relay to the user.
 /// <para>
 /// (1) COUNTERS CROSSED STORE BOUNDARIES. A cached all-stores sweep may serve a
@@ -33,7 +33,15 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// store-scoped searches, one frontier, against per-store probes spanning 45.4 hours).
 /// </para>
 /// <para>
-/// WHAT IS PROVEN HERE AND WHAT IS NOT. All three decisions are pure functions over data
+/// (4) FIXING (1) BROKE (1) AGAIN, ONE SCOPE DOWN. Per-store counters gave a store with no
+/// arrival-path folders <c>foldersSwept: 0, foldersAbsent: 4</c>, and "swept nothing" was
+/// read as a coverage hole without asking why - so a PST, an archive-only store or a shared
+/// mailbox mounted without the four defaults made every search naming it <c>degraded</c>,
+/// the very alarm the absent counter had been introduced to remove. Whole-sweep, the same
+/// call reported <c>live</c>, because another store's folders masked the zero.
+/// </para>
+/// <para>
+/// WHAT IS PROVEN HERE AND WHAT IS NOT. All these decisions are pure functions over data
 /// the COM layer produces, and every branch of them is pinned below. What needs a real
 /// mailbox is the COM layer FILLING that data in - a multi-store profile with a folder that
 /// will not open, and a store whose index lags another's - so the sweep result is modelled
@@ -45,6 +53,9 @@ public sealed class SweepScopeAndWindowTests
 {
     private const string StoreA = "alice@example.com";
     private const string StoreB = "bob@example.com";
+
+    /// <summary>An archive-only data file: a store with none of the four arrival-path folders.</summary>
+    private const string StoreC = "Archive 2019.pst";
 
     // ============================================ (1) counters belong to ONE store
 
@@ -138,26 +149,157 @@ public sealed class SweepScopeAndWindowTests
         Assert.Contains(FreshMerge.GapNothingSwept, info.CoverageGaps!);
     }
 
+    /// <summary>
+    /// Three stores, so absence is exercised at BOTH strengths rather than only the easy
+    /// one: A has all four arrival-path folders, B is missing one of them, and C - a PST, an
+    /// archive-only store, a shared mailbox mounted without the defaults - has none of them.
+    /// Nothing anywhere failed or was skipped, so absence is the only thing under test.
+    /// </summary>
+    private static ComSweepResult ThreeStoresOneMissingAFolder_AndOneMissingThemAll()
+    {
+        return new ComSweepResult(
+            Array.Empty<ComMailBrief>(),
+            foldersSwept: 7,
+            foldersSkipped: 0,
+            sweptFolders: new[]
+            {
+                StoreA + "/Inbox", StoreA + "/Sent Items", StoreA + "/Deleted Items", StoreA + "/Junk Email",
+                StoreB + "/Inbox", StoreB + "/Sent Items", StoreB + "/Deleted Items",
+            },
+            foldersFailed: 0,
+            foldersAbsent: 5,
+            perStore: new[]
+            {
+                new ComStoreSweepCounters(StoreA, foldersSwept: 4, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 0),
+                new ComStoreSweepCounters(StoreB, foldersSwept: 3, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 1),
+                new ComStoreSweepCounters(StoreC, foldersSwept: 0, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 4),
+            });
+    }
+
     [Fact]
     public void AbsentFoldersAreAttributedToo_AndStillDegradeNothing()
     {
         // A store without a Junk Email folder must not lend its absence to another store's
         // arithmetic, and absence remains a non-gap either way.
+        //
+        // "EITHER WAY" IS THE PART THAT HAD NO FIXTURE. This test used to give its absent
+        // store foldersSwept: 3, so it only ever proved the easy half - absence alongside
+        // real coverage - and the case it is named for never ran. Store C below is the hard
+        // half: every folder the sweep set out to walk is missing, so it swept nothing at
+        // all, and until 2026-08-18 that made every search naming such a store report
+        // freshness: partial and degraded: true. Read whole-sweep (before the per-store
+        // split of c515565) the same call had said live, because A's and B's seven folders
+        // masked the zero.
+        ComSweepResult result = ThreeStoresOneMissingAFolder_AndOneMissingThemAll();
+
+        // A: nothing missing, nothing borrowed from the others.
+        SweepInfo healthy = Applied(result, StoreA);
+        Assert.Equal(4, healthy.FoldersSwept);
+        Assert.Null(healthy.FoldersAbsent);
+        Assert.Null(healthy.CoverageGaps);
+
+        // B: one folder absent, three swept - absence attributed, and no gap.
+        SweepInfo partlyAbsent = Applied(result, StoreB);
+        Assert.Equal(3, partlyAbsent.FoldersSwept);
+        Assert.Equal(1, partlyAbsent.FoldersAbsent);
+        Assert.Null(partlyAbsent.CoverageGaps);
+        Assert.Equal(FreshMerge.FreshnessLive, FreshMerge.ClassifyFreshness(partlyAbsent));
+
+        // C: ALL four absent, so nothing was swept - because there was nothing to sweep. A
+        // folder that does not exist cannot be hiding mail, which is the rule e706315 set
+        // one level up; the per-store split must not smuggle it back in.
+        SweepInfo whollyAbsent = Applied(result, StoreC);
+        Assert.Equal(0, whollyAbsent.FoldersSwept);
+        Assert.Equal(0, whollyAbsent.FoldersSkipped);
+        Assert.Equal(0, whollyAbsent.FoldersFailed);
+        Assert.Equal(4, whollyAbsent.FoldersAbsent);
+        Assert.Null(whollyAbsent.Folders);
+        Assert.Null(whollyAbsent.CoverageGaps);
+        Assert.Equal(FreshMerge.FreshnessLive, FreshMerge.ClassifyFreshness(whollyAbsent));
+
+        // And the prose an agent relays says nothing either - a flag that cries wolf is
+        // worse than no flag, and so is a sentence.
+        Assert.Empty(MailService.DescribeSweepCoverage(whollyAbsent, "12 minutes", folderScoped: false));
+    }
+
+    [Fact]
+    public void AStoreWhoseFoldersAllFAILED_SweptNothingEither_AndIsStillDegraded()
+    {
+        // The other half, and the reason this is not simply "foldersSwept == 0 is fine".
+        // Same zero, opposite meaning: those four folders exist and hold mail nobody could
+        // read, so the answer really is missing something and must say so twice over.
         ComSweepResult result = new ComSweepResult(
             Array.Empty<ComMailBrief>(),
-            foldersSwept: 7,
-            foldersSkipped: 0,
-            sweptFolders: new[] { StoreA + "/Inbox", StoreB + "/Inbox" },
-            foldersAbsent: 1,
+            foldersSwept: 4,
+            foldersSkipped: 4,
+            sweptFolders: new[] { StoreA + "/Inbox" },
+            foldersFailed: 4,
+            foldersAbsent: 0,
             perStore: new[]
             {
                 new ComStoreSweepCounters(StoreA, foldersSwept: 4, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 0),
-                new ComStoreSweepCounters(StoreB, foldersSwept: 3, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 1),
+                new ComStoreSweepCounters(StoreB, foldersSwept: 0, foldersSkipped: 4, foldersFailed: 4, foldersAbsent: 0),
             });
 
-        Assert.Null(Applied(result, StoreA).FoldersAbsent);
-        Assert.Equal(1, Applied(result, StoreB).FoldersAbsent);
-        Assert.Null(Applied(result, StoreB).CoverageGaps);
+        SweepInfo scoped = Applied(result, StoreB);
+
+        Assert.Equal(0, scoped.FoldersSwept);
+        Assert.Null(scoped.FoldersAbsent);
+        Assert.Contains(FreshMerge.GapNothingSwept, scoped.CoverageGaps!);
+        Assert.Contains(FreshMerge.GapFoldersFailed, scoped.CoverageGaps!);
+        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(scoped));
+    }
+
+    [Fact]
+    public void AStoreWhereOneFolderIsMissingAndAnotherUnreadable_IsStillDegraded()
+    {
+        // The mixed case, which is where a naive "absent > 0 means nothing was wrong" rule
+        // would fail: two folders absent and two unreadable is still two folders of mail
+        // nobody checked, and absence must not launder them.
+        ComSweepResult result = new ComSweepResult(
+            Array.Empty<ComMailBrief>(),
+            foldersSwept: 0,
+            foldersSkipped: 2,
+            sweptFolders: Array.Empty<string>(),
+            foldersFailed: 2,
+            foldersAbsent: 2,
+            perStore: new[]
+            {
+                new ComStoreSweepCounters(StoreB, foldersSwept: 0, foldersSkipped: 2, foldersFailed: 2, foldersAbsent: 2),
+            });
+
+        SweepInfo scoped = Applied(result, StoreB);
+
+        Assert.Equal(2, scoped.FoldersAbsent);
+        Assert.Contains(FreshMerge.GapNothingSwept, scoped.CoverageGaps!);
+        Assert.Contains(FreshMerge.GapFoldersFailed, scoped.CoverageGaps!);
+        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(scoped));
+    }
+
+    [Fact]
+    public void AWholeProfileOfStoresWithoutDefaultFolders_IsNotDegradedEither()
+    {
+        // Unscoped, the totals say the same thing: the sweep ran, found no arrival-path
+        // folder anywhere to walk, and withheld nothing. This is the reading the whole-sweep
+        // counters gave BEFORE the per-store split, so the two must not disagree.
+        ComSweepResult result = new ComSweepResult(
+            Array.Empty<ComMailBrief>(),
+            foldersSwept: 0,
+            foldersSkipped: 0,
+            sweptFolders: Array.Empty<string>(),
+            foldersFailed: 0,
+            foldersAbsent: 4,
+            perStore: new[]
+            {
+                new ComStoreSweepCounters(StoreB, foldersSwept: 0, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 4),
+            });
+
+        SweepInfo unscoped = Applied(result, store: null);
+
+        Assert.Equal(0, unscoped.FoldersSwept);
+        Assert.Equal(4, unscoped.FoldersAbsent);
+        Assert.Null(unscoped.CoverageGaps);
+        Assert.Equal(FreshMerge.FreshnessLive, FreshMerge.ClassifyFreshness(unscoped));
     }
 
     [Fact]

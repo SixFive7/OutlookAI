@@ -3,6 +3,32 @@ using System;
 namespace OutlookAI.Core.Com
 {
     /// <summary>
+    /// Whether a failed operation may be run a SECOND time against a rebuilt session.
+    /// <para>
+    /// This is a safety decision, not a tuning knob. The rebuild fires on the
+    /// RPC_E_DISCONNECTED family, which includes <c>RPC_S_CALL_FAILED</c> - an HRESULT that
+    /// means the call may or may not already have executed - so a re-run is a possible
+    /// SECOND execution, not a first one. <see cref="ComSessionOperations"/> holds the
+    /// per-operation classification and the reasoning behind it.
+    /// </para>
+    /// </summary>
+    public enum ComSessionRecovery
+    {
+        /// <summary>
+        /// Never re-run. The default for anything whose effect the gateway cannot see -
+        /// which includes every multi-call lambda, because replaying one replays all of its
+        /// steps, including any that already succeeded.
+        /// </summary>
+        None = 0,
+
+        /// <summary>
+        /// Re-run once against a rebuilt session. Only ever asked for by a caller that knows
+        /// the operation is a single read (see <c>GatewayRoutingProxy</c>).
+        /// </summary>
+        RebuildOnce = 1,
+    }
+
+    /// <summary>
     /// How the service layer reaches a live Outlook session, without knowing whether that
     /// session is in this process or in the killable COM host.
     /// <para>
@@ -35,8 +61,25 @@ namespace OutlookAI.Core.Com
         /// <summary>Liveness with a real round trip: true only when Outlook actually answers.</summary>
         bool ProbeConnected();
 
-        /// <summary>Runs <paramref name="operation"/> against a live session, connecting when necessary.</summary>
+        /// <summary>
+        /// Runs <paramref name="operation"/> against a live session, connecting when
+        /// necessary. The operation is never re-run: see the overload below.
+        /// </summary>
         T Run<T>(Func<IOutlookSession, T> operation);
+
+        /// <summary>
+        /// Runs <paramref name="operation"/> and says whether it may be re-run once against
+        /// a rebuilt session if Outlook disconnects underneath it.
+        /// <para>
+        /// Only a caller that knows the operation is exactly ONE read may ask for
+        /// <see cref="ComSessionRecovery.RebuildOnce"/>. Two things have to hold, and only
+        /// the COM host's routing proxy can promise both: the lambda makes a single contract
+        /// call (so a replay does not redo earlier steps), and that call is classified
+        /// read-only by <see cref="ComSessionOperations"/> (so a replay of a call that may
+        /// already have executed cannot have an effect).
+        /// </para>
+        /// </summary>
+        T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery);
 
         /// <summary>
         /// Runs <paramref name="operation"/> with an explicit time budget instead of the

@@ -1781,7 +1781,11 @@ namespace OutlookAI.Core.Services
         /// <see cref="SweepInfo.FoldersAbsent"/> travels with them but is the one counter
         /// that is NOT a shortfall: it explains why a store contributed three folders
         /// instead of four without claiming anything was lost, so it is carried only when
-        /// non-zero and never reaches <see cref="FreshMerge.DescribeCoverageGaps"/>.
+        /// non-zero. It has to be attributed as carefully as the rest, because
+        /// <see cref="FreshMerge.DescribeCoverageGaps"/> reads it to tell "swept nothing
+        /// because there was nothing to sweep" (a store with none of the four default
+        /// folders - a PST, an archive-only store) apart from "swept nothing because it all
+        /// failed". Lend one store's absence to another and the wrong one goes quiet.
         /// </para>
         /// <para>
         /// Public and pure so T1 can exercise the store attribution over a hand-built

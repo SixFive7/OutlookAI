@@ -29,7 +29,12 @@ namespace OutlookAI.Core.Services
         /// <summary>Freshness verdict: the sweep did not run at all, so nothing was checked live.</summary>
         public const string FreshnessIndexOnly = "index-only";
 
-        /// <summary>Coverage hole: the sweep ran but swept no folder whatsoever.</summary>
+        /// <summary>
+        /// Coverage hole: the sweep ran but swept no folder whatsoever, and at least one
+        /// folder in its scope existed and went uncovered. A scope whose folders are all
+        /// ABSENT sweeps nothing too and raises this not at all - see
+        /// <see cref="DescribeCoverageGaps"/>.
+        /// </summary>
         public const string GapNothingSwept = "nothing_swept";
 
         /// <summary>Coverage hole: Outlook would not enumerate one or more folders.</summary>
@@ -110,11 +115,30 @@ namespace OutlookAI.Core.Services
         /// them - the bound's own code already says what happened.
         /// </para>
         /// <para>
-        /// <see cref="SweepInfo.FoldersAbsent"/> is read by NO branch here, on purpose. A
-        /// default folder the store does not have is not a hole in the coverage: there is
+        /// <see cref="SweepInfo.FoldersAbsent"/> RAISES no branch here and SUPPRESSES exactly
+        /// one, and the difference between those two sentences is a fix and a regression.
+        /// A default folder the store does not have is not a hole in the coverage: there is
         /// nothing behind it to cover. Counting absence as a skip made every non-folder-
         /// scoped search on a profile with such a store report <c>degraded: true</c> and
         /// <c>freshness: "partial"</c> - a flag that cries wolf is worse than no flag.
+        /// </para>
+        /// <para>
+        /// The comment that stood here said absence was read by no branch at all, and while
+        /// the counters were whole-sweep totals that was very nearly true: it took a profile
+        /// with no arrival-path folder ANYWHERE for the absent count to be the whole story.
+        /// Once the counters became per store (2026-08-18) it stopped being true for a far more
+        /// ordinary shape - a PST, an archive-only store, a shared mailbox mounted without
+        /// the four defaults - where <c>foldersSwept: 0, foldersAbsent: 4</c> is simply what
+        /// a complete sweep of that store looks like. Reading only the zero re-created the
+        /// very alarm the absent counter was introduced to remove, one scope down.
+        /// </para>
+        /// <para>
+        /// So <see cref="GapNothingSwept"/> now asks WHY nothing was swept. Nothing to sweep
+        /// is not a gap; nothing swept because folders failed or were skipped still is, and
+        /// so is a sweep that reached a store it was asked about and covered none of it (all
+        /// four counters zero - the store the sweep never got to). Absence only ever
+        /// suppresses on its own: one absent folder next to one unreadable folder is still a
+        /// hole, because that other folder exists and holds mail nobody read.
         /// </para>
         /// </summary>
         public static IReadOnlyList<string>? DescribeCoverageGaps(SweepInfo sweep)
@@ -129,8 +153,14 @@ namespace OutlookAI.Core.Services
                 return null;
             }
 
+            // Everything the sweep meant to walk here turned out not to exist. That is a
+            // complete answer about this scope, not an empty one.
+            bool nothingExistedToSweep = sweep.FoldersAbsent > 0
+                && sweep.FoldersSkipped == 0
+                && sweep.FoldersFailed == 0;
+
             List<string> gaps = new List<string>();
-            if (sweep.FoldersSwept == 0)
+            if (sweep.FoldersSwept == 0 && !nothingExistedToSweep)
             {
                 gaps.Add(GapNothingSwept);
             }

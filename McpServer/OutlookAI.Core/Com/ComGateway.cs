@@ -37,7 +37,11 @@ namespace OutlookAI.Core.Com
     /// releases every held ref the moment the process exits (user close, crash,
     /// logoff), <see cref="ProbeConnected"/> reports pinged - never stale - liveness,
     /// and the disconnect family of failures triggers a one-shot rebuild inside
-    /// <see cref="Run{T}"/>. NOT coverable from this side (probe-measured): an external
+    /// <see cref="Run{T}(Func{IOutlookSession, T}, ComSessionRecovery)"/> - for the
+    /// operations that may be re-run, which is reads only
+    /// (<see cref="ComSessionOperations"/>).
+    ///
+    /// NOT coverable from this side (probe-measured): an external
     /// client driving Application.Quit while sessions are attached parks Outlook
     /// indefinitely (no Quit event reaches out-of-process sinks, the process stays
     /// alive, COM keeps answering); the park self-heals ~6 s after our refs release
@@ -151,10 +155,44 @@ namespace OutlookAI.Core.Com
 
         /// <summary>
         /// Runs <paramref name="operation"/> against a live session, connecting (and
-        /// starting Outlook per D17) when necessary. If the held session turns out dead
-        /// (Outlook exited between calls), it is rebuilt exactly once.
+        /// starting Outlook per D17) when necessary. A dead HELD session is still replaced
+        /// before the operation starts (<see cref="GetOrConnect"/> pings first), but the
+        /// operation itself is never re-run - for that, name the recovery.
         /// </summary>
         public T Run<T>(Func<IOutlookSession, T> operation)
+        {
+            return Run(operation, ComSessionRecovery.None);
+        }
+
+        /// <summary>
+        /// Runs <paramref name="operation"/> against a live session, connecting (and
+        /// starting Outlook per D17) when necessary. If the session dies UNDER the call and
+        /// <paramref name="recovery"/> allows it, the session is rebuilt and the operation
+        /// runs exactly once more.
+        /// <para>
+        /// The re-run is a possible SECOND EXECUTION, not a first one:
+        /// <see cref="IsDisconnectHResult"/> includes <c>RPC_S_CALL_FAILED</c> (0x800706BE),
+        /// which means precisely that the call may or may not have reached Outlook. That is
+        /// harmless for a read and unrecoverable for a send, so the caller has to say which
+        /// it has, and the default is <see cref="ComSessionRecovery.None"/>.
+        /// </para>
+        /// <para>
+        /// Why the default is no: this method cannot see what the lambda does. Before the
+        /// COM host existed this recovery was reached only through whole SERVICE operations,
+        /// several contract calls long, and replaying one replays the steps that already
+        /// succeeded. The remote gateway refused to do that for exactly this reason
+        /// (<c>RemoteComGateway</c>, "a coarse retry here would quietly undo that"); this
+        /// side now refuses on the same grounds. The routing proxy inside the COM host is
+        /// the one caller whose lambda is a single classified contract call, so it is the
+        /// one caller that can safely opt in - which keeps every production READ covered,
+        /// per call, and no write covered at all.
+        /// </para>
+        /// <para>
+        /// A dead session is dropped either way. The difference is only whether the work is
+        /// attempted again here or reported to the caller.
+        /// </para>
+        /// </summary>
+        public T Run<T>(Func<IOutlookSession, T> operation, ComSessionRecovery recovery)
         {
             if (operation == null)
             {
@@ -174,6 +212,11 @@ namespace OutlookAI.Core.Com
             catch (Exception ex) when (IsDisconnectException(ex))
             {
                 Invalidate(session);
+                if (recovery != ComSessionRecovery.RebuildOnce)
+                {
+                    throw;
+                }
+
                 OutlookComSession retrySession = GetOrConnect();
                 return operation(retrySession);
             }
