@@ -553,8 +553,37 @@
   refusals, the teardown rule, the manifest format and the date-fidelity verdicts; only the COM
   calls are outside that tier, and they carry no decisions.
 
-  - **Not yet run.** Nothing has been built and nothing has been measured. The generator is code
-    only; it has never been executed against any store, and the parent session owns the VM.
+  - **Built once, 2026-08-19, and the measurement still has not been taken.** 40 000 items into
+    the VM's PST in 12m27s at 50.9 items/sec, zero failures; resumability and determinism both
+    demonstrated (a re-run skipped the 2 000 items an earlier timing run had made). Three faults
+    came out of it, all now guarded in code rather than written down as cautions:
+    - **Items were queued for delivery.** 5 532 landed in the target store's **Outbox** - inert
+      on that VM only because its profile has no mail account. The store guard could not catch
+      it: "local .pst" and "an account's delivery store" are not mutually exclusive.
+      `CorpusSafety.EvaluateProfile` now refuses unless `Session.Accounts` is EMPTY, with no
+      override. Stricter than "no account delivers here" because the object model cannot express
+      the narrower rule - `SendUsingAccount` is per item, so any account may send a message that
+      lives anywhere.
+    - **Every item was filed as a draft**, so the sweep saw 6 of 40 000 in 234-367 ms.
+      `Items.Add` + `Save` produces an UNSENT item and Outlook files those in Drafts whatever
+      folder they were added to; the sweep covers Inbox/Sent/Deleted/Junk and not Drafts. The
+      root cause was a design fault of mine: the MSGFLAG_UNSENT write lived as a rung of the
+      DATE ladder, so `--allow-undated` silently disabled placement too. `CorpusPlacement` is now
+      its own probed ladder, and a rung passes only when the item's `Parent` is the target folder
+      AND that folder's `GetTable` returns it.
+    - **`corpus-reindex` and the post-teardown count looked only at Inbox/Sent/Junk/Deleted**, so
+      with all 40 000 items in Drafts the recovery path would have reported ZERO and teardown
+      would have claimed a clean store. Drafts (16) and Outbox (4) are in the scan set now. Same
+      lesson as the Outbox omission `ComMailbox.SweepFolderIds` already records.
+  - **Still to do: tear down `CP-07-CORPUS-40K` and re-run.** The 40 000 drafts are still in the
+    PST; the manifest is 40 002 lines and a copy is outside the guest. Teardown deletes by
+    EntryID allowlist AND tag, and now reaches Drafts.
+  - **The date verdict from that run proves nothing and must not be quoted.** The probe reported
+    `readBack` correct with `daslIn=False`, which reads as "the date does not drive selection" -
+    but the item was in Drafts while the probe queried the Inbox's table, so "not in this folder"
+    explains it equally well. The two failures were indistinguishable in the output. The probe now
+    settles placement first and builds its date probe with the placement that verified, so a
+    re-run isolates the question.
   - **The one thing that must be settled first, before any of it is worth doing:** whether that PST
     accepts back-dated mail at all. `MailItem.SentOn` is read-only in the object model, and an item
     created straight into a folder is UNSENT, which some stores date themselves. `corpus-probe`
@@ -564,6 +593,13 @@
     `--allow-undated` says so in as many words. **An undated corpus would make both windows select
     the same population while looking exactly like a good corpus**, which is why the refusal is the
     default rather than a warning.
+  - **A product gap fell out of it, recorded as H3 in `Docs/completeness-gaps.md` and OPEN.** The
+    sweep restricts on `(datereceived >= X) OR (date >= X)`, so mail carrying neither property is
+    selected by NO window - absent from the freshness tier rather than mis-dated, and absent
+    however wide the window is opened - while `sweep.foldersSwept` still counts the folder and
+    `freshness` still says `live`. Real users hit this with imported, copied or restored mail.
+    The filter is code and is not in doubt; the supporting observation is confounded by the
+    placement fault above, and the row says so.
   - **The blocker for the 180 s proposal, found while writing the plan and not yet acted on:**
     `SearchBudgetMs` is `SearchIndexTimeoutSeconds * 1000 + SweepBudgetMs`, and T1
     `BudgetCompositionTests.SearchBudget_IsComposedFromItsPartsAndFitsTheOperationDeadline` asserts

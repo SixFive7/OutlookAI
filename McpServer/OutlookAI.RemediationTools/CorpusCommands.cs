@@ -45,6 +45,13 @@ public sealed class CorpusOptions
     /// <summary>Build even when no date-write method verified.</summary>
     public bool AllowUndated { get; private set; }
 
+    /// <summary>
+    /// Build even when no placement method put items in the folders the plan names, so every
+    /// item is filed as a draft. There is no equivalent override for the store or profile
+    /// guards, and deliberately so: this one costs a measurement, those cost real mail.
+    /// </summary>
+    public bool AllowDraftsPlacement { get; private set; }
+
     /// <summary>Actually write; without it every command dry-runs, as the rest of this console does.</summary>
     public bool Execute { get; private set; }
 
@@ -114,6 +121,9 @@ public sealed class CorpusOptions
         {
             case "allow-undated":
                 AllowUndated = true;
+                break;
+            case "allow-drafts-placement":
+                AllowDraftsPlacement = true;
                 break;
             case "execute":
                 Execute = true;
@@ -257,13 +267,25 @@ public static class CorpusCommands
             return 1;
         }
 
+        // Placement FIRST, and the date probe inherits it. Probing dates against an item
+        // that was filed somewhere other than the folder being queried cannot distinguish
+        // "the date does not drive selection" from "the item is not in this folder", and the
+        // first version of this tool reported the second as if it were the first.
+        IReadOnlyList<CorpusPlacementProbe> placements =
+            ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
+        CorpusPlacementMethod placement = ReportPlacementProbes(placements, output);
+        (bool placementOk, string placementMessage) =
+            CorpusPlacement.Decide(placement, options.AllowDraftsPlacement, Math.Max(options.Count, 1));
+        output.WriteLine(placementMessage);
+
         DateTime probeInstant = planOptions.AnchorUtc.AddDays(-30);
         IReadOnlyList<CorpusDateProbe> probes =
-            ComCorpusMailbox.ProbeDateFidelity(options.Store!, planOptions.CorpusId, probeInstant);
+            ComCorpusMailbox.ProbeDateFidelity(options.Store!, planOptions.CorpusId, probeInstant, placement);
         CorpusDateWriteMethod chosen = ReportProbes(probes, output);
-        (bool proceed, string message) = CorpusDateFidelity.Decide(chosen, options.AllowUndated);
+        (bool dateOk, string message) =
+            CorpusDateFidelity.Decide(chosen, options.AllowUndated, Math.Max(options.Count, 1));
         output.WriteLine(message);
-        return proceed ? 0 : 1;
+        return placementOk && dateOk ? 0 : 1;
     }
 
     /// <summary>
@@ -309,20 +331,31 @@ public static class CorpusCommands
                 + $"{(existing.UnparseableLines.Count > 0 ? $", {existing.UnparseableLines.Count} unreadable line(s)" : string.Empty)}.");
         }
 
-        DateTime probeInstant = planOptions.AnchorUtc.AddDays(-30);
-        IReadOnlyList<CorpusDateProbe> probes = options.Execute
-            ? ComCorpusMailbox.ProbeDateFidelity(options.Store!, planOptions.CorpusId, probeInstant)
-            : Array.Empty<CorpusDateProbe>();
         if (!options.Execute)
         {
             int todo = existing == null ? options.Count : existing.MissingOrdinals(options.Count).Count();
-            output.WriteLine($"Dry-run complete; {todo:N0} item(s) would be created. Nothing written, and the date "
-                + "probe was NOT run (it creates items). Re-run with --execute.");
+            output.WriteLine($"Dry-run complete; {todo:N0} item(s) would be created. Nothing written, and neither "
+                + "the placement probe nor the date probe was run (both create items). Re-run with --execute.");
             return 0;
         }
 
+        IReadOnlyList<CorpusPlacementProbe> placements =
+            ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
+        CorpusPlacementMethod placement = ReportPlacementProbes(placements, output);
+        (bool placementOk, string placementMessage) =
+            CorpusPlacement.Decide(placement, options.AllowDraftsPlacement, options.Count);
+        output.WriteLine(placementMessage);
+        if (!placementOk)
+        {
+            return 1;
+        }
+
+        DateTime probeInstant = planOptions.AnchorUtc.AddDays(-30);
+        IReadOnlyList<CorpusDateProbe> probes =
+            ComCorpusMailbox.ProbeDateFidelity(options.Store!, planOptions.CorpusId, probeInstant, placement);
         CorpusDateWriteMethod chosen = ReportProbes(probes, output);
-        (bool proceed, string message) = CorpusDateFidelity.Decide(chosen, options.AllowUndated);
+        (bool proceed, string message) =
+            CorpusDateFidelity.Decide(chosen, options.AllowUndated, options.Count);
         output.WriteLine(message);
         if (!proceed)
         {
@@ -344,7 +377,8 @@ public static class CorpusCommands
             planOptions.ShapeKey,
             options.Store!,
             facts.FilePath,
-            chosen.ToString()));
+            chosen.ToString(),
+            placement.ToString()));
 
         using StreamWriter writer = OpenManifest(options.ManifestPath!, existing == null, manifest.Header);
         ComCorpusMailbox.BuildOutcome outcome = ComCorpusMailbox.Build(
@@ -352,6 +386,7 @@ public static class CorpusCommands
             options.Store!,
             options.Count,
             chosen,
+            placement,
             writeShift,
             manifest,
             item =>
@@ -473,6 +508,7 @@ public static class CorpusCommands
             planOptions.ShapeKey,
             options.Store!,
             facts.FilePath,
+            "reindexed",
             "reindexed");
         using (StreamWriter writer = OpenManifest(options.ManifestPath!, writeHeader: true, header))
         {
@@ -502,8 +538,12 @@ public static class CorpusCommands
         }
 
         facts = ComCorpusMailbox.ReadStoreFacts(options.Store!);
-        CorpusStoreRefusal refusal = CorpusSafety.EvaluateStore(facts, options.AllowStores);
+        CorpusProfileFacts profile = ComCorpusMailbox.ReadProfileFacts(options.Store!);
+        CorpusStoreRefusal refusal = CorpusSafety.Evaluate(facts, profile, options.AllowStores);
         output.WriteLine(CorpusSafety.Explain(refusal, facts));
+        output.WriteLine($"  profile accounts: {(profile.AccountCount == null ? "(unreadable)" : profile.AccountCount)}"
+            + $", delivering into this store: {profile.AccountsDeliveringToTarget}"
+            + $", unreadable delivery store: {profile.AccountsWithUnreadableDeliveryStore}");
         if (refusal != CorpusStoreRefusal.None)
         {
             return false;
@@ -511,6 +551,29 @@ public static class CorpusCommands
 
         output.WriteLine($"  store file: {facts.FilePath}");
         return true;
+    }
+
+    /// <summary>
+    /// Prints every placement rung's result and returns the one to build with. The
+    /// "landed in" column is the useful one when a rung fails: it says where the store put
+    /// the item instead, which is the difference between a diagnosis and a shrug.
+    /// </summary>
+    private static CorpusPlacementMethod ReportPlacementProbes(
+        IReadOnlyList<CorpusPlacementProbe> probes, TextWriter output)
+    {
+        output.WriteLine("== placement probe ==");
+        foreach (CorpusPlacementProbe probe in probes)
+        {
+            output.WriteLine($"  {probe.Method,-28} target={probe.TargetFolderName}"
+                + $" landedIn={probe.LandedInFolderName ?? "(unknown)"}"
+                + $" parentMatches={probe.ParentIsTargetFolder}"
+                + $" inFolderTable={probe.TargetFolderTableContainsIt}"
+                + $" sentFlag={probe.SentFlagSet}"
+                + $" usable={CorpusPlacement.IsUsable(probe)}"
+                + (probe.Error == null ? string.Empty : $" error={probe.Error}"));
+        }
+
+        return CorpusPlacement.Choose(probes);
     }
 
     private static CorpusDateWriteMethod ReportProbes(IReadOnlyList<CorpusDateProbe> probes, TextWriter output)

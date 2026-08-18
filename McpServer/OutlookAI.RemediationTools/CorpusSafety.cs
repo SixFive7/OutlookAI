@@ -15,6 +15,27 @@ public sealed record CorpusStoreFacts(
     int? ExchangeStoreType,
     string? FilePath);
 
+/// <summary>
+/// What the PROFILE looks like from the point of view of "could a build queue mail for
+/// delivery". Separate from <see cref="CorpusStoreFacts"/> because it is a fact about the
+/// profile, not about the store, and because the store half proved insufficient on its own:
+/// a local .pst can be an account's delivery store.
+/// </summary>
+/// <param name="AccountCount">Session.Accounts.Count, or null when it could not be read.</param>
+/// <param name="AccountsDeliveringToTarget">
+/// Accounts whose <c>Account.DeliveryStore</c> is the target store, compared by StoreID
+/// rather than by display name - names are user-editable and two stores may share one.
+/// </param>
+/// <param name="AccountsWithUnreadableDeliveryStore">
+/// Accounts whose delivery store could not be read at all. Any of these makes the profile
+/// unprovable, because an account that cannot be examined is an account that might deliver
+/// into the target.
+/// </param>
+public sealed record CorpusProfileFacts(
+    int? AccountCount,
+    int AccountsDeliveringToTarget,
+    int AccountsWithUnreadableDeliveryStore);
+
 /// <summary>Why a store was refused as a corpus target. <see cref="None"/> is the only value that permits a write.</summary>
 public enum CorpusStoreRefusal
 {
@@ -41,6 +62,23 @@ public enum CorpusStoreRefusal
 
     /// <summary>One or more of the facts could not be read, so nothing about the store is proven.</summary>
     Unprovable = 7,
+
+    /// <summary>
+    /// An account in this profile delivers into the target store. Building here would create
+    /// mail inside a store a transport provider services, and an Outbox in such a store is
+    /// not inert.
+    /// </summary>
+    TargetIsAccountDeliveryStore = 8,
+
+    /// <summary>
+    /// The profile has at least one account, so something in it can send. See
+    /// <see cref="CorpusSafety.EvaluateProfile"/> for why this is refused even when no
+    /// account delivers into the target.
+    /// </summary>
+    ProfileCanSend = 9,
+
+    /// <summary>The account list, or one account's delivery store, could not be read.</summary>
+    ProfileUnprovable = 10,
 }
 
 /// <summary>
@@ -64,6 +102,14 @@ public enum CorpusStoreRefusal
 /// re-read subject carries the tags ordinally. Both, always. Rule 2 of the mailbox-safety
 /// section exists because a shell-side subject pattern - where the tag's own brackets
 /// became a character class - matched nearly every subject and destroyed real mail.
+/// </item>
+/// <item>
+/// A write happens only into a profile that has NO mail accounts at all. Added 2026-08-19
+/// after the first real build: a 40 000 item run put 5 532 items into the target store's
+/// Outbox. On that VM they were inert because the profile had no account and nothing could
+/// send - but the same build on a profile with an account would have queued 5 532 messages
+/// for delivery. The store half of this guard did not catch it, and could not: "local .pst"
+/// and "an account's delivery store" are not mutually exclusive.
 /// </item>
 /// </list>
 /// </summary>
@@ -134,6 +180,62 @@ public static class CorpusSafety
     }
 
     /// <summary>
+    /// Whether the PROFILE is one a corpus may be built in. The rule is: NO MAIL ACCOUNTS AT
+    /// ALL.
+    /// <para>
+    /// That is stricter than "no account delivers into the target store", and the strictness
+    /// is forced rather than chosen. The requirement is "no account able to SEND FROM the
+    /// target store", and the object model cannot express it: a draft's location does not
+    /// constrain which account sends it, because <c>SendUsingAccount</c> is set per item and
+    /// any account may send a message that lives anywhere. So "no account can send from this
+    /// store" is, through the OM, indistinguishable from "no account can send" - which is
+    /// <c>Accounts.Count == 0</c>. Anything weaker would be a guard that reads as a proof and
+    /// is not one.
+    /// </para>
+    /// <para>
+    /// It costs nothing operationally: a measurement VM has no mail account, which is the
+    /// entire reason its Outbox is inert. There is deliberately NO override flag - the one
+    /// safety verdict this tool has already had overridden was overridden on reasoning that
+    /// turned out to be wrong, and this is the verdict where being wrong queues real mail.
+    /// </para>
+    /// <para>
+    /// FAIL-CLOSED, like the store facts: an account list that cannot be read, or one account
+    /// whose delivery store cannot be read, refuses. An account nothing can examine is an
+    /// account that might deliver into the target.
+    /// </para>
+    /// </summary>
+    public static CorpusStoreRefusal EvaluateProfile(CorpusProfileFacts facts)
+    {
+        ArgumentNullException.ThrowIfNull(facts);
+        if (facts.AccountCount == null || facts.AccountsWithUnreadableDeliveryStore > 0)
+        {
+            return CorpusStoreRefusal.ProfileUnprovable;
+        }
+
+        // Named separately from the general case even though both refuse: this is the one
+        // that actually happened, and an operator reading the message deserves to be told
+        // which of the two they are looking at.
+        if (facts.AccountsDeliveringToTarget > 0)
+        {
+            return CorpusStoreRefusal.TargetIsAccountDeliveryStore;
+        }
+
+        return facts.AccountCount > 0 ? CorpusStoreRefusal.ProfileCanSend : CorpusStoreRefusal.None;
+    }
+
+    /// <summary>
+    /// The whole gate: the store must pass <see cref="EvaluateStore"/> AND the profile must
+    /// pass <see cref="EvaluateProfile"/>. The store is judged first so its message is the
+    /// one an operator sees when the target is simply wrong.
+    /// </summary>
+    public static CorpusStoreRefusal Evaluate(
+        CorpusStoreFacts storeFacts, CorpusProfileFacts profileFacts, IReadOnlyCollection<string>? allowlist)
+    {
+        CorpusStoreRefusal storeVerdict = EvaluateStore(storeFacts, allowlist);
+        return storeVerdict != CorpusStoreRefusal.None ? storeVerdict : EvaluateProfile(profileFacts);
+    }
+
+    /// <summary>
     /// The refusal message. Names only the offending store, never any other store's name,
     /// subject or content - the same discipline the live tier's guard keeps.
     /// </summary>
@@ -152,14 +254,34 @@ public static class CorpusSafety
             CorpusStoreRefusal.NotAPstFile => "its backing file is not a .pst",
             CorpusStoreRefusal.Unprovable => "one of IsDataFileStore / ExchangeStoreType / FilePath could not be read, "
                 + "so nothing about this store is proven",
+            CorpusStoreRefusal.TargetIsAccountDeliveryStore => "an account in this profile DELIVERS into this store, "
+                + "so a transport provider services it. A build here would put items into a live Outbox",
+            CorpusStoreRefusal.ProfileCanSend => "this profile has at least one mail account, so something in it can "
+                + "send. A corpus is built only in a profile with NO accounts - the object model cannot prove the "
+                + "narrower 'no account may send from this store', because any account may send an item that lives "
+                + "anywhere",
+            CorpusStoreRefusal.ProfileUnprovable => "the account list, or one account's delivery store, could not be "
+                + "read, so it is not proven that nothing here can send",
             _ => "unrecognised refusal",
         };
 
-        return refusal == CorpusStoreRefusal.None
-            ? $"Store '{target}' accepted as a corpus target."
-            : $"REFUSING to build a corpus in store '{target}': {why}. A corpus may only be written into a LOCAL "
-                + ".pst named explicitly by the caller. See the mailbox-safety rules in CLAUDE.md; widen the "
+        if (refusal == CorpusStoreRefusal.None)
+        {
+            return $"Store '{target}' accepted as a corpus target.";
+        }
+
+        bool profileRefusal = refusal is CorpusStoreRefusal.TargetIsAccountDeliveryStore
+            or CorpusStoreRefusal.ProfileCanSend
+            or CorpusStoreRefusal.ProfileUnprovable;
+        string remedy = profileRefusal
+            ? "Use a profile with no mail accounts. There is no flag for this: a build creates unsent items in bulk, "
+                + "and a real build put 5 532 of them into the target store's Outbox - inert only because that "
+                + "profile could not send."
+            : "A corpus may only be written into a LOCAL .pst named explicitly by the caller. Widen the "
                 + "--allow-store list, never the guard.";
+
+        return $"REFUSING to build a corpus in store '{target}': {why}. {remedy} "
+            + "See the mailbox-safety rules in CLAUDE.md.";
     }
 
     /// <summary>

@@ -38,10 +38,15 @@ using OutlookAI.RemediationTools;
 ///       band, and how many items each measurement window selects. No Outlook.
 ///
 ///   corpus-probe    --store ... --allow-store ... --corpus-id ... --seed N --anchor ...
-///       Settles whether this store accepts back-dated mail, by writing throwaway items
-///       and reading them back. Deletes every probe it creates.
+///       Settles two things empirically, by writing throwaway items and reading them back,
+///       and deletes every probe it creates. PLACEMENT first: whether an item can be made to
+///       live in the folder the plan names and appear in that folder's table, which is what
+///       the freshness sweep reads. Then DATES, built with the placement that verified - the
+///       order matters, because a date probed against an item filed in another folder cannot
+///       distinguish a date that does not select from an item that is not there.
 ///
-///   corpus-build    ... --count N --manifest &lt;path&gt; [--allow-undated] [--execute]
+///   corpus-build    ... --count N --manifest &lt;path&gt; [--allow-undated]
+///                       [--allow-drafts-placement] [--execute]
 ///       Creates the corpus. Resumable and idempotent - it builds the ordinals the manifest
 ///       does not already record.
 ///
@@ -51,8 +56,11 @@ using OutlookAI.RemediationTools;
 ///   corpus-reindex  ... --manifest &lt;path&gt; [--execute]
 ///       Read-only recovery: rebuilds a candidate manifest by scanning the store.
 ///
-/// Every corpus command refuses any store the caller did not name on --allow-store, and
-/// any store four independent COM facts do not agree is a local .pst.
+/// Every corpus command refuses any store the caller did not name on --allow-store, any
+/// store four independent COM facts do not agree is a local .pst, and any profile that has
+/// mail accounts at all. That last one has no override: a build creates unsent items in
+/// bulk, and the first real run put 5 532 of them into the target store's Outbox - inert
+/// only because that profile could not send.
 /// </summary>
 internal static class Program
 {
@@ -458,6 +466,8 @@ internal static class Program
         Console.WriteLine("Measurement corpus: corpus-plan | corpus-probe | corpus-build | corpus-teardown | corpus-reindex");
         Console.WriteLine("Common:   --corpus-id <id> --seed <n> --anchor <yyyy-MM-dd>   [--execute]");
         Console.WriteLine("Target:   --store <display name> --allow-store <display name> (repeatable; a local .pst only)");
-        Console.WriteLine("Build:    --count <n> --manifest <path> [--progress-every <n>] [--allow-undated]");
+        Console.WriteLine("Target:   the profile must have NO mail accounts (no override - see Program.cs)");
+        Console.WriteLine("Build:    --count <n> --manifest <path> [--progress-every <n>]");
+        Console.WriteLine("Override: [--allow-undated] [--allow-drafts-placement]  (each says what it costs)");
     }
 }

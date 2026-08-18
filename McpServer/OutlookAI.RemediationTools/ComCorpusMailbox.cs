@@ -41,6 +41,26 @@ public static class ComCorpusMailbox
     /// <summary>Default-folder id for Junk Email; a PST often has no such default folder.</summary>
     private const int JunkFolderId = 23;
 
+    /// <summary>Default-folder id for Drafts - where Outlook files an unsent item whatever folder it was added to.</summary>
+    private const int DraftsFolderId = 16;
+
+    /// <summary>
+    /// Folders a corpus scan walks, Deleted Items LAST because every other folder drains
+    /// into it when an item is soft-deleted.
+    /// <para>
+    /// DRAFTS (16) and the OUTBOX (4) are in this set and were missing from the first
+    /// version, which was a real hole rather than an oversight to note quietly: items
+    /// created by <c>Items.Add</c> + <c>Save</c> are UNSENT and Outlook files them in
+    /// Drafts, so the 40 000 items of the first real build lived in exactly the two folders
+    /// this scan did not look at. <c>corpus-reindex</c> - the recovery path for a lost
+    /// manifest - would have reported ZERO items with 40 000 in the store, and the
+    /// post-teardown "remaining" count would have said 0 for the same reason. It is the
+    /// same lesson <see cref="ComMailbox.SweepFolderIds"/> already records about the Outbox:
+    /// a folder nothing sweeps is a folder items can be stranded in indefinitely.
+    /// </para>
+    /// </summary>
+    private static readonly int[] ScanFolderIds = { DraftsFolderId, 6, 5, JunkFolderId, 4, 3 };
+
     /// <summary>How many rows a probe's verification table may walk before giving up.</summary>
     private const int ProbeTableRowCap = 2_000;
 
@@ -124,6 +144,279 @@ public static class ComCorpusMailbox
     }
 
     /// <summary>
+    /// Reads what <see cref="CorpusSafety.EvaluateProfile"/> judges the profile on: how many
+    /// accounts exist, and how many of them deliver into the target store.
+    /// <para>
+    /// Delivery stores are compared by <c>StoreID</c>, never by display name - names are
+    /// user-editable and a profile may mount two stores with the same one, so a name
+    /// comparison could clear an account that does deliver into the target.
+    /// </para>
+    /// <para>
+    /// An account whose <c>DeliveryStore</c> cannot be read is COUNTED rather than skipped.
+    /// It is the difference between "no account delivers here" and "no account I could
+    /// examine delivers here", and only the first is a proof.
+    /// </para>
+    /// </summary>
+    public static CorpusProfileFacts ReadProfileFacts(string storeDisplayName)
+    {
+        return RunSta(
+            () =>
+            {
+                dynamic app = CreateOutlookApplication();
+                dynamic? ns = null;
+                dynamic? stores = null;
+                dynamic? store = null;
+                dynamic? accounts = null;
+                try
+                {
+                    ns = app.GetNamespace("MAPI");
+                    stores = ns.Stores;
+                    store = FindStore(stores, storeDisplayName);
+                    string? targetStoreId = store == null ? null : TryRead<string>(() => (string)store!.StoreID);
+
+                    accounts = ns.Accounts;
+                    int? count = TryReadStruct(() => (int)accounts!.Count);
+                    if (count == null)
+                    {
+                        return new CorpusProfileFacts(null, 0, 0);
+                    }
+
+                    int delivering = 0;
+                    int unreadable = 0;
+                    for (int i = 1; i <= count.Value; i++)
+                    {
+                        dynamic? account = null;
+                        dynamic? deliveryStore = null;
+                        try
+                        {
+                            account = accounts![i];
+                            deliveryStore = account!.DeliveryStore;
+                            string? deliveryStoreId = deliveryStore == null
+                                ? null
+                                : TryRead<string>(() => (string)deliveryStore!.StoreID);
+                            if (deliveryStoreId == null || targetStoreId == null)
+                            {
+                                unreadable++;
+                            }
+                            else if (string.Equals(deliveryStoreId, targetStoreId, StringComparison.OrdinalIgnoreCase))
+                            {
+                                delivering++;
+                            }
+                        }
+                        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                        {
+                            unreadable++;
+                        }
+                        finally
+                        {
+                            Release(deliveryStore);
+                            Release(account);
+                        }
+                    }
+
+                    return new CorpusProfileFacts(count, delivering, unreadable);
+                }
+                finally
+                {
+                    Release(accounts);
+                    Release(store);
+                    Release(stores);
+                    Release(ns);
+                    Release(app);
+                }
+            },
+            TimeSpan.FromMinutes(3));
+    }
+
+    /// <summary>
+    /// Walks <see cref="CorpusPlacement.Ladder"/> against the store's Inbox, one throwaway
+    /// item per rung, and reports where each one actually ended up. Every probe item is
+    /// deleted before this returns, by the same two-key rule as the teardown.
+    /// <para>
+    /// The Inbox is the right folder to probe: it is the folder a PST always has, and it is
+    /// where the plan puts most of the corpus. A rung that can place an item in the Inbox
+    /// can place one in Sent Items or Junk Email, because the obstacle is the item's unsent
+    /// state and not the destination.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<CorpusPlacementProbe> ProbePlacement(string storeDisplayName, string corpusId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
+        return RunSta(
+            () =>
+            {
+                dynamic app = CreateOutlookApplication();
+                dynamic? ns = null;
+                dynamic? stores = null;
+                dynamic? store = null;
+                dynamic? target = null;
+                dynamic? drafts = null;
+                var probes = new List<CorpusPlacementProbe>();
+                try
+                {
+                    ns = app.GetNamespace("MAPI");
+                    stores = ns.Stores;
+                    store = FindStore(stores, storeDisplayName)
+                        ?? throw new InvalidOperationException("Store not found for the placement probe.");
+                    string storeId = (string)store.StoreID;
+                    target = store.GetDefaultFolder(6);
+                    drafts = store.GetDefaultFolder(DraftsFolderId);
+                    string targetName = (string)target!.Name;
+                    string targetFolderId = (string)target!.EntryID;
+
+                    foreach (CorpusPlacementMethod method in CorpusPlacement.Ladder)
+                    {
+                        probes.Add(RunOnePlacementProbe(
+                            ns!, target!, drafts!, storeId, targetFolderId, targetName, corpusId, method));
+                    }
+
+                    return (IReadOnlyList<CorpusPlacementProbe>)probes;
+                }
+                finally
+                {
+                    Release(drafts);
+                    Release(target);
+                    Release(store);
+                    Release(stores);
+                    Release(ns);
+                    Release(app);
+                }
+            },
+            TimeSpan.FromMinutes(10));
+    }
+
+    private static CorpusPlacementProbe RunOnePlacementProbe(
+        dynamic ns,
+        dynamic target,
+        dynamic drafts,
+        string storeId,
+        string targetFolderId,
+        string targetFolderName,
+        string corpusId,
+        CorpusPlacementMethod method)
+    {
+        dynamic? items = null;
+        dynamic? mail = null;
+        string? entryId = null;
+        try
+        {
+            dynamic source = CorpusPlacement.CreatesInDrafts(method) ? drafts : target;
+            items = source.Items;
+            mail = items.Add(0);
+            mail.Subject = ProbeSubject(corpusId, "placement " + method);
+            mail.Body = "placement probe";
+            mail.Save();
+
+            if (CorpusPlacement.WritesSentFlag(method))
+            {
+                ApplySentFlag(mail!, isRead: true);
+            }
+
+            if (CorpusPlacement.RequiresMove(method))
+            {
+                // Move issues a NEW EntryID, so everything after this point - including the
+                // delete in the finally block - must use the moved item's id.
+                dynamic moved = mail!.Move(target);
+                Release(mail);
+                mail = moved;
+            }
+
+            entryId = (string)mail!.EntryID;
+            bool sentFlag = TryReadStruct(() => (bool)mail!.Sent) ?? false;
+            Release(mail);
+            mail = null;
+
+            // Re-open by EntryID: the question is where the STORE put it, not what the
+            // handle we just wrote through believes.
+            string? parentId = null;
+            string? parentName = null;
+            dynamic? reopened = null;
+            try
+            {
+                reopened = ns.GetItemFromID(entryId, storeId);
+                dynamic? parent = null;
+                try
+                {
+                    parent = reopened!.Parent;
+                    parentId = TryRead<string>(() => (string)parent!.EntryID);
+                    parentName = TryRead<string>(() => (string)parent!.Name);
+                }
+                finally
+                {
+                    Release(parent);
+                }
+            }
+            catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+            {
+                return new CorpusPlacementProbe(method, targetFolderName, false, false, sentFlag, null, ex.Message);
+            }
+            finally
+            {
+                Release(reopened);
+            }
+
+            bool parentMatches = parentId != null
+                && string.Equals(parentId, targetFolderId, StringComparison.OrdinalIgnoreCase);
+
+            // The decisive check. The freshness sweep enumerates a folder through its TABLE,
+            // so an item the table does not carry does not exist as far as the measurement
+            // is concerned - however correct its Parent looks.
+            bool inTable = TableContains(target, CorpusSubjectFilter(), entryId!);
+
+            return new CorpusPlacementProbe(
+                method, targetFolderName, parentMatches, inTable, sentFlag, parentName, null);
+        }
+        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+        {
+            return new CorpusPlacementProbe(method, targetFolderName, false, false, false, null, ex.Message);
+        }
+        finally
+        {
+            Release(mail);
+            Release(items);
+            if (entryId != null)
+            {
+                DeleteOne(ns, storeId, entryId, CorpusSafety.BuildEntryIdAllowlist(new[] { entryId }), corpusId);
+            }
+        }
+    }
+
+    /// <summary>A bracket-free DASL LIKE restriction selecting corpus subjects and nothing else.</summary>
+    private static string CorpusSubjectFilter()
+        => "@SQL=" + "\"" + "urn:schemas:httpmail:subject" + "\"" + " LIKE '%" + CorpusPlan.DaslCountFragment + "%'";
+
+    /// <summary>
+    /// The subject every throwaway probe item carries: both tags plus a reserved ordinal, so
+    /// a probe is deletable by exactly the same two-key rule as a corpus item, and findable
+    /// by the same scan if this process dies between creating one and deleting it.
+    /// </summary>
+    private static string ProbeSubject(string corpusId, string what)
+        => CorpusPlan.SubjectTag + CorpusPlan.CorpusTagOpen + corpusId + "#"
+            + int.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture) + "] " + what;
+
+    /// <summary>
+    /// Clears MSGFLAG_UNSENT and writes the read state, then saves. Writing the WHOLE value
+    /// is what clears the unsent bit; MSGFLAG_READ carries the state the plan asked for,
+    /// because forcing it on would destroy the unread population the corpus is meant to hold
+    /// and an unread-only filter would then select nothing.
+    /// </summary>
+    private static void ApplySentFlag(dynamic mail, bool isRead)
+    {
+        dynamic? accessor = null;
+        try
+        {
+            accessor = mail.PropertyAccessor;
+            accessor.SetProperty(PrMessageFlags, isRead ? MsgFlagRead : 0);
+        }
+        finally
+        {
+            Release(accessor);
+        }
+
+        mail.Save();
+    }
+
+    /// <summary>
     /// Walks <see cref="CorpusDateFidelity.Ladder"/> against the store's Inbox, one
     /// throwaway item per rung, and reports what each rung actually achieved. Every probe
     /// item is deleted before this returns, by the same two-key rule as the teardown.
@@ -134,7 +427,8 @@ public static class ComCorpusMailbox
     /// only sees whether the corrected write landed.
     /// </para>
     /// </summary>
-    public static IReadOnlyList<CorpusDateProbe> ProbeDateFidelity(string storeDisplayName, string corpusId, DateTime requestedUtc)
+    public static IReadOnlyList<CorpusDateProbe> ProbeDateFidelity(
+        string storeDisplayName, string corpusId, DateTime requestedUtc, CorpusPlacementMethod placement)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
         DateTime requested = DateTime.SpecifyKind(requestedUtc, DateTimeKind.Utc);
@@ -148,6 +442,7 @@ public static class ComCorpusMailbox
                 dynamic? stores = null;
                 dynamic? store = null;
                 dynamic? folder = null;
+                dynamic? drafts = null;
                 var probes = new List<CorpusDateProbe>();
                 try
                 {
@@ -157,10 +452,12 @@ public static class ComCorpusMailbox
                         ?? throw new InvalidOperationException("Store not found for the date probe.");
                     string storeId = (string)store.StoreID;
                     folder = store.GetDefaultFolder(6); // Inbox - always present in a PST
+                    drafts = store.GetDefaultFolder(DraftsFolderId);
 
                     foreach (CorpusDateWriteMethod method in CorpusDateFidelity.Ladder)
                     {
-                        CorpusDateProbe first = RunOneProbe(ns!, folder!, storeId, corpusId, method, requested, requested);
+                        CorpusDateProbe first = RunOneProbe(
+                            ns!, folder!, drafts!, storeId, corpusId, method, placement, requested, requested);
                         CorpusDateOffsetVerdict verdict =
                             CorpusDateFidelity.ClassifyOffset(requested, first.ReadBackReceivedUtc, localOffset);
                         if (verdict != CorpusDateOffsetVerdict.LocalOffsetApplied)
@@ -171,13 +468,15 @@ public static class ComCorpusMailbox
 
                         DateTime compensated = CorpusDateFidelity.CompensatedWriteValue(
                             requested, verdict, localOffset, first.ReadBackReceivedUtc!.Value);
-                        probes.Add(RunOneProbe(ns!, folder!, storeId, corpusId, method, requested, compensated));
+                        probes.Add(RunOneProbe(
+                            ns!, folder!, drafts!, storeId, corpusId, method, placement, requested, compensated));
                     }
 
                     return (IReadOnlyList<CorpusDateProbe>)probes;
                 }
                 finally
                 {
+                    Release(drafts);
                     Release(folder);
                     Release(store);
                     Release(stores);
@@ -197,7 +496,8 @@ public static class ComCorpusMailbox
     /// <param name="plan">The corpus shape.</param>
     /// <param name="storeDisplayName">Target store; already vetted by <see cref="CorpusSafety.EvaluateStore"/>.</param>
     /// <param name="itemCount">Build ordinals 1..itemCount, skipping those the manifest already holds.</param>
-    /// <param name="method">The date-write rung the probe verified.</param>
+    /// <param name="dateMethod">The date-write rung the probe verified.</param>
+    /// <param name="placement">The placement rung the probe verified - what makes items live where the plan says.</param>
     /// <param name="writeShift">Pre-compensation added to every date written; <see cref="TimeSpan.Zero"/> unless the probe found an offset.</param>
     /// <param name="manifest">What already exists; also receives created folders.</param>
     /// <param name="record">Called with every created item; must persist it before returning.</param>
@@ -208,7 +508,8 @@ public static class ComCorpusMailbox
         CorpusPlan plan,
         string storeDisplayName,
         int itemCount,
-        CorpusDateWriteMethod method,
+        CorpusDateWriteMethod dateMethod,
+        CorpusPlacementMethod placement,
         TimeSpan writeShift,
         CorpusManifest manifest,
         Action<CorpusManifestItem> record,
@@ -238,6 +539,7 @@ public static class ComCorpusMailbox
                 dynamic? store = null;
                 var folderItems = new Dictionary<int, dynamic>();
                 var folders = new Dictionary<int, dynamic>();
+                dynamic? draftsItems = null;
                 int created = 0;
                 int failed = 0;
                 long bytes = 0;
@@ -253,6 +555,13 @@ public static class ComCorpusMailbox
                     // after 40 000 items would be finding it out too late.
                     _ = (string)store.StoreID;
 
+                    if (CorpusPlacement.CreatesInDrafts(placement))
+                    {
+                        dynamic draftsFolder = ResolveFolder(store!, DraftsFolderId, manifest, recordFolder);
+                        folders[DraftsFolderId] = draftsFolder;
+                        draftsItems = draftsFolder.Items;
+                    }
+
                     foreach (int ordinal in todo)
                     {
                         CorpusItemSpec spec = plan.Describe(ordinal);
@@ -267,15 +576,35 @@ public static class ComCorpusMailbox
                         dynamic? mail = null;
                         try
                         {
-                            mail = items!.Add(0); // olMailItem
+                            // The order is load-bearing: flags and dates are written BEFORE
+                            // any move, so the item that arrives in the target folder is
+                            // already in its final state and is not re-filed as a draft on
+                            // the way in.
+                            mail = (CorpusPlacement.CreatesInDrafts(placement) ? draftsItems! : items!).Add(0);
                             mail.Subject = spec.Subject;
                             mail.Body = plan.BuildBody(spec);
                             mail.UnRead = !spec.IsRead;
                             mail.Save();
 
+                            if (CorpusPlacement.WritesSentFlag(placement))
+                            {
+                                ApplySentFlag(mail!, spec.IsRead);
+                            }
+
                             DateTime? readBack = ApplyDates(
-                                mail!, method, spec.ReceivedUtc + writeShift, spec.SentUtc + writeShift, spec.IsRead);
-                            string entryId = (string)mail.EntryID;
+                                mail!, dateMethod, spec.ReceivedUtc + writeShift, spec.SentUtc + writeShift);
+
+                            if (CorpusPlacement.RequiresMove(placement))
+                            {
+                                // A move issues a NEW EntryID. The manifest is the teardown
+                                // allowlist, so recording the pre-move id would name nothing
+                                // and leave every item in this corpus undeletable.
+                                dynamic moved = mail!.Move(folders[spec.FolderId]);
+                                Release(mail);
+                                mail = moved;
+                            }
+
+                            string entryId = (string)mail!.EntryID;
                             var line = new CorpusManifestItem(
                                 ordinal,
                                 entryId,
@@ -308,6 +637,7 @@ public static class ComCorpusMailbox
                 }
                 finally
                 {
+                    Release(draftsItems);
                     foreach (dynamic items in folderItems.Values)
                     {
                         Release(items);
@@ -503,8 +833,7 @@ public static class ComCorpusMailbox
     private static List<ScanRow> ScanStore(dynamic store, CorpusManifest? manifest, string corpusId)
     {
         var rows = new List<ScanRow>();
-        var folderIds = new List<int> { 6, 5, 23, 3 }; // Deleted Items LAST: everything else drains into it
-        foreach (int folderId in folderIds)
+        foreach (int folderId in ScanFolderIds)
         {
             dynamic? folder = null;
             try
@@ -689,7 +1018,7 @@ public static class ComCorpusMailbox
     /// halfway through - the probe already established that this rung works on this store.
     /// </summary>
     private static DateTime? ApplyDates(
-        dynamic mail, CorpusDateWriteMethod method, DateTime receivedUtc, DateTime sentUtc, bool isRead)
+        dynamic mail, CorpusDateWriteMethod method, DateTime receivedUtc, DateTime sentUtc)
     {
         switch (method)
         {
@@ -705,22 +1034,16 @@ public static class ComCorpusMailbox
                 break;
 
             default:
+                // Dates only. The MSGFLAG_UNSENT write that used to live here has moved to
+                // ApplySentFlag, because it decides where an item LIVES rather than what it
+                // is dated - and while the two shared a rung, overriding the date refusal
+                // silently disabled the placement fix as well.
                 dynamic? accessor = null;
                 try
                 {
                     accessor = mail.PropertyAccessor;
                     accessor.SetProperty(PrMessageDeliveryTime, receivedUtc);
                     accessor.SetProperty(PrClientSubmitTime, sentUtc);
-                    if (method == CorpusDateWriteMethod.PropertyAccessorWithFlags)
-                    {
-                        // The whole value is written, which is what clears MSGFLAG_UNSENT
-                        // (0x8) and makes the item read as delivered mail rather than as a
-                        // draft. MSGFLAG_READ carries the state the PLAN asked for: forcing
-                        // it on would quietly destroy the unread population the corpus is
-                        // supposed to contain, and an unread-only filter would then select
-                        // nothing at all.
-                        accessor.SetProperty(PrMessageFlags, isRead ? MsgFlagRead : 0);
-                    }
                 }
                 finally
                 {
@@ -742,9 +1065,11 @@ public static class ComCorpusMailbox
     private static CorpusDateProbe RunOneProbe(
         dynamic ns,
         dynamic folder,
+        dynamic drafts,
         string storeId,
         string corpusId,
         CorpusDateWriteMethod method,
+        CorpusPlacementMethod placement,
         DateTime requestedUtc,
         DateTime writeUtc)
     {
@@ -753,30 +1078,45 @@ public static class ComCorpusMailbox
         string? entryId = null;
         try
         {
-            items = folder.Items;
+            // Built with the SAME placement the build will use, and that is not a detail.
+            // The first version created the probe straight into the Inbox and then asked the
+            // Inbox's table about it; because an unsent item is filed into Drafts, the table
+            // never held it, and the probe reported daslIn=False - which reads as "the date
+            // does not drive selection" when the real cause was "the item is in another
+            // folder". The two failures were indistinguishable in the output, and the date
+            // verdict taken from that run cannot be trusted. Placement is settled first now,
+            // and the date probe inherits it.
+            dynamic source = CorpusPlacement.CreatesInDrafts(placement) ? drafts : folder;
+            items = source.Items;
             mail = items.Add(0);
-
-            // A probe is an ordinary corpus item as far as every guard is concerned: it
-            // carries both tags and an ordinal, so it is deletable by the same rule and
-            // findable by the same scan if this process dies mid-probe.
-            string subject = CorpusPlan.SubjectTag + CorpusPlan.CorpusTagOpen + corpusId + "#"
-                + int.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture) + "] date probe "
-                + method;
-            mail.Subject = subject;
+            mail.Subject = ProbeSubject(corpusId, "date " + method);
             mail.Body = "date fidelity probe";
             mail.Save();
-            entryId = (string)mail.EntryID;
+
+            if (CorpusPlacement.WritesSentFlag(placement))
+            {
+                ApplySentFlag(mail!, isRead: true);
+            }
 
             DateTime? readBack;
             try
             {
-                readBack = ApplyDates(mail!, method, writeUtc, writeUtc, isRead: true);
+                readBack = ApplyDates(mail!, method, writeUtc, writeUtc);
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
+                entryId = TryRead<string>(() => (string)mail!.EntryID);
                 return new CorpusDateProbe(method, requestedUtc, writeUtc, null, false, false, ex.Message);
             }
 
+            if (CorpusPlacement.RequiresMove(placement))
+            {
+                dynamic moved = mail!.Move(folder);
+                Release(mail);
+                mail = moved;
+            }
+
+            entryId = (string)mail!.EntryID;
             Release(mail);
             mail = null;
 
@@ -825,11 +1165,12 @@ public static class ComCorpusMailbox
     /// </summary>
     private static string DateWindowFilter(DateTime fromUtc, DateTime? toUtc)
     {
+        string received = "\"urn:schemas:httpmail:datereceived\"";
         string filter = "@SQL=(\"urn:schemas:httpmail:subject\" LIKE '%" + CorpusPlan.DaslCountFragment + "%')"
-            + " AND (\"urn:schemas:httpmail:datereceived\" >= '" + DaslDateLiteral.FormatUtc(fromUtc) + "')";
+            + " AND (" + received + " >= '" + DaslDateLiteral.FormatUtc(fromUtc) + "')";
         if (toUtc != null)
         {
-            filter += " AND (\"urn:schemas:httpmail:datereceived\" < '" + DaslDateLiteral.FormatUtc(toUtc.Value) + "')";
+            filter += " AND (" + received + " < '" + DaslDateLiteral.FormatUtc(toUtc.Value) + "')";
         }
 
         return filter;

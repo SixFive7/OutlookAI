@@ -6,6 +6,26 @@ arguments with numbers, using the synthetic corpus that
 `OutlookAI.RemediationTools corpus-build` puts into a local PST on the Hyper-V test VM. It
 says what to run, in what order, and what each number would settle.
 
+**What the first real run established (2026-08-19).** A 40 000 item corpus was built into the
+VM's PST in 12m27s at 50.9 items/sec with zero failures; resumability and determinism both
+worked (a second run skipped the 2 000 items an earlier timing run had already made). Three
+things went wrong, and all three are now guarded rather than remembered:
+
+1. **Items were queued for delivery.** 5 532 landed in the target store's Outbox. Inert on
+   that VM because the profile has no mail account, and 5 532 queued messages on any profile
+   that has one. The build now refuses unless the profile has **no accounts at all** - see
+   "Before you run anything" below.
+2. **Every item was filed as a draft**, because `Items.Add` + `Save` produces an UNSENT item
+   and Outlook files unsent items in Drafts whatever folder they were added to. The sweep
+   covers Inbox, Sent Items, Deleted Items and Junk Email and **not** Drafts, so a sweep over
+   40 000 items selected **6**, in 234-367 ms. The measurement could not be taken.
+3. **The date guard's refusal message was wrong**, and the wrong sentence is what caused the
+   run to proceed. It said the items would be dated "roughly now", from which an all-recent
+   corpus looks like the sweep's worst case - a reasonable inference from a false premise.
+   The truth is that an item the folder table carries no delivery time for is selected by
+   **no** window, so the sweep sees fewer items, not more. The message now states the
+   consequence as a count.
+
 **Why a corpus is needed at all.** The two questions are about volume, and the developer
 profile cannot ask them. Every store on it is indexed, so the freshness sweep's window comes
 from each store's index frontier and the seven-day fallback never engages; and the only
@@ -51,6 +71,27 @@ proposed for the sweep should be justified against the harsher consequence.
 
 ---
 
+## Before you run anything - the two guards that now gate a build
+
+**The profile must have no mail accounts.** `corpus-build` reads `Session.Accounts`, compares
+each account's `DeliveryStore` to the target by `StoreID`, and refuses if there is any account
+at all. That is stricter than "no account delivers into the target", and the strictness is
+forced: `SendUsingAccount` is per item, so any account may send a message that lives anywhere,
+and "no account can send from this store" is only provable through the object model as "no
+account can send". There is **no override flag** for this one.
+
+**Placement is probed before the build and the build refuses if it fails.** `corpus-probe`
+now walks a placement ladder - create in place with MSGFLAG_UNSENT cleared; create in Drafts,
+clear the flag, then `Move`; create in Drafts and `Move` without the flag; and a plain saved
+item as a control - and a rung passes only when the item's `Parent` **is** the target folder
+**and** the target folder's `GetTable` returns it. The second half is decisive: the sweep
+enumerates a folder through its table, so an item the table does not carry does not exist as
+far as this measurement is concerned. `--allow-drafts-placement` overrides it and says in the
+same breath that the sweep will select 0 of N items.
+
+**Run `corpus-probe` on its own first.** It is cheap, it creates and deletes a handful of
+throwaway items, and it answers both questions - placement and dates - before any long build.
+
 ## Step 0 - build the expectation sheet before touching Outlook
 
 `corpus-plan` is pure and runs anywhere:
@@ -84,9 +125,18 @@ The build reports items per second and total body bytes. That is not one of the 
 being chased, but write it down anyway: it is the only figure on record for how long a rebuild
 after a VM rollback will take, and the plan is deterministic, so it will be the same next time.
 
-**Confirm before continuing:** the date probe printed at the start says a rung verified. If it
-says `NOT ACHIEVABLE`, every step below that mentions a window is void - see "If the dates do
-not stick" at the end.
+**Confirm before continuing, in this order:**
+
+1. The store and profile lines both say accepted, and `profile accounts: 0`.
+2. The **placement** probe named a verified rung. If it says `NOT ACHIEVABLE`, steps 3 and 4
+   are void and step 2 becomes the primary route - see "If placement fails" at the end.
+3. The **date** probe named a verified rung. If it says `NOT ACHIEVABLE`, every step that
+   mentions a window is void - see "If the dates do not stick".
+
+Placement is settled before dates on purpose. Probing a date against an item that was filed
+somewhere other than the folder being queried cannot tell "the date does not drive selection"
+from "the item is not in this folder", and the first run's date verdict was taken under
+exactly that confusion, so it proves nothing either way.
 
 **Then let the machine settle.** Windows Search must be given the chance to either index the
 PST or not, and which one happened must be established rather than assumed: run
@@ -95,6 +145,13 @@ seven-day fallback will not engage and the sweep measurements will be measuring 
 path. Excluding the PST from indexing is the intended state of this VM.
 
 ## Step 2 - per-folder sweep cost, out of band
+
+**This step is the fallback route for the whole document.** If placement cannot be made to
+work, steps 3 and 4 are impossible and everything the sweep budget needs has to come from
+here: per-item and per-folder cost measured directly, multiplied out by the folder and store
+counts of a real profile. It is a weaker answer than measuring the shipped sweep - it measures
+the cost model's coefficients rather than the thing itself - but it is a measured answer, and
+it is the one the current 30 s value never had.
 
 The server reports one clock for the whole sweep (`sweep.elapsedMs`) and no per-folder or
 per-store timings at all. The per-folder shape has to come from the existing read-only probe,
@@ -228,6 +285,26 @@ the same store. `corpus-teardown --manifest ... --execute` removes the corpus if
 to be reused for something else; it deletes only what the manifest records, by EntryID
 allowlist and subject tag together.
 
+## If placement fails
+
+If no placement rung verifies, items can only be created as drafts, and that changes the shape
+of this document rather than merely annotating it:
+
+- **Steps 3 and 4 are void.** The sweep does not read Drafts. It will report `foldersSwept: 4`
+  and `freshness: "live"` and select nothing, which looks identical to a quiet mailbox.
+- **Step 2 becomes the primary measurement**, not a supporting one. Time the table walk and
+  the per-row `GetItemFromID` directly against the Drafts folder, which holds the whole corpus
+  and is a perfectly good folder for measuring per-item cost. The coefficients are what the
+  budget arithmetic needs; the folder they were measured in does not matter.
+- **Step 5 still works** if the scan is scoped to the folder the corpus is in. The exhaustive
+  scan walks named folders rather than the sweep's fixed four.
+- **Say so in the results.** A sweep number taken against a drafts-placed corpus is a number
+  about an empty folder set, and it will read like a fast sweep.
+
+If it comes to that, record what each rung reported - the probe prints `landedIn` for every
+one - because "which rung failed and where the item went" is the whole diagnosis, and it is
+the evidence anyone revisiting this needs.
+
 ## If the dates do not stick
 
 `corpus-build` probes date fidelity before it writes anything, and refuses to build a corpus
@@ -237,11 +314,19 @@ corpus is still worth having, and it is worth being precise about what changes:
 - **Still measurable:** per-item and per-folder sweep cost at a known item count; the body cap
   and the byte budget; frame size; exhaustive scan throughput scoped to a folder; everything
   in steps 2, 4 and 5 that does not name a window.
-- **Not measurable:** anything comparing a 7-day window against a 60-day one, because every
-  item would carry a received time of roughly "now" and both windows would select the whole
-  corpus. Step 3 as written is void, and the uncapped-versus-capped comparison would be a
-  comparison against the entire store rather than against a window.
+- **Not measurable:** anything involving a date window at all. This is worse than it sounds
+  and the first run got it wrong: undated items are **not** "all recent", they are *absent*
+  from the sweep. The restriction is `(datereceived >= X) OR (date >= X)`, so an item exposing
+  neither property matches no window however wide - a 7-day sweep and a 60-day sweep would
+  both select zero. Step 3 is void, and so is the capped-versus-uncapped comparison.
 
-Do not paper over this case. A corpus whose items are all dated "now" looks exactly like a
-good one from the outside, and a window measurement taken against it would be wrong in a way
-nothing downstream could detect.
+Do not paper over this case, and do not reason around it the way the first run did. The
+guard's message now states the consequence as a count for exactly that reason.
+
+**This one is also a product finding, not only a tooling one.** Mail that reaches a PST
+without transport - imported, copied between stores, restored from backup - can carry no
+usable delivery time, and it is then invisible to the freshness sweep on a real user's
+machine while the payload still reports the folder as swept. Recorded as **H3** in
+`Docs/completeness-gaps.md`, with the evidence and, importantly, with the confound: the
+observation that motivated it was taken while every item was also in the wrong folder, so it
+does not yet prove the date half. A re-run with placement verified is what would settle it.

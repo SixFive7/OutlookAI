@@ -17,6 +17,12 @@ namespace OutlookAI.RemediationTools;
 /// <param name="StoreDisplayName">The store the items were written into.</param>
 /// <param name="StoreFilePath">The .pst backing that store, recorded so a manifest can be matched to a file.</param>
 /// <param name="DateWriteMethod">Which date-write rung the build verified before it started.</param>
+/// <param name="PlacementMethod">
+/// Which placement rung the build verified. Recorded because it decides whether the corpus
+/// is measurable at all: a corpus placed as drafts is invisible to the freshness sweep, and
+/// a measurement taken against one would otherwise look like a measurement of an empty
+/// store. Null in manifests written before placement was probed.
+/// </param>
 public sealed record CorpusManifestHeader(
     int Version,
     string CorpusId,
@@ -25,7 +31,8 @@ public sealed record CorpusManifestHeader(
     string ShapeKey,
     string StoreDisplayName,
     string? StoreFilePath,
-    string DateWriteMethod);
+    string DateWriteMethod,
+    string? PlacementMethod = null);
 
 /// <summary>One item this build created. The EntryID half of the teardown's two-key rule.</summary>
 /// <param name="Ordinal">The item's ordinal in the plan.</param>

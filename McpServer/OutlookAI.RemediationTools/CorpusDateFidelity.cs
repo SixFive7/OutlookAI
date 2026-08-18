@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace OutlookAI.RemediationTools;
 
 /// <summary>
@@ -9,19 +11,19 @@ public enum CorpusDateWriteMethod
     None = 0,
 
     /// <summary>
-    /// PropertyAccessor writes of PR_MESSAGE_DELIVERY_TIME and PR_CLIENT_SUBMIT_TIME, plus
-    /// PR_MESSAGE_FLAGS cleared of MSGFLAG_UNSENT and set to MSGFLAG_READ. This is the
-    /// strongest rung: it sets both date properties the sweep's DASL filter reads AND makes
-    /// the item read as a delivered message rather than an unsent one.
+    /// PropertyAccessor writes of PR_MESSAGE_DELIVERY_TIME (0x0E060040) and
+    /// PR_CLIENT_SUBMIT_TIME (0x00390040) - the two properties the freshness sweep's DASL
+    /// filter reads, as <c>urn:schemas:httpmail:datereceived</c> and
+    /// <c>urn:schemas:httpmail:date</c>.
+    /// <para>
+    /// This rung USED to also write PR_MESSAGE_FLAGS to clear MSGFLAG_UNSENT. That write has
+    /// moved to <see cref="CorpusPlacement"/>, where it belongs: it decides where an item
+    /// LIVES, not what it is dated. Bundling them meant that overriding the date refusal
+    /// silently disabled the placement fix too, which is exactly what happened on the first
+    /// real build - 40 000 items filed as drafts, invisible to the sweep.
+    /// </para>
     /// </summary>
-    PropertyAccessorWithFlags = 1,
-
-    /// <summary>
-    /// The same two date writes without touching PR_MESSAGE_FLAGS. Exists as its own rung
-    /// because a store that refuses the flags write would otherwise take the date writes
-    /// down with it, and dated-but-unsent items are still far more useful than undated ones.
-    /// </summary>
-    PropertyAccessorDatesOnly = 2,
+    PropertyAccessorDates = 1,
 
     /// <summary>
     /// Plain object-model assignment of MailItem.ReceivedTime. Weakest rung, tried last,
@@ -102,8 +104,7 @@ public static class CorpusDateFidelity
     /// <summary>The rungs, strongest first. The builder takes the first that fully verifies.</summary>
     public static readonly CorpusDateWriteMethod[] Ladder =
     {
-        CorpusDateWriteMethod.PropertyAccessorWithFlags,
-        CorpusDateWriteMethod.PropertyAccessorDatesOnly,
+        CorpusDateWriteMethod.PropertyAccessorDates,
         CorpusDateWriteMethod.ObjectModel,
     };
 
@@ -203,7 +204,7 @@ public static class CorpusDateFidelity
     /// allowed only when the caller asked for it in so many words, and even then the message
     /// says plainly what such a corpus can and cannot be used to measure.
     /// </summary>
-    public static (bool Proceed, string Message) Decide(CorpusDateWriteMethod chosen, bool allowUndated)
+    public static (bool Proceed, string Message) Decide(CorpusDateWriteMethod chosen, bool allowUndated, int itemCount)
     {
         if (chosen != CorpusDateWriteMethod.None)
         {
@@ -214,17 +215,29 @@ public static class CorpusDateFidelity
             return (true, $"Date fidelity: VERIFIED via {chosen}. Received dates drive DASL selection." + caveat);
         }
 
+        // CORRECTED 2026-08-19. This message used to say the items "would carry a received
+        // time of roughly 'now'", from which an operator reasonably concluded that an
+        // all-recent corpus is still the sweep's worst case, overrode the guard, and lost a
+        // 12-minute build. That conclusion was wrong because the premise was: an item whose
+        // delivery time is not readable through the folder table is not SELECTED by a date
+        // restriction at all. The sweep filters on
+        // (datereceived >= X) OR (date >= X), so such items are invisible to it - not
+        // recent, not old, absent. The consequence is now stated as a count, because a
+        // number cannot be reasoned around the way a description can.
         string what = "Date fidelity: NOT ACHIEVABLE on this store. No write method placed an item in the past "
-            + "and had a DASL date restriction select it. Every item would carry a received time of roughly "
-            + "'now', so a 7-day window and a 60-day window would select the SAME population and every window "
-            + "measurement taken against this corpus would be meaningless.";
+            + "and had a DASL date restriction select it. The freshness sweep selects with "
+            + "(datereceived >= X) OR (date >= X), so items whose delivery time the folder table does not carry "
+            + "are not selected by ANY window - they are invisible to the sweep, not merely mis-dated. This is "
+            + "NOT 'an all-recent corpus', which would at least be the sweep's worst case: a sweep would select "
+            + $"0 of {itemCount.ToString("N0", CultureInfo.InvariantCulture)} items, and both a 7-day and a "
+            + "60-day window would return nothing.";
 
         return allowUndated
-            ? (true, what + " Proceeding because --allow-undated was given. This corpus can still measure "
-                + "per-item sweep cost, body-cap behaviour and frame size at a known item count and known body "
-                + "sizes; it CANNOT measure anything that depends on a date window.")
-            : (false, what + " Refusing to build. Pass --allow-undated only if you accept a corpus that cannot "
-                + "measure any date window.");
+            ? (true, what + " Proceeding because --allow-undated was given. This corpus can still be used for "
+                + "out-of-band per-item and per-folder timing (measurement plan step 2), body-cap behaviour and "
+                + "frame size at a known item count and known body sizes; it CANNOT be used to measure the "
+                + "freshness sweep or any date window.")
+            : (false, what + " Refusing to build.");
     }
 
     private static TimeSpan Abs(TimeSpan value) => value < TimeSpan.Zero ? -value : value;

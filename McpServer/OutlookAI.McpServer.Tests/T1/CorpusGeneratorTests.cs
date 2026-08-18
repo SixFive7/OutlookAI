@@ -489,6 +489,234 @@ public class CorpusGeneratorTests
         Assert.DoesNotContain("Corpus PST", text, StringComparison.Ordinal);
     }
 
+    // -------------------------------------------------- profile / send capability
+
+    private static CorpusProfileFacts NoAccounts() => new(0, 0, 0);
+
+    [Fact]
+    public void Profile_AcceptedOnlyWhenThereAreNoAccountsAtAll()
+    {
+        Assert.Equal(CorpusStoreRefusal.None, CorpusSafety.EvaluateProfile(NoAccounts()));
+    }
+
+    [Fact]
+    public void Profile_RefusedWhenAnAccountDeliversIntoTheTargetStore()
+    {
+        // The case that actually happened: a build put 5 532 items into the target store's
+        // Outbox. On a profile with an account that is 5 532 queued messages.
+        Assert.Equal(
+            CorpusStoreRefusal.TargetIsAccountDeliveryStore,
+            CorpusSafety.EvaluateProfile(new CorpusProfileFacts(2, 1, 0)));
+    }
+
+    [Fact]
+    public void Profile_RefusedWhenAnyAccountExistsEvenIfNoneDeliversHere()
+    {
+        // Stricter than "no account delivers into the target", because the object model
+        // cannot express the requirement any other way: SendUsingAccount is set per item, so
+        // any account can send a message that lives anywhere. "No account can send from this
+        // store" is only provable as "no account can send".
+        Assert.Equal(
+            CorpusStoreRefusal.ProfileCanSend,
+            CorpusSafety.EvaluateProfile(new CorpusProfileFacts(1, 0, 0)));
+    }
+
+    [Fact]
+    public void Profile_RefusedWhenItCannotBeProven()
+    {
+        Assert.Equal(
+            CorpusStoreRefusal.ProfileUnprovable,
+            CorpusSafety.EvaluateProfile(new CorpusProfileFacts(null, 0, 0)));
+        Assert.Equal(
+            CorpusStoreRefusal.ProfileUnprovable,
+            CorpusSafety.EvaluateProfile(new CorpusProfileFacts(3, 0, 1)));
+    }
+
+    [Fact]
+    public void Profile_UnprovableOutranksDeliveringSoTheWeakerVerdictIsNeverReported()
+    {
+        // An account whose delivery store could not be read might be delivering here. The
+        // refusal has to be the one that says nothing is proven, not the one that says
+        // "one account delivers here" as though the rest had been cleared.
+        Assert.Equal(
+            CorpusStoreRefusal.ProfileUnprovable,
+            CorpusSafety.EvaluateProfile(new CorpusProfileFacts(3, 1, 1)));
+    }
+
+    [Fact]
+    public void Evaluate_RequiresBothTheStoreAndTheProfileToPass()
+    {
+        Assert.Equal(
+            CorpusStoreRefusal.None,
+            CorpusSafety.Evaluate(GoodFacts(), NoAccounts(), new[] { "Corpus PST" }));
+
+        // A local .pst is not sufficient on its own - it can be an account's delivery store.
+        Assert.Equal(
+            CorpusStoreRefusal.TargetIsAccountDeliveryStore,
+            CorpusSafety.Evaluate(GoodFacts(), new CorpusProfileFacts(1, 1, 0), new[] { "Corpus PST" }));
+
+        // The store verdict is reported first when both fail, because a wrong target is the
+        // more likely operator mistake and its message is the more useful one.
+        Assert.Equal(
+            CorpusStoreRefusal.NotOnAllowlist,
+            CorpusSafety.Evaluate(GoodFacts("Other"), new CorpusProfileFacts(1, 1, 0), new[] { "Corpus PST" }));
+    }
+
+    [Fact]
+    public void Profile_RefusalMessageSaysWhatToDoAndOffersNoFlag()
+    {
+        string text = CorpusSafety.Explain(CorpusStoreRefusal.ProfileCanSend, GoodFacts());
+        Assert.Contains("no mail accounts", text, StringComparison.Ordinal);
+        Assert.Contains("There is no flag for this", text, StringComparison.Ordinal);
+        Assert.Contains("Outbox", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("--allow-store", text, StringComparison.Ordinal);
+    }
+
+    // ------------------------------------------------------------------ placement
+
+    private static CorpusPlacementProbe PlacementProbe(
+        CorpusPlacementMethod method,
+        bool parentMatches = true,
+        bool inTable = true,
+        bool sentFlag = true,
+        string? landedIn = "Inbox",
+        string? error = null)
+        => new(method, "Inbox", parentMatches, inTable, sentFlag, landedIn, error);
+
+    [Fact]
+    public void Placement_IsUsableOnlyWhenTheItemIsParentedThereAndInThatFoldersTable()
+    {
+        Assert.True(CorpusPlacement.IsUsable(PlacementProbe(CorpusPlacementMethod.InPlaceWithSentFlag)));
+        Assert.False(CorpusPlacement.IsUsable(
+            PlacementProbe(CorpusPlacementMethod.InPlaceWithSentFlag, parentMatches: false)));
+        Assert.False(CorpusPlacement.IsUsable(
+            PlacementProbe(CorpusPlacementMethod.InPlaceWithSentFlag, inTable: false)));
+        Assert.False(CorpusPlacement.IsUsable(
+            PlacementProbe(CorpusPlacementMethod.InPlaceWithSentFlag, error: "refused")));
+    }
+
+    [Fact]
+    public void Placement_DoesNotRequireTheSentFlagItself()
+    {
+        // The flag is a means, not the goal. An item that sits in the Inbox and appears in
+        // its table is measurable whether or not MSGFLAG_UNSENT happened to clear, and
+        // demanding the flag would reject a rung that works.
+        Assert.True(CorpusPlacement.IsUsable(
+            PlacementProbe(CorpusPlacementMethod.DraftsThenMove, sentFlag: false)));
+    }
+
+    [Fact]
+    public void Placement_FolderTableIsTheDecidingSignal()
+    {
+        // An item can be parented correctly and still be missing from the table the sweep
+        // reads. That case would produce a corpus that looks right in Outlook and measures
+        // as an empty store, which is the failure mode this whole probe exists to catch.
+        Assert.False(CorpusPlacement.IsUsable(
+            PlacementProbe(CorpusPlacementMethod.InPlaceWithSentFlag, parentMatches: true, inTable: false)));
+    }
+
+    [Fact]
+    public void Placement_ChoosesTheCheapestRungThatVerified()
+    {
+        Assert.Equal(
+            CorpusPlacementMethod.InPlaceWithSentFlag,
+            CorpusPlacement.Choose(new[]
+            {
+                PlacementProbe(CorpusPlacementMethod.InPlaceWithSentFlag),
+                PlacementProbe(CorpusPlacementMethod.DraftsThenMoveWithSentFlag),
+            }));
+
+        Assert.Equal(
+            CorpusPlacementMethod.DraftsThenMoveWithSentFlag,
+            CorpusPlacement.Choose(new[]
+            {
+                PlacementProbe(CorpusPlacementMethod.InPlaceWithSentFlag, inTable: false, landedIn: "Drafts"),
+                PlacementProbe(CorpusPlacementMethod.DraftsThenMoveWithSentFlag),
+                PlacementProbe(CorpusPlacementMethod.DraftsThenMove),
+            }));
+
+        Assert.Equal(CorpusPlacementMethod.None, CorpusPlacement.Choose(Array.Empty<CorpusPlacementProbe>()));
+    }
+
+    [Fact]
+    public void Placement_LadderKeepsThePlainSaveAsAControlRung()
+    {
+        // InPlaceOnly is what the first real build did, and it is kept so the probe RECORDS
+        // what the store does with a plain saved item rather than assuming the one observed
+        // failure generalises. It is last, so it is never chosen over a rung that works.
+        Assert.Equal(CorpusPlacementMethod.InPlaceOnly, CorpusPlacement.Ladder[^1]);
+        Assert.Equal(CorpusPlacementMethod.InPlaceWithSentFlag, CorpusPlacement.Ladder[0]);
+        Assert.Equal(4, CorpusPlacement.Ladder.Length);
+        Assert.Equal(CorpusPlacement.Ladder.Length, CorpusPlacement.Ladder.Distinct().Count());
+    }
+
+    [Fact]
+    public void Placement_MechanicsMatchTheirRungNames()
+    {
+        Assert.False(CorpusPlacement.CreatesInDrafts(CorpusPlacementMethod.InPlaceWithSentFlag));
+        Assert.False(CorpusPlacement.RequiresMove(CorpusPlacementMethod.InPlaceWithSentFlag));
+        Assert.True(CorpusPlacement.WritesSentFlag(CorpusPlacementMethod.InPlaceWithSentFlag));
+
+        Assert.True(CorpusPlacement.CreatesInDrafts(CorpusPlacementMethod.DraftsThenMoveWithSentFlag));
+        Assert.True(CorpusPlacement.RequiresMove(CorpusPlacementMethod.DraftsThenMoveWithSentFlag));
+        Assert.True(CorpusPlacement.WritesSentFlag(CorpusPlacementMethod.DraftsThenMoveWithSentFlag));
+
+        Assert.True(CorpusPlacement.CreatesInDrafts(CorpusPlacementMethod.DraftsThenMove));
+        Assert.True(CorpusPlacement.RequiresMove(CorpusPlacementMethod.DraftsThenMove));
+        Assert.False(CorpusPlacement.WritesSentFlag(CorpusPlacementMethod.DraftsThenMove));
+
+        Assert.False(CorpusPlacement.CreatesInDrafts(CorpusPlacementMethod.InPlaceOnly));
+        Assert.False(CorpusPlacement.RequiresMove(CorpusPlacementMethod.InPlaceOnly));
+        Assert.False(CorpusPlacement.WritesSentFlag(CorpusPlacementMethod.InPlaceOnly));
+    }
+
+    [Fact]
+    public void Placement_RefusalStatesTheConsequenceAsACount()
+    {
+        (bool proceed, string message) =
+            CorpusPlacement.Decide(CorpusPlacementMethod.None, allowDraftsPlacement: false, itemCount: 40_000);
+        Assert.False(proceed);
+        Assert.Contains("0 of 40,000 items", message, StringComparison.Ordinal);
+        Assert.Contains("NOT Drafts", message, StringComparison.Ordinal);
+        Assert.Contains("Refusing to build", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Placement_OverrideIsAllowedButSaysWhatIsLost()
+    {
+        (bool proceed, string message) =
+            CorpusPlacement.Decide(CorpusPlacementMethod.None, allowDraftsPlacement: true, itemCount: 40_000);
+        Assert.True(proceed);
+        Assert.Contains("CANNOT be used to measure the freshness sweep at all", message, StringComparison.Ordinal);
+        Assert.Contains("step 2", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Placement_VerifiedMessageWarnsWhenTheChosenRungMoves()
+    {
+        (_, string moved) = CorpusPlacement.Decide(
+            CorpusPlacementMethod.DraftsThenMoveWithSentFlag, allowDraftsPlacement: false, itemCount: 10);
+        Assert.Contains("POST-move EntryID", moved, StringComparison.Ordinal);
+
+        (_, string inPlace) = CorpusPlacement.Decide(
+            CorpusPlacementMethod.InPlaceWithSentFlag, allowDraftsPlacement: false, itemCount: 10);
+        Assert.DoesNotContain("POST-move", inPlace, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Options_CarryTheDraftsPlacementOverrideSeparatelyFromTheDateOne()
+    {
+        CorpusOptions both = CorpusOptions.Parse(new[] { "--allow-undated", "--allow-drafts-placement" });
+        Assert.True(both.AllowUndated);
+        Assert.True(both.AllowDraftsPlacement);
+
+        // The coupling that caused the incident, pinned apart: --allow-undated must not
+        // imply anything about placement.
+        CorpusOptions dateOnly = CorpusOptions.Parse(new[] { "--allow-undated" });
+        Assert.True(dateOnly.AllowUndated);
+        Assert.False(dateOnly.AllowDraftsPlacement);
+    }
+
     // ------------------------------------------------------ teardown selection rule
 
     private const string CorpusId = "vm1";
@@ -607,7 +835,8 @@ public class CorpusGeneratorTests
             new CorpusPlanOptions(id, seed, Anchor).ShapeKey,
             storeName,
             @"D:\corpus\corpus.pst",
-            CorpusDateWriteMethod.PropertyAccessorWithFlags.ToString());
+            CorpusDateWriteMethod.PropertyAccessorDates.ToString(),
+            CorpusPlacementMethod.InPlaceWithSentFlag.ToString());
 
     [Fact]
     public void Manifest_RoundTrips()
@@ -736,7 +965,7 @@ public class CorpusGeneratorTests
         // A property that reads back correctly but does not drive a DASL restriction would
         // pass a read-back-only check and then make every window measurement wrong.
         Assert.False(CorpusDateFidelity.IsUsable(
-            Probe(CorpusDateWriteMethod.PropertyAccessorWithFlags, Anchor, selected: true, excluded: false)));
+            Probe(CorpusDateWriteMethod.PropertyAccessorDates, Anchor, selected: true, excluded: false)));
     }
 
     [Fact]
@@ -784,19 +1013,18 @@ public class CorpusGeneratorTests
     public void Choose_TakesTheStrongestRungThatVerified()
     {
         Assert.Equal(
-            CorpusDateWriteMethod.PropertyAccessorWithFlags,
+            CorpusDateWriteMethod.PropertyAccessorDates,
             CorpusDateFidelity.Choose(new[]
             {
-                Probe(CorpusDateWriteMethod.PropertyAccessorWithFlags, Anchor),
+                Probe(CorpusDateWriteMethod.PropertyAccessorDates, Anchor),
                 Probe(CorpusDateWriteMethod.ObjectModel, Anchor),
             }));
 
         Assert.Equal(
-            CorpusDateWriteMethod.PropertyAccessorDatesOnly,
+            CorpusDateWriteMethod.ObjectModel,
             CorpusDateFidelity.Choose(new[]
             {
-                Probe(CorpusDateWriteMethod.PropertyAccessorWithFlags, Anchor, error: "flags refused"),
-                Probe(CorpusDateWriteMethod.PropertyAccessorDatesOnly, Anchor),
+                Probe(CorpusDateWriteMethod.PropertyAccessorDates, Anchor, error: "refused"),
                 Probe(CorpusDateWriteMethod.ObjectModel, Anchor),
             }));
 
@@ -810,37 +1038,63 @@ public class CorpusGeneratorTests
     public void Ladder_TriesTheStrongestMethodFirst()
     {
         Assert.Equal(
-            new[]
-            {
-                CorpusDateWriteMethod.PropertyAccessorWithFlags,
-                CorpusDateWriteMethod.PropertyAccessorDatesOnly,
-                CorpusDateWriteMethod.ObjectModel,
-            },
+            new[] { CorpusDateWriteMethod.PropertyAccessorDates, CorpusDateWriteMethod.ObjectModel },
             CorpusDateFidelity.Ladder);
+    }
+
+    [Fact]
+    public void DateLadder_NoLongerCarriesTheMessageFlagWrite()
+    {
+        // Regression guard for the coupling that cost a 40 000 item build. The MSGFLAG_UNSENT
+        // write decides where an item LIVES; it used to be a rung of the DATE ladder, so
+        // --allow-undated silently disabled it and every item was filed as a draft. The two
+        // ladders are now disjoint concerns, and this test fails if anyone re-merges them.
+        Assert.Equal(2, CorpusDateFidelity.Ladder.Length);
+        Assert.DoesNotContain(
+            CorpusDateFidelity.Ladder,
+            m => m.ToString().Contains("Flag", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
     public void Decide_RefusesAnUndatedCorpusUnlessItWasAskedFor()
     {
-        (bool proceed, string message) = CorpusDateFidelity.Decide(CorpusDateWriteMethod.None, allowUndated: false);
+        (bool proceed, string message) =
+            CorpusDateFidelity.Decide(CorpusDateWriteMethod.None, allowUndated: false, itemCount: 40_000);
         Assert.False(proceed);
         Assert.Contains("Refusing to build", message, StringComparison.Ordinal);
-        Assert.Contains("meaningless", message, StringComparison.Ordinal);
 
         (bool proceedAnyway, string allowedMessage) =
-            CorpusDateFidelity.Decide(CorpusDateWriteMethod.None, allowUndated: true);
+            CorpusDateFidelity.Decide(CorpusDateWriteMethod.None, allowUndated: true, itemCount: 40_000);
         Assert.True(proceedAnyway);
-        Assert.Contains("CANNOT measure anything that depends on a date window", allowedMessage, StringComparison.Ordinal);
+        Assert.Contains("CANNOT be used to measure the freshness sweep", allowedMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Decide_StatesTheUndatedConsequenceAsACountAndNotAsAnAllRecentCorpus()
+    {
+        // The message this replaces said the items "would carry a received time of roughly
+        // now". An operator reasoned - reasonably, from that text - that an all-recent corpus
+        // is still the sweep's worst case, overrode the guard, and lost the build. The
+        // premise was wrong: an item whose delivery time the folder table does not carry is
+        // not selected by ANY window, so the sweep sees fewer items, not more.
+        (_, string message) =
+            CorpusDateFidelity.Decide(CorpusDateWriteMethod.None, allowUndated: false, itemCount: 40_000);
+        Assert.Contains("0 of 40,000 items", message, StringComparison.Ordinal);
+        Assert.Contains("invisible to the sweep, not merely mis-dated", message, StringComparison.Ordinal);
+        Assert.Contains("NOT 'an all-recent corpus'", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("roughly 'now'", message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Decide_SaysWhatTheWeakestRungCannotCarry()
     {
-        (bool proceed, string message) = CorpusDateFidelity.Decide(CorpusDateWriteMethod.ObjectModel, allowUndated: false);
+        (bool proceed, string message) =
+            CorpusDateFidelity.Decide(CorpusDateWriteMethod.ObjectModel, allowUndated: false, itemCount: 10);
         Assert.True(proceed);
         Assert.Contains("PR_CLIENT_SUBMIT_TIME", message, StringComparison.Ordinal);
 
-        (_, string strong) = CorpusDateFidelity.Decide(CorpusDateWriteMethod.PropertyAccessorWithFlags, allowUndated: false);
+        (_, string strong) =
+            CorpusDateFidelity.Decide(CorpusDateWriteMethod.PropertyAccessorDates, allowUndated: false, itemCount: 10);
         Assert.DoesNotContain("PR_CLIENT_SUBMIT_TIME", strong, StringComparison.Ordinal);
     }
 
