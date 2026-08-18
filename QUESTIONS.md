@@ -119,6 +119,55 @@ both readings so the history is legible.
 
 **Default if unanswered.** The reversal stands, and the test carries the explanation.
 
+## Q6 - Does the 2 KB cap apply to parameter descriptions, and is it per string or per tool?
+
+The documented sentence covers two surfaces: *"Claude Code truncates tool descriptions and server
+instructions at 2KB each."* Our guardrail applies 2048 to a third - every
+`inputSchema.properties[*].description` - which is an extrapolation I made without flagging it.
+
+Two separate unknowns sit here, and only one is cheap to be wrong about.
+
+**Do parameter descriptions have a cap at all?** If not, we are merely terser than necessary. Fine.
+
+**Is the cap per STRING or per serialized tool?** This one matters. Our guard assumes per string. If
+the 2 KB actually applies to a tool's whole entry in `tools/list` - description plus schema - then
+`search` at 1791 characters plus 831 on `folder`, 609 on `exhaustive` and 569 on
+`include_attachment_hits` is far over, and the trim that moved detail from the description onto the
+parameters moved it from one capped bucket into the same capped bucket. That would mean a fix I
+reported as solving the problem solved nothing.
+
+**Options.** Keep the conservative per-string guard and accept the unknown; verify empirically by
+overshooting deliberately and observing what the model receives; ask Anthropic.
+
+**Recommendation.** Keep the per-string guard - it costs nothing and errs safe. But settle the
+per-tool question, because unlike Q2 its downside is not terser text, it is work that did not do what
+it claimed. The same overshoot experiment answers both.
+
+**Default if unanswered.** Guard stays as is; the uncertainty stays recorded here rather than
+implied to be settled.
+
+## Q7 - Three follow-ups the freshness work deliberately did not decide
+
+Raised by the agent that added the `no_index_frontier` state; none blocks anything.
+
+**(a) `staleness.newestIndexedUtc` on an unscoped search** is still the profile-wide maximum. It is no
+longer the sweep's window base, and the advice age now uses the widest per-store frontier, but the
+field itself still reports the maximum - because narrowing it would make `search` and `outlook_health`
+report different numbers for the same profile. Options: leave it; add
+`staleness.oldestStoreFrontierUtc`; or change the field's meaning and update health to match.
+*Recommendation: add the second field.* It answers the question without making two tools disagree.
+
+**(b) The unindexed-store list is uncapped.** Every other list in this server has a cap and a has-more
+flag. A profile with many unindexed PSTs would list them all, in the payload and in an advice
+sentence. *Recommendation: cap it like the others* - the principle is already settled here, this is
+just an omission.
+
+**(c) `notNeeded` now costs one ordinary sweep** in a narrow case: an unscoped search bounded to mail
+older than the frontier but newer than the fallback runs a sweep where it previously did no COM work.
+That is the price of `notNeeded` no longer lying on unindexed stores. *Recommendation: accept it.* Any
+mitigation trades a bounded window of completeness for latency, which is the trade the standing rule
+forbids.
+
 ## Decision log
 
 Answers move here with the date and the reasoning, so a future reader sees not just what was chosen
