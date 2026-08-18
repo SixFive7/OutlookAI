@@ -160,6 +160,92 @@ public sealed class ComHostProtocolTests
         Assert.Contains("\"operation\":\"Ping\"", json, StringComparison.Ordinal);
     }
 
+    // --------------------------------------------------------------- frame size meter
+
+    [Fact]
+    public void EncodingAFrame_RecordsHowBigItWas()
+    {
+        // Nobody had ever measured the largest frame this product actually produces, so
+        // "64 MB is far above any real payload" was an assumption. This is the instrument
+        // that turns it into evidence: outlook_health reports the mark and the limit
+        // together, and the ratio between them is the headroom.
+        string body = new string('m', 96 * 1024);
+        byte[] frame = ComHostProtocol.EncodeFrame(new ComHostResponse
+        {
+            Id = 1,
+            Ok = true,
+            Result = JsonSerializer.SerializeToElement(body, ComHostProtocol.Json),
+        });
+
+        Assert.True(
+            ComHostFrameMeter.Shared.LargestFrameBytes >= frame.Length - 4,
+            "the meter must have seen a frame at least as big as the one just encoded");
+    }
+
+    [Fact]
+    public void TheFrameMeter_IsAHighWaterMark_NotTheLastValue()
+    {
+        // The whole point is the LARGEST payload seen. A meter that tracked the most recent
+        // one would read near zero at almost any moment it was asked, because the frame
+        // before the health call is a health call.
+        _ = ComHostProtocol.EncodeFrame(new ComHostResponse
+        {
+            Id = 2,
+            Ok = true,
+            Result = JsonSerializer.SerializeToElement(new string('h', 48 * 1024), ComHostProtocol.Json),
+        });
+        long peak = ComHostFrameMeter.Shared.LargestFrameBytes;
+
+        _ = ComHostProtocol.EncodeFrame(new ComHostRequest { Id = 3, Operation = "Ping" });
+
+        Assert.Equal(peak, ComHostFrameMeter.Shared.LargestFrameBytes);
+    }
+
+    [Fact]
+    public void ARefusedFrame_DoesNotMoveTheHighWaterMark()
+    {
+        // A refused payload never crossed the pipe, so counting it as a frame would report a
+        // size nothing ever carried and make every later reading look closer to the ceiling
+        // than it was. It is counted separately instead, and its size is named in the error
+        // the caller receives.
+        long peak = ComHostFrameMeter.Shared.LargestFrameBytes;
+        int refusals = ComHostFrameMeter.Shared.FramesRefusedTooLarge;
+
+        _ = Assert.Throws<ComHostProtocolException>(() => ComHostProtocol.EncodeFrame(
+            new ComHostResponse
+            {
+                Id = 4,
+                Ok = true,
+                Result = JsonSerializer.SerializeToElement(new string('r', 256 * 1024), ComHostProtocol.Json),
+            },
+            maxFrameBytes: 1024));
+
+        Assert.Equal(peak, ComHostFrameMeter.Shared.LargestFrameBytes);
+        Assert.Equal(refusals + 1, ComHostFrameMeter.Shared.FramesRefusedTooLarge);
+    }
+
+    [Fact]
+    public async Task ReadingAFrame_RecordsItToo_BecauseTheBigOnesAreBuiltInTheOtherProcess()
+    {
+        // The answers that get large are encoded in the CHILD, whose counters die with it -
+        // and it is restarted precisely on the degraded profiles that produce them. The
+        // parent's only view of their size is the frame it reads back, so the read path has
+        // to measure as well or health would only ever report the size of the REQUESTS this
+        // process sends, which are tiny.
+        byte[] frame = ComHostProtocol.EncodeFrame(
+            new ComHostResponse
+            {
+                Id = 5,
+                Ok = true,
+                Result = JsonSerializer.SerializeToElement(new string('w', 192 * 1024), ComHostProtocol.Json),
+            });
+
+        using MemoryStream stream = new MemoryStream(frame);
+        _ = await ComHostProtocol.ReadFrameAsync<ComHostResponse>(stream, CancellationToken.None);
+
+        Assert.True(ComHostFrameMeter.Shared.LargestFrameBytes >= frame.Length - 4);
+    }
+
     // ------------------------------------------------------- ComDraftBody round-trip
 
     [Fact]

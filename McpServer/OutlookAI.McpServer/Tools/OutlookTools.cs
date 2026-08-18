@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using OutlookAI.ComHost.Client;
+using OutlookAI.ComHost.Protocol;
 using OutlookAI.ComHost.Supervision;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.IndexSearch;
@@ -826,6 +827,14 @@ public static class OutlookTools
             return Error("ComHostUnavailable", ex.Message,
                 "The Outlook COM host could not be started or stopped unexpectedly. outlook_health reports its state; "
                 + "search still returns indexed results without it.");
+        }
+        catch (ComHostResponseTooLargeException ex)
+        {
+            return Error("ResponseTooLarge", ex.Message,
+                "Outlook answered, but the answer was too big to return in one piece, so it was refused. Nothing "
+                + "failed and nothing was changed - retrying the SAME request will refuse again. Ask for less: a "
+                + "narrower time window, a single folder or store, or a smaller limit. outlook_health reports the "
+                + "largest message that has crossed and the ceiling it must fit under.");
         }
         catch (SendRefusedException ex)
         {

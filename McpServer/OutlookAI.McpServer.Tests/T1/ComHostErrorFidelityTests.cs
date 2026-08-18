@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.IO.Pipes;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 using OutlookAI.ComHost.Host;
 using OutlookAI.ComHost.Protocol;
@@ -219,6 +221,74 @@ public sealed class ComHostErrorFidelityTests
         }
     }
 
+    [Fact]
+    public async Task AnAnswerTooLargeToFrame_IsRefusedAsAnError_AndTheHostKeepsServing()
+    {
+        // The other half of the same defect, found by the same audit: a good, specific
+        // message that did not survive the process boundary. EncodeFrame refuses an
+        // oversized payload by name and number, but the refusal was thrown from a write the
+        // serve loop guarded with `catch (IOException)` only - so it left the loop, Main
+        // printed it to stderr, and the child exited. The caller was told the COM host had
+        // gone away: the one fact that says nothing about what to do next, and which invites
+        // a retry of the exact request that cannot succeed.
+        //
+        // The ceiling is injected rather than met. A real 64 MB answer would cost the T1
+        // tier an allocation and a serialize larger than everything else it does put
+        // together; the branch, the serve loop and the frame the caller receives are
+        // identical either way.
+        const int Ceiling = 4096;
+        string oversized = new string('x', 64 * 1024);
+
+        await using Boundary boundary = await Boundary.StartAsync(
+            ScriptedSession.Create(
+                _ => null,
+                operation => operation == nameof(IOutlookSession.GetProfileName) ? oversized : null),
+            maxFrameBytes: Ceiling);
+
+        Exception surfaced = await boundary.FailureOfAsync(nameof(IOutlookSession.GetProfileName));
+
+        // Typed, so OutlookTools.GuardAsync can pick advice for it the way it does for every
+        // other modelled failure. Arriving as ComHostRemoteException would already be an
+        // improvement on a dead process, but the advice - ask for LESS, do not retry this -
+        // is the actionable part and it is chosen by type.
+        ComHostResponseTooLargeException typed = Assert.IsType<ComHostResponseTooLargeException>(surfaced);
+
+        // Named: which request, how big it was, and what it had to fit under. Asserted on
+        // the numbers rather than the sentence so rewording the message cannot break this.
+        Assert.Contains(nameof(IOutlookSession.GetProfileName), typed.Message, StringComparison.Ordinal);
+        long[] numbers = Regex.Matches(typed.Message, "[0-9]+")
+            .Select(m => long.Parse(m.Value, CultureInfo.InvariantCulture))
+            .ToArray();
+        Assert.Contains(Ceiling, numbers);
+        Assert.Contains(numbers, n => n > oversized.Length);
+
+        // And the host is still there. This is the part that made the defect expensive:
+        // every LATER request died with the child too, including the ones that would have
+        // fitted, so one oversized answer took out the session rather than one call.
+        ComHostResponse next = await boundary.CallAsync(nameof(IOutlookSession.GetAccounts));
+        Assert.True(next.Ok, "the serve loop must survive a refusal; it answered " + next.Error?.Message);
+    }
+
+    [Fact]
+    public async Task ARefusedAnswer_IsCounted_SoHealthCanSayItHappened()
+    {
+        // outlook_health reports the count, and a refusal that leaves no trace is a caller
+        // told "too large" with nothing on the server side saying so afterwards. Asserted as
+        // a rise rather than an absolute: the meter is process-wide by design (it outlives
+        // every child) and the whole tier shares this process.
+        int before = ComHostFrameMeter.Shared.FramesRefusedTooLarge;
+
+        await using Boundary boundary = await Boundary.StartAsync(
+            ScriptedSession.Create(_ => null, _ => new string('y', 32 * 1024)),
+            maxFrameBytes: 2048);
+
+        _ = await boundary.FailureOfAsync(nameof(IOutlookSession.GetProfileName));
+
+        Assert.True(
+            ComHostFrameMeter.Shared.FramesRefusedTooLarge > before,
+            "a refusal must be counted, or health cannot report that one happened");
+    }
+
     /// <summary>
     /// Every exception type <see cref="ComHostErrorMapper"/> models. Each is raised on the
     /// child side and expected back unchanged; a type that stops being modelled falls to the
@@ -317,7 +387,15 @@ public sealed class ComHostErrorFidelityTests
             _shutdown = shutdown;
         }
 
-        internal static async Task<Boundary> StartAsync(IOutlookSession session)
+        /// <param name="session">The stand-in the host dispatches to.</param>
+        /// <param name="maxFrameBytes">
+        /// The host's single-frame ceiling. Lowered by the refusal test so the too-large
+        /// branch runs on a 64 KB answer instead of a 64 MB one - same branch, same serve
+        /// loop, in milliseconds.
+        /// </param>
+        internal static async Task<Boundary> StartAsync(
+            IOutlookSession session,
+            int maxFrameBytes = ComHostProtocol.MaxFrameBytes)
         {
             string name = ComHostProtocol.NewPipeName();
             NamedPipeServerStream childEnd = new NamedPipeServerStream(
@@ -330,7 +408,7 @@ public sealed class ComHostErrorFidelityTests
             await listening.WaitAsync(Patience).ConfigureAwait(false);
 
             ComHostServer server = new ComHostServer(
-                childEnd, GatewayRoutingProxy.Create(new PassThroughGateway(session)), typeof(IOutlookSession));
+                childEnd, GatewayRoutingProxy.Create(new PassThroughGateway(session)), typeof(IOutlookSession), maxFrameBytes);
 
             CancellationTokenSource shutdown = new CancellationTokenSource();
             Task serving = server.ServeAsync(shutdown.Token);
@@ -448,12 +526,24 @@ public sealed class ComHostErrorFidelityTests
     internal class ScriptedSession : DispatchProxy
     {
         private Func<string, Exception?> _script = _ => null;
+        private Func<string, object?> _answers = _ => null;
 
-        internal static IOutlookSession Create(Func<string, Exception?> script)
+        /// <param name="script">What each operation should throw, or null to succeed.</param>
+        /// <param name="answers">
+        /// What a succeeding operation should RETURN, or null for the contract's usual
+        /// "null plus a not-found token". Only the refusal test needs this: every other
+        /// test here is about a failure, and a failure never reaches the return value.
+        /// </param>
+        internal static IOutlookSession Create(Func<string, Exception?> script, Func<string, object?>? answers = null)
         {
             object proxy = Create<IOutlookSession, ScriptedSession>()
                 ?? throw new InvalidOperationException("DispatchProxy.Create returned null.");
             ((ScriptedSession)proxy)._script = script;
+            if (answers != null)
+            {
+                ((ScriptedSession)proxy)._answers = answers;
+            }
+
             return (IOutlookSession)proxy;
         }
 
@@ -491,6 +581,12 @@ public sealed class ComHostErrorFidelityTests
 
                 Type slot = parameter.ParameterType.GetElementType()!;
                 args[i] = slot.IsValueType ? Activator.CreateInstance(slot) : null;
+            }
+
+            object? answer = _answers(targetMethod.Name);
+            if (answer != null)
+            {
+                return answer;
             }
 
             Type returnType = targetMethod.ReturnType;

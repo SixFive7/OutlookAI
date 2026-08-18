@@ -269,10 +269,26 @@ the switch does not name is not lost but demoted - it arrives as `ComHostRemoteE
 whose `RemoteType` the tool layer reports as the error type so the agent still reads the
 child's own word for the failure rather than the name of the pipe it crossed.
 
-**What is still open:** a response too large to frame (`MaxFrameBytes`, 64 MB) throws out
-of the serve loop rather than answering, and the host exits - so the caller learns "the COM
-host went away" and the sentence naming the size and the limit reaches only stderr. Same
-species, unfixed; see `TODO.md` for why the fix is not the one-line catch it looks like.
+**A response too large to frame is refused, not fatal.** `EncodeFrame` rejects a payload
+over `MaxFrameBytes` (64 MB), and that refusal used to be thrown from a write the serve
+loop guarded with `catch (IOException)` only: it left the loop, `Main` printed it to stderr
+and the child exited. The caller was told the COM host had gone away - the one fact that
+says nothing about what to do next - and every later request died with the host too,
+including the ones that would have fitted. The loop now answers with a
+`ComHostResponseTooLargeException` frame naming the operation, the size and the limit, and
+keeps serving; `OutlookTools.GuardAsync` turns it into a `ResponseTooLarge` error whose
+advice is to narrow the request rather than retry it. Reached in T1 by injecting a lower
+ceiling into `ComHostServer` - the same branch and the same serve loop, without a 64 MB
+allocation in a tier that runs in two minutes.
+
+**How big frames actually get is now measured.** `ComHostFrameMeter` keeps a high-water
+mark of the largest payload seen, in both directions, and a count of refusals;
+`outlook_health` reports them beside the limit as `comHost.largestFrameBytes`,
+`frameLimitBytes` and `framesRefusedTooLarge`. The mark is per SERVER process and
+deliberately survives child restarts - the child is restartable and its own counters die
+with it, while the question ("is 64 MB the right number?") is about the product. Reading it
+matters because the limit is reachable by ordinary use, and by a specific path: see
+`TODO.md` for the sizing derivation and for the options still open on what to do about it.
 
 ## What this does not fix
 

@@ -154,7 +154,14 @@ namespace OutlookAI.ComHost.Client
                 lastFailure: _supervisor.LastFailureMessage,
                 injectedFault: Host.ComHostFaultInjection.IsActive ? Host.ComHostFaultInjection.Description : null,
                 unresponsive: _supervisor.IsUnresponsive,
-                consecutiveTimeouts: _supervisor.ConsecutiveTimeouts);
+                consecutiveTimeouts: _supervisor.ConsecutiveTimeouts,
+
+                // Read from the process-wide meter rather than the supervisor: the counters
+                // measure the PIPE, which outlives every individual child, and a restart
+                // must not erase what the previous child taught us about payload sizes.
+                largestFrameBytes: Protocol.ComHostFrameMeter.Shared.LargestFrameBytes,
+                frameLimitBytes: Protocol.ComHostProtocol.MaxFrameBytes,
+                framesRefusedTooLarge: Protocol.ComHostFrameMeter.Shared.FramesRefusedTooLarge);
         }
 
         /// <inheritdoc />

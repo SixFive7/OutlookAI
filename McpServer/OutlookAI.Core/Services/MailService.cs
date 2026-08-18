@@ -5061,6 +5061,21 @@ namespace OutlookAI.Core.Services
                 problems.Add("Last COM host failure: " + comHost.LastFailure);
             }
 
+            if (comHost.FramesRefusedTooLarge > 0)
+            {
+                // A refusal is a request that got no answer, so it belongs with the
+                // problems even though nothing is broken: the caller must ask for LESS,
+                // and a retry of the same request refuses again. The high-water mark
+                // beside it in the payload is a measurement and stays out of here.
+                problems.Add("A message on the Outlook connection was too large to send and was refused "
+                    + comHost.FramesRefusedTooLarge.Value.ToString(CultureInfo.InvariantCulture)
+                    + " time(s) this session (limit "
+                    + (comHost.FrameLimitBytes / (1024 * 1024))?.ToString(CultureInfo.InvariantCulture)
+                    + " MB) - in practice an answer carrying too much mail. Narrow the request that caused it "
+                    + "- a shorter time window, fewer folders, or a smaller limit - rather than retrying it "
+                    + "unchanged.");
+            }
+
             if (!string.IsNullOrEmpty(comHost.InjectedFault))
             {
                 problems.Add("A TEST FAULT is injected into the COM host (" + comHost.InjectedFault

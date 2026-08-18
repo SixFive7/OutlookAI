@@ -642,6 +642,16 @@ namespace OutlookAI.ComHost.Supervision
                         continue;
                     }
 
+                    // Counted here rather than where the failure reaches the caller: the
+                    // child refuses an oversized answer in ITS process, so its own counter
+                    // is invisible to health, and a refusal whose caller had already given
+                    // up would go unrecorded if this waited for a pending match.
+                    if (response.Error != null
+                        && string.Equals(response.Error.Type, nameof(ComHostResponseTooLargeException), StringComparison.Ordinal))
+                    {
+                        ComHostFrameMeter.Shared.RecordRefusal();
+                    }
+
                     if (_pending.TryGetValue(response.Id, out PendingRequest? pending))
                     {
                         _ = pending.Completion.TrySetResult(response);

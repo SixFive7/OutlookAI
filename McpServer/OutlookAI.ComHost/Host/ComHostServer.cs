@@ -29,12 +29,22 @@ namespace OutlookAI.ComHost.Host
         private readonly Type _contract;
         private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
         private readonly Dictionary<string, MethodInfo> _operations;
+        private readonly int _maxFrameBytes;
 
-        internal ComHostServer(Stream pipe, object target, Type contract)
+        /// <param name="pipe">The connected pipe to the parent.</param>
+        /// <param name="target">The object the contract calls are dispatched to.</param>
+        /// <param name="contract">The interface whose methods are callable.</param>
+        /// <param name="maxFrameBytes">
+        /// Test seam. Production takes the default, so the shipped ceiling is
+        /// <see cref="ComHostProtocol.MaxFrameBytes"/>; a test lowers it to reach the
+        /// refusal path below without building a 64 MB answer to provoke it.
+        /// </param>
+        internal ComHostServer(Stream pipe, object target, Type contract, int maxFrameBytes = ComHostProtocol.MaxFrameBytes)
         {
             _pipe = pipe;
             _target = target;
             _contract = contract;
+            _maxFrameBytes = maxFrameBytes;
             _operations = contract
                 .GetMethods()
                 .GroupBy(m => m.Name, StringComparer.Ordinal)
@@ -78,11 +88,48 @@ namespace OutlookAI.ComHost.Host
                 {
                     await WriteAsync(response, cancellationToken).ConfigureAwait(false);
                 }
+                catch (ComHostProtocolException ex)
+                {
+                    // The answer is too large to frame. Answering with the refusal is the
+                    // whole fix: this used to leave the serve loop, print to stderr and end
+                    // the process, so a caller that asked for too much was told the COM host
+                    // had gone away - and every LATER request died with the host too,
+                    // including the ones that would have fitted.
+                    //
+                    // The refusal frame is a few hundred bytes, so it cannot hit the same
+                    // limit. Only an IOException can stop it, and that means the parent is
+                    // already gone.
+                    try
+                    {
+                        await WriteAsync(TooLarge(request, ex), cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (IOException)
+                    {
+                        return;
+                    }
+                }
                 catch (IOException)
                 {
                     return;
                 }
             }
+        }
+
+        /// <summary>
+        /// Turns a framing refusal into an answer the caller can act on.
+        /// <para>
+        /// Names the operation as well as the size and the limit. The size alone says the
+        /// answer was too big; the operation is what tells the caller WHICH request to ask
+        /// for less of, and it is known here and nowhere further up.
+        /// </para>
+        /// </summary>
+        private static ComHostResponse TooLarge(ComHostRequest request, ComHostProtocolException refusal)
+        {
+            return Failure(
+                request.Id,
+                nameof(ComHostResponseTooLargeException),
+                $"The answer to '{request.Operation}' was too large to return in one piece: {refusal.Message} "
+                + "The work itself succeeded and nothing was changed; only the reply was refused.");
         }
 
         /// <summary>Pushes an unsolicited event to the parent (e.g. Outlook exited).</summary>
@@ -103,7 +150,10 @@ namespace OutlookAI.ComHost.Host
 
         private async Task WriteAsync(ComHostResponse response, CancellationToken cancellationToken)
         {
-            byte[] frame = ComHostProtocol.EncodeFrame(response);
+            // Encoded OUTSIDE the write lock on purpose: a refusal must not have taken the
+            // lock, or the substitute frame the serve loop writes next would deadlock
+            // against it.
+            byte[] frame = ComHostProtocol.EncodeFrame(response, _maxFrameBytes);
             await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {

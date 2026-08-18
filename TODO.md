@@ -370,8 +370,36 @@
   the fix landed, are in the VM working folder under Downloads (`tmp-outlookai-vm`), with the
   before/after transcripts beside them.
 
-- [ ] **An answer too big to frame kills the COM host instead of being refused.** Found by the
-  boundary audit on 2026-08-18; not fixed, because the fix is not the small one it looks like.
+- [ ] **An answer too big to frame: refused (done), but not yet prevented (open).** Found by the
+  boundary audit on 2026-08-18. **The refusal and the measurement landed 2026-08-18; the four
+  responses below are still the maintainer's to choose between, and nothing here pre-empts them.**
+
+  **Done - (a) the refusal.** `ComHostServer.ServeAsync` now catches the framing refusal around
+  its write and answers with a `ComHostResponseTooLargeException` frame naming the operation, the
+  size and the limit; the serve loop keeps serving, so one oversized answer costs one call instead
+  of the session. `ComHostErrorMapper` rebuilds the type, and `OutlookTools.GuardAsync` returns it
+  as `ResponseTooLarge` with advice to NARROW the request rather than retry it. The testing
+  objection below is answered by the fourth option it did not list: `ComHostServer` takes its
+  ceiling as a constructor parameter defaulting to `ComHostProtocol.MaxFrameBytes`, so T1 reaches
+  the branch with a 64 KB answer against a 4 KB ceiling - real serve loop, real framing, real
+  mapper, no 64 MB allocation. Measured 2026-08-18: the two refusal tests run in 73 ms and all six
+  new tests in 99 ms, against a T1 tier of 1 m 55 s.
+
+  **Done - the measurement.** `ComHostFrameMeter` keeps a per-process high-water mark of the
+  largest payload seen (both directions: encode and read, because the big frames are built in the
+  child whose counters die with it) plus a refusal count. `outlook_health` reports both beside the
+  limit, as `comHost.largestFrameBytes`, `frameLimitBytes` and `framesRefusedTooLarge`, and a
+  refusal also raises a `problems` line. Lifetime is one SERVER process and survives child
+  restarts, deliberately: the child is restartable and the question is about the product. So the
+  number that says whether 64 MB is right is now collectable from any running install - it was
+  previously unmeasured, which is why the entry below argues from the caps instead.
+
+  **Still open - what to do about the size itself.** The refusal turns a dead host into a legible
+  failure; it does not stop the answer being too big. Four responses, unchanged and still
+  unanswered: **(b)** raise or lower `MaxFrameBytes`; **(c)** cap bodies at the COM layer so an
+  unsendable frame cannot be built; **(d)** chunk the sweep result across frames; or accept the
+  refusal as the whole answer and let callers narrow. The high-water mark is the evidence any of
+  those choices should rest on.
 
   **The limit is reachable by ordinary use - derived from the caps 2026-08-18, not measured.** One
   `SweepFoldersNewerThan` answer is a single frame and `MailService` calls it with
@@ -383,35 +411,28 @@
   stores, ~16 KB on five. An 80 KB body is an ordinary long quoted thread. **And the path there is
   the unindexed-store case**: the sweep window is normally minutes wide, so 200-per-folder never
   fills, EXCEPT when a store is missing from the index and the window falls back to seven days. So
-  the more degraded the index, the larger the frame, and the frame bursting kills the subsystem
-  that was compensating for the degraded index. Adds two options beside the recorded ones: cap
-  bodies at the COM layer so an unsendable frame cannot be built, or chunk the sweep result. The
-  measurement is also cheaper than the entry assumes - a high-water counter on the encode path,
-  read back through `outlook_health`, accumulates real evidence with no 64 MB allocation test.
-  Write-up in the session trace folder under Downloads (`tmp-aitrace/frame-size-analysis.md`).
+  the more degraded the index, the larger the frame - and before the refusal landed, the frame
+  bursting killed the subsystem that was compensating for the degraded index. It now refuses that
+  one call instead, which is why (c) and (d) are still worth choosing between: the sweep on a
+  degraded profile is exactly the caller with nothing left to narrow. This is where options (c)
+  and (d) come from. Write-up in the session trace folder under Downloads
+  (`tmp-aitrace/frame-size-analysis.md`).
 
+  **The defect, as found (kept for the record; the refusal half is fixed).**
   `ComHostProtocol.EncodeFrame` refuses a payload over `MaxFrameBytes` (64 MB) by throwing
-  `ComHostProtocolException` - a deliberate, specific, actionable failure. But it is thrown from
-  `ComHostServer.WriteAsync`, which `ServeAsync` guards with `catch (IOException)` only. So the
-  exception leaves the serve loop, `Program.Main` prints it to stderr and the child exits with 1.
-  The caller learns "the COM host went away", which is the one fact that says nothing about what
-  to do next; the sentence naming the size and the limit reaches only the child's stderr. This is
+  `ComHostProtocolException` - a deliberate, specific, actionable failure. But it was thrown from
+  `ComHostServer.WriteAsync`, which `ServeAsync` guarded with `catch (IOException)` only. So the
+  exception left the serve loop, `Program.Main` printed it to stderr and the child exited with 1.
+  The caller learned "the COM host went away", which is the one fact that says nothing about what
+  to do next; the sentence naming the size and the limit reached only the child's stderr. This is
   the same species as the wrapper defect above - a good message that does not survive the process
   boundary - and it is the only other instance the audit found.
 
-  **Why it is not just a catch clause.** A refusal frame is small, so answering with one is easy;
-  what is hard is testing it. Provoking it needs a genuinely oversized response, which means
-  allocating well over 64 MB in a T1 test that currently runs the whole tier in two minutes. The
-  alternatives each cost something: measuring the encoded size inside `Invoke` (where the existing
-  catch would turn it into a proper error frame for free) serializes every payload twice; making
-  `MaxFrameBytes` settable adds a production seam for a test; a new fault-injection kind is more
-  production-code-for-tests. **Pick one before writing it.**
-
   **How likely is it?** Low - `Docs/com-host.md` calls 64 MB "far above any real payload" and a
   `read` returns ~0.5 MB. The candidates are `SweepFoldersNewerThan(includeBodies: true)` and
-  `ExhaustiveScan` over a large window. Nobody has measured the largest frame the product actually
-  produces, and that measurement is worth having on its own: it is also the number that says
-  whether 64 MB is the right limit.
+  `ExhaustiveScan` over a large window. That "low" is still a derivation rather than an
+  observation; the high-water mark now accumulating in `outlook_health` is what will replace it,
+  and until an install has been read it says nothing on its own.
 
 - [ ] **Retire v3 planning ignores** — once the local v3 planning files (`v3.MD`, `Docs/v3-probes/`) are no longer needed:
   - [ ] remove the "v3 planning documents" section at the bottom of `.gitignore`

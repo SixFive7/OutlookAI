@@ -19,7 +19,10 @@ namespace OutlookAI.Core.Com
             string? lastFailure = null,
             string? injectedFault = null,
             bool unresponsive = false,
-            int consecutiveTimeouts = 0)
+            int consecutiveTimeouts = 0,
+            long? largestFrameBytes = null,
+            long? frameLimitBytes = null,
+            int? framesRefusedTooLarge = null)
         {
             Unresponsive = unresponsive;
             ConsecutiveTimeouts = consecutiveTimeouts;
@@ -29,6 +32,9 @@ namespace OutlookAI.Core.Com
             RestartCount = restartCount;
             LastFailure = lastFailure;
             InjectedFault = injectedFault;
+            LargestFrameBytes = largestFrameBytes;
+            FrameLimitBytes = frameLimitBytes;
+            FramesRefusedTooLarge = framesRefusedTooLarge;
         }
 
         /// <summary>"child-process" when COM runs in the supervised host, "in-process" otherwise.</summary>
@@ -68,5 +74,37 @@ namespace OutlookAI.Core.Com
         /// never be mistaken for a real one while reading a health report.
         /// </summary>
         public string? InjectedFault { get; }
+
+        /// <summary>
+        /// The largest single message that has crossed the pipe to the COM host, in bytes,
+        /// SINCE THIS SERVER PROCESS STARTED. Null when Outlook is reached in-process,
+        /// where there is no pipe and so no such thing.
+        /// <para>
+        /// This is a measurement, not a problem. It exists because the frame limit beside
+        /// it was chosen as "far above any real payload" without anyone measuring what a
+        /// real payload weighs. Read the two together: the ratio is the headroom, and it is
+        /// the only evidence that says whether the limit is set sensibly.
+        /// </para>
+        /// <para>
+        /// Deliberately NOT reset when the COM host restarts. The child is restartable and
+        /// its own counters die with it; the question this answers is about the product,
+        /// and the profiles that produce the biggest answers are exactly the ones whose
+        /// hosts restart most.
+        /// </para>
+        /// </summary>
+        public long? LargestFrameBytes { get; }
+
+        /// <summary>
+        /// The ceiling a single message must fit under. Reported alongside the high-water
+        /// mark so the headroom can be read without knowing the constant.
+        /// </summary>
+        public long? FrameLimitBytes { get; }
+
+        /// <summary>
+        /// How many answers were refused this session for exceeding that ceiling. Zero
+        /// normally; anything else means a caller was told "too large" instead of getting
+        /// its answer, and the request that caused it needs narrowing rather than retrying.
+        /// </summary>
+        public int? FramesRefusedTooLarge { get; }
     }
 }

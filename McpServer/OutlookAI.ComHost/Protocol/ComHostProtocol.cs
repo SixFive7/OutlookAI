@@ -20,7 +20,17 @@ namespace OutlookAI.ComHost.Protocol
     /// </summary>
     internal static class ComHostProtocol
     {
-        /// <summary>Hard ceiling on one frame. `read` can legitimately return ~0.5 MB; 64 MB is far above any real payload and far below a denial-of-service allocation.</summary>
+        /// <summary>
+        /// Hard ceiling on one frame. `read` can legitimately return ~0.5 MB; 64 MB was
+        /// chosen as far above any real payload and far below a denial-of-service
+        /// allocation.
+        /// <para>
+        /// "Far above any real payload" was an assumption, and a sweep of an unindexed
+        /// store can approach it (see TODO.md for the derivation). It is now checkable
+        /// rather than asserted: <see cref="ComHostFrameMeter"/> records the largest frame
+        /// actually seen and <c>outlook_health</c> reports it beside this number.
+        /// </para>
+        /// </summary>
         internal const int MaxFrameBytes = 64 * 1024 * 1024;
 
         /// <summary>Environment variable carrying the pipe name from parent to child.</summary>
@@ -40,15 +50,28 @@ namespace OutlookAI.ComHost.Protocol
             Converters = { new ComDraftBodyConverter() },
         };
 
-        internal static byte[] EncodeFrame<T>(T message)
+        /// <summary>
+        /// Builds one frame, or refuses to.
+        /// <para>
+        /// <paramref name="maxFrameBytes"/> exists so the refusal branch can be reached
+        /// without allocating a real 64 MB payload. Production never passes it: both
+        /// callers take the default, so the shipped limit is still the constant above.
+        /// The alternative was a test that allocates past the constant, in a tier that
+        /// runs in about two minutes - and an untested refusal is how this branch came to
+        /// kill the host in the first place.
+        /// </para>
+        /// </summary>
+        internal static byte[] EncodeFrame<T>(T message, int maxFrameBytes = MaxFrameBytes)
         {
             byte[] payload = JsonSerializer.SerializeToUtf8Bytes(message, Json);
-            if (payload.Length > MaxFrameBytes)
+            if (payload.Length > maxFrameBytes)
             {
+                ComHostFrameMeter.Shared.RecordRefusal();
                 throw new ComHostProtocolException(
-                    $"Frame of {payload.Length} bytes exceeds the {MaxFrameBytes} byte limit.");
+                    $"Frame of {payload.Length} bytes exceeds the {maxFrameBytes} byte limit.");
             }
 
+            ComHostFrameMeter.Shared.RecordFrame(payload.Length);
             byte[] frame = new byte[4 + payload.Length];
             BitConverter.TryWriteBytes(frame.AsSpan(0, 4), (uint)payload.Length);
             payload.CopyTo(frame.AsSpan(4));
@@ -85,6 +108,13 @@ namespace OutlookAI.ComHost.Protocol
             {
                 return null;
             }
+
+            // Measured here as well as on encode because the two ends are different
+            // PROCESSES: the answers that get big are built in the child, whose counters
+            // die with it, and this is the only place the parent - the side with a health
+            // surface - ever learns how big they were. Recorded after the payload is fully
+            // read, so the number means "this much actually crossed".
+            ComHostFrameMeter.Shared.RecordFrame(length);
 
             return JsonSerializer.Deserialize<TMessage>(payload, Json)
                 ?? throw new ComHostProtocolException("Frame deserialized to null.");
@@ -133,6 +163,33 @@ namespace OutlookAI.ComHost.Protocol
 
         internal ComHostProtocolException(string message, Exception inner)
             : base(message, inner)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Raised when the COM host produced an answer too large to fit in one frame, so it
+    /// was refused instead of sent.
+    /// <para>
+    /// Public, and living beside the limit rather than with the supervision exceptions,
+    /// because all three layers need to name it: the child stamps it on the wire error,
+    /// <c>ComHostErrorMapper</c> rebuilds it, and the tool layer catches it to choose the
+    /// advice an agent reads. Before this existed the refusal escaped the serve loop and
+    /// ended the child process, so the caller was told the host had gone away - the one
+    /// fact that says nothing about what to do next, and which invites a retry of the
+    /// exact request that cannot succeed.
+    /// </para>
+    /// <para>
+    /// Nothing failed in Outlook when this is raised and nothing was changed: the work
+    /// completed, and only the reply was refused. That is why it is not modelled as a
+    /// transport fault.
+    /// </para>
+    /// </summary>
+    public sealed class ComHostResponseTooLargeException : Exception
+    {
+        /// <summary>Creates the exception.</summary>
+        public ComHostResponseTooLargeException(string message)
+            : base(message)
         {
         }
     }

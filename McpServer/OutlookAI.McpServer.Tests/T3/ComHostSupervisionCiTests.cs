@@ -136,6 +136,22 @@ public sealed class ComHostSupervisionCiTests
 
         // An injected fault must never be mistakeable for a real one when reading health.
         Assert.Contains("hang:GetAccounts", comHost.GetProperty("injectedFault").GetString()!, StringComparison.Ordinal);
+
+        // The measurement half of the same block, asserted here because this is the only
+        // test that reads outlook_health out of a REAL server process talking to a REAL COM
+        // host - the one path on which the numbers can be wrong without any unit test
+        // noticing. It answers "is 64 MB the right limit?", which nobody could answer before
+        // because the largest frame the product actually produces had never been measured.
+        long limit = comHost.GetProperty("frameLimitBytes").GetInt64();
+        long largest = comHost.GetProperty("largestFrameBytes").GetInt64();
+
+        Assert.True(limit > 0, $"health must publish the ceiling a single message must fit under. comHost={reported}");
+        Assert.True(largest > 0, $"frames have crossed by now; the high-water mark must show it. comHost={reported}");
+        Assert.True(largest < limit, $"a frame at or over the limit could not have crossed. comHost={reported}");
+
+        // And nothing was refused: this test wedges Outlook, it does not overflow a frame.
+        // A non-zero count here would mean the meter is counting something else.
+        Assert.Equal(0, comHost.GetProperty("framesRefusedTooLarge").GetInt32());
     }
 
     [Fact]

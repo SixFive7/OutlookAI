@@ -318,8 +318,13 @@ if ($csRuntimePrefix -and $issRuntimePrefix -and $issRuntimePrefixLength) {
 #
 #     Scope is the session side, not the transport: Core/Com and Core/Text are what runs behind
 #     the contract, and ComHost/Host is the dispatch that calls it. ComHost/Protocol is left out
-#     deliberately - a framing failure never becomes a ComHostError, it takes the host down, and
-#     pretending otherwise here would make this check assert something untrue.
+#     deliberately, and the reason has narrowed since 2026-08-18. A DESYNC still takes the host
+#     down and never becomes a ComHostError. A response too large to frame no longer does: the
+#     serve loop answers with one, stamped ComHostResponseTooLargeException. But it does that by
+#     WRITING the type name onto the wire error, not by throwing - the failure happens while
+#     encoding the reply, past the point where a throw could still produce one - so there is no
+#     `throw new` for this scan to find, and including the directory would only make it demand a
+#     mapper case for the desync exception, which genuinely never travels.
 # ---------------------------------------------------------------------------------------------
 $script:Checks++
 $comHostSourceDirs = @(

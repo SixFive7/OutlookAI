@@ -36,6 +36,13 @@ namespace OutlookAI.ComHost.Supervision
                 case nameof(OutlookUnavailableException):
                     return new OutlookUnavailableException(message);
 
+                case nameof(ComHostResponseTooLargeException):
+                    // Not raised by a `throw` in the COM layer, so invariant 10 cannot see
+                    // it: the child stamps this name onto the wire error directly, because
+                    // the failure happens while ENCODING the reply - past the point where
+                    // throwing could still produce one.
+                    return new ComHostResponseTooLargeException(message);
+
                 case nameof(COMException):
                     return error.HResult is int hr
                         ? new COMException(message, hr)
