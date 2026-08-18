@@ -185,8 +185,53 @@ namespace OutlookAI.Core.Services
         /// <summary>Age of the cached sweep data in seconds (present only when Cached=true).</summary>
         public double? CacheAgeSeconds { get; set; }
 
-        /// <summary>Sweep window start (UTC).</summary>
+        /// <summary>
+        /// Sweep window start (UTC): the WIDEST window this sweep opened.
+        /// <para>
+        /// One number over what is now a per-store decision. An unscoped sweep opens one
+        /// window per store, each from that store's own index frontier, so a store whose
+        /// index lags by hours is swept back hours while a current one is swept back
+        /// minutes; this reports the earliest of them, i.e. how far back the sweep looked in
+        /// the store that needed it most. A store-scoped sweep opens exactly one window and
+        /// this is it.
+        /// </para>
+        /// <para>
+        /// The earliest is the honest single number even though it is not the window every
+        /// store got, because the claim it supports - "the merged answer covers everything
+        /// from here to now" - is true of every store in scope: a store swept from a LATER
+        /// start was swept from its own frontier, and its index covers the span in front of
+        /// that. Reporting the latest instead would understate coverage that was actually
+        /// delivered.
+        /// </para>
+        /// </summary>
         public DateTime? GapStartUtc { get; set; }
+
+        /// <summary>
+        /// True when part of this search's scope had NO index frontier to open a window
+        /// from - the index holds no mail whatsoever for it - so the window fell back to a
+        /// fixed span and everything older than that span is in neither tier. Null
+        /// otherwise; see <see cref="FreshMerge.GapNoIndexFrontier"/>, which this raises,
+        /// and <see cref="StoresWithoutIndex"/>, which names the stores where known.
+        /// <para>
+        /// Set from the frontier probe, so it is a fact about the INDEX and survives a sweep
+        /// that could not run or did not need to. It is the input the pure classifier reads;
+        /// the code and the advice sentence are its two renderings.
+        /// </para>
+        /// </summary>
+        public bool? IndexFrontierMissing { get; set; }
+
+        /// <summary>
+        /// The store(s) in scope the index holds no mail for, when they could be named.
+        /// Null when none were found, and also null in the one case where the fact is known
+        /// but the names are not: an unscoped search whose PROFILE-wide probe found no mail
+        /// anywhere (an unindexed profile - the flag is still set).
+        /// <para>
+        /// The same fact <c>list_accounts</c> reports as <c>inLocalIndex: false</c>, said
+        /// here because this is where it changes an answer: a store the index does not know
+        /// is searchable only as far back as the fallback window reaches.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<string>? StoresWithoutIndex { get; set; }
 
         /// <summary>
         /// What the sweep covered, following the search scope (soak fix 13):
@@ -367,13 +412,22 @@ namespace OutlookAI.Core.Services
         /// <summary>
         /// Newest indexed DateReceived (UTC) in the STORE this search was scoped to, or
         /// across the whole profile when it named no store
-        /// (<see cref="MailService.StalenessScopeFor"/>). It is also the base of the
-        /// freshness sweep's window, so the two always describe the same scope.
+        /// (<see cref="MailService.StalenessScopeFor"/>).
         /// <para>
         /// It said "across the searched scope" while the probe ran unscoped for every
         /// search: measured 2026-08-18, five store-scoped searches reported one profile-wide
         /// frontier while the per-store probes spanned 45.4 hours, which pinned a quiet
         /// store's sweep window to a busy store's clock.
+        /// </para>
+        /// <para>
+        /// IT IS NO LONGER THE SWEEP'S WINDOW BASE ON AN UNSCOPED SEARCH, and that is the
+        /// point rather than a discrepancy. A store-scoped search still has exactly one
+        /// frontier and this is it. An unscoped one opens a window per store, each from that
+        /// store's own frontier, because this figure is a MAXIMUM across stores and a maximum
+        /// cannot bound anyone else's lag - <see cref="SweepInfo.GapStartUtc"/> is what the
+        /// sweep actually looked back to. This stays the profile-wide value because that is
+        /// what it has always meant, and because narrowing it to the worst store would make
+        /// search and outlook_health report different numbers for the same profile.
         /// </para>
         /// <para>
         /// One exception, stated rather than papered over: an <c>exhaustive</c> search
@@ -638,14 +692,37 @@ namespace OutlookAI.Core.Services
         public long ElapsedMs { get; set; }
     }
 
-    /// <summary>Per-store index-freshness row of the outlook_health report.</summary>
+    /// <summary>
+    /// Per-store index-freshness row of the outlook_health report.
+    /// <para>
+    /// The rows are the UNION of what the index knows and what Outlook reports, not the
+    /// index's list alone. They were the index's alone, so a store Outlook has mounted and
+    /// the index has never seen simply did not appear - and that is the exact condition
+    /// that makes searches of it fall back to a fixed window, i.e. the one thing this block
+    /// most needs to say. Two lists that disagree, with nothing naming the disagreement,
+    /// was the defect.
+    /// </para>
+    /// </summary>
     public sealed class StoreStaleness
     {
         /// <summary>Store display name.</summary>
         public string Store { get; set; } = string.Empty;
 
-        /// <summary>Newest indexed DateReceived under that store's scope (UTC).</summary>
+        /// <summary>
+        /// Newest indexed DateReceived under that store's scope (UTC). Absent when the
+        /// index holds no mail for the store, which <see cref="InLocalIndex"/> tells apart
+        /// from a probe that could not be run.
+        /// </summary>
         public DateTime? NewestIndexedUtc { get; set; }
+
+        /// <summary>
+        /// Whether the local index holds anything for this store. False means searches of
+        /// it are served by the freshness sweep alone, over a fixed fallback window: mail
+        /// older than that is not findable through this server at all until the store is
+        /// indexed (or an <c>exhaustive:true</c> search names it). Null when the store was
+        /// not probed - never guessed.
+        /// </summary>
+        public bool? InLocalIndex { get; set; }
     }
 
     /// <summary>Account view for list_accounts.</summary>

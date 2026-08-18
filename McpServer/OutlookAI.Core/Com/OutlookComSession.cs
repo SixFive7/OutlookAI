@@ -1507,6 +1507,16 @@ namespace OutlookAI.Core.Com
         /// Junk Email or Deleted Items folder reported itself degraded. See
         /// <see cref="ClassifyDefaultFolder"/> for the signal that separates them.
         /// </para>
+        /// <para>
+        /// THE WINDOW IS PER STORE. <paramref name="sinceUtc"/> is the fallback; a store
+        /// named in <paramref name="perStoreSinceUtc"/> is swept from its own start instead.
+        /// The window exists to cover the span the index has not ingested yet, and that span
+        /// is a property of ONE store's ingestion - measured 2026-08-18, three stores on this
+        /// profile spanned 45.4 hours of frontier - so a single profile-wide start swept a
+        /// lagging store back only as far as the busiest store's clock and left the rest of
+        /// its gap in neither tier. Matching is case-insensitive on the display name, which
+        /// is how the caller names a store everywhere else.
+        /// </para>
         /// </summary>
         public ComSweepResult SweepFoldersNewerThan(
             DateTime sinceUtc,
@@ -1514,7 +1524,8 @@ namespace OutlookAI.Core.Com
             bool includeBodies,
             string? onlyStoreDisplayName,
             IReadOnlyList<string>? folderPath = null,
-            bool includeSubfolders = true)
+            bool includeSubfolders = true,
+            IReadOnlyDictionary<string, DateTime>? perStoreSinceUtc = null)
         {
             EnsureNotDisposed();
             if (perFolderCap < 1)
@@ -1528,6 +1539,8 @@ namespace OutlookAI.Core.Com
                     "A folder-scoped sweep needs the store the folder lives in.",
                     nameof(onlyStoreDisplayName));
             }
+
+            IReadOnlyDictionary<string, DateTime> windows = NormalizeSweepWindows(perStoreSinceUtc);
 
             return _runner.Run(() =>
             {
@@ -1545,7 +1558,8 @@ namespace OutlookAI.Core.Com
                 if (folderPath != null && folderPath.Count > 0)
                 {
                     SweepScopedFolder(
-                        ns, onlyStoreDisplayName!, folderPath, sinceUtc, perFolderCap, includeBodies,
+                        ns, onlyStoreDisplayName!, folderPath,
+                        WindowFor(windows, onlyStoreDisplayName!, sinceUtc), perFolderCap, includeBodies,
                         includeSubfolders, items, sweptFolders, ref skipped, tally);
 
                     // A folder-scoped sweep covers ONE store, so the whole tally is that
@@ -1632,7 +1646,8 @@ namespace OutlookAI.Core.Com
 
                                     string label = DescribeSweptFolder(storeName, folder!, folderKind);
                                     SweepOutcome outcome = SweepFolder(
-                                        ns, folder!, storeName, storeId, folderKind, sinceUtc, perFolderCap, includeBodies, items);
+                                        ns, folder!, storeName, storeId, folderKind,
+                                        WindowFor(windows, storeName, sinceUtc), perFolderCap, includeBodies, items);
                                     if (outcome == SweepOutcome.Failed)
                                     {
                                         // A folder whose table could not be read has NO
@@ -1691,6 +1706,71 @@ namespace OutlookAI.Core.Com
                     tally.DepthLimitReached, tally.TimeBudgetExceeded, absent, perStore);
             });
         }
+
+        /// <summary>
+        /// The per-store sweep windows, re-keyed case-insensitively. The map arrives over a
+        /// JSON boundary, so it comes back with an ORDINAL comparer whatever the sender used,
+        /// and store display names are compared case-insensitively everywhere else in this
+        /// server - an "Archive.PST" window that silently failed to match store "Archive.pst"
+        /// would hand that store the fallback window with nothing saying so.
+        /// <para>
+        /// A duplicate that differs only in case keeps the EARLIER start. Two spellings of one
+        /// store cannot both be right and the wider window is the one that cannot hide mail.
+        /// </para>
+        /// <para>
+        /// Public and pure so T1 pins it: the whole method is a comparer choice, and the
+        /// wrong comparer fails SILENTLY - the store simply gets the fallback window and
+        /// nothing anywhere says the per-store one was not applied.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyDictionary<string, DateTime> NormalizeSweepWindows(
+            IReadOnlyDictionary<string, DateTime>? perStoreSinceUtc)
+        {
+            if (perStoreSinceUtc == null || perStoreSinceUtc.Count == 0)
+            {
+                return EmptySweepWindows;
+            }
+
+            Dictionary<string, DateTime> normalized =
+                new Dictionary<string, DateTime>(perStoreSinceUtc.Count, StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, DateTime> entry in perStoreSinceUtc)
+            {
+                if (entry.Key == null)
+                {
+                    continue;
+                }
+
+                if (normalized.TryGetValue(entry.Key, out DateTime existing) && existing <= entry.Value)
+                {
+                    continue;
+                }
+
+                normalized[entry.Key] = entry.Value;
+            }
+
+            return normalized;
+        }
+
+        /// <summary>
+        /// The window one store is swept from: its own start when the caller supplied one,
+        /// otherwise <paramref name="fallbackUtc"/>. Pure, so T1 pins the resolution without
+        /// a mailbox.
+        /// </summary>
+        public static DateTime WindowFor(
+            IReadOnlyDictionary<string, DateTime> windows, string storeDisplayName, DateTime fallbackUtc)
+        {
+            if (windows == null)
+            {
+                throw new ArgumentNullException(nameof(windows));
+            }
+
+            return storeDisplayName != null && windows.TryGetValue(storeDisplayName, out DateTime since)
+                ? since
+                : fallbackUtc;
+        }
+
+        private static readonly IReadOnlyDictionary<string, DateTime> EmptySweepWindows =
+            new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// One store's running counters while the default-folder sweep walks it. The

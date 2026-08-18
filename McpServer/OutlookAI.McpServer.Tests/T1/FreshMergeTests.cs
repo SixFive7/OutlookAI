@@ -382,7 +382,137 @@ public sealed class FreshMergeTests
             FreshMerge.GapItemCap,
             new SweepInfo { Performed = true, FoldersSwept = 3, ItemCappedFolders = new[] { "alice@example.com/Inbox" } }));
 
+        // 8. A store in scope with NO index rows at all: there was no frontier to open the
+        //    window from, so it fell back to a fixed span and everything older than that
+        //    span is in neither tier. The sweep itself covered its whole scope, which is
+        //    exactly why this was silent - every counter said "complete".
+        data.Add((
+            FreshMerge.GapNoIndexFrontier,
+            new SweepInfo
+            {
+                Performed = true,
+                FoldersSwept = 4,
+                IndexFrontierMissing = true,
+                StoresWithoutIndex = new[] { "Archive 2019.pst" },
+            }));
+
         return data;
+    }
+
+    // ---------------------------------- (A1) no index frontier: a whole tier contributed nothing
+
+    // THE DEFECT: the sweep window is the index frontier minus a safety margin, and a scope
+    // with no indexed mail has no frontier, so the code substituted "seven days ago" and said
+    // nothing. Everything older than that, in a store the index has never seen, was in
+    // NEITHER tier - not indexed, and before the window - while the payload read
+    // freshness:"live", no degraded, no coverage gaps, foldersSwept:4, and no advice. It is
+    // the shape a local-PST-only profile takes whenever Windows Search has not indexed it.
+
+    [Fact]
+    public void AScopeWithNoIndexFrontier_IsPartialAndDegraded_EvenThoughTheSweepCoveredEverything()
+    {
+        SweepInfo sweep = new SweepInfo { Performed = true, FoldersSwept = 4, IndexFrontierMissing = true };
+
+        // Every sweep counter says "complete", which is true and was the whole problem.
+        Assert.Equal(new[] { FreshMerge.GapNoIndexFrontier }, FreshMerge.DescribeCoverageGaps(sweep));
+        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(sweep));
+    }
+
+    [Fact]
+    public void NoIndexFrontier_SortsFirst_BecauseItIsTheWidestHole()
+    {
+        SweepInfo sweep = new SweepInfo
+        {
+            Performed = true,
+            FoldersSwept = 2,
+            FoldersFailed = 1,
+            IndexFrontierMissing = true,
+            ItemCappedFolders = new[] { "alice@example.com/Inbox" },
+        };
+
+        Assert.Equal(
+            new[] { FreshMerge.GapNoIndexFrontier, FreshMerge.GapFoldersFailed, FreshMerge.GapItemCap },
+            FreshMerge.DescribeCoverageGaps(sweep));
+    }
+
+    [Fact]
+    public void NoIndexFrontier_SurvivesASweepThatCouldNotRun_BecauseItDescribesTheOtherTier()
+    {
+        // Two independent facts: the sweep did not run, AND the index holds nothing for this
+        // scope. An answer missing both tiers has to say both, so the code is reported
+        // alongside index-only rather than being swallowed by it.
+        SweepInfo sweep = new SweepInfo { Performed = false, Error = "OutlookUnavailable", IndexFrontierMissing = true };
+
+        Assert.Equal(new[] { FreshMerge.GapNoIndexFrontier }, FreshMerge.DescribeCoverageGaps(sweep));
+        Assert.Equal(FreshMerge.FreshnessIndexOnly, FreshMerge.ClassifyFreshness(sweep));
+    }
+
+    [Fact]
+    public void ASweepThatWasNotNeeded_IsNoLongerLive_WhenTheIndexHasNothingForTheScope()
+    {
+        // "Not needed" asserts the INDEX already covers the requested window. Over a store
+        // with no index rows that assertion is false, and the search would otherwise return
+        // an empty list out of an unindexed store and call itself live. This is the one case
+        // where notNeeded stops meaning complete.
+        SweepInfo notNeeded = new SweepInfo { Performed = false, NotNeeded = true, IndexFrontierMissing = true };
+        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(notNeeded));
+
+        // And with a frontier it is unchanged: still live, still no gaps.
+        SweepInfo ordinary = new SweepInfo { Performed = false, NotNeeded = true };
+        Assert.Equal(FreshMerge.FreshnessLive, FreshMerge.ClassifyFreshness(ordinary));
+        Assert.Null(FreshMerge.DescribeCoverageGaps(ordinary));
+    }
+
+    [Fact]
+    public void TheNoIndexFrontierSentence_NamesTheStores_AndFallsBackToTheProfile()
+    {
+        SweepInfo named = new SweepInfo
+        {
+            Performed = true,
+            FoldersSwept = 4,
+            IndexFrontierMissing = true,
+            StoresWithoutIndex = new[] { "Archive 2019.pst", "Old mail.pst" },
+            CoverageGaps = new[] { FreshMerge.GapNoIndexFrontier },
+        };
+
+        string line = Assert.Single(MailService.DescribeSweepCoverage(named, "12 minutes", folderScoped: false));
+        Assert.Contains("Archive 2019.pst", line, StringComparison.Ordinal);
+        Assert.Contains("Old mail.pst", line, StringComparison.Ordinal);
+
+        // The unindexed-profile case knows the fact but has no catalog to name stores from.
+        SweepInfo unnamed = new SweepInfo
+        {
+            Performed = true,
+            FoldersSwept = 4,
+            IndexFrontierMissing = true,
+            CoverageGaps = new[] { FreshMerge.GapNoIndexFrontier },
+        };
+
+        string profileLine = Assert.Single(MailService.DescribeSweepCoverage(unnamed, "12 minutes", folderScoped: false));
+        Assert.Contains("this profile", profileLine, StringComparison.Ordinal);
+
+        // The span it quotes is the constant, not a second copy of the number.
+        Assert.Contains(
+            MailService.EmptyIndexSweepWindow.TotalDays.ToString("F0", System.Globalization.CultureInfo.InvariantCulture)
+                + " days",
+            profileLine,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASweepWithAFrontier_NeverRaisesTheNoIndexCode()
+    {
+        // The flag is set from the frontier probe alone, so nothing else can raise this: a
+        // code that fired on ordinary partial coverage would make the state meaningless.
+        foreach ((string _, SweepInfo sweep) in CoverageHoles())
+        {
+            if (sweep.IndexFrontierMissing == true)
+            {
+                continue;
+            }
+
+            Assert.DoesNotContain(FreshMerge.GapNoIndexFrontier, FreshMerge.DescribeCoverageGaps(sweep)!);
+        }
     }
 
     [Fact]

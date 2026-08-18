@@ -20,6 +20,44 @@ namespace OutlookAI.McpServer.Tests.T1;
 public sealed class ComHostProtocolTests
 {
     [Fact]
+    public void PerStoreSweepWindows_SurviveTheWire_WithTheirStoreNamesIntact()
+    {
+        // The freshness sweep now carries one window PER STORE, keyed on the store display
+        // name, and that map crosses this pipe on every unscoped search. Two ways it could
+        // fail silently and produce a sweep that simply looks narrow: a key policy mangling
+        // the names (web defaults camel-case PROPERTY names - dictionary keys must pass
+        // through verbatim, and a store really can be called "Archive 2019.pst"), and a
+        // DateTime losing its UTC kind on the way, which would shift every window by the
+        // machine's offset. Neither shows up anywhere in the payload.
+        Dictionary<string, DateTime> windows = new(StringComparer.Ordinal)
+        {
+            ["Archive 2019.pst"] = new DateTime(2026, 08, 18, 07, 20, 09, DateTimeKind.Utc),
+            ["Jori Huisman"] = new DateTime(2026, 08, 17, 22, 00, 00, DateTimeKind.Utc),
+        };
+
+        JsonElement wire = JsonSerializer.SerializeToElement(
+            new { perStoreSinceUtc = windows }, ComHostProtocol.Json);
+        IReadOnlyDictionary<string, DateTime>? back = wire
+            .GetProperty("perStoreSinceUtc")
+            .Deserialize<IReadOnlyDictionary<string, DateTime>>(ComHostProtocol.Json);
+
+        Assert.NotNull(back);
+        Assert.Equal(2, back!.Count);
+        foreach (KeyValuePair<string, DateTime> expected in windows)
+        {
+            Assert.True(back.TryGetValue(expected.Key, out DateTime since), $"key '{expected.Key}' did not survive");
+            Assert.Equal(expected.Value, since.ToUniversalTime());
+        }
+
+        // And the far side re-keys case-insensitively, because JSON gives it an ordinal map
+        // while every store comparison in this server is case-insensitive.
+        IReadOnlyDictionary<string, DateTime> normalized = OutlookComSession.NormalizeSweepWindows(back);
+        Assert.Equal(
+            windows["Archive 2019.pst"],
+            OutlookComSession.WindowFor(normalized, "ARCHIVE 2019.PST", DateTime.MaxValue));
+    }
+
+    [Fact]
     public async Task Frame_RoundTrips()
     {
         ComHostRequest sent = new ComHostRequest

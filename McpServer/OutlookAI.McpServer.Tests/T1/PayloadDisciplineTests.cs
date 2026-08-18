@@ -72,6 +72,16 @@ public sealed class PayloadDisciplineTests
         // folder), the second is TABLE ROWS READ in the GetTable fallback.
         Assert.Equal(1000, OutlookComSession.TimeOnlyProbeMaxFolderItems);
         Assert.Equal(500, OutlookComSession.GetTableProbeMaxRows);
+
+        // How far back the sweep looks when there is NO index frontier to look up to. Not a
+        // payload cap - it is the reachable history of an unindexed store, and the whole
+        // content of the no_index_frontier advice, so lowering it silently shrinks what such
+        // a search can find and raising it silently makes every such search slower.
+        Assert.Equal(TimeSpan.FromDays(7), MailService.EmptyIndexSweepWindow);
+
+        // Budget for the post-sweep "is this store in the index at all" probes. They refine
+        // what the answer SAYS, never what it contains, so this stays small.
+        Assert.Equal(1_500, MailService.StoreIndexProbeBudgetMs);
     }
 
     /// <summary>

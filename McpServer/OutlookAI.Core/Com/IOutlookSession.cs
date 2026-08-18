@@ -46,14 +46,20 @@ namespace OutlookAI.Core.Com
         /// <summary>Folder paths whose leaf segment matches <paramref name="leafName"/> (delegate-store resolution).</summary>
         IReadOnlyList<IReadOnlyList<string>> FindFolderPathsByLeafName(string storeDisplayName, string leafName, int absoluteWalkCap);
 
-        /// <summary>The freshness sweep: mail newer than <paramref name="sinceUtc"/> that the index has not caught up with.</summary>
+        /// <summary>
+        /// The freshness sweep: mail newer than <paramref name="sinceUtc"/> that the index
+        /// has not caught up with. <paramref name="perStoreSinceUtc"/> overrides that start
+        /// per store (each store's own index frontier); <paramref name="sinceUtc"/> is what
+        /// a store not named in it gets.
+        /// </summary>
         ComSweepResult SweepFoldersNewerThan(
             DateTime sinceUtc,
             int perFolderCap,
             bool includeBodies,
             string? onlyStoreDisplayName,
             IReadOnlyList<string>? folderPath = null,
-            bool includeSubfolders = true);
+            bool includeSubfolders = true,
+            IReadOnlyDictionary<string, DateTime>? perStoreSinceUtc = null);
 
         /// <summary>Index-bypassing COM scan, bounded by item count and time budget.</summary>
         ComExhaustiveResult ExhaustiveScan(

@@ -109,7 +109,29 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public const int ShowSearchQueryCharsCap = 256;
         private static readonly TimeSpan SweepSafetyMargin = TimeSpan.FromMinutes(10);
-        private static readonly TimeSpan EmptyIndexSweepWindow = TimeSpan.FromDays(7);
+
+        /// <summary>
+        /// How far back the freshness sweep looks when there is no index frontier to open a
+        /// window from - the scope has no indexed mail at all, so there is nothing to be
+        /// "caught up to". Public so T1 pins it next to the advice sentence that quotes it:
+        /// this span IS the reachable history of an unindexed store, and a change to it is a
+        /// change to what such a search can find.
+        /// </summary>
+        public static readonly TimeSpan EmptyIndexSweepWindow = TimeSpan.FromDays(7);
+
+        /// <summary>
+        /// Budget for the post-sweep "is this store in the index at all" probes. Small on
+        /// purpose: the probes only refine what the answer SAYS, never what it contains, and
+        /// the stores that need them are the ones the catalog missed, i.e. usually none. A
+        /// store left unprobed is left unreported rather than guessed at.
+        /// <para>
+        /// Measured 2026-08-18 on this machine (OleDb, 8 passes): a delegate-subtree miss is
+        /// 9-10 ms across a two-store catalog and a targeted '@' discovery miss 27-30 ms, so
+        /// the worst case for one unknown store is ~40 ms - and it is paid once per store per
+        /// <see cref="StoreDetailsCacheTtl"/>, not once per search.
+        /// </para>
+        /// </summary>
+        public const int StoreIndexProbeBudgetMs = 1_500;
 
         /// <summary>
         /// How long Outlook's store list is reused before it is re-read over COM. Both
@@ -242,6 +264,16 @@ namespace OutlookAI.Core.Services
         private readonly object _catalogLock = new object();
         private readonly Dictionary<string, (IReadOnlyList<string> Paths, DateTime FetchedUtc)> _folderPaths =
             new Dictionary<string, (IReadOnlyList<string>, DateTime)>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Whether the index holds anything for a store, by display name, with the instant it
+        /// was established. Shares <see cref="StoreDetailsCacheTtl"/> and
+        /// <see cref="_catalogLock"/> with the other two per-profile caches for the reason
+        /// stated there: these are three angles on ONE profile and an answer mixing a fresh
+        /// one with a five-minute-old one describes a profile that never existed.
+        /// </summary>
+        private readonly Dictionary<string, (bool Present, DateTime AtUtc)> _storeIndexPresence =
+            new Dictionary<string, (bool, DateTime)>(StringComparer.OrdinalIgnoreCase);
         private string? _providerReport;
         private IReadOnlyList<StoreScopeInfo>? _catalog;
         private IReadOnlyList<ComStoreDetail>? _storeDetails;
@@ -463,7 +495,18 @@ namespace OutlookAI.Core.Services
 
             if (!request.IndexOnly)
             {
-                sweep = RunGapSweep(request, terms, staleness, indexResult.Hits, summaries, snippetChars);
+                sweep = RunGapSweep(
+                    request, terms, staleness, indexResult.Hits, summaries, snippetChars,
+                    out DateTime? widestFrontierUtc);
+
+                // The exposure these sentences quote is the OLDEST frontier in scope, not the
+                // profile-wide one. Now that the sweep opens a window per store, an unscoped
+                // search whose sweep fails is index-only against every store's OWN lag, and
+                // the profile figure - the newest instant ANY store ingested - understates
+                // that by exactly the spread the per-store windows exist to cover (measured
+                // 11 min 19 s between two stores on this machine, 45.4 h across three the day
+                // before). Same number for a store-scoped search, which has one frontier.
+                string indexAge = DescribeAge(staleness, widestFrontierUtc);
 
                 // The conclusion the counters add up to, computed ONCE and carried in the
                 // payload: it decides the advice below, the top-level freshness value and
@@ -472,18 +515,18 @@ namespace OutlookAI.Core.Services
                 if (sweep.Error == FreshMerge.RecipientFilterNotSweepable)
                 {
                     advice.Add("Freshness sweep skipped: recipient ('to') filters cannot be matched by the sweep, so results are "
-                        + "index-only and may lag the last " + DescribeAge(staleness) + " of mail.");
+                        + "index-only and may lag the last " + indexAge + " of mail.");
                 }
                 else if (sweep.Error == FreshMerge.AttachmentContentNotSweepable)
                 {
                     advice.Add("Freshness sweep skipped: attachment content is matched by the index only, so an attachment-only "
-                        + "search is index-only by construction and does not cover the last " + DescribeAge(staleness)
+                        + "search is index-only by construction and does not cover the last " + indexAge
                         + " of mail. Search without the attachment-only filter to get freshness coverage of subject and body.");
                 }
                 else if (sweep.Error != null)
                 {
                     advice.Add("INCOMPLETE RESULTS - TELL THE USER: these are indexed results only and may be missing mail "
-                        + "from roughly the last " + DescribeAge(staleness) + ". The live check against Outlook could not "
+                        + "from roughly the last " + indexAge + ". The live check against Outlook could not "
                         + "run (" + sweep.Error + "). Everything already indexed is here and correct; only very recent "
                         + "mail may be absent. " + (ComGateway.IsInstallerMutexHeld()
                             ? "An add-in update is in progress - retry shortly (D17)."
@@ -498,10 +541,10 @@ namespace OutlookAI.Core.Services
                     // implying the last few minutes were checked.
                     advice.Add("Freshness sweep covered no folder: '" + request.Folder
                         + "' could not be opened in Outlook, so results for it are index-only and may lag the last "
-                        + DescribeAge(staleness) + " of mail. Check the path with list_folders.");
+                        + indexAge + " of mail. Check the path with list_folders.");
                 }
 
-                advice.AddRange(DescribeSweepCoverage(sweep, DescribeAge(staleness), request.Folder != null));
+                advice.AddRange(DescribeSweepCoverage(sweep, indexAge, request.Folder != null));
             }
 
             AddUnresolvedFolderAdvice(advice, folderScope, request, summaries.Count);
@@ -754,6 +797,20 @@ namespace OutlookAI.Core.Services
             {
                 switch (gap)
                 {
+                    case FreshMerge.GapNoIndexFrontier:
+                        advice.Add("Freshness sweep is the ONLY tier covering "
+                            + (sweep.StoresWithoutIndex != null && sweep.StoresWithoutIndex.Count > 0
+                                ? "store(s) " + string.Join(", ", sweep.StoresWithoutIndex)
+                                : "this profile")
+                            + ": the local index holds no mail there, so there was no frontier to sweep up to and the "
+                            + "window fell back to the last "
+                            + EmptyIndexSweepWindow.TotalDays.ToString("F0", CultureInfo.InvariantCulture)
+                            + " days of the arrival-path folders. Mail older than that, or filed anywhere else there, "
+                            + "is in NEITHER tier - it is not findable by search at all. Confirm with outlook_health "
+                            + "(index.perStore) or list_accounts (locallySearchable), and use exhaustive:true with "
+                            + "store plus folder/after to read that store without the index.");
+                        break;
+
                     case FreshMerge.GapNothingSwept:
                         if (!folderScoped)
                         {
@@ -868,24 +925,195 @@ namespace OutlookAI.Core.Services
             _sweepCache.Clear();
         }
 
+        /// <summary>
+        /// The sweep window(s) for one search: one start per store in scope, plus the fallback
+        /// a store with no index frontier gets, plus what could not be established at all.
+        /// </summary>
+        private sealed class SweepWindowPlan
+        {
+            /// <summary>Window start for a store with no frontier of its own (unclamped).</summary>
+            internal DateTime FallbackBaseUtc { get; set; }
+
+            /// <summary>Per-store window starts (unclamped), empty for a store-scoped search.</summary>
+            internal Dictionary<string, DateTime>? PerStoreBaseUtc { get; set; }
+
+            /// <summary>A scope in this search had no index frontier at all.</summary>
+            internal bool FrontierMissing { get; set; }
+
+            /// <summary>The stores behind <see cref="FrontierMissing"/>, where nameable.</summary>
+            internal List<string>? StoresWithoutIndex { get; set; }
+
+            internal void AddStoreWithoutIndex(string store)
+            {
+                FrontierMissing = true;
+                StoresWithoutIndex ??= new List<string>();
+                if (!StoresWithoutIndex.Contains(store, StringComparer.OrdinalIgnoreCase))
+                {
+                    StoresWithoutIndex.Add(store);
+                }
+            }
+        }
+
+        /// <summary>
+        /// One sweep window PER STORE, each opened from that store's own index frontier.
+        /// <para>
+        /// A store-scoped search already had this: its frontier probe is scoped to the store
+        /// (<see cref="StalenessScopeFor"/>), so <paramref name="staleness"/> IS that store's
+        /// window base and nothing more is probed. An UNSCOPED search did not - it opened one
+        /// window from the profile-wide frontier, which is the newest instant any store
+        /// ingested, so a store lagging by hours was swept back only as far as the busiest
+        /// store's clock and the rest of its gap sat in neither tier: not indexed yet, and
+        /// before the window. Half of the per-store fix landed and read like all of it.
+        /// </para>
+        /// <para>
+        /// COST, measured rather than assumed (2026-08-18, this machine, OleDb over the live
+        /// SystemIndex): a scoped frontier probe is 14-21 ms, so a two-store catalog costs
+        /// 33-39 ms median per unscoped search - against a sweep budget of 30 s and a
+        /// per-query index timeout of 15 s. Catalog discovery itself (115-141 ms) is once per
+        /// process and every store-scoped search already paid it. The same runs measured the
+        /// reason it is worth paying: the two stores' frontiers sat 11 min 19 s apart, so the
+        /// single profile-wide window was eleven minutes short for one of them, silently.
+        /// That is the cost of the completeness, stated so it is known, not so it can be
+        /// traded against - a store swept from another store's clock returns less than it
+        /// should and says nothing.
+        /// </para>
+        /// <para>
+        /// THE FALLBACK IS THE WIDEST WINDOW, NOT THE PROFILE FRONTIER. A store the index
+        /// catalog does not know is exactly the store whose frontier we could not measure, so
+        /// giving it the profile-wide value would hand the one store that needs a wide window
+        /// the narrowest one on the profile. It gets <see cref="EmptyIndexSweepWindow"/>
+        /// instead: over-covering costs sweep time and is bounded by the per-folder cap;
+        /// under-covering loses mail silently.
+        /// </para>
+        /// </summary>
+        private SweepWindowPlan ResolveSweepWindows(SearchRequest request, IndexStalenessReport staleness)
+        {
+            DateTime emptyIndexBase = DateTime.UtcNow - EmptyIndexSweepWindow;
+            SweepWindowPlan plan = new SweepWindowPlan();
+
+            if (request.Store != null)
+            {
+                // Scoped: the search's own probe was already scoped to this store.
+                plan.FallbackBaseUtc = staleness.NewestIndexedReceivedUtc ?? emptyIndexBase;
+                if (!staleness.NewestIndexedReceivedUtc.HasValue)
+                {
+                    plan.AddStoreWithoutIndex(request.Store);
+                }
+
+                return plan;
+            }
+
+            plan.FallbackBaseUtc = emptyIndexBase;
+            if (!staleness.NewestIndexedReceivedUtc.HasValue)
+            {
+                // The profile-wide probe found no mail ANYWHERE: an unindexed profile, which
+                // is the shape a local-PST-only Outlook takes when Windows Search never
+                // indexed it. No store names to give - there is no catalog to name them from.
+                plan.FrontierMissing = true;
+                return plan;
+            }
+
+            try
+            {
+                foreach (StoreScopeInfo scopeInfo in GetCatalog(SearchIndexTimeoutSeconds))
+                {
+                    IndexStalenessReport scoped =
+                        _index.Value.GetStaleness(scopeInfo.StorePrefix, SearchIndexTimeoutSeconds);
+                    if (!scoped.NewestIndexedReceivedUtc.HasValue)
+                    {
+                        // In the catalog because it has indexed ITEMS, but none of them mail.
+                        plan.AddStoreWithoutIndex(scopeInfo.StoreDisplayName);
+                        continue;
+                    }
+
+                    plan.PerStoreBaseUtc ??= new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+                    if (!plan.PerStoreBaseUtc.TryGetValue(scopeInfo.StoreDisplayName, out DateTime existing)
+                        || scoped.NewestIndexedReceivedUtc.Value < existing)
+                    {
+                        // Two prefixes parsing to one display name cannot both be this
+                        // store's frontier; the earlier one is the window that cannot hide
+                        // mail, so it wins.
+                        plan.PerStoreBaseUtc[scopeInfo.StoreDisplayName] = scoped.NewestIndexedReceivedUtc.Value;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // A frontier probe is an optimisation of the WINDOW, never a precondition of
+                // the search: whatever was not probed keeps the widest window, which
+                // over-covers. Failing the search here would turn a slow indexer into no
+                // answer at all.
+            }
+
+            return plan;
+        }
+
         private SweepInfo RunGapSweep(
             SearchRequest request,
             IReadOnlyList<string> terms,
             IndexStalenessReport staleness,
             IReadOnlyList<IndexHit> indexHits,
             List<HitSummary> summaries,
-            int snippetChars)
+            int snippetChars,
+            out DateTime? widestFrontierUtc)
         {
             SweepInfo info = new SweepInfo();
-            DateTime baseGapStart = (staleness.NewestIndexedReceivedUtc ?? DateTime.UtcNow - EmptyIndexSweepWindow) - SweepSafetyMargin;
+            SweepWindowPlan windows = ResolveSweepWindows(request, staleness);
+            widestFrontierUtc = windows.PerStoreBaseUtc == null || windows.PerStoreBaseUtc.Count == 0
+                ? null
+                : WidestWindow(DateTime.MaxValue, windows.PerStoreBaseUtc);
+            info.IndexFrontierMissing = windows.FrontierMissing ? true : (bool?)null;
+            info.StoresWithoutIndex = windows.StoresWithoutIndex;
+
+            DateTime baseGapStart = windows.FallbackBaseUtc - SweepSafetyMargin;
+            Dictionary<string, DateTime>? perStoreBase = null;
+            if (windows.PerStoreBaseUtc != null)
+            {
+                perStoreBase = new Dictionary<string, DateTime>(windows.PerStoreBaseUtc.Count, StringComparer.OrdinalIgnoreCase);
+                foreach (KeyValuePair<string, DateTime> entry in windows.PerStoreBaseUtc)
+                {
+                    perStoreBase[entry.Key] = entry.Value - SweepSafetyMargin;
+                }
+            }
+
             DateTime gapStart = baseGapStart;
             if (request.AfterUtc.HasValue && request.AfterUtc.Value > gapStart)
             {
                 gapStart = request.AfterUtc.Value;
             }
 
-            info.GapStartUtc = gapStart;
-            if (FreshMerge.DecideSweepWindow(gapStart, request.BeforeUtc) == FreshMerge.SweepWindowVerdict.NotNeeded)
+            // The caller's own lower bound clamps EVERY window, not just the fallback: an
+            // unclamped per-store window would sweep a store back past what the request asked
+            // for, which costs time and returns rows the item filter then drops.
+            Dictionary<string, DateTime>? perStoreGapStart = perStoreBase;
+            bool windowsClamped = gapStart != baseGapStart;
+            if (perStoreBase != null && request.AfterUtc.HasValue)
+            {
+                perStoreGapStart = new Dictionary<string, DateTime>(perStoreBase.Count, StringComparer.OrdinalIgnoreCase);
+                foreach (KeyValuePair<string, DateTime> entry in perStoreBase)
+                {
+                    DateTime clamped = request.AfterUtc.Value > entry.Value ? request.AfterUtc.Value : entry.Value;
+                    windowsClamped |= clamped != entry.Value;
+                    perStoreGapStart[entry.Key] = clamped;
+                }
+            }
+
+            // The widest window any store in scope could get, which is what "is a sweep
+            // needed at all" has to be judged against: a 'before' bound that ends before the
+            // NARROWEST window would still leave the widest one something to find.
+            //
+            // It COSTS a sweep that used to be skipped. An unscoped search bounded to mail
+            // older than the index frontier but newer than the fallback window used to decide
+            // "not needed" off the profile frontier alone and do no COM work at all; it now
+            // sweeps, because a store with no frontier could hold matching mail inside that
+            // band and nothing else would ever find it. The sweep it runs is the ORDINARY
+            // narrow one - the per-store windows still apply, so a catalogued store is read
+            // back minutes, not days - and only a store the index does not know reads the
+            // full fallback span. That is the trade this whole change makes, in the one place
+            // it is invisible from the payload.
+            DateTime plannedGapStart = WidestWindow(gapStart, perStoreGapStart);
+            info.GapStartUtc = plannedGapStart;
+            if (FreshMerge.DecideSweepWindow(plannedGapStart, request.BeforeUtc) == FreshMerge.SweepWindowVerdict.NotNeeded)
             {
                 // Nothing to sweep, and that is a COMPLETE answer, not a degraded one: the
                 // requested window ends before the sweep would start, so the index already
@@ -944,8 +1172,11 @@ namespace OutlookAI.Core.Services
             // both the TryGet below and the Store further down, so an entry is always aged on
             // the clock it was stamped with.
             DateTime nowUtc = MonotonicClock.UtcNow;
+            ComSweepResult effectiveResult;
             IReadOnlyList<ComMailBrief> sweptItems;
-            if (_sweepCache.TryGet(baseGapStart, request.Store, folderKey, sweepRecursive, nowUtc, out SweepCache.CachedSweep? cachedSweep)
+            if (_sweepCache.TryGet(
+                    baseGapStart, request.Store, folderKey, sweepRecursive, nowUtc,
+                    out SweepCache.CachedSweep? cachedSweep, perStoreBase)
                 && cachedSweep != null)
             {
                 info.Performed = true;
@@ -953,6 +1184,7 @@ namespace OutlookAI.Core.Services
                 info.CacheAgeSeconds = Math.Round((nowUtc - cachedSweep.FetchedAtUtc).TotalSeconds, 1);
                 info.ElapsedMs = 0;
                 ApplySweepCounters(info, cachedSweep.Result, request.Store);
+                effectiveResult = cachedSweep.Result;
                 sweptItems = cachedSweep.Result.Items;
             }
             else
@@ -963,7 +1195,8 @@ namespace OutlookAI.Core.Services
                 {
                     sweepResult = _gateway.Run(
                     s => s.SweepFoldersNewerThan(
-                        gapStart, SweepPerFolderCap, includeBodies: true, request.Store, sweepFolderPath, sweepRecursive),
+                        gapStart, SweepPerFolderCap, includeBodies: true, request.Store, sweepFolderPath, sweepRecursive,
+                        perStoreGapStart),
                     SweepBudgetMs,
                     allowConnectFloor: true);
                 }
@@ -1000,16 +1233,36 @@ namespace OutlookAI.Core.Services
                 info.Performed = true;
                 info.ElapsedMs = stopwatch.ElapsedMilliseconds;
                 ApplySweepCounters(info, sweepResult, request.Store);
+                effectiveResult = sweepResult;
                 sweptItems = sweepResult.Items;
 
                 // Only unclamped windows are cacheable: an After-narrowed sweep must
-                // not poison wider follow-up searches.
-                if (gapStart == baseGapStart)
+                // not poison wider follow-up searches. That is now a statement about EVERY
+                // window - a request whose 'after' clamped one store's window took a
+                // narrower sweep of that store than an unclamped request would.
+                if (!windowsClamped)
                 {
                     _sweepCache.Store(
-                        baseGapStart, request.Store, folderKey, sweepRecursive, sweepResult, info.ElapsedMs, nowUtc);
+                        baseGapStart, request.Store, folderKey, sweepRecursive, sweepResult, info.ElapsedMs, nowUtc,
+                        perStoreBase);
                 }
             }
+
+            // What the sweep ACTUALLY looked back to, now that the stores it visited are
+            // known: the planned value has to assume the fallback window applies to someone,
+            // and on a fully catalogued profile it applies to no one. Reporting the plan
+            // would say "swept back 7 days" over a sweep that swept back eleven minutes.
+            info.GapStartUtc = WindowActuallyUsed(effectiveResult, request.Store, gapStart, perStoreGapStart)
+                ?? plannedGapStart;
+
+            // A store the sweep visited and the index catalog has never heard of. Its window
+            // was the fallback, which is right, but whether that is COMPLETE depends on
+            // something the catalog cannot answer: an indexed store missing from the
+            // discovery sample is covered by the index tier regardless (an unscoped index
+            // query has no SCOPE predicate), while a store that is genuinely not indexed is
+            // reachable only as far back as the fallback window goes. So it is probed - the
+            // same probe list_accounts reports as inLocalIndex - and only a NO is reported.
+            NoteStoresWithoutIndex(info, effectiveResult, request.Store, perStoreBase);
 
             List<ComMailBrief> filtered = new List<ComMailBrief>();
             foreach (ComMailBrief item in sweptItems)
@@ -1065,6 +1318,178 @@ namespace OutlookAI.Core.Services
             }
 
             return info;
+        }
+
+        /// <summary>
+        /// The EARLIEST of a set of per-store window starts and the fallback every unnamed
+        /// store gets - i.e. the widest window the sweep opens. Pure, and public so T1 pins
+        /// the direction: taking the latest instead would report a sweep as covering less
+        /// than it did, which is the safe-looking error that hides a real one.
+        /// </summary>
+        public static DateTime WidestWindow(DateTime fallbackUtc, IReadOnlyDictionary<string, DateTime>? perStoreUtc)
+        {
+            DateTime widest = fallbackUtc;
+            if (perStoreUtc != null)
+            {
+                foreach (KeyValuePair<string, DateTime> entry in perStoreUtc)
+                {
+                    if (entry.Value < widest)
+                    {
+                        widest = entry.Value;
+                    }
+                }
+            }
+
+            return widest;
+        }
+
+        /// <summary>
+        /// The widest window over the stores the sweep ACTUALLY visited, or null when it
+        /// visited none it can name (a folder-scoped sweep of an unnameable store, or a sweep
+        /// that reached nothing). Pure over the COM result, so T1 pins it without a mailbox.
+        /// </summary>
+        public static DateTime? WindowActuallyUsed(
+            ComSweepResult result,
+            string? requestedStore,
+            DateTime fallbackUtc,
+            IReadOnlyDictionary<string, DateTime>? perStoreUtc)
+        {
+            if (result == null)
+            {
+                throw new ArgumentNullException(nameof(result));
+            }
+
+            DateTime? widest = null;
+            foreach (ComStoreSweepCounters counters in result.PerStore)
+            {
+                if (requestedStore != null
+                    && !string.Equals(counters.StoreDisplayName, requestedStore, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue; // A cached all-stores sweep serving a store-scoped request.
+                }
+
+                DateTime window = perStoreUtc != null
+                    && perStoreUtc.TryGetValue(counters.StoreDisplayName, out DateTime since)
+                    ? since
+                    : fallbackUtc;
+                if (widest == null || window < widest.Value)
+                {
+                    widest = window;
+                }
+            }
+
+            return widest;
+        }
+
+        /// <summary>
+        /// Names the stores this sweep covered that the index holds nothing for, so an answer
+        /// resting on the sweep alone says which store it is resting on. Only ever ADDS to
+        /// what the frontier probes already found.
+        /// <para>
+        /// Bounded twice over. The verdict per store is cached for
+        /// <see cref="StoreDetailsCacheTtl"/>, so the probes run once per store per five
+        /// minutes rather than once per search; and the whole pass runs under
+        /// <see cref="StoreIndexProbeBudgetMs"/>, after which unprobed stores are left
+        /// unreported rather than guessed at. Silence here means "not established", never
+        /// "indexed" - a store that could not be probed keeps the wide fallback window it was
+        /// already swept with.
+        /// </para>
+        /// </summary>
+        private void NoteStoresWithoutIndex(
+            SweepInfo info,
+            ComSweepResult result,
+            string? requestedStore,
+            IReadOnlyDictionary<string, DateTime>? perStoreBase)
+        {
+            if (requestedStore != null)
+            {
+                return; // Scoped: the search's own frontier probe already settled it.
+            }
+
+            Stopwatch clock = Stopwatch.StartNew();
+            List<string>? missing = null;
+            foreach (ComStoreSweepCounters counters in result.PerStore)
+            {
+                if (perStoreBase != null && perStoreBase.ContainsKey(counters.StoreDisplayName))
+                {
+                    continue; // Has a frontier of its own, so the index knows it.
+                }
+
+                if (clock.ElapsedMilliseconds > StoreIndexProbeBudgetMs)
+                {
+                    break;
+                }
+
+                if (StoreHasIndexRows(counters.StoreDisplayName) == false)
+                {
+                    (missing ??= new List<string>()).Add(counters.StoreDisplayName);
+                }
+            }
+
+            if (missing == null)
+            {
+                return;
+            }
+
+            info.IndexFrontierMissing = true;
+            if (info.StoresWithoutIndex == null)
+            {
+                info.StoresWithoutIndex = missing;
+                return;
+            }
+
+            List<string> combined = new List<string>(info.StoresWithoutIndex);
+            foreach (string store in missing)
+            {
+                if (!combined.Contains(store, StringComparer.OrdinalIgnoreCase))
+                {
+                    combined.Add(store);
+                }
+            }
+
+            info.StoresWithoutIndex = combined;
+        }
+
+        /// <summary>
+        /// Whether the local index holds anything for a store, by display name, cached for
+        /// <see cref="StoreDetailsCacheTtl"/>. Null when it could not be established.
+        /// <para>
+        /// Both shapes of the probe, in cost order: the non-delegate one (catalog by name,
+        /// then targeted discovery for an '@'-named store the discovery sample missed), then
+        /// the delegate one (a delegate mailbox is indexed under its OWNER's <c>/1/name</c>
+        /// subtree, so it never appears in the catalog under its own name and a
+        /// name-comparison alone would report every shared mailbox on the profile as
+        /// unindexed). A YES from either is a yes.
+        /// </para>
+        /// </summary>
+        private bool? StoreHasIndexRows(string displayName, int? commandTimeoutSeconds = null)
+        {
+            lock (_catalogLock)
+            {
+                if (_storeIndexPresence.TryGetValue(displayName, out (bool Present, DateTime AtUtc) known)
+                    && MonotonicClock.UtcNow - known.AtUtc <= StoreDetailsCacheTtl)
+                {
+                    return known.Present;
+                }
+            }
+
+            bool present;
+            try
+            {
+                present = ProbeStoreInIndex(displayName, isDelegate: false, commandTimeoutSeconds)
+                    || ProbeStoreInIndex(displayName, isDelegate: true, commandTimeoutSeconds);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                return null; // Index unreachable - never answered from a probe that did not run.
+            }
+
+            lock (_catalogLock)
+            {
+                _storeIndexPresence[displayName] = (present, MonotonicClock.UtcNow);
+            }
+
+            return present;
         }
 
         // ------------------------------------------------------------------ exhaustive (Phase 3, D19)
@@ -3725,6 +4150,7 @@ namespace OutlookAI.Core.Services
                 }
 
                 perStore = new List<StoreStaleness>();
+                bool perStoreComplete = true;
                 foreach (StoreScopeInfo scopeInfo in GetCatalog(HealthIndexTimeoutSeconds))
                 {
                     // Overall budget as well as a per-query one: a profile with many
@@ -3732,6 +4158,7 @@ namespace OutlookAI.Core.Services
                     // fine outcome; taking minutes to report all of them is not.
                     if (indexClock.ElapsedMilliseconds > HealthPerStoreIndexBudgetMs)
                     {
+                        perStoreComplete = false;
                         advice.Add("Per-store index freshness is incomplete: the index did not answer quickly enough for "
                             + "every store. The global figure above is still accurate.");
                         break;
@@ -3743,13 +4170,40 @@ namespace OutlookAI.Core.Services
                     {
                         Store = scopeInfo.StoreDisplayName,
                         NewestIndexedUtc = scoped.NewestIndexedReceivedUtc,
+
+                        // In the catalog means the index has rows under this store's own
+                        // prefix. A missing timestamp beside it says those rows hold no mail.
+                        InLocalIndex = true,
                     });
                 }
+
+                // The two lists, compared. Until this ran, index.perStore was built from the
+                // index-derived catalog and outlook.stores from COM, and a store present in
+                // one and absent from the other was reported by neither - which is precisely
+                // the store whose searches fall back to a fixed window, i.e. the condition an
+                // operator opens this tool to find. Both lists were already in hand.
+                AddStoresMissingFromIndex(perStore, storeNames, perStoreComplete, indexClock, problems);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 provider = "unavailable: " + ex.GetType().Name;
                 problems.Add("The SystemIndex is unreachable - index-backed search cannot run.");
+            }
+
+            IndexCurrency currency = ClassifyIndexCurrency(provider, newestIndexed);
+            if (currency == IndexCurrency.NoMailAtAll)
+            {
+                // Nothing indexed ANYWHERE. Not a lag, not a quiet mailbox: every search on
+                // this machine is then served by the freshness sweep's fallback window alone,
+                // and mail older than it cannot be found. A PROBLEM, so status says degraded -
+                // this is the tool an operator opens to discover exactly this, and it used to
+                // answer "Index is current; searches run at index speed" over it, because a
+                // null age was read as "no lag" rather than as "no index".
+                problems.Add("The local index holds NO mail at all, so searches cannot use it: they fall back to a live "
+                    + "sweep of the last " + EmptyIndexSweepWindow.TotalDays.ToString("F0", CultureInfo.InvariantCulture)
+                    + " days in Inbox, Sent Items, Deleted Items and Junk Email. Older mail is not findable through "
+                    + "search - check that Windows Search indexes Outlook (WSearch running, the Outlook data files "
+                    + "ticked in Indexing Options) and use exhaustive:true meanwhile.");
             }
 
             if (!outlookRunning)
@@ -3765,11 +4219,15 @@ namespace OutlookAI.Core.Services
                     + " minutes old. search covers the gap automatically with its freshness sweep.");
             }
 
-            if (advice.Count == 0 && !provider.StartsWith("unavailable", StringComparison.Ordinal))
+            // "Current" is a claim about a MEASURED frontier, so it needs one. It used to be
+            // said on a null age too - i.e. over an index with no mail in it at all - which
+            // told the operator that searches run at index speed over an index that cannot
+            // serve one. Same decision as the problem above, read the other way round.
+            if (advice.Count == 0 && currency == IndexCurrency.Measured && ageMinutes.HasValue)
             {
-                advice.Add("Index is current" + (ageMinutes.HasValue
-                    ? " (newest mail " + ageMinutes.Value.ToString("F1", CultureInfo.InvariantCulture) + " min ago)"
-                    : string.Empty) + "; searches run at index speed.");
+                advice.Add("Index is current (newest mail "
+                    + ageMinutes.Value.ToString("F1", CultureInfo.InvariantCulture)
+                    + " min ago); searches run at index speed.");
             }
 
             int? wsearchStart = HealthReporting.TryReadWSearchStartValue();
@@ -4208,6 +4666,161 @@ namespace OutlookAI.Core.Services
         /// invisible in the report, where taking minutes is not.
         /// </para>
         /// </summary>
+        /// <summary>What the index freshness probe established about the index as a whole.</summary>
+        public enum IndexCurrency
+        {
+            /// <summary>A frontier was measured: the index holds mail and its age is known.</summary>
+            Measured = 0,
+
+            /// <summary>
+            /// The index is reachable and holds NO mail whatsoever. Not a lag and not a quiet
+            /// mailbox - a state in which the index tier cannot serve a single search.
+            /// </summary>
+            NoMailAtAll = 1,
+
+            /// <summary>The index could not be reached, so nothing about it was established.</summary>
+            Unavailable = 2,
+        }
+
+        /// <summary>
+        /// The three things a freshness probe can establish about the index, told apart in one
+        /// pure place because two of them look identical in the data: an index with no mail and
+        /// an index that could not be read BOTH report a null frontier and a null age.
+        /// <para>
+        /// Reading the null alone is what made outlook_health say "Index is current; searches
+        /// run at index speed" over an index holding zero mail rows - the one report an
+        /// operator would open to discover exactly that, denying it. Public so T1 pins all
+        /// three without an index.
+        /// </para>
+        /// </summary>
+        public static IndexCurrency ClassifyIndexCurrency(string provider, DateTime? newestIndexedUtc)
+        {
+            if (provider == null || provider.StartsWith("unavailable", StringComparison.Ordinal))
+            {
+                return IndexCurrency.Unavailable;
+            }
+
+            return newestIndexedUtc.HasValue ? IndexCurrency.Measured : IndexCurrency.NoMailAtAll;
+        }
+
+        /// <summary>
+        /// Which stores OUTLOOK reports the INDEX holds nothing for: the comparison the health
+        /// report never made. <paramref name="probe"/> answers per store - true indexed, false
+        /// not, null not established - and only a FALSE is reported.
+        /// <para>
+        /// Absence from <paramref name="indexKnownStores"/> is not evidence and must never be
+        /// treated as any: that list comes from an unordered 2000-row discovery sample which
+        /// misses small stores, and a delegate mailbox is indexed under its OWNER's subtree so
+        /// it never appears under its own name at all. Name-comparison alone would report every
+        /// shared mailbox on a delegate-heavy profile as unindexed, which is the failure mode
+        /// that makes a completeness flag worthless.
+        /// </para>
+        /// <para>
+        /// Pure over an injected probe, so T1 pins the rule - including the case that matters
+        /// most, a store the probe cannot settle - without a Windows Search index.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string> StoresMissingFromIndex(
+            IReadOnlyList<string>? comStoreNames,
+            IReadOnlyCollection<string>? indexKnownStores,
+            Func<string, bool?> probe)
+        {
+            if (probe == null)
+            {
+                throw new ArgumentNullException(nameof(probe));
+            }
+
+            if (comStoreNames == null || comStoreNames.Count == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            HashSet<string> known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string store in indexKnownStores ?? Array.Empty<string>())
+            {
+                known.Add(store);
+            }
+
+            List<string> missing = new List<string>();
+            foreach (string store in comStoreNames)
+            {
+                if (store == null || known.Contains(store) || missing.Contains(store, StringComparer.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (probe(store) == false)
+                {
+                    missing.Add(store);
+                }
+            }
+
+            return missing;
+        }
+
+        /// <summary>
+        /// Adds one <see cref="StoreStaleness"/> row per store OUTLOOK reports that the index
+        /// does not know, and raises a problem naming them. The report held both lists and
+        /// compared neither, so the disagreement between them - the single condition that
+        /// makes searches of a store fall back to a fixed window - had no field anywhere.
+        /// <para>
+        /// Every "no" here is a probe result, never an absence from the catalog: the catalog
+        /// comes from an unordered 2000-row sample that misses small stores, and a delegate
+        /// mailbox is indexed under its OWNER's subtree so it never appears under its own name
+        /// at all. Comparing names alone would have reported every shared mailbox on this
+        /// profile as unindexed. A store that could not be probed inside the budget is left
+        /// out entirely rather than reported either way.
+        /// </para>
+        /// <para>
+        /// Skipped when the per-store loop was cut short (<paramref name="perStoreComplete"/>)
+        /// or Outlook gave no store list: a comparison against half a list would invent
+        /// missing stores, and the truncation is already reported in its own words.
+        /// </para>
+        /// </summary>
+        private void AddStoresMissingFromIndex(
+            List<StoreStaleness> perStore,
+            IReadOnlyList<string>? comStoreNames,
+            bool perStoreComplete,
+            System.Diagnostics.Stopwatch indexClock,
+            List<string> problems)
+        {
+            if (!perStoreComplete || comStoreNames == null || comStoreNames.Count == 0)
+            {
+                return;
+            }
+
+            List<string> indexed = new List<string>(perStore.Count);
+            foreach (StoreStaleness row in perStore)
+            {
+                indexed.Add(row.Store);
+            }
+
+            IReadOnlyList<string> missing = StoresMissingFromIndex(
+                comStoreNames,
+                indexed,
+
+                // A store left unprobed because the budget ran out answers null, never false:
+                // "not established" must not become "not indexed".
+                store => indexClock.ElapsedMilliseconds > HealthPerStoreIndexBudgetMs
+                    ? (bool?)null
+                    : StoreHasIndexRows(store, HealthIndexTimeoutSeconds));
+
+            foreach (string store in missing)
+            {
+                perStore.Add(new StoreStaleness { Store = store, InLocalIndex = false });
+            }
+
+            if (missing.Count > 0)
+            {
+                problems.Add("Outlook has " + missing.Count.ToString(CultureInfo.InvariantCulture)
+                    + " store(s) the local index holds nothing for (" + string.Join(", ", missing)
+                    + "). Searches covering them fall back to a live sweep of the last "
+                    + EmptyIndexSweepWindow.TotalDays.ToString("F0", CultureInfo.InvariantCulture)
+                    + " days in their arrival-path folders; older mail there is not findable through search. Add the "
+                    + "data file(s) to Windows Indexing Options, or use exhaustive:true with store plus folder/after.");
+            }
+        }
+
         private void EnsureCatalogCoverageFromCom(System.Diagnostics.Stopwatch indexClock)
         {
             IReadOnlyList<ComStoreDetail> stores = _gateway.Run(GetStoreDetails, HealthProbeBudgetMs);
@@ -4239,9 +4852,10 @@ namespace OutlookAI.Core.Services
             }
         }
 
-        private bool ProbeStoreInIndex(string displayName, bool isDelegate)
+        private bool ProbeStoreInIndex(string displayName, bool isDelegate, int? commandTimeoutSeconds = null)
         {
-            IReadOnlyList<StoreScopeInfo> catalog = GetCatalog(SearchIndexTimeoutSeconds);
+            int timeout = commandTimeoutSeconds ?? SearchIndexTimeoutSeconds;
+            IReadOnlyList<StoreScopeInfo> catalog = GetCatalog(timeout);
             foreach (StoreScopeInfo scopeInfo in catalog)
             {
                 if (string.Equals(scopeInfo.StoreDisplayName, displayName, StringComparison.OrdinalIgnoreCase))
@@ -4256,7 +4870,7 @@ namespace OutlookAI.Core.Services
                 // subtree (Phase-1 fact 3).
                 foreach (StoreScopeInfo owner in catalog)
                 {
-                    if (_index.Value.ScopeHasAnyItem(owner.StorePrefix + "/1/" + displayName, SearchIndexTimeoutSeconds))
+                    if (_index.Value.ScopeHasAnyItem(owner.StorePrefix + "/1/" + displayName, timeout))
                     {
                         return true;
                     }
@@ -4267,7 +4881,7 @@ namespace OutlookAI.Core.Services
 
             if (displayName.IndexOf('@') >= 0)
             {
-                StoreScopeInfo? targeted = _index.Value.TryDiscoverStoreScopeByAddress(displayName, SearchIndexTimeoutSeconds);
+                StoreScopeInfo? targeted = _index.Value.TryDiscoverStoreScopeByAddress(displayName, timeout);
                 if (targeted != null)
                 {
                     InvalidateCatalog(targeted);
@@ -4469,10 +5083,19 @@ namespace OutlookAI.Core.Services
             return hit.FolderSegments.Count > 0 ? string.Join("/", hit.FolderSegments) : null;
         }
 
-        private static string DescribeAge(IndexStalenessReport staleness)
+        /// <summary>
+        /// How far behind the index is, as prose, over the WIDEST lag in the search's scope.
+        /// <paramref name="widestFrontierUtc"/> is the oldest per-store frontier when the
+        /// sweep opened one window per store; the profile-wide frontier is the MAXIMUM across
+        /// stores, so it is never the honest figure for a multi-store answer.
+        /// </summary>
+        private static string DescribeAge(IndexStalenessReport staleness, DateTime? widestFrontierUtc = null)
         {
-            return staleness.Age.HasValue
-                ? staleness.Age.Value.TotalMinutes.ToString("F0", CultureInfo.InvariantCulture) + " minutes"
+            TimeSpan? age = widestFrontierUtc.HasValue
+                ? staleness.ClockUtc - widestFrontierUtc.Value
+                : staleness.Age;
+            return age.HasValue
+                ? age.Value.TotalMinutes.ToString("F0", CultureInfo.InvariantCulture) + " minutes"
                 : "unknown span";
         }
 

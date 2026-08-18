@@ -269,6 +269,103 @@ public sealed class SweepCacheTests
         Assert.False(cache.TryGet(Frontier, store: null, folder: null, Shallow, Now.AddSeconds(-1), out _));
     }
 
+    // ---------------------------------- per-store windows: what "the same sweep" now means
+
+    // A sweep no longer has ONE window: an unscoped sweep opens one per store, from that
+    // store's own index frontier. The cache key never carried them, so the scalar base alone
+    // decided reuse - and the scalar base of a broad sweep is the FALLBACK window, which
+    // describes no particular store. The audit's question, answered below: a broad entry
+    // must never serve a narrow request under weaker coverage than a fresh sweep would give.
+
+    private static readonly Dictionary<string, DateTime> TwoStoreWindows = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["alice@example.com"] = Frontier,
+        ["bob@example.com"] = Frontier.AddHours(-9),
+    };
+
+    [Fact]
+    public void OneStoresFrontierAdvancing_InvalidatesTheBroadEntry_EvenThoughTheScalarBaseIsUnchanged()
+    {
+        // The exact hole the scalar key left: the fallback base is identical across both
+        // calls, so the old comparison saw "same window" while store B's own window had
+        // moved. Equality, not containment - a frontier advance means the index ingested
+        // something and the cache must not outlive that.
+        SweepCache cache = new();
+        cache.Store(Frontier, null, null, Shallow, MakeResult(2), 100, Now, TwoStoreWindows);
+
+        Dictionary<string, DateTime> moved = new(TwoStoreWindows, StringComparer.OrdinalIgnoreCase)
+        {
+            ["bob@example.com"] = Frontier.AddHours(-8),
+        };
+
+        Assert.False(cache.TryGet(Frontier, null, null, Shallow, Now.AddSeconds(1), out _, moved));
+        Assert.True(cache.TryGet(Frontier, null, null, Shallow, Now.AddSeconds(1), out _, TwoStoreWindows));
+    }
+
+    [Fact]
+    public void AStoreAppearingOrVanishingFromTheWindowSet_IsADifferentSweep()
+    {
+        SweepCache cache = new();
+        cache.Store(Frontier, null, null, Shallow, MakeResult(2), 100, Now, TwoStoreWindows);
+
+        Dictionary<string, DateTime> fewer = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["alice@example.com"] = Frontier,
+        };
+
+        Assert.False(cache.TryGet(Frontier, null, null, Shallow, Now.AddSeconds(1), out _, fewer));
+
+        // And an entry taken WITHOUT per-store windows cannot serve a request that has them.
+        SweepCache legacy = new();
+        legacy.Store(Frontier, null, null, Shallow, MakeResult(2), 100, Now);
+        Assert.False(legacy.TryGet(Frontier, null, null, Shallow, Now.AddSeconds(1), out _, TwoStoreWindows));
+    }
+
+    [Fact]
+    public void ABroadEntryServesAStoreScopedRequest_OnlyWhenItSweptThatStoreFromTheSameInstant()
+    {
+        // A store-scoped request has ONE window - its own store's - and the broad entry's
+        // window for that store is what decides, not its fallback base. Store B's window in
+        // the entry is 9 h before the fallback, so a B-scoped request whose own base IS that
+        // instant is served, and one whose base has moved on is not.
+        SweepCache cache = new();
+        cache.Store(Frontier, null, null, Shallow, MakeResult(2), 100, Now, TwoStoreWindows);
+
+        Assert.True(cache.TryGet(
+            Frontier.AddHours(-9), "bob@example.com", null, Shallow, Now.AddSeconds(2), out SweepCache.CachedSweep? served));
+        Assert.NotNull(served);
+        Assert.Equal(Frontier.AddHours(-9), served!.WindowFor("bob@example.com"));
+
+        // Its frontier advanced by a minute: a fresh sweep would open a NARROWER window than
+        // the entry has, and reusing it would answer from a sweep taken before that ingest.
+        Assert.False(cache.TryGet(Frontier.AddHours(-9).AddMinutes(1), "bob@example.com", null, Shallow, Now.AddSeconds(2), out _));
+
+        // A store the broad sweep had no window for falls back to the entry's scalar base,
+        // which is exactly the window such a store was swept with.
+        Assert.True(cache.TryGet(Frontier, "Archive 2019.pst", null, Shallow, Now.AddSeconds(2), out _));
+    }
+
+    [Fact]
+    public void TheBroadEntrysWindowForAStore_IsMatchedCaseInsensitively()
+    {
+        SweepCache cache = new();
+        cache.Store(Frontier, null, null, Shallow, MakeResult(2), 100, Now, TwoStoreWindows);
+
+        Assert.True(cache.TryGet(Frontier.AddHours(-9), "BOB@EXAMPLE.COM", null, Shallow, Now.AddSeconds(1), out _));
+    }
+
+    [Fact]
+    public void ABroadEntryStillNeverServesAcrossFolderScopes_WhateverTheWindows()
+    {
+        // Unchanged by per-store windows, and restated because the store-scoped path now has
+        // its own comparison: a folder-scoped sweep covers ONE subtree and answering a
+        // store-wide query from it would report a fraction of the coverage as all of it.
+        SweepCache cache = new();
+        cache.Store(Frontier, null, null, Shallow, MakeResult(2), 100, Now, TwoStoreWindows);
+
+        Assert.False(cache.TryGet(Frontier.AddHours(-9), "bob@example.com", "Inbox", Recursive, Now.AddSeconds(1), out _));
+    }
+
     private static ComSweepResult MakeResult(int items)
     {
         var list = new List<ComMailBrief>(items);

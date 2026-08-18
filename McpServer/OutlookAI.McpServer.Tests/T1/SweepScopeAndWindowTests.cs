@@ -490,4 +490,121 @@ public sealed class SweepScopeAndWindowTests
         Assert.Null(MailService.DescribeStaleIndex(ageMinutes, storeScoped: true));
         Assert.Null(MailService.DescribeStaleIndex(ageMinutes, storeScoped: false));
     }
+
+    // ============================================ (5) one window PER STORE, not one per search
+
+    // THE DEFECT: (3) fixed the frontier for a STORE-SCOPED search only. An unscoped search
+    // still opened ONE window from the profile-wide frontier - the newest instant ANY store
+    // ingested - so a store lagging by hours was swept back only as far as the busiest
+    // store's clock, and the rest of its gap sat in neither tier. Measured on this machine
+    // the same day: two catalog stores, frontiers 11 minutes apart. Half a fix reads as a
+    // whole one, so the half that had not landed was invisible.
+
+    private static readonly DateTime NowUtc = new(2026, 08, 18, 12, 00, 00, DateTimeKind.Utc);
+
+    [Fact]
+    public void EachStoreIsSweptFromItsOwnFrontier_AndAnUnnamedStoreGetsTheFallback()
+    {
+        Dictionary<string, DateTime> windows = new(StringComparer.Ordinal)
+        {
+            [StoreA] = NowUtc.AddMinutes(-11),
+            [StoreB] = NowUtc.AddHours(-9),
+        };
+
+        IReadOnlyDictionary<string, DateTime> resolved = OutlookComSession.NormalizeSweepWindows(windows);
+        DateTime fallback = NowUtc.AddDays(-7);
+
+        Assert.Equal(NowUtc.AddMinutes(-11), OutlookComSession.WindowFor(resolved, StoreA, fallback));
+        Assert.Equal(NowUtc.AddHours(-9), OutlookComSession.WindowFor(resolved, StoreB, fallback));
+
+        // The store nobody measured gets the WIDEST window, not the profile frontier: it is
+        // the one store whose gap is unknown, so the narrow window is the wrong guess.
+        Assert.Equal(fallback, OutlookComSession.WindowFor(resolved, StoreC, fallback));
+    }
+
+    [Fact]
+    public void AWindowMatchesItsStore_CaseInsensitively_BecauseEverythingElseDoes()
+    {
+        // The map crosses a JSON boundary and comes back with an ORDINAL comparer whatever
+        // the sender used. A miss here is silent: the store just gets the fallback window and
+        // nothing in the payload says its own one was not applied.
+        IReadOnlyDictionary<string, DateTime> resolved = OutlookComSession.NormalizeSweepWindows(
+            new Dictionary<string, DateTime>(StringComparer.Ordinal) { ["Archive 2019.PST"] = NowUtc.AddHours(-3) });
+
+        Assert.Equal(NowUtc.AddHours(-3), OutlookComSession.WindowFor(resolved, "archive 2019.pst", NowUtc));
+    }
+
+    [Fact]
+    public void TwoSpellingsOfOneStore_KeepTheEarlierWindow()
+    {
+        // They cannot both be that store's frontier, and the wider window is the one that
+        // cannot hide mail.
+        IReadOnlyDictionary<string, DateTime> resolved = OutlookComSession.NormalizeSweepWindows(
+            new Dictionary<string, DateTime>(StringComparer.Ordinal)
+            {
+                ["Archive.pst"] = NowUtc.AddHours(-1),
+                ["ARCHIVE.PST"] = NowUtc.AddHours(-6),
+            });
+
+        Assert.Equal(NowUtc.AddHours(-6), OutlookComSession.WindowFor(resolved, "Archive.pst", NowUtc));
+    }
+
+    [Fact]
+    public void TheReportedWindow_IsTheWidestOneOpened_NotTheNarrowest()
+    {
+        // One number over a per-store decision. The earliest is the honest one: the claim it
+        // supports - "the merged answer covers everything from here to now" - holds for every
+        // store, because a store swept from a LATER start has its index covering the span in
+        // front of that. The latest would understate coverage that was actually delivered.
+        Dictionary<string, DateTime> windows = new(StringComparer.OrdinalIgnoreCase)
+        {
+            [StoreA] = NowUtc.AddMinutes(-11),
+            [StoreB] = NowUtc.AddHours(-9),
+        };
+
+        Assert.Equal(NowUtc.AddHours(-9), MailService.WidestWindow(NowUtc.AddMinutes(-30), windows));
+
+        // The fallback counts too - it is the window an undiscovered store gets.
+        Assert.Equal(NowUtc.AddDays(-7), MailService.WidestWindow(NowUtc.AddDays(-7), windows));
+    }
+
+    [Fact]
+    public void TheReportedWindow_CountsOnlyTheStoresTheSweepActuallyVisited()
+    {
+        // Before the sweep runs, the fallback has to be assumed to apply to SOMEONE, so the
+        // planned widest window is 7 days on every unscoped search. On a fully catalogued
+        // profile it applies to no one, and reporting the plan would say "swept back 7 days"
+        // over a sweep that swept back eleven minutes.
+        Dictionary<string, DateTime> windows = new(StringComparer.OrdinalIgnoreCase)
+        {
+            [StoreA] = NowUtc.AddMinutes(-11),
+            [StoreB] = NowUtc.AddHours(-9),
+        };
+
+        ComSweepResult visited = TwoStoresOneFailingFolderInB();
+        Assert.Equal(
+            NowUtc.AddHours(-9),
+            MailService.WindowActuallyUsed(visited, requestedStore: null, NowUtc.AddDays(-7), windows));
+
+        // A store-scoped request reads ITS window out of a broad sweep, not the widest.
+        Assert.Equal(
+            NowUtc.AddMinutes(-11),
+            MailService.WindowActuallyUsed(visited, StoreA, NowUtc.AddDays(-7), windows));
+    }
+
+    [Fact]
+    public void AStoreTheSweepVisitedWithNoWindowOfItsOwn_ReportsTheFallback()
+    {
+        // Which is the whole point of the fallback being the widest span rather than the
+        // profile frontier: this is the store the index could not be asked about.
+        ComSweepResult visited = new ComSweepResult(
+            Array.Empty<ComMailBrief>(),
+            foldersSwept: 4,
+            foldersSkipped: 0,
+            perStore: new[] { new ComStoreSweepCounters(StoreC, 4, 0, 0, 0) });
+
+        Assert.Equal(
+            NowUtc.AddDays(-7),
+            MailService.WindowActuallyUsed(visited, requestedStore: null, NowUtc.AddDays(-7), null));
+    }
 }

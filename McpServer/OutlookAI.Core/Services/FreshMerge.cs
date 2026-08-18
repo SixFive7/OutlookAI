@@ -60,6 +60,37 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public const string GapFoldersSkipped = "folders_skipped";
 
+        /// <summary>
+        /// Coverage hole: the index holds NO mail at all for part of this search's scope, so
+        /// there was no frontier to open the sweep window from and it fell back to a fixed
+        /// span (<c>MailService.EmptyIndexSweepWindow</c>). Everything older than that span,
+        /// in the store(s) named by <see cref="SweepInfo.StoresWithoutIndex"/>, is in NEITHER
+        /// tier: not in the index, which has no rows for it, and not in the sweep, which
+        /// starts after it.
+        /// <para>
+        /// A CODE rather than a fourth <see cref="FreshnessLive"/>/<see cref="FreshnessPartial"/>/
+        /// <see cref="FreshnessIndexOnly"/> value, and the reasoning is the one the three-value
+        /// contract was designed around. Those three answer "did the LIVE check run, and did it
+        /// cover its scope", <c>degraded</c> is derived from them and is the single thing agents
+        /// are taught to branch on, and a fourth value would be a token no caller has been
+        /// taught - it would read as "unknown", i.e. as a reason to doubt an answer without
+        /// saying what to do about it, and every existing `freshness == "live"` check would
+        /// silently stop matching a state that is genuinely not live. The codes are the axis
+        /// this contract already extends along: each one names ONE hole, each earns its own
+        /// advice sentence, and each makes the search <see cref="FreshnessPartial"/> and
+        /// <c>degraded: true</c> through machinery that already exists. This hole is simply the
+        /// widest of them, so it sorts first.
+        /// </para>
+        /// <para>
+        /// It is also the only code raised by something the sweep did not do: it describes the
+        /// INDEX tier, and it therefore survives a sweep that never ran
+        /// (<see cref="DescribeCoverageGaps"/>). "The sweep could not run" and "the index has
+        /// nothing for this store" are independent facts and an answer missing both tiers must
+        /// say both.
+        /// </para>
+        /// </summary>
+        public const string GapNoIndexFrontier = "no_index_frontier";
+
         /// <summary>Whether a search's window leaves the freshness sweep anything to find.</summary>
         public enum SweepWindowVerdict
         {
@@ -148,9 +179,20 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentNullException(nameof(sweep));
             }
 
+            // FIRST, and before the "did it run" gate below: this one is a fact about the
+            // INDEX tier, not about the sweep, so a sweep that could not run or had nothing
+            // to do does not make it go away. It is also the widest hole here - a whole tier
+            // contributed nothing to part of the scope - and the gap order is the order the
+            // advice sentences are emitted in.
+            List<string> gaps = new List<string>();
+            if (sweep.IndexFrontierMissing == true)
+            {
+                gaps.Add(GapNoIndexFrontier);
+            }
+
             if (!sweep.Performed)
             {
-                return null;
+                return gaps.Count == 0 ? null : gaps;
             }
 
             // Everything the sweep meant to walk here turned out not to exist. That is a
@@ -159,7 +201,6 @@ namespace OutlookAI.Core.Services
                 && sweep.FoldersSkipped == 0
                 && sweep.FoldersFailed == 0;
 
-            List<string> gaps = new List<string>();
             if (sweep.FoldersSwept == 0 && !nothingExistedToSweep)
             {
                 gaps.Add(GapNothingSwept);
@@ -223,6 +264,15 @@ namespace OutlookAI.Core.Services
         /// The sweep block still says what happened: <c>performed: false</c> with
         /// <c>notNeeded: true</c>.
         /// </para>
+        /// <para>
+        /// ONE exception to that, and it is the whole of <see cref="GapNoIndexFrontier"/>:
+        /// "not needed" is a claim that the INDEX already covers the requested window, and
+        /// over a scope with no index rows that claim is simply false. A search bounded by
+        /// <c>before</c> to mail older than the fallback window would otherwise return an
+        /// empty list, out of a store the index has never seen, and call itself <c>live</c>.
+        /// So a not-needed sweep is live only while the frontier it was measured against
+        /// exists.
+        /// </para>
         /// </summary>
         public static string ClassifyFreshness(SweepInfo? sweep)
         {
@@ -233,7 +283,15 @@ namespace OutlookAI.Core.Services
 
             if (!sweep.Performed)
             {
-                return sweep.NotNeeded == true ? FreshnessLive : FreshnessIndexOnly;
+                if (sweep.NotNeeded == true)
+                {
+                    return sweep.IndexFrontierMissing == true ? FreshnessPartial : FreshnessLive;
+                }
+
+                // Could not run. Still index-only - that value means exactly "the sweep
+                // never ran" and callers pin it - and a missing frontier is reported
+                // alongside it as a coverage code, not by renaming this state.
+                return FreshnessIndexOnly;
             }
 
             IReadOnlyList<string>? gaps = DescribeCoverageGaps(sweep);

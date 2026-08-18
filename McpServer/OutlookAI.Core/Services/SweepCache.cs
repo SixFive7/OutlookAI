@@ -59,7 +59,8 @@ namespace OutlookAI.Core.Services
                 string? folder,
                 bool includeSubfolders,
                 DateTime fetchedAtUtc,
-                long elapsedMs)
+                long elapsedMs,
+                IReadOnlyDictionary<string, DateTime>? perStoreBaseUtc = null)
             {
                 Result = result ?? throw new ArgumentNullException(nameof(result));
                 BaseGapStartUtc = baseGapStartUtc;
@@ -68,13 +69,35 @@ namespace OutlookAI.Core.Services
                 IncludeSubfolders = includeSubfolders;
                 FetchedAtUtc = fetchedAtUtc;
                 ElapsedMs = elapsedMs;
+                PerStoreBaseUtc = Freeze(perStoreBaseUtc);
             }
 
             /// <summary>The swept items + folder counters.</summary>
             public ComSweepResult Result { get; }
 
-            /// <summary>The unclamped sweep window start this result covers.</summary>
+            /// <summary>
+            /// The unclamped sweep window start this result covers for a store NOT named in
+            /// <see cref="PerStoreBaseUtc"/>.
+            /// </summary>
             public DateTime BaseGapStartUtc { get; }
+
+            /// <summary>
+            /// The per-store window starts this sweep actually ran with (each store's own
+            /// index frontier, minus the safety margin). Empty for a sweep that used one
+            /// window everywhere, which is every store-scoped sweep.
+            /// </summary>
+            public IReadOnlyDictionary<string, DateTime> PerStoreBaseUtc { get; }
+
+            /// <summary>
+            /// The window this entry covers for one store: its own if the sweep opened one,
+            /// otherwise the fallback base. Public so T1 pins the reuse rule from the
+            /// outside - this is the value the broad-entry check compares, and the whole
+            /// question the per-store windows raise for this cache.
+            /// </summary>
+            public DateTime WindowFor(string store)
+            {
+                return PerStoreBaseUtc.TryGetValue(store, out DateTime since) ? since : BaseGapStartUtc;
+            }
 
             /// <summary>Store the sweep was scoped to (null = all stores).</summary>
             public string? Store { get; }
@@ -106,6 +129,17 @@ namespace OutlookAI.Core.Services
         /// scope, and a compatible store scope: the exact store entry, or the all-stores
         /// entry (whose items the caller filters down by store display name - sound only
         /// because every store gets the identical default folder set).
+        /// <para>
+        /// "The same window" now means the same window PER STORE
+        /// (<paramref name="perStoreBaseUtc"/>), and that is the whole of what the per-store
+        /// window change costs this cache. An all-stores entry is a BROAD sweep, and the
+        /// request it may serve is a NARROW one, so the question is whether the broad entry
+        /// covers the narrow request as well as a fresh sweep would: it does exactly when
+        /// its window FOR THAT STORE is the window the request would have opened. Comparing
+        /// the scalar base alone would have compared the fallback windows of two different
+        /// stores and reused a sweep taken over a span this store's frontier had already
+        /// moved past.
+        /// </para>
         /// </summary>
         public bool TryGet(
             DateTime baseGapStartUtc,
@@ -113,12 +147,14 @@ namespace OutlookAI.Core.Services
             string? folder,
             bool includeSubfolders,
             DateTime nowUtc,
-            out CachedSweep? cached)
+            out CachedSweep? cached,
+            IReadOnlyDictionary<string, DateTime>? perStoreBaseUtc = null)
         {
             lock (_lock)
             {
                 Prune(nowUtc);
-                if (TryGetUsable(KeyFor(store, folder, includeSubfolders), baseGapStartUtc, nowUtc, out cached))
+                if (TryGetUsable(
+                    KeyFor(store, folder, includeSubfolders), baseGapStartUtc, perStoreBaseUtc, nowUtc, out cached))
                 {
                     return true;
                 }
@@ -128,9 +164,17 @@ namespace OutlookAI.Core.Services
                 // across folder scopes - a folder-scoped sweep covers one subtree only.
                 // The default folder set is shallow by construction, so an all-stores
                 // entry may serve only a shallow-equivalent request.
+                //
+                // A store-scoped request has ONE window - its own store's - so the entry is
+                // usable when it swept that store from the same instant, whatever windows it
+                // used for the others.
                 if (store != null && folder == null
-                    && TryGetUsable(KeyFor(null, null, includeSubfolders), baseGapStartUtc, nowUtc, out cached))
+                    && _entries.TryGetValue(KeyFor(null, null, includeSubfolders), out CachedSweep? broad)
+                    && broad != null
+                    && IsFresh(broad, nowUtc)
+                    && broad.WindowFor(store) == baseGapStartUtc)
                 {
+                    cached = broad;
                     return true;
                 }
 
@@ -147,7 +191,8 @@ namespace OutlookAI.Core.Services
             bool includeSubfolders,
             ComSweepResult result,
             long elapsedMs,
-            DateTime nowUtc)
+            DateTime nowUtc,
+            IReadOnlyDictionary<string, DateTime>? perStoreBaseUtc = null)
         {
             if (result == null)
             {
@@ -162,8 +207,8 @@ namespace OutlookAI.Core.Services
             lock (_lock)
             {
                 Prune(nowUtc);
-                _entries[KeyFor(store, folder, includeSubfolders)] =
-                    new CachedSweep(result, baseGapStartUtc, store, folder, includeSubfolders, nowUtc, elapsedMs);
+                _entries[KeyFor(store, folder, includeSubfolders)] = new CachedSweep(
+                    result, baseGapStartUtc, store, folder, includeSubfolders, nowUtc, elapsedMs, perStoreBaseUtc);
             }
         }
 
@@ -190,13 +235,18 @@ namespace OutlookAI.Core.Services
                 + "\u001F" + (includeSubfolders ? "1" : "0");
         }
 
-        private bool TryGetUsable(string key, DateTime baseGapStartUtc, DateTime nowUtc, out CachedSweep? cached)
+        private bool TryGetUsable(
+            string key,
+            DateTime baseGapStartUtc,
+            IReadOnlyDictionary<string, DateTime>? perStoreBaseUtc,
+            DateTime nowUtc,
+            out CachedSweep? cached)
         {
             if (_entries.TryGetValue(key, out CachedSweep? entry)
                 && entry != null
                 && entry.BaseGapStartUtc == baseGapStartUtc
-                && nowUtc - entry.FetchedAtUtc <= _timeToLive
-                && nowUtc >= entry.FetchedAtUtc)
+                && SameWindows(entry.PerStoreBaseUtc, perStoreBaseUtc)
+                && IsFresh(entry, nowUtc))
             {
                 cached = entry;
                 return true;
@@ -205,6 +255,67 @@ namespace OutlookAI.Core.Services
             cached = null;
             return false;
         }
+
+        private bool IsFresh(CachedSweep entry, DateTime nowUtc)
+        {
+            return nowUtc - entry.FetchedAtUtc <= _timeToLive && nowUtc >= entry.FetchedAtUtc;
+        }
+
+        /// <summary>
+        /// Whether two per-store window sets are the same sweep. Equality, not containment:
+        /// a differing entry means one store's frontier moved, and the existing rule is that
+        /// a frontier advance invalidates so the cache cannot outlive what the index has
+        /// ingested. Containment would keep a wider-but-older sweep alive across exactly that
+        /// event.
+        /// </summary>
+        private static bool SameWindows(
+            IReadOnlyDictionary<string, DateTime> entry, IReadOnlyDictionary<string, DateTime>? request)
+        {
+            int requestCount = request?.Count ?? 0;
+            if (entry.Count != requestCount)
+            {
+                return false;
+            }
+
+            if (requestCount == 0)
+            {
+                return true;
+            }
+
+            foreach (KeyValuePair<string, DateTime> pair in request!)
+            {
+                if (!entry.TryGetValue(pair.Key, out DateTime since) || since != pair.Value)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// A private, case-insensitive copy: the caller's map may be mutated after the call,
+        /// and store display names are matched case-insensitively wherever they are compared.
+        /// </summary>
+        private static IReadOnlyDictionary<string, DateTime> Freeze(IReadOnlyDictionary<string, DateTime>? source)
+        {
+            if (source == null || source.Count == 0)
+            {
+                return EmptyWindows;
+            }
+
+            Dictionary<string, DateTime> copy =
+                new Dictionary<string, DateTime>(source.Count, StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, DateTime> pair in source)
+            {
+                copy[pair.Key] = pair.Value;
+            }
+
+            return copy;
+        }
+
+        private static readonly Dictionary<string, DateTime> EmptyWindows =
+            new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 
         private void Prune(DateTime nowUtc)
         {
