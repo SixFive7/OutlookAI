@@ -176,20 +176,28 @@
   description-budget prompt written for another project; read it and act on what it asks for. Recorded
   here because auto-compaction was imminent when it was requested.
 
-- [ ] **`TryCreateDerivedDraft`'s cross-store retry is unguarded.** `MailService.cs:2169` re-attempts
+- [x] **DONE (`eee02f2`) - `TryCreateDerivedDraft`'s cross-store retry is unguarded.** It re-attempted
   draft creation across every store on `r == null` alone, while its sibling loop in `TryUpdateDraft`
-  (`MailService.cs:2501`) only retries on `error == "ItemNotFound"`. So a creation that failed for
-  some other reason is retried against store after store. Found 2026-08-18 while classifying which
-  session operations are safe to retry after a disconnect; left alone because tightening it silently
-  is the wrong move - it needs a decision about which failures should fan out and which should stop.
+  only retried on `error == "ItemNotFound"`. Tracing the token before changing it turned up the
+  opposite bug in that sibling: `TryUpdateDraft` and `TryDiscardDraft` never SET `"ItemNotFound"`, so
+  their cross-store retries were dead code and a draft in a non-default store answered with an opaque
+  COM code - `BuildDraftRefusal` even carries a written-out `case "ItemNotFound"` that could never
+  fire. All three draft paths now set the token at their `GetItemFromID` and nowhere else, which
+  tightens the first and revives the other two, and the rule is single-sourced as pure
+  `MailService.ShouldSearchOtherStores` / `KeepSearchingStores` because the two loops disagreed only
+  because it was written twice. **Still open, deliberately:** four other loops (`TryReadItem`,
+  `TryDisplayItem`, `TrySaveAttachment`, `TryGetSendableDraftState`, `TryGetMailInfo`) still retry on
+  `r == null` alone. Three are read-only; `TryDisplayItem` opens a window and `TrySaveAttachment`
+  writes a file, and both are classified MUTATING. Their COM layers do not set the token either, so
+  tightening them without that groundwork would break them exactly as `TryUpdateDraft` was broken.
 
-- [ ] **One door back to the cross-store attribution defect.** `MailService.ApplySweepCounters` falls
-  back to whole-sweep totals when a store is named but `result.PerStore` is empty - which is the
-  pre-`c515565` behaviour that let one account's unreadable folder degrade another account's search.
-  Unreachable today (both `ComSweepResult` construction sites populate `PerStore`, and an empty
-  bucket list means nothing was walked at all), so it is a latent seam rather than a live defect -
-  but it is the one path that reopens a closed defect, and it deserves either a guard or a comment
-  saying why it cannot happen.
+- [x] **DONE (`eee02f2`) - One door back to the cross-store attribution defect.**
+  `MailService.ApplySweepCounters` fell back to whole-sweep totals when a store was named but
+  `result.PerStore` was empty. Guarded rather than commented: `store != null` alone now decides, a
+  missing entry answers zero, and zeroes make `DescribeCoverageGaps` raise `nothing_swept` with
+  `degraded: true`. That is the loud, safe direction - "no coverage attributable to this store"
+  instead of lending it another account's - and a future third construction site that forgets
+  `PerStore` fails visibly instead of silently reopening `c515565`. Pinned in T1.
 
 - [ ] **A useful error message never reaches the caller.** An `exhaustive` search naming a
   folder that does not exist comes back as an opaque
