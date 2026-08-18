@@ -168,6 +168,36 @@ That is the price of `notNeeded` no longer lying on unindexed stores. *Recommend
 mitigation trades a bounded window of completeness for latency, which is the trade the standing rule
 forbids.
 
+## Q8 - The three search tiers disagree about what counts as "mail"
+
+Audit gap B3, and the last item in the top ten I have not touched, because it is a product decision
+rather than a defect.
+
+**Primer.** A search can be answered by three different engines and they admit different item classes:
+
+- **Index tier**: requires `System.Kind` to include `email`. Meeting requests index as `calendar`, so
+  they are excluded.
+- **Freshness sweep**: no class filter at all. It returns whatever is in the folder.
+- **Exhaustive scan**: `PR_MESSAGE_CLASS like 'IPM.Note%'`, so no meeting requests, and **no NDRs or
+  read receipts** (`REPORT.IPM.Note.*`), no `IPM.Post`, no `IPM.Sharing`.
+
+**Why it matters.** The same query gives different item sets depending on which tier answered, and
+nothing in the payload says so. A meeting request found by the sweep today vanishes once it is
+indexed. The mode that exists for correctness - exhaustive - is the one blind to bounce messages, so
+"did my mail bounce?" is unanswerable exactly where a user would go looking hardest.
+
+**Options.** *(a)* Make all three admit the same set, whatever it is - one rule, one place.
+*(b)* Keep the tiers different but REPORT the difference, so an agent knows a result came from a tier
+that excludes meeting requests. *(c)* Define "mail" narrowly and consistently (`IPM.Note` plus
+reports) and exclude calendar items everywhere. *(d)* Leave it.
+
+**Recommendation.** *(a)*, with the set including NDRs and read receipts, because those are mail a
+user asks about by name. But which classes count is your call, not mine - it changes what every
+search returns, and I would rather ask than pick. `RowsDropped` already exists in the index layer and
+reaches no payload, so whatever is decided, the count of what a tier refused should surface.
+
+**Default if unanswered.** Leave it. Recorded in `Docs/completeness-gaps.md` as B3, unclosed.
+
 ## Decision log
 
 Answers move here with the date and the reasoning, so a future reader sees not just what was chosen
