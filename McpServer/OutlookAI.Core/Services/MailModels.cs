@@ -568,6 +568,28 @@ namespace OutlookAI.Core.Services
     /// </summary>
     public sealed class IndexTierInfo
     {
+        /// <summary>
+        /// True when the index tier did not run AT ALL because the requested <c>store</c>
+        /// exists in the Outlook profile but the local index has no scope that addresses it
+        /// (a PST, an archive-only data file, a fresh install, indexing off, excluded or
+        /// still building). Null on every other search.
+        /// <para>
+        /// It exists because <see cref="RowsScanned"/> 0 cannot say this. "The statement ran
+        /// and matched nothing" and "no statement ran, and none could have" lead to different
+        /// next moves: the first means there is no such mail, the second means this answer
+        /// rests on the freshness sweep alone and <c>exhaustive:true</c> is the way to read
+        /// the store in full. <c>sweep.storesWithoutIndex</c> names the store, and this says
+        /// the tier was skipped rather than merely empty.
+        /// </para>
+        /// <para>
+        /// The alternative to skipping was to run the query with NO scope, which is what
+        /// <c>thread</c> does with an unresolvable store. Rejected here: <c>search</c>'s
+        /// <c>store</c> is a filter on the result set, not a lookup hint, so widening it
+        /// would return another account's mail under a scope the caller chose.
+        /// </para>
+        /// </summary>
+        public bool? StoreNotIndexed { get; set; }
+
         /// <summary>Rows the SQL statement returned, before admission (the denominator of <see cref="RowsDropped"/>).</summary>
         public int RowsScanned { get; set; }
 

@@ -120,7 +120,14 @@ public static class OutlookTools
             + "foldersScanned/foldersSkipped plus advice for partial coverage. Use it when the index looks stale "
             + "or wrong, or when completeness matters more than speed.")]
         bool exhaustive = false,
-        [Description("Store display name to search in (see list_accounts). Omit for all stores (required when exhaustive=true).")] string? store = null,
+        [Description("Store display name to search in (see list_accounts). Omit for all stores (required when "
+            + "exhaustive=true). The scope is honoured exactly and never silently widened. A store the profile has "
+            + "but Windows Search has not indexed (a PST, a fresh install, indexing off or still building) still "
+            + "searches: the index tier is skipped, the freshness sweep is the only tier, and the answer says so "
+            + "with index.storeNotIndexed=true, sweep.storesWithoutIndex naming it, coverageGaps no_index_frontier "
+            + "and degraded=true - only the recent window is covered, so use exhaustive=true with folder and/or "
+            + "after to read that store in full. A name the profile does not have is refused, and the error lists "
+            + "the stores that do exist.")] string? store = null,
         [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Requires "
             + "store. Includes its subfolders unless include_subfolders=false. Delegate/shared mailboxes are "
             + "indexed WITHOUT their folder nesting, so a folder scope there matches by folder NAME: the search "

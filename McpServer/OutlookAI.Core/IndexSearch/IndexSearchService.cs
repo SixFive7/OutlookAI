@@ -30,6 +30,31 @@ namespace OutlookAI.Core.IndexSearch
         }
 
         /// <summary>
+        /// The result of a query that was never SENT, for a caller that must skip the index
+        /// tier rather than run it wrong - today only a store the profile has and the index
+        /// cannot address (<see cref="OutlookAI.Core.Services.FolderScopeKind.StoreNotIndexed"/>).
+        /// <para>
+        /// Every counter is zero because nothing happened, which is the honest reading:
+        /// <see cref="RowsScanned"/> 0 with <see cref="Sql"/> empty says no statement ran,
+        /// where a fabricated non-empty statement would read as one that ran and matched
+        /// nothing. <see cref="Provider"/> has no "none" member and nothing on this path
+        /// reads it; the empty statement beside it is what tells a diagnostic reader which
+        /// case this is.
+        /// </para>
+        /// </summary>
+        internal static IndexSearchResult NotQueried()
+        {
+            return new IndexSearchResult(
+                Array.Empty<IndexHit>(),
+                elapsedMilliseconds: 0,
+                sql: string.Empty,
+                provider: IndexProviderKind.OleDb,
+                rowsScanned: 0,
+                rowsDropped: 0,
+                candidatesExhausted: false);
+        }
+
+        /// <summary>
         /// Mapped hits, newest first, with rows the ordering cannot rank last
         /// (<see cref="IndexOrderGuard.RankableFirst"/>) rather than wherever the provider's
         /// NULL collation put them.
@@ -101,6 +126,18 @@ namespace OutlookAI.Core.IndexSearch
         {
             NewestIndexedReceivedUtc = newestIndexedReceivedUtc;
             ClockUtc = clockUtc;
+        }
+
+        /// <summary>
+        /// The report for a scope the index provably holds no mail for, WITHOUT probing -
+        /// used where probing is impossible rather than merely expensive: a store the
+        /// profile has and the index cannot address has no scope to probe, and the only
+        /// probe available (the profile-wide one) would answer about OTHER stores. Same
+        /// shape as a probe that ran and found nothing, because that is the same fact.
+        /// </summary>
+        internal static IndexStalenessReport NoRows()
+        {
+            return new IndexStalenessReport(null, DateTime.UtcNow);
         }
 
         /// <summary>Newest System.Message.DateReceived in the (scoped) index, UTC; null if no rows.</summary>

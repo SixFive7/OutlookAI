@@ -267,6 +267,18 @@
         return a short answer flagged with `index.candidatesExhausted` - loud, but the guarantee
         then rests on a query that never runs.
 
+- [ ] **Re-run the ten store-scope probes on the unindexed-PST machine.** The A4 fix (a `store`
+  scope resolved against the profile Outlook has rather than against the index) is pinned in T1
+  against stand-in index clients whose store catalog is empty, and against one that omits a store
+  the profile has - both fixtures the suite had never had, which is why the defect shipped. What
+  T1 cannot exercise is the real chain that produced the empty catalog in the first place: a live
+  `DiscoverStoreScopes` over a SystemIndex that holds nothing for the profile, and the COM store
+  list underneath it. Re-run the same ten probes that found this (the Hyper-V VM: one PST, not
+  indexed, `WSearch` running, Outlook connected) and confirm probe 14 now answers with
+  `index.storeNotIndexed: true` plus `no_index_frontier`, probe 15 still refuses and names the
+  real store, and probes 11/12/13/17/18/19 are unchanged. Read-only: `search`, `list_folders` and
+  `list_accounts` only, no mailbox writes.
+
 - [ ] **An answer too big to frame kills the COM host instead of being refused.** Found by the
   boundary audit on 2026-08-18; not fixed, because the fix is not the small one it looks like.
 

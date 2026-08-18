@@ -314,12 +314,33 @@ namespace OutlookAI.Core.Services
         /// inject short-TTL stores; production uses the 120 s default).
         /// </summary>
         public MailService(IComGateway gateway, SendConfirmationTokens? sendTokens)
+            : this(gateway, sendTokens, null)
+        {
+        }
+
+        /// <summary>
+        /// Creates the service over an explicit index client. The second test seam beside
+        /// <see cref="IComGateway"/>, and it exists for a defect that shipped BECAUSE it was
+        /// missing: every test until 2026-08-18 ran against an index that knew about every
+        /// store, so nothing exercised a profile whose store catalog is empty or short - the
+        /// ordinary shape of a PST-only machine, a fresh install, or one where indexing is
+        /// off or still building - and a store-scoped search failed outright on all of them.
+        /// <para>
+        /// <paramref name="indexClient"/> null keeps production behaviour: the real provider,
+        /// attached lazily on first use so nothing touches Windows Search until a search does.
+        /// </para>
+        /// </summary>
+        public MailService(IComGateway gateway, SendConfirmationTokens? sendTokens, IIndexClient? indexClient)
         {
             _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
             _sendTokens = sendTokens ?? new SendConfirmationTokens();
-            _index = new Lazy<IndexSearchService>(
-                () => IndexSearchService.CreateDefault(out _providerReport),
-                System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
+            _index = indexClient == null
+                ? new Lazy<IndexSearchService>(
+                    () => IndexSearchService.CreateDefault(out _providerReport),
+                    System.Threading.LazyThreadSafetyMode.ExecutionAndPublication)
+                : new Lazy<IndexSearchService>(
+                    () => new IndexSearchService(indexClient),
+                    System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
         }
 
         /// <summary>Creates the default production instance (autostart per D17 enabled).</summary>
@@ -457,16 +478,32 @@ namespace OutlookAI.Core.Services
             }
 
             FolderScopeResolution? folderScope = null;
-            string? scope = null;
             if (request.Store != null)
             {
                 folderScope = ResolveFolderScope(request.Store, request.Folder, request.IncludeSubfolders);
-                scope = folderScope.Scope;
             }
+
+            // A store the PROFILE has but the index cannot address (a PST, an archive-only
+            // data file, indexing off or still building) has no SCOPE to query with, and the
+            // three things one could do about that are not equivalent:
+            //
+            //   REFUSE   - what this used to do, and wrong: the sweep tier can answer, and
+            //              an unscoped search on the same profile already answers.
+            //   WIDEN    - what 'thread' does with its store, and wrong HERE: thread's store
+            //              only makes a lookup faster (the conversation is pinned by id
+            //              either way), whereas search's 'store' decides WHICH MAIL MAY COME
+            //              BACK. Widening it returns another account's mail under a scope the
+            //              caller chose, which is a wrong answer rather than a slow one.
+            //   PROCEED  - skip the index tier, sweep the store, report both. This.
+            //
+            // The reporting needs nothing new: no_index_frontier, sweep.storesWithoutIndex,
+            // degraded and freshness:"partial" are exactly this state, and they already fire
+            // on the unscoped path for the same store.
+            bool indexAddressable = folderScope == null || folderScope.IndexAddressable;
 
             IndexQuery query = new IndexQuery
             {
-                Scope = scope,
+                Scope = folderScope?.Scope,
                 FolderPathsAnyOf = folderScope?.FolderPaths,
                 Terms = terms.Count > 0 ? terms : null,
                 SearchIn = request.SearchIn,
@@ -488,14 +525,24 @@ namespace OutlookAI.Core.Services
                 Top = top + 1,
             };
 
-            IndexSearchResult indexResult = _index.Value.Search(query, SearchIndexTimeoutSeconds);
+            IndexSearchResult indexResult = indexAddressable
+                ? _index.Value.Search(query, SearchIndexTimeoutSeconds)
+                : IndexSearchResult.NotQueried();
 
             // The frontier is measured over the SCOPE being searched, not over the profile
             // (StalenessScopeFor): it sets this search's sweep window, and a busy store's
             // frontier would otherwise pin a quiet store's window to the last few minutes
             // while that store's own index lagged by hours.
-            IndexStalenessReport staleness =
-                _index.Value.GetStaleness(StalenessScopeFor(folderScope), SearchIndexTimeoutSeconds);
+            //
+            // An unaddressable store is not probed AT ALL, and falling back to the profile
+            // probe would be the same defect one level down: the frontier of the stores that
+            // ARE indexed says nothing about this one, and handing it their window would give
+            // the store that needs the widest sweep on the profile the narrowest one - and
+            // clear indexFrontierMissing while doing it. A no-rows report is the truth, and it
+            // is what routes this search to the fallback window and the honest flags.
+            IndexStalenessReport staleness = indexAddressable
+                ? _index.Value.GetStaleness(StalenessScopeFor(folderScope), SearchIndexTimeoutSeconds)
+                : IndexStalenessReport.NoRows();
 
             bool truncated = indexResult.Hits.Count > top;
             List<HitSummary> summaries = new List<HitSummary>(Math.Min(indexResult.Hits.Count, top));
@@ -664,6 +711,7 @@ namespace OutlookAI.Core.Services
                     RowsScanned = indexResult.RowsScanned,
                     RowsDropped = indexResult.RowsDropped,
                     CandidatesExhausted = indexResult.CandidatesExhausted ? true : (bool?)null,
+                    StoreNotIndexed = indexAddressable ? (bool?)null : true,
                 },
                 Scope = DescribeSearchScope(folderScope, request),
                 Staleness = new StalenessInfo
@@ -879,7 +927,14 @@ namespace OutlookAI.Core.Services
         private void AddUnresolvedFolderAdvice(
             List<string> advice, FolderScopeResolution? folderScope, SearchRequest request, int hitCount)
         {
-            if (hitCount > 0 || folderScope == null || folderScope.RequestedFolder == null)
+            // Not for a store the index cannot address: the guard's whole question is "did
+            // the FOLDER bound match nothing while the STORE matched something", and with no
+            // index tier there is no folder bound to have failed. Both probes would also run
+            // on a null scope, i.e. profile-wide, and answer about other stores entirely.
+            if (hitCount > 0
+                || folderScope == null
+                || folderScope.RequestedFolder == null
+                || !folderScope.IndexAddressable)
             {
                 return;
             }
@@ -1205,10 +1260,20 @@ namespace OutlookAI.Core.Services
                 + "inferred it rather than reading it). Say which is which if you relay a count.";
         }
 
-        /// <summary>Compact scope block; present only for folder-scoped searches.</summary>
+        /// <summary>
+        /// Compact scope block: present for a folder-scoped search, and for a store whose
+        /// scope the index cannot address - the two cases where what was COVERED differs from
+        /// what was asked for.
+        /// </summary>
         private static SearchScopeInfo? DescribeSearchScope(FolderScopeResolution? folderScope, SearchRequest request)
         {
-            if (folderScope == null || folderScope.RequestedFolder == null)
+            // A store scope with no folder is ordinarily uninteresting - it covers exactly
+            // what was asked for - so it stays out of the payload. StoreNotIndexed does not:
+            // there the shape of the answer changed (one tier instead of two), and a block
+            // that appeared only when a folder happened to be named would report that on
+            // some calls and not others.
+            if (folderScope == null
+                || (folderScope.RequestedFolder == null && folderScope.Kind != FolderScopeKind.StoreNotIndexed))
             {
                 return null;
             }
@@ -1219,6 +1284,10 @@ namespace OutlookAI.Core.Services
                 FolderScopeKind.PrimaryNonRecursive => "folder_only",
                 FolderScopeKind.DelegateFlat => "delegate_folders",
                 FolderScopeKind.DelegateWidened => "delegate_store_widened",
+                // Reported even when a folder WAS named: no index folder scope was built,
+                // so calling this "folder" or "folder_only" would describe a narrowing that
+                // never happened. The folder still bounds the sweep, and is still echoed.
+                FolderScopeKind.StoreNotIndexed => "store_not_indexed",
                 _ => "store",
             };
 
@@ -2472,6 +2541,13 @@ namespace OutlookAI.Core.Services
                 try
                 {
                     scope = ResolveScope(effectiveStore, null);
+
+                    // The second way to get no scope, added with the unindexed-store fix: a
+                    // store the profile HAS and the index cannot address resolves to null
+                    // instead of throwing. The lookup then widens exactly as an unknown name
+                    // does, so it must be reported exactly as one - reading the flag off the
+                    // catch alone would have made this half silent again.
+                    scopeWidened = scope == null;
                 }
                 catch (ArgumentException)
                 {
@@ -2749,9 +2825,13 @@ namespace OutlookAI.Core.Services
             List<string> advice = new List<string>();
             if (scopeWidened)
             {
-                advice.Add("The store '" + (store ?? "?") + "' did not resolve to an index scope, so this conversation was "
-                    + "looked up across the WHOLE profile - the answer may include members from another account. "
-                    + "Check the name with list_accounts.");
+                // Two causes, one sentence, since 2026-08-18: the name may be wrong, or the
+                // store may be real and simply not in the local index (a PST, indexing off).
+                // Naming only the first told a caller with a correct name to go and check it.
+                advice.Add("The store '" + (store ?? "?") + "' did not resolve to an index scope - the name may be "
+                    + "wrong, or the store may be one Windows Search does not index - so this conversation was "
+                    + "looked up across the WHOLE profile and the answer may include members from another account. "
+                    + "list_accounts settles which: it lists the names, and reports inLocalIndex per store.");
             }
 
             if (freshness == FreshMerge.FreshnessIndexOnly)
@@ -5855,7 +5935,12 @@ namespace OutlookAI.Core.Services
             return false;
         }
 
-        private string ResolveScope(string store, string? folder)
+        /// <summary>
+        /// The index SCOPE for a whole store, or null when the store exists in the profile
+        /// but the index cannot address it. Null is an ANSWER here, not a failure - the
+        /// caller decides what an unaddressable store means for its own tool.
+        /// </summary>
+        private string? ResolveScope(string store, string? folder)
         {
             return ResolveFolderScope(store, folder, includeSubfolders: true).Scope;
         }
@@ -5919,10 +6004,61 @@ namespace OutlookAI.Core.Services
                 }
             }
 
-            string known = string.Join(", ", catalog.Select(s => s.StoreDisplayName));
-            throw new ArgumentException(
-                "Store '" + store + "' was not found in the local index. Known stores: " + known
-                + ". Use list_accounts for the full store list.");
+            // NOTHING IN THE INDEX ADDRESSES THIS STORE. That is a fact about the INDEX, and
+            // it used to be reported as if it were a fact about the profile: the refusal
+            // named the index catalog as "Known stores", which on a profile of unindexed
+            // data files is EMPTY, and sent the caller to list_accounts - which returns the
+            // very name that just failed. A real store and a typo were the same message.
+            //
+            // So the verdict comes from Outlook, which is the profile the caller is actually
+            // searching, through the same pure classifier list_folders refuses with (gap G1).
+            // Fetched only here, on the failed lookup, and from a 5-minute cache, so an
+            // ordinary store-scoped search pays nothing for it.
+            IReadOnlyList<string>? profileStores = TryGetProfileStoreNames();
+            if (profileStores == null)
+            {
+                // Outlook is unreachable, so the two cases genuinely cannot be told apart
+                // right now. Say that, rather than picking one and sounding certain.
+                throw new ArgumentException(
+                    "Store '" + store + "' is not in the local search index, and Outlook could not be reached to "
+                    + "check whether the profile has it - so a store that exists but is not indexed cannot be told "
+                    + "apart from a misspelled name. Check outlook_health, then retry; search without 'store' works "
+                    + "meanwhile.",
+                    nameof(store));
+            }
+
+            string? refusal = DescribeUnresolvedFolderStore(store, profileStores);
+            if (refusal != null)
+            {
+                throw new ArgumentException(refusal, nameof(store));
+            }
+
+            // Outlook HAS it; only the index does not. The search proceeds with the index
+            // tier skipped - never widened, because 'store' filters which mail may come back
+            // and a widened scope would answer with another store's mail.
+            return FolderScopeResolver.ForUnindexedStore(folder);
+        }
+
+        /// <summary>
+        /// The store display names OUTLOOK reports, or null when Outlook could not be
+        /// reached. The same list <c>list_folders</c> refuses an unknown store against
+        /// (gap G1), from the same <see cref="StoreDetailsCacheTtl"/> cache.
+        /// <para>
+        /// Null is a THIRD answer, not an empty list: "the profile has no stores" and "we
+        /// could not ask" lead to different messages, and collapsing them would let a wedged
+        /// Outlook produce a confident "that store does not exist".
+        /// </para>
+        /// </summary>
+        private IReadOnlyList<string>? TryGetProfileStoreNames()
+        {
+            try
+            {
+                return _gateway.Run(s => GetStoreDetails(s)).Select(d => d.DisplayName).ToList();
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                return null;
+            }
         }
 
         /// <summary>

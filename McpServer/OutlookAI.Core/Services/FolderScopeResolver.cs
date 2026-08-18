@@ -32,6 +32,15 @@ namespace OutlookAI.Core.Services
         /// always reported.
         /// </summary>
         DelegateWidened = 4,
+
+        /// <summary>
+        /// The store exists in the PROFILE but the local index has no scope that addresses
+        /// it, so there is nothing to query the index tier with. The freshness sweep covers
+        /// the store on its own and the answer says so; see
+        /// <see cref="FolderScopeResolver.ForUnindexedStore"/> for why this is a resolution
+        /// rather than an error.
+        /// </summary>
+        StoreNotIndexed = 5,
     }
 
     /// <summary>
@@ -42,8 +51,8 @@ namespace OutlookAI.Core.Services
     {
         internal FolderScopeResolution(
             FolderScopeKind kind,
-            string scope,
-            string storeScope,
+            string? scope,
+            string? storeScope,
             IReadOnlyList<string>? folderPaths,
             bool isDelegateStore,
             string? requestedFolder,
@@ -60,15 +69,27 @@ namespace OutlookAI.Core.Services
             FolderTreeUnavailable = folderTreeUnavailable;
         }
 
-        /// <summary>The SCOPE predicate value.</summary>
-        public string Scope { get; }
+        /// <summary>
+        /// The SCOPE predicate value, or null when the index cannot address this store at
+        /// all (<see cref="FolderScopeKind.StoreNotIndexed"/>).
+        /// <para>
+        /// NULLABLE ON PURPOSE, and it is the whole point of that kind. Null here means
+        /// "do not query the index tier"; it must never be read as "query it without a
+        /// SCOPE", because an unscoped query answers a store-scoped request with the whole
+        /// profile's mail. Callers branch on <see cref="IndexAddressable"/> rather than
+        /// null-coalescing this to anything.
+        /// </para>
+        /// </summary>
+        public string? Scope { get; }
 
         /// <summary>
         /// The whole-store SCOPE this folder lives under. The zero-row guard falls back to
         /// it: rows here but none under the folder bound means the FOLDER did not resolve,
-        /// which is a different answer from "the folder holds no match".
+        /// which is a different answer from "the folder holds no match". Null under
+        /// <see cref="FolderScopeKind.StoreNotIndexed"/>, where there is no such scope and
+        /// the guard does not run.
         /// </summary>
-        public string StoreScope { get; }
+        public string? StoreScope { get; }
 
         /// <summary>Folder-path equalities ORed with the scope; null = recursive scope only.</summary>
         public IReadOnlyList<string>? FolderPaths { get; }
@@ -94,6 +115,13 @@ namespace OutlookAI.Core.Services
 
         /// <summary>True when the query covers more than was asked and the caller must say so.</summary>
         public bool Widened => Kind == FolderScopeKind.DelegateWidened;
+
+        /// <summary>
+        /// Whether the index tier can be asked about this scope at all. False only for
+        /// <see cref="FolderScopeKind.StoreNotIndexed"/>, where the caller must SKIP the
+        /// index query rather than run it unscoped, and report that it did.
+        /// </summary>
+        public bool IndexAddressable => Kind != FolderScopeKind.StoreNotIndexed;
     }
 
     /// <summary>
@@ -172,6 +200,54 @@ namespace OutlookAI.Core.Services
             return new FolderScopeResolution(
                 FolderScopeKind.PrimaryNonRecursive, scope, storePrefix, new[] { displayPath },
                 false, normalized, null, false);
+        }
+
+        /// <summary>
+        /// Resolves a store the PROFILE has and the local index cannot address: a PST, an
+        /// archive-only data file, a fresh install, a machine where Windows Search is off,
+        /// excluded or still building. There is no scope and no folder bound, because the
+        /// index holds nothing to bound.
+        /// <para>
+        /// ⚠ THIS EXISTS BECAUSE STORE SCOPE WAS RESOLVED AGAINST THE INDEX RATHER THAN
+        /// AGAINST OUTLOOK (measured 2026-08-18, clean machine, single PST profile not in
+        /// the Windows Search index). The store answered <c>list_folders</c>, answered an
+        /// exhaustive search and was swept by an UNSCOPED search - which degraded honestly
+        /// and said so - yet every non-exhaustive search naming it failed outright with
+        /// "Store 'X' was not found in the local index. Known stores: ", an empty
+        /// enumeration whose remedy pointed at <c>list_accounts</c>, which returns the very
+        /// name that just failed. A whole feature dead on an ordinary configuration.
+        /// </para>
+        /// <para>
+        /// It resolves rather than throwing because the question "which mail is in this
+        /// store" has a true answer that one tier can still produce. The index contributes
+        /// nothing, the freshness sweep covers the store, and the payload reports the hole
+        /// through machinery that already existed for exactly this state
+        /// (<c>no_index_frontier</c>, <c>sweep.storesWithoutIndex</c>, <c>degraded</c>) -
+        /// the same state an unscoped search on the same profile has always reported.
+        /// </para>
+        /// <para>
+        /// A store that is in NEITHER the index nor the profile still throws, from the
+        /// caller: that is the case this cannot be reached for, and telling the two apart
+        /// is why the caller asks Outlook before it gets here.
+        /// </para>
+        /// </summary>
+        /// <param name="folder">
+        /// The store-relative folder the caller asked for, kept so the payload can report
+        /// what was requested. It bounds the SWEEP, which the caller drives from the request
+        /// directly; it cannot bound an index query that is not being made, which is why no
+        /// <c>include_subfolders</c> is taken here.
+        /// </param>
+        public static FolderScopeResolution ForUnindexedStore(string? folder)
+        {
+            return new FolderScopeResolution(
+                FolderScopeKind.StoreNotIndexed,
+                scope: null,
+                storeScope: null,
+                folderPaths: null,
+                isDelegateStore: false,
+                requestedFolder: NormalizeFolder(folder),
+                collidingLeafNames: null,
+                folderTreeUnavailable: false);
         }
 
         /// <summary>
@@ -280,9 +356,12 @@ namespace OutlookAI.Core.Services
                 : "the subtree has more than " + DelegateFolderOrSetCap.ToString(CultureInfo.InvariantCulture)
                     + " folders, more than one index query can match at once";
 
+            // Only a DelegateWidened resolution reaches here, and that kind always carries
+            // the delegate root as its scope - so the fallback is unreachable rather than a
+            // guess about what an unindexed store would be called.
             return "Delegate mailboxes are indexed WITHOUT their folder nesting, so subfolders of '"
                 + resolution.RequestedFolder + "' can only be covered by listing them individually - and "
-                + reason + ". The search was WIDENED to the whole '" + LeafOf(resolution.Scope)
+                + reason + ". The search was WIDENED to the whole '" + LeafOf(resolution.Scope ?? string.Empty)
                 + "' mailbox instead of narrowing it silently: results may include mail from outside that folder. "
                 + "Narrow with include_subfolders:false (that folder only), or search the subfolder directly.";
         }
