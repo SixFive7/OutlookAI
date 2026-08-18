@@ -58,6 +58,46 @@
   - **Timers that outlive what they poll**, and any that are never disposed.
   - **Intervals chosen once and never revisited** against what they are actually waiting for.
 
+- [ ] **Live tier: a test hangs, and an aborted run leaves artifacts behind. Read this before
+      the next live run.** (2026-08-18, ~03:00-03:45)
+
+  **State left on the machine:** 7 items tagged `[OutlookAI-McpTest]` remain in the
+  `telefonie@xxlnet.nl` hub - **6 in Drafts, 1 in Outbox** - found by a read-only `search` after
+  the run was stopped. They are inert: drafts sit there, and the Outbox item is a self-addressed
+  test seed, so the worst case is a test mail arriving in the test mailbox. **The next successful
+  live run's post-run sweep covers Drafts and Outbox and will delete them** - that is the
+  sanctioned cleanup path and it needs no special handling. They were NOT removed by hand: the
+  shipped tools cannot (`discard_draft` only touches drafts from its own session, `move_mail`
+  refuses Outbox and Deleted Items), and the safety envelope forbids ad-hoc deletion.
+
+  **What happened.** `LiveDisconnectRecoveryTests.OutlookExit_ReleasesHeldRefsInBackground_
+  HealthProbes_GatewayReattaches` ran for **22.5 minutes** and was still going. Outlook had been
+  quit and restarted (uptime confirmed it), so the test got past the exit it drives and then
+  waited on a condition that never became true. The run was stopped rather than left overnight.
+  Stopping it is what left the artifacts: the teardown sweep never ran. **That is the lesson worth
+  keeping - an aborted live run has no sweep, so the mailbox state it leaves is whatever the last
+  test created.**
+
+  **Then the cleanup attempt hung too.** A short subset (`FullyQualifiedName~LiveSweepScope`,
+  about a minute earlier the same night) sat for **10 minutes at fixture setup**, before any test
+  ran and without ever spawning a COM host. So the second hang is in the fixture's own COM path,
+  not in the disconnect test.
+
+  **What is NOT yet known, and should not be guessed at:** whether either hang is a regression
+  from that night's work (the coverage attribution, per-store staleness scoping, the not-needed
+  sweep verdict, the DASL date fix) or fallout from Outlook's automation being left in a bad state
+  by the first abort. Evidence against a regression: the same fixture ran clean at 106/107 earlier
+  that night, after the budget-composition work. Evidence for caution: nothing else changed on the
+  machine, and the second hang is in a path the first abort could plausibly have poisoned.
+
+  **Suggested first step:** restart Outlook cleanly, then run the short subset alone. If it passes,
+  the hangs were abort fallout and the disconnect test needs its own bound. If it still hangs at
+  fixture setup on a fresh Outlook, it is a real defect in the COM attach path and the diff to
+  bisect is small.
+
+  Diagnostic logs: `C:\Users\jori\Downloads\tmp-aitrace\live-run4.txt` (the 22-minute test, with
+  the long-running-test diagnostics that named it) and `cleanup-sweep.txt` (the fixture-setup hang).
+
 - [ ] **A useful error message never reaches the caller.** An `exhaustive` search naming a
   folder that does not exist comes back as an opaque
   `ComHostRemoteException: "Exception has been thrown by the target of an invocation."`
