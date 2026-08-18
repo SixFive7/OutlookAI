@@ -14,6 +14,12 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// raising it needs raising everywhere; five copies means four of them stay wrong and the
 /// suite goes flaky in whichever file was forgotten.
 /// </para>
+/// <para>
+/// A SIXTH copy was missed by that consolidation and proved the point: LiveMoveArchiveTests
+/// waited its own <c>120</c> seconds through a store walk, and a real round trip that took
+/// longer than two minutes failed a 17-minute live run. It now calls this helper - the copy
+/// is gone rather than synchronised, which is the only version of this fix that stays fixed.
+/// </para>
 /// </summary>
 internal static class LiveInboxArrival
 {

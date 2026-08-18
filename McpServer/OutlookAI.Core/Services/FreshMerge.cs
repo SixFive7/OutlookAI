@@ -55,6 +55,43 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public const string GapFoldersSkipped = "folders_skipped";
 
+        /// <summary>Whether a search's window leaves the freshness sweep anything to find.</summary>
+        public enum SweepWindowVerdict
+        {
+            /// <summary>Part of the requested window lies past the index frontier - sweep it.</summary>
+            Needed = 0,
+
+            /// <summary>
+            /// The requested window ends at or before the sweep would start, so the index
+            /// already covers all of it and a sweep could not add a single item.
+            /// </summary>
+            NotNeeded = 1,
+        }
+
+        /// <summary>
+        /// Whether the freshness sweep has anything to do for this request - the same
+        /// distinction <c>ClassifyDefaultFolder</c> makes between a folder that is ABSENT
+        /// and one that is UNREADABLE, one level up.
+        /// <para>
+        /// A search bounded by <c>before</c> to mail older than the index frontier cannot
+        /// be missing recent mail: there is no recent mail inside its window. Until this
+        /// existed, that case set <c>performed = false</c> - the value that means "the
+        /// sweep could not run" - so a search deliberately aimed at old mail was told it
+        /// was <c>degraded</c> and <c>index-only</c>, i.e. that it might be missing exactly
+        /// the mail its own bounds exclude.
+        /// </para>
+        /// <para>
+        /// The boundary is inclusive on purpose: at <c>before == gapStart</c> the window is
+        /// empty (<c>before</c> is exclusive), so there is still nothing to sweep.
+        /// </para>
+        /// </summary>
+        public static SweepWindowVerdict DecideSweepWindow(DateTime gapStartUtc, DateTime? beforeUtc)
+        {
+            return beforeUtc.HasValue && beforeUtc.Value <= gapStartUtc
+                ? SweepWindowVerdict.NotNeeded
+                : SweepWindowVerdict.Needed;
+        }
+
         /// <summary>
         /// Every way a sweep that RAN can still have covered less than its scope, decided
         /// in one pure place and pinned in T1 - the same shape as
@@ -146,6 +183,16 @@ namespace OutlookAI.Core.Services
         /// was withheld and the verdict stays <see cref="FreshnessLive"/> - unchanged from
         /// before this classification existed.
         /// </para>
+        /// <para>
+        /// A sweep that was NOT NEEDED (<see cref="SweepInfo.NotNeeded"/>) is
+        /// <see cref="FreshnessLive"/> for the same reason: the answer is not missing
+        /// anything a sweep could have found, which is precisely what these three values
+        /// exist to say. It is deliberately not a fourth value - <c>degraded</c> is what
+        /// the tool description tells an agent to relay and it must be absent here, while
+        /// a value no agent has been taught would read as a reason to doubt the answer.
+        /// The sweep block still says what happened: <c>performed: false</c> with
+        /// <c>notNeeded: true</c>.
+        /// </para>
         /// </summary>
         public static string ClassifyFreshness(SweepInfo? sweep)
         {
@@ -156,7 +203,7 @@ namespace OutlookAI.Core.Services
 
             if (!sweep.Performed)
             {
-                return FreshnessIndexOnly;
+                return sweep.NotNeeded == true ? FreshnessLive : FreshnessIndexOnly;
             }
 
             IReadOnlyList<string>? gaps = DescribeCoverageGaps(sweep);

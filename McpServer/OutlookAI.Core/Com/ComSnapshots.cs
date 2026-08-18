@@ -955,6 +955,46 @@ namespace OutlookAI.Core.Com
         public IReadOnlyList<string> CreatedFolderPaths { get; }
     }
 
+    /// <summary>
+    /// One store's share of a sweep's folder counters.
+    /// <para>
+    /// The swept-folder LIST has always been attributable (its entries are
+    /// <c>store/path</c>), the counters were not - and a cached all-stores sweep may serve
+    /// a store-scoped search (SweepCache), which then reported another store's unreadable
+    /// folder as this search's coverage gap. Since those counters drive the coverage codes
+    /// they also drive <c>degraded</c>, the one field the search tool tells an agent to
+    /// relay, so the mis-attribution was visible to the user.
+    /// </para>
+    /// </summary>
+    public sealed class ComStoreSweepCounters
+    {
+        /// <summary>Creates one store's counters.</summary>
+        public ComStoreSweepCounters(
+            string storeDisplayName, int foldersSwept, int foldersSkipped, int foldersFailed, int foldersAbsent)
+        {
+            StoreDisplayName = storeDisplayName;
+            FoldersSwept = foldersSwept;
+            FoldersSkipped = foldersSkipped;
+            FoldersFailed = foldersFailed;
+            FoldersAbsent = foldersAbsent;
+        }
+
+        /// <summary>The store these counters belong to.</summary>
+        public string StoreDisplayName { get; }
+
+        /// <summary>Folders of this store that were swept.</summary>
+        public int FoldersSwept { get; }
+
+        /// <summary>Folders of this store that could not be resolved or enumerated.</summary>
+        public int FoldersSkipped { get; }
+
+        /// <summary>Folders of this store whose item enumeration failed.</summary>
+        public int FoldersFailed { get; }
+
+        /// <summary>Default folders this store does not have at all.</summary>
+        public int FoldersAbsent { get; }
+    }
+
     /// <summary>Result of one gap sweep (COM-free data).</summary>
     public sealed class ComSweepResult
     {
@@ -969,7 +1009,8 @@ namespace OutlookAI.Core.Com
             bool folderCapReached = false,
             bool depthLimitReached = false,
             bool timeBudgetExceeded = false,
-            int foldersAbsent = 0)
+            int foldersAbsent = 0,
+            IReadOnlyList<ComStoreSweepCounters>? perStore = null)
         {
             Items = items;
             FoldersSwept = foldersSwept;
@@ -981,6 +1022,7 @@ namespace OutlookAI.Core.Com
             DepthLimitReached = depthLimitReached;
             TimeBudgetExceeded = timeBudgetExceeded;
             FoldersAbsent = foldersAbsent;
+            PerStore = perStore ?? Array.Empty<ComStoreSweepCounters>();
         }
 
         /// <summary>Items received/sent at or after the sweep start.</summary>
@@ -1012,6 +1054,19 @@ namespace OutlookAI.Core.Com
         /// exactly what the freshness sweep covered (soak fix 13).
         /// </summary>
         public IReadOnlyList<string> SweptFolders { get; }
+
+        /// <summary>
+        /// The same counters attributed per store, so a search scoped to one store can
+        /// report ITS coverage instead of the whole sweep's.
+        /// <para>
+        /// One entry per store the sweep actually visited; empty only when it visited none.
+        /// The scalar counters above stay whole-sweep totals - they are what an unscoped
+        /// search reports - and the two agree by construction except for a store whose very
+        /// DisplayName could not be read: those skips belong to no nameable store, so they
+        /// count in the total and in no entry here.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<ComStoreSweepCounters> PerStore { get; }
 
         /// <summary>
         /// Folders whose item enumeration FAILED through COM. Before soak fix 15 such a

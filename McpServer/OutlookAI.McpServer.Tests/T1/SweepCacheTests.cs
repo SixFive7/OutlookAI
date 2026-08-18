@@ -8,7 +8,9 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// D34 sweep-cache logic (pure, no COM): the ~10 s TTL constant is PINNED (product
 /// contract - the accepted staleness window for rapid-fire searches), and the reuse
 /// rules are covered: fresh entry reuse, TTL expiry, frontier-advance invalidation,
-/// store-scope compatibility (all-stores serves store-scoped, never the reverse),
+/// store-scope compatibility (all-stores serves store-scoped, never the reverse, and only
+/// while both describe the same window - the check that keeps a scope-aware frontier from
+/// needing a key change),
 /// FOLDER-scope separation (soak fix 13: a folder-scoped sweep covers one subtree and
 /// must never answer a broader query), the SUBTREE FLAG in the key (soak fix 15 /
 /// constraint C6: a shallow sweep must never answer a recursive query), and Clear().
@@ -88,6 +90,29 @@ public sealed class SweepCacheTests
 
         // But the exact store matches, case-insensitively.
         Assert.True(scoped.TryGet(Frontier, store: "SOMEONE@example.com", folder: null, Shallow, Now.AddSeconds(5), out _));
+    }
+
+    [Fact]
+    public void AllStoresEntry_ServesAStoreScopedRequest_OnlyWhenTheWindowIsTheSame()
+    {
+        // Why the key needed no change when the staleness frontier became scope-aware.
+        //
+        // The window base is now measured over the store being searched, so a quiet store
+        // and the profile disagree about it whenever another store is further ahead. The
+        // base is not part of the KEY - it is checked for EQUALITY on the entry - so the
+        // broad-serves-narrow reuse now fires only when the two windows are identical,
+        // which is exactly when the broad sweep covered what the narrow one would have.
+        SweepCache cache = new();
+        cache.Store(Frontier, store: null, folder: null, Shallow, MakeResult(2), elapsedMs: 80, Now);
+
+        // The quiet store's own frontier lags the profile's: its window starts earlier and
+        // is WIDER, so the all-stores sweep (which started later) cannot answer it.
+        Assert.False(cache.TryGet(
+            Frontier.AddHours(-45), store: "quiet@example.com", folder: null, Shallow, Now.AddSeconds(1), out _));
+
+        // The store that set the profile frontier shares the window, and is served.
+        Assert.True(cache.TryGet(
+            Frontier, store: "busy@example.com", folder: null, Shallow, Now.AddSeconds(1), out _));
     }
 
     // ------------------------------------------- folder scope in the key (soak fix 13)

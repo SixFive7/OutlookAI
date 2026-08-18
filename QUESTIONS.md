@@ -71,6 +71,28 @@ it. Raising the threshold to stop a true warning would be the wrong move.
 
 ---
 
+## Q4 - An unscoped search still sweeps every store from one window base
+
+Freshness is now measured per store when a search names a store. An **unscoped** search - one that
+covers every account - still opens a single window from the profile-wide newest indexed mail, so a
+quiet account's gap is only covered when the search names that account. Measured spread between
+stores on this profile: 45.4 hours.
+
+**Options.** *(a)* Give the sweep a per-store window - one `sinceUtc` each - which needs a frontier
+probe per store on every unscoped search: about five extra TOP-1 index queries on a path that
+currently costs 85-185 ms. *(b)* Use the profile-wide MINIMUM frontier, so the window is as wide as
+the slowest store for everyone - cheap, but it would routinely trip the 200-item per-folder cap on
+busy stores and report `partial` constantly, trading a silent miss for a permanent false alarm.
+*(c)* Leave it, documented: name the account when freshness in a quiet account matters.
+
+**Recommendation.** (a) is the correct answer and the cost is probably acceptable - five index
+queries against 85-185 ms is noise - but it is a hot path and I would want it measured rather than
+assumed, which needs a decision about spending that latency at all. (b) I would rule out: it makes
+every busy-store search lie in the other direction.
+
+**Default if unanswered.** Leave it at (c) and keep it documented. Nothing regresses; the behaviour
+is what shipped before tonight, now merely understood and written down.
+
 ## Decision log
 
 Answers move here with the date and the reasoning, so a future reader sees not just what was chosen

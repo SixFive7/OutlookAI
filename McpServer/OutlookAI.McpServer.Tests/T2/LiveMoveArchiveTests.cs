@@ -72,8 +72,9 @@ public sealed class LiveMoveArchiveTests
         try
         {
             // --- seed: hub -> itself (D20), wait for the Inbox copy, take its REAL EntryID.
-            LiveOutlookTestMailer.SendSelfMail(Hub, seedSubject, "D39 move/archive seed body " + Marker, null);
-            currentEntryId = WaitForInboxSeed(seedSubject);
+            DateTime sentUtc = LiveOutlookTestMailer.SendSelfMail(
+                Hub, seedSubject, "D39 move/archive seed body " + Marker, null);
+            currentEntryId = LiveInboxArrival.WaitFor(_fixture.VerifySession, Hub, seedSubject, sentUtc).EntryId;
             _output.WriteLine("seed arrived in hub Inbox");
 
             // --- guard live: target folder missing without create_folder.
@@ -217,30 +218,6 @@ public sealed class LiveMoveArchiveTests
         // Belt-and-braces (D39): whole-store snapshot reconciliation - every hub
         // folder's baseline-era count back at its pre-run value, zero marker strays.
         _output.WriteLine(_fixture.VerifyHubReconciled());
-    }
-
-    /// <summary>
-    /// Waits for the self-send's Inbox copy and returns its REAL EntryID via a hub
-    /// store walk (index-independent - the hub is tiny by design).
-    /// </summary>
-    private string WaitForInboxSeed(string seedSubject)
-    {
-        DateTime deadline = DateTime.UtcNow.AddSeconds(120);
-        while (DateTime.UtcNow < deadline)
-        {
-            IReadOnlyList<ComWalkedItem> items = _fixture.VerifySession.WalkStoreMailItems(Hub);
-            ComWalkedItem? seed = items.FirstOrDefault(i =>
-                i.Subject == seedSubject
-                && string.Equals(i.FolderPath, "Inbox", StringComparison.OrdinalIgnoreCase));
-            if (seed != null)
-            {
-                return seed.EntryId;
-            }
-
-            Thread.Sleep(3000);
-        }
-
-        throw new TimeoutException("Seed mail did not arrive in the hub Inbox within 120 s.");
     }
 
     private static int CountAuditLines()

@@ -107,6 +107,74 @@ public sealed class BudgetCompositionTests
     }
 
     /// <summary>
+    /// The search result cap and its default are ONE pair of numbers, and the argument that
+    /// advertises them quotes THAT pair.
+    /// <para>
+    /// <c>"1-100, default 25"</c> is prose in an attribute literal while the enforcement is
+    /// <see cref="MailService.SearchTopCap"/> and <see cref="MailService.SearchTopDefault"/>
+    /// - the same unguarded shape the exhaustive budget and the subject cap were in when
+    /// each of them drifted. A wire pin exists (T3 SearchSchemaCiTests) but it asserts the
+    /// LITERAL "1-100", so raising the cap would leave that test green over a description
+    /// that lies. This one fails the moment the numbers stop agreeing, and names both.
+    /// </para>
+    /// <para>
+    /// The floor is a genuine literal on both sides (<c>Clamp(request.Top, 1, ...)</c>), so
+    /// it is written here as one too.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void SearchTopRange_IsQuotedTruthfullyInTheToolSurface()
+    {
+        string expected = "(1-" + MailService.SearchTopCap.ToString(CultureInfo.InvariantCulture)
+            + ", default " + MailService.SearchTopDefault.ToString(CultureInfo.InvariantCulture) + ")";
+        string hint = ParameterDescription(nameof(OutlookTools.Search), "top");
+
+        Assert.True(
+            hint.Contains(expected, System.StringComparison.Ordinal),
+            $"search's 'top' description must quote MailService.SearchTopCap ({MailService.SearchTopCap}) and "
+            + $"SearchTopDefault ({MailService.SearchTopDefault}) as \"{expected}\", because those are the values "
+            + $"the service actually clamps to. The description reads: \"{hint}\"");
+
+        // And the default the SCHEMA advertises is the same number, not a third copy.
+        Assert.Equal(MailService.SearchTopDefault, DefaultValue<int>(nameof(OutlookTools.Search), "top"));
+    }
+
+    /// <summary>
+    /// The attachment set's count and size caps are quoted from the constants that enforce
+    /// them, on every tool that advertises them.
+    /// <para>
+    /// Both numbers are fail-closed refusals (<see cref="DraftAttachments.Validate"/> throws
+    /// and attaches nothing), so a description that quotes a stale limit teaches an agent to
+    /// build a call that cannot succeed - and the megabyte figure is doubly exposed, being a
+    /// unit conversion of a byte constant rather than the constant itself.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AttachmentCaps_AreQuotedTruthfullyInTheToolSurface()
+    {
+        string expected = "Max " + DraftAttachments.MaxFiles.ToString(CultureInfo.InvariantCulture)
+            + " files and " + (DraftAttachments.MaxTotalBytes / (1024 * 1024)).ToString(CultureInfo.InvariantCulture)
+            + " MB";
+
+        foreach (string tool in new[]
+                 {
+                     nameof(OutlookTools.NewDraft),
+                     nameof(OutlookTools.ReplyDraft),
+                     nameof(OutlookTools.ReplyAllDraft),
+                     nameof(OutlookTools.ForwardDraft),
+                     nameof(OutlookTools.UpdateDraft),
+                 })
+        {
+            string hint = ParameterDescription(tool, "attachments");
+            Assert.True(
+                hint.Contains(expected, System.StringComparison.Ordinal),
+                $"{tool}'s 'attachments' description must quote DraftAttachments.MaxFiles ({DraftAttachments.MaxFiles}) "
+                + $"and MaxTotalBytes ({DraftAttachments.MaxTotalBytes} bytes) as \"{expected}\", because those are the "
+                + $"limits the validation actually refuses on. The description reads: \"{hint}\"");
+        }
+    }
+
+    /// <summary>
     /// outlook_health's description quotes its COM probe budget, and that budget is the
     /// supervisor's own - not a third independent 5 000.
     /// </summary>
@@ -258,6 +326,15 @@ public sealed class BudgetCompositionTests
             ?? throw new System.InvalidOperationException($"OutlookTools.{methodName} not found");
         return method.GetCustomAttribute<DescriptionAttribute>()?.Description
             ?? throw new System.InvalidOperationException($"OutlookTools.{methodName} carries no [Description]");
+    }
+
+    private static T DefaultValue<T>(string methodName, string parameterName)
+    {
+        MethodInfo method = typeof(OutlookTools).GetMethod(methodName, BindingFlags.Public | BindingFlags.Static)
+            ?? throw new System.InvalidOperationException($"OutlookTools.{methodName} not found");
+        ParameterInfo parameter = method.GetParameters().FirstOrDefault(p => p.Name == parameterName)
+            ?? throw new System.InvalidOperationException($"OutlookTools.{methodName} has no '{parameterName}' parameter");
+        return (T)parameter.DefaultValue!;
     }
 
     private static string ParameterDescription(string methodName, string parameterName)

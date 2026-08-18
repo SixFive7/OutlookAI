@@ -81,7 +81,12 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public const int SweepPerFolderCap = 200;
 
-        private const double VeryStaleAdviceMinutes = 720; // 12 h - suggest exhaustive:true
+        /// <summary>
+        /// Age of the newest indexed mail above which the answer says so and points at
+        /// exhaustive:true (12 h). Public so T1 pins the threshold together with the two
+        /// wordings it selects between (<see cref="DescribeStaleIndex"/>).
+        /// </summary>
+        public const double VeryStaleAdviceMinutes = 720;
         private static readonly TimeSpan SweepSafetyMargin = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan EmptyIndexSweepWindow = TimeSpan.FromDays(7);
 
@@ -405,7 +410,13 @@ namespace OutlookAI.Core.Services
             };
 
             IndexSearchResult indexResult = _index.Value.Search(query, SearchIndexTimeoutSeconds);
-            IndexStalenessReport staleness = _index.Value.GetStaleness(commandTimeoutSeconds: SearchIndexTimeoutSeconds);
+
+            // The frontier is measured over the SCOPE being searched, not over the profile
+            // (StalenessScopeFor): it sets this search's sweep window, and a busy store's
+            // frontier would otherwise pin a quiet store's window to the last few minutes
+            // while that store's own index lagged by hours.
+            IndexStalenessReport staleness =
+                _index.Value.GetStaleness(StalenessScopeFor(folderScope), SearchIndexTimeoutSeconds);
 
             bool truncated = indexResult.Hits.Count > top;
             List<HitSummary> summaries = new List<HitSummary>(Math.Min(indexResult.Hits.Count, top));
@@ -477,17 +488,22 @@ namespace OutlookAI.Core.Services
             // Snapshot AFTER the sweep: the sweep may have just autostarted Outlook
             // (D17) and the staleness block must reflect that reality, not the
             // pre-autostart state (D34 self-consistency fix).
+            //
+            // A sweep that was NOT NEEDED is excluded: "recent mail may be missing" names a
+            // risk this query cannot run - its window ends before the index frontier - and
+            // saying it in prose would just relocate the false alarm the notNeeded state
+            // exists to remove, into the field an agent is told to relay to the user.
             bool outlookRunning = ComGateway.IsOutlookRunning();
-            if (!outlookRunning && (sweep == null || (!sweep.Performed && sweep.Error == null)))
+            if (!outlookRunning
+                && (sweep == null || (!sweep.Performed && sweep.Error == null && sweep.NotNeeded != true)))
             {
                 advice.Add("Outlook is not running, so the index is frozen; recent mail may be missing until Outlook runs again.");
             }
 
-            double staleMinutes = staleness.Age?.TotalMinutes ?? 0;
-            if (staleMinutes > VeryStaleAdviceMinutes)
+            string? staleAdvice = DescribeStaleIndex(staleness.Age?.TotalMinutes, request.Store != null);
+            if (staleAdvice != null)
             {
-                advice.Add("The index is very stale (" + (staleMinutes / 60).ToString("F0", CultureInfo.InvariantCulture)
-                    + " h behind). For correctness-critical queries search again with exhaustive:true (bounded COM scan, store + folder/after required) - it bypasses the index entirely.");
+                advice.Add(staleAdvice);
             }
 
             summaries.Sort((a, b) => DateTime.Compare(b.ReceivedUtc ?? DateTime.MinValue, a.ReceivedUtc ?? DateTime.MinValue));
@@ -539,6 +555,68 @@ namespace OutlookAI.Core.Services
                 },
                 Advice = advice.Count > 0 ? advice : null,
             };
+        }
+
+        /// <summary>
+        /// The index SCOPE the freshness frontier is measured over: the STORE the search is
+        /// scoped to, or null (the whole profile) when it names no store.
+        /// <para>
+        /// MEASURED 2026-08-18: the probe ran unscoped for every search, so five
+        /// store-scoped searches all reported the same frontier while outlook_health's
+        /// per-store probe reported three values spanning 45.4 hours. That frontier sets the
+        /// sweep window, so a busy store held a quiet store's window down to minutes and
+        /// recent mail in the quiet store fell outside it - and the result reported itself
+        /// fresh.
+        /// </para>
+        /// <para>
+        /// STORE level, not folder level, even for a folder-scoped search. This number is an
+        /// INGESTION frontier, and it only approximates one where mail ARRIVES: a store
+        /// indexes as its own catalog subtree, so its newest indexed item tracks how far its
+        /// ingestion has got. A quiet Archive folder's newest item says nothing about
+        /// ingestion - it is old because nothing arrives there - so scoping the probe to a
+        /// folder would widen that search's sweep window to years and make it read hundreds
+        /// of already-indexed items per folder for nothing.
+        /// </para>
+        /// <para>
+        /// Pure, and public so T1 pins the choice: the alternatives (profile-wide, or the
+        /// folder URL) are both one field away, and neither is distinguishable from this one
+        /// at any call site.
+        /// </para>
+        /// </summary>
+        public static string? StalenessScopeFor(FolderScopeResolution? folderScope)
+        {
+            return folderScope?.StoreScope;
+        }
+
+        /// <summary>
+        /// The "the index may be far behind" advice, or null when it is not far enough
+        /// behind to be worth saying (<see cref="VeryStaleAdviceMinutes"/>).
+        /// <para>
+        /// It has TWO wordings because the number now means two things. Unscoped it is the
+        /// whole profile's frontier and a large age really does mean a lagging index. Scoped
+        /// to one store it is that store's, where a large age has a second, likelier cause:
+        /// the store is quiet. Saying "the index is very stale" over a low-traffic account
+        /// would state as fact something the number cannot distinguish - and scope-aware
+        /// staleness makes that the common case rather than the rare one.
+        /// </para>
+        /// <para>
+        /// The remedy is the same in both, because it does not depend on which cause it is.
+        /// </para>
+        /// </summary>
+        public static string? DescribeStaleIndex(double? ageMinutes, bool storeScoped)
+        {
+            if (!ageMinutes.HasValue || ageMinutes.Value <= VeryStaleAdviceMinutes)
+            {
+                return null;
+            }
+
+            string hours = (ageMinutes.Value / 60).ToString("F0", CultureInfo.InvariantCulture);
+            return (storeScoped
+                    ? "The newest indexed mail in this store is " + hours
+                        + " h old - either the store is quiet or its index is behind. "
+                    : "The index is very stale (" + hours + " h behind). ")
+                + "For correctness-critical queries search again with exhaustive:true (bounded COM scan, store + "
+                + "folder/after required) - it bypasses the index entirely.";
         }
 
         /// <summary>
@@ -786,10 +864,14 @@ namespace OutlookAI.Core.Services
             }
 
             info.GapStartUtc = gapStart;
-            if (request.BeforeUtc.HasValue && request.BeforeUtc.Value <= gapStart)
+            if (FreshMerge.DecideSweepWindow(gapStart, request.BeforeUtc) == FreshMerge.SweepWindowVerdict.NotNeeded)
             {
+                // Nothing to sweep, and that is a COMPLETE answer, not a degraded one: the
+                // requested window ends before the sweep would start, so the index already
+                // covers all of it (FreshMerge.DecideSweepWindow).
                 info.Performed = false;
-                info.Error = null; // Window empty by request - nothing to sweep, not an error.
+                info.NotNeeded = true;
+                info.Error = null;
                 return info;
             }
 
@@ -1621,35 +1703,30 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// The swept-folder list for the sweep block: the folders the sweep actually
-        /// covered, narrowed to the requested store when a cached all-stores sweep is
-        /// serving a store-scoped request, and dropped entirely once the list is too
-        /// long to be worth carrying (the count and scope still describe it).
+        /// The folders the sweep covered IN SCOPE: all of them, or only the requested
+        /// store's when a cached all-stores sweep is serving a store-scoped request.
+        /// Never null - the list cap is applied by the caller, so "too long to carry" and
+        /// "nothing in scope" stay distinguishable.
         /// </summary>
-        private static IReadOnlyList<string>? DescribeSweptFolders(ComSweepResult result, string? store)
+        private static IReadOnlyList<string> SweptFoldersInScope(ComSweepResult result, string? store)
         {
-            if (result.SweptFolders.Count == 0)
+            if (store == null)
             {
-                return null;
+                return result.SweptFolders;
             }
 
             List<string> folders = new List<string>(result.SweptFolders.Count);
             foreach (string entry in result.SweptFolders)
             {
-                if (store != null)
+                int separator = entry.IndexOf('/');
+                if (separator >= 0
+                    && string.Equals(entry.Substring(0, separator), store, StringComparison.OrdinalIgnoreCase))
                 {
-                    int separator = entry.IndexOf('/');
-                    if (separator < 0
-                        || !string.Equals(entry.Substring(0, separator), store, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
+                    folders.Add(entry);
                 }
-
-                folders.Add(entry);
             }
 
-            return folders.Count == 0 || folders.Count > SweptFolderListCap ? null : folders;
+            return folders;
         }
 
         /// <summary>
@@ -1658,22 +1735,59 @@ namespace OutlookAI.Core.Services
         /// cap, and whether the folder LIST was dropped by its own cap). Every one of
         /// these was previously either absent or indistinguishable from success.
         /// <para>
+        /// EVERYTHING HERE IS SCOPED TO <paramref name="store"/>. The sweep result may be
+        /// broader than the request - a cached all-stores sweep serves store-scoped
+        /// searches (SweepCache), which is safe for the DATA because a superset contains
+        /// what was asked - but the counters describe COVERAGE, and coverage of another
+        /// store is no answer about this one. The lists were narrowed here from the start;
+        /// the counters were not, and once they began driving the coverage codes a search
+        /// scoped to store A could report <c>degraded: true</c> because store B had an
+        /// unreadable folder. They are attributed per store in the COM layer
+        /// (<see cref="ComSweepResult.PerStore"/>) and picked out here.
+        /// </para>
+        /// <para>
         /// <see cref="SweepInfo.FoldersAbsent"/> travels with them but is the one counter
         /// that is NOT a shortfall: it explains why a store contributed three folders
         /// instead of four without claiming anything was lost, so it is carried only when
         /// non-zero and never reaches <see cref="FreshMerge.DescribeCoverageGaps"/>.
         /// </para>
+        /// <para>
+        /// Public and pure so T1 can exercise the store attribution over a hand-built
+        /// sweep result: reaching these states for real needs a multi-store profile with a
+        /// folder that will not open, which no CI runner has.
+        /// </para>
         /// </summary>
-        private static void ApplySweepCounters(SweepInfo info, ComSweepResult result, string? store)
+        public static void ApplySweepCounters(SweepInfo info, ComSweepResult result, string? store)
         {
-            info.FoldersSwept = result.FoldersSwept;
-            info.FoldersSkipped = result.FoldersSkipped;
-            info.FoldersFailed = result.FoldersFailed;
-            info.FoldersAbsent = result.FoldersAbsent > 0 ? result.FoldersAbsent : (int?)null;
-            info.Folders = DescribeSweptFolders(result, store);
-            info.FolderListOmitted = info.Folders == null && result.SweptFolders.Count > SweptFolderListCap
-                ? true
-                : (bool?)null;
+            if (info == null)
+            {
+                throw new ArgumentNullException(nameof(info));
+            }
+
+            if (result == null)
+            {
+                throw new ArgumentNullException(nameof(result));
+            }
+
+            // A store-scoped request reads that store's entry - and a MISSING entry means
+            // the sweep never reached the store, which is zero coverage, not the whole
+            // sweep's. Falling back to the totals there would resurrect the defect in the
+            // one case where it matters most.
+            ComStoreSweepCounters? scoped = store == null ? null : FindStoreCounters(result, store);
+            bool perStore = store != null && result.PerStore.Count > 0;
+
+            info.FoldersSwept = perStore ? scoped?.FoldersSwept ?? 0 : result.FoldersSwept;
+            info.FoldersSkipped = perStore ? scoped?.FoldersSkipped ?? 0 : result.FoldersSkipped;
+            info.FoldersFailed = perStore ? scoped?.FoldersFailed ?? 0 : result.FoldersFailed;
+            int absent = perStore ? scoped?.FoldersAbsent ?? 0 : result.FoldersAbsent;
+            info.FoldersAbsent = absent > 0 ? absent : (int?)null;
+
+            IReadOnlyList<string> inScope = SweptFoldersInScope(result, store);
+            info.Folders = inScope.Count == 0 || inScope.Count > SweptFolderListCap ? null : inScope;
+            info.FolderListOmitted = inScope.Count > SweptFolderListCap ? true : (bool?)null;
+
+            // Bounds of a subtree walk, which only a folder-scoped sweep performs - and a
+            // folder-scoped sweep covers exactly one store, so these need no attribution.
             info.FolderCapReached = result.FolderCapReached ? true : (bool?)null;
             info.DepthLimitReached = result.DepthLimitReached ? true : (bool?)null;
             info.TimeBudgetExceeded = result.TimeBudgetExceeded ? true : (bool?)null;
@@ -1695,6 +1809,20 @@ namespace OutlookAI.Core.Services
             }
 
             info.ItemCappedFolders = capped.Count == 0 ? null : capped;
+        }
+
+        /// <summary>This store's counters, or null when the sweep never reached it.</summary>
+        private static ComStoreSweepCounters? FindStoreCounters(ComSweepResult result, string store)
+        {
+            foreach (ComStoreSweepCounters entry in result.PerStore)
+            {
+                if (string.Equals(entry.StoreDisplayName, store, StringComparison.OrdinalIgnoreCase))
+                {
+                    return entry;
+                }
+            }
+
+            return null;
         }
 
         private static IReadOnlyList<string>? ParseFolderSegments(string? folder)

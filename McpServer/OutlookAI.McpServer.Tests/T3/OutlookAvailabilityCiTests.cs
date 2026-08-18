@@ -113,15 +113,22 @@ public sealed class OutlookAvailabilityCiTests
             sweep.TryGetProperty("performed", out JsonElement performed))
         {
             bool ran = performed.GetBoolean();
+            bool notNeeded = sweep.TryGetProperty("notNeeded", out JsonElement skipped) && skipped.GetBoolean();
             bool gapsReported = sweep.TryGetProperty("coverageGaps", out JsonElement gaps)
                 && gaps.ValueKind == JsonValueKind.Array
                 && gaps.GetArrayLength() > 0;
 
-            // A sweep that did not run is index-only, whatever else is in the block; a
+            // A sweep that COULD NOT run is index-only, whatever else is in the block; a
             // sweep that ran is degraded exactly when it reports coverage gaps, and the
             // gap list is the machine-readable reason - so an agent never has to read prose
             // to find out that an answer is partial.
-            Assert.Equal(!ran, freshness == "index-only");
+            //
+            // A sweep that did not NEED to run is the third state and is not index-only:
+            // its search's window ends before the index frontier, so there was nothing for
+            // it to find and the answer is complete. (This query sets no 'before' bound, so
+            // it never reaches that state here - the clause keeps the invariant honest for
+            // the searches that do.)
+            Assert.Equal(!ran && !notNeeded, freshness == "index-only");
             Assert.False(!ran && gapsReported, "a sweep that never ran cannot report coverage gaps");
             if (ran)
             {

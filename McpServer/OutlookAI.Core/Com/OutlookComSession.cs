@@ -1526,11 +1526,26 @@ namespace OutlookAI.Core.Com
                     SweepScopedFolder(
                         ns, onlyStoreDisplayName!, folderPath, sinceUtc, perFolderCap, includeBodies,
                         includeSubfolders, items, sweptFolders, ref skipped, tally);
+
+                    // A folder-scoped sweep covers ONE store, so the whole tally is that
+                    // store's. Reported per store anyway: the caller then has one rule for
+                    // reading counters, instead of one rule per sweep shape.
                     return new ComSweepResult(
                         items, sweptFolders.Count, skipped, sweptFolders,
                         tally.Failed, tally.ItemCapped, tally.FolderCapReached,
-                        tally.DepthLimitReached, tally.TimeBudgetExceeded);
+                        tally.DepthLimitReached, tally.TimeBudgetExceeded,
+                        foldersAbsent: 0,
+                        perStore: new[]
+                        {
+                            new ComStoreSweepCounters(
+                                onlyStoreDisplayName!, sweptFolders.Count, skipped, tally.Failed, 0),
+                        });
                 }
+
+                // The counters, attributed to the store they happened in. The scalar
+                // totals below stay the whole sweep's; a store-scoped caller reads its own
+                // entry, so another store's unreadable folder can no longer degrade it.
+                List<StoreSweepBucket> buckets = new List<StoreSweepBucket>();
 
                 dynamic stores = ns.Stores;
                 try
@@ -1550,6 +1565,10 @@ namespace OutlookAI.Core.Com
                             }
                             catch (COMException)
                             {
+                                // No name, so these skips belong to no nameable store: they
+                                // count in the total and in nobody's per-store entry. A
+                                // search scoped to a store we CAN name is unaffected, which
+                                // is right - the folders behind this failure are not its.
                                 skipped += DefaultSweepFolders.Length;
                                 continue;
                             }
@@ -1559,6 +1578,9 @@ namespace OutlookAI.Core.Com
                             {
                                 continue;
                             }
+
+                            StoreSweepBucket bucket = new StoreSweepBucket(storeName);
+                            buckets.Add(bucket);
 
                             foreach ((int folderId, string folderKind) in DefaultSweepFolders)
                             {
@@ -1574,6 +1596,7 @@ namespace OutlookAI.Core.Com
                                         // report. Counted only so the arithmetic still adds
                                         // up to the folder set this sweep set out to cover.
                                         absent++;
+                                        bucket.Absent++;
                                         continue;
                                     }
 
@@ -1582,6 +1605,7 @@ namespace OutlookAI.Core.Com
                                         // The folder is there and would not open - mail may
                                         // be sitting in it unseen, which IS a coverage gap.
                                         skipped++;
+                                        bucket.Skipped++;
                                         continue;
                                     }
 
@@ -1594,11 +1618,14 @@ namespace OutlookAI.Core.Com
                                         // freshness coverage - reporting it as swept was a
                                         // lie (section-12 no-silent-caps discipline).
                                         skipped++;
+                                        bucket.Skipped++;
                                         tally.Failed++;
+                                        bucket.Failed++;
                                         continue;
                                     }
 
                                     sweptFolders.Add(label);
+                                    bucket.Swept++;
                                     if (outcome == SweepOutcome.ItemCapped)
                                     {
                                         tally.ItemCapped.Add(label);
@@ -1611,6 +1638,7 @@ namespace OutlookAI.Core.Com
                                     // there but unreadable has no freshness coverage, so it
                                     // stays a skip (absence is handled above, at resolution).
                                     skipped++;
+                                    bucket.Skipped++;
                                 }
                                 finally
                                 {
@@ -1629,11 +1657,41 @@ namespace OutlookAI.Core.Com
                     Release(stores);
                 }
 
+                List<ComStoreSweepCounters> perStore = new List<ComStoreSweepCounters>(buckets.Count);
+                foreach (StoreSweepBucket bucket in buckets)
+                {
+                    perStore.Add(new ComStoreSweepCounters(
+                        bucket.StoreDisplayName, bucket.Swept, bucket.Skipped, bucket.Failed, bucket.Absent));
+                }
+
                 return new ComSweepResult(
                     items, sweptFolders.Count, skipped, sweptFolders,
                     tally.Failed, tally.ItemCapped, tally.FolderCapReached,
-                    tally.DepthLimitReached, tally.TimeBudgetExceeded, absent);
+                    tally.DepthLimitReached, tally.TimeBudgetExceeded, absent, perStore);
             });
+        }
+
+        /// <summary>
+        /// One store's running counters while the default-folder sweep walks it. The
+        /// bounds counters (folder cap, depth, time budget) are NOT per store: they belong
+        /// to a folder-scoped subtree walk, which by definition covers one store.
+        /// </summary>
+        private sealed class StoreSweepBucket
+        {
+            internal StoreSweepBucket(string storeDisplayName)
+            {
+                StoreDisplayName = storeDisplayName;
+            }
+
+            internal string StoreDisplayName { get; }
+
+            internal int Swept { get; set; }
+
+            internal int Skipped { get; set; }
+
+            internal int Failed { get; set; }
+
+            internal int Absent { get; set; }
         }
 
         /// <summary>

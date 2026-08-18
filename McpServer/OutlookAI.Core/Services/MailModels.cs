@@ -153,8 +153,27 @@ namespace OutlookAI.Core.Services
     /// <summary>Freshness gap-sweep diagnostics attached to (non-exhaustive) search results.</summary>
     public sealed class SweepInfo
     {
-        /// <summary>Whether the sweep ran (false: COM unavailable - see Error).</summary>
+        /// <summary>
+        /// Whether the sweep ran. False has two meanings, told apart by
+        /// <see cref="NotNeeded"/>: it could not run (see <see cref="Error"/>), or it had
+        /// nothing to do.
+        /// </summary>
         public bool Performed { get; set; }
+
+        /// <summary>
+        /// True when the sweep did not run because it could not have found anything: the
+        /// search's <c>before</c> bound ends at or before <see cref="GapStartUtc"/>, so the
+        /// index already covers the whole requested window
+        /// (<see cref="FreshMerge.DecideSweepWindow"/>). Null otherwise.
+        /// <para>
+        /// The distinction is the point: "did not need to run" is a COMPLETE answer, while
+        /// "could not run" is a degraded one. Both used to be <c>performed: false</c> with
+        /// no error, so a search deliberately bounded to older mail was reported as
+        /// <c>degraded</c> and <c>freshness: "index-only"</c> - told it might be missing
+        /// recent mail that its own bounds exclude.
+        /// </para>
+        /// </summary>
+        public bool? NotNeeded { get; set; }
 
         /// <summary>
         /// True when this result was served from the short-lived sweep cache (D34) - no
@@ -338,7 +357,24 @@ namespace OutlookAI.Core.Services
     /// <summary>Index staleness snapshot attached to search results.</summary>
     public sealed class StalenessInfo
     {
-        /// <summary>Newest indexed DateReceived (UTC) across the searched scope.</summary>
+        /// <summary>
+        /// Newest indexed DateReceived (UTC) in the STORE this search was scoped to, or
+        /// across the whole profile when it named no store
+        /// (<see cref="MailService.StalenessScopeFor"/>). It is also the base of the
+        /// freshness sweep's window, so the two always describe the same scope.
+        /// <para>
+        /// It said "across the searched scope" while the probe ran unscoped for every
+        /// search: measured 2026-08-18, five store-scoped searches reported one profile-wide
+        /// frontier while the per-store probes spanned 45.4 hours, which pinned a quiet
+        /// store's sweep window to a busy store's clock.
+        /// </para>
+        /// <para>
+        /// One exception, stated rather than papered over: an <c>exhaustive</c> search
+        /// reports the PROFILE-wide value. That path resolves no index scope by design - it
+        /// answers from COM alone - and this block is context there, not the basis of the
+        /// answer.
+        /// </para>
+        /// </summary>
         public DateTime? NewestIndexedUtc { get; set; }
 
         /// <summary>Age of the newest indexed mail in minutes.</summary>

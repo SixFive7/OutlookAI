@@ -165,6 +165,61 @@ public sealed class ComHostProtocolTests
         Assert.DoesNotContain("formatName", json, StringComparison.OrdinalIgnoreCase);
     }
 
+    // -------------------------------------------------- sweep counters across the pipe
+
+    [Fact]
+    public void ComSweepResult_CarriesItsPerStoreCountersAcrossTheWire()
+    {
+        // The sweep runs in the CHILD and its counters decide degraded/freshness in the
+        // PARENT, so per-store attribution only exists if it survives this hop. Nothing
+        // hand-writes that: the proxy reflects over IOutlookSession and serializes whatever
+        // the contract returns, so a shape the serializer cannot rebuild fails silently -
+        // the counters would come back zeroed and every store-scoped search would report
+        // itself as having swept nothing.
+        ComSweepResult original = new ComSweepResult(
+            Array.Empty<ComMailBrief>(),
+            foldersSwept: 7,
+            foldersSkipped: 1,
+            sweptFolders: new[] { "alice@example.com/Inbox", "bob@example.com/Inbox" },
+            foldersFailed: 1,
+            foldersAbsent: 1,
+            perStore: new[]
+            {
+                new ComStoreSweepCounters("alice@example.com", 4, 0, 0, 0),
+                new ComStoreSweepCounters("bob@example.com", 3, 1, 1, 1),
+            });
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComSweepResult? read = JsonSerializer.Deserialize<ComSweepResult>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Equal(2, read!.PerStore.Count);
+        Assert.Equal(original.FoldersSwept, read.FoldersSwept);
+        Assert.Equal(original.FoldersFailed, read.FoldersFailed);
+
+        ComStoreSweepCounters bob = read.PerStore[1];
+        Assert.Equal("bob@example.com", bob.StoreDisplayName);
+        Assert.Equal(3, bob.FoldersSwept);
+        Assert.Equal(1, bob.FoldersSkipped);
+        Assert.Equal(1, bob.FoldersFailed);
+        Assert.Equal(1, bob.FoldersAbsent);
+    }
+
+    [Fact]
+    public void ComSweepResult_WithNoPerStoreCounters_RoundTripsAsEmptyNotNull()
+    {
+        // Every consumer reads PerStore without a null check, and "the sweep reached no
+        // store" must stay a legible answer rather than a NullReferenceException in the
+        // parent after a child that reported one.
+        ComSweepResult original = new ComSweepResult(Array.Empty<ComMailBrief>(), foldersSwept: 0, foldersSkipped: 0);
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComSweepResult? read = JsonSerializer.Deserialize<ComSweepResult>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Empty(read!.PerStore);
+    }
+
     // ------------------------------------------------------------- output parameters
 
     [Fact]
