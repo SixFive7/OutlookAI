@@ -923,9 +923,22 @@ namespace OutlookAI.Core.Com
                 object? itemObject = null;
                 try
                 {
-                    itemObject = storeId != null
-                        ? ns.GetItemFromID(entryIdHex, storeId)
-                        : ns.GetItemFromID(entryIdHex);
+                    try
+                    {
+                        itemObject = storeId != null
+                            ? ns.GetItemFromID(entryIdHex, storeId)
+                            : ns.GetItemFromID(entryIdHex);
+                    }
+                    catch (Exception ex) when (ex is COMException || ex is Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+                    {
+                        // The token that read's cross-store retry keys on, set at the OPEN
+                        // and nowhere else. The filter is deliberately the same pair the
+                        // outer catches already handle, so this renames a failure that was
+                        // always captured here and never changes which failures escape.
+                        capturedError = ComErrorTokens.ItemNotFound;
+                        return null;
+                    }
+
                     return SnapshotDetail(itemObject!, includeHeaders, includeBody, includeHtml);
                 }
                 catch (COMException ex)
@@ -982,9 +995,26 @@ namespace OutlookAI.Core.Com
                 object? attachment = null;
                 try
                 {
-                    itemObject = storeId != null
-                        ? ns.GetItemFromID(entryIdHex, storeId)
-                        : ns.GetItemFromID(entryIdHex);
+                    try
+                    {
+                        itemObject = storeId != null
+                            ? ns.GetItemFromID(entryIdHex, storeId)
+                            : ns.GetItemFromID(entryIdHex);
+                    }
+                    catch (COMException)
+                    {
+                        // Set at the OPEN and nowhere else, and it matters more here than on
+                        // a read: save_attachment WRITES A FILE, so a cross-store fan-out on
+                        // any later failure would be one file per store. Nothing has been
+                        // written yet at this point. COMException only, because that is the
+                        // sole shape this line raises that the method already captures - the
+                        // IOException and UnauthorizedAccessException catches below belong to
+                        // the disk write further down, and widening the filter here would
+                        // change which failures escape.
+                        capturedError = ComErrorTokens.ItemNotFound;
+                        return null;
+                    }
+
                     dynamic item = itemObject!;
                     attachments = item.Attachments;
                     dynamic attachmentCollection = (dynamic)attachments!;
@@ -2228,9 +2258,24 @@ namespace OutlookAI.Core.Com
                 object? itemObject = null;
                 try
                 {
-                    itemObject = storeId != null
-                        ? ns.GetItemFromID(entryIdHex, storeId)
-                        : ns.GetItemFromID(entryIdHex);
+                    try
+                    {
+                        itemObject = storeId != null
+                            ? ns.GetItemFromID(entryIdHex, storeId)
+                            : ns.GetItemFromID(entryIdHex);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        // Set at the OPEN and nowhere else. open_in_outlook is classified
+                        // MUTATING (ComSessionOperations) because Display() puts a window on
+                        // the user's screen and can mark the mail read; a cross-store fan-out
+                        // on a Display failure would therefore be one side effect per store,
+                        // over an item that had already been found. Nothing has been
+                        // displayed at this point.
+                        capturedError = ComErrorTokens.ItemNotFound;
+                        return null;
+                    }
+
                     ComOpenResult snapshot = Snapshot(itemObject);
                     ((dynamic)itemObject!).Display();
                     return snapshot;
@@ -3097,7 +3142,7 @@ namespace OutlookAI.Core.Com
                         // later failure - Reply/Forward, compose, Save - happens after work
                         // that a retry would repeat, so it keeps the generic COM
                         // description and stops the fan-out (see MailService.CreateDerived).
-                        capturedError = "ItemNotFound";
+                        capturedError = ComErrorTokens.ItemNotFound;
                         return null;
                     }
 
@@ -3304,9 +3349,20 @@ namespace OutlookAI.Core.Com
                 object? itemObject = null;
                 try
                 {
-                    itemObject = storeId != null
-                        ? ns.GetItemFromID(entryIdHex, storeId)
-                        : ns.GetItemFromID(entryIdHex);
+                    try
+                    {
+                        itemObject = storeId != null
+                            ? ns.GetItemFromID(entryIdHex, storeId)
+                            : ns.GetItemFromID(entryIdHex);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        // Set at the OPEN and nowhere else - the token archive_mail's
+                        // cross-store lookup keys on when it is handed a bare EntryID.
+                        capturedError = ComErrorTokens.ItemNotFound;
+                        return null;
+                    }
+
                     return SnapshotDraft(itemObject!);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
@@ -3670,7 +3726,7 @@ namespace OutlookAI.Core.Com
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
-                        capturedError = "ItemNotFound";
+                        capturedError = ComErrorTokens.ItemNotFound;
                         return null;
                     }
 
@@ -3775,7 +3831,7 @@ namespace OutlookAI.Core.Com
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
-                        capturedError = "ItemNotFound";
+                        capturedError = ComErrorTokens.ItemNotFound;
                         return null;
                     }
 
@@ -4078,9 +4134,21 @@ namespace OutlookAI.Core.Com
                 object? account = null;
                 try
                 {
-                    item = storeId != null
-                        ? ns.GetItemFromID(entryIdHex, storeId)
-                        : ns.GetItemFromID(entryIdHex);
+                    try
+                    {
+                        item = storeId != null
+                            ? ns.GetItemFromID(entryIdHex, storeId)
+                            : ns.GetItemFromID(entryIdHex);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        // Set at the OPEN and nowhere else. Everything after this point -
+                        // "not a mail item", "already sent", an unreadable body - is an
+                        // ANSWER about the draft that was found, and answering it again in
+                        // another store would be asking a question that has been settled.
+                        capturedError = ComErrorTokens.ItemNotFound;
+                        return null;
+                    }
 
                     if (!IsMailItem(item!))
                     {
@@ -4373,7 +4441,7 @@ namespace OutlookAI.Core.Com
                         // service layer wrote for exactly this case could not fire. The
                         // caller got an opaque COM code over a draft that was simply in
                         // another account.
-                        capturedError = "ItemNotFound";
+                        capturedError = ComErrorTokens.ItemNotFound;
                         return null;
                     }
 
@@ -4636,7 +4704,7 @@ namespace OutlookAI.Core.Com
                         // Same dead guard as update_draft's, for the same reason and with
                         // the same consequence: discard_draft's cross-store retry keys on
                         // this token, and nothing here ever produced it.
-                        capturedError = "ItemNotFound";
+                        capturedError = ComErrorTokens.ItemNotFound;
                         return null;
                     }
 

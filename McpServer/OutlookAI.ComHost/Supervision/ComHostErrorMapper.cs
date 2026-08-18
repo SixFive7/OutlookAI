@@ -72,9 +72,19 @@ namespace OutlookAI.ComHost.Supervision
                     return new TimeoutException(message);
 
                 default:
-                    // Unknown child-side type. Keep the original type name in the message
-                    // so it still reaches the agent and the audit log, rather than being
-                    // flattened into an anonymous failure.
+                    // A child-side type this parent does not model. The name is carried on
+                    // the exception rather than folded into the message, and the tool layer
+                    // reports THAT as the error type - so the agent is told what actually
+                    // failed instead of being told the name of the pipe it crossed. An
+                    // earlier comment here claimed the name went into the message; it never
+                    // did, and while that was believed the name reached nothing at all.
+                    //
+                    // Landing here is not free - OutlookTools.GuardAsync branches on
+                    // exception TYPE to choose its advice, and this branch has none to
+                    // choose from - so the set of types that reach it is held down by
+                    // invariant 10 in .github/scripts/check-pinned-constants.ps1, which
+                    // fails the build when the COM layer starts raising a type the switch
+                    // above does not name.
                     return new ComHostRemoteException(error.Type, message);
             }
         }
@@ -90,10 +100,14 @@ namespace OutlookAI.ComHost.Supervision
         public ComHostRemoteException(string remoteType, string message)
             : base(message)
         {
-            RemoteType = remoteType;
+            RemoteType = string.IsNullOrWhiteSpace(remoteType) ? nameof(ComHostRemoteException) : remoteType;
         }
 
-        /// <summary>The exception type name as it was on the child side.</summary>
+        /// <summary>
+        /// The exception type name as it was on the child side. Never blank: this is what
+        /// the tool layer reports as the error type, and an empty <c>type</c> field would
+        /// be a worse answer than the transport's own name.
+        /// </summary>
         public string RemoteType { get; }
     }
 

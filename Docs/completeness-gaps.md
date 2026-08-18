@@ -19,8 +19,11 @@ it is marked, so the history of what was silent stays legible.
 `**CLOSED <date>** — <what the payload says now>` sentence; the severity cell becomes
 `~~OLD~~ → **NEW**`. Nothing is rewritten, so the row still reads as the defect it was.
 
-Closed so far: **B1**, **B3**, **C1**, **C2**, **C3**, **F1**, **F5**, **G1**, **G6**, **H1**, **I1**
-(2026-08-18), and **C4** downgraded from SILENT to REPORTED by C1's work.
+Closed so far: **B1**, **B3**, **B6**, **C1**, **C2**, **C3**, **F1**, **F5**, **G1**, **G6**, **H1**, **I1**
+(2026-08-18), and **C4** downgraded from SILENT to REPORTED by C1's work. **B6 was not in the
+original audit** - it came out of the COM-host boundary work, and it is added as a row rather
+than fixed quietly, because the map is meant to record what was silent and not only what was
+looked for.
 
 **B3 closed 2026-08-18** by maintainer decision ("unify all three, and prefer returning EVERYTHING where
 possible"): item class no longer excludes anything in any tier, and the two counters that were missing
@@ -66,6 +69,7 @@ All paths relative to `c:\Source\SixFive7\OutlookAI\McpServer\`.
 | B2 | Attachment text is index-only. The refused attachment-ONLY case is properly flagged; the DEFAULT case is not — a term inside an attachment of just-arrived mail is invisible while the answer says `freshness:"live"`. | `Services/FreshMerge.cs:256-272`; default path `MailService.cs:464-505` | attachment-only: `sweep.error`, `freshness:"index-only"`, `degraded:true` (**REPORTED**). Default: nothing | **PROSE** (default case) |
 | B4 | `search_in:"body"` means body **plus attachment content** in the index tier, `MailItem.Body` in the sweep, `urn:schemas:httpmail:textdescription` in exhaustive. | `WsSqlBuilder.cs:448-462`; `FreshMerge.cs:300-330`; `ExhaustiveDaslFilter.cs:44` | Nothing in the payload | **PROSE** (README only) |
 | B5 | Whole-word (index) vs substring (sweep, and exhaustive's LIKE fallback). | `FreshMerge.cs:300-330`; `ExhaustiveDaslFilter.cs:113-130` | exhaustive: `exhaustive.engine`, `exhaustive.instantSearchEnabled` plus advice (**REPORTED**). The sweep's over-match is the safe direction | **REPORTED / benign** |
+| B6 | The ordering the caller asked for did not survive the MERGE. `IndexOrder.SizeDescending` reached the provider correctly, but the combined list (index hits + sweep hits, or the exhaustive walk) was then re-sorted by `ReceivedUtc` unconditionally - and the `top` trim happens AFTER that sort, so a size-ordered search returned the newest `top` rather than the largest, and the biggest mail could be trimmed off the end. The same line stood in both tiers. Recorded 2026-08-18, alongside the COM-host boundary work; not reachable from the tool surface, since `search` exposes no order parameter and only a T2 test sets the flag - so no answer any caller has had was affected. It is written down anyway because the shape is the one this document is about: a correct query undone by a later line, with nothing in the payload to say the order was not the order asked for. **CLOSED 2026-08-18** - one `MailService.SortForOrder` decides both call sites; unknown keys sort last in both orders (an unmeasured size is not a zero-byte mail) and size ties fall back to date, because `List.Sort` is not stable and two equally large mails should not swap between runs of the same query. Pinned by T1 `MergedResultOrderTests`. | `Services/MailService.cs:612` (`Search`) and `:2082` (`RunExhaustive`); order chosen at `:485`; flag at `MailModels.cs:92` | Nothing - a correctly sized, full-looking list in the wrong order | ~~SILENT~~ -> **fixed** (one comparator, both tiers) |
 
 ## 4. `thread`
 

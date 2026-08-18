@@ -609,7 +609,7 @@ namespace OutlookAI.Core.Services
                 advice.Add(staleAdvice);
             }
 
-            summaries.Sort((a, b) => DateTime.Compare(b.ReceivedUtc ?? DateTime.MinValue, a.ReceivedUtc ?? DateTime.MinValue));
+            SortForOrder(summaries, request.OrderBySizeDescending);
             if (summaries.Count > top)
             {
                 summaries.RemoveRange(top, summaries.Count - top);
@@ -1690,8 +1690,14 @@ namespace OutlookAI.Core.Services
         /// set by every by-EntryID operation at its <c>GetItemFromID</c> and nowhere else, so
         /// it is the one failure a second attempt against a different store can fix, and the
         /// one that is guaranteed to have changed nothing yet.
+        /// <para>
+        /// Aliased from <see cref="ComErrorTokens.ItemNotFound"/> rather than spelt again:
+        /// the writer and the reader of this word sit in different namespaces, and while it
+        /// was written twice a COM path that stopped setting it broke a retry loop silently.
+        /// Now the two cannot disagree.
+        /// </para>
         /// </summary>
-        public const string ItemNotFoundToken = "ItemNotFound";
+        public const string ItemNotFoundToken = ComErrorTokens.ItemNotFound;
 
         /// <summary>
         /// Whether a failed by-EntryID operation should be re-attempted store by store: only
@@ -1724,6 +1730,47 @@ namespace OutlookAI.Core.Services
         public static bool KeepSearchingStores(bool succeeded, string? error)
         {
             return !succeeded && string.Equals(error, ItemNotFoundToken, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Puts the MERGED hit list into the order the caller asked for.
+        /// <para>
+        /// The index tier asks the provider for an ORDER BY, but that only decides which
+        /// rows come back - the list the caller receives is index hits plus freshness-sweep
+        /// hits (or, on the exhaustive tier, a COM walk), re-sorted after the merge. That
+        /// re-sort was unconditionally by date, so a size-ordered search was silently
+        /// reordered one layer above the query that honoured it and the caller's ordering
+        /// survived only as far as the SQL.
+        /// </para>
+        /// <para>
+        /// An unknown key sorts LAST in both orders: a hit whose size the provider never
+        /// reported is not a zero-byte mail, and treating it as one would put it at the top
+        /// of an ascending comparison and the bottom of a descending one for no reason.
+        /// Size ties fall back to date because <see cref="List{T}.Sort(Comparison{T})"/> is
+        /// not stable, and two equally large mails should not swap places between runs.
+        /// </para>
+        /// <para>Pure, and public so T1 pins the ordering without a mailbox.</para>
+        /// </summary>
+        public static void SortForOrder(List<HitSummary> summaries, bool bySizeDescending)
+        {
+            if (summaries == null)
+            {
+                throw new ArgumentNullException(nameof(summaries));
+            }
+
+            if (!bySizeDescending)
+            {
+                summaries.Sort((a, b) => DateTime.Compare(b.ReceivedUtc ?? DateTime.MinValue, a.ReceivedUtc ?? DateTime.MinValue));
+                return;
+            }
+
+            summaries.Sort((a, b) =>
+            {
+                int bySize = (b.SizeBytes ?? -1L).CompareTo(a.SizeBytes ?? -1L);
+                return bySize != 0
+                    ? bySize
+                    : DateTime.Compare(b.ReceivedUtc ?? DateTime.MinValue, a.ReceivedUtc ?? DateTime.MinValue);
+            });
         }
 
         /// <summary>
@@ -2032,7 +2079,7 @@ namespace OutlookAI.Core.Services
                 summaries.Add(RegisterLiveHit(item, snippetChars: 0, source: "exhaustive"));
             }
 
-            summaries.Sort((a, b) => DateTime.Compare(b.ReceivedUtc ?? DateTime.MinValue, a.ReceivedUtc ?? DateTime.MinValue));
+            SortForOrder(summaries, request.OrderBySizeDescending);
             if (summaries.Count > top)
             {
                 summaries.RemoveRange(top, summaries.Count - top);
@@ -2167,13 +2214,17 @@ namespace OutlookAI.Core.Services
             ComItemDetail detail = _gateway.Run(s =>
             {
                 ComItemDetail? d = s.TryReadItem(entryId, storeId, includeHeaders, includeBody: !haveCachedBody, out string? error, includeHtml);
-                if (d == null && storeId == null)
+                if (ShouldSearchOtherStores(storeId, d != null, error))
                 {
-                    // Direct EntryID without a known store: retry across stores.
+                    // Direct EntryID without a known store: retry across stores, and ONLY
+                    // when the item could not be OPENED. The guard used to be `d == null`
+                    // alone, which asked every store on the profile to re-open an item that
+                    // one of them had already opened and then failed to snapshot - a body
+                    // Outlook would not render reads the same as an id that is not there.
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
                         d = s.TryReadItem(entryId, store.StoreId, includeHeaders, includeBody: !haveCachedBody, out error, includeHtml);
-                        if (d != null)
+                        if (!KeepSearchingStores(d != null, error))
                         {
                             break;
                         }
@@ -2293,12 +2344,19 @@ namespace OutlookAI.Core.Services
             (string path, long size) = _gateway.Run(s =>
             {
                 string? saved = s.TrySaveAttachment(entryId, storeId, attachmentIndex, directory, out long sizeBytes, out string? error);
-                if (saved == null && storeId == null)
+                if (ShouldSearchOtherStores(storeId, saved != null, error))
                 {
+                    // Direct EntryID without a known store, and ONLY when the item could not
+                    // be OPENED. This loop writes to disk, which is why save_attachment is
+                    // classified MUTATING (ComSessionOperations). Under the old `saved ==
+                    // null` guard, an attachment index that was out of range, or a save that
+                    // failed on permissions, re-ran the whole save against every store on
+                    // the profile - so a partially written or oddly named file could be left
+                    // behind per store while the call still reported failure.
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
                         saved = s.TrySaveAttachment(entryId, store.StoreId, attachmentIndex, directory, out sizeBytes, out error);
-                        if (saved != null)
+                        if (!KeepSearchingStores(saved != null, error))
                         {
                             break;
                         }
@@ -2762,12 +2820,18 @@ namespace OutlookAI.Core.Services
             ComOpenResult displayed = _gateway.Run(s =>
             {
                 ComOpenResult? d = s.TryDisplayItem(entryId, storeId, out string? error);
-                if (d == null && storeId == null)
+                if (ShouldSearchOtherStores(storeId, d != null, error))
                 {
+                    // Direct EntryID without a known store, and ONLY when the item could not
+                    // be OPENED. open_in_outlook is classified MUTATING (ComSessionOperations)
+                    // because Display() puts a window on the user's screen and can mark the
+                    // mail read. Under the old `d == null` guard a failing Display was retried
+                    // against every store, so an item that WAS found could be displayed - or
+                    // marked read - once per store before the call reported failure.
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
                         d = s.TryDisplayItem(entryId, store.StoreId, out error);
-                        if (d != null)
+                        if (!KeepSearchingStores(d != null, error))
                         {
                             break;
                         }
@@ -4061,12 +4125,17 @@ namespace OutlookAI.Core.Services
             {
                 string? error = null;
                 ComSendableDraftState? st = s.TryGetSendableDraftState(entryId, storeId, out error);
-                if (st == null && storeId == null)
+                if (ShouldSearchOtherStores(storeId, st != null, error))
                 {
+                    // Direct EntryID without a known store, and ONLY when the draft could not
+                    // be OPENED. The read itself is harmless to repeat, but the answer is
+                    // not: "not a mail item" is a verdict about the draft that WAS found, and
+                    // re-asking it store by store used to end on whichever store failed last,
+                    // so the refusal the caller finally saw named the wrong reason.
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
                         st = s.TryGetSendableDraftState(entryId, store.StoreId, out error);
-                        if (st != null)
+                        if (!KeepSearchingStores(st != null, error))
                         {
                             break;
                         }
@@ -4449,12 +4518,16 @@ namespace OutlookAI.Core.Services
                 ComDraftInfo? info = _gateway.Run(s =>
                 {
                     ComDraftInfo? r = s.TryGetMailInfo(entryId, storeId, out string? infoError);
-                    if (r == null && storeId == null)
+                    if (ShouldSearchOtherStores(storeId, r != null, infoError))
                     {
+                        // Direct EntryID without a known store, and ONLY when the item could
+                        // not be OPENED - the same rule the move loop below already follows,
+                        // which matters because archive_mail runs both in sequence over the
+                        // same id and they disagreed about when to fan out.
                         foreach (ComStoreDetail candidate in GetStoreDetails(s))
                         {
                             r = s.TryGetMailInfo(entryId, candidate.StoreId, out infoError);
-                            if (r != null)
+                            if (!KeepSearchingStores(r != null, infoError))
                             {
                                 break;
                             }

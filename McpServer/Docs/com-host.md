@@ -225,6 +225,55 @@ SDK's generic handler and the client receives the message-redacted
 work exists to eliminate. `GuardAsync` therefore catches `OperationCanceledException`
 itself and distinguishes deadline expiry from client cancellation explicitly.
 
+### Crossing the boundary without losing the error
+
+An exception cannot propagate across a process. The child renders it as four fields -
+type name, message, HRESULT, refusal reason - and the parent rebuilds the closest
+equivalent from `ComHostErrorMapper`'s type switch. Every one of those four is read off
+whatever exception `ComHostServer.FromException` is handed, which makes that one function
+the last place a wrapper can be caught.
+
+It was not caught there for the whole of the process split's first life. Two reflective
+hops sit in series (`GatewayRoutingProxy.Invoke` → `ComHostServer.Invoke`), so a session
+failure arrived wrapped twice and the server peeled one layer; what went on the wire was
+the inner wrapper - `TargetInvocationException`, "Exception has been thrown by the target
+of an invocation.", no HRESULT, no reason. Nothing failed. The whole type switch was
+unreachable, `ComGateway`'s disconnect rebuild had never once fired in this process, and
+every deliberate message the session takes trouble to write reached the agent as that one
+sentence. It was found on 2026-08-18 by a probe that happened to name a folder that does
+not exist.
+
+Three things keep it fixed, and they are deliberately independent:
+
+- **The routing proxy unwraps its own hop** with `ExceptionDispatchInfo`, so the gateway's
+  exception filter - which sits between the two hops and can therefore never be helped by
+  anything the server does - sees the real failure.
+- **The server's peel is a loop**, so a reflective layer added anywhere below cannot
+  re-flatten everything silently.
+- **T1 `ComHostErrorFidelityTests` audits the OUTCOME**, per operation, enumerated from
+  `IOutlookSession` by reflection so a method added later is covered the day it is added.
+  It runs the whole child side for real over an in-process pipe. Note what that implies:
+  it fails only when the boundary actually loses something, so removing either unwrap
+  alone leaves it green - which is the point of having two.
+
+Both channels are audited, because most of this contract does not throw at all: it returns
+null and sets `out string? error`, and the service layer branches on that string (a
+cross-store retry runs only for `ItemNotFound`). That token travels as a by-ref output
+inside a **successful** frame, so the exception path says nothing about it, and losing it
+would change behaviour with no error anywhere to notice.
+
+`check-pinned-constants.ps1` #10 covers the half a test cannot: the mapper's `case` list is
+a second copy of "types the COM layer raises", spread across every `throw new` under
+`Core/Com`, `Core/Text` and `ComHost/Host`, and no compilation can relate the two. A type
+the switch does not name is not lost but demoted - it arrives as `ComHostRemoteException`,
+whose `RemoteType` the tool layer reports as the error type so the agent still reads the
+child's own word for the failure rather than the name of the pipe it crossed.
+
+**What is still open:** a response too large to frame (`MaxFrameBytes`, 64 MB) throws out
+of the serve loop rather than answering, and the host exits - so the caller learns "the COM
+host went away" and the sentence naming the size and the limit reaches only stderr. Same
+species, unfixed; see `TODO.md` for why the fix is not the one-line catch it looks like.
+
 ## What this does not fix
 
 It does not make Outlook responsive. If Outlook is wedged, fresh mail is still

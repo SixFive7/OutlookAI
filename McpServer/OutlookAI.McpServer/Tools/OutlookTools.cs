@@ -850,6 +850,15 @@ public static class OutlookTools
                 string.Format(CultureInfo.InvariantCulture, "{0} 0x{1:X8}", ex.GetType().Name, ex.HResult),
                 "Outlook rejected the operation; check outlook_health and retry.");
         }
+        catch (ComHostRemoteException ex)
+        {
+            // A failure raised inside the COM host whose type the parent does not model.
+            // The type reported is the CHILD's, not this wrapper's: "ComHostRemoteException"
+            // names the pipe the failure crossed and tells an agent nothing it can act on,
+            // while the child-side name is the same word it would have seen had the work
+            // run in this process. The message is already the child's own.
+            return Error(ex.RemoteType, ex.Message, null);
+        }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             return Error(ex.GetType().Name, ex.Message, null);

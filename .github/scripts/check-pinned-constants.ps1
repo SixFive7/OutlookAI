@@ -297,6 +297,72 @@ if ($csRuntimePrefix -and $issRuntimePrefix -and $issRuntimePrefixLength) {
     }
 }
 
+# ---------------------------------------------------------------------------------------------
+# 10. Deliberate failures raised inside the COM host.
+#     Every exception type thrown by the code BEHIND the IOutlookSession contract must be a
+#     `case nameof(...)` in ComHostErrorMapper's switch.
+#
+#     The COM host runs in a CHILD PROCESS, so an exception cannot simply propagate: the child
+#     renders it as four fields on the wire and the parent rebuilds the closest equivalent from
+#     that switch. A type the switch does not name is not lost, but it is DEMOTED - it arrives
+#     as ComHostRemoteException, and every layer that branches on exception type stops
+#     recognising it. OutlookTools.GuardAsync picks the advice an agent reads that way, and
+#     ComGateway keys its disconnect-and-rebuild on COMException; on 2026-08-18 both of those
+#     were found to have been unreachable in this process since the split, because everything
+#     arrived wrapped and nothing said so.
+#
+#     The switch is therefore a SECOND COPY of a list that exists nowhere else - it is spread
+#     across every `throw new` in the COM layer, and no compilation can relate the two. Adding
+#     `throw new SomeException(...)` down there compiles, ships, and quietly demotes itself.
+#     That is exactly the shape this script exists for.
+#
+#     Scope is the session side, not the transport: Core/Com and Core/Text are what runs behind
+#     the contract, and ComHost/Host is the dispatch that calls it. ComHost/Protocol is left out
+#     deliberately - a framing failure never becomes a ComHostError, it takes the host down, and
+#     pretending otherwise here would make this check assert something untrue.
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+$comHostSourceDirs = @(
+    'McpServer/OutlookAI.Core/Com',
+    'McpServer/OutlookAI.Core/Text',
+    'McpServer/OutlookAI.ComHost/Host')
+
+$thrownTypes = New-Object System.Collections.Generic.HashSet[string]
+$comHostFilesScanned = 0
+foreach ($dir in $comHostSourceDirs) {
+    $fullDir = Join-Path $RepoRoot $dir
+    if (-not (Test-Path $fullDir)) {
+        Fail "COM host failure types" "$dir does not exist (did it move? this check now proves nothing)"
+        continue
+    }
+
+    foreach ($file in @(Get-ChildItem -LiteralPath $fullDir -Filter '*.cs' -File)) {
+        $comHostFilesScanned++
+        $source = Get-Content -LiteralPath $file.FullName -Raw
+        foreach ($m in [regex]::Matches($source, 'throw\s+new\s+([A-Za-z_][A-Za-z0-9_.]*)\s*\(')) {
+            # Namespace-qualified throws are written both ways in these files, so compare on
+            # the leaf name - which is also what nameof() produces on the other side.
+            $null = $thrownTypes.Add(($m.Groups[1].Value -split '\.')[-1])
+        }
+    }
+}
+
+$mapperCases = Get-PinnedAll 'McpServer/OutlookAI.ComHost/Supervision/ComHostErrorMapper.cs' `
+    'case nameof\(([A-Za-z_][A-Za-z0-9_]*)\)\s*:' 'COM host error mapper cases'
+
+if ($comHostFilesScanned -eq 0) {
+    Fail "COM host failure types" "no .cs files found under $($comHostSourceDirs -join ', ') - the layout changed and this check no longer proves anything."
+} elseif ($thrownTypes.Count -eq 0) {
+    Fail "COM host failure types" "found no 'throw new' anywhere in $comHostFilesScanned COM-host source files, which cannot be right - the pattern stopped matching and this check has switched itself off."
+} elseif ($mapperCases) {
+    $unmapped = @($thrownTypes | Where-Object { $mapperCases -cnotcontains $_ } | Sort-Object)
+    if ($unmapped.Count -gt 0) {
+        Fail "COM host failure types" "the COM host raises $($unmapped -join ', ') but ComHostErrorMapper has no case for $(if ($unmapped.Count -eq 1) { 'it' } else { 'them' }). Raised in the child, $(if ($unmapped.Count -eq 1) { 'it arrives' } else { 'they arrive' }) as ComHostRemoteException instead, so the tool layer cannot choose advice by type and ComGateway cannot recognise a disconnect - the message survives, the meaning does not. Add the case to ComHostErrorMapper.ToException, or raise a type it already models."
+    } else {
+        Pass "COM host failure types" "$($thrownTypes.Count) raised, all modelled ($comHostFilesScanned files scanned)"
+    }
+}
+
 Write-Host ""
 if ($script:Failures.Count -gt 0) {
     foreach ($f in $script:Failures) {

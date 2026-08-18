@@ -185,11 +185,26 @@
   fire. All three draft paths now set the token at their `GetItemFromID` and nowhere else, which
   tightens the first and revives the other two, and the rule is single-sourced as pure
   `MailService.ShouldSearchOtherStores` / `KeepSearchingStores` because the two loops disagreed only
-  because it was written twice. **Still open, deliberately:** four other loops (`TryReadItem`,
+  because it was written twice. ~~**Still open, deliberately:** four other loops (`TryReadItem`,
   `TryDisplayItem`, `TrySaveAttachment`, `TryGetSendableDraftState`, `TryGetMailInfo`) still retry on
   `r == null` alone. Three are read-only; `TryDisplayItem` opens a window and `TrySaveAttachment`
   writes a file, and both are classified MUTATING. Their COM layers do not set the token either, so
-  tightening them without that groundwork would break them exactly as `TryUpdateDraft` was broken.
+  tightening them without that groundwork would break them exactly as `TryUpdateDraft` was broken.~~
+
+  **CLOSED 2026-08-18 - the remaining five are done, groundwork first.** Their COM layers now set
+  `ItemNotFound` at their own `GetItemFromID` and nowhere else, so the token exists before anything
+  reads it: `TryReadItem`, `TrySaveAttachment`, `TryDisplayItem`, `TryGetMailInfo` and
+  `TryGetSendableDraftState`. All ten by-EntryID operations in `OutlookComSession` now set it at the
+  same place, and the word itself is a shared constant (`ComErrorTokens.ItemNotFound`, aliased by
+  `MailService.ItemNotFoundToken`) rather than two literals a compiler cannot relate - which is how
+  the original pair came apart. The five service-layer loops then went over to
+  `ShouldSearchOtherStores` / `KeepSearchingStores`, so nine of nine now decide the same way.
+  The inner catch in each COM method is deliberately the SAME filter that method already captured,
+  so this renames a failure and never changes which failures escape. Pinned by
+  `T1/CrossStoreRetryScopeTests.cs`, which drives all five through the real service against a
+  counting stand-in session: a non-open failure must stop at the first store, an absent reason must
+  stop too (fail closed), and a genuine not-found must still reach every store - the last of those
+  being the half that breaks silently.
 
 - [x] **DONE (`eee02f2`) - One door back to the cross-store attribution defect.**
   `MailService.ApplySweepCounters` fell back to whole-sweep totals when a store was named but
@@ -199,8 +214,8 @@
   instead of lending it another account's - and a future third construction site that forgets
   `PerStore` fails visibly instead of silently reopening `c515565`. Pinned in T1.
 
-- [ ] **A useful error message never reaches the caller.** An `exhaustive` search naming a
-  folder that does not exist comes back as an opaque
+- [x] **DONE (`1460ddc`, audited 2026-08-18) - A useful error message never reaches the caller.**
+  An `exhaustive` search naming a folder that does not exist came back as an opaque
   `ComHostRemoteException: "Exception has been thrown by the target of an invocation."`
   instead of the message the code takes trouble to write:
   `"Folder 'X' was not found in store 'Y' (...). Use list_folders for paths."`
@@ -215,6 +230,29 @@
   and nothing noticed until a probe happened to hit it. An agent that cannot tell "no such
   folder" from "something went wrong" retries blindly instead of calling `list_folders`.
 
+  **Where it was lost:** two reflective hops in series - `GatewayRoutingProxy.Invoke`'s
+  `targetMethod.Invoke` and `ComHostServer.Invoke`'s `method.Invoke` - wrapped the session's
+  exception twice, and the server peeled exactly one layer, so the INNER wrapper is what went
+  on the wire: type `TargetInvocationException`, that one sentence as its message, and null
+  for both HResult and Reason. `1460ddc` fixed it in two independent places (the routing proxy
+  unwraps its own hop with `ExceptionDispatchInfo`; the server's peel is now a loop), and this
+  TODO entry was simply never marked.
+
+  **The audit the entry asked for is now done**, over all 26 contract methods and both
+  channels, in `T1/ComHostErrorFidelityTests.cs` - the whole child side runs for real over an
+  in-process pipe, with the parent's own mapper rebuilding what comes back. Result: every
+  operation delivers its own message intact; every one of the 14 exception types the mapper
+  models arrives as itself; COM HRESULTs and refusal reasons survive; and the `out string?
+  error` channel (which the exception path says nothing about) delivers its token for all 17
+  operations that use one. Proved by reinstating the defect - with both unwraps removed, 19 of
+  the 20 audit cases fail; the survivor is the token channel, which never crossed the
+  exception path. **Two residual losses were found and fixed:** an unmodelled child-side type
+  reached the agent labelled `ComHostRemoteException` (the name of the pipe, not of the
+  failure) because `RemoteType` was carried on a property nothing read - the tool layer now
+  reports it; and the mapper's own comment claimed that name went into the message, which it
+  never did. Invariant 10 in `check-pinned-constants.ps1` now fails the build when the COM
+  layer raises a type the mapper does not model.
+
 - [ ] **Run the index-collation probe on the live profile** - `T2 LiveOrderKeyCollationTests`
   (read-only, index statements only, no COM and no mailbox writes). It answers two things the
   B3 follow-up could only reason about, both recorded in `QUESTIONS.md` under Q8 and in
@@ -228,6 +266,32 @@
         comparison as "has a value". If it does not, the refetch fails and searches that need it
         return a short answer flagged with `index.candidatesExhausted` - loud, but the guarantee
         then rests on a query that never runs.
+
+- [ ] **An answer too big to frame kills the COM host instead of being refused.** Found by the
+  boundary audit on 2026-08-18; not fixed, because the fix is not the small one it looks like.
+
+  `ComHostProtocol.EncodeFrame` refuses a payload over `MaxFrameBytes` (64 MB) by throwing
+  `ComHostProtocolException` - a deliberate, specific, actionable failure. But it is thrown from
+  `ComHostServer.WriteAsync`, which `ServeAsync` guards with `catch (IOException)` only. So the
+  exception leaves the serve loop, `Program.Main` prints it to stderr and the child exits with 1.
+  The caller learns "the COM host went away", which is the one fact that says nothing about what
+  to do next; the sentence naming the size and the limit reaches only the child's stderr. This is
+  the same species as the wrapper defect above - a good message that does not survive the process
+  boundary - and it is the only other instance the audit found.
+
+  **Why it is not just a catch clause.** A refusal frame is small, so answering with one is easy;
+  what is hard is testing it. Provoking it needs a genuinely oversized response, which means
+  allocating well over 64 MB in a T1 test that currently runs the whole tier in two minutes. The
+  alternatives each cost something: measuring the encoded size inside `Invoke` (where the existing
+  catch would turn it into a proper error frame for free) serializes every payload twice; making
+  `MaxFrameBytes` settable adds a production seam for a test; a new fault-injection kind is more
+  production-code-for-tests. **Pick one before writing it.**
+
+  **How likely is it?** Low - `Docs/com-host.md` calls 64 MB "far above any real payload" and a
+  `read` returns ~0.5 MB. The candidates are `SweepFoldersNewerThan(includeBodies: true)` and
+  `ExhaustiveScan` over a large window. Nobody has measured the largest frame the product actually
+  produces, and that measurement is worth having on its own: it is also the number that says
+  whether 64 MB is the right limit.
 
 - [ ] **Retire v3 planning ignores** — once the local v3 planning files (`v3.MD`, `Docs/v3-probes/`) are no longer needed:
   - [ ] remove the "v3 planning documents" section at the bottom of `.gitignore`
