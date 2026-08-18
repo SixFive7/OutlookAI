@@ -178,6 +178,96 @@ machine-checkable statement that the tier admits every class.
 **Not verified here**: that a real meeting request, NDR or read receipt comes back from all three tiers
 on a live profile. That needs the live tier, which this work did not run.
 
+### 2026-08-18 follow-up: the widening's one open risk, closed by construction
+
+The commit above flagged a risk it could not settle. It is real, and it is worth stating precisely,
+because the precise version is not quite the one the flag described.
+
+Undated rows compete for `SELECT TOP n ... ORDER BY System.Message.DateReceived DESC` on terms nobody
+here has measured: an appointment or a contact carries no `System.Message.DateReceived`, so where the
+provider sorts a NULL under `DESC` decides whether they fill the `n`. The server-side sort that puts
+them last runs on rows the provider already truncated, so it cannot recover any of it. What the commit
+changed is **what happens next**:
+
+- `include_attachment_hits: true` (THE DEFAULT) already emitted no kind predicate under a SCOPE before
+  the commit, so those rows could always take slots. The post-filter then dropped them, so a
+  NULLs-first provider produced a SHORT answer - and `candidatesExhausted` fired, which is the whole
+  point of that counter. Loud.
+- `include_attachment_hits: false` used `KindFilter.EmailOnly`, which put `System.Kind='email'` **in
+  the SQL**. That shape was immune, and is not any more.
+- After the commit both shapes ADMIT the undated rows, so the answer is full length and can contain no
+  mail at all. **The loss stopped being visible.** That is the regression: not that displacement
+  became possible, but that the one signal which would have shown it went quiet.
+
+**The guarantee now shipped, and why it holds.** *A row the index cannot date can never reduce the
+number of dated rows a search returns.* Two things could take a slot from mail and both are closed:
+
+- **The client-side trim.** The service took the provider's first `Top` admitted rows. It now orders
+  rankable rows first, by their key, with unrankable rows after them
+  (`IndexOrderGuard.RankableFirst`), and trims after that - the same "undated last" convention
+  `MailService` already applies when it merges sweep hits into the same list. This alone fixes every
+  case where the statement was not truncated, because then every matching row is already in hand.
+- **The provider-side cut.** Where the statement WAS cut off and an unrankable row came back in it,
+  rankable rows may never have left the provider, and no client-side ordering can recover them. The
+  service then re-runs the same statement with one added predicate that admits only rows carrying the
+  ordering column, and unions the two answers. The union can only add.
+
+The trigger is `truncated AND at least one unrankable row in the block`, and it is sound under **any**
+collation, including an interleaved one: below the TOP nothing was displaced, and an unrankable row
+that sorted above the cut would be IN the block by definition. Both halves are pure functions with a
+T1 suite (`IndexOrderDisplacementTests`, 15 tests) that drives the real service through a scripted
+provider in both collations - NULLs-first must return the mail, NULLs-last must not pay for a second
+statement.
+
+**What it costs.** Nothing when the provider sorts NULLs last (no second statement is ever issued) or
+when a search carries an `after`/`before` bound (a date predicate already excludes undated rows). One
+extra index statement per truncated search if NULLs sort first, on the order of 40-100 ms by the
+measured shapes in `Docs/magic-numbers.md`. Plus mapping every returned row rather than the first
+`Top` of them, which is pure CPU on at most 5000 rows and is what makes `index.rowsScanned` /
+`index.rowsDropped` finally mean what their names say.
+
+**What was deliberately NOT protected.** A dated meeting request, bounce report or read receipt can
+still push an older mail off the end of a `Top n` list. That is the B3 decision working: under
+`MailItemAdmission` those ARE mail, and they compete on the same axis as mail. Ruling that out would
+mean re-narrowing the tier this decision widened.
+
+**Rejected alternatives.** Making the ordering explicit (WS-SQL has no `NULLS LAST` and no `COALESCE`
+in `ORDER BY`); a bigger over-fetch (a Calendar folder can hold more undated rows than any bounded
+factor, so a safe factor does not exist); excluding undated rows outright (works, and re-narrows the
+tier - it would also drop unsent items, which are mail); and running the mail-only statement as a
+floor on every search (an unconditional second query that recovers less than the date-floor shape,
+since a dated meeting request is not `kind='email'`).
+
+**Two smaller items from the same commit, settled.**
+
+1. **The `PR_MESSAGE_CLASS like '%'` predicate stays.** The question was whether a different
+   always-true predicate is more clearly correct. None is, and the reason is structural: a DASL
+   restriction is three-valued, so EVERY predicate over a property excludes a row whose property is
+   absent - a different predicate moves that risk rather than removing it, onto syntax this codebase
+   has never emitted. The only construction that removes it is no restriction at all
+   (`Folder.GetTable()` with no argument), which was considered and not taken: PR_MESSAGE_CLASS is
+   required on every MAPI message and is what Outlook itself reads to choose the item type it hands
+   back, so the absent case is unreachable through the object model, while dropping the filter changes
+   a COM call site nothing outside a live profile can exercise and makes the reported scan engine
+   (`"like"`) a claim about matching that never happened. The residual doubt is only whether the
+   provider reads `%` as "any string", and that failure is loud: `GetTable` throws, the folder is
+   counted skipped and a coverage gap is raised.
+2. **The extra `MessageClass` read is plainly fine; no measurement needed.** The sweep's fitted cost
+   model is ~19 ms per folder plus ~15 ms per item opened (215 sweeps, `Docs/magic-numbers.md`), so
+   one read out of nine is ~1.7 ms per item. Steady state opens 0-5 items across all 20 arrival-path
+   folders, so the whole addition is under 10 ms against a 30 s budget; the empty-index path's 377
+   capped items add ~0.6 s to a predicted 6.0 s sweep. It cannot decide that budget either way,
+   because the eight reads already there blow it first - the 200 x 4 x N worst case is ~60 s at eight
+   reads before this one is counted. On the exhaustive tier it is not an addition at all: that loop
+   used to read `item.Class` on every item in order to drop non-mail, so an admitted item paid nine
+   reads then and pays nine now.
+
+**Still needs a live profile** (`T2 LiveOrderKeyCollationTests`, read-only, written and NOT run):
+where the provider sorts a NULL under `DESC` - which decides whether the refetch fires on every
+truncated search or on none of them - and whether it accepts the `1601-01-01 00:00:00` floor literal.
+Until that runs, the guarantee rests on construction rather than on measurement; the failure mode of
+an unaccepted literal is a flagged short answer (`index.candidatesExhausted`), never a silent one.
+
 ## Decision log
 
 Answers move here with the date and the reasoning, so a future reader sees not just what was chosen

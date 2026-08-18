@@ -215,6 +215,20 @@
   and nothing noticed until a probe happened to hit it. An agent that cannot tell "no such
   folder" from "something went wrong" retries blindly instead of calling `list_folders`.
 
+- [ ] **Run the index-collation probe on the live profile** - `T2 LiveOrderKeyCollationTests`
+  (read-only, index statements only, no COM and no mailbox writes). It answers two things the
+  B3 follow-up could only reason about, both recorded in `QUESTIONS.md` under Q8 and in
+  `Docs/magic-numbers.md` beside `WsSqlBuilder.OrderKeyFloorUtc`:
+  - [ ] **Where the provider sorts a NULL under `ORDER BY System.Message.DateReceived DESC`.**
+        If last, the displacement refetch never fires and the guard is free; if first, it fires
+        on every truncated search and each one costs a second index statement. The guarantee
+        holds either way - this decides only what it costs, and it is the number that belongs
+        in the magic-numbers row, which currently says "not measured".
+  - [ ] **Whether the provider accepts the `1601-01-01 00:00:00` floor literal** and treats the
+        comparison as "has a value". If it does not, the refetch fails and searches that need it
+        return a short answer flagged with `index.candidatesExhausted` - loud, but the guarantee
+        then rests on a query that never runs.
+
 - [ ] **Retire v3 planning ignores** — once the local v3 planning files (`v3.MD`, `Docs/v3-probes/`) are no longer needed:
   - [ ] remove the "v3 planning documents" section at the bottom of `.gitignore`
   - [ ] delete the local plan-doc backup folder (location documented in v3.MD §0.8 D16 on the machine that holds it)

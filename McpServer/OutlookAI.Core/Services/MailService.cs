@@ -635,11 +635,13 @@ namespace OutlookAI.Core.Services
 
             if (indexResult.CandidatesExhausted)
             {
-                // The index tier admits rows in code over an over-fetched candidate list.
-                // Running out of candidates is the one way that could hide matches - say so
-                // (D42), in a FIELD as well as here since 2026-08-18 (gap G6).
-                advice.Add("The index tier ran out of candidate rows while filtering non-mail entries, "
-                    + "so this list may be short of matches. Narrow with store/folder/after, or lower top.");
+                // The index tier admits rows in code over an over-fetched candidate list, so
+                // running out of candidates - or failing the follow-up query that recovers
+                // rows the result ordering may have hidden - is how it could hide matches.
+                // Say so (D42), in a FIELD as well as here since 2026-08-18 (gap G6).
+                advice.Add("The index tier could not confirm this list holds every match: its candidate rows ran out "
+                    + "while filtering, or the follow-up query that would have proved otherwise failed. "
+                    + "Narrow with store/folder/after, or lower top.");
             }
 
             // Say the live check's outcome in a FIELD, not only in prose: a result that

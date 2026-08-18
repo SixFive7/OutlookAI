@@ -29,19 +29,34 @@ namespace OutlookAI.Core.IndexSearch
             CandidatesExhausted = candidatesExhausted;
         }
 
-        /// <summary>Mapped hits, newest first (ORDER BY System.Message.DateReceived DESC).</summary>
+        /// <summary>
+        /// Mapped hits, newest first, with rows the ordering cannot rank last
+        /// (<see cref="IndexOrderGuard.RankableFirst"/>) rather than wherever the provider's
+        /// NULL collation put them.
+        /// </summary>
         public IReadOnlyList<IndexHit> Hits { get; }
 
-        /// <summary>Wall-clock cost of the query including connection open and row drain.</summary>
+        /// <summary>
+        /// Wall-clock cost of the query including connection open and row drain, and of the
+        /// displacement refetch when one ran (<see cref="IndexOrderGuard"/>).
+        /// </summary>
         public long ElapsedMilliseconds { get; }
 
-        /// <summary>The executed WS-SQL statement (diagnostics/tests).</summary>
+        /// <summary>
+        /// The WS-SQL statement that ANSWERED the search (diagnostics/tests). A displacement
+        /// refetch, when one runs, is this statement plus
+        /// <see cref="WsSqlBuilder.BuildOrderKeyPresence"/>; it is a recovery query rather
+        /// than the search, so it is not reported here.
+        /// </summary>
         public string Sql { get; }
 
         /// <summary>Provider that served the query.</summary>
         public IndexProviderKind Provider { get; }
 
-        /// <summary>Rows the statement returned before <see cref="IndexRowFilter"/> ran.</summary>
+        /// <summary>
+        /// Rows the statement returned before <see cref="IndexRowFilter"/> ran, plus the
+        /// refetch's rows when one ran.
+        /// </summary>
         public int RowsScanned { get; }
 
         /// <summary>
@@ -57,13 +72,20 @@ namespace OutlookAI.Core.IndexSearch
         /// and since 2026-08-18 it reaches the payload as <c>index.rowsDropped</c> instead
         /// of dying here.
         /// </para>
+        /// <para>
+        /// Counted over every row both statements returned. It used to stop at the first
+        /// <c>Top</c> admitted rows, so it under-reported the refusals by exactly the tail
+        /// nobody looked at.
+        /// </para>
         /// </summary>
         public int RowsDropped { get; }
 
         /// <summary>
-        /// True when the over-fetched candidate list ran out before enough rows were
-        /// admitted - the only way the post-filter could hide matches. Reported, never
-        /// silent (no-silent-caps discipline, D42).
+        /// True when this tier could not establish that the list holds every match it should:
+        /// either the over-fetched candidate list ran out before enough rows were admitted,
+        /// or the displacement refetch (<see cref="IndexOrderGuard"/>) failed, which leaves
+        /// the rows the ordering may have hidden unrecovered. Both mean "possibly short of
+        /// matches" and both are reported rather than silent (no-silent-caps discipline, D42).
         /// </summary>
         public bool CandidatesExhausted { get; }
     }
@@ -163,31 +185,89 @@ namespace OutlookAI.Core.IndexSearch
             string sql = WsSqlBuilder.Build(query, sqlTop);
             Stopwatch stopwatch = Stopwatch.StartNew();
             IReadOnlyList<IReadOnlyDictionary<string, object?>> rows = _client.ExecuteRows(sql, sqlTop, commandTimeoutSeconds);
-            stopwatch.Stop();
 
-            List<IndexHit> hits = new List<IndexHit>(Math.Min(rows.Count, query.Top));
-            int dropped = 0;
-            int scanned = 0;
-            foreach (IReadOnlyDictionary<string, object?> row in rows)
+            // EVERY returned row is mapped and judged, not just the first Top of them: the
+            // trim below happens after the ordering guard has run, and a row it never looked
+            // at cannot be ranked. This is also what makes RowsScanned mean what it says.
+            List<IndexHit> mapped = MapRows(rows);
+            List<IndexHit> admitted = Admit(mapped, query.Kinds);
+            IReadOnlyList<IndexHit> candidates = admitted;
+            int scanned = mapped.Count;
+            int dropped = scanned - admitted.Count;
+            bool statementFilledTop = rows.Count >= sqlTop;
+            bool refetchFilledTop = false;
+            bool refetchFailed = false;
+
+            if (IndexOrderGuard.NeedsOrderKeyRefetch(
+                rows.Count, sqlTop, IndexOrderGuard.AnyRowMissingOrderKey(mapped, query.OrderBy)))
             {
-                scanned++;
-                IndexHit hit = IndexRowMapper.Map(row);
-                if (!IndexRowFilter.Keep(hit, query.Kinds))
+                // Rows the ORDER BY cannot rank took slots in a statement that was cut off,
+                // so rows it CAN rank may never have left the provider (IndexOrderGuard says
+                // why this is the exact condition). Ask again for the rankable ones only and
+                // union the two answers, which can add rows and can never remove any.
+                try
                 {
-                    dropped++;
-                    continue;
+                    IReadOnlyList<IReadOnlyDictionary<string, object?>> refetchRows =
+                        _client.ExecuteRows(WsSqlBuilder.Build(query, sqlTop, true), sqlTop, commandTimeoutSeconds);
+                    List<IndexHit> refetchMapped = MapRows(refetchRows);
+                    List<IndexHit> refetchAdmitted = Admit(refetchMapped, query.Kinds);
+                    scanned += refetchMapped.Count;
+                    dropped += refetchMapped.Count - refetchAdmitted.Count;
+                    candidates = IndexOrderGuard.Merge(admitted, refetchAdmitted);
+                    refetchFilledTop = refetchRows.Count >= sqlTop;
                 }
-
-                hits.Add(hit);
-                if (hits.Count >= query.Top)
+                catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
-                    break;
+                    // The recovery query failed, so this answer is the un-recovered one -
+                    // today's rows, possibly short of mail the ordering hid. Reported through
+                    // CandidatesExhausted rather than thrown: the caller still gets the rows
+                    // the search found, and a search that dies outright because a SECOND
+                    // statement was rejected would be a worse answer than a flagged one.
+                    refetchFailed = true;
                 }
             }
 
-            bool exhausted = hits.Count < query.Top && rows.Count >= sqlTop;
+            // Unrankable rows go last HERE, before the trim, because the trim is the second
+            // place they could displace mail: taking the provider's first Top admitted rows
+            // keeps them even when the dated rows are already in hand.
+            IReadOnlyList<IndexHit> ordered = IndexOrderGuard.RankableFirst(candidates, query.OrderBy);
+            stopwatch.Stop();
+
+            List<IndexHit> hits = new List<IndexHit>(Math.Min(ordered.Count, query.Top));
+            for (int i = 0; i < ordered.Count && hits.Count < query.Top; i++)
+            {
+                hits.Add(ordered[i]);
+            }
+
+            bool exhausted = refetchFailed
+                || (hits.Count < query.Top && (statementFilledTop || refetchFilledTop));
             return new IndexSearchResult(
                 hits, stopwatch.ElapsedMilliseconds, sql, _client.Provider, scanned, dropped, exhausted);
+        }
+
+        private static List<IndexHit> MapRows(IReadOnlyList<IReadOnlyDictionary<string, object?>> rows)
+        {
+            List<IndexHit> mapped = new List<IndexHit>(rows.Count);
+            foreach (IReadOnlyDictionary<string, object?> row in rows)
+            {
+                mapped.Add(IndexRowMapper.Map(row));
+            }
+
+            return mapped;
+        }
+
+        private static List<IndexHit> Admit(IReadOnlyList<IndexHit> mapped, KindFilter kinds)
+        {
+            List<IndexHit> admitted = new List<IndexHit>(mapped.Count);
+            for (int i = 0; i < mapped.Count; i++)
+            {
+                if (IndexRowFilter.Keep(mapped[i], kinds))
+                {
+                    admitted.Add(mapped[i]);
+                }
+            }
+
+            return admitted;
         }
 
         /// <summary>

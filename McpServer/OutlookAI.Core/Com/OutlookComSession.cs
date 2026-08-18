@@ -7314,6 +7314,18 @@ namespace OutlookAI.Core.Com
             // request rather than mail. One extra late-bound read beside the eight already
             // here, and it never fails the snapshot - PR_MESSAGE_CLASS is mandatory on a
             // MAPI message, so a null here means the item itself is unreadable.
+            //
+            // WHAT IT COSTS, decided 2026-08-18 rather than left implicit. The sweep's
+            // measured cost model is ~19 ms per folder plus ~15 ms per item OPENED, fitted
+            // over 215 sweeps (Docs/magic-numbers.md), so one read out of nine is ~1.7 ms
+            // per item. In steady state a whole 20-folder sweep opens 0-5 items, which puts
+            // the entire addition under 10 ms against a 30 s budget; the empty-index path's
+            // 377 capped items add ~0.6 s to a predicted 6.0 s sweep. It cannot decide that
+            // budget either way, because the eight reads already here blow it first: the
+            // 200 x 4 x N worst case is ~60 s at eight reads before this one is counted. So
+            // it is plainly fine and needs no measurement of its own. On the EXHAUSTIVE tier
+            // it is not an addition at all - that loop used to read item.Class on every item
+            // to drop non-mail, so an admitted item paid nine reads then and pays nine now.
             string? messageClass = TryGetString(() => (string?)item.MessageClass);
             string? subject = TryGetString(() => (string?)item.Subject);
             DateTime? received = TryGetDateTime(() => (DateTime)item.ReceivedTime);

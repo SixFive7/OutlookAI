@@ -32,6 +32,11 @@ namespace OutlookAI.Core.IndexSearch
     /// the ATTACHMENT's kind - 'document' alone dropped 22.6% of them - and since gap B3
     /// a message row is admitted whatever its class. Admission is decided by
     /// IndexRowFilter after the rows come back (v3.MD section 0.8 block (q)).</item>
+    /// <item>ORDER BY ranks the rows BEFORE the TOP cut, so a row the ordering column
+    /// cannot rank competes for that cut on terms nothing in this file controls (the
+    /// provider's NULL ordering). <see cref="BuildOrderKeyPresence"/> is the predicate that
+    /// keeps such rows out of a statement; <see cref="IndexOrderGuard"/> owns the decision
+    /// to emit it, and the reasoning.</item>
     /// <item>No aggregates, no JOINs (unsupported in WS-SQL).</item>
     /// <item>Sender/recipient filters use per-column CONTAINS - Phase-1 probes measured
     /// equality/LIKE on FromAddress at 1-10 s (property scan) vs ~60 ms for CONTAINS. The
@@ -116,6 +121,22 @@ namespace OutlookAI.Core.IndexSearch
         /// <summary>Sender DISPLAY NAME column of the <c>from</c> predicate (see <see cref="IndexQuery.SenderContains"/>).</summary>
         private const string FromNameColumn = "System.Message.FromName";
 
+        /// <summary>Received-date column: the default ORDER BY key and the date-range filter column.</summary>
+        private const string DateReceivedColumn = "System.Message.DateReceived";
+
+        /// <summary>Item size column: the ORDER BY key of <see cref="IndexOrder.SizeDescending"/>.</summary>
+        private const string SizeColumn = "System.Size";
+
+        /// <summary>
+        /// Lower bound of <see cref="BuildOrderKeyPresence"/>'s date predicate: 1601-01-01
+        /// UTC, the FILETIME epoch, which is the lowest instant a MAPI date property can
+        /// hold. It is chosen to exclude EXACTLY the rows that carry no received date at
+        /// all and nothing else, including the zero-FILETIME dates a damaged item can
+        /// carry: a floor of a later year would quietly turn a NULL-exclusion into a date
+        /// filter, which is the kind of narrowing this codebase keeps having to undo.
+        /// </summary>
+        public static readonly DateTime OrderKeyFloorUtc = new DateTime(1601, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
         /// <summary>Builds the search statement for <paramref name="query"/>.</summary>
         public static string Build(IndexQuery query)
         {
@@ -129,6 +150,21 @@ namespace OutlookAI.Core.IndexSearch
         /// <c>query.Top</c> ADMITTED rows, but the statement must offer more candidates.
         /// </summary>
         public static string Build(IndexQuery query, int? topOverride)
+        {
+            return Build(query, topOverride, false);
+        }
+
+        /// <summary>
+        /// Builds the search statement, optionally requiring that every row carry the
+        /// ORDER BY column (<see cref="BuildOrderKeyPresence"/>).
+        /// <para>
+        /// <paramref name="requireOrderKeyPresent"/> is set only by
+        /// <see cref="IndexSearchService"/>, and only for the second statement of a
+        /// displacement refetch. It NARROWS the result set, so it must never be set on the
+        /// statement that answers the search: it is the recovery query, not the query.
+        /// </para>
+        /// </summary>
+        public static string Build(IndexQuery query, int? topOverride, bool requireOrderKeyPresent)
         {
             if (query == null)
             {
@@ -225,12 +261,17 @@ namespace OutlookAI.Core.IndexSearch
 
             if (query.ReceivedOnOrAfterUtc.HasValue)
             {
-                where.Add("System.Message.DateReceived >= '" + FormatUtc(query.ReceivedOnOrAfterUtc.Value) + "'");
+                where.Add(DateReceivedColumn + " >= '" + FormatUtc(query.ReceivedOnOrAfterUtc.Value) + "'");
             }
 
             if (query.ReceivedBeforeUtc.HasValue)
             {
-                where.Add("System.Message.DateReceived < '" + FormatUtc(query.ReceivedBeforeUtc.Value) + "'");
+                where.Add(DateReceivedColumn + " < '" + FormatUtc(query.ReceivedBeforeUtc.Value) + "'");
+            }
+
+            if (requireOrderKeyPresent)
+            {
+                where.Add(BuildOrderKeyPresence(query.OrderBy));
             }
 
             if (query.IsRead.HasValue)
@@ -262,9 +303,35 @@ namespace OutlookAI.Core.IndexSearch
             sql.Append(" FROM SystemIndex WHERE ");
             sql.Append(string.Join(" AND ", where));
             sql.Append(query.OrderBy == IndexOrder.SizeDescending
-                ? " ORDER BY System.Size DESC"
-                : " ORDER BY System.Message.DateReceived DESC");
+                ? " ORDER BY " + SizeColumn + " DESC"
+                : " ORDER BY " + DateReceivedColumn + " DESC");
             return sql.ToString();
+        }
+
+        /// <summary>
+        /// Predicate that admits only rows carrying a value in <paramref name="order"/>'s
+        /// ORDER BY column, expressed as a comparison rather than a null test because
+        /// WS-SQL's supported predicate set is comparison / LIKE / CONTAINS / FREETEXT and
+        /// three-valued logic then does the work: a row with no value fails the comparison.
+        /// <para>
+        /// The date bound is <see cref="OrderKeyFloorUtc"/>, below every instant a MAPI date
+        /// can hold, and the size bound is zero, below every size a row can carry - so
+        /// neither predicate narrows anything except the rows with nothing there. The date
+        /// shape is the SAME comparison the range filter above emits, which is the one shape
+        /// already proven against this provider on every date-filtered search.
+        /// </para>
+        /// </summary>
+        public static string BuildOrderKeyPresence(IndexOrder order)
+        {
+            switch (order)
+            {
+                case IndexOrder.SizeDescending:
+                    return SizeColumn + " >= 0";
+                case IndexOrder.DateReceivedDescending:
+                    return DateReceivedColumn + " >= '" + FormatUtc(OrderKeyFloorUtc) + "'";
+                default:
+                    throw new ArgumentException("Unknown IndexOrder value.", nameof(order));
+            }
         }
 
         private static string ValidateConversationId(string conversationId)

@@ -587,10 +587,12 @@ namespace OutlookAI.Core.Services
         public int RowsDropped { get; set; }
 
         /// <summary>
-        /// True when the over-fetched candidate list ran out before enough rows were
-        /// admitted - the one way this tier's post-filter CAN hide matches, so unlike
-        /// <see cref="RowsDropped"/> it is worth acting on. Null otherwise (gap G6: it used
-        /// to be advice-only).
+        /// True when this tier could not establish that the list holds every match: the
+        /// over-fetched candidate list ran out before enough rows were admitted, or the
+        /// follow-up query that recovers rows the result ordering may have hidden failed
+        /// (<c>IndexSearch.IndexOrderGuard</c>). Those are the two ways this tier CAN hide
+        /// matches, so unlike <see cref="RowsDropped"/> it is worth acting on. Null otherwise
+        /// (gap G6: it used to be advice-only).
         /// </summary>
         public bool? CandidatesExhausted { get; set; }
     }

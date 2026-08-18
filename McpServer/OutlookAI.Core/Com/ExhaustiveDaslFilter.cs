@@ -65,6 +65,24 @@ namespace OutlookAI.Core.Com
         /// so T1 can pin the shape: a predicate that silently stopped matching would empty
         /// out exactly the unbounded folder scan that has no terms to fall back on.
         /// </para>
+        /// <para>
+        /// REVIEWED 2026-08-18, and KEPT. The question was whether some other always-true
+        /// predicate is more clearly correct. None is, and the reason is structural rather
+        /// than a preference: a DASL restriction is three-valued, so EVERY predicate over a
+        /// property silently excludes a row whose property is absent. Swapping this one for
+        /// a comparison, or for a negation, moves that risk around instead of removing it,
+        /// and lands on syntax this codebase has never emitted. The only construction that
+        /// removes it is no restriction at all (<c>Folder.GetTable()</c> with no argument),
+        /// which was considered and not taken: PR_MESSAGE_CLASS is required on every MAPI
+        /// message and is what Outlook itself reads to decide which item type to hand back,
+        /// so the absent case is not reachable through the object model, while dropping the
+        /// filter would change a COM call site that cannot be exercised outside a live
+        /// profile and would make the reported scan engine ("like") a claim about matching
+        /// that never happened. What stays unverified is narrow and loud: whether the
+        /// provider reads the pattern <c>%</c> as "any string". If it does not, GetTable
+        /// throws, the folder is counted skipped and a coverage gap is raised - the tier
+        /// says it lost the folder rather than pretending it was empty.
+        /// </para>
         /// </summary>
         public const string AdmitEveryClassClause = MessageClassProp + " like '%'";
 
