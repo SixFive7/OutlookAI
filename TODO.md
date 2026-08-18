@@ -267,7 +267,7 @@
         return a short answer flagged with `index.candidatesExhausted` - loud, but the guarantee
         then rests on a query that never runs.
 
-- [ ] **Re-run the ten store-scope probes on the unindexed-PST machine.** The A4 fix (a `store`
+- [x] **DONE 2026-08-18 15:12 against `2d28957` - Re-run the ten store-scope probes on the unindexed-PST machine.** The A4 fix (a `store`
   scope resolved against the profile Outlook has rather than against the index) is pinned in T1
   against stand-in index clients whose store catalog is empty, and against one that omits a store
   the profile has - both fixtures the suite had never had, which is why the defect shipped. What
@@ -278,6 +278,17 @@
   `index.storeNotIndexed: true` plus `no_index_frontier`, probe 15 still refuses and names the
   real store, and probes 11/12/13/17/18/19 are unchanged. Read-only: `search`, `list_folders` and
   `list_accounts` only, no mailbox writes.
+
+  **Result: verified.** Probe 14 answers `degraded:true` `freshness:"partial"`
+  `coverageGaps:["no_index_frontier"]` `sweep.storesWithoutIndex:["Outlook Data File"]`
+  `index.storeNotIndexed:true` `scope.shape:"store_not_indexed"`. Probe 15 still refuses, with the
+  new message naming the real store: *"Store 'no-such-store-xyz' was not found in Outlook. Known
+  stores: Outlook Data File."* Probes 10-13 and 17-19 byte-identical to the pre-fix run. **One
+  criterion the machine cannot test:** "does not widen" is unobservable on a single-store profile,
+  since a widened search and a correctly scoped one return the same set; T1 covers it with an index
+  stand-in that answers with a foreign store's mail. Evidence, and the pass criteria written before
+  the fix landed, are in the VM working folder under Downloads (`tmp-outlookai-vm`), with the
+  before/after transcripts beside them.
 
 - [ ] **An answer too big to frame kills the COM host instead of being refused.** Found by the
   boundary audit on 2026-08-18; not fixed, because the fix is not the small one it looks like.
