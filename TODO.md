@@ -542,6 +542,36 @@
     characters at all. If none ever does, the per-item cap is pure insurance and only the budget
     can ever bite - which would be the good outcome and should be recorded as such.
 
+- [ ] **Measure the sweep and scan budgets against a known corpus - the tooling exists, the corpus does not yet.**
+  The store shape the item above asks for cannot be borrowed from anywhere: every store on the real
+  profile is indexed, so `EmptyIndexSweepWindow` never engages, and the Hyper-V VM's PST is the only
+  unindexed store to hand and it is empty. So the corpus is built rather than found.
+  `McpServer/OutlookAI.RemediationTools` gained five commands for it - `corpus-plan`, `corpus-probe`,
+  `corpus-build`, `corpus-teardown`, `corpus-reindex` - and `Docs/corpus-measurement-plan.md` is the
+  plan for what to run against the result and what each number would settle. T1
+  `CorpusGeneratorTests` pins the size distribution, the date spread, the seeding, the store
+  refusals, the teardown rule, the manifest format and the date-fidelity verdicts; only the COM
+  calls are outside that tier, and they carry no decisions.
+
+  - **Not yet run.** Nothing has been built and nothing has been measured. The generator is code
+    only; it has never been executed against any store, and the parent session owns the VM.
+  - **The one thing that must be settled first, before any of it is worth doing:** whether that PST
+    accepts back-dated mail at all. `MailItem.SentOn` is read-only in the object model, and an item
+    created straight into a folder is UNSENT, which some stores date themselves. `corpus-probe`
+    settles it empirically - it writes one throwaway item per method, re-opens it by EntryID, reads
+    `ReceivedTime` back, and then asks a DASL date restriction on either side of the instant whether
+    it selects the item - and `corpus-build` refuses to build an undated corpus unless
+    `--allow-undated` says so in as many words. **An undated corpus would make both windows select
+    the same population while looking exactly like a good corpus**, which is why the refusal is the
+    default rather than a warning.
+  - **The blocker for the 180 s proposal, found while writing the plan and not yet acted on:**
+    `SearchBudgetMs` is `SearchIndexTimeoutSeconds * 1000 + SweepBudgetMs`, and T1
+    `BudgetCompositionTests.SearchBudget_IsComposedFromItsPartsAndFitsTheOperationDeadline` asserts
+    that sum fits inside `ComOperationBudgets.OperationDeadlineMs` (120 s). At 180 s the sum is
+    195 s and that test fails before anything reaches a mailbox. Anything above roughly 105 s moves
+    the operation deadline too, and with it `ChildWorkBudgetMs` and `ExhaustiveTimeBudgetMs`. Decide
+    the shape of that change before measuring, so the measurement is aimed at the right question.
+
 - [ ] **Verify the three folder-walk reporting fixes against a live profile - the COM half none of them can reach from T1.**
   G2, G3 and G4 of `Docs/completeness-gaps.md` were closed on 2026-08-18 and are pinned by T1
   `FolderWalkReportingTests` (21 tests, driving the real `MailService` through a stand-in session

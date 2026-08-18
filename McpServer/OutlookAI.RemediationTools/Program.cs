@@ -28,6 +28,31 @@ using OutlookAI.RemediationTools;
 ///
 /// Logging is S4-disciplined: counts/EntryIDs/booleans only for business stores;
 /// subject prefixes appear only for the designated test hub.
+///
+/// Five further commands build and remove a SYNTHETIC MEASUREMENT CORPUS in a local .pst,
+/// which is how the freshness-sweep and exhaustive-scan budgets get measured against known
+/// volume instead of modelled (see Docs/corpus-measurement-plan.md):
+///
+///   corpus-plan     --corpus-id ... --seed N --anchor yyyy-MM-dd --count N
+///       Pure. Prints what the corpus would contain - per folder, per size class, per age
+///       band, and how many items each measurement window selects. No Outlook.
+///
+///   corpus-probe    --store ... --allow-store ... --corpus-id ... --seed N --anchor ...
+///       Settles whether this store accepts back-dated mail, by writing throwaway items
+///       and reading them back. Deletes every probe it creates.
+///
+///   corpus-build    ... --count N --manifest &lt;path&gt; [--allow-undated] [--execute]
+///       Creates the corpus. Resumable and idempotent - it builds the ordinals the manifest
+///       does not already record.
+///
+///   corpus-teardown --store ... --allow-store ... --corpus-id ... --manifest ... [--execute]
+///       Removes exactly what the manifest records, by EntryID allowlist AND subject tag.
+///
+///   corpus-reindex  ... --manifest &lt;path&gt; [--execute]
+///       Read-only recovery: rebuilds a candidate manifest by scanning the store.
+///
+/// Every corpus command refuses any store the caller did not name on --allow-store, and
+/// any store four independent COM facts do not agree is a local .pst.
 /// </summary>
 internal static class Program
 {
@@ -41,9 +66,27 @@ internal static class Program
                 return 1;
             }
 
+            string command = args[0].ToLowerInvariant();
+            if (command.StartsWith("corpus-", StringComparison.Ordinal))
+            {
+                // The corpus commands take their own option parser: --allow-store is
+                // repeatable, and that list is the guard deciding whether tens of thousands
+                // of items may be written into a mailbox.
+                CorpusOptions corpus = CorpusOptions.Parse(args.Skip(1));
+                return command switch
+                {
+                    "corpus-plan" => CorpusCommands.RunPlan(corpus, Console.Out),
+                    "corpus-probe" => CorpusCommands.RunProbe(corpus, Console.Out),
+                    "corpus-build" => CorpusCommands.RunBuild(corpus, Console.Out),
+                    "corpus-teardown" => CorpusCommands.RunTeardown(corpus, Console.Out),
+                    "corpus-reindex" => CorpusCommands.RunReindex(corpus, Console.Out),
+                    _ => Fail($"Unknown command '{args[0]}'."),
+                };
+            }
+
             Dictionary<string, string> options = ParseOptions(args.Skip(1));
             bool execute = options.ContainsKey("execute");
-            return args[0].ToLowerInvariant() switch
+            return command switch
             {
                 "audit" => RunAudit(LoadSettings(options)),
                 "refile" => RunRefile(LoadSettings(options), Require(options, "log"), Require(options, "server"), execute),
@@ -406,10 +449,15 @@ internal static class Program
 
     private static void PrintUsage()
     {
-        Console.WriteLine("OutlookAI.RemediationTools - incident-7 closure console (v3.MD entry 7).");
-        Console.WriteLine("Commands: audit | refile | purge | dedupe   (see Program.cs doc comment)");
+        Console.WriteLine("OutlookAI.RemediationTools - operator console (see Program.cs doc comment).");
+        Console.WriteLine("Incident-7 closure: audit | refile | purge | dedupe");
         Console.WriteLine("Common:   --settings <live-test-settings.json>   [--execute]");
         Console.WriteLine("refile:   --log <incident-deletion-log.txt> --server <registered OutlookAI.McpServer.exe>");
         Console.WriteLine("dedupe:   --store <primary store display name>");
+        Console.WriteLine();
+        Console.WriteLine("Measurement corpus: corpus-plan | corpus-probe | corpus-build | corpus-teardown | corpus-reindex");
+        Console.WriteLine("Common:   --corpus-id <id> --seed <n> --anchor <yyyy-MM-dd>   [--execute]");
+        Console.WriteLine("Target:   --store <display name> --allow-store <display name> (repeatable; a local .pst only)");
+        Console.WriteLine("Build:    --count <n> --manifest <path> [--progress-every <n>] [--allow-undated]");
     }
 }
