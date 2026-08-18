@@ -158,7 +158,11 @@
   tripwire separately noted a `Deleted Items (self-pruning)` folder appearing, which is Outlook's own
   auto-prune.
 
-  **Unresolved, and it is a design gap rather than an incident:** the tripwire compares raw counts and
+  **CONFIRMED 2026-08-18: the maintainer deleted that mail himself.** The alarm was a false positive
+  and no mail was lost by the suite. That does not close the item - it promotes it from theory to a
+  measured instance.
+
+  **The design gap, now demonstrated rather than suspected:** the tripwire compares raw counts and
   cannot distinguish the user from the suite. It is deliberately fail-closed, which is right - but it
   means the live tier cannot be run on an actively used machine without a false alarm, and a real
   alarm would look identical. Directions: record per-item EntryIDs for the small stores rather than
