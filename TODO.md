@@ -115,6 +115,21 @@
   Diagnostic logs: `C:\Users\jori\Downloads\tmp-aitrace\live-run4.txt` (the 22-minute test, with
   the long-running-test diagnostics that named it) and `cleanup-sweep.txt` (the fixture-setup hang).
 
+- [ ] **`TryCreateDerivedDraft`'s cross-store retry is unguarded.** `MailService.cs:2169` re-attempts
+  draft creation across every store on `r == null` alone, while its sibling loop in `TryUpdateDraft`
+  (`MailService.cs:2501`) only retries on `error == "ItemNotFound"`. So a creation that failed for
+  some other reason is retried against store after store. Found 2026-08-18 while classifying which
+  session operations are safe to retry after a disconnect; left alone because tightening it silently
+  is the wrong move - it needs a decision about which failures should fan out and which should stop.
+
+- [ ] **One door back to the cross-store attribution defect.** `MailService.ApplySweepCounters` falls
+  back to whole-sweep totals when a store is named but `result.PerStore` is empty - which is the
+  pre-`c515565` behaviour that let one account's unreadable folder degrade another account's search.
+  Unreachable today (both `ComSweepResult` construction sites populate `PerStore`, and an empty
+  bucket list means nothing was walked at all), so it is a latent seam rather than a live defect -
+  but it is the one path that reopens a closed defect, and it deserves either a guard or a comment
+  saying why it cannot happen.
+
 - [ ] **A useful error message never reaches the caller.** An `exhaustive` search naming a
   folder that does not exist comes back as an opaque
   `ComHostRemoteException: "Exception has been thrown by the target of an invocation."`

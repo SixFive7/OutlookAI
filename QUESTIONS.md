@@ -93,6 +93,32 @@ every busy-store search lie in the other direction.
 **Default if unanswered.** Leave it at (c) and keep it documented. Nothing regresses; the behaviour
 is what shipped before tonight, now merely understood and written down.
 
+## Q5 - I reversed a decision that was made deliberately hours earlier
+
+`e706315` established that a default folder a store does not HAVE is not a coverage gap, and its
+test said so in as many words: *"absence is not a gap, but a sweep that ended up covering NOTHING
+is - whatever the reason"*. That "whatever the reason" clause was deliberate.
+
+It stopped being right when `c515565` made the coverage counters per store. Before, a sweep covering
+nothing needed a whole profile with no arrival-path folder anywhere - vanishingly rare, so treating
+it as a gap cost nothing. After, it describes an everyday PST or archive-only store, whose four
+default folders are all absent: `foldersSwept: 0`, so every search naming that store reported itself
+degraded. A review proved it.
+
+So in `687929f` I reversed the clause: absence suppresses `nothing_swept` when it is the whole story,
+while one absent folder beside one unreadable folder is still a hole, and a scope the sweep never
+reached still degrades.
+
+**Why this is a question and not just a fix.** I overrode a judgement someone made explicitly, with
+its reasoning written down, a few hours after they made it. That is exactly the kind of change worth
+a second opinion - the reasoning may have covered a case I did not see.
+
+**Recommendation.** Keep the reversal. The original clause was correct for the shape of the data it
+was written against and wrong for the shape that existed six commits later; the test now records
+both readings so the history is legible.
+
+**Default if unanswered.** The reversal stands, and the test carries the explanation.
+
 ## Decision log
 
 Answers move here with the date and the reasoning, so a future reader sees not just what was chosen
