@@ -370,6 +370,33 @@
   the fix landed, are in the VM working folder under Downloads (`tmp-outlookai-vm`), with the
   before/after transcripts beside them.
 
+- [ ] **Re-run the unindexed-store probes on a MIXED profile - the one shape no machine here has.**
+  Group A and E of `Docs/completeness-gaps.md` are now all closed (A1-A5, E1). Everything about
+  them has been verified on two profile shapes: the fully-indexed developer profile, and the
+  Hyper-V VM whose only store is an unindexed PST. **The shape that carries A1's residue is
+  neither of those** - one INDEXED mailbox plus one UNINDEXED data file, so that the profile-wide
+  frontier probe succeeds while one store is still absent from the index catalog. That is the
+  ordinary "Exchange account plus archive.pst" desktop, it is what T1
+  `UnindexedStoreReportingTests` models with a stand-in index client, and no machine to hand can
+  produce it live. What T1 cannot exercise is the real chain: a live `DiscoverStoreScopes` whose
+  sample returns one store's prefixes and not the other's, and `StoreHasIndexRows` answering
+  false against a real SystemIndex for a mounted PST.
+
+  Mount a PST on a profile that already has an indexed account (or add an account to the VM), do
+  not add it to Indexing Options, then confirm READ-ONLY, with `search` only:
+  - a plain unscoped search names it in `sweep.storesWithoutIndex` with `no_index_frontier`
+    (this already worked - it is the regression guard);
+  - an unscoped search with `before` older than 7 days reports `sweep.notNeeded:true` **and**
+    `indexFrontierMissing:true`, `freshness:"partial"`, `degraded:true` - it used to say
+    `freshness:"live"` with nothing else;
+  - an attachment-only search reports `freshness:"index-only"` **and** `no_index_frontier`;
+  - `outlook_health` shows the PST as `index.perStore[].inLocalIndex:false` with a problem line,
+    while the indexed account still reports a frontier.
+
+  Also worth measuring on that profile: the cost of the one COM store-list read the three
+  no-sweep paths now pay (5-minute cached, so expected to be a pipe round trip), and whether
+  `StoreIndexProbeBudgetMs` (1.5 s) is ever the thing that cuts the probe short.
+
 - [ ] **An answer too big to frame: refused (done), but not yet prevented (open).** Found by the
   boundary audit on 2026-08-18. **The refusal and the measurement landed 2026-08-18; the four
   responses below are still the maintainer's to choose between, and nothing here pre-empts them.**

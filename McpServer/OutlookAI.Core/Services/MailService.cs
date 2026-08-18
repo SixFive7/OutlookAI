@@ -1506,10 +1506,15 @@ namespace OutlookAI.Core.Services
                 // Nothing to sweep, and that is a COMPLETE answer, not a degraded one: the
                 // requested window ends before the sweep would start, so the index already
                 // covers all of it (FreshMerge.DecideSweepWindow).
+                //
+                // COMPLETE ONLY WHERE THE INDEX ACTUALLY COVERS IT. "Not needed" is a claim
+                // about the index tier, and it is false for a store the index holds no mail
+                // for - which is precisely the store a 'before'-bounded search is reaching
+                // into. So the profile is checked before that claim is made.
                 info.Performed = false;
                 info.NotNeeded = true;
                 info.Error = null;
-                return info;
+                return NoteProfileStoresWithoutIndex(info, request.Store, perStoreBase);
             }
 
             // What the sweep structurally cannot answer, decided in one pure place
@@ -1521,9 +1526,13 @@ namespace OutlookAI.Core.Services
             string? refusal = FreshMerge.SweepRefusalReason(request.To != null, request.AttachmentHitsOnly);
             if (refusal != null)
             {
+                // Two independent holes, and the answer owes the caller both: this filter has
+                // no live tier at all, AND part of the profile has no index tier. Naming only
+                // the refusal points at a remedy - drop the filter - that does not reach the
+                // store the index cannot see.
                 info.Performed = false;
                 info.Error = refusal;
-                return info;
+                return NoteProfileStoresWithoutIndex(info, request.Store, perStoreBase);
             }
 
             // The sweep follows the SEARCH scope (soak fix 13): a folder-scoped search
@@ -1588,11 +1597,15 @@ namespace OutlookAI.Core.Services
                     SweepBudgetMs,
                     allowConnectFloor: true);
                 }
+                // Each of the three failures below still names the stores with no index
+                // behind them: "the sweep could not run" and "the index has nothing here" are
+                // independent facts with different remedies - retry versus exhaustive:true -
+                // and an answer missing BOTH tiers over a store has to say so.
                 catch (OutlookUnavailableException ex)
                 {
                     info.Performed = false;
                     info.Error = ex.Message;
-                    return info;
+                    return NoteProfileStoresWithoutIndex(info, request.Store, perStoreBase);
                 }
                 catch (TimeoutException ex)
                 {
@@ -1602,7 +1615,7 @@ namespace OutlookAI.Core.Services
                     // this text reaches the agent, and through it the user.
                     info.Performed = false;
                     info.Error = ex.Message;
-                    return info;
+                    return NoteProfileStoresWithoutIndex(info, request.Store, perStoreBase);
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
@@ -1614,7 +1627,7 @@ namespace OutlookAI.Core.Services
                     info.Error = ex is System.Runtime.InteropServices.COMException com
                         ? string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", com.HResult)
                         : ex.GetType().Name;
-                    return info;
+                    return NoteProfileStoresWithoutIndex(info, request.Store, perStoreBase);
                 }
 
                 stopwatch.Stop();
@@ -1650,7 +1663,16 @@ namespace OutlookAI.Core.Services
             // query has no SCOPE predicate), while a store that is genuinely not indexed is
             // reachable only as far back as the fallback window goes. So it is probed - the
             // same probe list_accounts reports as inLocalIndex - and only a NO is reported.
-            NoteStoresWithoutIndex(info, effectiveResult, request.Store, perStoreBase);
+            //
+            // The store list comes from the sweep's own counters here, so this path spends no
+            // COM beyond the sweep it just did. The three paths that never reach a sweep ask
+            // Outlook instead (NoteProfileStoresWithoutIndex); the rule they apply is the same
+            // one, in the same method.
+            NoteStoresWithoutIndex(
+                info,
+                effectiveResult.PerStore.Select(counters => counters.StoreDisplayName).ToList(),
+                request.Store,
+                perStoreBase);
 
             List<ComMailBrief> filtered = new List<ComMailBrief>();
             HashSet<string> unevaluatedFilters = new HashSet<string>(StringComparer.Ordinal);
@@ -1942,9 +1964,24 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// Names the stores this sweep covered that the index holds nothing for, so an answer
-        /// resting on the sweep alone says which store it is resting on. Only ever ADDS to
-        /// what the frontier probes already found.
+        /// Names the stores in scope that the index holds nothing for, so an answer resting on
+        /// the sweep alone says which store it is resting on. Only ever ADDS to what the
+        /// frontier probes already found.
+        /// <para>
+        /// The verdict is <see cref="StoresMissingFromIndex"/>, the same pure rule
+        /// <c>outlook_health</c> compares its two store lists with (gap A3), so "the index
+        /// holds nothing for this store" means one thing in this server rather than two:
+        /// absence from the catalog is never evidence, only a probe's NO counts, and a store
+        /// that could not be settled is reported neither way.
+        /// </para>
+        /// <para>
+        /// <paramref name="storeNames"/> is the profile's stores from whichever source this
+        /// call has cheaply in hand - the sweep's own per-store counters after it ran, and
+        /// Outlook's store list when it did not (<see cref="NoteProfileStoresWithoutIndex"/>).
+        /// Null means "could not be established", which reports nothing at all: inventing a
+        /// missing store out of a list nobody could read would be the same defect pointing the
+        /// other way.
+        /// </para>
         /// <para>
         /// Bounded twice over. The verdict per store is cached for
         /// <see cref="StoreDetailsCacheTtl"/>, so the probes run once per store per five
@@ -1957,7 +1994,7 @@ namespace OutlookAI.Core.Services
         /// </summary>
         private void NoteStoresWithoutIndex(
             SweepInfo info,
-            ComSweepResult result,
+            IReadOnlyList<string>? storeNames,
             string? requestedStore,
             IReadOnlyDictionary<string, DateTime>? perStoreBase)
         {
@@ -1967,26 +2004,20 @@ namespace OutlookAI.Core.Services
             }
 
             Stopwatch clock = Stopwatch.StartNew();
-            List<string>? missing = null;
-            foreach (ComStoreSweepCounters counters in result.PerStore)
-            {
-                if (perStoreBase != null && perStoreBase.ContainsKey(counters.StoreDisplayName))
-                {
-                    continue; // Has a frontier of its own, so the index knows it.
-                }
+            IReadOnlyList<string> missing = StoresMissingFromIndex(
+                storeNames,
 
-                if (clock.ElapsedMilliseconds > StoreIndexProbeBudgetMs)
-                {
-                    break;
-                }
+                // A store with a per-store window HAS a frontier, so the index demonstrably
+                // knows it and no probe is worth spending on it.
+                perStoreBase?.Keys.ToList(),
 
-                if (StoreHasIndexRows(counters.StoreDisplayName) == false)
-                {
-                    (missing ??= new List<string>()).Add(counters.StoreDisplayName);
-                }
-            }
+                // A store left unprobed because the budget ran out answers null, never false:
+                // "not established" must not become "not indexed".
+                store => clock.ElapsedMilliseconds > StoreIndexProbeBudgetMs
+                    ? (bool?)null
+                    : StoreHasIndexRows(store));
 
-            if (missing == null)
+            if (missing.Count == 0)
             {
                 return;
             }
@@ -2008,6 +2039,51 @@ namespace OutlookAI.Core.Services
             }
 
             info.StoresWithoutIndex = combined;
+        }
+
+        /// <summary>
+        /// The same naming pass for a sweep that never ran, sourcing the profile's stores from
+        /// Outlook because there is no sweep result to read them out of. Returns
+        /// <paramref name="info"/> so the three places that give up on a sweep can end on one
+        /// statement.
+        /// <para>
+        /// THE DEFECT THIS CLOSES (gap A1, residue). The pass above ran only after a sweep,
+        /// off the sweep's own store list. On a MIXED profile - an indexed mailbox plus an
+        /// unindexed data file, the ordinary archive-PST shape - the profile-wide frontier
+        /// probe succeeds and the per-store loop only walks the index's CATALOG, which has
+        /// never heard of that data file, so nothing else names it. All three paths where the
+        /// sweep does not run were therefore silent about it: the window was NOT NEEDED (a
+        /// <c>before</c> bound older than the fallback span - which is how an agent searches
+        /// for OLD mail, i.e. exactly what such a store holds - answering
+        /// <c>freshness: "live"</c> with <c>degraded</c> absent); the sweep was REFUSED (a
+        /// recipient or attachment-only filter); or it FAILED. The first is the one that
+        /// misleads, and the other two were missing the half of the answer that says which
+        /// tier is gone for good rather than until a retry.
+        /// </para>
+        /// <para>
+        /// COST, and where it is not paid: nothing at all for a store-scoped search, whose own
+        /// frontier probe already settled the question, and nothing on the ordinary path, which
+        /// still reads the sweep's counters. Only a sweep that did not happen pays one COM
+        /// store-list read, from the <see cref="StoreDetailsCacheTtl"/> cache. Two of those
+        /// three paths - not needed, and refused - previously spent no COM at all, so this is
+        /// a real addition to them rather than a rounding error on work already done; it is
+        /// the completeness-over-cost trade taken deliberately, because a search that cannot
+        /// see a whole store must say so. On the third the sweep has just failed, and the
+        /// store list may fail with it: that answers null and reports nothing, which is
+        /// correct - after a COM failure there is no evidence either way.
+        /// </para>
+        /// </summary>
+        private SweepInfo NoteProfileStoresWithoutIndex(
+            SweepInfo info,
+            string? requestedStore,
+            IReadOnlyDictionary<string, DateTime>? perStoreBase)
+        {
+            if (requestedStore == null)
+            {
+                NoteStoresWithoutIndex(info, TryGetProfileStoreNames(), requestedStore, perStoreBase);
+            }
+
+            return info;
         }
 
         /// <summary>
