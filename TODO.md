@@ -115,6 +115,33 @@
   Diagnostic logs: `C:\Users\jori\Downloads\tmp-aitrace\live-run4.txt` (the 22-minute test, with
   the long-running-test diagnostics that named it) and `cleanup-sweep.txt` (the fixture-setup hang).
 
+- [ ] **IN FLIGHT 2026-08-18 09:00 - live tier: subset PASSES, full tier does not. Read this first.**
+
+  **New evidence, all from 2026-08-18 08:45-09:00, which overturns yesterday's hypothesis:**
+  - **Outlook COM is healthy.** A bounded out-of-process probe attached and read `Stores.Count = 5`
+    instantly. The "poisoned COM state" theory from the overnight notes is WRONG.
+  - **The short subset now passes end to end.** `--filter FullyQualifiedName~LiveSweepScope` under
+    `--blame-hang`: `[preflight] Outlook responsive (0 of 5 UI windows hung) - live tier may run.`,
+    `[tripwire] baseline: 5 stores, 148 mail folders, 12495 ms.`, tests passed, `hub reconciled: 5
+    baseline folders, all item counts back at pre-run values`, exit 0.
+  - **The FULL tier still hung** at `A total of 1 test files matched` for 19 minutes earlier the same
+    hour, with the preflight in place and Outlook responding.
+
+  **So the hang is NOT the shared tripwire and NOT a wedged Outlook.** It is something in a
+  collection the subset does not touch. The next diagnostic is to run the tier collection by
+  collection under `--blame-hang --blame-hang-timeout 4m` (that flag works and produces a sequence
+  file when a hang is real) and find which fixture stalls. Do NOT run the whole tier blind again -
+  it costs 20 minutes and produces no information.
+
+  **Artifacts:** 7 tagged items (6 Drafts, 1 Outbox) were left by an aborted run. The subset run above
+  reported the hub reconciled, so they may now be swept - VERIFY with a read-only `search` for
+  `OutlookAI-McpTest` before assuming either way.
+
+- [ ] **PENDING TASK - process `C:\Source\SixFive7\BrowserAI\.work	runcation-prompt-for-sibling-project.md`.**
+  The maintainer asked for this at 09:00 on 2026-08-18. It is expected to be the portable
+  description-budget prompt written for another project; read it and act on what it asks for. Recorded
+  here because auto-compaction was imminent when it was requested.
+
 - [ ] **`TryCreateDerivedDraft`'s cross-store retry is unguarded.** `MailService.cs:2169` re-attempts
   draft creation across every store on `r == null` alone, while its sibling loop in `TryUpdateDraft`
   (`MailService.cs:2501`) only retries on `error == "ItemNotFound"`. So a creation that failed for
