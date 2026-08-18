@@ -303,7 +303,7 @@ public sealed class LiveSearchInTests
             Scope = scope,
             Terms = terms,
             SearchIn = searchIn,
-            FromAddressContains = from,
+            SenderContains = from,
             Kinds = kinds,
             Top = 5000,
         }).Hits.Count;

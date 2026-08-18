@@ -222,6 +222,12 @@ namespace OutlookAI.Core.IndexSearch
         /// suffix, so small stores are found by querying mail addressed to / sent by the
         /// account (per-column CONTAINS, index-backed, ~60 ms) and taking the store
         /// prefix of hits whose store display name equals the address.
+        /// <para>
+        /// The sender probe matches display NAME as well as address since B1, which only
+        /// ever offers this loop MORE candidate rows. It cannot widen the answer: the store
+        /// prefix is taken from a hit whose store display name EQUALS the address, and that
+        /// test is unchanged.
+        /// </para>
         /// </summary>
         public StoreScopeInfo? TryDiscoverStoreScopeByAddress(string smtpAddress, int? commandTimeoutSeconds = null)
         {
@@ -233,7 +239,7 @@ namespace OutlookAI.Core.IndexSearch
             IndexQuery[] probes =
             {
                 new IndexQuery { Kinds = KindFilter.EmailOnly, RecipientContains = smtpAddress, Top = 50 },
-                new IndexQuery { Kinds = KindFilter.EmailOnly, FromAddressContains = smtpAddress, Top = 50 },
+                new IndexQuery { Kinds = KindFilter.EmailOnly, SenderContains = smtpAddress, Top = 50 },
             };
 
             foreach (IndexQuery probe in probes)

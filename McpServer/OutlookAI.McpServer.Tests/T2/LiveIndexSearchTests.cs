@@ -172,7 +172,7 @@ public sealed class LiveIndexSearchTests
                 {
                     Scope = scope.StorePrefix,
                     Kinds = KindFilter.EmailOnly,
-                    FromAddressContains = candidate,
+                    SenderContains = candidate,
                     Top = 5,
                 });
                 break;

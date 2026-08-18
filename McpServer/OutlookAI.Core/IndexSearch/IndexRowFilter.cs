@@ -21,7 +21,10 @@ namespace OutlookAI.Core.IndexSearch
     /// and decide here instead - a MESSAGE-level row (URL without <c>/at=</c>) is kept only
     /// when its kinds contain <c>email</c>; an ATTACHMENT-child row (<c>/at=</c>) is kept
     /// whatever its kind. Message-level non-mail rows (meeting requests index as
-    /// <c>calendar</c>) are therefore still excluded exactly as before.
+    /// <c>calendar</c>) are therefore still excluded exactly as before - on the SEARCH
+    /// filters. <see cref="KindFilter.MessagesAnyClass"/> is the one shape that admits them,
+    /// because a conversation is defined by Outlook rather than by item class and dropping a
+    /// meeting request from a thread drops a real member.
     /// </para>
     /// <para>
     /// The mapi-namespace check is load-bearing: without a Kind predicate an UNSCOPED
@@ -120,6 +123,12 @@ namespace OutlookAI.Core.IndexSearch
                     return attachment;
                 case KindFilter.EmailAndDocuments:
                     return attachment || HasEmailKind(hit.Kinds);
+                case KindFilter.MessagesAnyClass:
+                    // Every message-level row, whatever its item class - the thread tier
+                    // (gap C2). The mapi-namespace check above is what keeps this honest:
+                    // without a kind test it is the ONLY thing standing between this filter
+                    // and the file system.
+                    return !attachment;
                 default:
                     throw new ArgumentException("Unknown KindFilter value.", nameof(kinds));
             }

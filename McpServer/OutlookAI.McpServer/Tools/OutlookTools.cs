@@ -171,17 +171,29 @@ public static class OutlookTools
         });
     }
 
+    // FRESHNESS was added when thread gained the contract search already had (gap C1): it
+    // used to walk Outlook only when the index held nothing, so one indexed row hid every
+    // reply newer than the index frontier, and the payload had no degraded/freshness field
+    // to say so. The paragraph pays for itself out of the old text - the sentence explaining
+    // that the COM walk is a FALLBACK is gone, because it no longer is one - and the whole
+    // description still sits far inside the 2048-character client truncation budget that
+    // DescriptionBudgetCiTests measures from the wire.
     [McpServerTool(Name = "thread")]
     [Description("Fetch the full conversation of a mail. Two complementary lookup keys - pass BOTH when available: "
-        + "conversation_id is the fast path (a free index lookup; every search hit already carries it, no locate cost), "
-        + "and id anchors the COM fallback that walks Outlook's conversation graph when the index has no rows for the "
-        + "conversation - COM cannot look up a conversation by id string, it needs a concrete mail item to start from. "
+        + "conversation_id is the fast index path (every search hit already carries it, no locate cost), and id anchors "
+        + "the LIVE check - COM cannot look up a conversation by id string, it needs a concrete mail item to walk "
+        + "Outlook's conversation graph from.\n\n"
+        + "FRESHNESS: given id, the indexed members and a live walk of Outlook's own conversation are merged, so replies "
+        + "that arrived after the last index update are included. Given conversation_id alone there is no live check: "
+        + "degraded=true with freshness=\"index-only\", and the newest replies may be missing - SAY SO TO THE USER, or "
+        + "call again with id. degraded is also true when the live walk covered only part of the conversation "
+        + "(freshness=\"partial\"; live.coverageGaps says which, advice says what to do).\n\n"
         + "Members are oldest-first; truncated=true means the conversation has more members than 'top'.")]
     public static async Task<CallToolResult> Thread(
         [Description("ConversationId from a search hit or read result - the fast index path. Pass when you have it.")] string? conversation_id = null,
-        [Description("Hit id (e.g. h12) or EntryID of any mail in the conversation - anchors the COM conversation-graph fallback (used when the index has no rows).")] string? id = null,
-        [Description("Store display name to scope the index lookup (faster).")] string? store = null,
-        [Description("Max thread members (default 50).")] int top = 50,
+        [Description("Hit id (e.g. h12) or EntryID of any mail in the conversation - anchors the live conversation-graph walk. Pass it whenever you have one: without it the answer is index-only.")] string? id = null,
+        [Description("Store display name to scope the index lookup (faster). A name that does not resolve widens the lookup to the whole profile and reports scopeWidened:true.")] string? store = null,
+        [Description("Max thread members (default 50, max 200). It caps the live walk too, so raise it when live.coverageGaps reports member_cap.")] int top = 50,
         CancellationToken cancellationToken = default)
     {
         return await GuardAsync(cancellationToken, () => ServerRuntime.Service.Thread(conversation_id, id, store, top));

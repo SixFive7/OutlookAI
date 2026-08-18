@@ -124,6 +124,24 @@ namespace OutlookAI.Core.IndexSearch
 
         /// <summary><c>System.Kind='document'</c>: attachment-content entries only (probe R1 shape).</summary>
         DocumentsOnly = 2,
+
+        /// <summary>
+        /// Message-level rows WHATEVER their item class - mail, meeting requests and
+        /// responses, NDRs, posts - and no attachment-content rows. Like the
+        /// attachment-bearing shapes it emits no Kind predicate under a mapi SCOPE and the
+        /// enumerated kind list without one; admission is
+        /// <see cref="IndexRowFilter.Keep"/>'s "not an attachment row" alone.
+        /// <para>
+        /// It exists for the <c>thread</c> tool (gap C2). A conversation is defined by
+        /// Outlook, not by item class: a meeting request and its acceptances carry the same
+        /// ConversationID as the mail around them and index as <c>calendar</c>, so
+        /// <see cref="EmailOnly"/> dropped exactly those members from a payload whose tool
+        /// description promises the FULL conversation. Search keeps <see cref="EmailOnly"/>
+        /// - there the caller asked for mail - but a thread member that Outlook puts in the
+        /// conversation belongs in the conversation.
+        /// </para>
+        /// </summary>
+        MessagesAnyClass = 3,
     }
 
     /// <summary>Result ordering for an index query.</summary>
@@ -183,11 +201,29 @@ namespace OutlookAI.Core.IndexSearch
         public KindFilter Kinds { get; set; } = KindFilter.EmailAndDocuments;
 
         /// <summary>
-        /// Sender filter, matched with <c>CONTAINS(System.Message.FromAddress, ...)</c>.
-        /// Phase-1 probe result: equality and LIKE on FromAddress are multi-second property
-        /// scans; per-column CONTAINS is the only index-backed shape (~60 ms).
+        /// Sender filter, matched with CONTAINS over the sender ADDRESS and the sender
+        /// display NAME - the same "address or name fragment" the tool description promises
+        /// and the same thing the freshness sweep and the exhaustive scan have always
+        /// matched. Phase-1 probe result: equality and LIKE on either column are
+        /// multi-second property scans; per-column CONTAINS is the only index-backed shape.
+        /// <para>
+        /// It was <c>FromAddressContains</c> and matched the address alone, while
+        /// <c>System.Message.FromName</c> was SELECTed and never used in a predicate. So a
+        /// caller filtering by a person's display name got NOTHING from the index tier and
+        /// whatever the freshness sweep window happened to catch from the other two - an
+        /// answer built from minutes of mail, reported as complete. MEASURED on this
+        /// machine's index (read-only, 2026-08-18): of 419 distinct senders in a 3 000-row
+        /// sample, 218 (52%) have a display-name token that appears nowhere in their
+        /// address, so for half the correspondents in the mailbox the index tier could not
+        /// be reached by name at all.
+        /// </para>
+        /// <para>
+        /// The name changed with the behaviour on purpose: a field called
+        /// <c>FromAddressContains</c> that also matches names is the same defect one level
+        /// down, where the next reader believes the field name instead of the SQL.
+        /// </para>
         /// </summary>
-        public string? FromAddressContains { get; set; }
+        public string? SenderContains { get; set; }
 
         /// <summary>
         /// Recipient filter, matched with CONTAINS over To and Cc address columns.

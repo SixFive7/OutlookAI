@@ -33,7 +33,9 @@ namespace OutlookAI.Core.IndexSearch
     /// after the rows come back (v3.MD section 0.8 block (q)).</item>
     /// <item>No aggregates, no JOINs (unsupported in WS-SQL).</item>
     /// <item>Sender/recipient filters use per-column CONTAINS - Phase-1 probes measured
-    /// equality/LIKE on FromAddress at 1-10 s (property scan) vs ~60 ms for CONTAINS.</item>
+    /// equality/LIKE on FromAddress at 1-10 s (property scan) vs ~60 ms for CONTAINS. The
+    /// sender filter names BOTH sender columns (address OR display name), because the other
+    /// two search tiers always did and the address alone silently under-returned.</item>
     /// </list>
     /// </summary>
     public static class WsSqlBuilder
@@ -107,6 +109,12 @@ namespace OutlookAI.Core.IndexSearch
         /// <summary>Body/attachment-content stream. Query-only - never appears in a SELECT list.</summary>
         private const string ContentsColumn = "System.Search.Contents";
 
+        /// <summary>Sender SMTP address column of the <c>from</c> predicate.</summary>
+        private const string FromAddressColumn = "System.Message.FromAddress";
+
+        /// <summary>Sender DISPLAY NAME column of the <c>from</c> predicate (see <see cref="IndexQuery.SenderContains"/>).</summary>
+        private const string FromNameColumn = "System.Message.FromName";
+
         /// <summary>Builds the search statement for <paramref name="query"/>.</summary>
         public static string Build(IndexQuery query)
         {
@@ -167,13 +175,16 @@ namespace OutlookAI.Core.IndexSearch
                     break;
                 case KindFilter.DocumentsOnly:
                 case KindFilter.EmailAndDocuments:
-                    // Attachment-bearing shapes. An attachment-content row carries the
-                    // ATTACHMENT's kind (picture / communication / calendar / music /
-                    // video, not just document), so no kind list can be both complete and
-                    // future-proof - IndexRowFilter decides admission on the URL instead.
-                    // Under a mapi SCOPE the namespace already fences the statement, so no
-                    // Kind predicate is emitted at all; without one the enumerated kinds
-                    // keep the provider from offering the whole file system.
+                case KindFilter.MessagesAnyClass:
+                    // Shapes that must not be narrowed by kind. An attachment-content row
+                    // carries the ATTACHMENT's kind (picture / communication / calendar /
+                    // music / video, not just document) and a message-level row carries its
+                    // ITEM CLASS's kind (a meeting request is 'calendar'), so no kind list
+                    // can be both complete and future-proof - IndexRowFilter decides
+                    // admission on the URL instead. Under a mapi SCOPE the namespace already
+                    // fences the statement, so no Kind predicate is emitted at all; without
+                    // one the enumerated kinds keep the provider from offering the whole
+                    // file system.
                     if (query.Scope == null)
                     {
                         where.Add(BuildUnscopedKindPredicate());
@@ -189,10 +200,19 @@ namespace OutlookAI.Core.IndexSearch
                 where.Add(BuildTermsPredicate(query.Terms, query.SearchIn));
             }
 
-            if (query.FromAddressContains != null)
+            if (query.SenderContains != null)
             {
-                where.Add("CONTAINS(System.Message.FromAddress, '"
-                    + QuotedContainsValue(ValidateTerm(query.FromAddressContains, "FromAddressContains")) + "')");
+                // ADDRESS *or* NAME, because that is what the tool promises and what the
+                // other two tiers do. Matching the address alone made a name-fragment
+                // filter return zero index rows and then report the sweep's few minutes of
+                // mail as the whole answer (gap B1). See IndexQuery.SenderContains for the
+                // measured recall gap; the added CONTAINS is index-backed and cheap
+                // (measured on this index: FromName alone 18 ms against FromAddress alone
+                // 42 ms for the same fragment; the OR pair costs +0-12 ms on agent-sized
+                // TOP 26 statements and is faster than address-only on some).
+                string sender = QuotedContainsValue(ValidateTerm(query.SenderContains, "SenderContains"));
+                where.Add("(CONTAINS(" + FromAddressColumn + ", '" + sender
+                    + "') OR CONTAINS(" + FromNameColumn + ", '" + sender + "'))");
             }
 
             if (query.RecipientContains != null)

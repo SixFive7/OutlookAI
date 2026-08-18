@@ -89,6 +89,42 @@ public sealed class IndexRowFilterTests
         Assert.True(IndexRowFilter.Keep(Hit(AttachmentUrl, "picture"), KindFilter.DocumentsOnly));
     }
 
+    /// <summary>
+    /// Gap C2: the thread tier admits a message row whatever its item class. A meeting
+    /// request indexes as <c>calendar</c> and carries the surrounding mail's ConversationID,
+    /// so the EmailOnly filter dropped a real member of a conversation the tool promises
+    /// whole. Attachment rows stay out - a thread member is a message, and admitting the
+    /// attachment rows of its own members would return each of them twice.
+    /// </summary>
+    [Theory]
+    [InlineData("calendar")]
+    [InlineData("email")]
+    [InlineData("document")]
+    public void MessagesAnyClass_KeepsEveryMessageRow_WhateverItsKind(string kind)
+    {
+        Assert.True(IndexRowFilter.Keep(Hit(MessageUrl, kind), KindFilter.MessagesAnyClass));
+    }
+
+    [Fact]
+    public void MessagesAnyClass_KeepsAMessageRowWithNoKindAtAll()
+    {
+        // EmailOnly needs the kind to SAY email, so a row whose System.Kind did not come
+        // back was dropped. A thread member with an unreadable kind column is still a member.
+        Assert.True(IndexRowFilter.Keep(Hit(MessageUrl), KindFilter.MessagesAnyClass));
+        Assert.False(IndexRowFilter.Keep(Hit(MessageUrl), KindFilter.EmailOnly));
+    }
+
+    [Fact]
+    public void MessagesAnyClass_StillRejectsAttachmentRowsAndTheFileSystem()
+    {
+        Assert.False(IndexRowFilter.Keep(Hit(AttachmentUrl, "picture"), KindFilter.MessagesAnyClass));
+
+        // Without a kind test the mapi-namespace check is the ONLY thing keeping the file
+        // system out of this filter, so it is pinned here rather than assumed.
+        Assert.False(IndexRowFilter.Keep(Hit("file:C:/mail/archive.eml", "email"), KindFilter.MessagesAnyClass));
+        Assert.False(IndexRowFilter.Keep(Hit("file:C:/notes/agenda.ics", "calendar"), KindFilter.MessagesAnyClass));
+    }
+
     [Fact]
     public void AttachmentDetectionIsAUrlTest_NotAParseResult()
     {

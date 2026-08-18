@@ -104,7 +104,12 @@ namespace OutlookAI.Core.Services
         /// <summary>Opaque hit id for read/save_attachment/thread ("h1", "h2", ...). Cached per server process.</summary>
         public string Id { get; set; } = string.Empty;
 
-        /// <summary>"index" (SystemIndex row), "live" (freshness gap-sweep result, D19) or "exhaustive" (COM scan).</summary>
+        /// <summary>
+        /// "index" (SystemIndex row), "live" (freshness gap-sweep result, D19), "exhaustive"
+        /// (COM scan) or "com" (thread's live conversation walk). Everything but "index"
+        /// came from Outlook directly, so it carries no index-only field - notably
+        /// <see cref="ConversationId"/>, which the COM snapshot does not read.
+        /// </summary>
         public string Source { get; set; } = "index";
 
         /// <summary>Subject.</summary>
@@ -473,6 +478,15 @@ namespace OutlookAI.Core.Services
         /// a caller must NOT do is infer the reason from <c>freshness == "index-only"</c>:
         /// that value still means, exactly as before, that the sweep never ran.
         /// </para>
+        /// <para>
+        /// On an EXHAUSTIVE search there is no index to lag behind, and the flag keeps the
+        /// meaning that survives the change of tier: this answer covers less than it was
+        /// asked to. It is set when the scan timed out, skipped folders it could not filter,
+        /// or stopped at the result cap partway through the folder tree - facts
+        /// <c>exhaustive.*</c> already carried while these two flags stayed absent, which
+        /// left the mode chosen FOR completeness the only one that could not say it had
+        /// fallen short.
+        /// </para>
         /// </summary>
         public bool? Degraded { get; set; }
 
@@ -480,6 +494,14 @@ namespace OutlookAI.Core.Services
         /// <c>"live"</c> when the freshness sweep ran and covered its whole scope,
         /// <c>"partial"</c> when it ran but left coverage holes (see
         /// <see cref="SweepInfo.CoverageGaps"/>), <c>"index-only"</c> when it could not run.
+        /// <para>
+        /// An EXHAUSTIVE search carries the same three-value contract read over its own
+        /// single tier (<see cref="FreshMerge.ClassifyExhaustiveFreshness"/>): the scan IS
+        /// the live check, so it is <c>"live"</c> when it covered its scope and
+        /// <c>"partial"</c> when its own counters say it did not - timed out, skipped
+        /// folders, or stopped at the result cap mid-walk. <c>"index-only"</c> cannot occur
+        /// there; it names the state this mode exists to avoid.
+        /// </para>
         /// </summary>
         public string? Freshness { get; set; }
 
@@ -670,16 +692,98 @@ namespace OutlookAI.Core.Services
         public long SizeBytes { get; set; }
     }
 
+    /// <summary>
+    /// What the LIVE tier of one <c>thread</c> lookup did - the conversation walk, which is
+    /// to <c>thread</c> what the freshness sweep is to <c>search</c>.
+    /// <para>
+    /// The walk asks Outlook for the conversation itself rather than sweeping folders, and
+    /// that is why <c>thread</c> can afford to be live on every call: the scope IS one
+    /// conversation, so there is no window to open, no folder set to choose and no per-folder
+    /// cap to hit. It needs an anchor item though - COM cannot look up a conversation by id
+    /// string - so it is the one live tier here that can be unavailable for a reason the
+    /// caller can fix, by passing <c>id</c>.
+    /// </para>
+    /// </summary>
+    public sealed class ThreadLiveInfo
+    {
+        /// <summary>Whether the live conversation walk ran. False means <see cref="Error"/> says why.</summary>
+        public bool Performed { get; set; }
+
+        /// <summary>
+        /// Content-free reason the walk did not run: <c>NoAnchorItem</c> (only
+        /// <c>conversation_id</c> was passed, and COM needs a concrete item to walk from),
+        /// <c>AnchorNotLocatable</c> (the anchor could not be opened in Outlook), or a COM
+        /// failure token. Null when it ran.
+        /// </summary>
+        public string? Error { get; set; }
+
+        /// <summary>Store display name the walk covered (Outlook walks the anchor's store only).</summary>
+        public string? AnchorStore { get; set; }
+
+        /// <summary>Conversation members the walk returned.</summary>
+        public int MembersWalked { get; set; }
+
+        /// <summary>
+        /// True when the walk stopped at the requested member cap, so it did not see the
+        /// whole conversation (<see cref="FreshMerge.ThreadGapMemberCap"/>). Determined by
+        /// over-fetching one member past <c>top</c>, so true is definite.
+        /// </summary>
+        public bool MemberCapReached { get; set; }
+
+        /// <summary>Members the walk contributed that the index did not already hold.</summary>
+        public int MembersAdded { get; set; }
+
+        /// <summary>Walk wall-clock cost, including locating the anchor.</summary>
+        public long ElapsedMs { get; set; }
+
+        /// <summary>
+        /// Coverage holes of this lookup, in the same vocabulary as
+        /// <see cref="SweepInfo.CoverageGaps"/> (<see cref="FreshMerge.DescribeThreadCoverageGaps"/>).
+        /// Null when the answer is whole.
+        /// </summary>
+        public IReadOnlyList<string>? CoverageGaps { get; set; }
+    }
+
     /// <summary>thread outcome.</summary>
     public sealed class ThreadOutcome
     {
         /// <summary>Conversation id the thread was resolved for.</summary>
         public string? ConversationId { get; set; }
 
-        /// <summary>"index" (ConversationID query) or "com" (Outlook Conversation walk).</summary>
+        /// <summary>
+        /// True when this conversation is NOT fully fresh, so replies newer than the index
+        /// may be missing - the same flag, with the same meaning and the same obligation to
+        /// relay it, that <see cref="SearchOutcome.Degraded"/> carries.
+        /// <para>
+        /// <c>thread</c> had no freshness fields at all, which made it the one tool that
+        /// could not express a partial answer while being the one whose description promises
+        /// "the FULL conversation". With a single index row for the conversation the COM walk
+        /// never ran, so a reply that arrived after the index frontier was simply absent and
+        /// nothing in the payload said so.
+        /// </para>
+        /// </summary>
+        public bool? Degraded { get; set; }
+
+        /// <summary>
+        /// <c>"live"</c> when the conversation walk ran and covered the conversation,
+        /// <c>"partial"</c> when it ran but left a hole (see
+        /// <see cref="ThreadLiveInfo.CoverageGaps"/>), <c>"index-only"</c> when it could not
+        /// run at all. Same three values, same meanings, as on a search.
+        /// </summary>
+        public string? Freshness { get; set; }
+
+        /// <summary>
+        /// Which tier the member list RESTS on: "index" (the ConversationID query returned
+        /// rows) or "com" (it did not, so the Outlook Conversation walk is the whole answer).
+        /// <para>
+        /// It is no longer a statement that only one tier ran - since C1 both do, and their
+        /// members are merged. Read <see cref="Live"/> for what the live tier did and each
+        /// hit's own <c>source</c> for where that member came from.
+        /// </para>
+        /// </summary>
         public string Source { get; set; } = "index";
 
-        /// <summary>Thread members, oldest first.</summary>
+        /// <summary>Thread members, oldest first - index rows and live walk members, deduped.</summary>
         public IReadOnlyList<HitSummary> Hits { get; set; } = Array.Empty<HitSummary>();
 
         /// <summary>
@@ -687,6 +791,23 @@ namespace OutlookAI.Core.Services
         /// members (over-fetch-by-one, same contract as search.truncated).
         /// </summary>
         public bool Truncated { get; set; }
+
+        /// <summary>
+        /// True when the requested <c>store</c> did not resolve to an index scope and the
+        /// lookup ran over the WHOLE profile instead (gap C3). Over-returning is the safe
+        /// direction, so the widening stays - but silently widening a scope the caller chose
+        /// is not, so it is reported. Null when the scope was honoured or none was asked for.
+        /// </summary>
+        public bool? ScopeWidened { get; set; }
+
+        /// <summary>The live conversation walk's own report. Always present.</summary>
+        public ThreadLiveInfo? Live { get; set; }
+
+        /// <summary>Index staleness snapshot, same block and same meaning as on a search.</summary>
+        public StalenessInfo? Staleness { get; set; }
+
+        /// <summary>Agent-facing advice when the conversation may be incomplete.</summary>
+        public IReadOnlyList<string>? Advice { get; set; }
 
         /// <summary>Wall-clock cost of the thread lookup.</summary>
         public long ElapsedMs { get; set; }

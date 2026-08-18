@@ -91,6 +91,25 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public const string GapNoIndexFrontier = "no_index_frontier";
 
+        /// <summary>
+        /// Coverage hole: the live conversation walk stopped at the requested member cap,
+        /// so it did not see the whole conversation. Unlike a search's <c>top</c>, which
+        /// caps a date-SORTED match set, the walk reads the conversation table in Outlook's
+        /// own order and stops - so the member it did not reach may be the newest one, which
+        /// is exactly the member the live tier exists to find. Remedy: raise <c>top</c>.
+        /// </summary>
+        public const string ThreadGapMemberCap = "member_cap";
+
+        /// <summary>
+        /// Coverage hole: the conversation has members in a store the live walk did not
+        /// cover. Outlook's Conversation object walks the store of the item it was opened
+        /// from, so a conversation spanning two accounts gets a live check of one of them
+        /// and index coverage of the rest - fine for anything already indexed, blind to a
+        /// reply that arrived in the OTHER store moments ago. Remedy: pass an <c>id</c> from
+        /// the store in question.
+        /// </summary>
+        public const string ThreadGapUnwalkedStore = "unwalked_store";
+
         /// <summary>Whether a search's window leaves the freshness sweep anything to find.</summary>
         public enum SweepWindowVerdict
         {
@@ -296,6 +315,145 @@ namespace OutlookAI.Core.Services
 
             IReadOnlyList<string>? gaps = DescribeCoverageGaps(sweep);
             return gaps == null || gaps.Count == 0 ? FreshnessLive : FreshnessPartial;
+        }
+
+        /// <summary>
+        /// Every way a conversation walk that RAN can still have covered less than the
+        /// conversation - the <c>thread</c> analogue of <see cref="DescribeCoverageGaps"/>,
+        /// and pure for the same reason.
+        /// <para>
+        /// Returns null for a walk that covered everything and for one that never ran: "did
+        /// not run" is <see cref="FreshnessIndexOnly"/>, a different state with a different
+        /// remedy (pass <c>id</c>), and folding it in here would blur the two exactly as it
+        /// would on a sweep.
+        /// </para>
+        /// <para>
+        /// <paramref name="indexHitStores"/> is the set of stores the INDEX rows for this
+        /// conversation came from, which is the only evidence available that the
+        /// conversation reaches past the store Outlook walked. A store the walk covered
+        /// raises nothing; a store neither tier could name (null or blank) raises nothing
+        /// either, because "unknown" is not "uncovered" and a gap code that fires on missing
+        /// metadata is a false alarm on every profile that has any.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string>? DescribeThreadCoverageGaps(
+            ThreadLiveInfo live,
+            IReadOnlyCollection<string?>? indexHitStores)
+        {
+            if (live == null)
+            {
+                throw new ArgumentNullException(nameof(live));
+            }
+
+            if (!live.Performed)
+            {
+                return null;
+            }
+
+            List<string> gaps = new List<string>();
+            if (live.MembersWalked > 0 && !string.IsNullOrEmpty(live.AnchorStore) && indexHitStores != null)
+            {
+                foreach (string? store in indexHitStores)
+                {
+                    if (!string.IsNullOrEmpty(store)
+                        && !string.Equals(store, live.AnchorStore, StringComparison.OrdinalIgnoreCase))
+                    {
+                        gaps.Add(ThreadGapUnwalkedStore);
+                        break;
+                    }
+                }
+            }
+
+            if (live.MemberCapReached)
+            {
+                gaps.Add(ThreadGapMemberCap);
+            }
+
+            return gaps.Count == 0 ? null : gaps;
+        }
+
+        /// <summary>
+        /// The freshness verdict for one <c>thread</c> lookup, from its live block alone -
+        /// the same three values, with the same meanings, that a search carries.
+        /// <para>
+        /// <c>thread</c> had none of this: no <c>degraded</c>, no <c>freshness</c>, no
+        /// staleness, and with a single index row for the conversation the COM walk never
+        /// ran at all. So the tool that promises the FULL conversation was the only one with
+        /// no way to say it had returned part of one, and a reply newer than the index
+        /// frontier was absent from a payload that read as complete.
+        /// </para>
+        /// <para>
+        /// <see cref="FreshnessIndexOnly"/> is reachable here and means what it always
+        /// means - the live check did not run - but it has a remedy the sweep's version does
+        /// not: the walk needs a concrete item to start from, so a caller who passed only
+        /// <c>conversation_id</c> can fix it by passing <c>id</c> as well.
+        /// </para>
+        /// </summary>
+        public static string ClassifyThreadFreshness(
+            ThreadLiveInfo live,
+            IReadOnlyCollection<string?>? indexHitStores)
+        {
+            if (live == null)
+            {
+                throw new ArgumentNullException(nameof(live));
+            }
+
+            if (!live.Performed)
+            {
+                return FreshnessIndexOnly;
+            }
+
+            // Recomputed from the same inputs rather than read off the block, so the verdict
+            // and the codes cannot disagree about the same lookup - the shape ClassifyFreshness
+            // already uses for the sweep.
+            IReadOnlyList<string>? gaps = DescribeThreadCoverageGaps(live, indexHitStores);
+            return gaps == null || gaps.Count == 0 ? FreshnessLive : FreshnessPartial;
+        }
+
+        /// <summary>
+        /// The freshness verdict for an EXHAUSTIVE search - the same three-value contract,
+        /// over the one tier that mode has.
+        /// <para>
+        /// It set neither <c>freshness</c> nor <c>degraded</c> at all (gap F1), so a scan
+        /// that timed out after four folders and skipped nine more came back looking
+        /// identical, on the exact two fields the search description teaches agents to read
+        /// and relay, to one that covered everything. The facts were already in
+        /// <c>exhaustive.*</c>; the two flags an agent branches on were the ones missing.
+        /// </para>
+        /// <para>
+        /// WHAT THE THREE VALUES MEAN HERE, and why no fourth is added. They answer "did the
+        /// LIVE check run, and did it cover its scope". An exhaustive scan IS the live check
+        /// - it reads Outlook's folders directly and consults no index - so it has run by
+        /// the time there is a result to classify, and <see cref="FreshnessIndexOnly"/> is
+        /// therefore unreachable rather than merely unused: that value means "nothing was
+        /// checked live", which is the precise inverse of this mode. What remains is whether
+        /// the scan covered what it was asked, which is <see cref="FreshnessLive"/> against
+        /// <see cref="FreshnessPartial"/>, decided by the counters the scan already reports.
+        /// A fourth value such as "com-only" would say something true about the METHOD and
+        /// nothing about the COVERAGE, and every caller already taught to treat
+        /// <c>live</c> as "complete" would stop matching a complete answer.
+        /// </para>
+        /// <para>
+        /// TRUNCATION COUNTS HERE AND DOES NOT IN THE MERGED PATH, and that asymmetry is the
+        /// point rather than an oversight. An indexed search's <c>truncated</c> caps a
+        /// SORTED complete match set - the provider ordered every match by date and the
+        /// caller got the newest <c>top</c> of them, so raising <c>top</c> or moving the
+        /// <c>before</c> bound pages through the rest. The exhaustive scan stops walking the
+        /// moment it has <c>top</c> items, in whatever order the folder tree happened to
+        /// come (gap F2), so its truncation means folders were never opened at all. That is
+        /// a coverage hole in the plainest sense, and it is not pageable.
+        /// </para>
+        /// </summary>
+        public static string ClassifyExhaustiveFreshness(ExhaustiveInfo? exhaustive)
+        {
+            if (exhaustive == null)
+            {
+                throw new ArgumentNullException(nameof(exhaustive));
+            }
+
+            return exhaustive.TimedOut || exhaustive.FoldersSkipped > 0 || exhaustive.Truncated
+                ? FreshnessPartial
+                : FreshnessLive;
         }
 
         /// <summary>

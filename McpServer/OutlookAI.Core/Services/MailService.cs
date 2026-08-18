@@ -450,7 +450,7 @@ namespace OutlookAI.Core.Services
                 Kinds = request.AttachmentHitsOnly
                     ? KindFilter.DocumentsOnly
                     : request.IncludeAttachmentHits ? KindFilter.EmailAndDocuments : KindFilter.EmailOnly,
-                FromAddressContains = request.From,
+                SenderContains = request.From,
                 RecipientContains = request.To,
                 ReceivedOnOrAfterUtc = request.AfterUtc,
                 ReceivedBeforeUtc = request.BeforeUtc,
@@ -1620,22 +1620,34 @@ namespace OutlookAI.Core.Services
                 advice.Add("SystemIndex is unreachable (" + ex.GetType().Name + ") - exhaustive results are unaffected (COM-only path).");
             }
 
+            ExhaustiveInfo exhaustive = new ExhaustiveInfo
+            {
+                Engine = scan.Engine,
+                InstantSearchEnabled = scan.InstantSearchEnabled,
+                FoldersScanned = scan.FoldersScanned,
+                FoldersSkipped = scan.FoldersSkipped,
+                Truncated = scan.Truncated,
+                TimedOut = scan.TimedOut,
+                ElapsedMs = stopwatch.ElapsedMilliseconds,
+            };
+
+            // The SAME two top-level flags the merged path sets, from this mode's own
+            // counters (FreshMerge.ClassifyExhaustiveFreshness). They used to be absent
+            // here, so the one search mode a caller reaches for BECAUSE completeness
+            // matters was the one that never said it had fallen short - the partial-scan
+            // facts lived in exhaustive.* while degraded and freshness, the two fields the
+            // tool description tells agents to branch on, stayed empty.
+            string freshness = FreshMerge.ClassifyExhaustiveFreshness(exhaustive);
+
             return new SearchOutcome
             {
                 Hits = summaries,
                 Truncated = scan.Truncated,
+                Degraded = freshness == FreshMerge.FreshnessLive ? (bool?)null : true,
+                Freshness = freshness,
                 IndexElapsedMs = 0,
                 Sweep = null,
-                Exhaustive = new ExhaustiveInfo
-                {
-                    Engine = scan.Engine,
-                    InstantSearchEnabled = scan.InstantSearchEnabled,
-                    FoldersScanned = scan.FoldersScanned,
-                    FoldersSkipped = scan.FoldersSkipped,
-                    Truncated = scan.Truncated,
-                    TimedOut = scan.TimedOut,
-                    ElapsedMs = stopwatch.ElapsedMilliseconds,
-                },
+                Exhaustive = exhaustive,
                 Scope = request.Folder == null ? null : new SearchScopeInfo
                 {
                     Folder = request.Folder,
@@ -1870,8 +1882,49 @@ namespace OutlookAI.Core.Services
         // ------------------------------------------------------------------ thread
 
         /// <summary>
-        /// Resolves a conversation: index ConversationID query first (scoped when the
-        /// store is known), COM Conversation walk as fallback (v3.MD section 0.6 Phase 2).
+        /// Time budget for thread's live conversation walk. The same budget the freshness
+        /// sweep runs under, and stated as that relationship rather than as a second
+        /// literal, because it is the same kind of work: a bounded live COM check layered
+        /// over an answer the index already produced. It carries the sweep's connect floor
+        /// too - the walk may be the call that starts Outlook.
+        /// </summary>
+        public const int ThreadWalkBudgetMs = SweepBudgetMs;
+
+        /// <summary>
+        /// Resolves a conversation: index ConversationID query, then the live Outlook
+        /// Conversation walk, merged and deduped (v3.MD section 0.6 Phase 2).
+        /// <para>
+        /// THE WALK IS NO LONGER A FALLBACK, and that is the whole of gap C1. It used to run
+        /// only when the index returned zero rows, so ONE indexed row for a conversation was
+        /// enough to skip the live check entirely - and a reply that arrived after the index
+        /// frontier was absent from a payload whose tool description promises the FULL
+        /// conversation, with no <c>degraded</c>, no <c>freshness</c> and no staleness block
+        /// to hint at it. <c>thread</c> was the only tool on this surface with no way to
+        /// express a partial answer.
+        /// </para>
+        /// <para>
+        /// SWEEPING IS THE RIGHT ANSWER HERE AND IT IS CHEAP, which is why this reports AND
+        /// checks rather than only reporting. A search has to guess where new mail might be,
+        /// which is what makes its sweep a window over a folder SET with per-folder caps and
+        /// a 30 s budget. A conversation is a scope Outlook can enumerate directly: one
+        /// GetConversation plus one table walk over the members, which is why this path has
+        /// existed as the COM fallback since Phase 2 and is already exercised on every
+        /// conversation the index has never seen. The cost it adds to the previously
+        /// index-only case is one COM round trip plus one GetItemFromID per member, bounded
+        /// by <see cref="ThreadWalkBudgetMs"/>, plus - on the first use of a hit id that has
+        /// not been located yet - the same ~2 s HitLocator probe that <c>read</c> pays on
+        /// that hit, cached thereafter. Against that: <c>search</c> already sweeps folders
+        /// through COM on EVERY call and starts Outlook headless to do it, so a
+        /// <c>thread</c> that skipped the live check was not being consistent with the
+        /// product's stance, it was the exception to it.
+        /// </para>
+        /// <para>
+        /// The walk needs a concrete item to start from - COM cannot look up a conversation
+        /// by id string - so a caller who passed only <c>conversation_id</c> gets
+        /// <c>freshness: "index-only"</c> with the remedy named. That is the one degraded
+        /// state here the CALLER can clear, and it is why it is a reported state rather than
+        /// an error.
+        /// </para>
         /// </summary>
         public ThreadOutcome Thread(string? conversationId, string? id, string? store, int top = ThreadTopDefault)
         {
@@ -1893,85 +1946,340 @@ namespace OutlookAI.Core.Services
                     : referenced.Live?.StoreDisplayName;
             }
 
+            string? scope = null;
+            bool scopeWidened = false;
+            if (effectiveStore != null)
+            {
+                try
+                {
+                    scope = ResolveScope(effectiveStore, null);
+                }
+                catch (ArgumentException)
+                {
+                    // C3: the store did not resolve to an index scope, so the lookup runs
+                    // profile-wide. Over-returning members of the right conversation is the
+                    // safe direction and the widening stays - but it used to happen in
+                    // silence, and a scope the caller chose that was not applied is a fact
+                    // the caller is entitled to.
+                    scope = null;
+                    scopeWidened = true;
+                }
+            }
+
+            List<IndexHit> indexHits = new List<IndexHit>();
+            List<HitSummary> hits = new List<HitSummary>();
+            bool truncated = false;
             if (conversationId != null)
             {
-                string? scope = null;
-                if (effectiveStore != null)
-                {
-                    try
-                    {
-                        scope = ResolveScope(effectiveStore, null);
-                    }
-                    catch (ArgumentException)
-                    {
-                        scope = null;
-                    }
-                }
-
                 IndexSearchResult result = _index.Value.Search(
                     new IndexQuery
                     {
                         Scope = scope,
-                        Kinds = KindFilter.EmailOnly,
+                        // C2: message rows of EVERY item class, not 'email' alone. A meeting
+                        // request and its acceptances share the mail's ConversationID and
+                        // index as 'calendar', so EmailOnly dropped real members of the
+                        // conversation this tool exists to return whole.
+                        Kinds = KindFilter.MessagesAnyClass,
                         ConversationIdEquals = conversationId,
                         Top = top + 1, // Over-fetch by one: definite has-more flag.
                     },
                     SearchIndexTimeoutSeconds);
-                if (result.Hits.Count > 0)
+
+                truncated = result.Hits.Count > top;
+                foreach (IndexHit hit in result.Hits)
                 {
-                    bool indexTruncated = result.Hits.Count > top;
-                    List<HitSummary> hits = result.Hits
-                        .Take(top)
-                        .Select(h => RegisterIndexHit(h, snippetChars: SnippetCharsDefault))
-                        .OrderBy(h => h.ReceivedUtc ?? DateTime.MinValue)
-                        .ToList();
-                    stopwatch.Stop();
-                    return new ThreadOutcome
+                    if (indexHits.Count >= top)
                     {
-                        ConversationId = conversationId,
-                        Source = "index",
-                        Hits = hits,
-                        Truncated = indexTruncated,
-                        ElapsedMs = stopwatch.ElapsedMilliseconds,
-                    };
+                        break; // The over-fetched row is evidence, not a member.
+                    }
+
+                    indexHits.Add(hit);
+                    hits.Add(RegisterIndexHit(hit, snippetChars: SnippetCharsDefault));
                 }
             }
 
-            if (id == null)
+            ThreadLiveInfo live = RunConversationWalk(id, top, indexHits, hits);
+
+            // The stores the index says this conversation reaches, which is the only
+            // evidence available that the walk (one store, by Outlook's construction) left
+            // part of it unchecked.
+            HashSet<string?> indexStores = new HashSet<string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (IndexHit hit in indexHits)
             {
-                stopwatch.Stop();
-                return new ThreadOutcome
-                {
-                    ConversationId = conversationId,
-                    Source = "index",
-                    Hits = Array.Empty<HitSummary>(),
-                    ElapsedMs = stopwatch.ElapsedMilliseconds,
-                };
+                indexStores.Add(FreshMerge.ResolveHitStore(hit));
             }
 
-            // COM fallback: walk the Outlook Conversation of the referenced item
-            // (over-fetch by one, same has-more contract as the index path).
-            (string entryId, string? storeId, string? _, long _, string? _) = ResolveToEntryId(id);
-            IReadOnlyList<ComMailBrief> briefs = _gateway.Run(s =>
-            {
-                IReadOnlyList<ComMailBrief>? items = s.TryGetConversationItems(entryId, storeId, top + 1, out string? error);
-                return items ?? throw new InvalidOperationException("Conversation walk failed (" + (error ?? "unknown") + ").");
-            });
+            live.CoverageGaps = FreshMerge.DescribeThreadCoverageGaps(live, indexStores);
+            string freshness = FreshMerge.ClassifyThreadFreshness(live, indexStores);
 
-            bool comTruncated = briefs.Count > top;
-            List<HitSummary> comHits = briefs
-                .Take(top)
-                .Select(b => RegisterLiveHit(b, snippetChars: 0, source: "com"))
-                .ToList();
+            // Newest-first to decide WHICH members survive the cap - the index tier returns
+            // the newest top rows and the live tier exists to add newer ones still, so
+            // trimming from the old end is the only trim that cannot throw away the reply
+            // this whole path was added to find. Oldest-first afterwards, which is the
+            // documented member order.
+            hits.Sort((a, b) => DateTime.Compare(b.ReceivedUtc ?? DateTime.MinValue, a.ReceivedUtc ?? DateTime.MinValue));
+            if (hits.Count > top)
+            {
+                hits.RemoveRange(top, hits.Count - top);
+                truncated = true;
+            }
+
+            hits.Reverse();
+
+            // Inside the clock, not after it: elapsedMs is what this call cost, and a probe
+            // billed to nobody is how a tool's reported cost drifts from its real one.
+            StalenessInfo staleness = ProbeStaleness(scope);
+
             stopwatch.Stop();
             return new ThreadOutcome
             {
                 ConversationId = conversationId,
-                Source = "com",
-                Hits = comHits,
-                Truncated = comTruncated,
+                Degraded = freshness == FreshMerge.FreshnessLive ? (bool?)null : true,
+                Freshness = freshness,
+                Source = indexHits.Count > 0 || !live.Performed ? "index" : "com",
+                Hits = hits,
+                Truncated = truncated,
+                ScopeWidened = scopeWidened ? true : (bool?)null,
+                Live = live,
+                Staleness = staleness,
+                Advice = DescribeThreadCoverage(live, freshness, effectiveStore, scopeWidened, top),
                 ElapsedMs = stopwatch.ElapsedMilliseconds,
             };
+        }
+
+        /// <summary>
+        /// Runs the live conversation walk and merges what it found into
+        /// <paramref name="hits"/>, or reports why it could not run.
+        /// <para>
+        /// A failure DEGRADES this one tier, exactly as a failed freshness sweep degrades a
+        /// search rather than failing it - but only while the index tier has produced an
+        /// answer to degrade. With <paramref name="indexHits"/> empty the walk is not an
+        /// enhancement, it is the whole lookup, and swallowing its failure would turn a
+        /// caller's bad id or a wedged Outlook into an empty conversation reported as a
+        /// success. That case throws, exactly as it did when this walk was the fallback -
+        /// the new reporting is added to the merged path, it does not replace an error that
+        /// was already right.
+        /// </para>
+        /// </summary>
+        private ThreadLiveInfo RunConversationWalk(
+            string? id,
+            int top,
+            IReadOnlyList<IndexHit> indexHits,
+            List<HitSummary> hits)
+        {
+            ThreadLiveInfo live = new ThreadLiveInfo();
+            if (id == null)
+            {
+                // The one degraded state the CALLER can clear: Outlook's conversation graph
+                // is reachable only from a concrete item, so conversation_id alone leaves
+                // this tier with nothing to start from.
+                live.Performed = false;
+                live.Error = "NoAnchorItem";
+                return live;
+            }
+
+            bool degradeOnly = indexHits.Count > 0;
+            Stopwatch clock = Stopwatch.StartNew();
+            string entryId;
+            string? storeId;
+            try
+            {
+                (entryId, storeId, _, _, _) = ResolveToEntryId(id);
+            }
+            catch (ArgumentException) when (degradeOnly)
+            {
+                // The id is not a hit id from this session and not a plausible EntryID.
+                clock.Stop();
+                live.Performed = false;
+                live.Error = "UnknownAnchorId";
+                live.ElapsedMs = clock.ElapsedMilliseconds;
+                return live;
+            }
+            catch (Exception ex) when (degradeOnly && ex is not OutOfMemoryException)
+            {
+                // A real id Outlook would not open: a stale index row, a moved item, a
+                // folder that no longer exists. LocateFailureAdvice's text is the remedy and
+                // it reaches the caller when this is the only tier; here it is one token.
+                clock.Stop();
+                live.Performed = false;
+                live.Error = DescribeWalkFailure(ex, "AnchorNotLocatable");
+                live.ElapsedMs = clock.ElapsedMilliseconds;
+                return live;
+            }
+
+            IReadOnlyList<ComMailBrief> briefs;
+            try
+            {
+                briefs = _gateway.Run(
+                    s =>
+                    {
+                        IReadOnlyList<ComMailBrief>? items =
+                            s.TryGetConversationItems(entryId, storeId, top + 1, out string? error);
+                        return items ?? throw new InvalidOperationException(
+                            "Conversation walk failed (" + (error ?? "unknown") + ").");
+                    },
+                    ThreadWalkBudgetMs,
+                    allowConnectFloor: true);
+            }
+            catch (Exception ex) when (degradeOnly && ex is not OutOfMemoryException)
+            {
+                clock.Stop();
+                live.Performed = false;
+                live.Error = DescribeWalkFailure(ex, "ConversationWalkFailed");
+                live.ElapsedMs = clock.ElapsedMilliseconds;
+                return live;
+            }
+
+            live.Performed = true;
+            live.MemberCapReached = briefs.Count > top;
+            List<ComMailBrief> walked = new List<ComMailBrief>(Math.Min(briefs.Count, top));
+            foreach (ComMailBrief brief in briefs)
+            {
+                if (walked.Count >= top)
+                {
+                    break; // The over-fetched member is evidence, not a member.
+                }
+
+                walked.Add(brief);
+                live.AnchorStore ??= string.IsNullOrEmpty(brief.StoreDisplayName) ? null : brief.StoreDisplayName;
+            }
+
+            live.MembersWalked = walked.Count;
+            IReadOnlyList<ComMailBrief> freshOnly = FreshMerge.SelectFreshOnly(
+                walked, indexHits, DedupeToleranceSeconds, out int _);
+            live.MembersAdded = freshOnly.Count;
+            foreach (ComMailBrief brief in freshOnly)
+            {
+                hits.Add(RegisterLiveHit(brief, snippetChars: 0, source: "com"));
+            }
+
+            clock.Stop();
+            live.ElapsedMs = clock.ElapsedMilliseconds;
+            return live;
+        }
+
+        /// <summary>
+        /// One content-free token for a failed conversation walk (S4: never a subject, never
+        /// a body). <c>OutlookUnavailableException</c> and <c>TimeoutException</c> carry
+        /// messages the product wrote - they already name what failed and what was done
+        /// about it - so those pass through; everything else becomes a HRESULT or a type
+        /// name, and an exception carrying arbitrary text becomes <paramref name="fallback"/>.
+        /// </summary>
+        private static string DescribeWalkFailure(Exception ex, string fallback)
+        {
+            return ex switch
+            {
+                OutlookUnavailableException => ex.Message,
+                TimeoutException => ex.Message,
+                System.Runtime.InteropServices.COMException com =>
+                    string.Format(CultureInfo.InvariantCulture, "COMException 0x{0:X8}", com.HResult),
+                InvalidOperationException => fallback,
+                _ => ex.GetType().Name,
+            };
+        }
+
+        /// <summary>
+        /// Best-effort staleness snapshot for a thread lookup. Best-effort because the
+        /// conversation itself does not depend on it: it is context for a caller deciding
+        /// how much to trust an index-only answer, so an unreachable index reports unknown
+        /// rather than failing a lookup the COM walk may have answered completely.
+        /// </summary>
+        private StalenessInfo ProbeStaleness(string? scope)
+        {
+            DateTime? newestIndexed = null;
+            double? ageMinutes = null;
+            try
+            {
+                IndexStalenessReport staleness = _index.Value.GetStaleness(scope, SearchIndexTimeoutSeconds);
+                newestIndexed = staleness.NewestIndexedReceivedUtc;
+                ageMinutes = staleness.Age?.TotalMinutes;
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // Unknown, reported as unknown (nulls are omitted from the payload).
+            }
+
+            return new StalenessInfo
+            {
+                NewestIndexedUtc = newestIndexed,
+                AgeMinutes = ageMinutes,
+                OutlookRunning = ComGateway.IsOutlookRunning(),
+            };
+        }
+
+        /// <summary>
+        /// The advice sentences for one thread lookup - one per way this conversation may be
+        /// short of members, in the same severity-first order and the same voice the sweep's
+        /// coverage advice uses. Null when there is nothing to say.
+        /// <para>
+        /// Public and pure for the same reason <see cref="DescribeSweepCoverage"/> is: the
+        /// states it narrates need a real conversation spanning two stores, or one longer
+        /// than the member cap, which no CI runner has - and a code that reaches the payload
+        /// without a sentence is a partial answer an agent can see but cannot explain.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string>? DescribeThreadCoverage(
+            ThreadLiveInfo live,
+            string freshness,
+            string? store,
+            bool scopeWidened,
+            int top)
+        {
+            List<string> advice = new List<string>();
+            if (scopeWidened)
+            {
+                advice.Add("The store '" + (store ?? "?") + "' did not resolve to an index scope, so this conversation was "
+                    + "looked up across the WHOLE profile - the answer may include members from another account. "
+                    + "Check the name with list_accounts.");
+            }
+
+            if (freshness == FreshMerge.FreshnessIndexOnly)
+            {
+                const string lead = "INCOMPLETE CONVERSATION - TELL THE USER: these members are indexed results only";
+                advice.Add(live.Error switch
+                {
+                    // The remedy is the caller's, so it is stated as an instruction.
+                    "NoAnchorItem" => lead + ", so replies newer than the last index update are missing. Outlook's "
+                        + "conversation graph can only be walked from a concrete mail, so call thread again with id set "
+                        + "to any member's hit id to get the live check.",
+                    "UnknownAnchorId" => lead + " and may be missing the newest replies: the id passed is neither a hit "
+                        + "id from this session nor a full EntryID, so the live check had nothing to walk from. Hit ids "
+                        + "expire when the server restarts - re-run the search and pass a fresh one.",
+                    _ => lead + " and may be missing the newest replies. The live check against Outlook could not run ("
+                        + (live.Error ?? "unknown") + "). Retry, or check outlook_health.",
+                });
+            }
+
+            foreach (string gap in live.CoverageGaps ?? Array.Empty<string>())
+            {
+                switch (gap)
+                {
+                    case FreshMerge.ThreadGapUnwalkedStore:
+                        advice.Add("The live check covered '" + (live.AnchorStore ?? "?")
+                            + "' only - Outlook walks a conversation inside one store - while this conversation also has "
+                            + "members in another account. Those are indexed results, so a reply that arrived there "
+                            + "moments ago may be missing; call thread again with an id from that account to check it live.");
+                        break;
+
+                    case FreshMerge.ThreadGapMemberCap:
+                        advice.Add("The live check stopped at top=" + top.ToString(CultureInfo.InvariantCulture)
+                            + " members, and it reads the conversation in Outlook's own order rather than newest-first, "
+                            + "so the members it did not reach could include recent ones. Raise top (max "
+                            + ThreadTopCap.ToString(CultureInfo.InvariantCulture) + ") for full live coverage.");
+                        break;
+
+                    default:
+                        // A code with no sentence would be a silent partial result, which is
+                        // what all of this exists to remove. T1 pins that every code is
+                        // handled, so this can only be reached by a code added without its
+                        // advice - say so rather than dropping it.
+                        advice.Add("The conversation walk reported partial coverage (" + gap
+                            + ") with no further detail available; treat this thread as incomplete.");
+                        break;
+                }
+            }
+
+            return advice.Count > 0 ? advice : null;
         }
 
         // ------------------------------------------------------------------ show-me (Phase 3, v3.MD L3)

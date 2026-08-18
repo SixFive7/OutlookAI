@@ -391,7 +391,15 @@ public sealed class LiveMailServiceTests
         Assert.True(indexThread.Hits.Count >= 1);
         if (indexThread.Source == "index")
         {
-            Assert.All(indexThread.Hits, h => Assert.Equal(seed.ConversationId, h.ConversationId));
+            // Index-sourced members carry the conversation id the row was matched on. The
+            // LIVE members merged in beside them (gap C1: thread now walks Outlook's
+            // conversation on every call that has an anchor) come from a COM snapshot that
+            // reads no ConversationID column, so they carry none - claiming the requested id
+            // for them would be inventing a value nothing read, and thread is called with a
+            // deliberately wrong conversation id further down this very test.
+            Assert.All(
+                indexThread.Hits.Where(h => h.Source == "index"),
+                h => Assert.Equal(seed.ConversationId, h.ConversationId));
         }
 
         // COM fallback path: a conversation id that cannot exist in the index forces the

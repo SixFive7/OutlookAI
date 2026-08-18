@@ -321,6 +321,35 @@ public sealed class WsSqlBuilderTests
         Assert.DoesNotContain("System.Kind=", WhereClause(sql), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Gap C2: the thread tier must not narrow by kind at all. Under a mapi SCOPE the
+    /// namespace is the guard; unscoped, the enumerated kind list keeps the provider
+    /// selective and IndexRowFilter is the correctness guarantee in both cases.
+    /// </summary>
+    [Fact]
+    public void Build_MessagesAnyClass_EmitsNoKindPredicateUnderAScope()
+    {
+        var query = BaseQuery();
+        query.Kinds = KindFilter.MessagesAnyClass;
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.DoesNotContain("System.Kind=", WhereClause(sql), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_MessagesAnyClass_Unscoped_StillEnumeratesKinds()
+    {
+        string sql = WsSqlBuilder.Build(new IndexQuery
+        {
+            Kinds = KindFilter.MessagesAnyClass,
+            ConversationIdEquals = "ABCDEF0123456789",
+        });
+
+        Assert.Contains("System.Kind='email'", sql, StringComparison.Ordinal);
+        Assert.Contains("System.Kind='calendar'", sql, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Build_Unscoped_EnumeratesTheAttachmentKinds_SoTheFileSystemStaysOut()
     {
@@ -379,7 +408,7 @@ public sealed class WsSqlBuilderTests
         {
             Scope = SyntheticScope,
             Terms = new[] { "factuur", "betaling" },
-            FromAddressContains = "billing@example.com",
+            SenderContains = "billing@example.com",
             RecipientContains = "alice@example.com",
             ReceivedOnOrAfterUtc = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc),
             ReceivedBeforeUtc = new DateTime(2026, 7, 20, 0, 0, 0, DateTimeKind.Utc),
@@ -405,7 +434,7 @@ public sealed class WsSqlBuilderTests
         {
             Scope = SyntheticScope,
             Terms = new[] { "factuur", "betaling" },
-            FromAddressContains = "billing@example.com",
+            SenderContains = "billing@example.com",
             RecipientContains = "alice@example.com",
             ReceivedOnOrAfterUtc = new DateTime(2026, 7, 1, 12, 30, 45, DateTimeKind.Utc),
             ReceivedBeforeUtc = new DateTime(2026, 7, 20, 0, 0, 0, DateTimeKind.Utc),
@@ -429,6 +458,67 @@ public sealed class WsSqlBuilderTests
         Assert.Contains("System.Message.DateReceived < '2026-07-20 00:00:00'", sql, StringComparison.Ordinal);
         Assert.Contains("System.IsRead=FALSE", sql, StringComparison.Ordinal);
         Assert.Contains("System.Message.HasAttachments=TRUE", sql, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Gap B1: the index tier's <c>from</c> predicate names BOTH sender columns. It named
+    /// the address alone while <c>System.Message.FromName</c> sat in the SELECT list unused,
+    /// so a name-fragment filter - which the tool description promises and which the
+    /// freshness sweep and the exhaustive scan have always honoured - matched nothing in the
+    /// index and the answer was whatever the sweep window caught, reported as complete.
+    /// </summary>
+    [Fact]
+    public void Build_SenderFilter_MatchesAddressOrDisplayName()
+    {
+        var query = BaseQuery();
+        query.SenderContains = "huisman";
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains(
+            "(CONTAINS(System.Message.FromAddress, '\"huisman\"') OR CONTAINS(System.Message.FromName, '\"huisman\"'))",
+            sql,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The two sender columns are ORed with each other and ANDed with everything else: an
+    /// OR that escaped its own parentheses would widen the whole statement to "any mail from
+    /// this sender", dropping the term and date bounds - the over-return that looks like a
+    /// recall fix and is a correctness bug.
+    /// </summary>
+    [Fact]
+    public void Build_SenderFilter_IsParenthesisedSoItCannotWidenTheStatement()
+    {
+        var query = BaseQuery();
+        query.SenderContains = "huisman";
+        query.ReceivedOnOrAfterUtc = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        string sql = WsSqlBuilder.Build(query);
+        string where = sql.Substring(sql.IndexOf(" WHERE ", StringComparison.Ordinal) + 7);
+
+        foreach (string clause in where.Split(new[] { " AND " }, StringSplitOptions.None))
+        {
+            if (clause.IndexOf(" OR ", StringComparison.Ordinal) >= 0)
+            {
+                Assert.StartsWith("(", clause.Trim(), StringComparison.Ordinal);
+            }
+        }
+
+        Assert.Contains("System.Message.DateReceived >= '2026-07-01 00:00:00'", sql, StringComparison.Ordinal);
+    }
+
+    /// <summary>Both sender columns go through the same term validation - one escape, not two.</summary>
+    [Fact]
+    public void Build_SenderFilter_EscapesQuotesInBothColumns()
+    {
+        var query = BaseQuery();
+        query.SenderContains = "o'brien";
+
+        string sql = WsSqlBuilder.Build(query);
+
+        Assert.Contains("CONTAINS(System.Message.FromAddress, '\"o''brien\"')", sql, StringComparison.Ordinal);
+        Assert.Contains("CONTAINS(System.Message.FromName, '\"o''brien\"')", sql, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -679,7 +769,7 @@ public sealed class WsSqlBuilderTests
     public void Build_RejectsUnsafeSenderAndRecipientFilters()
     {
         var withBadSender = BaseQuery();
-        withBadSender.FromAddressContains = "*";
+        withBadSender.SenderContains = "*";
         Assert.Throws<ArgumentException>(() => WsSqlBuilder.Build(withBadSender));
 
         var withBadRecipient = BaseQuery();
