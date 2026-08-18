@@ -18,6 +18,12 @@ namespace OutlookAI.McpServer.Tests.T3;
 [Trait("Category", "Live")]
 public sealed class Phase4LiveMcpToolShapeTests
 {
+    /// <summary>
+    /// How long the seed may take to become visible over stdio. Covers a real mail round
+    /// trip plus the ~10 s sweep cache TTL, which can delay an arrival during rapid polling.
+    /// </summary>
+    private const int SeedVisibleSeconds = 180;
+
     private readonly LivePhase4Fixture _fixture;
     private readonly ITestOutputHelper _output;
 
@@ -49,8 +55,8 @@ public sealed class Phase4LiveMcpToolShapeTests
             // an arrival by up to its TTL during rapid polling - the 180 s deadline
             // absorbs that by design.
             string? hitId = null;
-            DateTime deadline = DateTime.UtcNow.AddSeconds(180);
-            while (hitId == null && DateTime.UtcNow < deadline)
+            LiveWaitBudget wait = LiveWaitBudget.OfSeconds(SeedVisibleSeconds);
+            while (hitId == null && wait.HasTimeLeft)
             {
                 JsonElement search = await client.CallToolAsync("search", new
                 {

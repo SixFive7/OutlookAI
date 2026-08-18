@@ -9,6 +9,13 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// configured stores - the primary accounts AND the delegate/shared mailboxes that are
 /// read-only for tests.
 /// <para>
+/// Every folder is counted; folders within <see cref="CensusIdentityPlan"/>'s budget are
+/// also walked item by item, so a firing can say WHICH items left rather than only how
+/// many. The post-run passes repeat the baseline's identity choices rather than re-deciding
+/// them, because a folder walked at one end and counted at the other cannot be compared
+/// item by item at all.
+/// </para>
+/// <para>
 /// Fail-closed, like <c>SignatureDirectorySnapshot</c>: if the baseline cannot be taken
 /// the live tier REFUSES to run, because an unmeasured mailbox cannot be proven
 /// untouched. Every live collection fixture calls <see cref="EnsureBaseline"/> in its
@@ -25,7 +32,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 public static class LiveStoreCountTripwire
 {
     private static readonly object Gate = new();
-    private static Dictionary<string, IReadOnlyDictionary<string, int>>? _baseline;
+    private static Dictionary<string, IReadOnlyDictionary<string, FolderCensus>>? _baseline;
     private static string? _hub;
     private static IReadOnlyList<string> _lazyHierarchyStores = Array.Empty<string>();
     private static bool _verified;
@@ -70,7 +77,7 @@ public static class LiveStoreCountTripwire
 
     /// <summary>
     /// Takes the baseline once per process. Throws (refusing the live tier) when any
-    /// watched store cannot be counted.
+    /// watched store cannot be censused.
     /// </summary>
     public static void EnsureBaseline(LiveTestSettings settings)
     {
@@ -104,21 +111,24 @@ public static class LiveStoreCountTripwire
             }
 
             Stopwatch stopwatch = Stopwatch.StartNew();
-            _baseline = Capture(WatchedStores(settings), "baseline");
+            CensusPass pass = Capture(WatchedStores(settings), "baseline", settings.TestHubStoreDisplayName, null);
             stopwatch.Stop();
+            _baseline = pass.Census;
             Console.WriteLine(
                 $"[tripwire] baseline: {_baseline.Count} stores, "
-                + $"{_baseline.Values.Sum(f => f.Count)} mail folders, {stopwatch.ElapsedMilliseconds} ms.");
+                + $"{_baseline.Values.Sum(f => f.Count)} mail folders, {pass.Describe()}, "
+                + $"{stopwatch.ElapsedMilliseconds} ms.");
         }
     }
 
     /// <summary>
-    /// Re-counts and compares. Throws naming store/folder/delta when anything was lost
-    /// outside the hub. Runs once; later calls are no-ops.
+    /// Re-censuses and compares. Throws naming the store, the folder, the items and where
+    /// they went when anything was removed outside the hub, and ends with an attribution
+    /// line saying how far the evidence actually goes. Runs once; later calls are no-ops.
     /// </summary>
     public static void Verify()
     {
-        Dictionary<string, IReadOnlyDictionary<string, int>> baseline;
+        Dictionary<string, IReadOnlyDictionary<string, FolderCensus>> baseline;
         string hub;
         IReadOnlyList<string> lazyStores;
         lock (Gate)
@@ -135,25 +145,30 @@ public static class LiveStoreCountTripwire
         }
 
         Stopwatch stopwatch = Stopwatch.StartNew();
-        Dictionary<string, IReadOnlyDictionary<string, int>> after = Capture(baseline.Keys.ToList(), "post-run");
+        CensusPass after = Capture(baseline.Keys.ToList(), "post-run", hub, baseline);
         stopwatch.Stop();
 
-        TripwireVerdict verdict = StoreCountTripwire.Evaluate(baseline, after, hub, lazyStores);
+        TripwireVerdict verdict = StoreCountTripwire.Evaluate(baseline, after.Census, hub, lazyStores);
         if (verdict.Failed)
         {
             // Confirm before crying: one more census, and only what fails BOTH times is
             // reported. COM enumeration under a busy Outlook is not perfectly repeatable.
-            Console.WriteLine("[tripwire] suspected loss - re-counting to confirm.");
-            Dictionary<string, IReadOnlyDictionary<string, int>> recheck =
-                Capture(baseline.Keys.ToList(), "confirmation");
-            TripwireVerdict second = StoreCountTripwire.Evaluate(baseline, recheck, hub, lazyStores);
+            //
+            // Failure lines name EntryIDs now, so this intersection is stricter than it was:
+            // the SAME items must be missing both times, not merely the same tally. That is
+            // the right direction - a line that changes between two censuses seconds apart
+            // was describing enumeration noise, not a deletion.
+            Console.WriteLine("[tripwire] suspected loss - re-censusing to confirm.");
+            CensusPass recheck = Capture(baseline.Keys.ToList(), "confirmation", hub, baseline);
+            TripwireVerdict second = StoreCountTripwire.Evaluate(baseline, recheck.Census, hub, lazyStores);
             List<string> confirmed = verdict.Failures.Intersect(second.Failures, StringComparer.Ordinal).ToList();
             if (confirmed.Count == 0)
             {
                 Console.WriteLine("[tripwire] not reproducible on the second census - treating as enumeration noise.");
             }
 
-            verdict = new TripwireVerdict(confirmed, verdict.Notes);
+            verdict = new TripwireVerdict(
+                confirmed, verdict.Notes, confirmed.Count > 0 ? verdict.Attribution : null);
         }
 
         foreach (string note in verdict.Notes)
@@ -162,7 +177,7 @@ public static class LiveStoreCountTripwire
         }
 
         Console.WriteLine(
-            $"[tripwire] post-run census in {stopwatch.ElapsedMilliseconds} ms; "
+            $"[tripwire] post-run census in {stopwatch.ElapsedMilliseconds} ms ({after.Describe()}); "
             + $"{verdict.Failures.Count} failure(s), {verdict.Notes.Count} note(s).");
 
         // Releases COM references only - Outlook keeps running (S7: never kill/close).
@@ -194,26 +209,92 @@ public static class LiveStoreCountTripwire
         }
     }
 
-    private static Dictionary<string, IReadOnlyDictionary<string, int>> Capture(
-        IReadOnlyList<string> stores, string phase)
+    /// <summary>
+    /// One census over every watched store, plus how much of it was walked item by item.
+    /// <para>
+    /// <paramref name="repeatOf"/> is null for the baseline and the baseline census for every
+    /// later pass: a folder identified at one end and only counted at the other cannot be
+    /// compared item by item, so later passes repeat the baseline's choices instead of
+    /// re-deciding them against a budget that has since moved.
+    /// </para>
+    /// </summary>
+    private static CensusPass Capture(
+        IReadOnlyList<string> stores,
+        string phase,
+        string hubStoreDisplayName,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, FolderCensus>>? repeatOf)
     {
-        Dictionary<string, IReadOnlyDictionary<string, int>> census = new(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, IReadOnlyDictionary<string, FolderCensus>> census =
+            new(StringComparer.OrdinalIgnoreCase);
+        int folders = 0;
+        int items = 0;
         foreach (string store in stores)
         {
+            CensusIdentityPlan plan = PlanFor(store, hubStoreDisplayName, repeatOf);
             try
             {
-                census[store] = LiveOutlookTestMailer.CountMailFolderItems(store);
+                census[store] = LiveOutlookTestMailer.CaptureMailFolderCensus(store, plan);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 throw new InvalidOperationException(
-                    "REFUSING to run the live tier: the " + phase + " per-store count for '" + store
+                    "REFUSING to run the live tier: the " + phase + " per-store census for '" + store
                     + "' could not be taken (" + ex.GetType().Name + ": " + ex.Message
                     + "). An unmeasured mailbox cannot be proven untouched.",
                     ex);
             }
+
+            folders += plan.IdentifiedFolders;
+            items += plan.IdentifiedItems;
         }
 
-        return census;
+        return new CensusPass(census, folders, items);
+    }
+
+    /// <summary>
+    /// How much of one store to walk. The hub is counted only - this guard exempts it
+    /// anyway, its churn is tagged, and it is the busiest store in the run.
+    /// </summary>
+    private static CensusIdentityPlan PlanFor(
+        string store,
+        string hubStoreDisplayName,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, FolderCensus>>? repeatOf)
+    {
+        if (string.Equals(store, hubStoreDisplayName, StringComparison.OrdinalIgnoreCase))
+        {
+            return CensusIdentityPlan.CountOnly();
+        }
+
+        if (repeatOf == null)
+        {
+            return CensusIdentityPlan.Baseline();
+        }
+
+        return repeatOf.TryGetValue(store, out IReadOnlyDictionary<string, FolderCensus>? was)
+            ? CensusIdentityPlan.Repeating(was)
+            : CensusIdentityPlan.CountOnly();
+    }
+
+    /// <summary>One census and what identifying it cost, so a run reports its own overhead.</summary>
+    private sealed class CensusPass
+    {
+        internal CensusPass(
+            Dictionary<string, IReadOnlyDictionary<string, FolderCensus>> census, int folders, int items)
+        {
+            Census = census;
+            IdentifiedFolders = folders;
+            IdentifiedItems = items;
+        }
+
+        internal Dictionary<string, IReadOnlyDictionary<string, FolderCensus>> Census { get; }
+
+        internal int IdentifiedFolders { get; }
+
+        internal int IdentifiedItems { get; }
+
+        internal string Describe()
+        {
+            return $"identified {IdentifiedFolders} folder(s)/{IdentifiedItems} item(s)";
+        }
     }
 }

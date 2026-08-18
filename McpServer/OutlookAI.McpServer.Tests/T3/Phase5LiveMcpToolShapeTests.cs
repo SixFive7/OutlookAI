@@ -23,6 +23,15 @@ namespace OutlookAI.McpServer.Tests.T3;
 [Trait("Category", "Live")]
 public sealed class Phase5LiveMcpToolShapeTests
 {
+    /// <summary>
+    /// How long a sent mail may take to come back through the mail server, whether it is
+    /// read back from the Inbox or from the Sent Items copy.
+    /// </summary>
+    private const int ArrivalSeconds = 180;
+
+    /// <summary>How long a just-sent mail may take to become readable over stdio.</summary>
+    private const int ReadableHitSeconds = 120;
+
     private readonly LivePhase5Fixture _fixture;
     private readonly ITestOutputHelper _output;
 
@@ -92,6 +101,12 @@ public sealed class Phase5LiveMcpToolShapeTests
             Stopwatch sendWatch = Stopwatch.StartNew();
             JsonElement step2 = await client.CallToolAsync("send", new { id = draftEntryId, confirm_token = token });
             sendWatch.Stop();
+            // Wall clock ON PURPOSE, unlike the poll budgets below. This instant becomes the
+            // base of a DASL sweep window compared against the DateReceived Outlook stamps on
+            // the arriving copy, so it must be real calendar time on both sides. The latency
+            // figures derived from it are diagnostics printed to the test log; a clock jump
+            // would misreport a number nothing asserts on, which is the right trade against
+            // sweeping the wrong window.
             DateTime sentUtc = DateTime.UtcNow;
             Assert.Equal("sent", step2.GetProperty("status").GetString());
             Assert.True(step2.GetProperty("sent").GetBoolean());
@@ -167,8 +182,8 @@ public sealed class Phase5LiveMcpToolShapeTests
 
     private ComMailBrief WaitForInboxArrival(string subject, DateTime sentUtc)
     {
-        DateTime deadline = DateTime.UtcNow.AddSeconds(180);
-        while (DateTime.UtcNow < deadline)
+        LiveWaitBudget wait = LiveWaitBudget.OfSeconds(ArrivalSeconds);
+        while (wait.HasTimeLeft)
         {
             ComSweepResult sweep = _fixture.VerifySession.SweepFoldersNewerThan(
                 sentUtc.AddMinutes(-2), perFolderCap: 100, includeBodies: false, onlyStoreDisplayName: Hub);
@@ -182,7 +197,10 @@ public sealed class Phase5LiveMcpToolShapeTests
             Thread.Sleep(3000);
         }
 
-        throw new TimeoutException("Sent mail did not arrive in the hub Inbox within 180 s (D20 round trip).");
+        // The bound and the number in the message come from one constant: a failure that
+        // states the wrong wait is worse than one that states none.
+        throw new TimeoutException(
+            $"Sent mail did not arrive in the hub Inbox within {ArrivalSeconds} s (D20 round trip).");
     }
 
     /// <summary>
@@ -192,8 +210,8 @@ public sealed class Phase5LiveMcpToolShapeTests
     /// </summary>
     private async Task<(string HitId, JsonElement Read)> FindReadableHitAsync(McpStdioClient client, string subject)
     {
-        DateTime deadline = DateTime.UtcNow.AddSeconds(120);
-        while (DateTime.UtcNow < deadline)
+        LiveWaitBudget wait = LiveWaitBudget.OfSeconds(ReadableHitSeconds);
+        while (wait.HasTimeLeft)
         {
             JsonElement search = await client.CallToolAsync("search", new
             {
@@ -223,14 +241,14 @@ public sealed class Phase5LiveMcpToolShapeTests
             await Task.Delay(3000);
         }
 
-        throw new TimeoutException("Sent mail not readable over stdio within 120 s.");
+        throw new TimeoutException($"Sent mail not readable over stdio within {ReadableHitSeconds} s.");
     }
 
     /// <summary>Sent Items filing check via direct folder count (lag-tolerant, Phase-2 fact).</summary>
     private double WaitForSentItemsCopy(DateTime sentUtc)
     {
-        DateTime deadline = DateTime.UtcNow.AddSeconds(180);
-        while (DateTime.UtcNow < deadline)
+        LiveWaitBudget wait = LiveWaitBudget.OfSeconds(ArrivalSeconds);
+        while (wait.HasTimeLeft)
         {
             if (LiveOutlookTestMailer.CountTaggedArtifacts(Hub, Marker, new[] { 5 }) >= 1)
             {
@@ -240,7 +258,8 @@ public sealed class Phase5LiveMcpToolShapeTests
             Thread.Sleep(3000);
         }
 
-        throw new TimeoutException("Sent Items copy of the sent mail not visible within 180 s.");
+        throw new TimeoutException(
+            $"Sent Items copy of the sent mail not visible within {ArrivalSeconds} s.");
     }
 
     private static int CountAuditLines()

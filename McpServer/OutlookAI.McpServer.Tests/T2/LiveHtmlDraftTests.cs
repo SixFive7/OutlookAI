@@ -418,8 +418,8 @@ public sealed class LiveHtmlDraftTests
 
     private bool WaitForInspector(string entryId, TimeSpan timeout)
     {
-        DateTime deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
+        LiveWaitBudget wait = LiveWaitBudget.Of(timeout);
+        while (wait.HasTimeLeft)
         {
             if (_fixture.VerifySession.GetOpenInspectors().Any(i =>
                 string.Equals(i.EntryId, entryId, StringComparison.OrdinalIgnoreCase)))

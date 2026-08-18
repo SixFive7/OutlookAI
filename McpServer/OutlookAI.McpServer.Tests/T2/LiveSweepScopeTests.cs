@@ -357,8 +357,8 @@ public sealed class LiveSweepScopeTests
     private string WaitForInboxSeed(string seedSubject)
     {
         const int DeadlineSeconds = 240;
-        DateTime deadline = DateTime.UtcNow.AddSeconds(DeadlineSeconds);
-        while (DateTime.UtcNow < deadline)
+        LiveWaitBudget wait = LiveWaitBudget.OfSeconds(DeadlineSeconds);
+        while (wait.HasTimeLeft)
         {
             ComWalkedItem? seed = _fixture.VerifySession.WalkStoreMailItems(Hub).FirstOrDefault(i =>
                 i.Subject == seedSubject

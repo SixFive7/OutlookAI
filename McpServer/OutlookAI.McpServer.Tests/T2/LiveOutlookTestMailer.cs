@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.CSharp.RuntimeBinder;
 
@@ -208,6 +209,10 @@ public static class LiveOutlookTestMailer
                     Release(sendingAccount);
                 }
 
+                // Wall clock ON PURPOSE: every caller turns this into a sweep window base
+                // compared against the DateReceived that Outlook stamps on the arriving
+                // copy, so it has to be real calendar time rather than a monotonic reading.
+                // The durations the live tier MEASURES are on LiveWaitBudget instead.
                 return DateTime.UtcNow;
             }
             finally
@@ -289,10 +294,13 @@ public static class LiveOutlookTestMailer
     {
         TimeSpan totalWindow = window ?? TimeSpan.FromSeconds(120);
         TimeSpan requiredStable = stableFor ?? TimeSpan.FromSeconds(10);
-        DateTime deadline = DateTime.UtcNow + totalWindow;
-        DateTime? zeroSince = null;
+        // Monotonic on both counters: this loop decides when a mailbox is CLEAN, and a
+        // forwards clock jump would end it with tagged items still in a real mailbox while
+        // a backwards one would keep deleting for as long as the jump lasted.
+        LiveWaitBudget wait = LiveWaitBudget.Of(totalWindow);
+        TimeSpan? zeroSince = null;
         int totalDeleted = 0;
-        while (DateTime.UtcNow < deadline)
+        while (wait.HasTimeLeft)
         {
             int remaining = CountTaggedArtifacts(storeDisplayName, uniqueMarker, folderIds);
             if (remaining > 0)
@@ -302,8 +310,8 @@ public static class LiveOutlookTestMailer
                 continue;
             }
 
-            zeroSince ??= DateTime.UtcNow;
-            if (DateTime.UtcNow - zeroSince.Value >= requiredStable)
+            zeroSince ??= wait.Elapsed;
+            if (wait.Elapsed - zeroSince.Value >= requiredStable)
             {
                 return totalDeleted;
             }
@@ -749,20 +757,30 @@ public static class LiveOutlookTestMailer
     }
 
     /// <summary>
-    /// READ-ONLY census for the per-store count tripwire: store-relative path -&gt; item
-    /// count for every MAIL folder in <paramref name="storeDisplayName"/> (mail-typed
-    /// folders plus Deleted Items, Outbox and the Sync Issues subtree, which are all
-    /// mail-typed). Calendar/Contacts/Tasks are skipped deliberately - their churn is not
-    /// mail loss and would only add false positives.
+    /// READ-ONLY census for the per-store tripwire: store-relative path -&gt; what was in
+    /// every MAIL folder of <paramref name="storeDisplayName"/> (mail-typed folders plus
+    /// Deleted Items, Outbox and the Sync Issues subtree, which are all mail-typed).
+    /// Calendar/Contacts/Tasks are skipped deliberately - their churn is not mail loss and
+    /// would only add false positives.
     /// <para>
-    /// Counts only: <c>Folder.Items.Count</c> is a property read, never a walk, and no
-    /// subject, sender or body is touched (S4). Throws if the store cannot be enumerated -
-    /// the tripwire is fail-closed.
+    /// Every folder is COUNTED. Folders within <paramref name="plan"/>'s budget are also
+    /// WALKED, so the tripwire can say which items left rather than only how many: a count
+    /// cannot tell a deletion from a filing, and cannot see an item removed while another
+    /// arrives. The walk reads EntryID, ReceivedTime and Size, and reads the Subject only
+    /// to set a boolean saying whether it carried <see cref="SubjectTag"/> - the subject
+    /// itself never leaves this method, so no other mailbox's content is stored or logged
+    /// (S3/S4).
+    /// </para>
+    /// <para>
+    /// Throws if the store cannot be enumerated - the tripwire is fail-closed. A folder
+    /// whose WALK fails or comes back inconsistent degrades to a count, never to nothing.
     /// </para>
     /// </summary>
-    public static IReadOnlyDictionary<string, int> CountMailFolderItems(string storeDisplayName)
+    public static IReadOnlyDictionary<string, FolderCensus> CaptureMailFolderCensus(
+        string storeDisplayName, CensusIdentityPlan plan)
     {
-        return RunSta<IReadOnlyDictionary<string, int>>(() =>
+        ArgumentNullException.ThrowIfNull(plan);
+        return RunSta<IReadOnlyDictionary<string, FolderCensus>>(() =>
         {
             dynamic app = CreateOutlookApplication();
             dynamic? ns = null;
@@ -778,12 +796,15 @@ public static class LiveOutlookTestMailer
                         "Store not found for the count tripwire: '" + storeDisplayName + "'.");
                 root = store.GetRootFolder();
 
-                // Folders the SYSTEM prunes on its own: Deleted Items ages out, and
-                // Outlook writes and removes sync-issue reports whenever it feels like it.
-                // A shrink there is not evidence of anything, so the census marks them and
-                // the tripwire notes rather than fails them.
+                // Folders the SYSTEM prunes on its own: Deleted Items ages out, JUNK MAIL
+                // expires on a server policy nobody here controls, and Outlook writes and
+                // removes sync-issue reports whenever it feels like it. A shrink there is
+                // not evidence of anything, so the census marks them and the tripwire notes
+                // rather than fails them. Junk (23) was missing from this list and cost a
+                // false alarm on 2026-08-18: 'Ongewenste e-mail' going 1 -> 0 during a run
+                // is junk expiry, not mail loss.
                 HashSet<string> volatileIds = new(StringComparer.OrdinalIgnoreCase);
-                foreach (int volatileFolderId in new[] { 3, 20, 19, 21, 22 })
+                foreach (int volatileFolderId in new[] { 3, 20, 19, 21, 22, 23 })
                 {
                     try
                     {
@@ -802,15 +823,15 @@ public static class LiveOutlookTestMailer
                     }
                 }
 
-                Dictionary<string, int> counts = new(StringComparer.OrdinalIgnoreCase);
-                CollectMailFolderCounts(root, string.Empty, counts, 0, volatileIds, false);
-                if (counts.Count == 0)
+                Dictionary<string, FolderCensus> census = new(StringComparer.OrdinalIgnoreCase);
+                CollectMailFolderCensus(root, string.Empty, census, 0, volatileIds, false, plan);
+                if (census.Count == 0)
                 {
                     throw new InvalidOperationException(
                         "The count tripwire found no mail folder in '" + storeDisplayName + "'.");
                 }
 
-                return counts;
+                return census;
             }
             finally
             {
@@ -823,13 +844,14 @@ public static class LiveOutlookTestMailer
         });
     }
 
-    private static void CollectMailFolderCounts(
+    private static void CollectMailFolderCensus(
         dynamic folder,
         string parentPath,
-        Dictionary<string, int> counts,
+        Dictionary<string, FolderCensus> census,
         int depth,
         HashSet<string> volatileFolderIds,
-        bool parentIsVolatile)
+        bool parentIsVolatile,
+        CensusIdentityPlan plan)
     {
         if (depth > 32)
         {
@@ -867,8 +889,8 @@ public static class LiveOutlookTestMailer
 
                 if (isMail)
                 {
-                    counts[(isVolatile ? StoreCountTripwire.VolatilePrefix : string.Empty) + path]
-                        = (int)folder.Items.Count;
+                    string key = (isVolatile ? StoreCountTripwire.VolatilePrefix : string.Empty) + path;
+                    census[key] = CaptureFolder(folder, key, isVolatile, plan);
                 }
             }
 
@@ -879,8 +901,9 @@ public static class LiveOutlookTestMailer
                 dynamic child = children[i];
                 try
                 {
-                    CollectMailFolderCounts(
-                        child, depth == 0 ? string.Empty : path, counts, depth + 1, volatileFolderIds, isVolatile);
+                    CollectMailFolderCensus(
+                        child, depth == 0 ? string.Empty : path, census, depth + 1, volatileFolderIds, isVolatile,
+                        plan);
                 }
                 finally
                 {
@@ -891,6 +914,131 @@ public static class LiveOutlookTestMailer
         finally
         {
             Release(children);
+        }
+    }
+
+    /// <summary>
+    /// One folder's entry: always the count, plus the item list when <paramref name="plan"/>
+    /// can afford it. Degrades to a count on any failure - a folder the tripwire can only
+    /// count is still guarded, while a folder it cannot measure at all would be a hole.
+    /// </summary>
+    private static FolderCensus CaptureFolder(dynamic folder, string key, bool isVolatile, CensusIdentityPlan plan)
+    {
+        dynamic? items = null;
+        try
+        {
+            items = folder.Items;
+            int count = (int)items.Count;
+            if (!plan.ShouldIdentify(key, isVolatile, count))
+            {
+                return FolderCensus.CountOnly(count);
+            }
+
+            List<CensusItem>? walked = WalkFolderItems(items, count);
+            if (walked == null)
+            {
+                return FolderCensus.CountOnly(count);
+            }
+
+            plan.Spend(walked.Count);
+            return FolderCensus.WithItems(walked);
+        }
+        finally
+        {
+            Release(items);
+        }
+    }
+
+    /// <summary>
+    /// Reads one folder item by item, or returns null when the folder moved under the walk
+    /// (mail arriving mid-census) and the reading cannot be trusted. Null means "count this
+    /// folder instead", never "assume nothing changed".
+    /// <para>
+    /// Deliberately does NOT use <c>Items.SetColumns</c>. It would be much faster, but it
+    /// changes which properties are readable and is documented to leave some of them empty -
+    /// and an EntryID that comes back blank here would read as an item that vanished, which
+    /// is the one wrong answer this guard must never give. The identity budget in
+    /// <see cref="CensusIdentityPlan"/> is what keeps the cost bounded instead.
+    /// </para>
+    /// </summary>
+    private static List<CensusItem>? WalkFolderItems(dynamic items, int expectedCount)
+    {
+        List<CensusItem> walked = new(expectedCount);
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        for (int i = 1; i <= expectedCount; i++)
+        {
+            dynamic? item = null;
+            try
+            {
+                item = items[i];
+                string id = (string)item.EntryID;
+                if (string.IsNullOrEmpty(id) || !seen.Add(id))
+                {
+                    // A blank id, or the same item twice: the collection shifted under the
+                    // index walk. Anything derived from this reading would be fiction.
+                    return null;
+                }
+
+                walked.Add(new CensusItem(id, ReadFingerprint(item), ReadIsTagged(item)));
+            }
+            catch (Exception ex) when (ex is COMException or RuntimeBinderException or InvalidCastException)
+            {
+                return null;
+            }
+            finally
+            {
+                Release(item);
+            }
+        }
+
+        // Re-read the count: if it moved while we walked, the list is a mix of two moments.
+        try
+        {
+            return (int)items.Count == expectedCount ? walked : null;
+        }
+        catch (Exception ex) when (ex is COMException or RuntimeBinderException or InvalidCastException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// A key that survives a move between folders, so an item filed into another folder is
+    /// recognisable there. EntryIDs do not survive a move; a received instant and a size do.
+    /// Both are metadata - no subject, no sender, no body (S3).
+    /// </summary>
+    private static string? ReadFingerprint(dynamic item)
+    {
+        try
+        {
+            DateTime received = ((DateTime)item.ReceivedTime).ToUniversalTime();
+            int size = (int)item.Size;
+            return received.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture)
+                + "/" + size.ToString(CultureInfo.InvariantCulture);
+        }
+        catch (Exception ex) when (ex is COMException or RuntimeBinderException or InvalidCastException)
+        {
+            // Drafts and report items have no received time. They still carry an EntryID,
+            // so they are still censused - they just cannot be traced across a move.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Whether this item is the live tier's own. The subject is read here and DISCARDED -
+    /// only the boolean is kept, so a delegate mailbox's subjects never reach a census, a
+    /// log or a failure message.
+    /// </summary>
+    private static bool ReadIsTagged(dynamic item)
+    {
+        try
+        {
+            string? subject = (string?)item.Subject;
+            return subject != null && subject.IndexOf(SubjectTag, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+        catch (Exception ex) when (ex is COMException or RuntimeBinderException or InvalidCastException)
+        {
+            return false;
         }
     }
 

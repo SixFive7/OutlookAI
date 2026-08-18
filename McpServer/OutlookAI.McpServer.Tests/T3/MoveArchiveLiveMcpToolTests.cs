@@ -17,6 +17,12 @@ namespace OutlookAI.McpServer.Tests.T3;
 [Trait("Category", "Live")]
 public sealed class MoveArchiveLiveMcpToolTests
 {
+    /// <summary>
+    /// How long the seed may take to become visible over stdio. Covers a real mail round
+    /// trip plus the ~10 s sweep cache TTL, which can delay an arrival during rapid polling.
+    /// </summary>
+    private const int SeedVisibleSeconds = 180;
+
     private readonly LiveMoveArchiveFixture _fixture;
     private readonly ITestOutputHelper _output;
 
@@ -46,8 +52,8 @@ public sealed class MoveArchiveLiveMcpToolTests
             // Find the seed over stdio (hit-id flow; the freshness sweep catches
             // pre-index arrivals, the cache TTL is absorbed by the deadline).
             string? hitId = null;
-            DateTime deadline = DateTime.UtcNow.AddSeconds(180);
-            while (hitId == null && DateTime.UtcNow < deadline)
+            LiveWaitBudget wait = LiveWaitBudget.OfSeconds(SeedVisibleSeconds);
+            while (hitId == null && wait.HasTimeLeft)
             {
                 JsonElement search = await client.CallToolAsync("search", new
                 {

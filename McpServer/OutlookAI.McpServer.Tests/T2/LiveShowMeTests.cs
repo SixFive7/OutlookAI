@@ -21,6 +21,12 @@ namespace OutlookAI.McpServer.Tests.T2;
 [Trait("Category", "Live")]
 public sealed class LiveShowMeTests
 {
+    /// <summary>
+    /// How long a second COM client may take to see the explorer the first one just moved.
+    /// Short because this is UI settling, not a mail round trip.
+    /// </summary>
+    private const int ExplorerSettleSeconds = 10;
+
     private const int OlNavigationPane = 4;
     private const int OlToDoBar = 5;
 
@@ -57,8 +63,8 @@ public sealed class LiveShowMeTests
         // client can momentarily see no active explorer yet.
         ComExplorerState? state = null;
         string? error = null;
-        DateTime deadline = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < deadline)
+        LiveWaitBudget wait = LiveWaitBudget.OfSeconds(ExplorerSettleSeconds);
+        while (wait.HasTimeLeft)
         {
             state = _fixture.VerifySession.TryGetActiveExplorerState(out error);
             if (state?.CurrentFolderPath != null
@@ -228,9 +234,9 @@ public sealed class LiveShowMeTests
 
     private ComInspectorInfo? PollForInspector(string entryId, bool present, TimeSpan timeout)
     {
-        DateTime deadline = DateTime.UtcNow + timeout;
+        LiveWaitBudget wait = LiveWaitBudget.Of(timeout);
         ComInspectorInfo? last = null;
-        while (DateTime.UtcNow < deadline)
+        while (wait.HasTimeLeft)
         {
             last = _fixture.VerifySession.GetOpenInspectors()
                 .FirstOrDefault(i => i.EntryId != null && string.Equals(i.EntryId, entryId, StringComparison.OrdinalIgnoreCase));

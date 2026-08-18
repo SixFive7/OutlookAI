@@ -405,9 +405,9 @@ public sealed class LiveDraftTests
 
     private ComInspectorInfo? PollForInspector(string entryId, bool present, TimeSpan timeout)
     {
-        DateTime deadline = DateTime.UtcNow + timeout;
+        LiveWaitBudget wait = LiveWaitBudget.Of(timeout);
         ComInspectorInfo? last = null;
-        while (DateTime.UtcNow < deadline)
+        while (wait.HasTimeLeft)
         {
             last = _fixture.VerifySession.GetOpenInspectors()
                 .FirstOrDefault(i => i.EntryId != null && string.Equals(i.EntryId, entryId, StringComparison.OrdinalIgnoreCase));

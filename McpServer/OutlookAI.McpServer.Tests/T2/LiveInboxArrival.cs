@@ -49,8 +49,8 @@ internal static class LiveInboxArrival
     /// <exception cref="TimeoutException">The mail did not arrive inside the deadline.</exception>
     internal static ComMailBrief WaitFor(OutlookComSession session, string hubStore, string subject, DateTime sentUtc)
     {
-        DateTime deadline = DateTime.UtcNow.AddSeconds(DeadlineSeconds);
-        while (DateTime.UtcNow < deadline)
+        LiveWaitBudget wait = LiveWaitBudget.OfSeconds(DeadlineSeconds);
+        while (wait.HasTimeLeft)
         {
             ComSweepResult sweep = session.SweepFoldersNewerThan(
                 sentUtc.AddMinutes(-WindowLeadMinutes),

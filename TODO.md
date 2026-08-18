@@ -35,10 +35,50 @@
   files. That gap was fixed in the same work — an in-place upgrade will not leave a stale
   COM host holding its own image open.
 
-- [ ] **Audit the codebase for other timers and time-based behaviour.** The update poll above
-  was found by accident while adding the manual check; nothing has ever looked at the set as
-  a whole. Worth one pass to find polls that should be events, intervals that no longer match
-  what they wait for, and anything that assumes wall-clock time moves forward smoothly.
+- [x] **DONE (2026-08-18) - Audit the codebase for other timers and time-based behaviour.**
+  The sweep is finished. The three halves, and what each one turned up:
+
+  - **Add-in (`Services\`, `TaskPane\`, root `*.cs`) - clean, and was already clean.**
+    `UpdateService` measures "checked 4m ago" from the process-lifetime `Stopwatch`
+    (`_sinceStart` / `_checkedAtMs`); `AITaskPane`'s debug-click window is a `Stopwatch`.
+    The three remaining wall-clock reads are ABSOLUTE INSTANTS and are correct as they are:
+    `UpdateService.LastChecked`, the debug log's `HH:mm:ss` stamps, and the `LastReconcileUtc`
+    stamps written by `McpRegistrationService` and `OutlookTuningService` - which are only
+    ever displayed, never subtracted from anything. The WinForms `Timer`s
+    (`_versionTimer` x2, `McpRegistrationPrompt`) count ticks, not clock time, and are all
+    stopped and disposed.
+  - **MCP server (`Core\`, `ComHost\`, `McpServer\`, `RemediationTools\`) - clean, and
+    already documented.** Six TTLs went to `MonotonicClock` earlier; the five wall-clock
+    reads left are absolute on both sides (`AuditLog` line stamps, `SignatureManager` backup
+    filenames, `IndexSearchService`'s staleness "as of", `MailService`'s `baseGapStart` DASL
+    base, `OutlookComSession`'s temp-file purge against `File.GetLastWriteTimeUtc`). The COM
+    host's supervision, breaker and deadline paths hold no `DateTime` at all -
+    `Stopwatch.GetTimestamp` throughout. Row in `Docs/magic-numbers.md`.
+  - **Live test tier (`T2\`, `T3\`) - THIS is where the defect still lived, and it is now
+    fixed.** Thirteen polling loops measured their own timeout as
+    `DateTime deadline = DateTime.UtcNow + timeout; while (DateTime.UtcNow < deadline)`, with
+    waits of 10 s to 240 s each - including every "wait for the mail to come back" and the
+    cleanup loop that decides a mailbox is free of test artifacts. A backwards clock jump
+    lengthens all of them by the size of the jump, which on this suite is indistinguishable
+    from the hang that already cost a night; a forwards jump ends the artifact-cleanup loop
+    with tagged items still in a real mailbox. All thirteen now use `T2/LiveWaitBudget`
+    (`Stopwatch.GetTimestamp`). Four hardcoded `180`/`120` second literals became named
+    constants that the timeout MESSAGES are built from, which is the same defect
+    `LiveSweepScopeTests` had already been bitten by.
+  - **Drift guard:** `T1/LiveTierClockDriftTests` scans every `T2`/`T3` source for the shape
+    and fails on the fourteenth copy. It asserts that it found files to scan and that its own
+    detector still recognises the exact lines it replaced, so it cannot silently switch off.
+
+  What is deliberately still on the wall clock in the live tier, and why: the send instant
+  returned by `LiveOutlookTestMailer.SendSelfMail` and its equivalent in
+  `Phase5LiveMcpToolShapeTests` (both become DASL sweep-window bases compared against
+  Outlook's own `DateReceived`), the `ReceivedOnOrAfterUtc` filters, and the screenshot
+  filenames. Each is commented in place.
+
+  ~~The update poll above was found by accident while adding the manual check; nothing has
+  ever looked at the set as a whole. Worth one pass to find polls that should be events,
+  intervals that no longer match what they wait for, and anything that assumes wall-clock
+  time moves forward smoothly.~~
 
   Known starting points — not a complete list, which is the point of the audit:
   - `Services/UpdateService.cs` — the 10-minute `System.Threading.Timer` poll, the 5-minute
@@ -47,16 +87,11 @@
   - `McpServer/` — the COM-host supervision and health paths carry several timeouts and
     back-off intervals (the wedged-Outlook work added re-check and cool-down periods).
 
-  Things to check for specifically:
-  - **`DateTime.Now` used for elapsed time.** It is wall-clock and can jump backwards over a
-    DST change or a clock sync. `Stopwatch` is the right tool where a duration is meant.
-    **Done for the add-in:** `UpdateService` measures "checked 4m ago" from a process-wide
-    `Stopwatch` (`_sinceStart` / `_checkedAtMs`) and the negative-interval clamp that was the
-    symptom is gone; `AITaskPane`'s debug-click window is a `Stopwatch` too. `LastChecked`
-    and the debug log's `HH:mm:ss` stamps stay wall-clock on purpose — those are absolute
-    instants, not durations. `McpServer/` has not been swept for this.
-  - **Timers that outlive what they poll**, and any that are never disposed.
-  - **Intervals chosen once and never revisited** against what they are actually waiting for.
+  Still open from the original list, and NOT covered by the clock sweep: the installer
+  hand-off script's `Get-Process outlook | Wait-Process; Start-Sleep -Seconds 2` still waits
+  a fixed grace period rather than for a condition, and nobody has revisited the 10-minute
+  update poll or the 5-minute API timeout against what they actually wait for. Those are
+  interval-choice questions, not clock-correctness ones.
 
 - [ ] **Live tier: a test hangs, and an aborted run leaves artifacts behind. Read this before
       the next live run.** (2026-08-18, ~03:00-03:45)
@@ -140,8 +175,9 @@
   `--logger "console;verbosity=normal"`.** Run it verbose and read what it is doing before touching
   anything.
 
-- [ ] **The store-count tripwire cannot tell the user apart from the tests, and says so loudly.**
-  (2026-08-18) The 26.8-minute run above passed all 107 tests and then FAILED at teardown:
+- [x] **DONE (2026-08-18) - The store-count tripwire could not tell the user apart from the
+  tests, and said so loudly.** The 26.8-minute run passed all 107 tests and then FAILED at
+  teardown:
 
   ```
   STORE COUNT TRIPWIRE: the live tier changed mailboxes it may not touch.
@@ -150,26 +186,56 @@
     ITEMS LOST: store 'Jan van Linge' folder 'Postvak IN' 52 -> 50 (-2).
   ```
 
-  **Evidence that the tests did not do it:** `StoreWriteAllowlist` throws in code on any write aimed
-  outside the designated hub and never fired; all 107 tests passed; the artifact sweep reported
-  `taggedArtifacts=0` for all three accounts. **Evidence for ordinary activity:** this was the first
-  live run taken while the maintainer was actively using the machine, a 27-minute window covers mail
-  read, deleted and rule-filed, a junk folder going 1 to 0 is what junk expiry looks like, and the
-  tripwire separately noted a `Deleted Items (self-pruning)` folder appearing, which is Outlook's own
-  auto-prune.
+  **CONFIRMED: the maintainer deleted that mail himself.** The alarm was a false positive and
+  no mail was lost by the suite.
 
-  **CONFIRMED 2026-08-18: the maintainer deleted that mail himself.** The alarm was a false positive
-  and no mail was lost by the suite. That does not close the item - it promotes it from theory to a
-  measured instance.
+  **What was actually wrong, and what could not be fixed.** A before/after reading of a
+  mailbox CANNOT name the actor - Outlook records that an item is gone, never who removed it.
+  So the guard was not made quieter, and a removal it cannot explain still fails the suite.
+  What changed is that it now measures enough to be CHECKED, and enough to stop being blind
+  in the direction nobody had looked at:
 
-  **The design gap, now demonstrated rather than suspected:** the tripwire compares raw counts and
-  cannot distinguish the user from the suite. It is deliberately fail-closed, which is right - but it
-  means the live tier cannot be run on an actively used machine without a false alarm, and a real
-  alarm would look identical. Directions: record per-item EntryIDs for the small stores rather than
-  counts; or capture the count deltas the suite itself could plausibly cause and subtract them; or
-  require the machine to be idle, which is what the S7 quit-when-safe guard already does for a
-  different purpose. **Nobody should trust a green tripwire on a busy machine either** - that is the
-  half of this nobody has looked at.
+  - **The census records item identities, not just counts**, for every ordinary folder it can
+    afford (`T2/CensusIdentityPlan`: 500 items per folder, 3,000 per store, the hub and the
+    self-pruning folders skipped because a shrink there is not evidence of anything). The hub
+    keeps its existing treatment - exempt, policed by the zero-artifact sweep instead.
+  - **A firing now names WHICH items left**, by EntryID plus a metadata fingerprint (received
+    instant and size), and says where each one ended up. `-7` was unfalsifiable; seven ids
+    sitting in Deleted Items can be confirmed or refuted in seconds. **No subject and no body
+    is ever stored or printed** (S3) - the subject is read in-process only to set a boolean.
+  - **Mail that was FILED is no longer reported as lost.** An item that left one folder and
+    turned up in another ordinary folder of the same store is still there, and the census can
+    prove it. That is the one exoneration the evidence actually supports, and a count could
+    never see it. Rule-filing on a busy machine was a false-alarm class of its own.
+  - **The blind half is closed: a removal masked by an arrival now fires.** A count that
+    starts and ends at 168 while an item is destroyed and another arrives was invisible.
+    That was the half "nobody has looked at" and it is the one real strengthening here.
+  - **Every failure carries an ATTRIBUTION line.** It says "THE SUITE" only when a departed
+    item carried `[OutlookAI-McpTest]` in a mailbox the write allowlist forbids - the one
+    thing the evidence supports outright - and otherwise says plainly that the actor is
+    undecidable and shows its working.
+  - **Junk mail (folder id 23) joined the self-pruning set.** Junk expires on a server policy
+    nobody here controls; `Ongewenste e-mail` going 1 -> 0 during a run is expiry, not loss.
+    That is one of the three lines above gone on its own.
+  - Fail-closed is unchanged: no baseline still means the live tier REFUSES to run, and a
+    folder whose walk fails degrades to a count rather than to nothing.
+
+  Pinned by 18 new T1 tests (`StoreCountTripwireTests`, `CensusIdentityPlanTests`).
+
+  **STILL OPEN - one decision for the maintainer, and one unknown that needs a live run:**
+
+  1. **The 2026-08-18 reading would still fail today.** Deleting your own mail during a run
+     and a runaway test deleting it produce the same census. The remaining options are all
+     policy rather than measurement: leave it strict (today), add an explicit
+     "the mailbox was in use" declaration to the live-test settings that downgrades
+     non-attributable removals to a loud warning, or require an idle machine. None was
+     implemented, because a switch that can silence this guard is the maintainer's call.
+  2. **What the identity census costs on this profile has never been measured.** The
+     estimate is seconds, not minutes, because the budget bounds it at 3,000 items per store
+     per census and the walk is late-bound COM. `[tripwire] baseline: ... identified N
+     folder(s)/M item(s), T ms` now prints the real number on every run - read it on the
+     first live run and raise or lower `CensusIdentityPlan.DefaultPerStoreItemBudget`
+     accordingly.
 
 - [ ] **PENDING TASK - process `C:\Source\SixFive7\BrowserAI\.work	runcation-prompt-for-sibling-project.md`.**
   The maintainer asked for this at 09:00 on 2026-08-18. It is expected to be the portable
