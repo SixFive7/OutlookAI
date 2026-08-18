@@ -377,7 +377,9 @@ namespace OutlookAI.Core.Com
             string engine,
             bool instantSearchEnabled,
             bool truncated,
-            bool timedOut)
+            bool timedOut,
+            int rowsDropped = 0,
+            int rowsUnreadable = 0)
         {
             Items = items;
             FoldersScanned = foldersScanned;
@@ -386,6 +388,8 @@ namespace OutlookAI.Core.Com
             InstantSearchEnabled = instantSearchEnabled;
             Truncated = truncated;
             TimedOut = timedOut;
+            RowsDropped = rowsDropped;
+            RowsUnreadable = rowsUnreadable;
         }
 
         /// <summary>Matched mail items with their REAL EntryIDs.</summary>
@@ -408,6 +412,21 @@ namespace OutlookAI.Core.Com
 
         /// <summary>True when the time budget cut the scan short.</summary>
         public bool TimedOut { get; }
+
+        /// <summary>
+        /// Rows the scan examined and did not admit, for any reason: no usable EntryID
+        /// column, the item would not open, its <c>Class</c> would not read, or its class
+        /// was not mail. Never counted before (gap F5), so a scan that lost rows was
+        /// indistinguishable from one that found nothing.
+        /// </summary>
+        public int RowsDropped { get; }
+
+        /// <summary>
+        /// The FAILURE subset of <see cref="RowsDropped"/> - everything except the
+        /// deliberate item-class filter. This is the number that makes a scan partial; the
+        /// class filter is the mode working as designed.
+        /// </summary>
+        public int RowsUnreadable { get; }
     }
 
     /// <summary>How a derived draft is created from its source mail (v3.MD section 3: threading ONLY via these).</summary>
@@ -970,13 +989,19 @@ namespace OutlookAI.Core.Com
     {
         /// <summary>Creates one store's counters.</summary>
         public ComStoreSweepCounters(
-            string storeDisplayName, int foldersSwept, int foldersSkipped, int foldersFailed, int foldersAbsent)
+            string storeDisplayName,
+            int foldersSwept,
+            int foldersSkipped,
+            int foldersFailed,
+            int foldersAbsent,
+            int rowsUnreadable = 0)
         {
             StoreDisplayName = storeDisplayName;
             FoldersSwept = foldersSwept;
             FoldersSkipped = foldersSkipped;
             FoldersFailed = foldersFailed;
             FoldersAbsent = foldersAbsent;
+            RowsUnreadable = rowsUnreadable;
         }
 
         /// <summary>The store these counters belong to.</summary>
@@ -993,6 +1018,13 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Default folders this store does not have at all.</summary>
         public int FoldersAbsent { get; }
+
+        /// <summary>
+        /// Rows in this store's swept folders that could not be turned into items. A hole
+        /// INSIDE a folder that was successfully enumerated, so no folder counter here can
+        /// express it (gap H1).
+        /// </summary>
+        public int RowsUnreadable { get; }
     }
 
     /// <summary>Result of one gap sweep (COM-free data).</summary>
@@ -1010,7 +1042,8 @@ namespace OutlookAI.Core.Com
             bool depthLimitReached = false,
             bool timeBudgetExceeded = false,
             int foldersAbsent = 0,
-            IReadOnlyList<ComStoreSweepCounters>? perStore = null)
+            IReadOnlyList<ComStoreSweepCounters>? perStore = null,
+            int rowsUnreadable = 0)
         {
             Items = items;
             FoldersSwept = foldersSwept;
@@ -1023,6 +1056,7 @@ namespace OutlookAI.Core.Com
             TimeBudgetExceeded = timeBudgetExceeded;
             FoldersAbsent = foldersAbsent;
             PerStore = perStore ?? Array.Empty<ComStoreSweepCounters>();
+            RowsUnreadable = rowsUnreadable;
         }
 
         /// <summary>Items received/sent at or after the sweep start.</summary>
@@ -1074,6 +1108,19 @@ namespace OutlookAI.Core.Com
         /// in freshness coverage as full coverage.
         /// </summary>
         public int FoldersFailed { get; }
+
+        /// <summary>
+        /// Table rows the sweep could not turn into items, over the whole sweep: the row
+        /// carried no usable EntryID column, or <c>GetItemFromID</c> refused to open it.
+        /// The per-store split is on <see cref="PerStore"/>.
+        /// <para>
+        /// A row-level counter is the only thing that can report this. Such a row was
+        /// skipped AND did not count toward the per-folder cap, so a folder where every row
+        /// failed came back as a COMPLETE sweep with zero items and was counted in
+        /// <see cref="FoldersSwept"/> - full coverage, having produced nothing (gap H1).
+        /// </para>
+        /// </summary>
+        public int RowsUnreadable { get; }
 
         /// <summary>
         /// Folders where the per-folder item cap cut the sweep short - the cap is applied

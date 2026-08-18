@@ -607,4 +607,193 @@ public sealed class SweepScopeAndWindowTests
             NowUtc.AddDays(-7),
             MailService.WindowActuallyUsed(visited, requestedStore: null, NowUtc.AddDays(-7), null));
     }
+
+    // ================================ (5) rows lost INSIDE a folder that was swept (H1)
+
+    [Fact]
+    public void RowsTheSweepCouldNotOpen_AreAttributedToTheirOwnStore()
+    {
+        // The counter that folder counters cannot replace. Store B enumerated all four of
+        // its folders successfully and still lost six items in them; store A lost none. Two
+        // searches over ONE sweep result must therefore disagree about degraded, which is
+        // the whole reason this rides the per-store buckets rather than the totals.
+        ComSweepResult result = new ComSweepResult(
+            Array.Empty<ComMailBrief>(),
+            foldersSwept: 8,
+            foldersSkipped: 0,
+            sweptFolders: new[] { StoreA + "/Inbox", StoreB + "/Inbox" },
+            foldersFailed: 0,
+            perStore: new[]
+            {
+                new ComStoreSweepCounters(StoreA, foldersSwept: 4, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 0),
+                new ComStoreSweepCounters(
+                    StoreB, foldersSwept: 4, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 0, rowsUnreadable: 6),
+            },
+            rowsUnreadable: 6);
+
+        SweepInfo healthy = Applied(result, StoreA);
+        Assert.Equal(0, healthy.RowsUnreadable);
+        Assert.Null(healthy.CoverageGaps);
+        Assert.Equal(FreshMerge.FreshnessLive, FreshMerge.ClassifyFreshness(healthy));
+
+        SweepInfo lossy = Applied(result, StoreB);
+        Assert.Equal(6, lossy.RowsUnreadable);
+        Assert.Contains(FreshMerge.GapRowsUnreadable, lossy.CoverageGaps!);
+        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(lossy));
+
+        // Unscoped, the whole sweep's total is what is reported.
+        SweepInfo unscoped = Applied(result, store: null);
+        Assert.Equal(6, unscoped.RowsUnreadable);
+        Assert.Contains(FreshMerge.GapRowsUnreadable, unscoped.CoverageGaps!);
+    }
+
+    [Fact]
+    public void AFolderWhoseEveryRowFailed_NoLongerReportsItselfComplete()
+    {
+        // THE DEFECT, exactly (gap H1): the folder's table opened, so the sweep counted it
+        // as swept and returned SweepOutcome.Complete - and a failed row did not even count
+        // toward the per-folder cap, so nothing anywhere said the folder had produced
+        // nothing. foldersSwept: 4 with zero items read as full coverage.
+        ComSweepResult result = new ComSweepResult(
+            Array.Empty<ComMailBrief>(),
+            foldersSwept: 4,
+            foldersSkipped: 0,
+            sweptFolders: new[] { StoreA + "/Inbox" },
+            foldersFailed: 0,
+            perStore: new[]
+            {
+                new ComStoreSweepCounters(
+                    StoreA, foldersSwept: 4, foldersSkipped: 0, foldersFailed: 0, foldersAbsent: 0, rowsUnreadable: 37),
+            },
+            rowsUnreadable: 37);
+
+        SweepInfo info = Applied(result, StoreA);
+
+        Assert.Equal(4, info.FoldersSwept);
+        Assert.Equal(0, info.FoldersFailed);
+        Assert.Equal(37, info.RowsUnreadable);
+        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(info));
+
+        string line = Assert.Single(MailService.DescribeSweepCoverage(info, "12 minutes", folderScoped: false));
+        Assert.Contains("37", line, StringComparison.Ordinal);
+    }
+
+    // =========================== (6) the cross-store attribution seam, closed by construction
+
+    [Fact]
+    public void AStoreScopedRequestOverAResultWithNoPerStoreCounters_ReportsZeroCoverage_NotTheTotals()
+    {
+        // The one door back to the defect this file exists about. ApplySweepCounters used to
+        // fall back to the WHOLE SWEEP's totals when a store was named and PerStore was
+        // empty, which is precisely the pre-c515565 behaviour: one account's unreadable
+        // folder degrading another account's search. It was unreachable - both
+        // ComSweepResult construction sites populate PerStore - so this pins the guard
+        // rather than a bug, and a third construction site that forgets PerStore now fails
+        // loudly here instead of mis-attributing quietly.
+        ComSweepResult noAttribution = new ComSweepResult(
+            Array.Empty<ComMailBrief>(),
+            foldersSwept: 8,
+            foldersSkipped: 3,
+            sweptFolders: new[] { StoreB + "/Inbox" },
+            foldersFailed: 2,
+            rowsUnreadable: 9);
+
+        SweepInfo info = Applied(noAttribution, StoreA);
+
+        Assert.Equal(0, info.FoldersSwept);
+        Assert.Equal(0, info.FoldersSkipped);
+        Assert.Equal(0, info.FoldersFailed);
+        Assert.Equal(0, info.RowsUnreadable);
+        Assert.Null(info.FoldersAbsent);
+        Assert.Contains(FreshMerge.GapNothingSwept, info.CoverageGaps!);
+        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(info));
+
+        // Unscoped over the same result still reads the totals - that is what they are for.
+        SweepInfo unscoped = Applied(noAttribution, store: null);
+        Assert.Equal(8, unscoped.FoldersSwept);
+        Assert.Equal(2, unscoped.FoldersFailed);
+        Assert.Equal(9, unscoped.RowsUnreadable);
+    }
+
+    // ============================= (7) items dropped by an unevaluable filter (I1)
+
+    [Fact]
+    public void TheUnevaluatedFilterNames_AreReportedInRequestOrder_AndAreRealParameterNames()
+    {
+        // The names ARE the remedy: each one is a search parameter the caller passed, so
+        // "re-run without has_attachments" is an instruction rather than a hint. Reported in
+        // one fixed order so two searches with the same holes read the same way.
+        Assert.Equal(
+            new[] { "unread_only", "has_attachments", "before", "after" },
+            MailService.OrderUnevaluatedFilters(new[] { "after", "has_attachments", "before", "unread_only" }));
+
+        Assert.Equal(new[] { "has_attachments" }, MailService.OrderUnevaluatedFilters(new[] { "has_attachments" }));
+        Assert.Null(MailService.OrderUnevaluatedFilters(Array.Empty<string>()));
+        Assert.Null(MailService.OrderUnevaluatedFilters(null));
+
+        // A name that is not a request parameter is not reportable advice.
+        Assert.Null(MailService.OrderUnevaluatedFilters(new[] { "sender_is_nice" }));
+    }
+
+    [Fact]
+    public void DroppedItemsMakeTheSweepPartial_AndTheAdviceNamesTheFilterToDrop()
+    {
+        SweepInfo info = new SweepInfo
+        {
+            Performed = true,
+            FoldersSwept = 4,
+            ItemsFilterUnreadable = 3,
+            FiltersUnevaluated = new[] { "unread_only", "before" },
+        };
+        info.CoverageGaps = FreshMerge.DescribeCoverageGaps(info);
+
+        Assert.Contains(FreshMerge.GapFilterUnreadable, info.CoverageGaps!);
+        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyFreshness(info));
+
+        string line = Assert.Single(MailService.DescribeSweepCoverage(info, "12 minutes", folderScoped: false));
+        Assert.Contains("unread_only / before", line, StringComparison.Ordinal);
+        Assert.Contains("3", line, StringComparison.Ordinal);
+    }
+
+    // ================================= (8) list_folders refuses an unresolvable store (G1)
+
+    [Fact]
+    public void AnUnknownStore_IsRefusedByName_NotAnsweredWithAnEmptyTree()
+    {
+        // THE DEFECT (gap G1): list_folders(store: "typo") answered folderTotal: 0,
+        // truncated: false and no error - indistinguishable from a store that is there and
+        // holds no folders, so a misspelling came back looking like a fact about the
+        // mailbox. search has always refused an unresolvable store loudly; this makes the
+        // two agree.
+        string? refusal = MailService.DescribeUnresolvedFolderStore("typo", new[] { StoreA, StoreB });
+
+        Assert.NotNull(refusal);
+        Assert.Contains("typo", refusal!, StringComparison.Ordinal);
+        Assert.Contains(StoreA, refusal, StringComparison.Ordinal);
+        Assert.Contains(StoreB, refusal, StringComparison.Ordinal);
+        Assert.Contains("list_accounts", refusal, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AStoreThatIsThereAndSimplyHasNoFolders_StaysAnEmptyTree()
+    {
+        // The mirror of the defect, and why the check consults the store list instead of
+        // just counting rows: a store whose root has no subfolders is a real thing, and
+        // inventing an error for it would be the same lie in the other direction. Matching
+        // is case-insensitive, as store names are everywhere else in this server.
+        Assert.Null(MailService.DescribeUnresolvedFolderStore(StoreA, new[] { StoreA, StoreB }));
+        Assert.Null(MailService.DescribeUnresolvedFolderStore(StoreA.ToUpperInvariant(), new[] { StoreA }));
+    }
+
+    [Fact]
+    public void AProfileThatReportedNoStoresAtAll_SaysSo_RatherThanListingNothing()
+    {
+        // "Known stores: " with an empty list reads as a formatting bug, and the state it
+        // describes - Outlook enumerating no stores - is a different problem from a typo.
+        string refusal = Assert.IsType<string>(
+            MailService.DescribeUnresolvedFolderStore("anything", Array.Empty<string>()));
+
+        Assert.Contains("no stores at all", refusal, StringComparison.Ordinal);
+        Assert.DoesNotContain("Known stores:", refusal, StringComparison.Ordinal);
+    }
 }

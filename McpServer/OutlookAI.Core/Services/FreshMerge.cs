@@ -92,6 +92,61 @@ namespace OutlookAI.Core.Services
         public const string GapNoIndexFrontier = "no_index_frontier";
 
         /// <summary>
+        /// Coverage hole: a tier reached rows it could not turn into items - the row carried
+        /// no usable EntryID, Outlook refused to open it, or its item class could not be
+        /// read. Each one is a mail that matched the tier's own filter and is missing from
+        /// the answer anyway.
+        /// <para>
+        /// The specific defect (gap H1): a swept row that failed to open was skipped AND did
+        /// not count toward the per-folder cap, so a folder where EVERY row failed came back
+        /// as <c>SweepOutcome.Complete</c> with zero items and was counted in
+        /// <c>foldersSwept</c> - a folder reporting full coverage having produced nothing.
+        /// The folder-level counters cannot express this, because the folder really was
+        /// enumerated; only a row-level counter can.
+        /// </para>
+        /// <para>
+        /// Shared with the exhaustive scan (<see cref="ScanGapRowsUnreadable"/>, gap F5),
+        /// which loses rows the same three ways. One token, because it is one fact about one
+        /// kind of loss and an agent should not have to learn a second name for it per tier.
+        /// </para>
+        /// </summary>
+        public const string GapRowsUnreadable = "rows_unreadable";
+
+        /// <summary>
+        /// Coverage hole: a swept item was dropped because a property one of the caller's
+        /// own filters needs could not be read from it - <c>unread_only</c> needs
+        /// <c>IsRead</c>, <c>has_attachments</c> needs <c>HasAttachments</c>,
+        /// <c>before</c>/<c>after</c> need <c>ReceivedTime</c> (gap I1).
+        /// <para>
+        /// DROPPING IS THE DELIBERATE CHOICE, and this code is the other half of it. A
+        /// filter the caller asked for has to be honoured: admitting an item that cannot be
+        /// shown to match would quietly corrupt the answer in the opposite direction, and an
+        /// agent that asked for unread mail would relay read mail as unread. So the item
+        /// stays out - and the count of what was dropped, plus which filters could not be
+        /// evaluated, goes in the payload, because "we dropped some of your results" is
+        /// exactly the class of fact this whole contract exists to stop being silent.
+        /// </para>
+        /// <para>
+        /// The remedy is the caller's, which is why the filter NAMES travel with the code
+        /// (<see cref="SweepInfo.FiltersUnevaluated"/>): re-running without the filter in
+        /// question returns those items, and the caller can judge them.
+        /// </para>
+        /// <para>
+        /// One honest caveat, carried here rather than settled here: a null
+        /// <c>ReceivedTime</c> is ambiguous. Outlook reports 4501-01-01 for "no value" and
+        /// the COM snapshot maps that to null exactly as it maps a failed read
+        /// (<c>OutlookComSession.TryGetDateTime</c>), so a date filter dropping such an item
+        /// cannot say which of the two happened. The advice sentence therefore says "no
+        /// usable value", never "the read failed". Known to occur for real on drafts (the
+        /// Phase-1 completeness oracle had to exclude them on both sides for that reason);
+        /// whether Sent Items carry it too is the open question this deliberately leaves
+        /// open - and reporting the drop is what will eventually answer it, since the code
+        /// names the filter and counts the items each time it happens.
+        /// </para>
+        /// </summary>
+        public const string GapFilterUnreadable = "filter_unreadable";
+
+        /// <summary>
         /// Coverage hole: the live conversation walk stopped at the requested member cap,
         /// so it did not see the whole conversation. Unlike a search's <c>top</c>, which
         /// caps a date-SORTED match set, the walk reads the conversation table in Outlook's
@@ -109,6 +164,61 @@ namespace OutlookAI.Core.Services
         /// the store in question.
         /// </summary>
         public const string ThreadGapUnwalkedStore = "unwalked_store";
+
+        /// <summary>
+        /// Exhaustive-scan coverage hole: the scan's wall-clock budget stopped it, so the
+        /// folders it had not reached yet were never opened. Deliberately the SAME token the
+        /// freshness sweep uses (<see cref="GapTimeBudget"/>) - the hole is the same hole,
+        /// and a caller should not have to learn one vocabulary per tier.
+        /// </summary>
+        public const string ScanGapTimeBudget = GapTimeBudget;
+
+        /// <summary>
+        /// Exhaustive-scan coverage hole: folders whose table neither filter engine would
+        /// open. Same token as the sweep's (<see cref="GapFoldersSkipped"/>), same reason.
+        /// </summary>
+        public const string ScanGapFoldersSkipped = GapFoldersSkipped;
+
+        /// <summary>
+        /// Exhaustive-scan coverage hole: the result cap stopped the walk partway through
+        /// the folder tree.
+        /// <para>
+        /// Its own token rather than the sweep's <see cref="GapItemCap"/>, because the two
+        /// caps lose different things. The sweep's per-folder cap truncates ONE folder's
+        /// newest-first window, and the folders after it are still swept; the exhaustive cap
+        /// stops the whole walk in the order the tree happened to come (gap F2), so what is
+        /// missing is whole folders that were never opened, and raising <c>top</c> is capped
+        /// at 100 rather than pageable.
+        /// </para>
+        /// </summary>
+        public const string ScanGapResultCap = "result_cap";
+
+        /// <summary>
+        /// Exhaustive-scan coverage hole: rows the scan could not turn into items (gap F5).
+        /// The same token as the sweep's <see cref="GapRowsUnreadable"/> - one fact, one
+        /// name.
+        /// <para>
+        /// Counts only the FAILURES: a row with no usable EntryID, one Outlook would not
+        /// open, one whose <c>Class</c> would not read. A row dropped because its class is
+        /// not <c>IPM.Note</c> is a deliberate filter, not a failure, and is counted apart
+        /// in <see cref="ExhaustiveInfo.RowsDropped"/> without raising anything - the same
+        /// distinction <see cref="SweepInfo.FoldersAbsent"/> draws one level up, and for the
+        /// same reason: a flag that cries wolf is worse than no flag.
+        /// </para>
+        /// </summary>
+        public const string ScanGapRowsUnreadable = GapRowsUnreadable;
+
+        /// <summary>
+        /// Exhaustive-scan coverage hole: a scanned item was dropped because a property one
+        /// of the caller's own filters needs could not be read - the same hole gap I1 names
+        /// in the sweep, in the tier that post-filters the same snapshots, so the same token.
+        /// <para>
+        /// Only <c>unread_only</c> and <c>has_attachments</c> can raise it here: this mode's
+        /// date bounds go into the DASL filter rather than a post-filter, so there is no
+        /// <c>before</c>/<c>after</c> read to fail.
+        /// </para>
+        /// </summary>
+        public const string ScanGapFilterUnreadable = GapFilterUnreadable;
 
         /// <summary>Whether a search's window leaves the freshness sweep anything to find.</summary>
         public enum SweepWindowVerdict
@@ -256,6 +366,73 @@ namespace OutlookAI.Core.Services
             if (sweep.ItemCappedFolders != null && sweep.ItemCappedFolders.Count > 0)
             {
                 gaps.Add(GapItemCap);
+            }
+
+            // Row- and item-level holes last: they are the narrowest, and they sit INSIDE
+            // folders the counters above already report as swept. That is exactly why they
+            // need their own codes - no folder counter can express "this folder was read
+            // and some of its mail was still lost".
+            if (sweep.RowsUnreadable > 0)
+            {
+                gaps.Add(GapRowsUnreadable);
+            }
+
+            if (sweep.ItemsFilterUnreadable > 0)
+            {
+                gaps.Add(GapFilterUnreadable);
+            }
+
+            return gaps.Count == 0 ? null : gaps;
+        }
+
+        /// <summary>
+        /// Every way an EXHAUSTIVE scan that ran can still have covered less than its scope -
+        /// the third tier's <see cref="DescribeCoverageGaps"/>, pure for the same reason and
+        /// pinned in T1 the same way.
+        /// <para>
+        /// The scan always runs (it IS the live check), so unlike the sweep and the thread
+        /// walk there is no "did it run" gate here and null means one thing only: it covered
+        /// what it was asked.
+        /// </para>
+        /// <para>
+        /// Order is severity-first, and it is also the order the advice sentences come out
+        /// in: the two bounds that stopped the WALK (so whole folders were never opened),
+        /// then the folders it reached and could not filter, then the rows it opened and
+        /// lost. <see cref="ExhaustiveInfo.RowsDropped"/> raises nothing on its own - a row
+        /// dropped for its item class is the mode working as designed, not a hole.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string>? DescribeExhaustiveCoverageGaps(ExhaustiveInfo exhaustive)
+        {
+            if (exhaustive == null)
+            {
+                throw new ArgumentNullException(nameof(exhaustive));
+            }
+
+            List<string> gaps = new List<string>();
+            if (exhaustive.TimedOut)
+            {
+                gaps.Add(ScanGapTimeBudget);
+            }
+
+            if (exhaustive.Truncated)
+            {
+                gaps.Add(ScanGapResultCap);
+            }
+
+            if (exhaustive.FoldersSkipped > 0)
+            {
+                gaps.Add(ScanGapFoldersSkipped);
+            }
+
+            if (exhaustive.RowsUnreadable > 0)
+            {
+                gaps.Add(ScanGapRowsUnreadable);
+            }
+
+            if (exhaustive.ItemsFilterUnreadable > 0)
+            {
+                gaps.Add(ScanGapFilterUnreadable);
             }
 
             return gaps.Count == 0 ? null : gaps;
@@ -451,9 +628,13 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentNullException(nameof(exhaustive));
             }
 
-            return exhaustive.TimedOut || exhaustive.FoldersSkipped > 0 || exhaustive.Truncated
-                ? FreshnessPartial
-                : FreshnessLive;
+            // Recomputed from the gap codes rather than restating their conditions, so the
+            // verdict and the codes cannot disagree about the same scan - the shape
+            // ClassifyFreshness and ClassifyThreadFreshness already use for their tiers.
+            // Before this, adding a hole meant remembering to widen a boolean expression
+            // here as well, which is precisely how a code ships next to freshness "live".
+            IReadOnlyList<string>? gaps = DescribeExhaustiveCoverageGaps(exhaustive);
+            return gaps == null || gaps.Count == 0 ? FreshnessLive : FreshnessPartial;
         }
 
         /// <summary>

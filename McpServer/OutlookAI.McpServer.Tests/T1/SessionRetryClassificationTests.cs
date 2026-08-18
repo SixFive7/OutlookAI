@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 
 using OutlookAI.ComHost.Host;
 using OutlookAI.Core.Com;
+using OutlookAI.Core.Services;
 
 using Xunit;
 
@@ -126,6 +127,65 @@ public sealed class SessionRetryClassificationTests
         // one answer would otherwise satisfy every assertion above.
         Assert.Equal(ComSessionOperations.ReadOnlyOperations.Count, reads);
         Assert.Equal(ComSessionOperations.MutatingOperations.Count, writes);
+    }
+
+    // ------------------------------------------- the OTHER retry: store by store, in one session
+
+    // A different question from the one above, and it had drifted in both directions at
+    // once. This is not the disconnect rebuild; it is the loop that answers "the caller gave
+    // a bare EntryID and we do not know which store it lives in". reply/replyall/forward
+    // retried on ANY failure, so a compose or Save error fanned out across every store -
+    // and creating a derived draft is not idempotent, so a run that still ended in failure
+    // could leave one orphaned draft per store, none of whose ids the caller ever learns.
+    // update_draft and discard_draft asked for the "ItemNotFound" token, which their COM
+    // layer never set - so their loop was dead code and a draft in a non-default store came
+    // back as an opaque "COMException 0x..." instead of being found.
+
+    [Fact]
+    public void ABareEntryIdThatWasNotFound_IsLookedForInTheOtherStores()
+    {
+        Assert.True(MailService.ShouldSearchOtherStores(
+            storeId: null, succeeded: false, error: MailService.ItemNotFoundToken));
+    }
+
+    [Fact]
+    public void AFailureWithAnyOtherCause_StopsAtTheFirstAttempt()
+    {
+        // The tightening. Every one of these happens AFTER the item was opened, so a second
+        // attempt would repeat work rather than find something - and for a derived draft
+        // that work leaves a mail behind.
+        foreach (string? other in new[] { "AlreadySent", "NotInDraftsFolder", "COMException 0x80040111", "NoInspector", null })
+        {
+            Assert.False(MailService.ShouldSearchOtherStores(storeId: null, succeeded: false, error: other));
+            Assert.False(MailService.KeepSearchingStores(succeeded: false, error: other));
+        }
+    }
+
+    [Fact]
+    public void AKnownStore_IsNeverSecondGuessed()
+    {
+        // The caller (or the hit cache) already said where the item lives. Not finding it
+        // there is an answer, not a reason to go looking elsewhere.
+        Assert.False(MailService.ShouldSearchOtherStores(
+            storeId: "store-id", succeeded: false, error: MailService.ItemNotFoundToken));
+    }
+
+    [Fact]
+    public void ASuccessEndsTheSearch_Immediately()
+    {
+        Assert.False(MailService.ShouldSearchOtherStores(
+            storeId: null, succeeded: true, error: null));
+        Assert.False(MailService.KeepSearchingStores(succeeded: true, error: null));
+        Assert.True(MailService.KeepSearchingStores(succeeded: false, error: MailService.ItemNotFoundToken));
+    }
+
+    [Fact]
+    public void TheTokenIsSpeltExactlyAsTheComLayerSetsIt()
+    {
+        // The two halves of this rule live in different assemblies and are joined by a
+        // string. That is how update_draft's retry came to be unreachable for as long as it
+        // was: nothing failed, nothing warned, the loop simply never ran.
+        Assert.Equal("ItemNotFound", MailService.ItemNotFoundToken);
     }
 
     private static HashSet<string> ContractOperations()

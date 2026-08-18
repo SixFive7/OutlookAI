@@ -345,6 +345,43 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public IReadOnlyList<string>? CoverageGaps { get; set; }
 
+        /// <summary>
+        /// Table rows the sweep could not turn into items: no usable EntryID column, or
+        /// Outlook refused to open the row's item (<see cref="FreshMerge.GapRowsUnreadable"/>,
+        /// gap H1). Each one is mail inside the freshness window that the sweep saw and did
+        /// not deliver.
+        /// <para>
+        /// Attributed per store like the folder counters beside it, so a store-scoped search
+        /// reads its own losses rather than another account's.
+        /// </para>
+        /// <para>
+        /// Nothing counted these, and the folder counters could not: such a row was skipped
+        /// AND did not count toward the per-folder cap, so a folder where every row failed
+        /// returned "complete" with zero items and was counted in
+        /// <see cref="FoldersSwept"/> as fully covered.
+        /// </para>
+        /// </summary>
+        public int RowsUnreadable { get; set; }
+
+        /// <summary>
+        /// Swept items dropped because a property one of the request's own filters needs
+        /// could not be read (<see cref="FreshMerge.GapFilterUnreadable"/>, gap I1).
+        /// <see cref="FiltersUnevaluated"/> names which filters.
+        /// </summary>
+        public int ItemsFilterUnreadable { get; set; }
+
+        /// <summary>
+        /// The request filters that could not be evaluated on at least one swept item -
+        /// <c>"unread_only"</c>, <c>"has_attachments"</c>, <c>"before"</c>, <c>"after"</c> -
+        /// in that order, each named once. Null when every filter could be evaluated on
+        /// every item, which is the usual case.
+        /// <para>
+        /// The names are the remedy: they are the request parameters the caller passed, so
+        /// re-running without the one named returns the dropped items.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<string>? FiltersUnevaluated { get; set; }
+
         /// <summary>Items in the window before term filtering.</summary>
         public int ItemsSeen { get; set; }
 
@@ -378,6 +415,61 @@ namespace OutlookAI.Core.Services
 
         /// <summary>True when the time budget stopped the scan (results may be incomplete).</summary>
         public bool TimedOut { get; set; }
+
+        /// <summary>
+        /// Rows the scan examined and did not admit, for ANY reason - the same counter, with
+        /// the same meaning, that the index tier keeps as
+        /// <c>IndexSearch.IndexSearchResult.RowsDropped</c>. One shape across tiers rather
+        /// than a second vocabulary for the third one.
+        /// <para>
+        /// It is a DIAGNOSTIC, not a coverage hole, and raises nothing on its own. Most of
+        /// it is the scan's deliberate item-class filter: only <c>IPM.Note</c> mail is
+        /// admitted, so meeting requests and responses, NDRs and read receipts, posts and
+        /// sharing invitations are counted here and dropped. Subtract
+        /// <see cref="RowsUnreadable"/> to get exactly that number - which is the measurement
+        /// the tier-asymmetry question (gap B3) needs and nothing has ever reported.
+        /// </para>
+        /// </summary>
+        public int RowsDropped { get; set; }
+
+        /// <summary>
+        /// The subset of <see cref="RowsDropped"/> that was a FAILURE rather than a filter:
+        /// a row with no usable EntryID, one Outlook would not open, one whose item class
+        /// could not be read (<see cref="FreshMerge.ScanGapRowsUnreadable"/>, gap F5). Any
+        /// of them may have been a match.
+        /// </summary>
+        public int RowsUnreadable { get; set; }
+
+        /// <summary>
+        /// Scanned items dropped because a property one of the request's own filters needs
+        /// could not be read (<see cref="FreshMerge.ScanGapFilterUnreadable"/>) - the sweep's
+        /// gap I1 in this tier. <see cref="FiltersUnevaluated"/> names which filters.
+        /// </summary>
+        public int ItemsFilterUnreadable { get; set; }
+
+        /// <summary>
+        /// The request filters that could not be evaluated on at least one scanned item.
+        /// Only <c>unread_only</c> and <c>has_attachments</c> are reachable here - this
+        /// mode's date bounds are applied by the DASL filter, not read back off the item.
+        /// Null when every filter could be evaluated on every item.
+        /// </summary>
+        public IReadOnlyList<string>? FiltersUnevaluated { get; set; }
+
+        /// <summary>
+        /// Every coverage hole this scan left, as machine-readable codes
+        /// (<c>FreshMerge.ScanGap*</c>), on the same contract
+        /// <see cref="SweepInfo.CoverageGaps"/> carries for the sweep and
+        /// <c>ThreadLiveInfo</c> for the conversation walk. Null when the scan covered its
+        /// whole scope.
+        /// <para>
+        /// The counters above each state ONE fact; this states the conclusion drawn from all
+        /// of them, and <see cref="SearchOutcome.Freshness"/> is recomputed from it
+        /// (<see cref="FreshMerge.ClassifyExhaustiveFreshness"/>) so a code can never ship
+        /// beside <c>freshness: "live"</c>. Each code has exactly one advice sentence,
+        /// emitted from this same list by <c>MailService.DescribeExhaustiveCoverage</c>.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<string>? CoverageGaps { get; set; }
 
         /// <summary>Scan wall-clock cost.</summary>
         public long ElapsedMs { get; set; }

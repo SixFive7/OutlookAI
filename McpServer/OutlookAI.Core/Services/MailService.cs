@@ -863,6 +863,25 @@ namespace OutlookAI.Core.Services
                             + "narrow the window with 'after' or search those folders directly.");
                         break;
 
+                    case FreshMerge.GapRowsUnreadable:
+                        advice.Add("Freshness sweep could not open "
+                            + sweep.RowsUnreadable.ToString(CultureInfo.InvariantCulture)
+                            + " item(s) it found in the swept folders, so mail that arrived there in the last " + indexAge
+                            + " may be missing even though the folder itself was read. Usually a transient Outlook "
+                            + "state - retry the search, or use exhaustive:true for that folder.");
+                        break;
+
+                    case FreshMerge.GapFilterUnreadable:
+                        advice.Add("Freshness sweep dropped "
+                            + sweep.ItemsFilterUnreadable.ToString(CultureInfo.InvariantCulture)
+                            + " newly arrived item(s) because Outlook reported no usable value for "
+                            + (sweep.FiltersUnevaluated != null && sweep.FiltersUnevaluated.Count > 0
+                                ? string.Join(" / ", sweep.FiltersUnevaluated)
+                                : "one of the filters you passed")
+                            + " on them, so they could neither be matched nor ruled out. Re-run without that filter to "
+                            + "see them and judge them yourself; index results are unaffected.");
+                        break;
+
                     default:
                         // A code with no sentence would be a silent partial result, which is
                         // the whole defect this reporting exists to remove. T1 pins that
@@ -881,6 +900,84 @@ namespace OutlookAI.Core.Services
             {
                 advice.Add("The swept-folder list is omitted above " + SweptFolderListCap.ToString(CultureInfo.InvariantCulture)
                     + " folders (payload discipline); sweep.foldersSwept is the true count.");
+            }
+
+            return advice;
+        }
+
+        /// <summary>
+        /// One advice sentence per EXHAUSTIVE coverage code, from the code list alone - the
+        /// third tier's <see cref="DescribeSweepCoverage"/>, pure and public for the same
+        /// reason (T1 pins that every code declared has prose, over a payload block that
+        /// only a real multi-GB store can produce).
+        /// <para>
+        /// The three sentences that were emitted inline moved here unchanged in wording. The
+        /// change is where they come from: they used to be written from the scan counters by
+        /// three separate <c>if</c>s, next to <c>freshness</c> computed from a fourth copy of
+        /// the same conditions. Now the codes are the single decision and both renderings
+        /// read them, so a hole cannot appear in the prose and not in the fields, or the
+        /// other way round.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string> DescribeExhaustiveCoverage(ExhaustiveInfo exhaustive, int top)
+        {
+            if (exhaustive == null)
+            {
+                throw new ArgumentNullException(nameof(exhaustive));
+            }
+
+            List<string> advice = new List<string>();
+            foreach (string gap in exhaustive.CoverageGaps ?? Array.Empty<string>())
+            {
+                switch (gap)
+                {
+                    case FreshMerge.ScanGapTimeBudget:
+                        advice.Add("The " + (ExhaustiveTimeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
+                            + " s time budget stopped the scan after "
+                            + exhaustive.FoldersScanned.ToString(CultureInfo.InvariantCulture)
+                            + " folder(s) - results are partial. Narrow the folder/date bounds, or pass "
+                            + "include_subfolders:false to scan just the named folder.");
+                        break;
+
+                    case FreshMerge.ScanGapResultCap:
+                        advice.Add("Result cap (" + top.ToString(CultureInfo.InvariantCulture)
+                            + ") stopped the scan - results may be incomplete. Narrow the folder/date bounds or raise top.");
+                        break;
+
+                    case FreshMerge.ScanGapFoldersSkipped:
+                        advice.Add("The scan SKIPPED " + exhaustive.FoldersSkipped.ToString(CultureInfo.InvariantCulture)
+                            + " folder(s) Outlook would not filter or enumerate (of "
+                            + (exhaustive.FoldersScanned + exhaustive.FoldersSkipped).ToString(CultureInfo.InvariantCulture)
+                            + " reached) - mail in them is NOT covered by these results.");
+                        break;
+
+                    case FreshMerge.ScanGapRowsUnreadable:
+                        advice.Add("The scan matched " + exhaustive.RowsUnreadable.ToString(CultureInfo.InvariantCulture)
+                            + " item(s) it could not then open or identify, so they are missing from these results even "
+                            + "though the folders holding them were scanned. Usually a transient Outlook state - retry, "
+                            + "or narrow the scan to the folder in question.");
+                        break;
+
+                    case FreshMerge.ScanGapFilterUnreadable:
+                        advice.Add("The scan dropped "
+                            + exhaustive.ItemsFilterUnreadable.ToString(CultureInfo.InvariantCulture)
+                            + " matching item(s) because Outlook reported no usable value for "
+                            + (exhaustive.FiltersUnevaluated != null && exhaustive.FiltersUnevaluated.Count > 0
+                                ? string.Join(" / ", exhaustive.FiltersUnevaluated)
+                                : "one of the filters you passed")
+                            + " on them, so they could neither be matched nor ruled out. Re-run without that filter to "
+                            + "see them and judge them yourself.");
+                        break;
+
+                    default:
+                        // Same rule as the sweep's: a code with no sentence is a partial
+                        // result an agent can see and cannot explain. T1 pins that every
+                        // declared code is handled, so this is only reachable by a code
+                        // added without prose - say so rather than dropping it.
+                        advice.Add("The exhaustive scan reported partial coverage (" + gap
+                            + ") with no further detail available; treat these results as incomplete.");
+                        break;
+                }
             }
 
             return advice;
@@ -1265,6 +1362,7 @@ namespace OutlookAI.Core.Services
             NoteStoresWithoutIndex(info, effectiveResult, request.Store, perStoreBase);
 
             List<ComMailBrief> filtered = new List<ComMailBrief>();
+            HashSet<string> unevaluatedFilters = new HashSet<string>(StringComparer.Ordinal);
             foreach (ComMailBrief item in sweptItems)
             {
                 if (request.Store != null
@@ -1285,19 +1383,60 @@ namespace OutlookAI.Core.Services
                     continue;
                 }
 
+                // Gap I1. Four filters below need a property the COM snapshot may not
+                // carry, and each of them used to drop such an item SILENTLY. The drop
+                // itself stays - a filter the caller asked for has to be honoured, and
+                // admitting an item that cannot be shown to match would corrupt the answer
+                // the other way round - but it is now counted, and the filter that could not
+                // be evaluated is named, so the caller can re-run without it. See
+                // FreshMerge.GapFilterUnreadable for the decision in full.
                 DateTime? receivedUtc = ToUtc(item.ReceivedTime);
-                if (request.BeforeUtc.HasValue && (receivedUtc == null || receivedUtc.Value >= request.BeforeUtc.Value))
+                bool dateFilterRequested = request.BeforeUtc.HasValue || request.AfterUtc.HasValue;
+                if (dateFilterRequested && receivedUtc == null)
+                {
+                    // Deliberately BEFORE the comparisons: an item with no usable timestamp
+                    // fails both of them, and the reason is the missing value, not the
+                    // bound. Which of `before`/`after` is named follows what was asked.
+                    if (request.BeforeUtc.HasValue)
+                    {
+                        NoteUnevaluatedFilter(unevaluatedFilters, "before");
+                    }
+
+                    if (request.AfterUtc.HasValue)
+                    {
+                        NoteUnevaluatedFilter(unevaluatedFilters, "after");
+                    }
+
+                    info.ItemsFilterUnreadable++;
+                    continue;
+                }
+
+                if (request.BeforeUtc.HasValue && receivedUtc!.Value >= request.BeforeUtc.Value)
                 {
                     continue;
                 }
 
-                if (request.AfterUtc.HasValue && (receivedUtc == null || receivedUtc.Value < request.AfterUtc.Value))
+                if (request.AfterUtc.HasValue && receivedUtc!.Value < request.AfterUtc.Value)
                 {
+                    continue;
+                }
+
+                if (request.UnreadOnly == true && item.IsRead == null)
+                {
+                    NoteUnevaluatedFilter(unevaluatedFilters, "unread_only");
+                    info.ItemsFilterUnreadable++;
                     continue;
                 }
 
                 if (request.UnreadOnly == true && item.IsRead != false)
                 {
+                    continue;
+                }
+
+                if (request.HasAttachments.HasValue && item.HasAttachments == null)
+                {
+                    NoteUnevaluatedFilter(unevaluatedFilters, "has_attachments");
+                    info.ItemsFilterUnreadable++;
                     continue;
                 }
 
@@ -1309,6 +1448,10 @@ namespace OutlookAI.Core.Services
                 filtered.Add(item);
             }
 
+            // Reported in the request's own parameter order, so the names read as the
+            // remedy they are: drop the one named and the dropped items come back.
+            info.FiltersUnevaluated = OrderUnevaluatedFilters(unevaluatedFilters);
+
             IReadOnlyList<ComMailBrief> freshOnly = FreshMerge.SelectFreshOnly(
                 filtered, indexHits, DedupeToleranceSeconds, out int duplicates);
             info.Duplicates = duplicates;
@@ -1318,6 +1461,85 @@ namespace OutlookAI.Core.Services
             }
 
             return info;
+        }
+
+        /// <summary>
+        /// The COM error token that means "the item could not be OPENED where we looked" -
+        /// set by every by-EntryID operation at its <c>GetItemFromID</c> and nowhere else, so
+        /// it is the one failure a second attempt against a different store can fix, and the
+        /// one that is guaranteed to have changed nothing yet.
+        /// </summary>
+        public const string ItemNotFoundToken = "ItemNotFound";
+
+        /// <summary>
+        /// Whether a failed by-EntryID operation should be re-attempted store by store: only
+        /// for a bare EntryID (no store was known), and only when the item was not FOUND.
+        /// <para>
+        /// One rule in one place because the two loops that needed it had drifted apart in
+        /// opposite directions, each in a way its own author could not see. <c>reply_draft</c>
+        /// and friends retried on failure ALONE, so a compose or Save error fanned out across
+        /// every store on the profile - and creating a draft is not idempotent, so a run that
+        /// still ended in failure could leave an orphan per store, none of whose ids the
+        /// caller ever learns. <c>update_draft</c> and <c>discard_draft</c> asked for this
+        /// token, which their COM layer never produced, so their retry was dead code and a
+        /// draft in a non-default store answered with an opaque <c>COMException 0x...</c>
+        /// instead of being found.
+        /// </para>
+        /// <para>Pure, and public so T1 pins the rule without a mailbox.</para>
+        /// </summary>
+        public static bool ShouldSearchOtherStores(string? storeId, bool succeeded, string? error)
+        {
+            return !succeeded && storeId == null && string.Equals(error, ItemNotFoundToken, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Whether the store-by-store loop should try the NEXT store. It stops the moment a
+        /// store answers - with the item, or with any refusal other than "not found". A store
+        /// that opened the item has answered the question the loop is asking, and trying the
+        /// rest would repeat work that is not free: an update re-applies attachments and
+        /// signatures, a derived draft leaves another orphan behind.
+        /// </summary>
+        public static bool KeepSearchingStores(bool succeeded, string? error)
+        {
+            return !succeeded && string.Equals(error, ItemNotFoundToken, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// The request-filter names that can fail to evaluate on a swept item, in the order
+        /// they are reported (gap I1). Also the T1 pin that the reported names are exactly
+        /// the names of the request parameters a caller passes - a name that does not match
+        /// a parameter is advice nobody can act on.
+        /// </summary>
+        public static readonly IReadOnlyList<string> SweepFilterNames =
+            new[] { "unread_only", "has_attachments", "before", "after" };
+
+        private static void NoteUnevaluatedFilter(HashSet<string> names, string filter)
+        {
+            names.Add(filter);
+        }
+
+        /// <summary>
+        /// The unevaluated-filter names in <see cref="SweepFilterNames"/> order, or null when
+        /// every filter could be evaluated on every item. Pure, and public so T1 pins the
+        /// ordering without a mailbox.
+        /// </summary>
+        public static IReadOnlyList<string>? OrderUnevaluatedFilters(IReadOnlyCollection<string>? names)
+        {
+            if (names == null || names.Count == 0)
+            {
+                return null;
+            }
+
+            List<string> ordered = new List<string>(names.Count);
+            foreach (string candidate in SweepFilterNames)
+            {
+                if (names.Contains(candidate))
+                {
+                    ordered.Add(candidate);
+                }
+            }
+
+            return ordered.Count == 0 ? null : ordered;
         }
 
         /// <summary>
@@ -1547,6 +1769,8 @@ namespace OutlookAI.Core.Services
             stopwatch.Stop();
 
             List<HitSummary> summaries = new List<HitSummary>();
+            HashSet<string> scanFiltersUnevaluated = new HashSet<string>(StringComparer.Ordinal);
+            int scanItemsFilterUnreadable = 0;
             foreach (ComMailBrief item in scan.Items)
             {
                 if (request.From != null
@@ -1555,8 +1779,26 @@ namespace OutlookAI.Core.Services
                     continue;
                 }
 
+                // Gap I1's other tier. Same snapshots, same unreadable properties, same
+                // deliberate drop - so the same counter and the same code, rather than a
+                // second answer to one question. There is no before/after here: this mode's
+                // date bounds go into the DASL filter and are never read back off the item.
+                if (request.UnreadOnly == true && item.IsRead == null)
+                {
+                    NoteUnevaluatedFilter(scanFiltersUnevaluated, "unread_only");
+                    scanItemsFilterUnreadable++;
+                    continue;
+                }
+
                 if (request.UnreadOnly == true && item.IsRead != false)
                 {
+                    continue;
+                }
+
+                if (request.HasAttachments.HasValue && item.HasAttachments == null)
+                {
+                    NoteUnevaluatedFilter(scanFiltersUnevaluated, "has_attachments");
+                    scanItemsFilterUnreadable++;
                     continue;
                 }
 
@@ -1581,27 +1823,26 @@ namespace OutlookAI.Core.Services
                     ? "; ci_phrasematch was rejected here" : "; Instant Search is disabled for this store") + ") - slower and broader than index word matching.");
             }
 
-            if (scan.Truncated)
+            ExhaustiveInfo exhaustive = new ExhaustiveInfo
             {
-                advice.Add("Result cap (" + top.ToString(CultureInfo.InvariantCulture)
-                    + ") stopped the scan - results may be incomplete. Narrow the folder/date bounds or raise top.");
-            }
+                Engine = scan.Engine,
+                InstantSearchEnabled = scan.InstantSearchEnabled,
+                FoldersScanned = scan.FoldersScanned,
+                FoldersSkipped = scan.FoldersSkipped,
+                Truncated = scan.Truncated,
+                TimedOut = scan.TimedOut,
+                RowsDropped = scan.RowsDropped,
+                RowsUnreadable = scan.RowsUnreadable,
+                ItemsFilterUnreadable = scanItemsFilterUnreadable,
+                FiltersUnevaluated = OrderUnevaluatedFilters(scanFiltersUnevaluated),
+                ElapsedMs = stopwatch.ElapsedMilliseconds,
+            };
 
-            if (scan.TimedOut)
-            {
-                advice.Add("The " + (ExhaustiveTimeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
-                    + " s time budget stopped the scan after " + scan.FoldersScanned.ToString(CultureInfo.InvariantCulture)
-                    + " folder(s) - results are partial. Narrow the folder/date bounds, or pass include_subfolders:false "
-                    + "to scan just the named folder.");
-            }
-
-            if (scan.FoldersSkipped > 0)
-            {
-                advice.Add("The scan SKIPPED " + scan.FoldersSkipped.ToString(CultureInfo.InvariantCulture)
-                    + " folder(s) Outlook would not filter or enumerate (of "
-                    + (scan.FoldersScanned + scan.FoldersSkipped).ToString(CultureInfo.InvariantCulture)
-                    + " reached) - mail in them is NOT covered by these results.");
-            }
+            // The codes first, then the prose from the codes, then the verdict recomputed
+            // from the same codes - the order the sweep and the thread walk already use, so
+            // this tier cannot report a hole in one rendering and full coverage in another.
+            exhaustive.CoverageGaps = FreshMerge.DescribeExhaustiveCoverageGaps(exhaustive);
+            advice.AddRange(DescribeExhaustiveCoverage(exhaustive, top));
 
             AddTopClampAdvice(advice, request.Top, top);
 
@@ -1619,17 +1860,6 @@ namespace OutlookAI.Core.Services
             {
                 advice.Add("SystemIndex is unreachable (" + ex.GetType().Name + ") - exhaustive results are unaffected (COM-only path).");
             }
-
-            ExhaustiveInfo exhaustive = new ExhaustiveInfo
-            {
-                Engine = scan.Engine,
-                InstantSearchEnabled = scan.InstantSearchEnabled,
-                FoldersScanned = scan.FoldersScanned,
-                FoldersSkipped = scan.FoldersSkipped,
-                Truncated = scan.Truncated,
-                TimedOut = scan.TimedOut,
-                ElapsedMs = stopwatch.ElapsedMilliseconds,
-            };
 
             // The SAME two top-level flags the merged path sets, from this mode's own
             // counters (FreshMerge.ClassifyExhaustiveFreshness). They used to be absent
@@ -2542,12 +2772,27 @@ namespace OutlookAI.Core.Services
             // the sweep never reached the store, which is zero coverage, not the whole
             // sweep's. Falling back to the totals there would resurrect the defect in the
             // one case where it matters most.
+            //
+            // THE FALLBACK IS GONE, and its absence is the guard. `perStore` used to also
+            // require `result.PerStore.Count > 0`, which contradicted the paragraph above:
+            // a store-scoped request over a result with NO per-store entries at all read
+            // the whole sweep's totals, i.e. exactly the pre-c515565 cross-store
+            // attribution this method exists to prevent. Unreachable today - both
+            // ComSweepResult construction sites populate PerStore - so it was a latent seam
+            // rather than a live defect, and it is closed by construction instead of by
+            // comment: `store != null` alone decides, a missing entry answers zero, and
+            // zeroes make DescribeCoverageGaps raise `nothing_swept` with degraded: true.
+            // That is the loud, safe direction. The empty-PerStore case now says "no
+            // coverage attributable to this store" rather than lending it another
+            // account's, and a future third construction site that forgets PerStore fails
+            // visibly instead of silently mis-attributing.
             ComStoreSweepCounters? scoped = store == null ? null : FindStoreCounters(result, store);
-            bool perStore = store != null && result.PerStore.Count > 0;
+            bool perStore = store != null;
 
             info.FoldersSwept = perStore ? scoped?.FoldersSwept ?? 0 : result.FoldersSwept;
             info.FoldersSkipped = perStore ? scoped?.FoldersSkipped ?? 0 : result.FoldersSkipped;
             info.FoldersFailed = perStore ? scoped?.FoldersFailed ?? 0 : result.FoldersFailed;
+            info.RowsUnreadable = perStore ? scoped?.RowsUnreadable ?? 0 : result.RowsUnreadable;
             int absent = perStore ? scoped?.FoldersAbsent ?? 0 : result.FoldersAbsent;
             info.FoldersAbsent = absent > 0 ? absent : (int?)null;
 
@@ -2903,15 +3148,32 @@ namespace OutlookAI.Core.Services
             ComDraftCreateResult created = _gateway.Run(s =>
             {
                 ComDraftCreateResult? r = s.TryCreateDerivedDraft(entryId, storeId, kind, toList, draftBody, display, signatureOverride, options, out string? error);
-                if (r == null && storeId == null)
+                if (ShouldSearchOtherStores(storeId, r != null, error))
                 {
                     // Direct EntryID without a known store: retry across stores (same
-                    // pattern as read/open_in_outlook).
+                    // pattern as read/open_in_outlook), and ONLY when the source mail could
+                    // not be OPENED.
+                    //
+                    // The guard used to be `r == null` alone, so any failure fanned out
+                    // across every store on the profile. That is the one loop where a
+                    // needless retry is not free: TryCreateDerivedDraft is classified as
+                    // MUTATING for exactly this reason (ComSessionOperations) - a re-run
+                    // can leave a second draft behind, and the caller only ever learns the
+                    // id of the last one, so the earlier ones are orphaned where no cleanup
+                    // will find them. A compose or Save failure could therefore leave up to
+                    // one orphan per store and still report a failure.
+                    // "ItemNotFound" is set before any item is created, so a retry under it
+                    // repeats nothing. Every other failure now stops at the first attempt,
+                    // which is also what the sibling loops in update_draft/discard_draft/
+                    // move_mail do.
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
                         r = s.TryCreateDerivedDraft(entryId, store.StoreId, kind, toList, draftBody, display, signatureOverride, options, out error);
-                        if (r != null)
+                        if (!KeepSearchingStores(r != null, error))
                         {
+                            // A store that opened the item and then failed answers the
+                            // question the loop is asking - the item is not missing - so
+                            // trying the rest would create drafts for nothing.
                             break;
                         }
                     }
@@ -3230,15 +3492,23 @@ namespace OutlookAI.Core.Services
                     parsedImportance, requestReadReceipt, signatureOverride,
                     files.Select(f => f.Path).ToList(), removeNames, display, out error);
 
-                if (r == null && storeId == null && error == "ItemNotFound")
+                if (ShouldSearchOtherStores(storeId, r != null, error))
                 {
+                    // This loop was unreachable until the COM layer began setting
+                    // "ItemNotFound" on a failed open: TryUpdateDraft reported that failure
+                    // as a bare "COMException 0x...", so a direct EntryID naming a draft
+                    // outside the DEFAULT store never got its second attempt and the caller
+                    // saw an opaque COM code instead. Now that it runs, it stops the moment
+                    // a store OPENS the draft - update_draft appends attachments and can
+                    // re-apply a signature, so carrying on past a store that answered would
+                    // risk doing that twice.
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
                         r = s.TryUpdateDraft(
                             entryId, store.StoreId, draftBody, subject?.Trim(), toList, ccList, bccList,
                             parsedImportance, requestReadReceipt, signatureOverride,
                             files.Select(f => f.Path).ToList(), removeNames, display, out error);
-                        if (r != null)
+                        if (!KeepSearchingStores(r != null, error))
                         {
                             break;
                         }
@@ -3299,12 +3569,16 @@ namespace OutlookAI.Core.Services
             {
                 string? error = null;
                 ComDraftDiscardResult? r = s.TryDiscardDraft(entryId, storeId, out error);
-                if (r == null && storeId == null && error == "ItemNotFound")
+                if (ShouldSearchOtherStores(storeId, r != null, error))
                 {
+                    // Unreachable until the COM layer began setting "ItemNotFound" here too
+                    // (see update_draft above). It stops at the first store that opens the
+                    // draft: this is the one mail-deleting path in the product, and a store
+                    // that answered with a refusal has answered - the draft is not missing.
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
                         r = s.TryDiscardDraft(entryId, store.StoreId, out error);
-                        if (r != null)
+                        if (!KeepSearchingStores(r != null, error))
                         {
                             break;
                         }
@@ -4026,14 +4300,14 @@ namespace OutlookAI.Core.Services
                 (ComMoveItemResult? moved, string? comError) = _gateway.Run(s =>
                 {
                     ComMoveItemResult? r = s.TryMoveItemToPath(entryId, storeId, segments, createFolder, requestedStore, out string? e);
-                    if (r == null && storeId == null && e == "ItemNotFound")
+                    if (ShouldSearchOtherStores(storeId, r != null, e))
                     {
                         // Direct EntryID without a known store: retry across stores
                         // (same pattern as read/draft ops).
                         foreach (ComStoreDetail candidate in GetStoreDetails(s))
                         {
                             r = s.TryMoveItemToPath(entryId, candidate.StoreId, segments, createFolder, requestedStore, out e);
-                            if (r != null || e != "ItemNotFound")
+                            if (!KeepSearchingStores(r != null, e))
                             {
                                 break;
                             }
@@ -4766,7 +5040,74 @@ namespace OutlookAI.Core.Services
             }
 
             IReadOnlyList<ComFolderInfo> folders = _gateway.Run(s => s.ListFolders(store, FolderWalkAbsoluteCap));
+
+            // Gap G1. A store name that matched nothing produced folderTotal: 0,
+            // truncated: false and no error - indistinguishable from a store that is there
+            // and empty, so a typo came back looking like an answer. search has always
+            // refused an unresolvable store loudly; this was the odd one out, and the fix is
+            // that same refusal rather than a second shape.
+            //
+            // Only on the EMPTY result, so the ordinary call pays nothing: the store list is
+            // fetched (from a cache with a 5-minute TTL) exactly when there is a question to
+            // answer. An empty tree from a store that IS in the list stays an empty tree with
+            // no error - a store whose root has no subfolders is a real thing, and inventing
+            // a failure for it would be the mirror of the defect.
+            if (store != null && folders.Count == 0)
+            {
+                IReadOnlyList<string> known = _gateway.Run(s => GetStoreDetails(s))
+                    .Select(d => d.DisplayName)
+                    .ToList();
+                string? refusal = DescribeUnresolvedFolderStore(store, known);
+                if (refusal != null)
+                {
+                    throw new ArgumentException(refusal, nameof(store));
+                }
+            }
+
             return PageFolders(folders, offset);
+        }
+
+        /// <summary>
+        /// Why a <c>list_folders</c> store scope resolved to nothing, or null when the empty
+        /// tree is the honest answer (gap G1). Pure, and public so T1 pins both verdicts -
+        /// reaching them for real needs a live profile.
+        /// <para>
+        /// The message deliberately matches the shape the index-tier store resolver already
+        /// throws: what was asked for, what exists, and the tool that lists the rest. Two
+        /// tools refusing the same mistake in two different shapes is how an agent learns to
+        /// handle one and not the other.
+        /// </para>
+        /// <para>
+        /// <paramref name="knownStores"/> comes from the same COM enumeration
+        /// <c>ListFolders</c> itself walks, so the two agree by construction: a store whose
+        /// DisplayName cannot be read is absent from both, and "not found under that name" is
+        /// then still true (gap G2 is the separate defect that such a store is invisible at
+        /// all, and this does not touch it).
+        /// </para>
+        /// </summary>
+        public static string? DescribeUnresolvedFolderStore(string requestedStore, IReadOnlyList<string>? knownStores)
+        {
+            if (requestedStore == null)
+            {
+                throw new ArgumentNullException(nameof(requestedStore));
+            }
+
+            IReadOnlyList<string> known = knownStores ?? Array.Empty<string>();
+            foreach (string candidate in known)
+            {
+                if (string.Equals(candidate, requestedStore, StringComparison.OrdinalIgnoreCase))
+                {
+                    // It is there and it has no folders below its root. Nothing was lost, so
+                    // nothing is reported.
+                    return null;
+                }
+            }
+
+            return "Store '" + requestedStore + "' was not found in Outlook. "
+                + (known.Count > 0
+                    ? "Known stores: " + string.Join(", ", known) + ". "
+                    : "Outlook reported no stores at all. ")
+                + "Use list_accounts for the full store list.";
         }
 
         /// <summary>

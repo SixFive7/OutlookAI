@@ -396,6 +396,27 @@ public sealed class FreshMergeTests
                 StoresWithoutIndex = new[] { "Archive 2019.pst" },
             }));
 
+        // 9. Rows inside a folder that WAS enumerated and could not be turned into items
+        //    (gap H1). No folder counter can express this: the folder really was read, and
+        //    such a row did not even count toward the per-folder cap - so a folder where
+        //    every row failed reported itself swept, complete and empty.
+        data.Add((
+            FreshMerge.GapRowsUnreadable,
+            new SweepInfo { Performed = true, FoldersSwept = 4, RowsUnreadable = 3 }));
+
+        // 10. Items dropped because a filter the CALLER passed could not be evaluated on
+        //     them (gap I1). The sweep covered every folder it was asked to; the loss is one
+        //     level further in, at the item, and it was the last silent drop on this path.
+        data.Add((
+            FreshMerge.GapFilterUnreadable,
+            new SweepInfo
+            {
+                Performed = true,
+                FoldersSwept = 4,
+                ItemsFilterUnreadable = 2,
+                FiltersUnevaluated = new[] { "unread_only" },
+            }));
+
         return data;
     }
 
@@ -609,6 +630,9 @@ public sealed class FreshMergeTests
                 FoldersSwept = 4,
                 FoldersFailed = 1,
                 FoldersSkipped = 2,
+                RowsUnreadable = 3,
+                ItemsFilterUnreadable = 2,
+                FiltersUnevaluated = new[] { "unread_only" },
                 ItemCappedFolders = new[] { "alice@example.com/Inbox" },
                 CoverageGaps = new[] { code },
             };

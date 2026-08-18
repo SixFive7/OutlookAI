@@ -246,6 +246,56 @@ public sealed class ComHostProtocolTests
     }
 
     [Fact]
+    public void ComSweepResult_CarriesItsUnreadableRowCountAcrossTheWire()
+    {
+        // Same hop, same reason, one level finer: rows lost INSIDE a folder that was swept
+        // (gap H1) are counted in the child and decide degraded/freshness in the parent. A
+        // counter that does not survive the pipe reads as zero, which is exactly the silence
+        // it was added to remove.
+        ComSweepResult original = new ComSweepResult(
+            Array.Empty<ComMailBrief>(),
+            foldersSwept: 4,
+            foldersSkipped: 0,
+            perStore: new[]
+            {
+                new ComStoreSweepCounters("alice@example.com", 4, 0, 0, 0, rowsUnreadable: 6),
+            },
+            rowsUnreadable: 6);
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComSweepResult? read = JsonSerializer.Deserialize<ComSweepResult>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Equal(6, read!.RowsUnreadable);
+        Assert.Equal(6, Assert.Single(read.PerStore).RowsUnreadable);
+    }
+
+    [Fact]
+    public void ComExhaustiveResult_CarriesItsDroppedRowCountsAcrossTheWire()
+    {
+        // The scan runs in the child too (gap F5). Both numbers matter and they mean
+        // different things: rowsUnreadable makes the scan partial, rowsDropped minus
+        // rowsUnreadable is the item-class filter and raises nothing.
+        ComExhaustiveResult original = new ComExhaustiveResult(
+            Array.Empty<ComMailBrief>(),
+            foldersScanned: 12,
+            foldersSkipped: 1,
+            engine: "ci_phrasematch",
+            instantSearchEnabled: true,
+            truncated: false,
+            timedOut: false,
+            rowsDropped: 28,
+            rowsUnreadable: 3);
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComExhaustiveResult? read = JsonSerializer.Deserialize<ComExhaustiveResult>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Equal(28, read!.RowsDropped);
+        Assert.Equal(3, read.RowsUnreadable);
+    }
+
+    [Fact]
     public void ComSweepResult_WithNoPerStoreCounters_RoundTripsAsEmptyNotNull()
     {
         // Every consumer reads PerStore without a null check, and "the sweep reached no

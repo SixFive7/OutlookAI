@@ -1573,8 +1573,10 @@ namespace OutlookAI.Core.Com
                         perStore: new[]
                         {
                             new ComStoreSweepCounters(
-                                onlyStoreDisplayName!, sweptFolders.Count, skipped, tally.Failed, 0),
-                        });
+                                onlyStoreDisplayName!, sweptFolders.Count, skipped, tally.Failed, 0,
+                                tally.RowsUnreadable),
+                        },
+                        rowsUnreadable: tally.RowsUnreadable);
                 }
 
                 // The counters, attributed to the store they happened in. The scalar
@@ -1647,7 +1649,15 @@ namespace OutlookAI.Core.Com
                                     string label = DescribeSweptFolder(storeName, folder!, folderKind);
                                     SweepOutcome outcome = SweepFolder(
                                         ns, folder!, storeName, storeId, folderKind,
-                                        WindowFor(windows, storeName, sinceUtc), perFolderCap, includeBodies, items);
+                                        WindowFor(windows, storeName, sinceUtc), perFolderCap, includeBodies, items,
+                                        out int rowsUnreadable);
+
+                                    // Counted whatever the outcome, and attributed to this
+                                    // store: rows lost inside a folder are this store's
+                                    // loss, and a folder that then FAILED can still have
+                                    // dropped rows before it did.
+                                    tally.RowsUnreadable += rowsUnreadable;
+                                    bucket.RowsUnreadable += rowsUnreadable;
                                     if (outcome == SweepOutcome.Failed)
                                     {
                                         // A folder whose table could not be read has NO
@@ -1697,13 +1707,15 @@ namespace OutlookAI.Core.Com
                 foreach (StoreSweepBucket bucket in buckets)
                 {
                     perStore.Add(new ComStoreSweepCounters(
-                        bucket.StoreDisplayName, bucket.Swept, bucket.Skipped, bucket.Failed, bucket.Absent));
+                        bucket.StoreDisplayName, bucket.Swept, bucket.Skipped, bucket.Failed, bucket.Absent,
+                        bucket.RowsUnreadable));
                 }
 
                 return new ComSweepResult(
                     items, sweptFolders.Count, skipped, sweptFolders,
                     tally.Failed, tally.ItemCapped, tally.FolderCapReached,
-                    tally.DepthLimitReached, tally.TimeBudgetExceeded, absent, perStore);
+                    tally.DepthLimitReached, tally.TimeBudgetExceeded, absent, perStore,
+                    tally.RowsUnreadable);
             });
         }
 
@@ -1793,6 +1805,8 @@ namespace OutlookAI.Core.Com
             internal int Failed { get; set; }
 
             internal int Absent { get; set; }
+
+            internal int RowsUnreadable { get; set; }
         }
 
         /// <summary>
@@ -1802,6 +1816,9 @@ namespace OutlookAI.Core.Com
         private sealed class SweepTally
         {
             internal int Failed { get; set; }
+
+            /// <summary>Table rows no folder counter can account for (gap H1).</summary>
+            internal int RowsUnreadable { get; set; }
 
             internal List<string> ItemCapped { get; } = new List<string>();
 
@@ -2004,7 +2021,9 @@ namespace OutlookAI.Core.Com
             {
                 string label = storeName + "/" + relativePath;
                 SweepOutcome outcome = SweepFolder(
-                    ns, folderObject, storeName, storeId, null, sinceUtc, perFolderCap, includeBodies, items);
+                    ns, folderObject, storeName, storeId, null, sinceUtc, perFolderCap, includeBodies, items,
+                    out int rowsUnreadable);
+                tally.RowsUnreadable += rowsUnreadable;
                 if (outcome == SweepOutcome.Failed)
                 {
                     skipped++;
@@ -3062,9 +3081,25 @@ namespace OutlookAI.Core.Com
                 object? mail = null;
                 try
                 {
-                    source = sourceStoreId != null
-                        ? ns.GetItemFromID(sourceEntryIdHex, sourceStoreId)
-                        : ns.GetItemFromID(sourceEntryIdHex);
+                    try
+                    {
+                        source = sourceStoreId != null
+                            ? ns.GetItemFromID(sourceEntryIdHex, sourceStoreId)
+                            : ns.GetItemFromID(sourceEntryIdHex);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        // The token the move paths already use, and the one the service
+                        // layer's cross-store retry keys on. It is set HERE and nowhere
+                        // else in this method on purpose: "the source could not be opened"
+                        // is the only failure a second attempt against another store can
+                        // fix, and it is the only one that has created nothing yet. Every
+                        // later failure - Reply/Forward, compose, Save - happens after work
+                        // that a retry would repeat, so it keeps the generic COM
+                        // description and stops the fan-out (see MailService.CreateDerived).
+                        capturedError = "ItemNotFound";
+                        return null;
+                    }
 
                     // The store the source mail lives in drives both the sending
                     // account and the Drafts folder the draft must land in.
@@ -4323,9 +4358,24 @@ namespace OutlookAI.Core.Com
                 object? fresh = null;
                 try
                 {
-                    item = storeId != null
-                        ? ns.GetItemFromID(entryIdHex, storeId)
-                        : ns.GetItemFromID(entryIdHex);
+                    try
+                    {
+                        item = storeId != null
+                            ? ns.GetItemFromID(entryIdHex, storeId)
+                            : ns.GetItemFromID(entryIdHex);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        // update_draft's cross-store retry keys on this token and this
+                        // method never produced it: a direct EntryID whose draft lives
+                        // outside the DEFAULT store failed the open here, the outer catch
+                        // turned it into "COMException 0x...", and the retry loop the
+                        // service layer wrote for exactly this case could not fire. The
+                        // caller got an opaque COM code over a draft that was simply in
+                        // another account.
+                        capturedError = "ItemNotFound";
+                        return null;
+                    }
 
                     capturedError = CheckEditableDraft(item!);
                     if (capturedError != null)
@@ -4575,9 +4625,20 @@ namespace OutlookAI.Core.Com
                 object? parentStore = null;
                 try
                 {
-                    item = storeId != null
-                        ? ns.GetItemFromID(entryIdHex, storeId)
-                        : ns.GetItemFromID(entryIdHex);
+                    try
+                    {
+                        item = storeId != null
+                            ? ns.GetItemFromID(entryIdHex, storeId)
+                            : ns.GetItemFromID(entryIdHex);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        // Same dead guard as update_draft's, for the same reason and with
+                        // the same consequence: discard_draft's cross-store retry keys on
+                        // this token, and nothing here ever produced it.
+                        capturedError = "ItemNotFound";
+                        return null;
+                    }
 
                     capturedError = CheckEditableDraft(item!);
                     if (capturedError != null)
@@ -6830,7 +6891,9 @@ namespace OutlookAI.Core.Com
                     engine,
                     instantSearch,
                     state.Truncated,
-                    state.TimedOut);
+                    state.TimedOut,
+                    state.RowsDropped,
+                    state.RowsUnreadable);
             });
         }
 
@@ -6965,6 +7028,12 @@ namespace OutlookAI.Core.Com
                         object[] values = (object[])((dynamic)row!).GetValues();
                         if (entryIdIndex >= values.Length || values[entryIdIndex] is not string entryId || entryId.Length == 0)
                         {
+                            // Gap F5: every drop below is counted. A row the DASL filter
+                            // already matched is a candidate answer, and losing it without a
+                            // number leaves a partial scan looking like a complete one - in
+                            // the one mode a caller picks BECAUSE completeness matters.
+                            state.RowsDropped++;
+                            state.RowsUnreadable++;
                             continue;
                         }
 
@@ -6974,6 +7043,8 @@ namespace OutlookAI.Core.Com
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
+                            state.RowsDropped++;
+                            state.RowsUnreadable++;
                             continue;
                         }
 
@@ -6984,11 +7055,19 @@ namespace OutlookAI.Core.Com
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
+                            state.RowsDropped++;
+                            state.RowsUnreadable++;
                             continue;
                         }
 
                         if (itemClass != OlMailItemClass)
                         {
+                            // A FILTER, not a failure: this scan admits IPM.Note mail only,
+                            // so meeting requests, NDRs, receipts and posts land here. It is
+                            // counted (the tier-asymmetry question needs the number) and
+                            // raises nothing - a flag that fires on the mode working as
+                            // designed is a flag nobody reads.
+                            state.RowsDropped++;
                             continue;
                         }
 
@@ -7040,6 +7119,12 @@ namespace OutlookAI.Core.Com
 
             internal int FoldersSkipped { get; set; }
 
+            /// <summary>Rows examined and not admitted, for any reason (gap F5).</summary>
+            internal int RowsDropped { get; set; }
+
+            /// <summary>The failure subset of <see cref="RowsDropped"/> - never the class filter.</summary>
+            internal int RowsUnreadable { get; set; }
+
             internal bool UsedCi { get; set; }
 
             internal bool UsedLike { get; set; }
@@ -7081,6 +7166,14 @@ namespace OutlookAI.Core.Com
         /// wholly invisible (itemsSeen is post-cap, so "200" was indistinguishable from
         /// "exactly 200 existed" - and the table is sorted newest-first, so the OLDEST
         /// items in the freshness window were the ones silently dropped).
+        /// <para>
+        /// <paramref name="rowsUnreadable"/> closes the last silent drop in here (gap H1):
+        /// a row with no usable EntryID column, or one <c>GetItemFromID</c> refuses, is
+        /// skipped AND does not count toward <paramref name="cap"/>, so a folder where every
+        /// row fails returns <see cref="SweepOutcome.Complete"/> with zero items and is
+        /// counted as fully swept. The outcome cannot say this - the folder really was
+        /// enumerated - so it is counted separately and reported as its own coverage code.
+        /// </para>
         /// </summary>
         private SweepOutcome SweepFolder(
             dynamic ns,
@@ -7091,8 +7184,10 @@ namespace OutlookAI.Core.Com
             DateTime sinceUtc,
             int cap,
             bool includeBodies,
-            List<ComMailBrief> results)
+            List<ComMailBrief> results,
+            out int rowsUnreadable)
         {
+            rowsUnreadable = 0;
             dynamic folder = folderObject;
             string? folderName = TryGetString(() => (string?)folder.Name);
             // Year-first UTC literal (DaslDateLiteral). This one is the dangerous one to get
@@ -7146,6 +7241,9 @@ namespace OutlookAI.Core.Com
                         object[] values = (object[])((dynamic)row!).GetValues();
                         if (entryIdIndex >= values.Length || values[entryIdIndex] is not string entryId || entryId.Length == 0)
                         {
+                            // A row inside the freshness window that named no item. It is
+                            // mail this sweep was asked for and will not deliver.
+                            rowsUnreadable++;
                             continue;
                         }
 
@@ -7155,6 +7253,7 @@ namespace OutlookAI.Core.Com
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
+                            rowsUnreadable++;
                             continue;
                         }
 

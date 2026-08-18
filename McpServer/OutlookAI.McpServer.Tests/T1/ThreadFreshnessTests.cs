@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 
@@ -345,5 +347,138 @@ public sealed class ThreadFreshnessTests
     public void DegradedIsDerivedFromFreshness_Everywhere(string freshness, bool? expected)
     {
         Assert.Equal(expected, freshness == FreshMerge.FreshnessLive ? (bool?)null : true);
+    }
+
+    // ----------------------------------------- exhaustive coverage CODES (F5, and F1's other half)
+
+    // THE DEFECT THIS SECTION PINS: F1 gave the exhaustive tier degraded/freshness but no
+    // machine-readable REASON, and the rows the scan lost inside a folder it had already
+    // opened were not counted at all (gap F5) - a scan that could not open a single one of a
+    // folder's matches reported that folder as scanned and returned nothing from it.
+
+    /// <summary>Every exhaustive coverage code declared on <see cref="FreshMerge"/>, read from the type.</summary>
+    private static IReadOnlyList<string> AllScanGapCodes()
+    {
+        return typeof(FreshMerge)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string) && f.Name.StartsWith("ScanGap", StringComparison.Ordinal))
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Every way an exhaustive scan covers less than its scope, paired with the code it must
+    /// report - the same data-driven shape the sweep's holes use, so the set itself can be
+    /// compared against the codes the type declares.
+    /// </summary>
+    private static List<(string Gap, ExhaustiveInfo Scan)> ScanCoverageHoles()
+    {
+        return new List<(string, ExhaustiveInfo)>
+        {
+            (FreshMerge.ScanGapTimeBudget, new ExhaustiveInfo { FoldersScanned = 4, TimedOut = true }),
+            (FreshMerge.ScanGapResultCap, new ExhaustiveInfo { FoldersScanned = 4, Truncated = true }),
+            (FreshMerge.ScanGapFoldersSkipped, new ExhaustiveInfo { FoldersScanned = 4, FoldersSkipped = 9 }),
+            (FreshMerge.ScanGapRowsUnreadable, new ExhaustiveInfo { FoldersScanned = 4, RowsDropped = 5, RowsUnreadable = 5 }),
+            (
+                FreshMerge.ScanGapFilterUnreadable,
+                new ExhaustiveInfo
+                {
+                    FoldersScanned = 4,
+                    ItemsFilterUnreadable = 2,
+                    FiltersUnevaluated = new[] { "unread_only" },
+                }),
+        };
+    }
+
+    [Fact]
+    public void AScanThatCoveredItsScope_ReportsNoCodes()
+    {
+        Assert.Null(FreshMerge.DescribeExhaustiveCoverageGaps(new ExhaustiveInfo { FoldersScanned = 12 }));
+    }
+
+    [Fact]
+    public void EveryScanCoverageHole_MakesTheScanPartial_AndNamesItself()
+    {
+        foreach ((string expectedGap, ExhaustiveInfo scan) in ScanCoverageHoles())
+        {
+            IReadOnlyList<string>? gaps = FreshMerge.DescribeExhaustiveCoverageGaps(scan);
+            Assert.True(gaps != null, $"{expectedGap}: a scan with this hole must report coverage gaps");
+            Assert.Contains(expectedGap, gaps!);
+            Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyExhaustiveFreshness(scan));
+        }
+    }
+
+    [Fact]
+    public void TheScanCoverageHoleSet_IsExactlyTheScanCodesDeclared_SoANewOneCannotBeAddedUntested()
+    {
+        List<string> covered = ScanCoverageHoles().Select(r => r.Gap).Distinct(StringComparer.Ordinal)
+            .OrderBy(c => c, StringComparer.Ordinal).ToList();
+        List<string> declared = AllScanGapCodes().OrderBy(c => c, StringComparer.Ordinal).ToList();
+        Assert.Equal(declared, covered);
+    }
+
+    [Fact]
+    public void EveryScanCode_ProducesItsOwnAdviceSentence()
+    {
+        // Codes and prose are two renderings of one decision here exactly as they are for
+        // the sweep. A code with no sentence is a partial result an agent can see and cannot
+        // explain; this walks the codes declared on the type, so a new one added without
+        // prose fails here rather than shipping silent.
+        foreach (string code in AllScanGapCodes())
+        {
+            ExhaustiveInfo scan = new ExhaustiveInfo
+            {
+                FoldersScanned = 4,
+                FoldersSkipped = 9,
+                RowsDropped = 7,
+                RowsUnreadable = 5,
+                ItemsFilterUnreadable = 2,
+                FiltersUnevaluated = new[] { "unread_only" },
+                CoverageGaps = new[] { code },
+            };
+
+            string line = Assert.Single(MailService.DescribeExhaustiveCoverage(scan, top: 25));
+            Assert.DoesNotContain("no further detail available", line, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void RowsDroppedForTheirItemClass_AreCounted_ButRaiseNothing()
+    {
+        // The distinction that keeps this flag from crying wolf, and the measurement gap B3
+        // needs: the scan admits IPM.Note only, so meeting requests, NDRs, receipts and posts
+        // are DROPPED by design. Counted, because "40 rows matched and 12 came back" is a
+        // fact about the answer - but never a coverage hole, because it is the mode working
+        // as specified. rowsDropped minus rowsUnreadable is exactly that number.
+        ExhaustiveInfo byClassOnly = new ExhaustiveInfo { FoldersScanned = 4, RowsDropped = 28, RowsUnreadable = 0 };
+
+        Assert.Null(FreshMerge.DescribeExhaustiveCoverageGaps(byClassOnly));
+        Assert.Equal(FreshMerge.FreshnessLive, FreshMerge.ClassifyExhaustiveFreshness(byClassOnly));
+
+        // And a scan that lost rows to FAILURE is partial even when it covered every folder.
+        ExhaustiveInfo lostRows = new ExhaustiveInfo { FoldersScanned = 4, RowsDropped = 28, RowsUnreadable = 2 };
+        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyExhaustiveFreshness(lostRows));
+        Assert.Contains(FreshMerge.ScanGapRowsUnreadable, FreshMerge.DescribeExhaustiveCoverageGaps(lostRows)!);
+    }
+
+    [Fact]
+    public void TheScanReusesTheSweepsTokens_WhereTheHoleIsTheSameHole()
+    {
+        // One vocabulary across tiers: a caller that learned "time_budget" from a freshness
+        // sweep must not have to learn a second spelling of it for the scan. Where the holes
+        // genuinely differ, the tokens do too - the sweep's item cap truncates ONE folder's
+        // window and the rest are still swept, while the scan's result cap stops the walk.
+        Assert.Equal(FreshMerge.GapTimeBudget, FreshMerge.ScanGapTimeBudget);
+        Assert.Equal(FreshMerge.GapFoldersSkipped, FreshMerge.ScanGapFoldersSkipped);
+        Assert.Equal(FreshMerge.GapRowsUnreadable, FreshMerge.ScanGapRowsUnreadable);
+        Assert.Equal(FreshMerge.GapFilterUnreadable, FreshMerge.ScanGapFilterUnreadable);
+        Assert.NotEqual(FreshMerge.GapItemCap, FreshMerge.ScanGapResultCap);
+
+        foreach (string code in AllScanGapCodes())
+        {
+            Assert.DoesNotContain(" ", code, StringComparison.Ordinal);
+            Assert.Equal(code.ToLowerInvariant(), code);
+        }
     }
 }
