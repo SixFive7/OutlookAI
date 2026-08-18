@@ -401,6 +401,22 @@
   refusal as the whole answer and let callers narrow. The high-water mark is the evidence any of
   those choices should rest on.
 
+  **MEASURED 2026-08-18 on the real 5-store profile, with that high-water mark** (read-only:
+  `outlook_health`, `list_accounts`, four searches; nothing created, moved or deleted). Largest
+  frame **441,930 bytes - 432 KB, 0.66% of the limit, about 152x headroom**; zero refusals.
+  **This corrects the derived worst case below:** "reachable by ordinary use" is too strong. The
+  filter-only search, the one that should have swept hardest, **timed out** - `Outlook did not
+  respond to 'SweepFoldersNewerThan' within 30000 ms` - the supervisor replaced the COM host, and
+  the search degraded to `index-only` and still answered with 100 hits. So **the 30-second sweep
+  budget bites long before the 200-items-per-folder cap does**, and the cap arithmetic is the wrong
+  worst case for an Exchange store. The residual risk narrows, and stays real: a fast LOCAL store
+  absent from the index, where the window falls back to seven days, holding a lot of recent large
+  mail - the archive/PST shape, and the one case this machine cannot produce, because the only
+  unindexed store to hand is the test VM's and it is empty. **Bearing on the options:** (b) is not
+  urgent on this evidence, and (c) is the one that would close the residual case outright.
+  Incidentally, the timeout path was observed working on a real profile for the first time: no
+  hang, host replaced, honest degraded answer naming the reason.
+
   **The limit is reachable by ordinary use - derived from the caps 2026-08-18, not measured.** One
   `SweepFoldersNewerThan` answer is a single frame and `MailService` calls it with
   `includeBodies: true`, so a frame carries 4 arrival-path folders x `SweepPerFolderCap` (200)
