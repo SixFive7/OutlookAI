@@ -29,9 +29,8 @@ degrades every agent session today.
 version bump and a changelog stamp for no user benefit, and nothing currently in Unreleased is a
 field emergency. Revisit when the audit follow-ups are done.
 
-**Default if unanswered.** No release. I will not trigger the release workflow autonomously; the
-project's own rules make that an explicit-word-only action, and I am treating that as unchanged by
-the general autonomy grant.
+**ANSWERED 2026-08-18: no release yet; the maintainer will say when.** I will not trigger the release
+workflow autonomously regardless - the project's own rules make that an explicit-word action.
 
 ---
 
@@ -51,28 +50,6 @@ it. Raising the threshold to stop a true warning would be the wrong move.
 **Default if unanswered.** Leave it, and let the warn tier keep flagging it on every CI run.
 
 ---
-
-## Q4 - An unscoped search still sweeps every store from one window base
-
-Freshness is now measured per store when a search names a store. An **unscoped** search - one that
-covers every account - still opens a single window from the profile-wide newest indexed mail, so a
-quiet account's gap is only covered when the search names that account. Measured spread between
-stores on this profile: 45.4 hours.
-
-**Options.** *(a)* Give the sweep a per-store window - one `sinceUtc` each - which needs a frontier
-probe per store on every unscoped search: about five extra TOP-1 index queries on a path that
-currently costs 85-185 ms. *(b)* Use the profile-wide MINIMUM frontier, so the window is as wide as
-the slowest store for everyone - cheap, but it would routinely trip the 200-item per-folder cap on
-busy stores and report `partial` constantly, trading a silent miss for a permanent false alarm.
-*(c)* Leave it, documented: name the account when freshness in a quiet account matters.
-
-**Recommendation.** (a) is the correct answer and the cost is probably acceptable - five index
-queries against 85-185 ms is noise - but it is a hot path and I would want it measured rather than
-assumed, which needs a decision about spending that latency at all. (b) I would rule out: it makes
-every busy-store search lie in the other direction.
-
-**Default if unanswered.** Leave it at (c) and keep it documented. Nothing regresses; the behaviour
-is what shipped before tonight, now merely understood and written down.
 
 ## Q5 - I reversed a decision that was made deliberately hours earlier
 
@@ -98,7 +75,12 @@ a second opinion - the reasoning may have covered a case I did not see.
 was written against and wrong for the shape that existed six commits later; the test now records
 both readings so the history is legible.
 
-**Default if unanswered.** The reversal stands, and the test carries the explanation.
+**ANSWERED 2026-08-18: keep it, and CONFIRM IT ON THE PST-ONLY TESTBED.** That machine - Outlook with
+no accounts and only local PSTs - is the shape where all four arrival-path folders are legitimately
+absent. What to look for there: a search naming a PST store must come back complete and correct, NOT
+flagged degraded. If it also reports `no_index_frontier`, that is the separate and expected finding
+that the PST is not in the Windows Search index. **This verification has not been done** - it needs a
+machine this session cannot reach.
 
 ## Q7 - Three follow-ups the freshness work deliberately did not decide
 
@@ -110,17 +92,18 @@ field itself still reports the maximum - because narrowing it would make `search
 report different numbers for the same profile. Options: leave it; add
 `staleness.oldestStoreFrontierUtc`; or change the field's meaning and update health to match.
 *Recommendation: add the second field.* It answers the question without making two tools disagree.
+**ANSWERED 2026-08-18: do this.**
 
 **(b) The unindexed-store list is uncapped.** Every other list in this server has a cap and a has-more
 flag. A profile with many unindexed PSTs would list them all, in the payload and in an advice
 sentence. *Recommendation: cap it like the others* - the principle is already settled here, this is
-just an omission.
+just an omission. **ANSWERED 2026-08-18: do this.**
 
 **(c) `notNeeded` now costs one ordinary sweep** in a narrow case: an unscoped search bounded to mail
 older than the frontier but newer than the fallback runs a sweep where it previously did no COM work.
 That is the price of `notNeeded` no longer lying on unindexed stores. *Recommendation: accept it.* Any
 mitigation trades a bounded window of completeness for latency, which is the trade the standing rule
-forbids.
+forbids. **ANSWERED 2026-08-18: accepted.**
 
 ## Q8 - The three search tiers disagree about what counts as "mail"
 
@@ -150,12 +133,27 @@ user asks about by name. But which classes count is your call, not mine - it cha
 search returns, and I would rather ask than pick. `RowsDropped` already exists in the index layer and
 reaches no payload, so whatever is decided, the count of what a tier refused should surface.
 
-**Default if unanswered.** Leave it. Recorded in `Docs/completeness-gaps.md` as B3, unclosed.
+**ANSWERED 2026-08-18: unify all three, and prefer returning EVERYTHING where possible.** So the
+admission rule is one rule in one place, as inclusive as each tier can be made - NDRs, read receipts,
+meeting requests and post items included - rather than three different narrowings. Where a tier
+physically cannot reach a class, that is a coverage fact to report, not a filter to leave implicit.
 
 ## Decision log
 
 Answers move here with the date and the reasoning, so a future reader sees not just what was chosen
 but why, and what the alternative was.
+
+### 2026-08-18 - Q4 ANSWERED and shipped: per-store sweep windows for unscoped searches
+
+Asked whether an unscoped search should pay roughly five extra index queries so every account gets a
+window sized to its own index frontier, rather than one window from the profile-wide frontier.
+Answered "proceed, completeness outranks cost", and shipped in `79c1827`.
+
+Measured after the fact: **33-39 ms added per unscoped search** on a two-store catalog, against store
+frontiers that sat **11 minutes 19 seconds apart** - so the single window really was eleven minutes
+short for one store, on every search, silently. The larger half of the fix was not the map but the
+fallback: a store missing from the index catalog used to inherit the profile frontier, the narrowest
+window on the machine handed to the one store whose gap nobody had measured. It now gets the widest.
 
 ### 2026-08-18 - Q2 and Q6 ANSWERED by measurement, not by reasoning
 
