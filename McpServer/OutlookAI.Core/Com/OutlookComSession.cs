@@ -636,12 +636,14 @@ namespace OutlookAI.Core.Com
 
                     // Tier A (Phase-2 narrowing, v3.MD section 0.8 Phase-1 guidance):
                     // Folder.GetTable with subject + received-time window - lightweight
-                    // rows, no item RCWs until the final open. DASL date literals are UTC.
+                    // rows, no item RCWs until the final open. DASL date literals are UTC
+                    // and year-first (DaslDateLiteral - Outlook parses them in the machine
+                    // locale, so a month-first literal silently swaps day and month).
                     if (indexReceivedUtc.HasValue)
                     {
                         string windowed = "@SQL=(" + subjectClause + ") AND (\"urn:schemas:httpmail:datereceived\" >= '"
-                            + FormatDaslUtc(indexReceivedUtc.Value.AddSeconds(-toleranceSeconds - 5)) + "' AND \"urn:schemas:httpmail:datereceived\" <= '"
-                            + FormatDaslUtc(indexReceivedUtc.Value.AddSeconds(toleranceSeconds + 5)) + "')";
+                            + DaslDateLiteral.FormatUtc(indexReceivedUtc.Value.AddSeconds(-toleranceSeconds - 5)) + "' AND \"urn:schemas:httpmail:datereceived\" <= '"
+                            + DaslDateLiteral.FormatUtc(indexReceivedUtc.Value.AddSeconds(toleranceSeconds + 5)) + "')";
                         ComOpenResult? viaWindow = TryProbeViaGetTable(folder, windowed, indexReceivedUtc, toleranceSeconds);
                         if (viaWindow != null)
                         {
@@ -6934,8 +6936,12 @@ namespace OutlookAI.Core.Com
         {
             dynamic folder = folderObject;
             string? folderName = TryGetString(() => (string?)folder.Name);
-            string filter = "@SQL=(\"urn:schemas:httpmail:datereceived\" >= '" + FormatDaslUtc(sinceUtc)
-                + "') OR (\"urn:schemas:httpmail:date\" >= '" + FormatDaslUtc(sinceUtc) + "')";
+            // Year-first UTC literal (DaslDateLiteral). This one is the dangerous one to get
+            // wrong: a sweep whose window is misparsed into the future selects nothing while
+            // the caller still reports foldersSwept and freshness "live" - a silent empty
+            // answer that looks complete.
+            string filter = "@SQL=(\"urn:schemas:httpmail:datereceived\" >= '" + DaslDateLiteral.FormatUtc(sinceUtc)
+                + "') OR (\"urn:schemas:httpmail:date\" >= '" + DaslDateLiteral.FormatUtc(sinceUtc) + "')";
 
             object? table = null;
             try
@@ -7903,13 +7909,6 @@ namespace OutlookAI.Core.Com
         private static string EscapeDaslValue(string value)
         {
             return value.Replace("'", "''");
-        }
-
-        /// <summary>DASL date literal: UTC, invariant US format (documented DASL semantics).</summary>
-        private static string FormatDaslUtc(DateTime value)
-        {
-            DateTime utc = value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : value;
-            return utc.ToString("MM/dd/yyyy HH:mm:ss", CultureInfo.InvariantCulture);
         }
 
         private static string SanitizeFileName(string fileName)

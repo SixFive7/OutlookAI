@@ -28,8 +28,10 @@ namespace OutlookAI.Core.Com
     /// <summary>
     /// Builds DASL <c>@SQL=</c> restrictions for the exhaustive folder/date-bounded COM
     /// scan (v3.MD section 0.6 Phase 3). Pure logic, unit-tested in T1. Shapes follow the
-    /// section-12 rules: ci_* only in Restrict/GetTable, date literals UTC invariant
-    /// "MM/dd/yyyy HH:mm:ss", single quotes escaped by doubling. Terms are ANDed; each
+    /// section-12 rules: ci_* only in Restrict/GetTable, date literals UTC and year-first
+    /// via <see cref="DaslDateLiteral"/> (Outlook parses them in the MACHINE locale, so a
+    /// month-first literal transposes day and month on any day 12 or lower - see that
+    /// class for the measurement), single quotes escaped by doubling. Terms are ANDed; each
     /// term matches subject OR body by default, narrowable to one of them via
     /// <see cref="SearchIn"/> (D40 - the same three scopes the index tier offers).
     /// A trailing '*' marks a prefix stem and is matched via LIKE substring in BOTH
@@ -75,12 +77,12 @@ namespace OutlookAI.Core.Com
 
             if (sinceUtc.HasValue)
             {
-                clauses.Add(DateReceivedProp + " >= '" + FormatDaslUtc(sinceUtc.Value) + "'");
+                clauses.Add(DateReceivedProp + " >= '" + DaslDateLiteral.FormatUtc(sinceUtc.Value) + "'");
             }
 
             if (beforeUtc.HasValue)
             {
-                clauses.Add(DateReceivedProp + " < '" + FormatDaslUtc(beforeUtc.Value) + "'");
+                clauses.Add(DateReceivedProp + " < '" + DaslDateLiteral.FormatUtc(beforeUtc.Value) + "'");
             }
 
             if (terms != null)
@@ -205,13 +207,6 @@ namespace OutlookAI.Core.Com
             // '_' is a single-char LIKE wildcard and part of the allowed term charset -
             // bracket-escape it ('%'/'[' are already rejected by the charset).
             return value.Replace("'", "''").Replace("_", "[_]");
-        }
-
-        /// <summary>DASL date literal: UTC, invariant US format (documented DASL semantics).</summary>
-        private static string FormatDaslUtc(DateTime value)
-        {
-            DateTime utc = value.Kind == DateTimeKind.Local ? value.ToUniversalTime() : value;
-            return utc.ToString("MM/dd/yyyy HH:mm:ss", CultureInfo.InvariantCulture);
         }
     }
 }

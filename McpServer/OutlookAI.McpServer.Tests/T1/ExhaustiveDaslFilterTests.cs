@@ -85,14 +85,20 @@ public sealed class ExhaustiveDaslFilterTests
     }
 
     [Fact]
-    public void DateBounds_EmitUtcDaslLiterals()
+    public void DateBounds_EmitUtcYearFirstDaslLiterals()
     {
+        // The SINCE bound deliberately falls on day 1: Outlook parses DASL date literals
+        // in the machine locale, so the month-first literal this used to emit was read
+        // with day and month swapped on any day 12 or lower (measured 2026-08-18 - an
+        // exhaustive search for 1-5 August returned only mail from January to June).
+        // Culture-independence of these literals is pinned in DaslDateLiteralTests.
         DateTime since = new DateTime(2026, 7, 1, 8, 30, 0, DateTimeKind.Utc);
         DateTime before = new DateTime(2026, 7, 15, 0, 0, 0, DateTimeKind.Utc);
         string filter = ExhaustiveDaslFilter.Build(null, since, before, ExhaustiveEngine.Like);
 
-        Assert.Contains("(" + DateReceived + " >= '07/01/2026 08:30:00')", filter, StringComparison.Ordinal);
-        Assert.Contains("(" + DateReceived + " < '07/15/2026 00:00:00')", filter, StringComparison.Ordinal);
+        Assert.Contains("(" + DateReceived + " >= '2026-07-01 08:30:00')", filter, StringComparison.Ordinal);
+        Assert.Contains("(" + DateReceived + " < '2026-07-15 00:00:00')", filter, StringComparison.Ordinal);
+        Assert.DoesNotContain("07/01/2026", filter, StringComparison.Ordinal);
     }
 
     [Fact]
