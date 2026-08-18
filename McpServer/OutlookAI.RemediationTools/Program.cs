@@ -229,9 +229,17 @@ internal static class Program
 
             var totals = new Dictionary<string, int>(StringComparer.Ordinal);
             int pass = 0;
-            DateTime deadline = DateTime.UtcNow + TimeSpan.FromMinutes(8);
-            DateTime? zeroSince = null;
-            while (DateTime.UtcNow < deadline)
+
+            // Stopwatch, not DateTime.UtcNow: both of these measure how long something has
+            // been going on inside this run, so they must be read from a clock that only
+            // moves forward. On the wall clock a backwards jump mid-purge extends the
+            // 8-minute cap by the size of the jump and re-arms the stability window, and a
+            // forwards jump ends the purge early with tagged items still in the mailbox -
+            // which this tool then reports as a non-zero remaining count and a failure exit.
+            System.Diagnostics.Stopwatch elapsed = System.Diagnostics.Stopwatch.StartNew();
+            TimeSpan deadline = TimeSpan.FromMinutes(8);
+            TimeSpan? zeroSince = null;
+            while (elapsed.Elapsed < deadline)
             {
                 pass++;
                 List<ComMailbox.PurgeFolderResult> results = ComMailbox.PurgeTaggedPass(store, folders, execute: true);
@@ -250,8 +258,8 @@ internal static class Program
 
                 if (deletedThisPass == 0 && ComMailbox.CountTaggedInFolders(store, folders) == 0)
                 {
-                    zeroSince ??= DateTime.UtcNow;
-                    if (DateTime.UtcNow - zeroSince.Value >= TimeSpan.FromSeconds(10))
+                    zeroSince ??= elapsed.Elapsed;
+                    if (elapsed.Elapsed - zeroSince.Value >= TimeSpan.FromSeconds(10))
                     {
                         break; // stable zero
                     }

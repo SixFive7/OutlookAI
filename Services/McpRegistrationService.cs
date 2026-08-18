@@ -848,6 +848,13 @@ namespace OutlookAI.Services
         /// 10.x: the server's default roll-forward (Minor) accepts a newer 10.x but not 11.x.
         /// Probes the filesystem because the sharedfx registry key is absent on machines that
         /// do have the runtime.
+        /// <para>
+        /// Installer.iss asks the same question the same way in Pascal
+        /// (<c>IsNetRuntime10Installed</c>), because setup has to decide before the add-in
+        /// exists. The two version prefixes are compared by
+        /// .github/scripts/check-pinned-constants.ps1 - neither language can read the other's
+        /// constant, and a disagreement here shows up only as a status message.
+        /// </para>
         /// </summary>
         internal static bool IsDotnetRuntime10Installed()
         {

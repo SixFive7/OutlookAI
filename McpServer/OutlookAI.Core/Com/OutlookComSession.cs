@@ -603,7 +603,7 @@ namespace OutlookAI.Core.Com
                         items = folder.Items;
                         dynamic itemCollection = (dynamic)items!;
                         int total = itemCollection.Count;
-                        if (total > 1000)
+                        if (total > TimeOnlyProbeMaxFolderItems)
                         {
                             capturedError = "FolderTooLargeForTimeOnlyProbe";
                             return null;
@@ -1283,6 +1283,27 @@ namespace OutlookAI.Core.Com
         /// </para>
         /// </summary>
         public const int MaxScopedSweepFolders = 40;
+
+        /// <summary>
+        /// Items a folder may hold before the SUBJECTLESS locate probe refuses it. That probe
+        /// has no subject to <c>Restrict</c> on, so it can only walk the folder item by item
+        /// and compare each ReceivedTime - a linear COM enumeration whose cost is the folder's
+        /// whole size. The cap is what keeps "we could not identify this hit" cheap instead of
+        /// turning it into a full scan of an Inbox: over it, the probe reports
+        /// <c>FolderTooLargeForTimeOnlyProbe</c> and the caller degrades to not locating the
+        /// item. Sized for the small folders a subjectless item realistically turns up in (the
+        /// test hub store); no measurement behind the exact figure.
+        /// </summary>
+        public const int TimeOnlyProbeMaxFolderItems = 1000;
+
+        /// <summary>
+        /// Table rows the <c>GetTable</c> locate fallback reads before giving up. The DASL
+        /// filter has already narrowed the table to candidates, so a match is expected within
+        /// the first handful of rows; this bounds the pathological case where the filter
+        /// matches most of a large folder, since every row costs a COM round trip and an item
+        /// open. Running out of rows returns "not found", which every caller already handles.
+        /// </summary>
+        public const int GetTableProbeMaxRows = 500;
 
         /// <summary>
         /// Wall-clock budget for a folder-scoped sweep's subtree walk, evaluated PER
@@ -7851,7 +7872,7 @@ namespace OutlookAI.Core.Com
 
                 dynamic ns = _namespace!;
                 int scanned = 0;
-                while (!(bool)t.EndOfTable && scanned < 500)
+                while (!(bool)t.EndOfTable && scanned < GetTableProbeMaxRows)
                 {
                     scanned++;
                     object? row = null;

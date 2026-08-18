@@ -87,6 +87,27 @@ namespace OutlookAI.Core.Services
         /// wordings it selects between (<see cref="DescribeStaleIndex"/>).
         /// </summary>
         public const double VeryStaleAdviceMinutes = 720;
+
+        /// <summary>
+        /// Age of the newest indexed mail above which <c>outlook_health</c> mentions the lag
+        /// at all (30 min). The NOTICE threshold, not the alarm one: it is far below
+        /// <see cref="VeryStaleAdviceMinutes"/> because all it does is name a normal condition
+        /// and say the sweep already covers it, whereas that one tells the agent to change how
+        /// it searches. Sized above the ordinary quiet-mailbox gap - on the dev profile the
+        /// median index frontier age is ~6 min and p90 ~30 min (2026-08-18, 177 probes), so it
+        /// is the p90 of "nothing has arrived lately" and speaks up just past it. Public so T1
+        /// pins it next to the threshold it must stay under.
+        /// </summary>
+        public const double StaleIndexNoticeMinutes = 30;
+
+        /// <summary>
+        /// Longest query <c>show_search_results</c> will put in Outlook's search box. Not our
+        /// limit - it is the box's - and the tool's own error message quotes this constant
+        /// rather than restating the number, which is the shape that went stale for the
+        /// subject cap (<see cref="SubjectCharsCap"/>). The tool description deliberately does
+        /// not repeat it: a query that long is an agent bug, not a thing to design around.
+        /// </summary>
+        public const int ShowSearchQueryCharsCap = 256;
         private static readonly TimeSpan SweepSafetyMargin = TimeSpan.FromMinutes(10);
         private static readonly TimeSpan EmptyIndexSweepWindow = TimeSpan.FromDays(7);
 
@@ -914,7 +935,15 @@ namespace OutlookAI.Core.Services
             // folder-scoped sweep only ever serves that same folder scope. Item-level
             // After/Before filters also apply below, so a wider cached window never
             // over-returns.
-            DateTime nowUtc = DateTime.UtcNow;
+            //
+            // MonotonicClock, and deliberately NOT the same clock as baseGapStart above. That
+            // one is a real calendar instant because it becomes a DASL date compared against
+            // mail Outlook received; this one is only ever subtracted from itself - the cache
+            // TTL and the reported cache age - so a wall-clock jump would either hold a stale
+            // sweep past its 10 s window or throw away a fresh one. Read once and used for
+            // both the TryGet below and the Store further down, so an entry is always aged on
+            // the clock it was stamped with.
+            DateTime nowUtc = MonotonicClock.UtcNow;
             IReadOnlyList<ComMailBrief> sweptItems;
             if (_sweepCache.TryGet(baseGapStart, request.Store, folderKey, sweepRecursive, nowUtc, out SweepCache.CachedSweep? cachedSweep)
                 && cachedSweep != null)
@@ -1613,9 +1642,12 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("query is required.", nameof(query));
             }
 
-            if (query.Length > 256)
+            if (query.Length > ShowSearchQueryCharsCap)
             {
-                throw new ArgumentException("query is too long for the Outlook search box (max 256 chars).", nameof(query));
+                throw new ArgumentException(
+                    "query is too long for the Outlook search box (max "
+                    + ShowSearchQueryCharsCap.ToString(CultureInfo.InvariantCulture) + " chars).",
+                    nameof(query));
             }
 
             foreach (char c in query)
@@ -3723,7 +3755,7 @@ namespace OutlookAI.Core.Services
                         ? " - but an add-in update is in progress, so the sweep degrades to index-only results until it finishes."
                         : "."));
             }
-            else if (ageMinutes.HasValue && ageMinutes.Value > 30)
+            else if (ageMinutes.HasValue && ageMinutes.Value > StaleIndexNoticeMinutes)
             {
                 advice.Add("Newest indexed mail is " + ageMinutes.Value.ToString("F0", CultureInfo.InvariantCulture)
                     + " minutes old. search covers the gap automatically with its freshness sweep.");
@@ -4321,8 +4353,11 @@ namespace OutlookAI.Core.Services
         {
             lock (_catalogLock)
             {
+                // MonotonicClock: the stamp is only ever subtracted from a later reading of
+                // the same clock to get the entry's age, never compared with anything outside
+                // this process.
                 if (_folderPaths.TryGetValue(store, out (IReadOnlyList<string> Paths, DateTime FetchedUtc) cached)
-                    && DateTime.UtcNow - cached.FetchedUtc <= FolderPathCacheTtl)
+                    && MonotonicClock.UtcNow - cached.FetchedUtc <= FolderPathCacheTtl)
                 {
                     return cached.Paths;
                 }
@@ -4345,7 +4380,7 @@ namespace OutlookAI.Core.Services
 
             lock (_catalogLock)
             {
-                _folderPaths[store] = (paths, DateTime.UtcNow);
+                _folderPaths[store] = (paths, MonotonicClock.UtcNow);
             }
 
             return paths;
@@ -4400,10 +4435,12 @@ namespace OutlookAI.Core.Services
         {
             lock (_catalogLock)
             {
-                if (_storeDetails == null || DateTime.UtcNow - _storeDetailsFetchedUtc > StoreDetailsCacheTtl)
+                // MonotonicClock, for the same reason as the folder-path cache above: this
+                // stamp exists only to be subtracted from a later reading of the same clock.
+                if (_storeDetails == null || MonotonicClock.UtcNow - _storeDetailsFetchedUtc > StoreDetailsCacheTtl)
                 {
                     _storeDetails = session.GetStoreDetails();
-                    _storeDetailsFetchedUtc = DateTime.UtcNow;
+                    _storeDetailsFetchedUtc = MonotonicClock.UtcNow;
                 }
 
                 return _storeDetails;

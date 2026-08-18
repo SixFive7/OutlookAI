@@ -259,6 +259,44 @@ if ($addInStatuses -and $addInDocList) {
     }
 }
 
+# ---------------------------------------------------------------------------------------------
+# 8. The .NET 10 runtime probe.
+#    McpRegistrationService.IsDotnetRuntime10Installed's version prefix ==
+#    Installer.iss IsNetRuntime10Installed's. Both walk the shared-framework directory and
+#    accept a Microsoft.NETCore.App folder whose name starts with the same three characters;
+#    the server's roll-forward is Minor, so EXACTLY 10.x is the answer both must give - a
+#    ">= 10" reading would report a satisfied prerequisite on a machine where the server
+#    cannot start.
+#
+#    They are a knowing mirror in two languages, and Pascal cannot read a C# constant, so this
+#    is the only thing that can relate them. The failure is quiet in both directions: setup
+#    skipping a runtime install the machine needed, or Settings reporting a missing runtime
+#    that is right there - each one a status message rather than a crash, which is exactly why
+#    a drifted pair could sit unnoticed.
+#
+#    The Pascal side is checked twice, because it spells the prefix as a LENGTH plus a literal
+#    and the two can disagree with each other: Copy(name, 1, 3) = '10.' is only meaningful
+#    while the length matches the literal it is compared against. Copy(name, 1, 2) = '10.' can
+#    never be true, and Copy(name, 1, 4) = '10.' is false for every 10.x folder there is - both
+#    of which would silently turn the installer's probe into "no runtime, ever".
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+$csRuntimePrefix = Get-Pinned 'Services/McpRegistrationService.cs' `
+    'name\.StartsWith\("([^"]+)",\s*StringComparison\.Ordinal\)' '.NET runtime version prefix (McpRegistrationService.cs)'
+$issRuntimePrefix = Get-Pinned 'Installer.iss' `
+    "Copy\(FindRec\.Name,\s*1,\s*\d+\)\s*=\s*'([^']*)'" '.NET runtime version prefix (Installer.iss)'
+$issRuntimePrefixLength = Get-Pinned 'Installer.iss' `
+    "Copy\(FindRec\.Name,\s*1,\s*(\d+)\)\s*=\s*'[^']*'" '.NET runtime prefix length (Installer.iss)'
+if ($csRuntimePrefix -and $issRuntimePrefix -and $issRuntimePrefixLength) {
+    if ($csRuntimePrefix -cne $issRuntimePrefix) {
+        Fail ".NET runtime version prefix" "McpRegistrationService accepts a shared-framework folder starting '$csRuntimePrefix' but Installer.iss accepts one starting '$issRuntimePrefix'. Setup and the add-in would disagree about whether the runtime the mail server needs is installed - one of them silently, because both report the answer rather than failing on it."
+    } elseif ([int]$issRuntimePrefixLength -ne $issRuntimePrefix.Length) {
+        Fail ".NET runtime version prefix" "Installer.iss compares Copy(FindRec.Name, 1, $issRuntimePrefixLength) against '$issRuntimePrefix', which is $($issRuntimePrefix.Length) characters. Those cannot both be right: the comparison is either always false or matching a prefix nobody intended, so setup would decide the runtime is missing on every machine."
+    } else {
+        Pass ".NET runtime version prefix" "$csRuntimePrefix (Copy length $issRuntimePrefixLength)"
+    }
+}
+
 Write-Host ""
 if ($script:Failures.Count -gt 0) {
     foreach ($f in $script:Failures) {

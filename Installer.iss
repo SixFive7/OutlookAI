@@ -188,6 +188,10 @@ end;
 // server's default roll-forward policy (Minor) will use any newer 10.x but will NOT
 // accept a future 11.x, so accepting ">= 10" here would report a satisfied prerequisite
 // on a machine where the server cannot start.
+// Same question, same answer as McpRegistrationService.IsDotnetRuntime10Installed - one
+// asked by setup, one by the add-in in OutlookAI Settings. The '10.' prefix below and the
+// Copy length that reads it are compared against the C# side by
+// .github/scripts/check-pinned-constants.ps1.
 function IsNetRuntime10Installed: Boolean;
 var
   FindRec: TFindRec;

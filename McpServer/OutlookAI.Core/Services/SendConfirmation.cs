@@ -71,7 +71,12 @@ namespace OutlookAI.Core.Services
         {
         }
 
-        /// <summary>Creates a store with an explicit time-to-live and optional test clock.</summary>
+        /// <summary>
+        /// Creates a store with an explicit time-to-live and optional test clock. The default
+        /// is <see cref="MonotonicClock"/>, not <see cref="DateTime.UtcNow"/>: a token's whole
+        /// purpose is that it expires, and on the wall clock a backwards jump would keep every
+        /// pending send token valid for the size of the jump.
+        /// </summary>
         public SendConfirmationTokens(TimeSpan timeToLive, Func<DateTime>? utcNowProvider = null)
         {
             if (timeToLive <= TimeSpan.Zero)
@@ -80,7 +85,7 @@ namespace OutlookAI.Core.Services
             }
 
             TimeToLive = timeToLive;
-            _utcNow = utcNowProvider ?? (() => DateTime.UtcNow);
+            _utcNow = utcNowProvider ?? (() => MonotonicClock.UtcNow);
         }
 
         /// <summary>How long an issued token stays valid.</summary>

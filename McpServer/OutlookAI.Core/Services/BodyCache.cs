@@ -37,10 +37,15 @@ namespace OutlookAI.Core.Services
         {
         }
 
-        /// <summary>Creates a cache with an injectable clock (T1 expiry tests).</summary>
+        /// <summary>
+        /// Creates a cache with an injectable clock (T1 expiry tests). The default is
+        /// <see cref="MonotonicClock"/>, not <see cref="DateTime.UtcNow"/>: the only thing
+        /// this clock is asked for is the AGE of an entry, and on the wall clock a backwards
+        /// jump would hold a 15-minute paging snapshot open for the size of the jump.
+        /// </summary>
         public BodyCache(Func<DateTime>? utcNow)
         {
-            _utcNow = utcNow ?? (() => DateTime.UtcNow);
+            _utcNow = utcNow ?? (() => MonotonicClock.UtcNow);
         }
 
         /// <summary>Number of cached bodies (diagnostics/tests).</summary>

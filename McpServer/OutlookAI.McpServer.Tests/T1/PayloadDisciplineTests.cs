@@ -62,6 +62,35 @@ public sealed class PayloadDisciplineTests
         // Longest accepted subject. Three copies of this literal in MailService plus a
         // fourth as tool prose; see BudgetCompositionTests for the prose half.
         Assert.Equal(255, MailService.SubjectCharsCap);
+
+        // Longest query show_search_results puts in Outlook's search box. Outlook's limit,
+        // not ours; the rejection message quotes the constant rather than restating it.
+        Assert.Equal(256, MailService.ShowSearchQueryCharsCap);
+
+        // The two COM locate-probe bounds. Neither said what it counted before it was named:
+        // the first is ITEMS IN A FOLDER (a subjectless hit can only be found by walking the
+        // folder), the second is TABLE ROWS READ in the GetTable fallback.
+        Assert.Equal(1000, OutlookComSession.TimeOnlyProbeMaxFolderItems);
+        Assert.Equal(500, OutlookComSession.GetTableProbeMaxRows);
+    }
+
+    /// <summary>
+    /// The two index-staleness thresholds are ONE decision with two wordings, so they are
+    /// pinned together and in order. The 30-minute one only says "the index is a bit behind
+    /// and the sweep covers it"; the 12-hour one tells the agent to search differently. If
+    /// the notice threshold ever rose above the advice threshold, outlook_health would call
+    /// an index "current" that search is simultaneously calling very stale.
+    /// </summary>
+    [Fact]
+    public void IndexStalenessThresholds_ArePinnedAndOrdered()
+    {
+        Assert.Equal(30, MailService.StaleIndexNoticeMinutes);
+        Assert.Equal(720, MailService.VeryStaleAdviceMinutes);
+        Assert.True(
+            MailService.StaleIndexNoticeMinutes < MailService.VeryStaleAdviceMinutes,
+            $"the notice threshold ({MailService.StaleIndexNoticeMinutes} min) must stay below the "
+            + $"very-stale advice threshold ({MailService.VeryStaleAdviceMinutes} min): the first says the "
+            + "freshness sweep is handling the gap, the second says stop trusting the index.");
     }
 
     [Fact]
