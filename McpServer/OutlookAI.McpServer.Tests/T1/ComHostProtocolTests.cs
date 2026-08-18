@@ -414,6 +414,91 @@ public sealed class ComHostProtocolTests
     }
 
     [Fact]
+    public void ComFolderTree_CarriesWhatBoundedTheWalkAcrossTheWire()
+    {
+        // The walk runs in the CHILD and its bounds decide list_folders' truncated flag,
+        // its advice and whether a nextOffset is offered at all (gap G3). These used to be
+        // no part of the return value, so there was nothing to lose on the hop; now there
+        // is, and a bound that reads as false in the parent puts the payload back to
+        // reporting a cut-off tree as a complete answer.
+        ComFolderTree original = new ComFolderTree(
+            new[] { new ComFolderInfo("alice@example.com", "Inbox", "Inbox", 12, 3, 0) },
+            walkCapReached: true,
+            depthLimitReached: true,
+            storesUnnamed: 2,
+            storesUnnamedExcluded: 1);
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComFolderTree? read = JsonSerializer.Deserialize<ComFolderTree>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Single(read!.Folders);
+        Assert.True(read.WalkCapReached);
+        Assert.True(read.DepthLimitReached);
+        Assert.Equal(2, read.StoresUnnamed);
+        Assert.Equal(1, read.StoresUnnamedExcluded);
+    }
+
+    [Fact]
+    public void ComFolderPathList_CarriesItsTruncationAcrossTheWire()
+    {
+        // Same hop, and this is the one where losing the flag costs MAIL rather than a
+        // listing (gap G4): a delegate folder scope is an OR of folder names taken from this
+        // list, so the parent has to know the list is short of the mailbox's real folder set.
+        ComFolderPathList original = new ComFolderPathList(
+            new[] { "Archive", "Archive/2024" }, walkCapReached: true, depthLimitReached: false);
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComFolderPathList? read = JsonSerializer.Deserialize<ComFolderPathList>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Equal(2, read!.Paths.Count);
+        Assert.True(read.WalkCapReached);
+        Assert.False(read.DepthLimitReached);
+        Assert.True(read.Incomplete);
+    }
+
+    [Fact]
+    public void ComSweepResult_CarriesItsUnnameableStoreCountAcrossTheWire()
+    {
+        // Gap G2. The sweep names such a store in the child (a StoreNaming label) and the
+        // parent reports the count and the advice sentence, so this counter has the same
+        // pipe dependency as every other one beside it.
+        ComSweepResult original = new ComSweepResult(
+            Array.Empty<ComMailBrief>(),
+            foldersSwept: 4,
+            foldersSkipped: 0,
+            perStore: new[]
+            {
+                new ComStoreSweepCounters(StoreNaming.LabelForUnnamedStore(2), 4, 0, 0, 0),
+            },
+            storesUnnamed: 1);
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComSweepResult? read = JsonSerializer.Deserialize<ComSweepResult>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Equal(1, read!.StoresUnnamed);
+        Assert.Equal("(unnamed store 2)", Assert.Single(read.PerStore).StoreDisplayName);
+    }
+
+    [Fact]
+    public void ComStoreDetail_CarriesTheUnreadableNameFlagAcrossTheWire()
+    {
+        // The flag decides whether list_accounts prints a label as a usable store name, and
+        // whether list_folders' refusal claims a store is absent when it cannot know (G2).
+        ComStoreDetail original = new ComStoreDetail(
+            StoreNaming.LabelForUnnamedStore(3), "storeid", 3, null, nameUnreadable: true);
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComStoreDetail? read = JsonSerializer.Deserialize<ComStoreDetail>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.True(read!.NameUnreadable);
+        Assert.Equal("(unnamed store 3)", read.DisplayName);
+    }
+
+    [Fact]
     public void ComSweepResult_WithNoPerStoreCounters_RoundTripsAsEmptyNotNull()
     {
         // Every consumer reads PerStore without a null check, and "the sweep reached no

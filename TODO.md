@@ -477,6 +477,41 @@
   observation; the high-water mark now accumulating in `outlook_health` is what will replace it,
   and until an install has been read it says nothing on its own.
 
+- [ ] **Verify the three folder-walk reporting fixes against a live profile - the COM half none of them can reach from T1.**
+  G2, G3 and G4 of `Docs/completeness-gaps.md` were closed on 2026-08-18 and are pinned by T1
+  `FolderWalkReportingTests` (21 tests, driving the real `MailService` through a stand-in session
+  and index client; mutation-checked - removing any one of the three fix lines fails 4 of them).
+  What T1 owns is everything ABOVE the COM call, which is where the whole defect lived, since all
+  three drops were decisions taken there. What it cannot produce is the COM failure itself:
+
+  - **G2 needs a store whose `DisplayName` read throws.** Never observed on any machine here; it
+    was found by reading the `catch` that swallowed it. Nothing in the repo knows what actually
+    provokes it - a damaged profile entry, a data file that will not open, a store mid-removal are
+    guesses. Worth trying: mount a PST, then rename or delete the file underneath Outlook while a
+    session holds it. What to confirm read-only: the store appears in `list_folders` under
+    `(unnamed store N)` with `nameUnreadable: true`, an unscoped `search` reports
+    `sweep.storesUnnamed`, hits from it carry the label as their `store`, `outlook_health` lists it
+    (via the same COM store list, so it should now reach `index.perStore[].inLocalIndex: false`),
+    and `search(store: "(unnamed store N)")` is refused with the placeholder message rather than
+    the typo one. **Also unverified in the real world:** whether a store that will not name itself
+    will still answer `GetDefaultFolder` and `GetTable`, i.e. whether the sweep of it actually
+    returns mail rather than four skips. The code handles both; only a live case can say which
+    happens.
+  - **G3 needs 10 000 folders in one profile, or a 65-level-deep tree.** Both are constructible in
+    a test PST and neither exists here. The cheap partial check is a temporary build with the cap
+    lowered (it is a `public const` on `MailService`, read at the call site) against the real
+    profile: confirm `truncated: true`, `walkCapReached: true`, NO `nextOffset`, and the advice
+    sentence - and that a store-by-store listing then returns the tree the capped call could not.
+  - **G4 needs a delegate mailbox whose folder walk hits a bound**, i.e. G3's condition inside a
+    shared mailbox. The dev profile has two delegate mailboxes indexing 11 and 23 folder paths, so
+    the honest statement is that this flag has never fired on real data and cannot until the walk
+    cap is reachable. The lowered-cap build covers it in the same pass: a delegate folder search
+    should then report `scope.folderNamesTruncated: true`, `degraded: true`, and the INCOMPLETE
+    SCOPE sentence.
+
+  Read-only throughout - `list_folders`, `search`, `outlook_health`, `list_accounts`. No mailbox
+  writes are needed for any of it.
+
 - [ ] **Retire v3 planning ignores** — once the local v3 planning files (`v3.MD`, `Docs/v3-probes/`) are no longer needed:
   - [ ] remove the "v3 planning documents" section at the bottom of `.gitignore`
   - [ ] delete the local plan-doc backup folder (location documented in v3.MD §0.8 D16 on the machine that holds it)

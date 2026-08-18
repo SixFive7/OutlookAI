@@ -43,6 +43,12 @@ public sealed class PayloadDisciplineTests
         Assert.Equal(1000, MailService.FoldersPerCallCap);
         Assert.Equal(10_000, MailService.FolderWalkAbsoluteCap);
 
+        // The two bounds of the walk ITSELF, pinned since 2026-08-18 because the walk now
+        // reports hitting either one (gap G3) and both numbers are quoted in the advice that
+        // says so. Until then the depth guard was private, unpinned and restated as a literal
+        // "64" in a doc comment - a cap with no test is a cap whose creep nothing notices.
+        Assert.Equal(64, OutlookComSession.FolderWalkDepthGuard);
+
         // Read body paging (soak fix D37: window served from the per-process body cache).
         Assert.Equal(8, BodyCache.MaxEntries);
         Assert.Equal(8_000_000, BodyCache.MaxTotalChars);
@@ -154,7 +160,7 @@ public sealed class PayloadDisciplineTests
         Assert.Equal(MailService.FoldersPerCallCap, first.Stores.Sum(s => s.Folders.Count));
         Assert.True(first.Truncated);
         Assert.Equal(MailService.FoldersPerCallCap, first.NextOffset);
-        Assert.Equal(walk.Count, first.FolderTotal);
+        Assert.Equal(walk.Folders.Count, first.FolderTotal);
 
         FoldersOutcome second = MailService.PageFolders(walk, offset: first.NextOffset!.Value);
         Assert.Equal(3, second.Stores.Sum(s => s.Folders.Count));
@@ -166,7 +172,7 @@ public sealed class PayloadDisciplineTests
         var pagedPaths = first.Stores.SelectMany(s => s.Folders).Select(f => f.Path)
             .Concat(second.Stores.SelectMany(s => s.Folders).Select(f => f.Path))
             .ToList();
-        Assert.Equal(walk.Select(f => f.Path), pagedPaths);
+        Assert.Equal(walk.Folders.Select(f => f.Path), pagedPaths);
     }
 
     [Fact]
@@ -194,7 +200,13 @@ public sealed class PayloadDisciplineTests
         Assert.Null(outcome.Offset);
     }
 
-    private static List<ComFolderInfo> MakeFolders(int count)
+    /// <summary>
+    /// A COMPLETE walk of <paramref name="count"/> folders - no cap hit, no depth guard, no
+    /// unnameable store. Paging is what these tests are about, so the walk's own bounds are
+    /// held at their "nothing was lost" values; <c>FolderWalkReportingTests</c> drives the
+    /// other side.
+    /// </summary>
+    private static ComFolderTree MakeFolders(int count)
     {
         var list = new List<ComFolderInfo>(count);
         for (int i = 1; i <= count; i++)
@@ -204,7 +216,7 @@ public sealed class PayloadDisciplineTests
             list.Add(new ComFolderInfo(store, $"F{i:D5}", $"F{i:D5}", i, 0, 0));
         }
 
-        return list;
+        return new ComFolderTree(list);
     }
 
     [Fact]

@@ -57,7 +57,8 @@ namespace OutlookAI.Core.Services
             bool isDelegateStore,
             string? requestedFolder,
             IReadOnlyList<string>? collidingLeafNames,
-            bool folderTreeUnavailable)
+            bool folderTreeUnavailable,
+            bool folderTreeTruncated = false)
         {
             Kind = kind;
             Scope = scope;
@@ -67,6 +68,7 @@ namespace OutlookAI.Core.Services
             RequestedFolder = requestedFolder;
             CollidingLeafNames = collidingLeafNames;
             FolderTreeUnavailable = folderTreeUnavailable;
+            FolderTreeTruncated = folderTreeTruncated;
         }
 
         /// <summary>
@@ -112,6 +114,20 @@ namespace OutlookAI.Core.Services
 
         /// <summary>True when the delegate folder tree could not be read (Outlook down).</summary>
         public bool FolderTreeUnavailable { get; }
+
+        /// <summary>
+        /// True when the delegate folder tree WAS read and is short of the mailbox's real
+        /// folder set, because the COM walk hit its absolute cap or its depth guard (gap
+        /// G4). The leaf names built from it are then incomplete, and the flat delegate
+        /// namespace matches by name - so folders whose names are missing are searched by
+        /// no tier at all.
+        /// <para>
+        /// Distinct from <see cref="FolderTreeUnavailable"/>, which means there was no tree
+        /// to read: that widens the scope (over-return, the safe direction), while this one
+        /// NARROWS it silently, which is the direction this whole contract exists to catch.
+        /// </para>
+        /// </summary>
+        public bool FolderTreeTruncated { get; }
 
         /// <summary>True when the query covers more than was asked and the caller must say so.</summary>
         public bool Widened => Kind == FolderScopeKind.DelegateWidened;
@@ -265,11 +281,19 @@ namespace OutlookAI.Core.Services
         /// '/'-separated). Null when Outlook could not be reached - the recursive request
         /// then widens rather than silently narrowing.
         /// </param>
+        /// <param name="comFolderPathsTruncated">
+        /// True when that walk was cut short by its own cap or depth guard, so the paths are
+        /// a PREFIX of the mailbox's folder set rather than all of it (gap G4). It changes no
+        /// scope here - a short list is still the best bound available, and widening on it
+        /// would answer with the whole delegate mailbox - but it rides out on the resolution
+        /// so the search can say the folder scope was built from an incomplete tree.
+        /// </param>
         public static FolderScopeResolution ForDelegateStore(
             string delegateStoreScope,
             string? folder,
             bool includeSubfolders,
-            IReadOnlyList<string>? comFolderPaths)
+            IReadOnlyList<string>? comFolderPaths,
+            bool comFolderPathsTruncated = false)
         {
             if (string.IsNullOrWhiteSpace(delegateStoreScope))
             {
@@ -283,7 +307,8 @@ namespace OutlookAI.Core.Services
                 // The whole delegate store: the root scope already covers every flat
                 // folder, so no filter is needed and the flag cannot change the answer.
                 return new FolderScopeResolution(
-                    FolderScopeKind.WholeStore, root, root, null, true, null, null, comFolderPaths == null);
+                    FolderScopeKind.WholeStore, root, root, null, true, null, null, comFolderPaths == null,
+                    comFolderPathsTruncated);
             }
 
             if (!MapiItemUrl.TryBuildFolderPathDisplay(root, out string? rootPath) || rootPath == null)
@@ -304,7 +329,8 @@ namespace OutlookAI.Core.Services
                     true,
                     normalized,
                     FindCollisions(comFolderPaths, new[] { leaf }),
-                    comFolderPaths == null);
+                    comFolderPaths == null,
+                    comFolderPathsTruncated);
             }
 
             if (comFolderPaths == null)
@@ -320,7 +346,8 @@ namespace OutlookAI.Core.Services
             if (leaves.Count > DelegateFolderOrSetCap)
             {
                 return new FolderScopeResolution(
-                    FolderScopeKind.DelegateWidened, root, root, null, true, normalized, null, false);
+                    FolderScopeKind.DelegateWidened, root, root, null, true, normalized, null, false,
+                    comFolderPathsTruncated);
             }
 
             List<string> paths = new List<string>(leaves.Count);
@@ -337,7 +364,8 @@ namespace OutlookAI.Core.Services
                 true,
                 normalized,
                 FindCollisions(comFolderPaths, leaves),
-                false);
+                false,
+                comFolderPathsTruncated);
         }
 
         /// <summary>

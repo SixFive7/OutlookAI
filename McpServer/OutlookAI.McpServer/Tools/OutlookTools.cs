@@ -347,8 +347,11 @@ public static class OutlookTools
     [McpServerTool(Name = "list_folders")]
     [Description("List the FULL folder tree(s) with item/unread counts. Folder paths feed the search tool's 'folder' argument. "
         + "Traversal order is stable: stores sorted by display name, then depth-first with sibling folders sorted by name. "
-        + "One call returns up to 1000 folders (virtually always the whole tree); truncated=true means more exist - "
-        + "continue with offset=nextOffset to page the remainder in the same stable order.")]
+        + "One call returns up to 1000 folders (virtually always the whole tree). truncated=true means this is NOT the "
+        + "whole tree: continue with offset=nextOffset when that is present; when it is absent the folder WALK itself was "
+        + "cut short (walkCapReached / depthLimitReached) and no offset can reach the rest - narrow with 'store'. A store "
+        + "carrying nameUnreadable=true is listed under a placeholder label, not a name, and that label cannot be passed "
+        + "back as 'store'; read advice for what to do instead.")]
     public static async Task<CallToolResult> ListFolders(
         [Description("Store display name (see list_accounts). Omit for all stores.")] string? store = null,
         [Description("Folders to skip in the stable traversal (default 0). Use the previous result's nextOffset to continue a truncated listing.")] int offset = 0,

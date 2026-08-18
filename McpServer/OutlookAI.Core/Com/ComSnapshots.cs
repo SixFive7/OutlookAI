@@ -187,12 +187,18 @@ namespace OutlookAI.Core.Com
     public sealed class ComStoreDetail
     {
         /// <summary>Creates a store snapshot.</summary>
-        public ComStoreDetail(string displayName, string storeId, int? exchangeStoreType, bool? isCachedExchange)
+        public ComStoreDetail(
+            string displayName,
+            string storeId,
+            int? exchangeStoreType,
+            bool? isCachedExchange,
+            bool nameUnreadable = false)
         {
             DisplayName = displayName;
             StoreId = storeId;
             ExchangeStoreType = exchangeStoreType;
             IsCachedExchange = isCachedExchange;
+            NameUnreadable = nameUnreadable;
         }
 
         /// <summary>Store display name (matches the index URL store segment, Phase-1 fact).</summary>
@@ -206,6 +212,92 @@ namespace OutlookAI.Core.Com
 
         /// <summary>Store.IsCachedExchange - false means server-only (not locally indexed, D22/D25).</summary>
         public bool? IsCachedExchange { get; }
+
+        /// <summary>
+        /// True when <see cref="DisplayName"/> is a <see cref="StoreNaming"/> LABEL because
+        /// Outlook would not report the store's real name (gap G2). Such a store used to be
+        /// dropped from every list this snapshot feeds; it is listed now, and this flag is
+        /// what stops the label being read as a name that can be passed back as a scope.
+        /// </summary>
+        public bool NameUnreadable { get; }
+    }
+
+    /// <summary>
+    /// A whole-tree folder walk plus what BOUNDED it (gap G3). The list alone could not say
+    /// whether it was the tree or the cap that ended, so a truncated walk paged out as a
+    /// complete answer with <c>truncated: false</c> on it.
+    /// </summary>
+    public sealed class ComFolderTree
+    {
+        /// <summary>Creates a folder-walk snapshot.</summary>
+        public ComFolderTree(
+            IReadOnlyList<ComFolderInfo> folders,
+            bool walkCapReached = false,
+            bool depthLimitReached = false,
+            int storesUnnamed = 0,
+            int storesUnnamedExcluded = 0)
+        {
+            Folders = folders;
+            WalkCapReached = walkCapReached;
+            DepthLimitReached = depthLimitReached;
+            StoresUnnamed = storesUnnamed;
+            StoresUnnamedExcluded = storesUnnamedExcluded;
+        }
+
+        /// <summary>The folders the walk collected, in the stable traversal order.</summary>
+        public IReadOnlyList<ComFolderInfo> Folders { get; }
+
+        /// <summary>True when the absolute walk cap stopped the traversal short of the tree.</summary>
+        public bool WalkCapReached { get; }
+
+        /// <summary>True when the walk refused folders deeper than the depth guard.</summary>
+        public bool DepthLimitReached { get; }
+
+        /// <summary>
+        /// Stores in this walk carrying a <see cref="StoreNaming"/> label rather than a real
+        /// display name (gap G2).
+        /// </summary>
+        public int StoresUnnamed { get; }
+
+        /// <summary>
+        /// Unnameable stores a store-SCOPED walk left out because they could be neither
+        /// matched against the requested name nor ruled out of it. Zero on an unscoped walk,
+        /// where every store is in scope and nothing has to be decided.
+        /// </summary>
+        public int StoresUnnamedExcluded { get; }
+    }
+
+    /// <summary>
+    /// A names-only folder walk of one store plus what bounded it - the
+    /// <see cref="ComFolderTree"/> of the delegate scope path (gap G4).
+    /// </summary>
+    public sealed class ComFolderPathList
+    {
+        /// <summary>Creates a folder-path walk snapshot.</summary>
+        public ComFolderPathList(
+            IReadOnlyList<string> paths, bool walkCapReached = false, bool depthLimitReached = false)
+        {
+            Paths = paths;
+            WalkCapReached = walkCapReached;
+            DepthLimitReached = depthLimitReached;
+        }
+
+        /// <summary>Store-relative folder paths, '/'-joined, depth-first.</summary>
+        public IReadOnlyList<string> Paths { get; }
+
+        /// <summary>True when the absolute walk cap stopped the traversal short of the tree.</summary>
+        public bool WalkCapReached { get; }
+
+        /// <summary>True when the walk refused folders deeper than the depth guard.</summary>
+        public bool DepthLimitReached { get; }
+
+        /// <summary>
+        /// True when this list is SHORT of the store's real folder set for any reason. The
+        /// delegate index namespace is flat, so a folder scope there is matched by NAME
+        /// against this list - a short list therefore under-returns mail, and the caller has
+        /// to be able to say so without knowing which bound did it.
+        /// </summary>
+        public bool Incomplete => WalkCapReached || DepthLimitReached;
     }
 
     /// <summary>One folder in a store tree (COM-free data).</summary>
@@ -1060,7 +1152,8 @@ namespace OutlookAI.Core.Com
             bool timeBudgetExceeded = false,
             int foldersAbsent = 0,
             IReadOnlyList<ComStoreSweepCounters>? perStore = null,
-            int rowsUnreadable = 0)
+            int rowsUnreadable = 0,
+            int storesUnnamed = 0)
         {
             Items = items;
             FoldersSwept = foldersSwept;
@@ -1074,7 +1167,22 @@ namespace OutlookAI.Core.Com
             FoldersAbsent = foldersAbsent;
             PerStore = perStore ?? Array.Empty<ComStoreSweepCounters>();
             RowsUnreadable = rowsUnreadable;
+            StoresUnnamed = storesUnnamed;
         }
+
+        /// <summary>
+        /// Stores this sweep reached whose display name Outlook would not report, so they
+        /// were swept under a <see cref="StoreNaming"/> label (gap G2).
+        /// <para>
+        /// Before the label existed, such a store was abandoned at the name read: its four
+        /// default folders were added to <see cref="FoldersSkipped"/> and to no per-store
+        /// bucket, so an unscoped search lost that store's fresh mail entirely and the only
+        /// trace was four skips nobody could attribute. It is swept now, which is the
+        /// coverage half; this counter is the reporting half, because a store the caller
+        /// cannot NAME is one it cannot scope a follow-up search to.
+        /// </para>
+        /// </summary>
+        public int StoresUnnamed { get; }
 
         /// <summary>Items received/sent at or after the sweep start.</summary>
         public IReadOnlyList<ComMailBrief> Items { get; }

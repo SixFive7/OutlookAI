@@ -37,11 +37,18 @@ namespace OutlookAI.Core.Com
         /// <summary>Every store in the profile, with item counts where available.</summary>
         IReadOnlyList<ComStoreDetail> GetStoreDetails();
 
-        /// <summary>Folder tree for one store (or all stores when null), bounded by <paramref name="absoluteWalkCap"/>.</summary>
-        IReadOnlyList<ComFolderInfo> ListFolders(string? storeDisplayName, int absoluteWalkCap);
+        /// <summary>
+        /// Folder tree for one store (or all stores when null), bounded by
+        /// <paramref name="absoluteWalkCap"/> - which the result REPORTS rather than merely
+        /// obeying, because a list alone cannot say whether the tree or the cap ended it.
+        /// </summary>
+        ComFolderTree ListFolders(string? storeDisplayName, int absoluteWalkCap);
 
-        /// <summary>Store-relative folder paths for one store, bounded by <paramref name="absoluteWalkCap"/>.</summary>
-        IReadOnlyList<string> ListFolderPaths(string storeDisplayName, int absoluteWalkCap);
+        /// <summary>
+        /// Store-relative folder paths for one store, bounded by
+        /// <paramref name="absoluteWalkCap"/> and reporting that bound for the same reason.
+        /// </summary>
+        ComFolderPathList ListFolderPaths(string storeDisplayName, int absoluteWalkCap);
 
         /// <summary>Folder paths whose leaf segment matches <paramref name="leafName"/> (delegate-store resolution).</summary>
         IReadOnlyList<IReadOnlyList<string>> FindFolderPathsByLeafName(string storeDisplayName, string leafName, int absoluteWalkCap);

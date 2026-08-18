@@ -476,7 +476,16 @@ namespace OutlookAI.Core.Com
                         dynamic store = stores[i];
                         try
                         {
-                            result.Add(new ComStoreInfo((string)store.DisplayName, (string)store.StoreID));
+                            // Gap G2's rule, applied here too: a store whose DisplayName read
+                            // throws is LABELLED, never dropped and never allowed to take the
+                            // whole enumeration down with it. This overload is used by the
+                            // live-test fixtures to find a store by name, and a fixture that
+                            // dies on the one profile shape this work is about would hide
+                            // exactly the case it is meant to exercise.
+                            string? name = TryGetString(() => (string?)store.DisplayName);
+                            result.Add(new ComStoreInfo(
+                                string.IsNullOrEmpty(name) ? StoreNaming.LabelForUnnamedStore(i) : name!,
+                                TryGetString(() => (string?)store.StoreID) ?? string.Empty));
                         }
                         finally
                         {
@@ -1146,8 +1155,21 @@ namespace OutlookAI.Core.Com
                         dynamic store = stores[i];
                         try
                         {
-                            string displayName = (string)store.DisplayName;
-                            string storeId = (string)store.StoreID;
+                            // The display name and the StoreID are read APART now (gap G2).
+                            // One try around both meant either failure dropped the whole
+                            // store from every list this feeds - list_accounts, the health
+                            // per-store block, the "Known stores" a refusal offers - and a
+                            // store nobody lists is a store nobody can be told about.
+                            string? readName = TryGetString(() => (string?)store.DisplayName);
+                            bool nameUnreadable = string.IsNullOrEmpty(readName);
+                            string displayName = nameUnreadable
+                                ? StoreNaming.LabelForUnnamedStore(i)
+                                : readName!;
+
+                            // The id is the load-bearing half: without it nothing in this
+                            // server can open an item in the store. Empty rather than
+                            // absent, so the store is still COUNTED and still named.
+                            string storeId = TryGetString(() => (string?)store.StoreID) ?? string.Empty;
                             int? exchangeType = null;
                             bool? cached = null;
                             try
@@ -1166,11 +1188,11 @@ namespace OutlookAI.Core.Com
                             {
                             }
 
-                            result.Add(new ComStoreDetail(displayName, storeId, exchangeType, cached));
+                            result.Add(new ComStoreDetail(displayName, storeId, exchangeType, cached, nameUnreadable));
                         }
-                        catch (COMException)
+                        catch (Exception ex) when (IsComCallFailure(ex))
                         {
-                            // Store with unreadable identity - skip.
+                            // The store object itself would not answer anything at all.
                         }
                         finally
                         {
@@ -1196,7 +1218,7 @@ namespace OutlookAI.Core.Com
         /// <paramref name="absoluteWalkCap"/> (a pathological-store guard, v3.MD
         /// section 12) - the per-call page bound lives in MailService.
         /// </summary>
-        public IReadOnlyList<ComFolderInfo> ListFolders(string? storeDisplayName, int absoluteWalkCap)
+        public ComFolderTree ListFolders(string? storeDisplayName, int absoluteWalkCap)
         {
             EnsureNotDisposed();
             if (absoluteWalkCap < 1)
@@ -1208,8 +1230,11 @@ namespace OutlookAI.Core.Com
             {
                 dynamic ns = _namespace!;
                 List<ComFolderInfo> result = new List<ComFolderInfo>();
+                FolderWalkBounds bounds = new FolderWalkBounds();
                 dynamic stores = ns.Stores;
                 List<(string Name, int Index)> storeOrder = new List<(string, int)>();
+                int unnamed = 0;
+                int unnamedExcluded = 0;
                 try
                 {
                     int count = stores.Count;
@@ -1219,11 +1244,35 @@ namespace OutlookAI.Core.Com
                         try
                         {
                             probe = stores[i];
-                            string name = (string)((dynamic)probe!).DisplayName;
-                            if (storeDisplayName == null
-                                || string.Equals(name, storeDisplayName, StringComparison.OrdinalIgnoreCase))
+                            string? name = TryGetString(() => (string?)((dynamic)probe!).DisplayName);
+                            if (string.IsNullOrEmpty(name))
                             {
-                                storeOrder.Add((name, i));
+                                // Gap G2. This store used to vanish here, tree and all: an
+                                // unscoped list_folders answered as though the profile did
+                                // not have it, and nothing in the payload said a store had
+                                // been dropped. It gets a label instead (StoreNaming), so
+                                // its folders are listed and the fact that the label is not
+                                // a name travels with them.
+                                unnamed++;
+                                if (storeDisplayName != null)
+                                {
+                                    // A SCOPED listing cannot include it - the requested
+                                    // name can be neither matched nor ruled out against a
+                                    // store that will not say its own. Counted separately,
+                                    // because "left out of your scope" and "listed under a
+                                    // label" are different things to tell a caller.
+                                    unnamedExcluded++;
+                                    continue;
+                                }
+
+                                storeOrder.Add((StoreNaming.LabelForUnnamedStore(i), i));
+                                continue;
+                            }
+
+                            if (string.Equals(name, storeDisplayName, StringComparison.OrdinalIgnoreCase)
+                                || storeDisplayName == null)
+                            {
+                                storeOrder.Add((name!, i));
                             }
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
@@ -1247,6 +1296,9 @@ namespace OutlookAI.Core.Com
                     {
                         if (result.Count >= absoluteWalkCap)
                         {
+                            // Gap G3: stores after this one are never walked, so the answer
+                            // is short of whole TREES and not merely of trailing folders.
+                            bounds.WalkCapReached = true;
                             break;
                         }
 
@@ -1256,7 +1308,7 @@ namespace OutlookAI.Core.Com
                         {
                             store = stores[index];
                             root = ((dynamic)store!).GetRootFolder();
-                            CollectFolders(root!, name, string.Empty, 1, absoluteWalkCap, result);
+                            CollectFolders(root!, name, string.Empty, 1, absoluteWalkCap, result, bounds);
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
@@ -1273,8 +1325,28 @@ namespace OutlookAI.Core.Com
                     Release(stores);
                 }
 
-                return (IReadOnlyList<ComFolderInfo>)result;
+                return new ComFolderTree(
+                    result, bounds.WalkCapReached, bounds.DepthLimitReached, unnamed, unnamedExcluded);
             });
+        }
+
+        /// <summary>
+        /// What STOPPED a folder walk, carried down the recursion so the bound is reported
+        /// rather than merely obeyed (gap G3).
+        /// <para>
+        /// A mutable carrier rather than a return value because the walk is recursive and
+        /// the cap can fire at any depth: threading a bool back up through every frame is
+        /// how the flag went missing in the first place - the recursion returned void, the
+        /// caller saw a list, and a truncated tree was indistinguishable from a whole one.
+        /// </para>
+        /// </summary>
+        private sealed class FolderWalkBounds
+        {
+            /// <summary>True when the absolute walk cap ended the traversal early.</summary>
+            internal bool WalkCapReached { get; set; }
+
+            /// <summary>True when a folder below <see cref="FolderWalkDepthGuard"/> was refused.</summary>
+            internal bool DepthLimitReached { get; set; }
         }
 
         /// <summary>
@@ -1613,6 +1685,7 @@ namespace OutlookAI.Core.Com
                 // totals below stay the whole sweep's; a store-scoped caller reads its own
                 // entry, so another store's unreadable folder can no longer degrade it.
                 List<StoreSweepBucket> buckets = new List<StoreSweepBucket>();
+                int storesUnnamed = 0;
 
                 dynamic stores = ns.Stores;
                 try
@@ -1623,27 +1696,38 @@ namespace OutlookAI.Core.Com
                         dynamic store = stores[i];
                         try
                         {
-                            string storeName;
-                            string storeId;
-                            try
+                            // Gap G2. This used to be one try around both reads, and either
+                            // failure abandoned the store: its four default folders were
+                            // added to the SKIPPED total and to no per-store bucket, so an
+                            // unscoped search lost that store's fresh mail with nothing in
+                            // the payload attributing the loss to anything. Both reads are
+                            // separate now and neither is fatal - the name falls back to a
+                            // StoreNaming label, and the id falls back to empty, which the
+                            // one-argument GetItemFromID overload handles wherever a swept
+                            // hit is later re-opened.
+                            string? readName = TryGetString(() => (string?)store.DisplayName);
+                            bool nameUnreadable = string.IsNullOrEmpty(readName);
+                            string storeName = nameUnreadable
+                                ? StoreNaming.LabelForUnnamedStore(i)
+                                : readName!;
+                            string storeId = TryGetString(() => (string?)store.StoreID) ?? string.Empty;
+
+                            if (onlyStoreDisplayName != null
+                                && (nameUnreadable
+                                    || !string.Equals(storeName, onlyStoreDisplayName, StringComparison.OrdinalIgnoreCase)))
                             {
-                                storeName = (string)store.DisplayName;
-                                storeId = (string)store.StoreID;
-                            }
-                            catch (COMException)
-                            {
-                                // No name, so these skips belong to no nameable store: they
-                                // count in the total and in nobody's per-store entry. A
-                                // search scoped to a store we CAN name is unaffected, which
-                                // is right - the folders behind this failure are not its.
-                                skipped += DefaultSweepFolders.Length;
+                                // A store that will not say its name can be neither matched
+                                // against the requested one nor ruled out of it, so a SCOPED
+                                // sweep leaves it alone - sweeping it would answer a
+                                // store-scoped search with another store's mail. It is not
+                                // counted as this store's skip either: the requested store's
+                                // own coverage is untouched by it.
                                 continue;
                             }
 
-                            if (onlyStoreDisplayName != null
-                                && !string.Equals(storeName, onlyStoreDisplayName, StringComparison.OrdinalIgnoreCase))
+                            if (nameUnreadable)
                             {
-                                continue;
+                                storesUnnamed++;
                             }
 
                             StoreSweepBucket bucket = new StoreSweepBucket(storeName);
@@ -1745,7 +1829,7 @@ namespace OutlookAI.Core.Com
                     items, sweptFolders.Count, skipped, sweptFolders,
                     tally.Failed, tally.ItemCapped, tally.FolderCapReached,
                     tally.DepthLimitReached, tally.TimeBudgetExceeded, absent, perStore,
-                    tally.RowsUnreadable);
+                    tally.RowsUnreadable, storesUnnamed);
             });
         }
 
@@ -7731,7 +7815,7 @@ namespace OutlookAI.Core.Com
         /// a requested subtree onto the leaf names it contains (and spotting leaf-name
         /// collisions) needs the COM tree, and only Outlook has it.
         /// </summary>
-        public IReadOnlyList<string> ListFolderPaths(string storeDisplayName, int absoluteWalkCap)
+        public ComFolderPathList ListFolderPaths(string storeDisplayName, int absoluteWalkCap)
         {
             EnsureNotDisposed();
             if (string.IsNullOrWhiteSpace(storeDisplayName))
@@ -7747,17 +7831,18 @@ namespace OutlookAI.Core.Com
             return _runner.Run(() =>
             {
                 List<string> result = new List<string>();
+                FolderWalkBounds bounds = new FolderWalkBounds();
                 dynamic? store = FindStoreByDisplayName(storeDisplayName);
                 if (store == null)
                 {
-                    return (IReadOnlyList<string>)result;
+                    return new ComFolderPathList(result);
                 }
 
                 object? root = null;
                 try
                 {
                     root = store.GetRootFolder();
-                    CollectFolderPaths(root!, string.Empty, 1, absoluteWalkCap, result);
+                    CollectFolderPaths(root!, string.Empty, 1, absoluteWalkCap, result, bounds);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -7768,7 +7853,7 @@ namespace OutlookAI.Core.Com
                     Release((object?)store);
                 }
 
-                return (IReadOnlyList<string>)result;
+                return new ComFolderPathList(result, bounds.WalkCapReached, bounds.DepthLimitReached);
             });
         }
 
@@ -7889,10 +7974,22 @@ namespace OutlookAI.Core.Com
         }
 
         private void CollectFolderPaths(
-            object folderObject, string parentPath, int depth, int absoluteWalkCap, List<string> result)
+            object folderObject,
+            string parentPath,
+            int depth,
+            int absoluteWalkCap,
+            List<string> result,
+            FolderWalkBounds bounds)
         {
-            if (depth > FolderWalkDepthGuard || result.Count >= absoluteWalkCap)
+            if (depth > FolderWalkDepthGuard)
             {
+                bounds.DepthLimitReached = true;
+                return;
+            }
+
+            if (result.Count >= absoluteWalkCap)
+            {
+                bounds.WalkCapReached = true;
                 return;
             }
 
@@ -7907,6 +8004,7 @@ namespace OutlookAI.Core.Com
                 {
                     if (result.Count >= absoluteWalkCap)
                     {
+                        bounds.WalkCapReached = true;
                         return;
                     }
 
@@ -7922,7 +8020,7 @@ namespace OutlookAI.Core.Com
 
                         string path = parentPath.Length == 0 ? name : parentPath + "/" + name;
                         result.Add(path);
-                        CollectFolderPaths(child!, path, depth + 1, absoluteWalkCap, result);
+                        CollectFolderPaths(child!, path, depth + 1, absoluteWalkCap, result, bounds);
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
@@ -7943,8 +8041,13 @@ namespace OutlookAI.Core.Com
             }
         }
 
-        /// <summary>Recursion guard for the full-tree folder walk (real trees are a handful of levels).</summary>
-        private const int FolderWalkDepthGuard = 64;
+        /// <summary>
+        /// Recursion guard for the full-tree folder walk (real trees are a handful of levels).
+        /// Public since 2026-08-18 because the walk now REPORTS hitting it, and the sentence
+        /// that says so has to quote the number rather than restate it - a cap named in prose
+        /// beside a constant nobody compares it with is how the two drift.
+        /// </summary>
+        public const int FolderWalkDepthGuard = 64;
 
         private void CollectFolders(
             object folderObject,
@@ -7952,10 +8055,12 @@ namespace OutlookAI.Core.Com
             string parentPath,
             int depth,
             int absoluteWalkCap,
-            List<ComFolderInfo> result)
+            List<ComFolderInfo> result,
+            FolderWalkBounds bounds)
         {
             if (depth > FolderWalkDepthGuard)
             {
+                bounds.DepthLimitReached = true;
                 return;
             }
 
@@ -7999,6 +8104,7 @@ namespace OutlookAI.Core.Com
                 {
                     if (result.Count >= absoluteWalkCap)
                     {
+                        bounds.WalkCapReached = true;
                         return;
                     }
 
@@ -8028,7 +8134,7 @@ namespace OutlookAI.Core.Com
                         result.Add(new ComFolderInfo(storeDisplayName, path, name, itemCount, unread, childCount));
                         if (childCount > 0)
                         {
-                            CollectFolders(child, storeDisplayName, path, depth + 1, absoluteWalkCap, result);
+                            CollectFolders(child, storeDisplayName, path, depth + 1, absoluteWalkCap, result, bounds);
                         }
                     }
                     catch (Exception ex) when (IsComCallFailure(ex))

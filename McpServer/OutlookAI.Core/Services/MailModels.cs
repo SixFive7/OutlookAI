@@ -435,6 +435,20 @@ namespace OutlookAI.Core.Services
         /// <summary>Sweep wall-clock cost.</summary>
         public long ElapsedMs { get; set; }
 
+        /// <summary>
+        /// Stores this sweep covered under a <c>Com.StoreNaming</c> label because Outlook
+        /// would not report their display name (gap G2). Null when every store named itself.
+        /// <para>
+        /// A REPORT rather than a coverage gap, and the distinction is the point. Such a
+        /// store used to be abandoned at the failed name read - four folders added to
+        /// <see cref="FoldersSkipped"/>, no per-store bucket, its fresh mail simply absent -
+        /// and it is swept now, so there is no hole to raise. What is left is a NAMING hole
+        /// with a consequence the caller has to know: mail from this store is in the answer,
+        /// and the store cannot be used as a <c>store</c> scope for a follow-up.
+        /// </para>
+        /// </summary>
+        public int? StoresUnnamed { get; set; }
+
         /// <summary>Content-free error when the sweep could not run.</summary>
         public string? Error { get; set; }
     }
@@ -545,6 +559,22 @@ namespace OutlookAI.Core.Services
 
         /// <summary>How many flat folder names the delegate query matched (delegate scopes only).</summary>
         public int? FolderNamesMatched { get; set; }
+
+        /// <summary>
+        /// True when the COM folder walk that produced those names was itself cut short by
+        /// the walk cap or the depth guard, so the name set is SHORT and the delegate scope
+        /// under-returns (gap G4). Null when the walk covered the mailbox's tree.
+        /// <para>
+        /// It matters more here than anywhere else the same walk is used, which is why it is
+        /// reported rather than left to the folder listing. The delegate index namespace is
+        /// FLAT: a delegate folder scope cannot be a subtree predicate, it can only be an OR
+        /// of folder NAMES read out of the COM tree. A missing name is therefore not a
+        /// missing row in a listing, it is a folder whose mail no tier looks in - and
+        /// <see cref="FolderNamesMatched"/>, being a count, reads exactly the same whether
+        /// the walk saw the whole mailbox or stopped halfway.
+        /// </para>
+        /// </summary>
+        public bool? FolderNamesTruncated { get; set; }
     }
 
     /// <summary>
@@ -1103,6 +1133,19 @@ namespace OutlookAI.Core.Services
         /// <summary>Store display name (use as the search tool's store argument).</summary>
         public string DisplayName { get; set; } = string.Empty;
 
+        /// <summary>
+        /// True when <see cref="DisplayName"/> is a <c>Com.StoreNaming</c> LABEL because
+        /// Outlook would not report this store's real name (gap G2) - so it is the one entry
+        /// in this list that CANNOT be used as the <c>store</c> argument, since a store scope
+        /// is matched against the display name that could not be read. Null otherwise.
+        /// <para>
+        /// Such a store was absent from this list entirely until 2026-08-18, which made
+        /// <c>list_accounts</c> - the tool whose whole job is to say what stores exist -
+        /// quietly incomplete.
+        /// </para>
+        /// </summary>
+        public bool? NameUnreadable { get; set; }
+
         /// <summary>True for delegate/shared mailbox caches (distinct from the 3 accounts).</summary>
         public bool IsDelegate { get; set; }
 
@@ -1218,6 +1261,19 @@ namespace OutlookAI.Core.Services
         /// <summary>Store display name.</summary>
         public string Store { get; set; } = string.Empty;
 
+        /// <summary>
+        /// True when <see cref="Store"/> is a LABEL rather than a name, because Outlook
+        /// would not report this store's display name (gap G2, <c>Com.StoreNaming</c>).
+        /// <para>
+        /// The store used to be dropped from this listing entirely, so its whole folder tree
+        /// was missing with nothing saying so. It is listed now, and this flag is the half
+        /// that keeps the fix honest: the label CANNOT be passed back as the <c>store</c>
+        /// argument of <c>search</c> or <c>list_folders</c>, because a store scope is
+        /// resolved by comparing against the very display name that could not be read.
+        /// </para>
+        /// </summary>
+        public bool? NameUnreadable { get; set; }
+
         /// <summary>This page's folders of the store (full tree, stable traversal order).</summary>
         public IReadOnlyList<FolderView> Folders { get; set; } = Array.Empty<FolderView>();
     }
@@ -1228,17 +1284,70 @@ namespace OutlookAI.Core.Services
         /// <summary>Folder trees per store (this page).</summary>
         public IReadOnlyList<StoreFoldersView> Stores { get; set; } = Array.Empty<StoreFoldersView>();
 
-        /// <summary>Total folders in the full traversal (all pages).</summary>
+        /// <summary>
+        /// Total folders in the full traversal (all pages) - a LOWER BOUND when
+        /// <see cref="WalkCapReached"/> or <see cref="DepthLimitReached"/> is set, since the
+        /// walk that produced it stopped before the tree did.
+        /// </summary>
         public int FolderTotal { get; set; }
 
         /// <summary>Echo of a non-zero requested offset (omitted for the first page).</summary>
         public int? Offset { get; set; }
 
-        /// <summary>True when more folders exist beyond this page - continue with offset=nextOffset.</summary>
+        /// <summary>
+        /// True when this answer is not the whole tree - either more folders exist beyond
+        /// this page (continue with <see cref="NextOffset"/>) or the walk itself was cut
+        /// short (<see cref="WalkCapReached"/> / <see cref="DepthLimitReached"/>, gap G3).
+        /// <para>
+        /// It used to mean only the first of those, and it was computed against the list the
+        /// walk had ALREADY truncated - so the one case it could not see was the one that
+        /// mattered: a tree cut off at the walk cap paged out as <c>truncated: false</c>,
+        /// i.e. as a complete answer. The two causes are told apart by the flags beside it,
+        /// and only the pageable one carries a <see cref="NextOffset"/>: paging cannot get
+        /// past a walk cap, because the next call re-walks and stops at the same place.
+        /// </para>
+        /// </summary>
         public bool Truncated { get; set; }
 
-        /// <summary>The offset that continues the listing (present only when truncated).</summary>
+        /// <summary>The offset that continues the listing (present only when more PAGES exist).</summary>
         public int? NextOffset { get; set; }
+
+        /// <summary>
+        /// True when the folder walk stopped at <see cref="MailService.FolderWalkAbsoluteCap"/>,
+        /// so folders - and, once the cap falls mid-profile, whole stores - were never
+        /// visited. Null when the walk covered the tree. Not pageable: narrow with
+        /// <c>store</c> instead.
+        /// </summary>
+        public bool? WalkCapReached { get; set; }
+
+        /// <summary>
+        /// True when the walk refused a folder deeper than
+        /// <c>OutlookComSession.FolderWalkDepthGuard</c> (64), so that subtree is missing.
+        /// Null when the walk stayed inside the guard, which every real tree does - the
+        /// guard is what stops a cyclic tree taking the process down.
+        /// </summary>
+        public bool? DepthLimitReached { get; set; }
+
+        /// <summary>
+        /// Stores listed under a <c>Com.StoreNaming</c> label because Outlook would not
+        /// report their display name (gap G2). Null when every store named itself.
+        /// </summary>
+        public int? StoresUnnamed { get; set; }
+
+        /// <summary>
+        /// Stores a store-SCOPED listing had to leave out because they would not report a
+        /// name, so they could be neither matched against the requested store nor ruled out
+        /// of it. Null on an unscoped listing, where nothing has to be decided and such a
+        /// store is listed under its label instead.
+        /// </summary>
+        public int? StoresUnnamedExcluded { get; set; }
+
+        /// <summary>
+        /// What a caller has to know about this listing that the counters alone do not say -
+        /// the same role <c>advice</c> plays on a search. Null when the listing is complete
+        /// and every store named itself, which is the usual case.
+        /// </summary>
+        public IReadOnlyList<string>? Advice { get; set; }
     }
 
     /// <summary>open_in_outlook outcome (v3.MD L3).</summary>

@@ -285,8 +285,8 @@ namespace OutlookAI.Core.Services
         private readonly ConcurrentDictionary<string, CachedHit> _hits =
             new ConcurrentDictionary<string, CachedHit>(StringComparer.Ordinal);
         private readonly object _catalogLock = new object();
-        private readonly Dictionary<string, (IReadOnlyList<string> Paths, DateTime FetchedUtc)> _folderPaths =
-            new Dictionary<string, (IReadOnlyList<string>, DateTime)>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, (ComFolderPathList Paths, DateTime FetchedUtc)> _folderPaths =
+            new Dictionary<string, (ComFolderPathList, DateTime)>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// Whether the index holds anything for a store, by display name, with the instant it
@@ -631,6 +631,18 @@ namespace OutlookAI.Core.Services
                 }
 
                 advice.AddRange(DescribeSweepCoverage(sweep, indexAge, request.Folder != null));
+                string? unnamedStoreAdvice = DescribeUnnamedStores(sweep.StoresUnnamed);
+                if (unnamedStoreAdvice != null)
+                {
+                    advice.Add(unnamedStoreAdvice);
+                }
+            }
+
+            // Gap G4: a scope hole, so it is said whether or not a sweep ran.
+            string? scopeAdvice = DescribeTruncatedFolderNames(folderScope);
+            if (scopeAdvice != null)
+            {
+                advice.Add(scopeAdvice);
             }
 
             AddUnresolvedFolderAdvice(advice, folderScope, request, summaries.Count);
@@ -698,11 +710,19 @@ namespace OutlookAI.Core.Services
             // it is not "index-only", and it left mail unchecked, so it is not "live".
             string freshness = FreshMerge.ClassifyFreshness(sweep);
 
+            // Gap G4. A delegate folder scope built from a folder walk that hit its own cap
+            // covers less than it was asked to, which is what this flag has always meant -
+            // so it is raised here too, by a fact about the SCOPE rather than about a tier.
+            // freshness stays what the tiers measured: this is not a lag behind the index,
+            // and folding it into "partial" would make that word mean two different holes
+            // with two different remedies.
+            bool scopeTruncated = folderScope != null && folderScope.FolderTreeTruncated;
+
             return new SearchOutcome
             {
                 Hits = summaries,
                 Truncated = truncated,
-                Degraded = freshness == FreshMerge.FreshnessLive ? (bool?)null : true,
+                Degraded = freshness != FreshMerge.FreshnessLive || scopeTruncated ? true : (bool?)null,
                 Freshness = freshness,
                 IndexElapsedMs = indexResult.ElapsedMilliseconds,
                 Sweep = sweep,
@@ -1300,6 +1320,11 @@ namespace OutlookAI.Core.Services
                 FolderNamesMatched = folderScope.IsDelegateStore && folderScope.FolderPaths != null
                     ? folderScope.FolderPaths.Count
                     : (int?)null,
+
+                // Gap G4. folderNamesMatched is a count, and a count reads the same whether
+                // the walk behind it saw the whole mailbox or stopped at its cap - so the
+                // one thing that makes the number untrustworthy needs its own field.
+                FolderNamesTruncated = folderScope.FolderTreeTruncated ? true : (bool?)null,
             };
         }
 
@@ -3246,6 +3271,14 @@ namespace OutlookAI.Core.Services
             info.FoldersSkipped = perStore ? scoped?.FoldersSkipped ?? 0 : result.FoldersSkipped;
             info.FoldersFailed = perStore ? scoped?.FoldersFailed ?? 0 : result.FoldersFailed;
             info.RowsUnreadable = perStore ? scoped?.RowsUnreadable ?? 0 : result.RowsUnreadable;
+
+            // Gap G2, and attributed by the same rule as everything above it. A sweep that
+            // was SCOPED never reaches an unnameable store (it can be neither matched nor
+            // ruled out), so a non-zero count here can only have come from an all-stores
+            // sweep - which the cache may well be serving to a store-scoped request. Reading
+            // it there would report another store's naming failure inside this store's
+            // answer, which is the cross-store leak the per-store buckets exist to prevent.
+            info.StoresUnnamed = !perStore && result.StoresUnnamed > 0 ? result.StoresUnnamed : (int?)null;
             int absent = perStore ? scoped?.FoldersAbsent ?? 0 : result.FoldersAbsent;
             info.FoldersAbsent = absent > 0 ? absent : (int?)null;
 
@@ -5400,6 +5433,11 @@ namespace OutlookAI.Core.Services
                 storeViews.Add(new StoreView
                 {
                     DisplayName = store.DisplayName,
+
+                    // Gap G2: this tool is where an agent is told what the 'store' argument
+                    // may be, so a label printed here without the flag beside it would be
+                    // read as a usable store name - and it is the one name that is not.
+                    NameUnreadable = store.NameUnreadable ? true : (bool?)null,
                     IsDelegate = isDelegate,
                     IsCachedExchange = store.IsCachedExchange,
                     ExchangeStoreType = store.ExchangeStoreType,
@@ -5516,7 +5554,7 @@ namespace OutlookAI.Core.Services
                 offset = 0;
             }
 
-            IReadOnlyList<ComFolderInfo> folders = _gateway.Run(s => s.ListFolders(store, FolderWalkAbsoluteCap));
+            ComFolderTree tree = _gateway.Run(s => s.ListFolders(store, FolderWalkAbsoluteCap));
 
             // Gap G1. A store name that matched nothing produced folderTotal: 0,
             // truncated: false and no error - indistinguishable from a store that is there
@@ -5529,19 +5567,70 @@ namespace OutlookAI.Core.Services
             // answer. An empty tree from a store that IS in the list stays an empty tree with
             // no error - a store whose root has no subfolders is a real thing, and inventing
             // a failure for it would be the mirror of the defect.
-            if (store != null && folders.Count == 0)
+            if (store != null && tree.Folders.Count == 0)
             {
-                IReadOnlyList<string> known = _gateway.Run(s => GetStoreDetails(s))
-                    .Select(d => d.DisplayName)
-                    .ToList();
-                string? refusal = DescribeUnresolvedFolderStore(store, known);
+                IReadOnlyList<ComStoreDetail> details = _gateway.Run(s => GetStoreDetails(s));
+                string? refusal = DescribeUnresolvedFolderStore(
+                    store,
+                    details.Where(d => !d.NameUnreadable).Select(d => d.DisplayName).ToList(),
+                    details.Count(d => d.NameUnreadable));
                 if (refusal != null)
                 {
                     throw new ArgumentException(refusal, nameof(store));
                 }
             }
 
-            return PageFolders(folders, offset);
+            return PageFolders(tree, offset);
+        }
+
+        /// <summary>
+        /// What to say when the freshness sweep covered a store Outlook would not name (gap
+        /// G2), or null when every store named itself.
+        /// <para>
+        /// It raises no coverage code and does not degrade the search on purpose: the store
+        /// IS swept, so nothing is missing from the answer. What the caller loses is the
+        /// ability to ASK about it again - every scope in this server is keyed by a display
+        /// name - and that is a fact about the next call rather than a hole in this one.
+        /// </para>
+        /// </summary>
+        public static string? DescribeUnnamedStores(int? storesUnnamed)
+        {
+            if (storesUnnamed == null || storesUnnamed <= 0)
+            {
+                return null;
+            }
+
+            return storesUnnamed.Value.ToString(CultureInfo.InvariantCulture)
+                + " store(s) in this profile would not report a display name to Outlook. Their mail IS in this answer "
+                + "(the freshness sweep covered them under '" + StoreNaming.UnnamedStorePrefix
+                + "N)' labels), but they cannot be used as a 'store' scope, and hits from them carry that label "
+                + "instead of a real store name. list_folders shows their folder trees.";
+        }
+
+        /// <summary>
+        /// What to say when a delegate folder scope was built from a folder walk that hit its
+        /// own bound (gap G4), or null when it was not.
+        /// <para>
+        /// The remedy is the shape of the defect: the delegate index namespace is flat, so
+        /// the scope is an OR of folder NAMES, and a name the walk never reached is a folder
+        /// no tier looks in. Naming one folder at a time re-walks a smaller tree; exhaustive
+        /// bypasses the index and its name matching entirely.
+        /// </para>
+        /// </summary>
+        public static string? DescribeTruncatedFolderNames(FolderScopeResolution? folderScope)
+        {
+            if (folderScope == null || !folderScope.FolderTreeTruncated)
+            {
+                return null;
+            }
+
+            return "INCOMPLETE SCOPE - TELL THE USER: this shared/delegate mailbox's folder tree could not be walked "
+                + "in full (it hit the " + FolderWalkAbsoluteCap.ToString(CultureInfo.InvariantCulture)
+                + "-folder walk cap or the "
+                + OutlookComSession.FolderWalkDepthGuard.ToString(CultureInfo.InvariantCulture)
+                + "-level depth guard), and a delegate folder scope can only be matched by folder "
+                + "NAME - so folders the walk never reached were searched by no tier. Narrow to a single folder with "
+                + "include_subfolders:false, or use exhaustive:true with store plus folder/after bounds.";
         }
 
         /// <summary>
@@ -5556,17 +5645,40 @@ namespace OutlookAI.Core.Services
         /// </para>
         /// <para>
         /// <paramref name="knownStores"/> comes from the same COM enumeration
-        /// <c>ListFolders</c> itself walks, so the two agree by construction: a store whose
-        /// DisplayName cannot be read is absent from both, and "not found under that name" is
-        /// then still true (gap G2 is the separate defect that such a store is invisible at
-        /// all, and this does not touch it).
+        /// <c>ListFolders</c> itself walks, so the two agree by construction. It holds the
+        /// stores that reported a NAME; <paramref name="unnamedStores"/> counts the rest,
+        /// and it is what stops this refusal asserting more than it knows. Until gap G2 was
+        /// closed such a store was absent from every list in this server, so "not found in
+        /// Outlook" was said with certainty about a profile that might well have held it
+        /// under a name nothing could read.
         /// </para>
         /// </summary>
-        public static string? DescribeUnresolvedFolderStore(string requestedStore, IReadOnlyList<string>? knownStores)
+        /// <param name="requestedStore">The store scope as the caller wrote it.</param>
+        /// <param name="knownStores">Stores Outlook reported a display name for.</param>
+        /// <param name="unnamedStores">
+        /// How many stores Outlook has whose display name could not be read (gap G2). Any of
+        /// them could be the requested one, so a non-zero count turns the refusal from a
+        /// verdict into a report of what could and could not be established.
+        /// </param>
+        public static string? DescribeUnresolvedFolderStore(
+            string requestedStore, IReadOnlyList<string>? knownStores, int unnamedStores = 0)
         {
             if (requestedStore == null)
             {
                 throw new ArgumentNullException(nameof(requestedStore));
+            }
+
+            if (StoreNaming.IsUnnamedStoreLabel(requestedStore))
+            {
+                // The caller read a label out of a payload and passed it back as a scope,
+                // which is the one wrong turn this label makes possible - so it gets the
+                // answer that fits, rather than the "check for a typo" a generic refusal
+                // would send it hunting for. A scope is matched against DisplayName, and
+                // DisplayName is exactly what this store would not report.
+                return "'" + requestedStore + "' is a placeholder this server prints for a store whose display name "
+                    + "Outlook would not report - not a name, and it cannot be used as a scope, because a store scope "
+                    + "is matched against the display name that could not be read. Search without 'store' to include "
+                    + "that store's mail, or use exhaustive:true with a folder bound.";
             }
 
             IReadOnlyList<string> known = knownStores ?? Array.Empty<string>();
@@ -5584,6 +5696,12 @@ namespace OutlookAI.Core.Services
                 + (known.Count > 0
                     ? "Known stores: " + string.Join(", ", known) + ". "
                     : "Outlook reported no stores at all. ")
+                + (unnamedStores > 0
+                    ? unnamedStores.ToString(CultureInfo.InvariantCulture)
+                        + " further store(s) would not report a display name, so this one cannot be ruled out among "
+                        + "them; list_folders without 'store' lists them under '" + StoreNaming.UnnamedStorePrefix
+                        + "N)' labels. "
+                    : string.Empty)
                 + "Use list_accounts for the full store list.";
         }
 
@@ -5592,11 +5710,11 @@ namespace OutlookAI.Core.Services
         /// flattened walk at [offset, offset + <see cref="FoldersPerCallCap"/>) and
         /// derives the has-more contract (truncated + nextOffset + total).
         /// </summary>
-        public static FoldersOutcome PageFolders(IReadOnlyList<ComFolderInfo> folders, int offset)
+        public static FoldersOutcome PageFolders(ComFolderTree tree, int offset)
         {
-            if (folders == null)
+            if (tree == null)
             {
-                throw new ArgumentNullException(nameof(folders));
+                throw new ArgumentNullException(nameof(tree));
             }
 
             if (offset < 0)
@@ -5604,6 +5722,7 @@ namespace OutlookAI.Core.Services
                 offset = 0;
             }
 
+            IReadOnlyList<ComFolderInfo> folders = tree.Folders;
             int end = (int)Math.Min((long)offset + FoldersPerCallCap, folders.Count);
             List<ComFolderInfo> page = new List<ComFolderInfo>(Math.Max(0, end - offset));
             for (int i = offset; i < end; i++)
@@ -5616,6 +5735,11 @@ namespace OutlookAI.Core.Services
                 .Select(g => new StoreFoldersView
                 {
                     Store = g.Key,
+
+                    // Gap G2: the label is in the payload, so what it IS has to be there
+                    // beside it - an agent that reads it as a store name will pass it back
+                    // as a scope and be refused for a reason it has no way to guess.
+                    NameUnreadable = StoreNaming.IsUnnamedStoreLabel(g.Key) ? true : (bool?)null,
                     Folders = g.Select(f => new FolderView
                     {
                         Path = f.Path,
@@ -5625,15 +5749,81 @@ namespace OutlookAI.Core.Services
                 })
                 .ToList();
 
-            bool truncated = end < folders.Count;
+            // Gap G3. This was `end < folders.Count` alone - computed against the list the
+            // WALK had already truncated, so the one truncation it could never see was the
+            // one that lost whole folders rather than merely deferring them to a later page.
+            bool morePages = end < folders.Count;
+            bool walkCut = tree.WalkCapReached || tree.DepthLimitReached;
             return new FoldersOutcome
             {
                 Stores = byStore,
                 FolderTotal = folders.Count,
                 Offset = offset > 0 ? offset : (int?)null,
-                Truncated = truncated,
-                NextOffset = truncated ? end : (int?)null,
+                Truncated = morePages || walkCut,
+
+                // Only the pageable half gets a continuation: the next call re-walks and
+                // stops at the same cap, so offering an offset past a walk cut would be an
+                // instruction that cannot work.
+                NextOffset = morePages ? end : (int?)null,
+                WalkCapReached = tree.WalkCapReached ? true : (bool?)null,
+                DepthLimitReached = tree.DepthLimitReached ? true : (bool?)null,
+                StoresUnnamed = tree.StoresUnnamed > 0 ? tree.StoresUnnamed : (int?)null,
+                StoresUnnamedExcluded = tree.StoresUnnamedExcluded > 0 ? tree.StoresUnnamedExcluded : (int?)null,
+                Advice = DescribeFolderListingCoverage(
+                    tree.WalkCapReached, tree.DepthLimitReached, tree.StoresUnnamed, tree.StoresUnnamedExcluded),
             };
+        }
+
+        /// <summary>
+        /// The prose half of what <c>list_folders</c> could not deliver - one sentence per
+        /// fact, each naming the remedy, in the same relationship to the flags beside it that
+        /// <see cref="DescribeSweepCoverage"/> has to the sweep's coverage codes: the flags
+        /// are what software branches on, these are what a person is told.
+        /// <para>
+        /// Pure and public so T1 pins the wording; reaching any of these states for real
+        /// needs a profile with 10 000 folders, a cyclic folder tree, or a store whose
+        /// DisplayName read fails - none of which a CI runner has.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string>? DescribeFolderListingCoverage(
+            bool walkCapReached, bool depthLimitReached, int storesUnnamed, int storesUnnamedExcluded)
+        {
+            List<string> advice = new List<string>();
+            if (walkCapReached)
+            {
+                advice.Add("INCOMPLETE LISTING - the folder walk stopped at its "
+                    + FolderWalkAbsoluteCap.ToString(CultureInfo.InvariantCulture)
+                    + "-folder cap, so folders (and possibly whole stores, which are walked one after another) are "
+                    + "missing from this tree. Paging cannot reach them - the next call re-walks and stops in the "
+                    + "same place - so list one store at a time with 'store'.");
+            }
+
+            if (depthLimitReached)
+            {
+                advice.Add("INCOMPLETE LISTING - folders nested deeper than "
+                    + OutlookComSession.FolderWalkDepthGuard.ToString(CultureInfo.InvariantCulture)
+                    + " levels were refused, so a subtree is missing. That depth means a pathological or cyclic "
+                    + "folder tree; the guard is what keeps the walk from taking the process down.");
+            }
+
+            if (storesUnnamed > 0)
+            {
+                advice.Add(storesUnnamed.ToString(CultureInfo.InvariantCulture)
+                    + " store(s) would not report a display name and are listed under '" + StoreNaming.UnnamedStorePrefix
+                    + "N)' labels (nameUnreadable: true). Their folders are real and are listed; the LABEL is not a "
+                    + "name and cannot be passed back as 'store' to search or list_folders, because a store scope is "
+                    + "matched against the display name that could not be read. Search without 'store' to include "
+                    + "their mail.");
+            }
+
+            if (storesUnnamedExcluded > 0)
+            {
+                advice.Add(storesUnnamedExcluded.ToString(CultureInfo.InvariantCulture)
+                    + " store(s) would not report a display name, so this store-scoped listing could neither include "
+                    + "them nor rule them out. Call list_folders without 'store' to see them.");
+            }
+
+            return advice.Count == 0 ? null : advice;
         }
 
         // ------------------------------------------------------------------ hit cache + location
@@ -6090,8 +6280,9 @@ namespace OutlookAI.Core.Services
                     // The COM tree is needed only for a delegate FOLDER scope: to map the
                     // requested subtree onto the flat leaf names it contains, and to spot
                     // leaf names the flat namespace merges.
-                    IReadOnlyList<string>? tree = folder == null ? null : TryGetFolderPaths(store);
-                    return FolderScopeResolver.ForDelegateStore(delegateScope, folder, includeSubfolders, tree);
+                    ComFolderPathList? tree = folder == null ? null : TryGetFolderPaths(store);
+                    return FolderScopeResolver.ForDelegateStore(
+                        delegateScope, folder, includeSubfolders, tree?.Paths, tree?.Incomplete ?? false);
                 }
             }
 
@@ -6156,22 +6347,30 @@ namespace OutlookAI.Core.Services
         /// Store-relative folder paths of one store from COM, cached for
         /// <see cref="FolderPathCacheTtl"/>. Returns null when Outlook cannot be reached -
         /// the caller then widens rather than narrowing on a guess.
+        /// <para>
+        /// The walk's BOUNDS travel with the paths (gap G4). A delegate folder scope is an
+        /// OR of folder names taken from this list, so a list the walk cut short narrows the
+        /// search silently - and a bare list cannot say whether it ended because the mailbox
+        /// did. The truncation flag is cached with the paths for the same reason they are:
+        /// the next caller inside the TTL is answered from this entry and must be told the
+        /// same thing.
+        /// </para>
         /// </summary>
-        private IReadOnlyList<string>? TryGetFolderPaths(string store)
+        private ComFolderPathList? TryGetFolderPaths(string store)
         {
             lock (_catalogLock)
             {
                 // MonotonicClock: the stamp is only ever subtracted from a later reading of
                 // the same clock to get the entry's age, never compared with anything outside
                 // this process.
-                if (_folderPaths.TryGetValue(store, out (IReadOnlyList<string> Paths, DateTime FetchedUtc) cached)
+                if (_folderPaths.TryGetValue(store, out (ComFolderPathList Paths, DateTime FetchedUtc) cached)
                     && MonotonicClock.UtcNow - cached.FetchedUtc <= FolderPathCacheTtl)
                 {
                     return cached.Paths;
                 }
             }
 
-            IReadOnlyList<string> paths;
+            ComFolderPathList paths;
             try
             {
                 paths = _gateway.Run(s => s.ListFolderPaths(store, FolderWalkAbsoluteCap));
@@ -6181,7 +6380,7 @@ namespace OutlookAI.Core.Services
                 return null;
             }
 
-            if (paths.Count == 0)
+            if (paths.Paths.Count == 0)
             {
                 return null;
             }
