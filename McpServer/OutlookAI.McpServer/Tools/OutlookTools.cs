@@ -55,18 +55,23 @@ public static class OutlookTools
         WriteIndented = false,
     };
 
-    // The tool description is capped by the CLIENT, not by the protocol: Claude Code
-    // truncates tool descriptions and server instructions at 2 KB each, positionally and
-    // silently, so a description that outgrows the cap loses its tail without any
-    // diagnostic. This one used to run to 3912 characters and the cut landed mid-word
-    // inside DEGRADED RESULTS, taking the rest of that instruction plus the folder-scope,
-    // results and exhaustive sections with it. What stays here is what a caller needs
-    // BEFORE the call (purpose, matching semantics) plus the one thing that is a shipped
-    // behaviour the agent must act on (degraded=true is a SUCCESS the user has to be told
-    // about). Everything that describes the ANSWER moved to where the answer already
+    // The tool description is capped by the CLIENT, not by the protocol: Claude Code cuts
+    // a tool description at 2048 UTF-16 code units, positionally and silently, so a
+    // description that outgrows the cap loses its tail without any diagnostic. That is
+    // measured, not documented-and-hoped: 2026-08-18, client 2.1.234, read off the client's
+    // own outbound request (DescriptionBudgetCiTests.ClientTruncationBudget carries the
+    // numbers and the caveats). This description used to run to 3912 characters and the cut
+    // landed mid-word inside DEGRADED RESULTS, taking the rest of that instruction plus the
+    // folder-scope, results and exhaustive sections with it. What stays here is what a
+    // caller needs BEFORE the call (purpose, matching semantics) plus the one thing that is
+    // a shipped behaviour the agent must act on (degraded=true is a SUCCESS the user has to
+    // be told about). Everything that describes the ANSWER moved to where the answer already
     // reports it - the advice/scope/sweep blocks - and everything that is per-argument
-    // how-to-call detail moved onto the arguments, which carry their own budgets.
-    // DescriptionBudgetCiTests measures all of it from the wire.
+    // how-to-call detail moved onto the arguments. The same measurement showed the cut is
+    // PER STRING with no per-tool bucket, so that move really did buy room rather than
+    // shuffling text between two halves of one budget; the arguments carry their own budget,
+    // which is a house limit rather than a client one. DescriptionBudgetCiTests measures all
+    // of it from the wire.
     //
     // DEGRADED RESULTS was rewritten when freshness gained its third value: it used to
     // state degraded=true and freshness="index-only" as one fact, which stopped being true
@@ -176,8 +181,9 @@ public static class OutlookTools
     // reply newer than the index frontier, and the payload had no degraded/freshness field
     // to say so. The paragraph pays for itself out of the old text - the sentence explaining
     // that the COM walk is a FALLBACK is gone, because it no longer is one - and the whole
-    // description still sits far inside the 2048-character client truncation budget that
-    // DescriptionBudgetCiTests measures from the wire.
+    // description still sits far inside the 2048-code-unit client truncation budget that
+    // DescriptionBudgetCiTests measures from the wire (measured client behaviour, 2.1.234,
+    // 2026-08-18 - see DescriptionBudgetCiTests.ClientTruncationBudget).
     [McpServerTool(Name = "thread")]
     [Description("Fetch the full conversation of a mail. Two complementary lookup keys - pass BOTH when available: "
         + "conversation_id is the fast index path (every search hit already carries it, no locate cost), and id anchors "
@@ -287,16 +293,17 @@ public static class OutlookTools
     // liveness wording itself, problems spells out a hung Outlook, a COM host restart and
     // its lastFailure, a stopped WSearch and an unwritable audit log, and advice carries the
     // index-freshness guidance including that search covers a gap with its own sweep. Kept
-    // deliberately small because the client truncates descriptions at 2 KB silently and
-    // mid-sentence; this one had reached 80% of that, and a later insertion had already
-    // landed mid-sentence inside the comHost paragraph, splitting it in two.
-    // DescriptionBudgetCiTests measures it from the wire.
+    // deliberately small because the client truncates descriptions at 2048 UTF-16 code units
+    // silently and mid-sentence (measured 2026-08-18 against client 2.1.234); this one had
+    // reached 80% of that, and a later insertion had already landed mid-sentence inside the
+    // comHost paragraph, splitting it in two. DescriptionBudgetCiTests measures it from the
+    // wire.
     //
     // officeVersion follows that same rule and is why it is only NAMED here: the field costs
     // eight words in the coverage list plus four in the degradation list, and the sentence
     // explaining what an absent one implies lives in HealthReporting.NoOfficeVersionProblem,
     // which the payload already carries whenever it applies. Measured after that addition:
-    // 1445 of the 2048 client cap, 91 below the 1536 warn line.
+    // 1445 units of the 2048 client cap, 91 below the 1536 warn line.
     [McpServerTool(Name = "outlook_health")]
     [Description("One-call, read-only health and freshness report covering everything this server depends on: Outlook "
         + "itself (running, installed version, its Office registry major as officeVersion, probed COM session liveness, "

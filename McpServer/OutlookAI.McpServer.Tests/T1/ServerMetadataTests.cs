@@ -11,8 +11,10 @@ namespace OutlookAI.McpServer.Tests.T1;
 public sealed class ServerMetadataTests
 {
     /// <summary>
-    /// The text loads into EVERY session on the machine, so it must stay short. Claude
-    /// Code truncates server instructions at 2 KB; our own budget is far tighter.
+    /// The text loads into EVERY session on the machine, so it must stay short. Claude Code
+    /// cuts server instructions at 2048 UTF-16 code units (measured 2026-08-18 against client
+    /// 2.1.234, see T3 <c>DescriptionBudgetCiTests</c>); our own budget is far tighter,
+    /// because the cost here is per session rather than per call.
     /// </summary>
     [Fact]
     public void Instructions_StayWithinPassiveLoadBudget()

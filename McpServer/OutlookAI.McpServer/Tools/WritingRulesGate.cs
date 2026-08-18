@@ -17,9 +17,12 @@ namespace OutlookAI.McpServer.Tools;
 /// It cannot travel on the schema. Everything a client reads as prose - the server
 /// <c>instructions</c>, a tool <c>description</c>, a parameter <c>description</c> - is built
 /// from compile-time constants, so it physically cannot carry text a user edits at runtime;
-/// and those strings are capped anyway (Claude Code truncates them at 2 KB, silently and
-/// mid-sentence, which <c>DescriptionBudgetCiTests</c> guards). The rules run to pages and
-/// can change between two tool calls.
+/// and the two the client reads as prose are capped anyway (Claude Code cuts a tool
+/// <c>description</c> and the server <c>instructions</c> at 2048 UTF-16 code units, silently
+/// and mid-sentence - measured 2026-08-18 against client 2.1.234, which
+/// <c>DescriptionBudgetCiTests</c> guards; parameter descriptions turn out not to be cut at
+/// all, but they are compile-time constants too, so that changes nothing here). The rules run
+/// to pages and can change between two tool calls.
 /// </para>
 /// <para>
 /// So they travel in an ERROR, which is the one channel that is per-call, unbudgeted, and

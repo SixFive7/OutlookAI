@@ -35,25 +35,6 @@ the general autonomy grant.
 
 ---
 
-## Q2 - The 2 KB description cap is trusted, not verified
-
-Every description-budget decision - including cutting `search` from 3912 to 1798 characters - rests
-on Claude Code's documentation saying it "truncates tool descriptions and server instructions at 2KB
-each". That is the vendor documenting its own client. I have never observed it truncating our
-strings, and the documentation does not say whether the 2 KB is characters or UTF-8 bytes, which is
-why the guardrail measures both and fails on the larger.
-
-**Options.** Trust the documentation and move on; verify empirically by shipping a deliberately
-over-long description and inspecting what the model actually receives; or ask Anthropic.
-
-**Recommendation.** Trust it. The failure mode of being wrong in the conservative direction is a
-slightly terser description; the failure mode of being wrong the other way is silent loss of
-instructions, which we have already seen produce a real defect.
-
-**Default if unanswered.** Trust the documentation, keep the guardrail measuring both units.
-
----
-
 ## Q3 - Whether `search` should stay this close to the cap
 
 `search` is at 1791 of 2048 - 87%, inside the guardrail's warn tier. It is the most-used tool and
@@ -119,33 +100,6 @@ both readings so the history is legible.
 
 **Default if unanswered.** The reversal stands, and the test carries the explanation.
 
-## Q6 - Does the 2 KB cap apply to parameter descriptions, and is it per string or per tool?
-
-The documented sentence covers two surfaces: *"Claude Code truncates tool descriptions and server
-instructions at 2KB each."* Our guardrail applies 2048 to a third - every
-`inputSchema.properties[*].description` - which is an extrapolation I made without flagging it.
-
-Two separate unknowns sit here, and only one is cheap to be wrong about.
-
-**Do parameter descriptions have a cap at all?** If not, we are merely terser than necessary. Fine.
-
-**Is the cap per STRING or per serialized tool?** This one matters. Our guard assumes per string. If
-the 2 KB actually applies to a tool's whole entry in `tools/list` - description plus schema - then
-`search` at 1791 characters plus 831 on `folder`, 609 on `exhaustive` and 569 on
-`include_attachment_hits` is far over, and the trim that moved detail from the description onto the
-parameters moved it from one capped bucket into the same capped bucket. That would mean a fix I
-reported as solving the problem solved nothing.
-
-**Options.** Keep the conservative per-string guard and accept the unknown; verify empirically by
-overshooting deliberately and observing what the model receives; ask Anthropic.
-
-**Recommendation.** Keep the per-string guard - it costs nothing and errs safe. But settle the
-per-tool question, because unlike Q2 its downside is not terser text, it is work that did not do what
-it claimed. The same overshoot experiment answers both.
-
-**Default if unanswered.** Guard stays as is; the uncertainty stays recorded here rather than
-implied to be settled.
-
 ## Q7 - Three follow-ups the freshness work deliberately did not decide
 
 Raised by the agent that added the `no_index_frontier` state; none blocks anything.
@@ -202,6 +156,63 @@ reaches no payload, so whatever is decided, the count of what a tier refused sho
 
 Answers move here with the date and the reasoning, so a future reader sees not just what was chosen
 but why, and what the alternative was.
+
+### 2026-08-18 - Q2 and Q6 ANSWERED by measurement, not by reasoning
+
+**The questions.** Q2 asked whether Claude Code's documented "truncates tool descriptions and server
+instructions at 2KB each" could be trusted at all, and in which unit - characters or UTF-8 bytes -
+since the guardrail hedged by measuring both and failing on the larger. Q6 asked two things the same
+sentence leaves open: whether `inputSchema.properties[*].description` is capped at all, and whether
+the 2 KB is per STRING or per serialized tool. Q6's second half was the one that mattered, because
+under the per-tool reading the 2026-08-17 trim - moving `search` detail out of the description and
+onto its arguments - would have moved text from one capped bucket into the same capped bucket, and a
+fix reported as solving the problem would have solved nothing.
+
+**The evidence.** An interception experiment against Claude Code `2.1.234` on Windows 11, run
+2026-08-18: a local HTTP endpoint stood in for the API (`ANTHROPIC_BASE_URL` plus a throwaway
+`ANTHROPIC_AUTH_TOKEN`), captured the client's outbound `POST /v1/messages`, and the `tools` array
+the model actually receives was read byte for byte. Reproduced against two models, byte-identical,
+because the cut is client-side. Not a model's recollection of what it received - the wire.
+
+**The answers.**
+
+1. **Per string. There is no per-tool bucket at all.** A probe entry of 17,411 bytes and another of
+   20,172 bytes both arrived intact, as did 202 tools totalling 348,314 bytes of serialized entries
+   in one request. **So Q6's dangerous reading is disproved and the `search` trim was valid** - it
+   moved text out of a capped string into an uncapped one. (348 KB establishes no cap at 348 KB, not
+   that none exists above it.)
+2. **UTF-16 code units, never bytes.** A 2,048-character description weighing 6,004 UTF-8 bytes
+   arrived whole, and two strings of very different byte lengths were cut at the same CHARACTER
+   offset. Units rather than code points, and the cut is surrogate-aware (2,047 rather than splitting
+   a pair).
+3. **Parameter descriptions are not capped at any length.** 20,000 characters through intact. The
+   documentation's silence about `inputSchema` is accurate, not an omission.
+4. **Boundary:** cut when `length > 2048`, so exactly 2,048 passes and 2,049 does not - measured as a
+   triple in one run. A cut string reaches the model as its exact prefix plus a 13-unit marker
+   (U+2026 HORIZONTAL ELLIPSIS, space, `[truncated]`), so 2,061 units in total.
+5. **The marker is invisible to us.** It is appended after our JSON-RPC response has left, with no
+   error, notification or re-request: **a server cannot detect its own truncation**, and no test in
+   this repo ever will. A model can, so "did that arrive whole?" is answerable by asking and
+   unanswerable by logging.
+
+**What changed as a result.** `DescriptionBudgetCiTests` now measures UTF-16 code units alone
+(`string.Length`) instead of `max(chars, UTF-8 bytes)`. Failing on bytes could only ever produce
+FALSE failures - it rejected text the client delivers whole - and on today's surface it changed
+nothing at all: all 132 wire strings are pure ASCII, so no measured size moved and the warn tier is
+unchanged (`search` 1791, `update_draft` 1593). The guard is now right rather than accidentally
+harmless. The 2048 applied to parameter descriptions is **kept but relabelled** as
+`HouseParameterBudget`, a separate constant with its own reasoning: it floats with a client version
+we do not control and get no signal about, and `BodyHtmlHint` is one constant reused across five
+drafting tools, so one over-long shared parameter description would be five silent truncations the
+day a release starts cutting schemas. The marker is recorded as `ClientTruncationMarker` - not as a
+detector, which is impossible, but because it is the string a human greps for in a transcript when
+something looks cut - and the guard now also fails if a shipped description ever CONTAINS it, which
+would mean already-truncated text was copied back into source.
+
+**The caveat that replaces the old uncertainty.** This is one client at one version, and nothing
+watches it: no version header, no notification, no server-side signal when it changes. The number is
+only as current as its date. Re-measure at client-bump time; the change worth re-measuring for is a
+release that introduces a per-tool bucket, which would cut large schemas on day one and silently.
 
 ### 2026-08-18, autonomous - a measured defect jumped the queue
 

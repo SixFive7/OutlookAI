@@ -114,13 +114,21 @@ public sealed class SearchSchemaCiTests
     /// without changing the sentence (or vice versa) must fail here.
     /// <para>
     /// Re-homed 2026-08-17 (client-truncation fix, see DescriptionBudgetCiTests): the tool
-    /// description had grown to 3912 characters, and Claude Code truncates tool
-    /// descriptions at 2 KB - positionally and silently - so from "only mail f|rom roughly
-    /// the last few minutes" onward NOTHING below reached the model. Every claim pinned
-    /// here still has to be on the wire; several are now pinned on the ARGUMENT that owns
-    /// them (the schema's own, separately budgeted surface) instead of on the tool
-    /// description, and the ones that only describe the ANSWER are pinned against the
-    /// runtime payload that already reports them.
+    /// description had grown to 3912 characters, and Claude Code cuts a tool description at
+    /// 2048 UTF-16 code units - positionally and silently - so from "only mail f|rom roughly
+    /// the last few minutes" onward NOTHING below reached the model. Every claim pinned here
+    /// still has to be on the wire; several are now pinned on the ARGUMENT that owns them
+    /// (the schema's own, separately budgeted surface) instead of on the tool description,
+    /// and the ones that only describe the ANSWER are pinned against the runtime payload that
+    /// already reports them.
+    /// </para>
+    /// <para>
+    /// The re-homing was VALID, and that is now measured rather than hoped. 2026-08-18,
+    /// client 2.1.234, read off the client's own outbound request: the cut is PER STRING and
+    /// there is no per-tool bucket at all - a 17,411-byte serialized entry arrived intact -
+    /// so moving detail from the description onto the arguments moved it out of a capped
+    /// string into an uncapped one, rather than from one capped bucket into the same bucket.
+    /// The opposite reading, which would have made this trim a no-op, is disproved.
     /// </para>
     /// </summary>
     [Fact]
@@ -170,7 +178,7 @@ public sealed class SearchSchemaCiTests
 
         // DEGRADED RESULTS is the one paragraph here that is a shipped BEHAVIOR the agent
         // must act on rather than documentation: degraded=true is a SUCCESSFUL result and
-        // the user has to be told. It was the paragraph the 2 KB cut landed inside, so it
+        // the user has to be told. It was the paragraph the client's cut landed inside, so it
         // is now pinned word for word rather than by a single keyword.
         Assert.Contains("degraded=true", description, StringComparison.Ordinal);
         Assert.Contains("freshness=\"index-only\"", description, StringComparison.Ordinal);
@@ -190,8 +198,10 @@ public sealed class SearchSchemaCiTests
         // check failed to run.
         Assert.DoesNotContain("when the live check cannot run", description, StringComparison.OrdinalIgnoreCase);
 
-        // ... and it must survive the cut, not merely exist. A client that truncates at
-        // 2 KB must still receive the whole instruction.
+        // ... and it must survive the cut, not merely exist. A client that cuts at 2048
+        // UTF-16 code units must still receive the whole instruction. The comparison is in
+        // the client's own unit: IndexOf returns a UTF-16 offset and the budget is counted in
+        // UTF-16 code units, so the two are directly comparable with no conversion.
         int degradedEnd = description.IndexOf("outlook_health gives the full picture", StringComparison.Ordinal);
         Assert.True(degradedEnd >= 0, "the degraded-results instruction must be intact");
         Assert.True(

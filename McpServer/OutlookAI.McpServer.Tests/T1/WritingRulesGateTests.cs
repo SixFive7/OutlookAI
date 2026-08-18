@@ -9,7 +9,8 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// HKCU, without a server process, and without Outlook.
 /// <para>
 /// The gate exists because the user's writing rules cannot travel on the MCP schema - a
-/// description is a compile-time constant and is capped at 2 KB by the client, while the rules
+/// description is a compile-time constant and is capped at 2048 UTF-16 code units by the
+/// client (measured, not assumed - see T3 <c>DescriptionBudgetCiTests</c>), while the rules
 /// are user-edited, can run to pages, and can change between two tool calls. They travel in a
 /// rejection instead: the first drafting call of a server process is refused with the rules
 /// attached, and the retry goes through.

@@ -141,9 +141,11 @@ public sealed class Phase7CiToolShapeTests
             .ToDictionary(t => t.GetProperty("name").GetString()!, t => t);
 
         // search states the has-more contract on the 'top' argument that causes it
-        // (re-homed 2026-08-17: the tool description was over Claude Code's 2 KB client
-        // truncation cap, so its tail was being cut silently - see
-        // DescriptionBudgetCiTests). Same wire, same words, budgeted separately.
+        // (re-homed 2026-08-17: the tool description was over Claude Code's client truncation
+        // cap of 2048 UTF-16 code units, so its tail was being cut silently - see
+        // DescriptionBudgetCiTests). Same wire, same words, and measurably better placed: the
+        // 2026-08-18 capture of client 2.1.234 showed the cut is per string with no per-tool
+        // bucket, and that parameter descriptions are not cut at any length.
         string searchTop = tools["search"].GetProperty("inputSchema").GetProperty("properties")
             .GetProperty("top").GetProperty("description").GetString()!;
         Assert.Contains("truncated", searchTop, StringComparison.OrdinalIgnoreCase);
