@@ -357,6 +357,29 @@ public sealed class ComHostProtocolTests
     }
 
     [Fact]
+    public void ComSweepResult_CarriesTheUnsortedCappedFoldersAcrossTheWire()
+    {
+        // The sort failure is observed in the CHILD, where the table lives, and it decides
+        // WHICH advice sentence the parent emits about the cap (gap H2). Lost on the hop, the
+        // list reads as empty, the folder falls back into the ordinary capped set, and the
+        // parent goes back to telling the caller the OLDEST mail is what is missing - which
+        // is the false statement this whole field exists to retire.
+        ComSweepResult original = new ComSweepResult(
+            Array.Empty<ComMailBrief>(),
+            foldersSwept: 4,
+            foldersSkipped: 0,
+            itemCappedFolders: new[] { "alice@example.com/Inbox", "alice@example.com/Sent Items" },
+            itemCappedFoldersUnsorted: new[] { "alice@example.com/Sent Items" });
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComSweepResult? read = JsonSerializer.Deserialize<ComSweepResult>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Equal(2, read!.ItemCappedFolders.Count);
+        Assert.Equal(new[] { "alice@example.com/Sent Items" }, read.ItemCappedFoldersUnsorted);
+    }
+
+    [Fact]
     public void ComMailBrief_CarriesTheMessageClassAcrossTheWire()
     {
         // The snapshot is taken in the CHILD and the class decides a payload field in the

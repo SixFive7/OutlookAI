@@ -346,8 +346,39 @@ namespace OutlookAI.Core.Services
         /// Folders where the per-folder item cap (<c>SweepPerFolderCap</c>) truncated the
         /// window. The sweep reads newest-first, so the OLDEST fresh mail in those folders
         /// was dropped. Null when nothing was truncated.
+        /// <para>
+        /// That newest-first claim holds for the folders in this list MINUS
+        /// <see cref="ItemCappedFoldersUnsorted"/>; the two lists together are always the
+        /// whole capped set.
+        /// </para>
         /// </summary>
         public IReadOnlyList<string>? ItemCappedFolders { get; set; }
+
+        /// <summary>
+        /// The subset of <see cref="ItemCappedFolders"/> whose table Outlook would not sort
+        /// by received time, so the cap kept an ARBITRARY slice of the freshness window
+        /// rather than its newest end (gap H2). Null when every capped folder sorted.
+        /// <para>
+        /// It exists because a coverage code alone cannot carry a claim that is sometimes
+        /// false. <c>item_cap</c> means "a folder's window was truncated" and its advice
+        /// sentence says which part is missing - the oldest - which is what makes narrowing
+        /// with <c>after</c> a remedy and what an agent relays to the user. Outlook's
+        /// <c>Table.Sort</c> can fail (the property must exist as a column, and late-bound
+        /// COM turns E_INVALIDARG into an ArgumentException), and that failure was swallowed
+        /// on the grounds that an unsorted sweep still works. It does; the sentence does
+        /// not. An arbitrary cut leaves an arbitrary hole, so the caller is not merely told
+        /// less than the truth, it is told the wrong thing about which mail to go looking
+        /// for.
+        /// </para>
+        /// <para>
+        /// So the fact rides in the payload and both renderings are computed from it: the
+        /// folders named here raise <see cref="FreshMerge.GapItemCapUnsorted"/> and its own
+        /// sentence, the rest raise <see cref="FreshMerge.GapItemCap"/> and keep theirs, and
+        /// neither sentence can name a folder it is not true of
+        /// (<see cref="FreshMerge.SortedItemCappedFolders"/> is the one split both read).
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<string>? ItemCappedFoldersUnsorted { get; set; }
 
         /// <summary>
         /// True when the scoped sweep hit <c>MaxScopedSweepFolders</c> and stopped walking
@@ -428,6 +459,40 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Items in the window before term filtering.</summary>
         public int ItemsSeen { get; set; }
+
+        /// <summary>
+        /// <c>false</c> when this query's terms could have matched inside an attachment and
+        /// the sweep cannot look there (gap B2); null when the question does not arise - a
+        /// subject-only search, or one with no terms at all.
+        /// <para>
+        /// Never true, and that is deliberate rather than an oversight. The value is a
+        /// statement about the TIER, not about this particular sweep: the sweep reads
+        /// <c>MailItem.Subject</c> and <c>MailItem.Body</c> through COM and never opens an
+        /// attachment, so there is no state of the world in which it covers attachment text.
+        /// A field that is either <c>false</c> or absent says exactly that, and an agent
+        /// branching on <c>=== false</c> gets the right answer without having to know it.
+        /// </para>
+        /// <para>
+        /// WHY IT IS HERE. The attachment-ONLY search is refused outright and reported
+        /// (<c>sweep.error</c>, <c>freshness: "index-only"</c>, <c>degraded</c>). The
+        /// DEFAULT search said nothing: the index tier matches
+        /// <c>System.Search.Contents</c>, which is body PLUS attachment content, the sweep
+        /// re-matches subject and body only, and the merged answer then reports
+        /// <c>freshness: "live"</c> - so a term inside an attachment of mail that arrived
+        /// after the index frontier is invisible under the one word an agent reads as
+        /// "nothing is missing".
+        /// </para>
+        /// <para>
+        /// It raises no coverage code and does not degrade the search, and the reason is
+        /// arithmetic rather than taste: every gap code makes a search <c>partial</c>
+        /// (<c>FreshMerge.ClassifyFreshness</c> derives the verdict from the code list), and
+        /// this condition holds for nearly every search anyone runs. A flag that fires
+        /// always tells a caller nothing and devalues the flag that fires rarely. The
+        /// advice sentence is narrower still and fires only where the gap could actually be
+        /// hiding something - see <c>MailService.DescribeAttachmentTextGap</c>.
+        /// </para>
+        /// </summary>
+        public bool? AttachmentTextCovered { get; set; }
 
         /// <summary>Swept items dropped as already present in the index results.</summary>
         public int Duplicates { get; set; }
@@ -512,6 +577,38 @@ namespace OutlookAI.Core.Services
         /// Null when every filter could be evaluated on every item.
         /// </summary>
         public IReadOnlyList<string>? FiltersUnevaluated { get; set; }
+
+        /// <summary>
+        /// The request filters this mode could only apply AFTER its own result cap -
+        /// <c>from</c>, <c>unread_only</c>, <c>has_attachments</c>, in request order
+        /// (<see cref="FreshMerge.PostCapFilters"/>, gap F3). Null when the request passed
+        /// none.
+        /// <para>
+        /// The scan's <c>maxItems</c> is <c>top</c> and it counts items the DASL filter
+        /// matched. These three are read off the returned snapshots, so they thin the list
+        /// the cap already closed - which is how an exhaustive search returns 2 rows with
+        /// <see cref="Truncated"/> set while thousands of items match. Present whether or
+        /// not the cap fired, because it says how the answer was BUILT; it is the pairing
+        /// with <see cref="Truncated"/> that raises
+        /// <see cref="FreshMerge.ScanGapPostCapFilter"/>.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<string>? PostCapFilters { get; set; }
+
+        /// <summary>
+        /// Scanned items one of <see cref="PostCapFilters"/> evaluated and EXCLUDED - the
+        /// caller asked for them to go, so this is not a coverage hole and raises nothing on
+        /// its own (gap F3).
+        /// <para>
+        /// It is the size of the thinning, and it is what turns
+        /// <see cref="FreshMerge.ScanGapPostCapFilter"/> from an abstract warning into a
+        /// measurement: a scan that stopped at <c>top</c> = 25 and returned 2 rows spent 23
+        /// of its 25 on items the filter then dropped, so the cap was reached on candidates
+        /// rather than on results. Distinct from <see cref="ItemsFilterUnreadable"/>, which
+        /// counts items those filters could not be evaluated on at all.
+        /// </para>
+        /// </summary>
+        public int ItemsFilteredOut { get; set; }
 
         /// <summary>
         /// Every coverage hole this scan left, as machine-readable codes
@@ -619,6 +716,35 @@ namespace OutlookAI.Core.Services
         /// </para>
         /// </summary>
         public bool? StoreNotIndexed { get; set; }
+
+        /// <summary>
+        /// True when the index tier RAN, returned nothing, and its own probes then found no
+        /// indexed row at all under the requested <c>folder</c> bound while the store around
+        /// it does hold rows (gap G5). Null on every other search, including one where the
+        /// probes could not run.
+        /// <para>
+        /// It is the folder-level sibling of <see cref="StoreNotIndexed"/> and answers the
+        /// same question one scope down: can the index address what the caller named. The
+        /// two are not interchangeable - <c>storeNotIndexed</c> means no statement ran, this
+        /// means the statement ran and its folder predicate matched nothing - and either way
+        /// the consequence is the one worth branching on: for that scope this answer rests
+        /// on the freshness sweep alone, so nothing older than the sweep window is covered
+        /// and <c>exhaustive: true</c> is the way to read the folder in full.
+        /// </para>
+        /// <para>
+        /// It exists because the fact was PROSE-only and, worse, conditional on the merged
+        /// answer being completely empty - so one item the freshness sweep returned removed
+        /// the only trace of it. A swept item proves the folder resolves in COM, which is a
+        /// different tier and a different question.
+        /// </para>
+        /// <para>
+        /// It does not set <c>degraded</c>: a folder created minutes ago is genuinely absent
+        /// from the index and is not a defect, and the probes cannot tell that apart from a
+        /// path that does not resolve. Reporting the fact is the honest half; asserting a
+        /// hole would be a false alarm on every new folder.
+        /// </para>
+        /// </summary>
+        public bool? FolderNotIndexed { get; set; }
 
         /// <summary>Rows the SQL statement returned, before admission (the denominator of <see cref="RowsDropped"/>).</summary>
         public int RowsScanned { get; set; }

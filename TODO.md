@@ -512,6 +512,38 @@
   Read-only throughout - `list_folders`, `search`, `outlook_health`, `list_accounts`. No mailbox
   writes are needed for any of it.
 
+- [ ] **Verify the sweep's sort-failure detection against a live profile - the one half of H2 that T1 cannot reach.**
+  H2, G5, B2 and F3 of `Docs/completeness-gaps.md` were closed on 2026-08-18 and are pinned by T1
+  `SearchCoverageClaimTests` (20 tests driving the real `MailService` through a stand-in session
+  and index client, mutation-checked: five separate revert-one-line runs each fail exactly the
+  tests that own that line). Three of the four are settled by that, because the whole defect lived
+  above the COM call. H2 is not, and the gap is narrow and specific:
+
+  - **`SweepFolder`'s new `out bool sortApplied` is set inside the `catch` around
+    `Table.Sort`, and that catch has never been observed to fire on any machine here** - the
+    defect was found by reading the swallowed exception, not by hitting it. So the value the whole
+    row turns on is produced by a line no test executes. What IS pinned: the flag's journey across
+    the process boundary (`ComHostProtocolTests.ComSweepResult_CarriesTheUnsortedCappedFoldersAcrossTheWire`),
+    its per-store filtering in `ApplySweepCounters`, the code split, and both advice sentences.
+  - **What would provoke it is unknown.** `Table.Sort` needs the property present as a column, and
+    the code adds `urn:schemas:httpmail:datereceived` to `Columns` before sorting, so the ordinary
+    path cannot fail. Guesses worth trying, none verified: a folder whose `DefaultItemType` is mail
+    but whose contents are not, a folder on a store mid-reconnect, or a search folder. A cheaper
+    substitute is a temporary build that forces `sortApplied = false` and confirms the payload
+    end-to-end on the real profile.
+  - **What to confirm read-only**, once a folder can be made to both refuse the sort and exceed
+    `SweepPerFolderCap` (200 items in the freshness window - see the `EmptyIndexSweepWindow` row in
+    `Docs/magic-numbers.md` for how wide the window has to get): `sweep.itemCappedFolders` names the
+    folder, `sweep.itemCappedFoldersUnsorted` names it too, `sweep.coverageGaps` carries
+    `item_cap_unsorted` and NOT `item_cap`, and the advice contains the word ARBITRARY and neither
+    "newest-first" nor "OLDEST".
+
+  Also unmeasured, and cheap to settle on the dev profile while the above is open: how often the
+  G5 probes now run. The trigger widened from "the merged answer was empty" to "the index tier
+  returned no rows", which costs two TOP-1 statements per folder-scoped search that the index did
+  not answer. It was accepted on the standing rule that completeness outranks speed, so the number
+  is worth having rather than worth acting on.
+
 - [ ] **Retire v3 planning ignores** — once the local v3 planning files (`v3.MD`, `Docs/v3-probes/`) are no longer needed:
   - [ ] remove the "v3 planning documents" section at the bottom of `.gitignore`
   - [ ] delete the local plan-doc backup folder (location documented in v3.MD §0.8 D16 on the machine that holds it)

@@ -1678,7 +1678,8 @@ namespace OutlookAI.Core.Com
                                 onlyStoreDisplayName!, sweptFolders.Count, skipped, tally.Failed, 0,
                                 tally.RowsUnreadable),
                         },
-                        rowsUnreadable: tally.RowsUnreadable);
+                        rowsUnreadable: tally.RowsUnreadable,
+                        itemCappedFoldersUnsorted: tally.ItemCappedUnsorted);
                 }
 
                 // The counters, attributed to the store they happened in. The scalar
@@ -1764,7 +1765,8 @@ namespace OutlookAI.Core.Com
                                     SweepOutcome outcome = SweepFolder(
                                         ns, folder!, storeName, storeId, folderKind,
                                         WindowFor(windows, storeName, sinceUtc), perFolderCap, includeBodies, items,
-                                        out int rowsUnreadable);
+                                        out int rowsUnreadable,
+                                        out bool sortApplied);
 
                                     // Counted whatever the outcome, and attributed to this
                                     // store: rows lost inside a folder are this store's
@@ -1789,6 +1791,14 @@ namespace OutlookAI.Core.Com
                                     if (outcome == SweepOutcome.ItemCapped)
                                     {
                                         tally.ItemCapped.Add(label);
+                                        if (!sortApplied)
+                                        {
+                                            // Only where BOTH happened: an unsorted folder
+                                            // that stayed under the cap lost nothing, and a
+                                            // sorted folder that hit it lost its oldest end,
+                                            // which is exactly what the advice already says.
+                                            tally.ItemCappedUnsorted.Add(label);
+                                        }
                                     }
                                 }
                                 catch (Exception ex) when (IsComCallFailure(ex))
@@ -1829,7 +1839,7 @@ namespace OutlookAI.Core.Com
                     items, sweptFolders.Count, skipped, sweptFolders,
                     tally.Failed, tally.ItemCapped, tally.FolderCapReached,
                     tally.DepthLimitReached, tally.TimeBudgetExceeded, absent, perStore,
-                    tally.RowsUnreadable, storesUnnamed);
+                    tally.RowsUnreadable, storesUnnamed, tally.ItemCappedUnsorted);
             });
         }
 
@@ -1935,6 +1945,15 @@ namespace OutlookAI.Core.Com
             internal int RowsUnreadable { get; set; }
 
             internal List<string> ItemCapped { get; } = new List<string>();
+
+            /// <summary>
+            /// The subset of <see cref="ItemCapped"/> whose table Outlook would not sort, so
+            /// the cap cut an arbitrary slice of the window rather than its oldest end
+            /// (gap H2). Kept apart rather than folded in, because the two carry different
+            /// advice: one says what is missing, the other says that what is missing is
+            /// unknown.
+            /// </summary>
+            internal List<string> ItemCappedUnsorted { get; } = new List<string>();
 
             internal bool FolderCapReached { get; set; }
 
@@ -2136,7 +2155,8 @@ namespace OutlookAI.Core.Com
                 string label = storeName + "/" + relativePath;
                 SweepOutcome outcome = SweepFolder(
                     ns, folderObject, storeName, storeId, null, sinceUtc, perFolderCap, includeBodies, items,
-                    out int rowsUnreadable);
+                    out int rowsUnreadable,
+                    out bool sortApplied);
                 tally.RowsUnreadable += rowsUnreadable;
                 if (outcome == SweepOutcome.Failed)
                 {
@@ -2149,6 +2169,10 @@ namespace OutlookAI.Core.Com
                     if (outcome == SweepOutcome.ItemCapped)
                     {
                         tally.ItemCapped.Add(label);
+                        if (!sortApplied)
+                        {
+                            tally.ItemCappedUnsorted.Add(label); // gap H2, same pairing as above.
+                        }
                     }
                 }
             }
@@ -7327,6 +7351,25 @@ namespace OutlookAI.Core.Com
         /// counted as fully swept. The outcome cannot say this - the folder really was
         /// enumerated - so it is counted separately and reported as its own coverage code.
         /// </para>
+        /// <para>
+        /// <paramref name="sortApplied"/> closes gap H2, and it is the ONE fact that decides
+        /// whether the cap's advice sentence is true. The table is sorted newest-first so
+        /// that <see cref="SweepOutcome.ItemCapped"/> means "the OLDEST of this window was
+        /// dropped", which is what the caller is told and what makes narrowing with 'after'
+        /// a real remedy. The sort can fail - the property has to exist as a column and
+        /// late-bound COM maps E_INVALIDARG to ArgumentException - and that failure used to
+        /// be swallowed with the note that an unsorted sweep still works and "the cap just
+        /// cuts arbitrarily". It does work; the SENTENCE stops being true, because an
+        /// arbitrary cut leaves an arbitrary hole, and an agent told the oldest is missing
+        /// reasons about the wrong gap rather than merely an incomplete one. So the caller
+        /// gets the fact instead of the assumption.
+        /// </para>
+        /// <para>
+        /// It reports what was ASKED FOR and not refused: a <c>Sort</c> that returns without
+        /// throwing is the only evidence a table is ordered that COM offers. It matters only
+        /// where the cap also fired - an uncapped folder yields its whole window whatever
+        /// order it came in - so the two are only ever paired at the call sites.
+        /// </para>
         /// </summary>
         private SweepOutcome SweepFolder(
             dynamic ns,
@@ -7338,9 +7381,11 @@ namespace OutlookAI.Core.Com
             int cap,
             bool includeBodies,
             List<ComMailBrief> results,
-            out int rowsUnreadable)
+            out int rowsUnreadable,
+            out bool sortApplied)
         {
             rowsUnreadable = 0;
+            sortApplied = false;
             dynamic folder = folderObject;
             string? folderName = TryGetString(() => (string?)folder.Name);
             // Year-first UTC literal (DaslDateLiteral). This one is the dangerous one to get
@@ -7371,10 +7416,13 @@ namespace OutlookAI.Core.Com
                     }
 
                     t.Sort("urn:schemas:httpmail:datereceived", true);
+                    sortApplied = true;
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
-                    // Unsorted sweep still works; the cap just cuts arbitrarily.
+                    // The sweep still works unsorted - every row in the window is still read
+                    // until the cap fires. What stops working is the CLAIM attached to the
+                    // cap, so the failure is reported instead of swallowed (gap H2).
                 }
 
                 int entryIdIndex = FindTableColumn(t, "EntryID");

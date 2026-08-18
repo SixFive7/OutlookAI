@@ -388,6 +388,20 @@ public sealed class ThreadFreshnessTests
                     ItemsFilterUnreadable = 2,
                     FiltersUnevaluated = new[] { "unread_only" },
                 }),
+
+            // Gap F3: the cap counted CANDIDATES, and the caller's own filter then thinned
+            // what it kept - so `truncated` beside two results does not mean two more exist.
+            // Truncated is part of the fixture on purpose: without the cap the filter saw
+            // the whole matched set and this is not a hole at all.
+            (
+                FreshMerge.ScanGapPostCapFilter,
+                new ExhaustiveInfo
+                {
+                    FoldersScanned = 4,
+                    Truncated = true,
+                    PostCapFilters = new[] { "from" },
+                    ItemsFilteredOut = 23,
+                }),
         };
     }
 

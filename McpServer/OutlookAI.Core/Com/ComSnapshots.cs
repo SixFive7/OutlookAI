@@ -1153,7 +1153,8 @@ namespace OutlookAI.Core.Com
             int foldersAbsent = 0,
             IReadOnlyList<ComStoreSweepCounters>? perStore = null,
             int rowsUnreadable = 0,
-            int storesUnnamed = 0)
+            int storesUnnamed = 0,
+            IReadOnlyList<string>? itemCappedFoldersUnsorted = null)
         {
             Items = items;
             FoldersSwept = foldersSwept;
@@ -1168,6 +1169,7 @@ namespace OutlookAI.Core.Com
             PerStore = perStore ?? Array.Empty<ComStoreSweepCounters>();
             RowsUnreadable = rowsUnreadable;
             StoresUnnamed = storesUnnamed;
+            ItemCappedFoldersUnsorted = itemCappedFoldersUnsorted ?? Array.Empty<string>();
         }
 
         /// <summary>
@@ -1252,8 +1254,34 @@ namespace OutlookAI.Core.Com
         /// newest-first, so the OLDEST items in the freshness window are the ones that
         /// vanish. Named so the caller can say which coverage is partial (section-12
         /// no-silent-caps discipline).
+        /// <para>
+        /// "Newest-first" holds only for the folders NOT in
+        /// <see cref="ItemCappedFoldersUnsorted"/>; this list stays the complete set of
+        /// capped folders, and the subset is what splits the claim from the exception.
+        /// </para>
         /// </summary>
         public IReadOnlyList<string> ItemCappedFolders { get; }
+
+        /// <summary>
+        /// The subset of <see cref="ItemCappedFolders"/> whose table Outlook refused to sort
+        /// by received time, so the cap kept an ARBITRARY slice of the window instead of its
+        /// newest end (gap H2).
+        /// <para>
+        /// The sort failure alone was already survivable and was treated as such - an
+        /// unsorted sweep still reads the whole window, and only the cap can turn the order
+        /// into a loss. What did not survive it was the SENTENCE the cap emits, which tells
+        /// the caller the oldest mail in the window is the part that is missing. Over an
+        /// unsorted folder that is not merely imprecise, it points at the wrong mail: the
+        /// hole is arbitrary, so narrowing with 'after' recovers no particular item and the
+        /// caller cannot reason about what it did not get.
+        /// </para>
+        /// <para>
+        /// Empty on every healthy sweep, which is why it is a SUBSET rather than a flag on
+        /// the sweep: one folder in a store may refuse the sort while its siblings sort
+        /// fine, and a whole-sweep boolean would then either overstate the damage or hide it.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<string> ItemCappedFoldersUnsorted { get; }
 
         /// <summary>
         /// True when the scoped sweep's FOLDER cap stopped the subtree walk, so folders

@@ -382,6 +382,20 @@ public sealed class FreshMergeTests
             FreshMerge.GapItemCap,
             new SweepInfo { Performed = true, FoldersSwept = 3, ItemCappedFolders = new[] { "alice@example.com/Inbox" } }));
 
+        // 7b. The same cap over a folder whose table Outlook would NOT sort, so the cut is
+        //     arbitrary and "the oldest is missing" would be a false statement about it
+        //     (gap H2). Its own code, because it leads somewhere different: nothing here
+        //     tells the caller WHICH mail is absent.
+        data.Add((
+            FreshMerge.GapItemCapUnsorted,
+            new SweepInfo
+            {
+                Performed = true,
+                FoldersSwept = 3,
+                ItemCappedFolders = new[] { "alice@example.com/Inbox" },
+                ItemCappedFoldersUnsorted = new[] { "alice@example.com/Inbox" },
+            }));
+
         // 8. A store in scope with NO index rows at all: there was no frontier to open the
         //    window from, so it fell back to a fixed span and everything older than that
         //    span is in neither tier. The sweep itself covered its whole scope, which is

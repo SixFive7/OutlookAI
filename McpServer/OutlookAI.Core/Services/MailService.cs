@@ -92,8 +92,15 @@ namespace OutlookAI.Core.Services
         /// cap. The affected folders are named in the response sweep block
         /// (<see cref="SweepInfo.ItemCappedFolders"/>, carried up from
         /// <see cref="ComSweepResult.ItemCappedFolders"/> by <c>ApplySweepCounters</c>) and
-        /// in an advice line that quotes this number (<c>AddSweepCoverageAdvice</c>) - the
-        /// same shape the folder cap, the time budget and the top clamp already use.
+        /// in an advice line that quotes this number (<see cref="DescribeSweepCoverage"/>) -
+        /// the same shape the folder cap, the time budget and the top clamp already use.
+        /// </para>
+        /// <para>
+        /// "Newest-first" is a property of the folder's TABLE, not of this cap, and Outlook
+        /// can refuse to sort one (gap H2). Such a folder is named in
+        /// <see cref="SweepInfo.ItemCappedFoldersUnsorted"/> instead and gets a different
+        /// sentence, because there the cap kept an arbitrary slice and the claim above is
+        /// simply false.
         /// </para>
         /// <para>
         /// Public so T1 pins it with every other payload cap: it was the one cap in this
@@ -631,6 +638,12 @@ namespace OutlookAI.Core.Services
                 }
 
                 advice.AddRange(DescribeSweepCoverage(sweep, indexAge, request.Folder != null));
+                string? attachmentTextAdvice = DescribeAttachmentTextGap(sweep);
+                if (attachmentTextAdvice != null)
+                {
+                    advice.Add(attachmentTextAdvice);
+                }
+
                 string? unnamedStoreAdvice = DescribeUnnamedStores(sweep.StoresUnnamed);
                 if (unnamedStoreAdvice != null)
                 {
@@ -645,7 +658,12 @@ namespace OutlookAI.Core.Services
                 advice.Add(scopeAdvice);
             }
 
-            AddUnresolvedFolderAdvice(advice, folderScope, request, summaries.Count);
+            // Gap G5. Judged on the INDEX tier's own row count, not on the merged answer:
+            // the question is whether the index can see the folder at all, and a single
+            // swept item - which comes from COM, where the folder resolved fine - used to
+            // silence it completely.
+            bool? folderNotIndexed = DescribeFolderMissingFromIndex(
+                advice, folderScope, request, indexResult.Hits.Count);
 
             // Snapshot AFTER the sweep: the sweep may have just autostarted Outlook
             // (D17) and the staleness block must reflect that reality, not the
@@ -732,6 +750,7 @@ namespace OutlookAI.Core.Services
                     RowsDropped = indexResult.RowsDropped,
                     CandidatesExhausted = indexResult.CandidatesExhausted ? true : (bool?)null,
                     StoreNotIndexed = indexAddressable ? (bool?)null : true,
+                    FolderNotIndexed = folderNotIndexed,
                 },
                 Scope = DescribeSearchScope(folderScope, request),
                 Staleness = new StalenessInfo
@@ -910,7 +929,8 @@ namespace OutlookAI.Core.Services
         /// Reports every way the folder bound differs from what was asked (v3.MD
         /// constraints C2/C3). Nothing here changes the result set - it exists so the
         /// result set can never be misread. The C7 zero-row guard is separate
-        /// (<see cref="AddUnresolvedFolderAdvice"/>): it can only judge the MERGED answer.
+        /// (<see cref="DescribeFolderMissingFromIndex"/>): it judges the INDEX tier's own
+        /// row count, which is a different question from what the merged answer holds.
         /// </summary>
         private static void AddFolderScopeAdvice(List<string> advice, FolderScopeResolution? folderScope)
         {
@@ -937,43 +957,85 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// The non-silent zero-row guard (v3.MD constraint C7). Two TOP-1 probes, only
-        /// ever on a FULLY empty answer (index plus freshness sweep): first "does this
-        /// folder bound match ANY row" - so a folder that merely holds no match stays
-        /// quiet, which the one-probe form would not - then "does the store". Rows in the
-        /// store but none for the folder means the PATH did not resolve, which is the
-        /// failure mode that hid the delegate defect.
+        /// The non-silent zero-row guard (v3.MD constraint C7, widened by gap G5). Two TOP-1
+        /// probes: first "does this folder bound match ANY row" - so a folder that merely
+        /// holds no match stays quiet, which the one-probe form would not - then "does the
+        /// store". Rows in the store but none for the folder means the PATH did not resolve
+        /// in the index, which is the failure mode that hid the delegate defect.
+        /// <para>
+        /// Returns the value of <c>index.folderNotIndexed</c>: <c>true</c> when the index
+        /// tier holds nothing addressable by this folder bound while it holds rows for the
+        /// store, null in every other case - not probed, probe failed, or the folder
+        /// resolves. The advice sentence is emitted from the same branch that decides the
+        /// field, so the payload and the prose are one decision rather than two.
+        /// </para>
+        /// <para>
+        /// WHAT CHANGED, and it is the whole of gap G5. This ran only on a FULLY EMPTY
+        /// merged answer - index rows plus swept items - so a single item the freshness
+        /// sweep happened to return silenced it outright. That condition is not defensible:
+        /// the swept item comes from COM, where the folder resolved perfectly well, and it
+        /// says nothing whatever about whether the INDEX can address that folder. The state
+        /// it hid is the ordinary one for a renamed or localized folder - the sweep answers
+        /// for the last few minutes and the index answers for nothing at all - so the answer
+        /// looked like a thin result set rather than a folder scope that matched no indexed
+        /// row. The gate is now the index tier's own row count, which is exactly the
+        /// question the two probes go on to ask.
+        /// </para>
+        /// <para>
+        /// COST: two TOP-1 statements, on folder-scoped searches whose index tier returned
+        /// nothing. That is more often than "the whole answer was empty" and still only on
+        /// searches the index did not answer, which is the trade this project's standing
+        /// rule already settles - completeness outranks speed.
+        /// </para>
+        /// <para>
+        /// It deliberately does NOT set <c>degraded</c>. The probe establishes that the
+        /// index holds no row under this folder bound; it cannot distinguish "the path does
+        /// not resolve" from "the folder is genuinely new and everything in it is still
+        /// only in the sweep window", and degrading the second would be a false alarm on
+        /// every freshly created folder - the same cry-wolf trap <c>foldersAbsent</c> exists
+        /// to avoid one level up. The fact is reported instead, in a field and in a
+        /// sentence, which is what gap G5 asks for.
+        /// </para>
         /// </summary>
-        private void AddUnresolvedFolderAdvice(
-            List<string> advice, FolderScopeResolution? folderScope, SearchRequest request, int hitCount)
+        private bool? DescribeFolderMissingFromIndex(
+            List<string> advice, FolderScopeResolution? folderScope, SearchRequest request, int indexRowCount)
         {
             // Not for a store the index cannot address: the guard's whole question is "did
             // the FOLDER bound match nothing while the STORE matched something", and with no
             // index tier there is no folder bound to have failed. Both probes would also run
             // on a null scope, i.e. profile-wide, and answer about other stores entirely.
-            if (hitCount > 0
+            if (indexRowCount > 0
                 || folderScope == null
                 || folderScope.RequestedFolder == null
                 || !folderScope.IndexAddressable)
             {
-                return;
+                return null;
             }
 
             try
             {
                 if (_index.Value.FolderScopeHasAnyItem(folderScope.Scope, folderScope.FolderPaths, SearchIndexTimeoutSeconds))
                 {
-                    return;
+                    return null;
                 }
 
-                if (_index.Value.FolderScopeHasAnyItem(folderScope.StoreScope, null, SearchIndexTimeoutSeconds))
+                if (!_index.Value.FolderScopeHasAnyItem(folderScope.StoreScope, null, SearchIndexTimeoutSeconds))
                 {
-                    advice.Add(FolderScopeResolver.DescribeUnresolvedFolder(request.Folder, request.Store!));
+                    // The STORE has no indexed rows either, so this says nothing about the
+                    // folder. That state has its own reporting (index.storeNotIndexed,
+                    // sweep.storesWithoutIndex, no_index_frontier) and claiming the folder
+                    // failed to resolve here would blame the path for the store's gap.
+                    return null;
                 }
+
+                advice.Add(FolderScopeResolver.DescribeUnresolvedFolder(request.Folder, request.Store!));
+                return true;
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
-                // The guard is a diagnostic; a failing probe must never fail the search.
+                // The guard is a diagnostic; a failing probe must never fail the search -
+                // and must not answer either, which is what null means here.
+                return null;
             }
         }
 
@@ -1079,11 +1141,25 @@ namespace OutlookAI.Core.Services
                         break;
 
                     case FreshMerge.GapItemCap:
+                        // Named from the SORTED subset, not from the whole capped set: the
+                        // clause after it asserts newest-first, and over a folder Outlook
+                        // would not sort that assertion is false (gap H2).
                         advice.Add("Freshness sweep hit its per-folder cap of "
                             + SweepPerFolderCap.ToString(CultureInfo.InvariantCulture) + " items in: "
-                            + string.Join(", ", sweep.ItemCappedFolders ?? Array.Empty<string>())
+                            + string.Join(", ", FreshMerge.SortedItemCappedFolders(sweep))
                             + ". It reads newest-first, so the OLDEST not-yet-indexed mail in those folders is not covered - "
                             + "narrow the window with 'after' or search those folders directly.");
+                        break;
+
+                    case FreshMerge.GapItemCapUnsorted:
+                        advice.Add("Freshness sweep hit its per-folder cap of "
+                            + SweepPerFolderCap.ToString(CultureInfo.InvariantCulture) + " items in: "
+                            + string.Join(", ", sweep.ItemCappedFoldersUnsorted ?? Array.Empty<string>())
+                            + " - and Outlook would not sort those folders by received time, so the cap kept an ARBITRARY "
+                            + SweepPerFolderCap.ToString(CultureInfo.InvariantCulture)
+                            + " of the window rather than the newest. WHICH not-yet-indexed mail is missing there is "
+                            + "unknown: do not assume it is the oldest. Narrow the window with 'after' until the folder "
+                            + "fits under the cap, or read the folder with exhaustive:true.");
                         break;
 
                     case FreshMerge.GapRowsUnreadable:
@@ -1129,6 +1205,51 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
+        /// The one sentence for <see cref="SweepInfo.AttachmentTextCovered"/>, or null when
+        /// there is nothing this gap could be hiding (gap B2).
+        /// <para>
+        /// Generated FROM the field, so the prose cannot claim a coverage hole the payload
+        /// does not carry, nor stay quiet about one it does - the same pairing the coverage
+        /// codes and <see cref="DescribeSweepCoverage"/> already have.
+        /// </para>
+        /// <para>
+        /// Two further conditions, and both are about whether the hole is REAL rather than
+        /// merely structural. The sweep must have RUN: a sweep that was refused or could not
+        /// run has already said the whole window is uncovered, and repeating a subset of
+        /// that is noise. And it must have SEEN something: <see cref="SweepInfo.ItemsSeen"/>
+        /// counts the items in the freshness window before term filtering, so zero means no
+        /// mail arrived after the index frontier at all - and a window with no mail in it
+        /// cannot be hiding a mail whose match is in an attachment. That is the same
+        /// reasoning <c>foldersAbsent</c> uses, and it is emphatically NOT the "suppress it
+        /// when there is a hit" shape gap G5 is about: this suppresses when there is
+        /// provably nothing to report, not when the answer happens to look full.
+        /// </para>
+        /// <para>
+        /// Public and pure so T1 can pin all four states without a mailbox.
+        /// </para>
+        /// </summary>
+        public static string? DescribeAttachmentTextGap(SweepInfo sweep)
+        {
+            if (sweep == null)
+            {
+                throw new ArgumentNullException(nameof(sweep));
+            }
+
+            if (sweep.AttachmentTextCovered != false || !sweep.Performed || sweep.ItemsSeen <= 0)
+            {
+                return null;
+            }
+
+            return "Attachment CONTENT is matched by the index tier alone: the freshness sweep reads subject and body "
+                + "through Outlook and never opens an attachment. It found "
+                + sweep.ItemsSeen.ToString(CultureInfo.InvariantCulture)
+                + " item(s) newer than the index, and a query term appearing ONLY inside an attachment of one of those "
+                + "was not matched - so these results are complete for subject and body but NOT for attachment text in "
+                + "that window, even though freshness reads 'live'. The gap closes by itself once those items are "
+                + "indexed; to check now, read the candidates or re-run with attachment_hits_only once they are.";
+        }
+
+        /// <summary>
         /// One advice sentence per EXHAUSTIVE coverage code, from the code list alone - the
         /// third tier's <see cref="DescribeSweepCoverage"/>, pure and public for the same
         /// reason (T1 pins that every code declared has prose, over a payload block that
@@ -1142,7 +1263,8 @@ namespace OutlookAI.Core.Services
         /// other way round.
         /// </para>
         /// </summary>
-        public static IReadOnlyList<string> DescribeExhaustiveCoverage(ExhaustiveInfo exhaustive, int top)
+        public static IReadOnlyList<string> DescribeExhaustiveCoverage(
+            ExhaustiveInfo exhaustive, int top, int summaryCount = 0)
         {
             if (exhaustive == null)
             {
@@ -1190,6 +1312,22 @@ namespace OutlookAI.Core.Services
                                 : "one of the filters you passed")
                             + " on them, so they could neither be matched nor ruled out. Re-run without that filter to "
                             + "see them and judge them yourself.");
+                        break;
+
+                    case FreshMerge.ScanGapPostCapFilter:
+                        advice.Add("The result cap counted CANDIDATES, not results: the scan stopped after "
+                            + top.ToString(CultureInfo.InvariantCulture) + " item(s) matched its subject/body filter, "
+                            + "and your "
+                            + string.Join(" / ", exhaustive.PostCapFilters ?? Array.Empty<string>())
+                            + " filter was applied only afterwards, discarding "
+                            + exhaustive.ItemsFilteredOut.ToString(CultureInfo.InvariantCulture)
+                            + " of them. So the "
+                            + summaryCount.ToString(CultureInfo.InvariantCulture)
+                            + " result(s) here are NOT the first "
+                            + top.ToString(CultureInfo.InvariantCulture)
+                            + " matches of your whole query, and far more may exist further into the scan. Put the "
+                            + "narrowing into the scan itself - a tighter folder or 'after' bound - rather than into a "
+                            + "filter that runs after the cap.");
                         break;
 
                     default:
@@ -1471,6 +1609,14 @@ namespace OutlookAI.Core.Services
             out DateTime? widestFrontierUtc)
         {
             SweepInfo info = new SweepInfo();
+
+            // Gap B2, and set BEFORE any early return: it is a fact about what this tier can
+            // read, so it is equally true of a sweep that ran, one that was refused and one
+            // that was not needed. Deciding it here rather than at each exit is what keeps
+            // it from going missing on the paths that report the least.
+            info.AttachmentTextCovered =
+                FreshMerge.AttachmentTextMatchable(request.SearchIn, terms.Count > 0) ? false : (bool?)null;
+
             SweepWindowPlan windows = ResolveSweepWindows(request, staleness);
             widestFrontierUtc = windows.PerStoreBaseUtc == null || windows.PerStoreBaseUtc.Count == 0
                 ? null
@@ -2210,11 +2356,18 @@ namespace OutlookAI.Core.Services
             List<HitSummary> summaries = new List<HitSummary>();
             HashSet<string> scanFiltersUnevaluated = new HashSet<string>(StringComparer.Ordinal);
             int scanItemsFilterUnreadable = 0;
+
+            // Gap F3. Everything below this line runs over scan.Items, which the COM scan
+            // already capped at `top` - so these three filters thin a list the cap has
+            // closed, and the number they remove is the difference between "top MATCHES
+            // exist" and "top CANDIDATES were reached". Counted so the payload can say so.
+            int scanItemsFilteredOut = 0;
             foreach (ComMailBrief item in scan.Items)
             {
                 if (request.From != null
                     && !(Contains(item.SenderAddress, request.From) || Contains(item.SenderName, request.From)))
                 {
+                    scanItemsFilteredOut++;
                     continue;
                 }
 
@@ -2231,6 +2384,7 @@ namespace OutlookAI.Core.Services
 
                 if (request.UnreadOnly == true && item.IsRead != false)
                 {
+                    scanItemsFilteredOut++;
                     continue;
                 }
 
@@ -2243,6 +2397,7 @@ namespace OutlookAI.Core.Services
 
                 if (request.HasAttachments.HasValue && item.HasAttachments != request.HasAttachments.Value)
                 {
+                    scanItemsFilteredOut++;
                     continue;
                 }
 
@@ -2274,6 +2429,9 @@ namespace OutlookAI.Core.Services
                 RowsUnreadable = scan.RowsUnreadable,
                 ItemsFilterUnreadable = scanItemsFilterUnreadable,
                 FiltersUnevaluated = OrderUnevaluatedFilters(scanFiltersUnevaluated),
+                PostCapFilters = FreshMerge.PostCapFilters(
+                    request.From != null, request.UnreadOnly == true, request.HasAttachments.HasValue),
+                ItemsFilteredOut = scanItemsFilteredOut,
                 ElapsedMs = stopwatch.ElapsedMilliseconds,
             };
 
@@ -2281,7 +2439,7 @@ namespace OutlookAI.Core.Services
             // from the same codes - the order the sweep and the thread walk already use, so
             // this tier cannot report a hole in one rendering and full coverage in another.
             exhaustive.CoverageGaps = FreshMerge.DescribeExhaustiveCoverageGaps(exhaustive);
-            advice.AddRange(DescribeExhaustiveCoverage(exhaustive, top));
+            advice.AddRange(DescribeExhaustiveCoverage(exhaustive, top, summaries.Count));
 
             // The same sentence the merged path emits, from the same helper: this tier
             // gained the most from the widening (it was the only one that could not find a
@@ -3295,20 +3453,45 @@ namespace OutlookAI.Core.Services
             List<string> capped = new List<string>();
             foreach (string entry in result.ItemCappedFolders)
             {
-                if (store != null)
+                if (InStoreScope(entry, store))
                 {
-                    int separator = entry.IndexOf('/');
-                    if (separator < 0
-                        || !string.Equals(entry.Substring(0, separator), store, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
+                    capped.Add(entry);
                 }
-
-                capped.Add(entry);
             }
 
             info.ItemCappedFolders = capped.Count == 0 ? null : capped;
+
+            // The H2 subset, filtered by the SAME store rule as the list it is a subset of -
+            // any other rule and the difference the advice is built from would stop being a
+            // subset at all, and one of the two sentences would name a folder the other
+            // never saw.
+            List<string> arbitrary = new List<string>();
+            foreach (string entry in result.ItemCappedFoldersUnsorted)
+            {
+                if (InStoreScope(entry, store))
+                {
+                    arbitrary.Add(entry);
+                }
+            }
+
+            info.ItemCappedFoldersUnsorted = arbitrary.Count == 0 ? null : arbitrary;
+        }
+
+        /// <summary>
+        /// Whether a <c>store/folder</c> sweep label belongs to the requested store, or to
+        /// any store when the request named none. The store filter both capped-folder lists
+        /// share, so the H2 subset cannot be filtered by a rule its superset was not.
+        /// </summary>
+        private static bool InStoreScope(string entry, string? store)
+        {
+            if (store == null)
+            {
+                return true;
+            }
+
+            int separator = entry.IndexOf('/');
+            return separator >= 0
+                && string.Equals(entry.Substring(0, separator), store, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>This store's counters, or null when the sweep never reached it.</summary>

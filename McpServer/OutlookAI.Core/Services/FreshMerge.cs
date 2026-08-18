@@ -40,8 +40,39 @@ namespace OutlookAI.Core.Services
         /// <summary>Coverage hole: Outlook would not enumerate one or more folders.</summary>
         public const string GapFoldersFailed = "folders_failed";
 
-        /// <summary>Coverage hole: the per-folder item cap truncated a folder's window.</summary>
+        /// <summary>
+        /// Coverage hole: the per-folder item cap truncated a folder's window, newest-first,
+        /// so what is missing is the OLDEST part of that folder's freshness window.
+        /// <para>
+        /// Raised only for folders whose table Outlook actually sorted. The rest raise
+        /// <see cref="GapItemCapUnsorted"/>, and the split is what keeps this code's advice
+        /// sentence true of every folder it names (see
+        /// <see cref="SortedItemCappedFolders"/>).
+        /// </para>
+        /// </summary>
         public const string GapItemCap = "item_cap";
+
+        /// <summary>
+        /// Coverage hole: the per-folder item cap truncated a folder's window whose table
+        /// Outlook would not sort, so the cap kept an ARBITRARY slice of the window and what
+        /// is missing is unknown (gap H2).
+        /// <para>
+        /// Its own code rather than a qualifier on <see cref="GapItemCap"/>, because the two
+        /// lead somewhere different. <c>item_cap</c> says the oldest end of the window is
+        /// missing: an agent can narrow with <c>after</c>, page the bound, or tell the user
+        /// which mail to expect to be absent. This one says none of that is available - the
+        /// hole is a random 200-item slice - so the only remedies are to make the window
+        /// small enough to fit under the cap or to read the folder with
+        /// <c>exhaustive: true</c>.
+        /// </para>
+        /// <para>
+        /// The failure it reports was previously swallowed with the note that an unsorted
+        /// sweep still works. The SWEEP does; the sentence attached to the cap does not, and
+        /// a sentence an agent relays to a human as fact is the thing this whole contract
+        /// exists to keep honest.
+        /// </para>
+        /// </summary>
+        public const string GapItemCapUnsorted = "item_cap_unsorted";
 
         /// <summary>Coverage hole: the subtree walk stopped at its folder cap.</summary>
         public const string GapFolderCap = "folder_cap";
@@ -220,6 +251,34 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public const string ScanGapFilterUnreadable = GapFilterUnreadable;
 
+        /// <summary>
+        /// Exhaustive-scan coverage hole: the scan's result cap stopped the walk, and the
+        /// request's <c>from</c> / <c>unread_only</c> / <c>has_attachments</c> filters were
+        /// then applied to what the cap had already kept (gap F3).
+        /// <para>
+        /// The cap counts items the DASL filter matched, before any of those three run, so
+        /// the returned list can be a handful of rows while the store holds thousands of
+        /// matches - and <c>truncated: true</c> beside two results reads as "a couple more
+        /// exist" rather than "the scan stopped after <c>top</c> candidates and most of them
+        /// were then discarded". Neither number on its own says which happened; only the
+        /// pairing does.
+        /// </para>
+        /// <para>
+        /// Raised ONLY together with <see cref="ScanGapResultCap"/>, which is what makes it
+        /// free of false alarms: with no cap the post-filter saw the whole matched set and
+        /// removed exactly what the caller asked to remove, and with no such filter the cap
+        /// truncated a list nothing later thinned. So this code adds no degradation of its
+        /// own - the scan is already <c>partial</c> when it fires - it adds the explanation
+        /// the result cap's own sentence could not give.
+        /// </para>
+        /// <para>
+        /// Distinct from <see cref="ScanGapFilterUnreadable"/>, which is about items those
+        /// same filters could not be EVALUATED on. Here they were evaluated and worked; the
+        /// hole is that they ran over a truncated input.
+        /// </para>
+        /// </summary>
+        public const string ScanGapPostCapFilter = "post_cap_filter";
+
         /// <summary>Whether a search's window leaves the freshness sweep anything to find.</summary>
         public enum SweepWindowVerdict
         {
@@ -255,6 +314,55 @@ namespace OutlookAI.Core.Services
             return beforeUtc.HasValue && beforeUtc.Value <= gapStartUtc
                 ? SweepWindowVerdict.NotNeeded
                 : SweepWindowVerdict.Needed;
+        }
+
+        /// <summary>
+        /// The item-capped folders whose window really was cut newest-first: everything in
+        /// <see cref="SweepInfo.ItemCappedFolders"/> that is not in
+        /// <see cref="SweepInfo.ItemCappedFoldersUnsorted"/> (gap H2).
+        /// <para>
+        /// One split read by both renderings - the gap codes and the advice sentences - so
+        /// neither can name a folder the other does not. Written as a difference rather than
+        /// as a second list from the COM layer because the sweep result already carries the
+        /// whole capped set and its exception; deriving the complement here keeps the two
+        /// lists from drifting into disagreement about which folders were capped at all.
+        /// </para>
+        /// <para>
+        /// Matched ordinally: both lists are built from the same
+        /// <c>store/folder</c> labels in the same walk, so a case-insensitive compare would
+        /// buy nothing and could collapse two folders a mailbox genuinely distinguishes.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string> SortedItemCappedFolders(SweepInfo sweep)
+        {
+            if (sweep == null)
+            {
+                throw new ArgumentNullException(nameof(sweep));
+            }
+
+            IReadOnlyList<string>? capped = sweep.ItemCappedFolders;
+            if (capped == null || capped.Count == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            IReadOnlyList<string>? unsorted = sweep.ItemCappedFoldersUnsorted;
+            if (unsorted == null || unsorted.Count == 0)
+            {
+                return capped;
+            }
+
+            HashSet<string> arbitrary = new HashSet<string>(unsorted, StringComparer.Ordinal);
+            List<string> sorted = new List<string>(capped.Count);
+            foreach (string folder in capped)
+            {
+                if (!arbitrary.Contains(folder))
+                {
+                    sorted.Add(folder);
+                }
+            }
+
+            return sorted;
         }
 
         /// <summary>
@@ -303,6 +411,9 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public static IReadOnlyList<string>? DescribeCoverageGaps(SweepInfo sweep)
         {
+            // The one place the capped set is split, so the code list and the advice
+            // sentences cannot end up describing different folders (gap H2).
+
             if (sweep == null)
             {
                 throw new ArgumentNullException(nameof(sweep));
@@ -363,9 +474,16 @@ namespace OutlookAI.Core.Services
                 gaps.Add(GapFoldersSkipped);
             }
 
-            if (sweep.ItemCappedFolders != null && sweep.ItemCappedFolders.Count > 0)
+            // Two codes over one cap, because "newest-first" is true of one set of folders
+            // and false of the other, and a single code would have to carry both (gap H2).
+            if (SortedItemCappedFolders(sweep).Count > 0)
             {
                 gaps.Add(GapItemCap);
+            }
+
+            if (sweep.ItemCappedFoldersUnsorted != null && sweep.ItemCappedFoldersUnsorted.Count > 0)
+            {
+                gaps.Add(GapItemCapUnsorted);
             }
 
             // Row- and item-level holes last: they are the narrowest, and they sit INSIDE
@@ -435,7 +553,56 @@ namespace OutlookAI.Core.Services
                 gaps.Add(ScanGapFilterUnreadable);
             }
 
+            // Last, and conditional on the cap having actually fired: it explains a hole the
+            // codes above already declared rather than declaring one of its own (gap F3).
+            if (exhaustive.Truncated
+                && exhaustive.PostCapFilters != null
+                && exhaustive.PostCapFilters.Count > 0)
+            {
+                gaps.Add(ScanGapPostCapFilter);
+            }
+
             return gaps.Count == 0 ? null : gaps;
+        }
+
+        /// <summary>
+        /// The request filters an exhaustive scan can only apply AFTER its own result cap,
+        /// in the order they appear on the request, or null when the request passed none
+        /// (gap F3).
+        /// <para>
+        /// These three are read off the item snapshots the scan returns, so the scan cannot
+        /// push them into its DASL filter and cannot count toward its cap only the items
+        /// that pass them. Contrast <c>before</c>/<c>after</c>, which DO go into the filter
+        /// and therefore bound the scan itself; they are absent here for that reason and not
+        /// by omission.
+        /// </para>
+        /// <para>
+        /// Pure and T1-pinned, so the names in the payload and the names in the advice
+        /// sentence are one list. They are the caller's own parameter names, which is what
+        /// makes the sentence actionable: the remedy is to drop one of them and let the cap
+        /// count the matches instead.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string>? PostCapFilters(
+            bool hasFrom, bool hasUnreadOnly, bool hasAttachmentsFilter)
+        {
+            List<string> names = new List<string>(3);
+            if (hasFrom)
+            {
+                names.Add("from");
+            }
+
+            if (hasUnreadOnly)
+            {
+                names.Add("unread_only");
+            }
+
+            if (hasAttachmentsFilter)
+            {
+                names.Add("has_attachments");
+            }
+
+            return names.Count == 0 ? null : names;
         }
 
         /// <summary>
@@ -671,6 +838,40 @@ namespace OutlookAI.Core.Services
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Whether this query's terms could match INSIDE an attachment, which is a thing
+        /// only the index tier can do (gap B2).
+        /// <para>
+        /// The index tier's body scope is <c>System.Search.Contents</c>, which is body plus
+        /// attachment content. The freshness sweep reads <c>MailItem.Subject</c> and
+        /// <c>MailItem.Body</c> through COM and never opens an attachment, and the
+        /// exhaustive scan reads <c>urn:schemas:httpmail:textdescription</c>. So for any
+        /// query whose terms are matched against the body scope, attachment text is covered
+        /// by exactly one of the three tiers - and the one that does not cover it is the one
+        /// responsible for everything newer than the index frontier.
+        /// </para>
+        /// <para>
+        /// The attachment-ONLY case was already refused and reported
+        /// (<see cref="AttachmentContentNotSweepable"/>). This is the DEFAULT case, which
+        /// said nothing at all: the sweep contributes its message rows, the merge succeeds,
+        /// and the answer reports <c>freshness: "live"</c> while a term sitting inside a
+        /// PDF that arrived four minutes ago is in neither tier. <c>live</c> is the reading
+        /// an agent trusts most, so the shortfall belongs in the payload.
+        /// </para>
+        /// <para>
+        /// It depends on <paramref name="searchIn"/> and on there being terms at all, and
+        /// deliberately not on the attachment-hit flags: with attachment rows INCLUDED the
+        /// index can return the attachment itself, with them EXCLUDED it can still match a
+        /// message row on its attachment's text, and with attachment rows ONLY the sweep
+        /// does not run. All three leave the sweep unable to see attachment text; only the
+        /// third already says so.
+        /// </para>
+        /// </summary>
+        public static bool AttachmentTextMatchable(SearchIn searchIn, bool hasTerms)
+        {
+            return hasTerms && searchIn != SearchIn.SubjectOnly;
         }
 
         /// <summary>
