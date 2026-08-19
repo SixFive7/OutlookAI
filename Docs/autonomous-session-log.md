@@ -249,6 +249,36 @@ has moved twice; cite it by the `SweepFolder` symbol instead.
 - **Corpus build throughput:** 50.9 items/s without the move rung. With the move rung each item is
   written twice, so budget roughly double.
 
+## 5b. Two research outputs worth reading before the next work starts
+
+Both live in the session trace folder under Downloads (`tmp-aitrace/`), because they were produced
+while the repo was held by another agent.
+
+**`resumable-scan-design.md`** - the design for the maintainer's chosen continuation-token scan.
+Recommends a three-tier resumption ladder behind a short opaque handle, with walk state in the
+server parent rather than the COM child: per folder, try a date cursor, then a validated ordinal
+skip, then a full folder restart with EntryID dedup, reporting which tier paid. Key constraints it
+establishes: the folder walk has no stable order until this code imposes one (the `list_folders`
+walk already sorts siblings for exactly that reason and its comparator should be shared); within a
+folder MAPI documents that nothing is stable, so a token cannot name a row; resuming only at folder
+boundaries is fatal here because the measured failure IS one 108,144-item folder; and server-side
+state is forced rather than preferred, because proving no folder was skipped needs the set of
+completed folders, which is too big for the wire. Four open questions are listed in its section 8.
+
+**`sort-hypothesis.md`** - UNRESOLVED, and potentially the largest single defect found this session.
+Microsoft documents that `Table.Sort` accepts property names "by their explicit string names only;
+cannot reference properties by their namespaces". The sweep passes
+`urn:schemas:httpmail:datereceived`, which is a namespace reference. If the documentation holds for
+this call then the freshness sweep has NEVER sorted on any store for any user, its 200-item cap has
+always cut arbitrarily, and the tier whose entire purpose is recent mail has been taking an
+arbitrary 200 instead of the newest 200. It would also mean this session's reading of
+`item_cap_unsorted` - "the sort genuinely does not apply on that store" - is wrong: it would not
+apply anywhere. **Four read-only PowerShell probes failed to settle it**, all with the same error
+across every property form and the no-argument form, which is PowerShell late binding against the
+`Table` COM object rather than Outlook's verdict. **It needs a few lines of C# in the existing live
+harness**, where binding is not a problem. One cheap fix falls out regardless: the shipped `catch`
+wraps the column add and the sort together, so `sortApplied: false` cannot say which failed.
+
 ## 6. Still unverified, and why
 
 - The sweep budget itself. The corpus exists to settle it and the measurement has not been taken.
