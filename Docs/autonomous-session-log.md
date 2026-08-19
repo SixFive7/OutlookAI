@@ -30,7 +30,7 @@ reasoning, and flagged for review rather than buried.
 | Work order | Infrastructure first: corpus, second PST, live tier on the VM | **in progress** |
 | `update_draft` | **(d)** make it re-entrant: record intent first, so a retry completes rather than repeats | **queued** |
 | Sweep timeout | **(d)** make expiry graceful **and** distinguish budget expiry from unresponsiveness at the supervisor | **shipped** (uncommitted) |
-| H3 (undated mail invisible to the sweep) | Check whether DASL can express "or the property is absent" first; failing that, report it; full fallback enumeration only if it proves common | **queued** |
+| H3 (undated mail invisible to the sweep) | Check whether DASL can express "or the property is absent" first; failing that, report it; full fallback enumeration only if it proves common | **answered by measurement - NOT fixed, see section 3** |
 
 ## 2. Timeout values - SHIPPED (uncommitted) on 2026-08-19
 
@@ -76,6 +76,26 @@ takes minutes turns every generous budget elsewhere into an unbounded wait with 
 why.
 
 ## 3. Decisions taken autonomously - REVIEW THESE
+
+**H3 measured to zero, and deliberately not fixed.** DASL *can* express absence: Microsoft documents
+`IS NULL` and documents it specifically as the way to test whether a date property has been set. The
+negation route that looked trivial is documented NOT to work - MAPI says a restriction over a
+property that does not exist has *undefined* results, so `NOT (x >= floor)` negates an undefined
+value. So the fix was available. It was not taken, because the population it would rescue was
+measured at **zero**: a read-only probe over the maintainer's five stores and twenty arrival-path
+folders counted **43,048 items, none lacking a usable date**. The fix is not free either - an item
+with no date never leaves the sweep window, so it would be re-selected on every sweep forever, 200
+items per folder per search. Paying a permanent cost to rescue an empty set is the wrong trade.
+**What this does not establish:** that profile is entirely Exchange-delivered mail and mounts no
+PST, and H3's hypothesised shape is imported, copied or restored mail. The row stays open,
+downgraded, with the measurement attached. Evidence and the reusable probe are in the session trace
+folder under Downloads (`tmp-aitrace/h3-measurement.md`, `h3-probe.ps1`).
+
+**Two corrections the repo owes, from the same research and not yet applied:** `ExhaustiveDaslFilter`
+and `QUESTIONS.md` say a DASL predicate *"silently excludes"* absent-property rows, where MAPI
+documents the result as *undefined* - as written it invites precisely the wrong inference, that
+`NOT (...)` therefore admits them. And the gap map cites the sweep restriction by a line number that
+has moved twice; cite it by the `SweepFolder` symbol instead.
 
 1. **Overrode the corpus generator's date-fidelity refusal** with `--allow-undated`, reasoning that
    an all-recent corpus is still the sweep's worst case. **Wrong, twice over.** Undated items are
