@@ -21,18 +21,18 @@ reasoning, and flagged for review rather than buried.
 | Live tier | Move the intermediate tier to the VM; keep the ability to run everything against the real system before a release | **queued** |
 | `Stick-Test` VM + scratch | Delete both | **done** |
 | Installed MCP server | Leave disabled until the release | **done, nothing to do** |
-| Exhaustive scan | Resumable walk with a continuation token | **queued** |
+| Exhaustive scan | Resumable walk with a continuation token | **in progress**, design in `tmp-aitrace/resumable-scan-design.md` |
 | `thread` store asymmetry | Derive the warning from Outlook's store list; also scan for the same asymmetry elsewhere | **queued** |
-| Timeout defects | Fold all three into the timeout-raising pass | **shipped** (uncommitted) |
-| COM host kill | Keep the hard kill, document it, add a brief wait before killing, make the kill outcome-aware | **shipped** (uncommitted) |
+| Timeout defects | Fold all three into the timeout-raising pass | **shipped** `4502c92` |
+| COM host kill | Keep the hard kill, document it, add a brief wait before killing, make the kill outcome-aware | **shipped** `4502c92` |
 | `top` ceiling | Leave at 100; rely on resumption | **decided, no work** |
 | Remaining gap-map rows | Clear **all** of them before the release | **queued** |
 | Work order | Infrastructure first: corpus, second PST, live tier on the VM | **in progress** |
-| `update_draft` | **(d)** make it re-entrant: record intent first, so a retry completes rather than repeats | **shipped** (uncommitted) |
-| Sweep timeout | **(d)** make expiry graceful **and** distinguish budget expiry from unresponsiveness at the supervisor | **shipped** (uncommitted) |
+| `update_draft` | **(d)** make it re-entrant: record intent first, so a retry completes rather than repeats | **shipped** `db34923` |
+| Sweep timeout | **(d)** make expiry graceful **and** distinguish budget expiry from unresponsiveness at the supervisor | **shipped** `4502c92` |
 | H3 (undated mail invisible to the sweep) | Check whether DASL can express "or the property is absent" first; failing that, report it; full fallback enumeration only if it proves common | **answered by measurement - NOT fixed, see section 3** |
 
-## 2. Timeout values - SHIPPED (uncommitted) on 2026-08-19
+## 2. Timeout values - SHIPPED in `4502c92`
 
 | Constant | Was | Now | Derivation |
 | --- | --- | --- | --- |
@@ -74,6 +74,13 @@ load-bearing. Both figures are now in `Docs/magic-numbers.md`.
 in context"): it is the diagnostic run precisely when Outlook is wedged. A health check that also
 takes minutes turns every generous budget elsewhere into an unbounded wait with no way to find out
 why.
+
+**A verification gap of mine, found and closed.** `4502c92` shipped a type that does not exist on
+net48, leaving CI red on master, and my verification did not catch it because I only built the test
+project - which targets net10 alone, while CI builds `OutlookAI.Core` explicitly for both. Fixed in
+`db34923`, and my own check now builds Core for both frameworks before any commit. Worth knowing
+because it means every commit before `db34923` this session was verified against a weaker bar than
+I stated at the time.
 
 ## 3. Decisions taken autonomously - REVIEW THESE
 
