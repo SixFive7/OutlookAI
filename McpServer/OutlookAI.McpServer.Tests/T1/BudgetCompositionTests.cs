@@ -34,27 +34,49 @@ namespace OutlookAI.McpServer.Tests.T1;
 public sealed class BudgetCompositionTests
 {
     /// <summary>
-    /// The inner scan budget is strictly INSIDE the outer hard deadline, by the declared
-    /// headroom. Equality is the defect: the scan stops only once elapsed has PASSED its
-    /// budget, then still has to serialize its results back over the pipe, while the
-    /// watchdog fires at &gt;=.
+    /// The inner scan budget is strictly INSIDE the hard deadline of its OWN class, by the
+    /// declared headroom. Equality is the defect: the scan stops only once elapsed has
+    /// PASSED its budget, then still has to serialize its results back over the pipe, while
+    /// the watchdog fires at &gt;=.
+    /// <para>
+    /// The class is the second half of what this pins. The scan is the one operation whose
+    /// budget expiry is a documented ANSWER, so it is allowed to be long - and every OTHER
+    /// tool must keep the ordinary hang detector, which is only true while the two numbers
+    /// are different. A future change that "simplified" this by dropping the class and
+    /// raising the shared deadline would give <c>read</c> and <c>move_mail</c> a ten-minute
+    /// wait to discover a wedged Outlook, and nothing else would notice.
+    /// </para>
     /// </summary>
     [Fact]
-    public void ExhaustiveScanBudget_LeavesHeadroomInsideTheOperationDeadline()
+    public void ExhaustiveScanBudget_LeavesHeadroomInsideItsOwnDeadlineClass()
     {
         Assert.True(
-            MailService.ExhaustiveTimeBudgetMs < ComOperationBudgets.OperationDeadlineMs,
+            MailService.ExhaustiveTimeBudgetMs < ComOperationBudgets.ExhaustiveScanDeadlineMs,
             $"the exhaustive scan's soft budget ({MailService.ExhaustiveTimeBudgetMs} ms) must be strictly inside the COM "
-            + $"host's hard operation deadline ({ComOperationBudgets.OperationDeadlineMs} ms); equal means the documented "
-            + "partial-results outcome is unreachable and a long scan becomes a timeout plus a host kill");
+            + $"host's hard deadline for that class ({ComOperationBudgets.ExhaustiveScanDeadlineMs} ms); equal means the "
+            + "documented partial-results outcome is unreachable and a long scan becomes a timeout plus a host kill");
 
         Assert.Equal(
-            ComOperationBudgets.OperationDeadlineMs - ComOperationBudgets.ResultReturnHeadroomMs,
+            ComOperationBudgets.ExhaustiveScanDeadlineMs - ComOperationBudgets.ResultReturnHeadroomMs,
             MailService.ExhaustiveTimeBudgetMs);
 
         Assert.True(
             ComOperationBudgets.ResultReturnHeadroomMs > 0,
             "the return-trip headroom must be positive - it is the whole mechanism");
+
+        // The class exists and carries that deadline, rather than the number living only in
+        // the one call site that passes it.
+        Assert.Equal(
+            ComOperationBudgets.ExhaustiveScanDeadlineMs,
+            (int)ComHostPolicy.DeadlineFor(ComHostOperationClass.ExhaustiveScan, null));
+
+        // And it is a class of its OWN: the long scan must not be the price every other
+        // tool pays for its hang detection.
+        Assert.True(
+            ComOperationBudgets.ExhaustiveScanDeadlineMs > ComOperationBudgets.OperationDeadlineMs,
+            $"the exhaustive class ({ComOperationBudgets.ExhaustiveScanDeadlineMs} ms) exists precisely because it is "
+            + $"longer than the ordinary operation deadline ({ComOperationBudgets.OperationDeadlineMs} ms); equal or "
+            + "shorter means the class buys nothing and should not exist");
     }
 
     /// <summary>
@@ -216,10 +238,29 @@ public sealed class BudgetCompositionTests
     public void MoveBatchBudget_BoundsTheWholeBatchNotJustOneItem()
     {
         Assert.True(MailService.MoveBatchBudgetMs > 0);
-        Assert.Equal(ComOperationBudgets.OperationDeadlineMs, MailService.MoveBatchBudgetMs);
+
+        // STRICTLY below, and this assertion used to be Assert.Equal - i.e. the test
+        // enforced the defect. An aggregate equal to its own unit of work is not an
+        // aggregate: the budget is checked BEFORE each item, so a batch one millisecond
+        // inside it could start one more item carrying a full operation deadline of its own
+        // and run to twice the budget. The items are now dispatched with what is LEFT of
+        // this budget, and this inequality is what keeps "the batch ran long" and "Outlook
+        // stopped answering" two different events.
+        Assert.True(
+            MailService.MoveBatchBudgetMs < ComOperationBudgets.OperationDeadlineMs,
+            $"the move batch budget ({MailService.MoveBatchBudgetMs} ms) must be strictly inside the COM host's hard "
+            + $"operation deadline ({ComOperationBudgets.OperationDeadlineMs} ms)");
+
         Assert.True(
             MailService.MoveBatchBudgetMs < (long)MailService.MoveIdsCap * ComOperationBudgets.OperationDeadlineMs,
             "the batch budget must be smaller than the worst case it replaces");
+
+        // And an item is never dispatched on a budget too small to be dispatched at all -
+        // below this the item is reported as not attempted, which is legible, instead of
+        // being refused by the COM host's own dispatch floor as a bare timeout.
+        Assert.True(
+            MailService.MinimumItemBudgetMs > 0 && MailService.MinimumItemBudgetMs < MailService.MoveBatchBudgetMs,
+            "the per-item floor must be positive and inside the batch budget");
     }
 
     /// <summary>
@@ -240,6 +281,78 @@ public sealed class BudgetCompositionTests
     public void HandshakeBudget_FollowsTheDeadlineBetweenItsFloorAndItsCeiling(long deadline, long expected)
     {
         Assert.Equal(expected, ComHostPolicy.HandshakeBudgetFor(deadline));
+    }
+
+    /// <summary>
+    /// A budget the CALLER declared outranks the handshake floor, on the same terms as it
+    /// already outranks the cold-start connect floor.
+    /// <para>
+    /// The defect this pins: <c>outlook_health</c>'s description promises "gives up after
+    /// 5 s", it asks the gateway for exactly 5 s - and the handshake, which runs BEFORE the
+    /// deadline clock starts, took 10 s of floor anyway, twice over because health makes two
+    /// gateway calls. The one tool that must always answer had the longest cold-host
+    /// preamble in the product.
+    /// </para>
+    /// </summary>
+    [Theory]
+    // Health's own budget: honoured, not floored.
+    [InlineData(ComOperationBudgets.HealthProbeDeadlineMs, ComOperationBudgets.HealthProbeDeadlineMs)]
+    [InlineData(1L, 1L)]
+    [InlineData(ComHostPolicy.HandshakeFloorMilliseconds, ComHostPolicy.HandshakeFloorMilliseconds)]
+    // Above the floor nothing changes - the floor was never the binding rule there.
+    [InlineData(20_000L, 20_000L)]
+    // The ceiling still binds: a caller may not declare its way past one handshake budget.
+    [InlineData(ComHostPolicy.HandshakeBudgetMilliseconds + 1, ComHostPolicy.HandshakeBudgetMilliseconds)]
+    [InlineData(600_000L, ComHostPolicy.HandshakeBudgetMilliseconds)]
+    // "No budget" must never become "no handshake".
+    [InlineData(0L, ComHostPolicy.HandshakeFloorMilliseconds)]
+    [InlineData(-1L, ComHostPolicy.HandshakeFloorMilliseconds)]
+    public void HandshakeBudget_GivesWayToABudgetTheCallerDeclared(long deadline, long expected)
+    {
+        Assert.Equal(expected, ComHostPolicy.HandshakeBudgetFor(deadline, callerDeclaredBudget: true));
+
+        // And the floor is untouched for everyone who did NOT declare one - which is the
+        // test suite shortening the deadline to observe the timeout path, not the start path.
+        Assert.Equal(
+            ComHostPolicy.HandshakeFloorMilliseconds,
+            ComHostPolicy.HandshakeBudgetFor(ComOperationBudgets.HealthProbeDeadlineMs, callerDeclaredBudget: false));
+    }
+
+    /// <summary>
+    /// Only a HANG is evidence of a hang. A caller-declared work budget expiring says the
+    /// work was big, and must not count toward the breaker.
+    /// <para>
+    /// The outage this prevents: the freshness sweep runs on an explicit budget on every
+    /// search, so two ordinary slow searches on a large mailbox opened the breaker and every
+    /// COM request then failed fast for the whole cooldown - caused by nothing but the size
+    /// of the mailbox.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void OnlyAHangDetectorExpiring_CountsTowardTheBreaker()
+    {
+        // The sweep and the thread walk: explicit budgets, below the class deadline.
+        Assert.False(ComHostPolicy.TimeoutIndicatesUnresponsiveness(
+            ComHostOperationClass.Operation, MailService.SweepBudgetMs));
+        Assert.False(ComHostPolicy.TimeoutIndicatesUnresponsiveness(
+            ComHostOperationClass.Operation, MailService.ThreadWalkBudgetMs));
+        Assert.False(ComHostPolicy.TimeoutIndicatesUnresponsiveness(
+            ComHostOperationClass.Operation, MailService.MoveBatchBudgetMs));
+
+        // No explicit budget at all: this IS the hang detector.
+        Assert.True(ComHostPolicy.TimeoutIndicatesUnresponsiveness(ComHostOperationClass.Operation, null));
+        Assert.True(ComHostPolicy.TimeoutIndicatesUnresponsiveness(ComHostOperationClass.Operation, 0));
+        Assert.True(ComHostPolicy.TimeoutIndicatesUnresponsiveness(ComHostOperationClass.Connect, null));
+
+        // The health probe is the instrument: it is dispatched precisely to find out, so its
+        // short explicit budget expiring is the answer rather than a work limit.
+        Assert.True(ComHostPolicy.TimeoutIndicatesUnresponsiveness(
+            ComHostOperationClass.HealthProbe, ComOperationBudgets.HealthProbeDeadlineMs));
+
+        // The exhaustive scan asks for its own class deadline, and its INNER budget stops it
+        // gracefully long before - so reaching the outer one really is a wedge.
+        Assert.True(ComHostPolicy.TimeoutIndicatesUnresponsiveness(
+            ComHostOperationClass.ExhaustiveScan, ComOperationBudgets.ExhaustiveScanDeadlineMs));
     }
 
     /// <summary>Both ends of the pipe handshake are ONE number, not two that agree today.</summary>

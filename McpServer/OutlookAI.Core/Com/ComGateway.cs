@@ -223,15 +223,59 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// Runs with an explicit budget. This implementation OWNS the COM session in its
-        /// own process and therefore cannot enforce one: a blocked COM call is not
-        /// cancellable, and killing the caller is not an option when the caller is us.
-        /// The budget is honoured only by the out-of-process gateway, which can enforce it
-        /// by ending the child. Accepted and ignored here so the two are substitutable.
+        /// Runs with an explicit budget, enforced BETWEEN contract calls.
+        /// <para>
+        /// This implementation owns the COM session in its own process, so it cannot bound
+        /// ONE call: a blocked outbound COM call is not cancellable, and killing the caller
+        /// is not an option when the caller is us. Only the out-of-process gateway can do
+        /// that, by ending the child. What this one can do - and now does - is bound the
+        /// SEQUENCE: <see cref="BudgetedSessionProxy"/> checks the clock before each call
+        /// and refuses to start another once the budget is spent.
+        /// </para>
+        /// <para>
+        /// It used to be <c>{ return Run(operation); }</c>, accepting the budget and
+        /// discarding it. That reads as harmless - inside the COM host child the parent's
+        /// watchdog is the real bound - but <c>MailService.CreateDefault()</c> uses this
+        /// gateway too, and every live (T2) fixture is built on <c>CreateDefault()</c>. So
+        /// the entire live tier exercised a path with no budget, no aggregate, no breaker
+        /// and no hang detector, which is both a coverage hole (anything sized against
+        /// those budgets was unverified there by construction) and a hang the tier had
+        /// nothing to stop.
+        /// </para>
+        /// <para>
+        /// <paramref name="allowConnectFloor"/> is accepted and has no effect here, for a
+        /// reason rather than by omission: the clock starts after the session is connected,
+        /// so a cold start is never inside the caller's work budget in this implementation.
+        /// The flag exists for the remote gateway, where the connect IS chargeable and the
+        /// caller has to say whether to charge it.
+        /// </para>
         /// </summary>
         public T Run<T>(Func<IOutlookSession, T> operation, int budgetMilliseconds, bool allowConnectFloor = false)
         {
-            return Run(operation);
+            if (operation == null)
+            {
+                throw new ArgumentNullException(nameof(operation));
+            }
+
+            if (_disposed)
+            {
+                throw new ObjectDisposedException(nameof(ComGateway));
+            }
+
+            OutlookComSession session = GetOrConnect();
+            IOutlookSession budgeted = BudgetedSessionProxy.Wrap(session, budgetMilliseconds);
+            try
+            {
+                return operation(budgeted);
+            }
+            catch (Exception ex) when (IsDisconnectException(ex))
+            {
+                // Same rule as the no-recovery overload: the dead session is dropped, the
+                // work is never re-run. A budgeted operation is a multi-call lambda by
+                // assumption, and replaying one replays the steps that already succeeded.
+                Invalidate(session);
+                throw;
+            }
         }
 
         /// <inheritdoc />

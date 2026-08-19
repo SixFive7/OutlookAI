@@ -35,6 +35,54 @@
   files. That gap was fixed in the same work — an in-place upgrade will not leave a stale
   COM host holding its own image open.
 
+- [ ] **Residual gaps left by the 2026-08-19 timeout pass.** The values, the three inventory
+  defects, the graceful sweep expiry and the kill work all landed; these did not, and each one
+  is written down because a mutation check proved it unguarded rather than because it was
+  guessed at.
+
+  - [ ] **Nothing in the non-live tier notices if `ComGateway`'s budget overload goes back to
+        being a pass-through.** Reverting `BudgetedSessionProxy.Wrap(session, budget)` to
+        `session` leaves all 1,887 tests green. The MECHANISM is pinned (T1
+        `InProcessBudgetTests` drives the proxy directly, and removing its dispatch check
+        fails); the WIRING is not, because exercising it needs a real COM session. The live
+        tier is where it is exercised, which is the tier that had no budget at all until this
+        pass. Options: accept and rely on T2; add `InternalsVisibleTo` to `OutlookAI.Core` and
+        pin the wiring through an internal seam; or a structural IL assertion, which is
+        fragile and unlike anything else here.
+  - [ ] **Same for `ComHostSupervisor.CleanExitGraceMilliseconds`.** Replacing the
+        `WaitForExit(250)` with a no-op leaves the suite green. It is a process-lifecycle
+        behaviour with no observable payload; proving it needs a child that logs its own
+        clean exit, which is a T3-shaped test nobody has written.
+  - [ ] **`MailService.SearchIndexTimeoutSeconds` is pinned only from above.** T1 asserts it
+        never exceeds `OleDbIndexClient.DefaultCommandTimeoutSeconds`, so reverting 60 to 15
+        fails nothing. A lower bound would need a measurement constant for "how long a
+        statement on a saturated indexer legitimately takes", and no such measurement exists.
+  - [ ] **`T3/McpStdioClient` still has one budget for a whole session.** One
+        `CancellationTokenSource` bounds every read and write for the client's lifetime, so it
+        is a session budget masquerading as a per-call one. The exhaustive-scan live test now
+        passes an explicitly derived budget, which is the case that would have broken first;
+        the general split (session budget plus a per-`RoundTripAsync` budget, both named)
+        is still open. Raising the DEFAULT is deliberately not the fix - it is CI's only
+        safety net against a hung stdio test, and CI's job timeout is 20 minutes.
+  - [ ] **`T2/LiveAttachmentKindRecallTests` (~line 364) keeps two bare literals** (90 s wait,
+        5 s poll) and is the last product-shaped index call in the suite relying on the client's
+        default command timeout. Name them and pass a `commandTimeoutSeconds`; one slow
+        statement currently eats a third of the wait.
+  - [ ] **Claude Code's 30-minute stdio idle abort is now the nearest client-side limit, and
+        nobody owns it.** A 600 s exhaustive scan is 600 s of complete silence on the pipe -
+        this server sends no progress notifications. It fits (600 s < 1800 s idle < the
+        ~27.8 h per-call hard ceiling), but the idle limit is a client default nobody here
+        chose, no test watches it, and a user who sets a per-server `timeout` in `.mcp.json`
+        for a sensible reason will land far below 600 s. Re-measure instruction: `grep -a` the
+        shipped `~/.local/share/claude/versions/<ver>` binary for
+        `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` and resolve the stdio branch's constant.
+  - [ ] **The graceful sweep expiry has never fired against real mail.** It is pinned at both
+        ends in T1 - the pure boundary (`OutlookComSession.SweepBudgetSpent`) and the whole
+        reporting chain from `ComSweepResult` to the advice sentence - but the walk that stops
+        exists only over live COM folders. With the budget now at 165 s inner / 180 s outer and
+        a measured whole-profile sweep of ~60 s, it should never fire in ordinary use, which is
+        the point and also the reason it will stay unexercised.
+
 - [x] **DONE (2026-08-18) - Audit the codebase for other timers and time-based behaviour.**
   The sweep is finished. The three halves, and what each one turned up:
 
@@ -476,7 +524,16 @@
   respond to 'SweepFoldersNewerThan' within 30000 ms` - the supervisor replaced the COM host, and
   the search degraded to `index-only` and still answered with 100 hits. So **the 30-second sweep
   budget bites long before the 200-items-per-folder cap does**, and the cap arithmetic is the wrong
-  worst case for an Exchange store. The residual risk narrows, and stays real: a fast LOCAL store
+  worst case for an Exchange store. **SUPERSEDED IN PART, 2026-08-19: the 30 s budget is now 180 s,
+  and with the bound lifted the frame measurement changes completely.** On a purpose-built corpus
+  (one unindexed PST, 20,000 items across the four arrival-path folders, the 200-per-folder cap
+  engaged) a single store's sweep produced a frame high-water of **10,734,599 bytes - 10.2 MB over
+  758 items, ~13.5 KB per item**, and five such stores extrapolates to **~54 MB against the 64 MB
+  limit**. So the 432 KB measured on the real profile was bounded by the TIMEOUT, not by the item
+  caps, and `SweepBodyBytesBudget` (32 MiB) is load-bearing rather than insurance: it bites before
+  the frame limit does, which is exactly its design intent. The residual PST case below is no longer
+  the one this machine cannot produce - it has now been produced, on the test VM, and the bounds
+  held. The residual risk narrows, and stays real: a fast LOCAL store
   absent from the index, where the window falls back to seven days, holding a lot of recent large
   mail - the archive/PST shape, and the one case this machine cannot produce, because the only
   unindexed store to hand is the test VM's and it is empty. **Bearing on the options:** (b) was not
@@ -605,7 +662,7 @@
     `BudgetCompositionTests.SearchBudget_IsComposedFromItsPartsAndFitsTheOperationDeadline` asserts
     that sum fits inside `ComOperationBudgets.OperationDeadlineMs` (120 s). At 180 s the sum is
     195 s and that test fails before anything reaches a mailbox. Anything above roughly 105 s moves
-    the operation deadline too, and with it `ChildWorkBudgetMs` and `ExhaustiveTimeBudgetMs`. Decide
+    the operation deadline too, and with it the child work budget and `ExhaustiveTimeBudgetMs`. Decide
     the shape of that change before measuring, so the measurement is aimed at the right question.
 
 - [ ] **Verify the three folder-walk reporting fixes against a live profile - the COM half none of them can reach from T1.**

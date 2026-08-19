@@ -370,6 +370,17 @@ public sealed class FreshMergeTests
         // 4. The subtree walk stopped at ScopedSweepTimeBudgetMs.
         data.Add((FreshMerge.GapTimeBudget, new SweepInfo { Performed = true, FoldersSwept = 7, TimeBudgetExceeded = true }));
 
+        // 4b. The WHOLE sweep ran out of MailService.SweepWorkBudgetMs and stopped at a
+        //     store or folder boundary. Its own code, because the remedy points the other
+        //     way from 4: that one says one subtree is too wide (scope it, or drop
+        //     include_subfolders), this one says the profile is too big for one sweep (name
+        //     a store). It replaced an outcome rather than adding one - before the sweep had
+        //     a budget of its own this arrived as a gateway timeout and a killed COM host,
+        //     with every folder already swept thrown away.
+        data.Add((
+            FreshMerge.GapSweepBudget,
+            new SweepInfo { Performed = true, FoldersSwept = 6, SweepBudgetExpired = true }));
+
         // 5. The subtree walk refused folders past the depth guard.
         data.Add((FreshMerge.GapDepthLimit, new SweepInfo { Performed = true, FoldersSwept = 9, DepthLimitReached = true }));
 

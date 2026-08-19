@@ -428,6 +428,21 @@ namespace OutlookAI.Core.Services
         public bool? TimeBudgetExceeded { get; set; }
 
         /// <summary>
+        /// True when the WHOLE sweep ran out of <c>MailService.SweepWorkBudgetMs</c> and
+        /// stopped at a store or folder boundary, so folders it never reached have no
+        /// freshness coverage. Null when it finished inside its budget.
+        /// <para>
+        /// Separate from <see cref="TimeBudgetExceeded"/> because the remedies point in
+        /// different directions: that one says a SUBTREE is wide (scope narrower, or drop
+        /// <c>include_subfolders</c>), this one says the PROFILE is big (name a store or a
+        /// folder). Before the budget existed, this state was not reported at all - the
+        /// outer gateway deadline expired instead, the COM host was killed as unresponsive,
+        /// and the folders already swept were discarded.
+        /// </para>
+        /// </summary>
+        public bool? SweepBudgetExpired { get; set; }
+
+        /// <summary>
         /// Every coverage hole this sweep left, as machine-readable codes
         /// (<c>FreshMerge.Gap*</c>). Null when the sweep covered its whole scope, or when
         /// it never ran (that is <c>freshness: "index-only"</c>, not a partial sweep).

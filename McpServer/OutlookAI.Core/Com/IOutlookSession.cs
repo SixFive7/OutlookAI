@@ -59,6 +59,19 @@ namespace OutlookAI.Core.Com
         /// per store (each store's own index frontier); <paramref name="sinceUtc"/> is what
         /// a store not named in it gets.
         /// </summary>
+        /// <param name="timeBudgetMs">
+        /// Wall clock the walk may spend before it stops at the next store or folder
+        /// boundary and returns what it covered, with
+        /// <see cref="ComSweepResult.SweepBudgetExpired"/> set. Zero or less means unbounded,
+        /// which is what an in-process caller with its own bound asks for.
+        /// <para>
+        /// This is the SWEEP's own soft budget, not the gateway deadline above it. Without
+        /// it, a sweep that ran long produced a timeout, the supervisor concluded the host
+        /// was wedged, the child was killed, and every folder already swept was discarded -
+        /// so a large mailbox lost its freshness tier entirely instead of getting a partial
+        /// one. Same discipline as <see cref="ExhaustiveScan"/>'s.
+        /// </para>
+        /// </param>
         ComSweepResult SweepFoldersNewerThan(
             DateTime sinceUtc,
             int perFolderCap,
@@ -66,7 +79,8 @@ namespace OutlookAI.Core.Com
             string? onlyStoreDisplayName,
             IReadOnlyList<string>? folderPath = null,
             bool includeSubfolders = true,
-            IReadOnlyDictionary<string, DateTime>? perStoreSinceUtc = null);
+            IReadOnlyDictionary<string, DateTime>? perStoreSinceUtc = null,
+            int timeBudgetMs = 0);
 
         /// <summary>Index-bypassing COM scan, bounded by item count and time budget.</summary>
         ComExhaustiveResult ExhaustiveScan(

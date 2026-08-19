@@ -349,11 +349,21 @@ namespace OutlookAI.ComHost.Supervision
 
             // The child-start handshake used to sit entirely outside the deadline system.
             // It is now bounded by this operation's own deadline (floored, so a test that
-            // shortens the budget does not start failing on child startup instead).
-            await EnsureStartedAsync(ComHostPolicy.HandshakeBudgetFor(deadline), cancellationToken).ConfigureAwait(false);
+            // shortens the budget does not start failing on child startup instead) - and
+            // the floor gives way to a budget the CALLER declared, on the same terms as the
+            // connect floor above. Without that, outlook_health's explicit 5 s could spend
+            // 10 s in handshake before its own clock even started.
+            bool callerDeclaredBudget = deadlineOverrideMilliseconds is > 0 && !allowConnectFloor;
+            await EnsureStartedAsync(
+                    ComHostPolicy.HandshakeBudgetFor(deadline, callerDeclaredBudget), cancellationToken)
+                .ConfigureAwait(false);
 
             long id = Interlocked.Increment(ref _nextId);
-            PendingRequest pending = new PendingRequest(operation, deadline);
+            PendingRequest pending = new PendingRequest(
+                operation,
+                deadline,
+                countsTowardUnresponsive: ComHostPolicy.TimeoutIndicatesUnresponsiveness(
+                    operationClass, deadlineOverrideMilliseconds));
             if (!_pending.TryAdd(id, pending))
             {
                 throw new InvalidOperationException("Duplicate request id.");
@@ -439,10 +449,26 @@ namespace OutlookAI.ComHost.Supervision
                         //    and report the vaguer cause, hiding both that we ended it and
                         //    why.
                         // 3. Kill last. It is the slowest step and nothing waits on it.
+                        //
+                        // 4. Count it toward the breaker only when it is EVIDENCE. An
+                        //    expiring caller-declared work budget says the work was big;
+                        //    an expiring hang detector says Outlook is deaf. Counting both
+                        //    meant two ordinary slow searches on a large mailbox opened the
+                        //    breaker and failed every request for 30 s - an outage caused
+                        //    by nothing but the size of the mailbox. The kill and the
+                        //    restart happen either way: a blocked COM call cannot be
+                        //    reclaimed any other way, and the child serves serially.
                         // Not `_ =` here: the enclosing lambda's parameter is named _.
-                        Interlocked.Increment(ref _consecutiveTimeouts);
-                        Volatile.Write(ref _lastTimeoutTimestamp, Stopwatch.GetTimestamp());
-                        BeginReplacement($"'{pending.Operation}' exceeded its {pending.DeadlineMilliseconds} ms budget; the COM host was restarted.");
+                        if (pending.CountsTowardUnresponsive)
+                        {
+                            Interlocked.Increment(ref _consecutiveTimeouts);
+                            Volatile.Write(ref _lastTimeoutTimestamp, Stopwatch.GetTimestamp());
+                        }
+
+                        BeginReplacement(pending.CountsTowardUnresponsive
+                            ? $"'{pending.Operation}' exceeded its {pending.DeadlineMilliseconds} ms budget; the COM host was restarted."
+                            : $"'{pending.Operation}' ran past the {pending.DeadlineMilliseconds} ms budget its caller set for it, so the "
+                              + "COM host was restarted to reclaim the call. Outlook was not judged unresponsive by this.");
                         pending.Completion.TrySetException(
                             new ComHostTimeoutException(pending.Operation, pending.DeadlineMilliseconds));
                         KillChild($"deadline exceeded on '{pending.Operation}'", generation);
@@ -722,13 +748,41 @@ namespace OutlookAI.ComHost.Supervision
             {
                 if (_pending.TryRemove(entry.Key, out PendingRequest? pending))
                 {
-                    string message = string.IsNullOrEmpty(cause)
-                        ? $"The Outlook COM host stopped before '{pending.Operation}' completed."
-                        : $"'{pending.Operation}' was interrupted because the Outlook COM host was restarted: {cause} "
-                          + "This request itself was not at fault; retry it.";
-                    _ = pending.Completion.TrySetException(new ComHostUnavailableException(message));
+                    _ = pending.Completion.TrySetException(
+                        new ComHostUnavailableException(DescribeInterruption(pending.Operation, cause)));
                 }
             }
+        }
+
+        /// <summary>
+        /// What an interrupted request is told, which depends on WHAT IT WAS DOING.
+        /// <para>
+        /// This used to end "This request itself was not at fault; retry it." for every
+        /// victim alike. That is right for a read and wrong for a mutation: the child was
+        /// terminated at an unknown point, so a killed <c>TrySendDraft</c> may already have
+        /// submitted the mail and a killed <c>TryUpdateDraft</c> may have applied part of
+        /// its ~20-call sequence, and "retry it" is then advice to send twice or to append
+        /// the attachments a second time. The classification is the same
+        /// <see cref="ComSessionOperations"/> the in-process gateway keys its
+        /// disconnect-rebuild on, so there is one answer to "may this be run again" in the
+        /// product rather than two, and it fails closed: an unclassified name is treated as
+        /// mutating.
+        /// </para>
+        /// <para>
+        /// Pure and internal so T1 can pin both halves without a child process.
+        /// </para>
+        /// </summary>
+        internal static string DescribeInterruption(string operation, string? cause)
+        {
+            string opening = string.IsNullOrEmpty(cause)
+                ? $"The Outlook COM host stopped before '{operation}' completed."
+                : $"'{operation}' was interrupted because the Outlook COM host was restarted: {cause}";
+
+            return ComSessionOperations.IsRetryable(operation)
+                ? opening + " This request itself was not at fault, and it only READ - retrying it is safe."
+                : opening + " This request itself was not at fault, but it CHANGES mail and the COM host ended before it "
+                    + "answered, so whether it took effect is UNKNOWN. Do not simply retry it: check the current state "
+                    + "first (read the item, or search for it) and decide from what you find.";
         }
 
         private async Task SendAsync(ComHostRequest request)
@@ -749,6 +803,66 @@ namespace OutlookAI.ComHost.Supervision
             await pipe.FlushAsync().ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// How long a child gets to notice its pipe closed and exit on its own before it is
+        /// terminated (2026-08-19).
+        /// <para>
+        /// The child already has a clean-exit path - <c>ComHostServer.ServeAsync</c> returns
+        /// on EOF, with the comment "Exiting here is what makes a parent shutdown reliably
+        /// take the child with it" - and <see cref="TearDownChild"/> already disposes the
+        /// pipe before killing. But the kill followed the dispose in the same statement
+        /// block, so the child was terminated microseconds after EOF and that path was dead
+        /// code in practice. This gap makes it reachable: on an ORDERLY teardown the child
+        /// runs its own finally blocks and releases its COM references, which is what the
+        /// kill skips.
+        /// </para>
+        /// <para>
+        /// 250 ms is chosen to be invisible: it is paid only when a child is being replaced
+        /// or the server is shutting down, never on a served request. On the DEADLINE path
+        /// it costs nothing at all, because <see cref="KillChild"/> has already terminated
+        /// the process and <c>HasExited</c> is true by the time the wait is reached.
+        /// </para>
+        /// </summary>
+        private const int CleanExitGraceMilliseconds = 250;
+
+        /// <summary>
+        /// Terminates the child that missed its deadline.
+        /// <para>
+        /// WHY A HARD KILL, AND WHY THAT DOES NOT CONTRADICT <c>PumpedStaRunner</c>. Inside
+        /// this same child, <c>PumpedStaRunner.Dispose</c> refuses to abort its STA thread
+        /// on the grounds that "a COM call could be mid-flight". Read side by side the two
+        /// disciplines look opposed; they are not, and the difference is which process
+        /// survives. <c>Thread.Abort</c> injects an asynchronous exception into a thread in
+        /// a process that KEEPS RUNNING, leaving that process holding half-released COM
+        /// proxies, a corrupted apartment and an unusable Application reference - a
+        /// permanently broken child that still answers the pipe. <c>TerminateProcess</c>
+        /// destroys the whole address space at once, and Windows tears down the LRPC
+        /// endpoints and Outlook's references to the dead client with it. The child's
+        /// refusal protects the child's own remaining life; this kill ends that life, so
+        /// there is nothing left to protect.
+        /// </para>
+        /// <para>
+        /// WHAT THE KILL DOES NOT REACH: OUTLOOK.EXE. It is not in the tree, established
+        /// four ways (2026-08-18 audit) - there is exactly one <c>Process.Start</c> in this
+        /// whole path and it starts the COM host; Outlook is COM-ACTIVATED, so the SCM's
+        /// service host is its parent, which this repo already measured on a live wedge
+        /// (<c>OUTLOOK.EXE -Embedding</c>, parent <c>svchost.exe</c>, see
+        /// <see cref="AutostartCooldownMilliseconds"/>); job membership is inherited only
+        /// by processes the job's members create, and the child creates none; and
+        /// <c>entireProcessTree</c> walks recorded parentage. So this is a CLIENT death,
+        /// not a server kill: no store is left half-written by it.
+        /// </para>
+        /// <para>
+        /// WHAT IT DOES COST is caller certainty, and that is handled elsewhere: the
+        /// pending request is completed as a timeout before this runs, its siblings are
+        /// told whether their own operation is safe to retry
+        /// (<see cref="OnChildConnectionLost"/>), and a killed send is reported with the
+        /// Outbox warning by <c>MailService.Send</c>. What no grace period can fix is that
+        /// a wedged child cannot answer a polite request at all: <c>ComHostServer.ServeAsync</c>
+        /// calls <c>Invoke</c> synchronously inside its read loop, so while wedged the
+        /// child is not reading the pipe and a stop frame is structurally undeliverable.
+        /// </para>
+        /// </summary>
         private void KillChild(string why, int generation)
         {
             Process? child;
@@ -839,6 +953,23 @@ namespace OutlookAI.ComHost.Supervision
 
             cts?.Dispose();
             pipe?.Dispose();
+
+            // Closing the pipe is EOF to the child, and the child exits on EOF by design.
+            // Give it that chance before terminating it: an orderly exit runs its finally
+            // blocks and releases its COM references, which a kill skips. Free on the
+            // deadline path (KillChild has already terminated it), and bounded at
+            // CleanExitGraceMilliseconds everywhere else.
+            try
+            {
+                if (child is { HasExited: false })
+                {
+                    _ = child.WaitForExit(CleanExitGraceMilliseconds);
+                }
+            }
+            catch (Exception)
+            {
+                // Already gone, or the handle is unusable. The kill below covers it.
+            }
 
             try
             {
@@ -959,15 +1090,25 @@ namespace OutlookAI.ComHost.Supervision
 
         private sealed class PendingRequest : IDisposable
         {
-            internal PendingRequest(string operation, long deadlineMilliseconds)
+            internal PendingRequest(string operation, long deadlineMilliseconds, bool countsTowardUnresponsive)
             {
                 Operation = operation;
                 DeadlineMilliseconds = deadlineMilliseconds;
+                CountsTowardUnresponsive = countsTowardUnresponsive;
             }
 
             internal string Operation { get; }
 
             internal long DeadlineMilliseconds { get; }
+
+            /// <summary>
+            /// Whether this request's deadline expiring is evidence that Outlook is
+            /// unresponsive, rather than that the work was bigger than the budget its
+            /// caller chose for it. Decided once, at dispatch, by
+            /// <see cref="ComHostPolicy.TimeoutIndicatesUnresponsiveness"/> - the watchdog
+            /// fires long after the inputs are out of scope.
+            /// </summary>
+            internal bool CountsTowardUnresponsive { get; }
 
             internal CancellationTokenSource DeadlineCts { get; } = new CancellationTokenSource();
 

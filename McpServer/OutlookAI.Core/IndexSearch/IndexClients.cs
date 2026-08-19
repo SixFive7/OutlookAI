@@ -44,9 +44,19 @@ namespace OutlookAI.Core.IndexSearch
         /// <inheritdoc />
         public IndexProviderKind Provider => IndexProviderKind.OleDb;
 
-        /// <inheritdoc />
-        /// <summary>Default per-query timeout for index queries.</summary>
-        public const int DefaultCommandTimeoutSeconds = 30;
+        /// <summary>
+        /// Default per-query timeout for index queries - the fallback for a caller that
+        /// passes none. Every product call site passes one; only tests still rely on this.
+        /// <para>
+        /// It is a CEILING as well as a default: T1 asserts the search path never asks for
+        /// more index time than this, so it must stay at or above
+        /// <c>MailService.SearchIndexTimeoutSeconds</c>. Raised from 30 to 60 on 2026-08-19
+        /// when that one moved, for the same reason - on a ~50 GB profile a saturated or
+        /// still-building index is an ordinary state, and a statement that gives up hands
+        /// back a degraded answer where one that waits hands back the real one.
+        /// </para>
+        /// </summary>
+        public const int DefaultCommandTimeoutSeconds = 60;
 
         public IReadOnlyList<IReadOnlyDictionary<string, object?>> ExecuteRows(string sql, int maxRows, int? commandTimeoutSeconds = null)
         {

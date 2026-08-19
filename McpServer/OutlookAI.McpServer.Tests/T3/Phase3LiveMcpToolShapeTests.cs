@@ -30,7 +30,14 @@ public sealed class Phase3LiveMcpToolShapeTests
     public async Task ShowMe_And_ExhaustiveSearch_GoldenShapes_OverRealStdio()
     {
         string hub = _settings.TestHubStoreDisplayName;
-        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(TimeSpan.FromMinutes(6));
+
+        // The session budget bounds EVERY read and write for this client's whole lifetime,
+        // and this session ends with an exhaustive scan - the one tool the product lets run
+        // for minutes on purpose. So it is derived from that tool's own deadline plus room
+        // for the show-me calls before it, rather than written as a flat six minutes: at six
+        // minutes a scan the product would have completed was reported here as a hang.
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
+            TimeSpan.FromMilliseconds(ComOperationBudgets.ExhaustiveScanDeadlineMs) + TimeSpan.FromMinutes(6));
         using OutlookComSession session = OutlookComSession.Connect(allowStartingOutlook: true);
 
         // --- goto_folder: golden shape + explorer folder path.

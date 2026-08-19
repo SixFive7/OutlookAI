@@ -44,8 +44,17 @@ namespace OutlookAI.Core.Services
         /// outcome was unreachable whenever the scan actually ran long: the caller got a
         /// Timeout, the COM host was killed, and two of those open the breaker for 30 s.
         /// </para>
+        /// <para>
+        /// Since 2026-08-19 it derives from the scan's OWN deadline class
+        /// (<c>ComHostOperationClass.ExhaustiveScan</c>, 615 s) rather than from the shared
+        /// operation deadline, so ten minutes of scanning does not become ten minutes of
+        /// hang detection for <c>read</c> and <c>move_mail</c>. The measurement behind the
+        /// number: on the maintainer's real profile a 60-day whole-store scan reached 3
+        /// folders of 32 before the old 105 s stopped it, so the budget - not the result cap
+        /// - was what bounded completeness.
+        /// </para>
         /// </summary>
-        public const int ExhaustiveTimeBudgetMs = ComOperationBudgets.ChildWorkBudgetMs;
+        public const int ExhaustiveTimeBudgetMs = ComOperationBudgets.ExhaustiveScanWorkBudgetMs;
 
         /// <summary>
         /// What a non-folder-scoped sweep covers, echoed in the sweep block so an agent
@@ -444,24 +453,75 @@ namespace OutlookAI.Core.Services
         /// <summary>
         /// Time budget for the freshness sweep.
         /// <para>
-        /// Much shorter than an ordinary operation, because the sweep is an ENHANCEMENT:
-        /// search already has its indexed answer in hand before the sweep runs, and the
-        /// tool's own contract calls search "sub-second and cheap". Measured healthy on
-        /// this machine at 0.5-6 s; measured against a wedged Outlook it spent the full
-        /// 120 s operation budget before degrading, which made every search feel broken
-        /// even though the answer was already computed and waiting.
+        /// Shorter than an ordinary operation, because the sweep is an ENHANCEMENT: search
+        /// already has its indexed answer in hand before the sweep runs, and the tool's own
+        /// contract calls search "sub-second and cheap". Measured healthy on this machine at
+        /// 0.5-6 s; measured against a wedged Outlook it spent the full operation budget
+        /// before degrading, which made every search feel broken even though the answer was
+        /// already computed and waiting.
         /// </para>
         /// <para>
         /// It is a budget for the SWEEP, and the sweep call passes allowConnectFloor so the
         /// COM host may still add its cold-start connect allowance on a fresh host. Without
         /// that the very first search had to fit the COM attach AND the whole sweep into
-        /// 30 s - on a machine where attaching to a large OST takes longer than that (the
-        /// reason ConnectDeadlineMilliseconds is 90 s at all) the sweep could never succeed:
-        /// every attempt timed out, killed the host, bumped the restart count and blamed the
-        /// sweep.
+        /// this budget - on a machine where attaching to a large OST takes longer than that
+        /// (the reason ConnectDeadlineMs is what it is at all) the sweep could never
+        /// succeed: every attempt timed out, killed the host, bumped the restart count and
+        /// blamed the sweep.
+        /// </para>
+        /// <para>
+        /// RAISED FROM 30 000 TO 180 000 on 2026-08-19, and this is a measurement, not a
+        /// preference. Measured on a purpose-built corpus - one PST outside the local index,
+        /// 20 000 items across the four arrival-path folders with real received dates, 1 612
+        /// of them inside the seven-day fallback window so the per-folder cap engages: four
+        /// sweeps of that ONE store took 13.6 s, 11.8 s, 10.7 s and 11.9 s, i.e. about 12 s
+        /// per store with the cap engaged. The maintainer's profile mounts FIVE stores and
+        /// the sweep covers four folders in each, so the extrapolation is ~60 s - against a
+        /// 30 s budget. That is the direct explanation for the sweep timeout observed on
+        /// their real profile, where the supervisor then killed and replaced the COM host,
+        /// and it agrees with the earlier whole-store 7-day figure of 36.6 s there.
+        /// </para>
+        /// <para>
+        /// 180 000 is 3x that measured extrapolation, and the margin is headroom rather than
+        /// luxury: the corpus is a fast LOCAL PST, and the same per-item work against
+        /// Exchange is slower. The other half of the fix is that expiry is no longer fatal -
+        /// the sweep stops at a folder boundary and returns what it covered
+        /// (<see cref="SweepWorkBudgetMs"/>), and an expiring caller budget no longer counts
+        /// as evidence that Outlook is unresponsive.
+        /// </para>
+        /// <para>
+        /// It is COUPLED to <c>OutlookComSession.SweepBodyBytesBudget</c>. The 432 KB frame
+        /// high-water previously measured on the real profile was bounded by the old 30 s
+        /// timeout, not by any item cap; the same corpus measured 10.2 MB from one store's
+        /// sweep once the sweep was allowed to finish. Giving the sweep time is what lets it
+        /// build frames large enough for the body budget to matter.
         /// </para>
         /// </summary>
-        public const int SweepBudgetMs = 30_000;
+        public const int SweepBudgetMs = 180_000;
+
+        /// <summary>
+        /// The sweep's INNER budget - the one the COM child measures against its own clock
+        /// and stops on gracefully. Derived from <see cref="SweepBudgetMs"/> exactly as the
+        /// exhaustive scan's is derived from its class deadline, and for the same reason:
+        /// an inner budget equal to its outer one can never degrade, because the outer
+        /// watchdog fires while the inner walk is still serializing its answer.
+        /// <para>
+        /// WHAT IT BUYS (maintainer decision (d), 2026-08-19). Before it, the whole-profile
+        /// sweep had no budget of its own at all - only the outer gateway deadline - so a
+        /// sweep that ran long produced a <c>TimeoutException</c>, the supervisor concluded
+        /// the host was wedged, the child was killed and replaced, and every folder the
+        /// sweep HAD covered was thrown away. Observed on the maintainer's real profile.
+        /// Now the walk checks this budget at each store and each folder boundary, stops,
+        /// and returns the folders it did cover with <c>sweep_time_budget</c> in
+        /// <c>coverageGaps</c> - the same discipline the exhaustive scan has had since
+        /// 2026-08-18.
+        /// </para>
+        /// <para>
+        /// The clock starts inside the COM child, after the session is connected, so a cold
+        /// start is paid out of the outer budget's headroom rather than out of this one.
+        /// </para>
+        /// </summary>
+        public const int SweepWorkBudgetMs = SweepBudgetMs - ComOperationBudgets.ResultReturnHeadroomMs;
 
         /// <summary>
         /// Time budget for health's COM probe. Short by design: outlook_health exists to
@@ -499,8 +559,18 @@ namespace OutlookAI.Core.Services
         /// search says so and degrades rather than waiting twice as long to say the same
         /// thing.
         /// </para>
+        /// <para>
+        /// RAISED FROM 15 TO 60 on 2026-08-19. The measurement it was sized against is
+        /// unchanged and so is its meaning - what changed is the judgement about what to do
+        /// when it is exceeded. On a ~50 GB profile a saturated or still-building index is
+        /// an ordinary state rather than a fault, and a search that gives up after 15 s
+        /// hands back a degraded answer the caller then has to work around; one that waits
+        /// a minute hands back the real one. The headroom over the healthy measurement is
+        /// now ~110x, which is the point: this is a backstop against an indexer that has
+        /// stopped answering at all, not a service-level target.
+        /// </para>
         /// </summary>
-        public const int SearchIndexTimeoutSeconds = 15;
+        public const int SearchIndexTimeoutSeconds = 60;
 
         /// <summary>
         /// The tool-level wall-clock shape of one indexed search, stated as a relationship
@@ -520,8 +590,40 @@ namespace OutlookAI.Core.Services
         /// not attempted, exactly like the audit-log short circuit beside it, so a partial
         /// batch stays legible and every EntryID that did move is still returned.
         /// </para>
+        /// <para>
+        /// IT USED TO EQUAL <c>ComOperationBudgets.OperationDeadlineMs</c>, and an aggregate
+        /// equal to its own unit of work is not an aggregate. The check runs BEFORE each
+        /// item, and each item was a fresh gateway call carrying a full operation deadline
+        /// of its own, so a batch sitting at 119.9 s could start one more item and run to
+        /// ~240 s. T1 pinned the equality, which meant the test enforced the flaw. Two
+        /// things fix it: the value is now strictly below the operation deadline, and each
+        /// item is dispatched with what is LEFT of this budget
+        /// (<see cref="MinimumItemBudgetMs"/> is the floor below which the item is reported
+        /// as not attempted instead), so the batch is bounded by this number plus one
+        /// result-return rather than by this number plus a whole extra deadline.
+        /// </para>
+        /// <para>
+        /// 240 000 is 80% of the operation deadline: a full 50-id batch stays comfortably
+        /// servable on a slow profile - the maintainer's instruction is that finishing
+        /// slowly beats giving up - while leaving the hang detector strictly above it, so
+        /// "the batch ran long" and "Outlook stopped answering" remain different events
+        /// with different reports.
+        /// </para>
         /// </summary>
-        public const int MoveBatchBudgetMs = ComOperationBudgets.OperationDeadlineMs;
+        public const int MoveBatchBudgetMs = 240_000;
+
+        /// <summary>
+        /// Least budget one move/archive item is dispatched with. Below this the item is
+        /// reported as not attempted rather than started: a sub-second deadline would be
+        /// refused by the COM host's own dispatch floor anyway, and the refusal would
+        /// surface as a bare timeout instead of as the legible per-item "re-issue the rest
+        /// as a smaller batch" the batch short circuit already produces.
+        /// <para>
+        /// Public so T1 pins it beside the budget it divides, exactly like every other value
+        /// in this block.
+        /// </para>
+        /// </summary>
+        public const int MinimumItemBudgetMs = 1_000;
 
         /// <summary>Default directory attachments are saved to when the caller names none.</summary>
         public static string DefaultAttachmentDirectory =>
@@ -1241,6 +1343,17 @@ namespace OutlookAI.Core.Services
                             + "brand-new mail there may be missing. Scope the search to a narrower folder for full freshness coverage.");
                         break;
 
+                    case FreshMerge.GapSweepBudget:
+                        advice.Add("Freshness sweep ran out of its "
+                            + (SweepWorkBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
+                            + " s budget after " + sweep.FoldersSwept.ToString(CultureInfo.InvariantCulture)
+                            + " folder(s) and stopped there, so stores or folders it had not reached yet have no freshness "
+                            + "coverage - index results still cover them, but brand-new mail there may be missing. It "
+                            + "returned what it did cover rather than failing. Name a 'store' (and a 'folder' if you know "
+                            + "one) to give the sweep less ground, or re-run: the window it could not finish is still open "
+                            + "next time.");
+                        break;
+
                     case FreshMerge.GapTimeBudget:
                         advice.Add("Freshness sweep stopped at its "
                             + (OutlookComSession.ScopedSweepTimeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
@@ -1922,10 +2035,15 @@ namespace OutlookAI.Core.Services
                 ComSweepResult sweepResult;
                 try
                 {
+                    // Two budgets, one relationship. The inner one is what the walk itself
+                    // measures and stops on gracefully; the outer one is the gateway
+                    // deadline that reclaims a host which did not answer at all. The gap
+                    // between them is the return trip, so a slow sweep always ends as
+                    // partial coverage rather than as a timeout and a killed host.
                     sweepResult = _gateway.Run(
                     s => s.SweepFoldersNewerThan(
                         gapStart, SweepPerFolderCap, includeBodies: true, request.Store, sweepFolderPath, sweepRecursive,
-                        perStoreGapStart),
+                        perStoreGapStart, SweepWorkBudgetMs),
                     SweepBudgetMs,
                     allowConnectFloor: true);
                 }
@@ -2543,16 +2661,29 @@ namespace OutlookAI.Core.Services
             IReadOnlyList<string>? folderSegments = ParseFolderSegments(request.Folder);
 
             Stopwatch stopwatch = Stopwatch.StartNew();
-            ComExhaustiveResult scan = _gateway.Run(s => s.ExhaustiveScan(
-                request.Store!,
-                folderSegments,
-                terms,
-                request.AfterUtc,
-                request.BeforeUtc,
-                maxItems: top,
-                timeBudgetMs: ExhaustiveTimeBudgetMs,
-                searchIn: request.SearchIn,
-                includeSubfolders: request.IncludeSubfolders));
+
+            // The scan runs on its OWN deadline, not the shared one. Two numbers, one
+            // relationship: the outer budget below is the exhaustive class's hard deadline
+            // and the inner timeBudgetMs is that same deadline less the return trip, so the
+            // walk always stops and hands back partial results before the watchdog can
+            // decide the host is wedged. Stated explicitly here as well as in
+            // ComHostOperationClass because the enclosing gateway operation would otherwise
+            // bound the lambda at the ORDINARY deadline and clip the scan back to it - an
+            // aggregate is measured across the lambda, and this lambda's one call is
+            // allowed to be longer than an ordinary one.
+            ComExhaustiveResult scan = _gateway.Run(
+                s => s.ExhaustiveScan(
+                    request.Store!,
+                    folderSegments,
+                    terms,
+                    request.AfterUtc,
+                    request.BeforeUtc,
+                    maxItems: top,
+                    timeBudgetMs: ExhaustiveTimeBudgetMs,
+                    searchIn: request.SearchIn,
+                    includeSubfolders: request.IncludeSubfolders),
+                ComOperationBudgets.ExhaustiveScanDeadlineMs,
+                allowConnectFloor: true);
             stopwatch.Stop();
 
             List<HitSummary> summaries = new List<HitSummary>();
@@ -3732,6 +3863,14 @@ namespace OutlookAI.Core.Services
             info.DepthLimitReached = result.DepthLimitReached ? true : (bool?)null;
             info.TimeBudgetExceeded = result.TimeBudgetExceeded ? true : (bool?)null;
 
+            // Bound of the WHOLE sweep rather than of a subtree walk, so it is deliberately
+            // NOT attributed per store: the budget is spent across every store the sweep
+            // visited, and the stores it never reached are exactly the ones with no entry to
+            // attribute it to. A store-scoped request served by a cached all-stores sweep
+            // has to see this - its own zero coverage would otherwise read as "nothing was
+            // there" instead of "we ran out of time before reaching you".
+            info.SweepBudgetExpired = result.SweepBudgetExpired ? true : (bool?)null;
+
             List<string> capped = new List<string>();
             foreach (string entry in result.ItemCappedFolders)
             {
@@ -4838,7 +4977,31 @@ namespace OutlookAI.Core.Services
             // Confirmed: execute as ONE STA operation (re-verify content INSIDE, pin +
             // hard-verify identity, then Send) - v3.MD section 12 Phase-4/5 rules.
             string? sendError = null;
-            ComSendResult? sent = _gateway.Run(s => s.TrySendDraft(state.EntryId, state.StoreId, contentHash, sentOnBehalfOf, out sendError));
+            ComSendResult? sent;
+            try
+            {
+                sent = _gateway.Run(s => s.TrySendDraft(state.EntryId, state.StoreId, contentHash, sentOnBehalfOf, out sendError));
+            }
+            catch (TimeoutException ex)
+            {
+                // THE ONE PATH THAT MOST NEEDS THE OUTBOX WARNING WAS THE ONE NOT GETTING
+                // IT. A deadline expiry here kills the COM host somewhere between
+                // MailItem.Send() executing inside Outlook and the answer reaching us, so
+                // the mail may already have been submitted - Outlook creates and submits a
+                // message in a folder, usually the Outbox - and the draft's EntryID is gone
+                // with it. The neighbouring SendCallFailed branch has said "The mail MAY be
+                // sitting in the Outbox - verify before retrying" since it was written; the
+                // kill path handed back the generic "Outlook did not respond ... the COM
+                // host was restarted" instead, which says nothing about mail at all.
+                //
+                // The confirm token is already consumed at this point (it is consumed in
+                // this process, before the child is even asked), so the friction is
+                // pointing the wrong way too: re-confirming after an unknown-outcome send
+                // is exactly how a duplicate gets sent. Hence the explicit instruction to
+                // look before re-sending.
+                throw new InvalidOperationException(AuditSendOutcomeUnknown(state, hitId, ex), ex);
+            }
+
             if (sent == null)
             {
                 throw MapSendFailure(sendError, state);
@@ -4991,6 +5154,71 @@ namespace OutlookAI.Core.Services
                 "The draft could not be re-opened for sending (" + (sendError ?? "unknown") + "). Nothing was sent.");
         }
 
+        /// <summary>
+        /// Records a send whose outcome nobody can state, and builds the message the caller
+        /// gets. Both halves, in one place, because they are one fact.
+        /// <para>
+        /// The audit trail was one line away from being a real detector here. Its ordering
+        /// is mutate-then-record, so a kill produces a MISSING line, never a corrupt one -
+        /// which meant a killed send left <c>send_token_issued</c> with no matching
+        /// <c>send</c> and no <c>send_refused</c>, and nothing in the product looked for
+        /// that shape. <c>send_outcome_unknown</c> turns the gap into a record: the same
+        /// diagnosis, stated rather than inferred.
+        /// </para>
+        /// <para>
+        /// The audit write is best-effort here, unlike everywhere else in the send path. A
+        /// failed append normally refuses the operation (D4: no send without its line), but
+        /// the operation this describes has ALREADY happened or already failed; throwing an
+        /// audit error over it would replace the one message the caller most needs with a
+        /// message about a log file.
+        /// </para>
+        /// </summary>
+        private static string AuditSendOutcomeUnknown(ComSendableDraftState state, string? hitId, Exception cause)
+        {
+            try
+            {
+                Audit.AuditLog.Append(
+                    "send_outcome_unknown",
+                    ("entryId", state.EntryId),
+                    ("store", state.StoreDisplayName),
+                    ("account", state.ResolvedAccountSmtp),
+                    ("recipients", state.Recipients.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("reason", cause.GetType().Name),
+                    ("hitId", hitId));
+            }
+            catch (InvalidOperationException)
+            {
+                // The caller-facing message below is the important half and it is built
+                // regardless. An unwritable audit log is reported by outlook_health.
+            }
+
+            return DescribeSendOutcomeUnknown(cause.Message);
+        }
+
+        /// <summary>
+        /// What a caller is told when a send did not answer and the COM host was reclaimed.
+        /// Pure and public so T1 pins it: the whole point of this message is a set of words
+        /// that must be present, and the path it belongs to cannot be exercised without
+        /// wedging a real Outlook mid-send.
+        /// <para>
+        /// It says what the <c>SendCallFailed</c> branch beside it has always said - "the
+        /// mail MAY be sitting in the Outbox" - because the two describe the same state.
+        /// Only one of them used to say it, and it was the branch that fires when Outlook
+        /// ANSWERS with an error; the kill path, where the caller knows least, got the
+        /// generic "Outlook did not respond ... the COM host was restarted", which mentions
+        /// no mail at all.
+        /// </para>
+        /// </summary>
+        public static string DescribeSendOutcomeUnknown(string causeMessage)
+        {
+            return "Outlook did not answer the send within its budget, and the COM host was restarted to reclaim the call. "
+                + "WHETHER THE MAIL WAS SENT IS UNKNOWN: the send may have executed inside Outlook without the answer "
+                + "reaching us, in which case the mail is on its way or MAY BE SITTING IN THE OUTBOX and will go out when "
+                + "Outlook next runs. Do NOT simply send again - check Sent Items and the Outbox for this message first, "
+                + "and only re-create and re-send if it is in neither. The confirm token is spent either way. (Underlying "
+                + "failure: " + causeMessage + ")";
+        }
+
         /// <summary>Send audit (load-bearing, D4): a failure surfaces with the send already executed.</summary>
         private static void AuditSend(ComSendResult sent, string? hitId)
         {
@@ -5068,14 +5296,16 @@ namespace OutlookAI.Core.Services
                     continue;
                 }
 
-                if (batchClock.ElapsedMilliseconds > MoveBatchBudgetMs)
+                int itemBudgetMs = RemainingBatchBudgetMs(batchClock);
+                if (itemBudgetMs < MinimumItemBudgetMs)
                 {
                     items.Add(FailedItem(id, BatchBudgetExhaustedMessage));
                     continue;
                 }
 
                 MoveItemView item = MoveOne(
-                    id, segments, createFolder, requiredStore, targetFolderEcho, createdFolders, out bool auditFailed);
+                    id, segments, createFolder, requiredStore, targetFolderEcho, createdFolders, itemBudgetMs,
+                    out bool auditFailed);
                 auditBroken |= auditFailed;
                 items.Add(item);
             }
@@ -5119,13 +5349,14 @@ namespace OutlookAI.Core.Services
                     continue;
                 }
 
-                if (batchClock.ElapsedMilliseconds > MoveBatchBudgetMs)
+                int itemBudgetMs = RemainingBatchBudgetMs(batchClock);
+                if (itemBudgetMs < MinimumItemBudgetMs)
                 {
                     items.Add(FailedItem(id, BatchBudgetExhaustedMessage));
                     continue;
                 }
 
-                MoveItemView item = ArchiveOne(id, archiveByStore, out bool auditFailed);
+                MoveItemView item = ArchiveOne(id, archiveByStore, itemBudgetMs, out bool auditFailed);
                 auditBroken |= auditFailed;
                 items.Add(item);
             }
@@ -5153,9 +5384,40 @@ namespace OutlookAI.Core.Services
             };
         }
 
+        /// <summary>
+        /// What is left of <see cref="MoveBatchBudgetMs"/>, which is the budget the NEXT
+        /// item is dispatched with.
+        /// <para>
+        /// Handing it to the item is what makes the batch budget an aggregate rather than a
+        /// label. Without it the check before each item was the only bound, and each item
+        /// then ran under a full operation deadline of its own - so a batch sitting one
+        /// millisecond inside the budget could start one more item and run to the budget
+        /// plus a whole extra deadline.
+        /// </para>
+        /// </summary>
+        private static int RemainingBatchBudgetMs(Stopwatch batchClock)
+        {
+            long remaining = MoveBatchBudgetMs - batchClock.ElapsedMilliseconds;
+            return remaining > 0 ? (int)remaining : 0;
+        }
+
+        /// <summary>
+        /// Per-item reason when an item's own budget expired mid-move. It is a MUTATION
+        /// whose outcome the caller cannot infer: the COM host was ended to reclaim the
+        /// call, so the move may or may not have happened, and re-issuing it blindly is how
+        /// a caller ends up hunting an item that already moved.
+        /// </summary>
+        internal static string BatchItemTimedOutMessage(string detail)
+        {
+            return "The move did not answer within the batch's remaining time budget (" + detail
+                + "). Whether it took effect is UNKNOWN - the COM host was ended to reclaim the call. Check where the item "
+                + "is now (search for it, or read it) before re-issuing, and re-issue the rest as a smaller batch.";
+        }
+
         private MoveItemView ArchiveOne(
             string id,
             Dictionary<string, (ComArchiveFolderInfo? Info, string? Error)> archiveByStore,
+            int itemBudgetMs,
             out bool auditFailed)
         {
             auditFailed = false;
@@ -5175,7 +5437,8 @@ namespace OutlookAI.Core.Services
             {
                 // Learn the item's own store first (cross-store retry for bare EntryIDs),
                 // then resolve THAT store's designated archive folder (memoized per call).
-                ComDraftInfo? info = _gateway.Run(s =>
+                ComDraftInfo? info = _gateway.Run(
+                    s =>
                 {
                     ComDraftInfo? r = s.TryGetMailInfo(entryId, storeId, out string? infoError);
                     if (ShouldSearchOtherStores(storeId, r != null, infoError))
@@ -5195,7 +5458,9 @@ namespace OutlookAI.Core.Services
                     }
 
                     return r;
-                });
+                },
+                    itemBudgetMs,
+                    allowConnectFloor: true);
                 if (info?.StoreDisplayName == null)
                 {
                     return FailedItem(id, "The item could not be opened. Re-run search - it may have moved (EntryIDs change on moves).");
@@ -5203,11 +5468,14 @@ namespace OutlookAI.Core.Services
 
                 if (!archiveByStore.TryGetValue(info.StoreDisplayName, out (ComArchiveFolderInfo? Info, string? Error) archive))
                 {
-                    archive = _gateway.Run(s =>
-                    {
-                        ComArchiveFolderInfo? resolvedInfo = s.TryResolveArchiveFolder(info.StoreDisplayName, out string? resolveError);
-                        return (resolvedInfo, resolveError);
-                    });
+                    archive = _gateway.Run(
+                        s =>
+                        {
+                            ComArchiveFolderInfo? resolvedInfo = s.TryResolveArchiveFolder(info.StoreDisplayName, out string? resolveError);
+                            return (resolvedInfo, resolveError);
+                        },
+                        itemBudgetMs,
+                        allowConnectFloor: true);
                     archiveByStore[info.StoreDisplayName] = archive;
                 }
 
@@ -5217,11 +5485,14 @@ namespace OutlookAI.Core.Services
                 }
 
                 ComArchiveFolderInfo target = archive.Info;
-                (ComMoveItemResult? moved, string? moveError) = _gateway.Run(s =>
-                {
-                    ComMoveItemResult? r = s.TryMoveItemToFolderId(entryId, info.StoreId ?? storeId, target.EntryId, target.StoreId, out string? e);
-                    return (r, e);
-                });
+                (ComMoveItemResult? moved, string? moveError) = _gateway.Run(
+                    s =>
+                    {
+                        ComMoveItemResult? r = s.TryMoveItemToFolderId(entryId, info.StoreId ?? storeId, target.EntryId, target.StoreId, out string? e);
+                        return (r, e);
+                    },
+                    itemBudgetMs,
+                    allowConnectFloor: true);
                 if (moved == null)
                 {
                     return FailedItem(id, DescribeMoveFailure(moveError, target.StoreRelativePath, requestedStore: null, createFolder: false));
@@ -5232,6 +5503,13 @@ namespace OutlookAI.Core.Services
             catch (OutlookUnavailableException)
             {
                 throw;
+            }
+            catch (TimeoutException ex)
+            {
+                // Per item, not per batch. The item's own budget is what expired, so the
+                // rest of the batch is still worth attempting - and the item is a mutation
+                // whose outcome nobody can now state, which the message has to say.
+                return FailedItem(id, BatchItemTimedOutMessage(ex.Message));
             }
             catch (Exception ex) when (ex is InvalidOperationException || OutlookComSession.IsComCallFailure(ex))
             {
@@ -5246,6 +5524,7 @@ namespace OutlookAI.Core.Services
             string? requestedStore,
             string targetFolderEcho,
             List<string> createdFolders,
+            int itemBudgetMs,
             out bool auditFailed)
         {
             auditFailed = false;
@@ -5263,7 +5542,8 @@ namespace OutlookAI.Core.Services
 
             try
             {
-                (ComMoveItemResult? moved, string? comError) = _gateway.Run(s =>
+                (ComMoveItemResult? moved, string? comError) = _gateway.Run(
+                    s =>
                 {
                     ComMoveItemResult? r = s.TryMoveItemToPath(entryId, storeId, segments, createFolder, requestedStore, out string? e);
                     if (ShouldSearchOtherStores(storeId, r != null, e))
@@ -5281,7 +5561,9 @@ namespace OutlookAI.Core.Services
                     }
 
                     return (r, e);
-                });
+                },
+                    itemBudgetMs,
+                    allowConnectFloor: true);
 
                 if (moved == null)
                 {
@@ -5301,6 +5583,11 @@ namespace OutlookAI.Core.Services
             catch (OutlookUnavailableException)
             {
                 throw;
+            }
+            catch (TimeoutException ex)
+            {
+                // Per item, not per batch - see ArchiveOne's twin.
+                return FailedItem(id, BatchItemTimedOutMessage(ex.Message));
             }
             catch (Exception ex) when (ex is InvalidOperationException || OutlookComSession.IsComCallFailure(ex))
             {

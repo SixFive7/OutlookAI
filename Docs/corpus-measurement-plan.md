@@ -1,5 +1,22 @@
 # Measuring the sweep and scan budgets against a known corpus
 
+> **SUPERSEDED IN PART, 2026-08-19.** Both budgets have since been measured and changed, so
+> everything below that reads as "what to decide" is now a record of how the question was
+> framed rather than an open one. What actually happened: **the sweep was measured** on this
+> corpus at ~12 s for ONE store with the 200-per-folder cap engaged (13.6 / 11.8 / 10.7 /
+> 11.9 s over four runs, 758 items each), which extrapolates to ~60 s on the maintainer's
+> five-store profile and is the direct explanation for the 30 s timeout seen there.
+> `SweepBudgetMs` is now **180 s** (3x that) with a derived inner budget
+> `SweepWorkBudgetMs` of 165 s that stops the walk gracefully at a folder boundary; the scan
+> got its **own deadline class** (`ComHostOperationClass.ExhaustiveScan`, 615 s) rather than
+> dragging the shared deadline up, so `ExhaustiveTimeBudgetMs` is **600 s** while every other
+> tool keeps a 300 s hang detector. The same run also measured a frame high-water of
+> 10,734,599 bytes from one store, which makes `SweepBodyBytesBudget` load-bearing rather than
+> insurance. Current values and their derivations: `Docs/magic-numbers.md` and section 2 of
+> `Docs/autonomous-session-log.md`. Two symbols named below no longer exist under those names:
+> `ComOperationBudgets.ChildWorkBudgetMs` is now `ExhaustiveScanWorkBudgetMs`, and it derives
+> from `ExhaustiveScanDeadlineMs` rather than from the shared operation deadline.
+
 **What this file is for.** Two budgets in the MCP server are set by argument rather than by
 measurement, and one of them is about to be changed. This is the plan for replacing both
 arguments with numbers, using the synthetic corpus that
@@ -37,8 +54,8 @@ ages.
 
 | Constant | Value now | Where | How it was arrived at |
 | --- | --- | --- | --- |
-| `MailService.SweepBudgetMs` | `30_000` | `McpServer/OutlookAI.Core/Services/MailService.cs` | Proposed to become `180_000`. The only support so far is a model: four folders x 200 items x five stores at roughly 15 ms per item opened. |
-| `MailService.ExhaustiveTimeBudgetMs` | `105_000` (derived from `ComOperationBudgets.ChildWorkBudgetMs`) | `McpServer/OutlookAI.Core/Services/MailService.cs`, `McpServer/OutlookAI.Core/Com/ComOperationBudgets.cs` | Derived from the COM operation deadline minus the result-return headroom. Never measured against volume: on the real profile a sixty-day scan reached three folders of thirty-two in 105 s and stopped there. |
+| `MailService.SweepBudgetMs` | ~~`30_000`~~ **`180_000` since 2026-08-19** | `McpServer/OutlookAI.Core/Services/MailService.cs` | Was a model (four folders x 200 items x five stores at ~15 ms per item opened). Now MEASURED on this corpus: ~12 s per store with the cap engaged, ~60 s extrapolated to five stores, and the budget is 3x that. |
+| `MailService.ExhaustiveTimeBudgetMs` | ~~`105_000`~~ **`600_000` since 2026-08-19** (derived from `ComOperationBudgets.ExhaustiveScanWorkBudgetMs`, itself `ExhaustiveScanDeadlineMs` less the return trip) | `McpServer/OutlookAI.Core/Services/MailService.cs`, `McpServer/OutlookAI.Core/Com/ComOperationBudgets.cs` | Derived from the COM operation deadline minus the result-return headroom. Never measured against volume: on the real profile a sixty-day scan reached three folders of thirty-two in 105 s and stopped there. |
 
 **The one model that already exists**, from `Docs/magic-numbers.md`: roughly **19 ms per
 folder** fixed plus **15 ms per item opened**, fitted over 215 sweeps on the real profile. It
@@ -51,13 +68,15 @@ was wrong.
 
 ## Read this before proposing 180 s
 
-**180 s does not fit.** `MailService.SearchBudgetMs` is
+> **RESOLVED 2026-08-19: 180 s fits now.** The composition below was the real blocker and it was cleared exactly as this section says it must be - in one pass, moving `OperationDeadlineMs` with the sweep. `SearchBudgetMs` is now 240 s (60 s index + 180 s sweep) inside a 300 s operation deadline, and the exhaustive scan was taken OUT of that composition entirely by giving it its own deadline class. The paragraph below is kept because the constraint it describes is permanent, even though this particular instance of it is settled.
+
+**180 s did not fit.** `MailService.SearchBudgetMs` is
 `(SearchIndexTimeoutSeconds * 1000) + SweepBudgetMs`, and T1
 `BudgetCompositionTests.SearchBudget_IsComposedFromItsPartsAndFitsTheOperationDeadline`
 asserts that sum is at most `ComOperationBudgets.OperationDeadlineMs`, which is `120_000`.
 With `SweepBudgetMs = 180_000` the sum is 195 s against a 120 s deadline, so that test fails
 before anything reaches a mailbox. Raising the sweep budget past about **105 s** is therefore
-not a one-constant change: it moves `OperationDeadlineMs`, and with it `ChildWorkBudgetMs`,
+not a one-constant change: it moves `OperationDeadlineMs`, and with it the child work budget
 `ExhaustiveTimeBudgetMs` and the supervisor's own timing. **Decide the shape of that change
 before the measurement, so the measurement can be aimed at the right question.**
 

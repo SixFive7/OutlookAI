@@ -80,6 +80,28 @@ namespace OutlookAI.Core.Services
         /// <summary>Coverage hole: the subtree walk stopped at its time budget.</summary>
         public const string GapTimeBudget = "time_budget";
 
+        /// <summary>
+        /// Coverage hole: the WHOLE freshness sweep stopped at its own time budget, so
+        /// stores or folders it had not reached were never swept.
+        /// <para>
+        /// Its own code rather than <see cref="GapTimeBudget"/>, on the same rule that split
+        /// <see cref="GapItemCap"/> from <see cref="GapItemCapUnsorted"/>: two bounds that
+        /// point at different remedies need two codes. <c>time_budget</c> means one SUBTREE
+        /// was too wide and the remedy is a narrower folder scope or
+        /// <c>include_subfolders: false</c>; this one means the PROFILE was too big for the
+        /// sweep's budget and the remedy is to name a store or a folder so there is less
+        /// ground to cover. Telling a caller to drop <c>include_subfolders</c> over a
+        /// default-folder sweep, which is shallow by construction, would be advice that
+        /// cannot be acted on.
+        /// </para>
+        /// <para>
+        /// New in 2026-08-19, and it replaces an outcome rather than adding one: the sweep
+        /// had no budget of its own, so this state used to arrive as a gateway timeout, a
+        /// killed COM host and a search with no freshness tier at all.
+        /// </para>
+        /// </summary>
+        public const string GapSweepBudget = "sweep_time_budget";
+
         /// <summary>Coverage hole: the subtree walk refused folders past its depth guard.</summary>
         public const string GapDepthLimit = "depth_limit";
 
@@ -531,6 +553,14 @@ namespace OutlookAI.Core.Services
             if (sweep.FolderCapReached == true)
             {
                 gaps.Add(GapFolderCap);
+            }
+
+            // The whole sweep's budget first: it is the wider of the two holes (stores and
+            // folders never reached at all) and the gap order is the order the advice
+            // sentences come out in.
+            if (sweep.SweepBudgetExpired == true)
+            {
+                gaps.Add(GapSweepBudget);
             }
 
             if (sweep.TimeBudgetExceeded == true)

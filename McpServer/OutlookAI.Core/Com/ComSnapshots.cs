@@ -1191,8 +1191,10 @@ namespace OutlookAI.Core.Com
             int storesUnnamed = 0,
             IReadOnlyList<string>? itemCappedFoldersUnsorted = null,
             int bodiesTruncated = 0,
-            bool bodyBudgetExhausted = false)
+            bool bodyBudgetExhausted = false,
+            bool sweepBudgetExpired = false)
         {
+            SweepBudgetExpired = sweepBudgetExpired;
             BodiesTruncated = bodiesTruncated;
             BodyBudgetExhausted = bodyBudgetExhausted;
             Items = items;
@@ -1374,6 +1376,26 @@ namespace OutlookAI.Core.Com
         /// invisible (section-12 no-silent-caps discipline).
         /// </summary>
         public bool TimeBudgetExceeded { get; }
+
+        /// <summary>
+        /// True when the WHOLE sweep's own soft budget ran out, so it stopped at a store or
+        /// folder boundary and the folders it had not reached were never swept.
+        /// <para>
+        /// A separate fact from <see cref="TimeBudgetExceeded"/>, which belongs to the
+        /// folder-scoped subtree walk, for the reason the payload's vocabulary always
+        /// splits on: the remedies differ. That one means the SUBTREE is wide - scope
+        /// narrower, or pass <c>include_subfolders: false</c>. This one means the PROFILE is
+        /// big - name a store, or a folder, so the sweep has less ground to cover.
+        /// </para>
+        /// <para>
+        /// The alternative to reporting it is what used to happen: the sweep had no budget
+        /// of its own, the gateway deadline expired instead, the supervisor read that as an
+        /// unresponsive host, killed the child - and every folder already swept was thrown
+        /// away, so a big mailbox lost its whole freshness tier rather than getting a
+        /// partial one.
+        /// </para>
+        /// </summary>
+        public bool SweepBudgetExpired { get; }
     }
 
     /// <summary>

@@ -91,14 +91,76 @@ They are pure so T1 can pin every branch with a synthetic clock, the same idiom
 matters most would only be observable by wedging a real Outlook — neither reproducible
 nor CI-safe.
 
-Deadlines: 120 s for an ordinary operation, 90 s for connect (which may cold-start
-Outlook), **5 s for the health probe**. Health must answer while Outlook is wedged,
-because that is exactly when it is asked; exceeding its probe budget degrades the report
-rather than failing it.
+Deadlines, by operation CLASS (`ComHostPolicy.DeadlineFor`, raised 2026-08-19): **300 s**
+for an ordinary operation, **180 s** for connect (which may cold-start Outlook), **615 s**
+for an exhaustive scan, and **5 s for the health probe** - the one budget deliberately left
+short, because health must answer while Outlook is wedged and that is exactly when it is
+asked. Exceeding the probe budget degrades the report rather than failing it.
+
+The exhaustive scan has a class of its own precisely so that giving it ten minutes does not
+give every other tool ten minutes: it is the one operation a caller picks BECAUSE
+completeness matters more than speed, and the one whose budget expiry is a documented
+partial-results answer rather than an incident. Every other tool keeps a 300 s hang
+detector. The ordinary budgets are sized against measurement rather than habit - on a real
+5-store profile a whole-store 7-day sweep is 36.6 s and an Inbox-with-subfolders exhaustive
+scan 66.5 s, so the previous 120 s was under 2x the slowest HEALTHY operation observed,
+which is a second work limit rather than a hang detector.
 
 Failure of a request is not failure of the server: the child is killed, the caller gets a
 structured `Timeout` error, and the next call spawns a fresh child. Repeated start
 failures trigger a backoff so a broken machine does not become a spawn loop.
+
+**Not every expiry is evidence of a wedge** (`ComHostPolicy.TimeoutIndicatesUnresponsiveness`,
+2026-08-19). A caller that hands the gateway its own budget - the freshness sweep, the
+thread walk, a move batch - is stating how much of ITS work it will pay for, and it always
+has somewhere to degrade to. Reaching that budget says the work was big, not that the host
+is deaf, so it no longer counts toward the two-strike breaker. Before this, two ordinary
+slow searches on a large mailbox opened the breaker and every COM request then failed fast
+for 30 s, with nothing wrong but the size of the mailbox. The unqualified class deadlines
+still count, health included. The kill and the restart happen either way: nothing else can
+reclaim a blocked COM call, and the child serves requests serially.
+
+## The kill, and why it is not the contradiction it looks like
+
+When a deadline expires the parent calls `Kill(entireProcessTree: true)` on the child. Read
+beside `PumpedStaRunner.Dispose`, which refuses to abort its STA thread on the grounds that
+"a COM call could be mid-flight", the two disciplines look opposed. They are not, and the
+difference is which process survives. `Thread.Abort` injects an asynchronous exception into
+a thread in a process that KEEPS RUNNING, leaving it holding half-released COM proxies, a
+corrupted apartment and an unusable `Application` reference - a permanently broken child
+that still answers the pipe. `TerminateProcess` destroys the whole address space at once,
+and Windows tears down the LRPC endpoints and Outlook's references to the dead client with
+it. The child's refusal protects the child's own remaining life; the kill ends that life,
+so there is nothing left to protect.
+
+**OUTLOOK.EXE is never in the killed tree**, established four ways in the 2026-08-18 audit:
+there is exactly one `Process.Start` on this whole path and it starts the COM host; Outlook
+is COM-ACTIVATED, so the SCM's service host is its parent, which this repo already measured
+on a live wedge (`OUTLOOK.EXE -Embedding`, parent `svchost.exe`, below); job membership is
+inherited only by processes a job member creates, and the child creates none; and
+`entireProcessTree` walks recorded parentage. So this is a CLIENT death, not a server kill.
+No store is left half-written by it.
+
+What the kill does cost is caller certainty, and that is handled where the caller can act
+on it rather than by a grace period:
+
+- an interrupted sibling request is told whether ITS operation is safe to repeat, from the
+  same `ComSessionOperations` classification the disconnect-rebuild uses. Reads are told
+  retrying is safe; anything that changes mail is told the outcome is UNKNOWN and to check
+  first. It used to say "retry it" to all of them alike, which over a killed `TrySendDraft`
+  is advice to send twice.
+- a killed SEND reports that the mail may be sitting in the Outbox - the words the
+  neighbouring `SendCallFailed` branch has always used - and writes a `send_outcome_unknown`
+  audit line, so the trail records the gap instead of merely containing one.
+- an orderly teardown now waits `CleanExitGraceMilliseconds` (250 ms) after closing the pipe
+  before terminating, which makes the child's own EOF-exit path reachable for the first
+  time. It costs nothing on the deadline path, where the process is already gone.
+
+**A stop-request-and-grace protocol was considered and rejected.** `ComHostServer.ServeAsync`
+calls `Invoke` synchronously inside its read loop, so while wedged the child is not reading
+the pipe at all: a stop frame would sit unread until the wedged operation returned, which by
+definition it never does. In the case the deadline exists for, a polite request is not merely
+slow - it is structurally undeliverable.
 
 ## Remembering, not just bounding
 
@@ -122,9 +184,22 @@ immediately for 30 s, then allows one **cheap** liveness probe — `GetProfileNa
 would make every cooldown expiry cost two minutes again. Any success closes it, so a user
 who restarts Outlook is picked up automatically.
 
-The freshness sweep also got its own, much shorter budget (30 s rather than 120 s). It is
-an *enhancement*: search already holds its indexed answer before the sweep runs, and the
-tool's own description promises "sub-second and cheap". Healthy sweeps measure 0.5–6 s.
+The freshness sweep also got its own, shorter budget (180 s against the ordinary 300 s; it
+was 30 s against 120 s when this was written). It is an *enhancement*: search already holds
+its indexed answer before the sweep runs, and the tool's own description promises
+"sub-second and cheap". Healthy sweeps measure 0.5–6 s.
+
+That budget was raised on 2026-08-19 against a measurement, and the measured tables in this
+section are historical - they were taken at the budgets in force in August 2026, so the
+absolute latencies below are the old numbers rather than what the same wedge would cost
+today. On a purpose-built corpus (one unindexed PST, 20,000 items across the four
+arrival-path folders, the 200-per-folder cap engaged) four sweeps of ONE store took 13.6 s,
+11.8 s, 10.7 s and 11.9 s, so a five-store profile extrapolates to ~60 s - against a 30 s
+budget. That is the measured explanation for a sweep timeout seen on a real profile, where
+the supervisor then killed and replaced the host. The sweep also has an INNER budget now
+(`MailService.SweepWorkBudgetMs`, the outer one less the return trip), checked at every
+store and folder boundary, so expiry stops the walk and returns the folders it did cover
+instead of discarding all of them.
 
 Same machine, same wedge, after:
 

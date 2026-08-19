@@ -143,13 +143,21 @@ namespace OutlookAI.ComHost.Client
         }
 
         /// <summary>
-        /// Assigns a deadline class. Only the liveness ping is special: it is the cheapest
-        /// call on the contract, so a slow one is itself the signal.
+        /// Assigns a deadline class. Two calls on the contract are special, at opposite
+        /// ends: the liveness ping is the cheapest, so a slow one is itself the signal; and
+        /// the exhaustive scan is the one operation a caller picks BECAUSE completeness
+        /// matters more than speed, so it gets minutes where everything else gets the
+        /// ordinary hang detector.
         /// </summary>
         private static ComHostOperationClass ClassifyOperation(string operation)
         {
-            return string.Equals(operation, nameof(IOutlookSession.GetProfileName), StringComparison.Ordinal)
-                ? ComHostOperationClass.HealthProbe
+            if (string.Equals(operation, nameof(IOutlookSession.GetProfileName), StringComparison.Ordinal))
+            {
+                return ComHostOperationClass.HealthProbe;
+            }
+
+            return string.Equals(operation, nameof(IOutlookSession.ExhaustiveScan), StringComparison.Ordinal)
+                ? ComHostOperationClass.ExhaustiveScan
                 : ComHostOperationClass.Operation;
         }
     }

@@ -1414,9 +1414,11 @@ namespace OutlookAI.Core.Com
         /// reaches an inner loop, so folder-level checking is the only thing that bounds
         /// a wide low-yield subtree.
         /// <para>
-        /// 2 s is deliberately far above any healthy sweep and two orders of magnitude
-        /// below the exhaustive scan's 120 s, because this walk runs INLINE on every
-        /// folder-scoped search while exhaustive is opt-in. Measured: a folder walk costs
+        /// 2 s is deliberately far above any healthy sweep and orders of magnitude below
+        /// <c>MailService.ExhaustiveTimeBudgetMs</c> - named rather than quoted, because
+        /// the number it used to quote ("120 s") had already stopped being that constant's
+        /// value twice over - because this walk runs INLINE on every folder-scoped search
+        /// while exhaustive is opt-in. Measured: a folder walk costs
         /// ~10 ms per folder, so the 40-folder cap implies ~400 ms of intended work, and
         /// whole sweeps through the service measured 33-614 ms. The budget therefore
         /// leaves roughly 5x headroom over the worst legitimate walk - it should never
@@ -1502,6 +1504,21 @@ namespace OutlookAI.Core.Com
         /// bytes it bites at ~18 M characters of ordinary Latin prose and correspondingly
         /// earlier for CJK or Cyrillic mail - which is right, because those frames genuinely
         /// are that much bigger.
+        /// </para>
+        /// <para>
+        /// MEASURED 2026-08-19, and the measurement upgrades this from insurance to a
+        /// load-bearing bound. On a 20 000-item unindexed PST with the per-folder cap
+        /// engaged, ONE store's sweep produced a frame high-water of 10 734 599 bytes -
+        /// 10.2 MB over 758 items, about 13.5 KB per item. Five such stores extrapolates to
+        /// roughly 54 MB against <c>ComHostProtocol.MaxFrameBytes</c> (64 MB), so this
+        /// budget bites BEFORE the frame limit does, which is exactly what it is for.
+        /// </para>
+        /// <para>
+        /// It is coupled to <c>MailService.SweepBudgetMs</c>, which is why the two were
+        /// raised in the same pass. The 432 KB high-water previously measured on the real
+        /// profile was bounded by the old 30 s sweep timeout, not by any item cap - the
+        /// sweep was being stopped before it could gather enough to be big. Giving the sweep
+        /// the time to finish is what lets it reach frames this size.
         /// </para>
         /// </summary>
         public const long SweepBodyBytesBudget = 32L * 1024 * 1024;
@@ -1673,6 +1690,24 @@ namespace OutlookAI.Core.Com
             return SweepWalkVerdict.Visit;
         }
 
+        /// <summary>
+        /// Whether the WHOLE sweep's soft budget is spent. Pure and public for the same
+        /// reason <see cref="DecideSweepWalk"/> is: the walk it governs exists only over
+        /// live COM folders and cannot be exercised in T1, so the boundary is pinned here
+        /// instead.
+        /// <para>
+        /// A non-positive budget means unbounded - that is what an in-process caller with a
+        /// bound of its own asks for, and "no budget" must never become "no folders". The
+        /// comparison matches <c>ExhaustiveScanState.CheckDeadline</c> and
+        /// <see cref="DecideSweepWalk"/> exactly: the budget is spent only once elapsed has
+        /// PASSED it, never exactly at it, so "budget" means one thing in this file.
+        /// </para>
+        /// </summary>
+        public static bool SweepBudgetSpent(int timeBudgetMs, long elapsedMilliseconds)
+        {
+            return timeBudgetMs > 0 && elapsedMilliseconds > timeBudgetMs;
+        }
+
         // 6 = olFolderInbox, 5 = olFolderSentMail, 3 = olFolderDeletedItems, 23 = olFolderJunk.
         private static readonly (int FolderId, string Kind)[] DefaultSweepFolders =
         {
@@ -1818,7 +1853,8 @@ namespace OutlookAI.Core.Com
             string? onlyStoreDisplayName,
             IReadOnlyList<string>? folderPath = null,
             bool includeSubfolders = true,
-            IReadOnlyDictionary<string, DateTime>? perStoreSinceUtc = null)
+            IReadOnlyDictionary<string, DateTime>? perStoreSinceUtc = null,
+            int timeBudgetMs = 0)
         {
             EnsureNotDisposed();
             if (perFolderCap < 1)
@@ -1838,7 +1874,7 @@ namespace OutlookAI.Core.Com
             return _runner.Run(() =>
             {
                 dynamic ns = _namespace!;
-                SweepTally tally = new SweepTally();
+                SweepTally tally = new SweepTally(timeBudgetMs);
                 List<ComMailBrief> items = new List<ComMailBrief>();
                 List<string> sweptFolders = new List<string>();
                 int skipped = 0;
@@ -1872,7 +1908,8 @@ namespace OutlookAI.Core.Com
                         rowsUnreadable: tally.RowsUnreadable,
                         itemCappedFoldersUnsorted: tally.ItemCappedUnsorted,
                         bodiesTruncated: tally.BodiesTruncated,
-                        bodyBudgetExhausted: tally.BodyBudgetExhausted);
+                        bodyBudgetExhausted: tally.BodyBudgetExhausted,
+                        sweepBudgetExpired: tally.SweepBudgetExpired);
                 }
 
                 // The counters, attributed to the store they happened in. The scalar
@@ -1887,6 +1924,14 @@ namespace OutlookAI.Core.Com
                     int count = stores.Count;
                     for (int i = 1; i <= count; i++)
                     {
+                        // Stop at a STORE boundary as well as at a folder one: on a profile
+                        // whose first store is the 108 000-item archive, every store after
+                        // it is what the budget runs out on.
+                        if (tally.CheckSweepDeadline())
+                        {
+                            break;
+                        }
+
                         dynamic store = stores[i];
                         try
                         {
@@ -1929,6 +1974,17 @@ namespace OutlookAI.Core.Com
 
                             foreach ((int folderId, string folderKind) in DefaultSweepFolders)
                             {
+                                // Graceful expiry (maintainer decision (d)): stop at the
+                                // next folder boundary and keep what is already collected,
+                                // instead of letting the outer deadline turn a slow sweep
+                                // into a host kill that throws all of it away. The folders
+                                // not reached are simply not counted as swept, and the
+                                // coverage code says the budget is why.
+                                if (tally.CheckSweepDeadline())
+                                {
+                                    break;
+                                }
+
                                 object? folder = null;
                                 try
                                 {
@@ -2034,7 +2090,7 @@ namespace OutlookAI.Core.Com
                     tally.Failed, tally.ItemCapped, tally.FolderCapReached,
                     tally.DepthLimitReached, tally.TimeBudgetExceeded, absent, perStore,
                     tally.RowsUnreadable, storesUnnamed, tally.ItemCappedUnsorted,
-                    tally.BodiesTruncated, tally.BodyBudgetExhausted);
+                    tally.BodiesTruncated, tally.BodyBudgetExhausted, tally.SweepBudgetExpired);
             });
         }
 
@@ -2134,6 +2190,53 @@ namespace OutlookAI.Core.Com
         /// </summary>
         private sealed class SweepTally
         {
+            private readonly Stopwatch _clock = Stopwatch.StartNew();
+            private readonly int _timeBudgetMs;
+
+            internal SweepTally(int timeBudgetMs)
+            {
+                _timeBudgetMs = timeBudgetMs;
+            }
+
+            /// <summary>
+            /// Latched once the WHOLE sweep's soft budget is spent, so the walk stopped at a
+            /// store or folder boundary with folders left unvisited.
+            /// <para>
+            /// Distinct from <see cref="TimeBudgetExceeded"/>, which is the folder-scoped
+            /// subtree walk's own 2 s bound, because the two point at different remedies:
+            /// that one says "this subtree is wide, scope it narrower or drop
+            /// include_subfolders", this one says "this profile is big, name a store or a
+            /// folder". Same reason <c>item_cap</c> and <c>item_cap_unsorted</c> are two
+            /// codes over one cap.
+            /// </para>
+            /// </summary>
+            internal bool SweepBudgetExpired { get; private set; }
+
+            /// <summary>
+            /// Latches <see cref="SweepBudgetExpired"/> once the budget is spent, and
+            /// answers whether the walk must stop. Called at every STORE and FOLDER
+            /// boundary, exactly as <c>ExhaustiveScanState.CheckDeadline</c> is - a folder
+            /// whose restriction matches nothing never reaches an inner loop, so
+            /// boundary-level checking is the only thing that bounds a wide low-yield
+            /// profile. Boundary semantics match it too: the budget is spent only once
+            /// elapsed has PASSED it, never exactly at it.
+            /// </summary>
+            internal bool CheckSweepDeadline()
+            {
+                if (SweepBudgetExpired)
+                {
+                    return true;
+                }
+
+                if (!SweepBudgetSpent(_timeBudgetMs, _clock.ElapsedMilliseconds))
+                {
+                    return false;
+                }
+
+                SweepBudgetExpired = true;
+                return true;
+            }
+
             internal int Failed { get; set; }
 
             /// <summary>Table rows no folder counter can account for (gap H1).</summary>
@@ -2235,7 +2338,8 @@ namespace OutlookAI.Core.Com
             /// two COM round trips (index + Name), so a refusal that is only made after
             /// fetching it still pays for a folder it will never sweep.
             /// </summary>
-            internal bool CanVisit(int depth) => Record(DecideSweepWalk(Visited, depth, _clock.Elapsed));
+            internal bool CanVisit(int depth) =>
+                !_tally.CheckSweepDeadline() && Record(DecideSweepWalk(Visited, depth, _clock.Elapsed));
 
             /// <summary>
             /// Admits the folder at <paramref name="depth"/> and counts the visit, or
@@ -2243,6 +2347,13 @@ namespace OutlookAI.Core.Com
             /// </summary>
             internal bool TryVisit(int depth)
             {
+                // The WHOLE sweep's budget outranks this walk's own: it is the outer of the
+                // two, and stopping on it is what keeps the answer partial instead of lost.
+                if (_tally.CheckSweepDeadline())
+                {
+                    return false;
+                }
+
                 if (!Record(DecideSweepWalk(Visited, depth, _clock.Elapsed)))
                 {
                     return false;

@@ -23,33 +23,52 @@ reasoning, and flagged for review rather than buried.
 | Installed MCP server | Leave disabled until the release | **done, nothing to do** |
 | Exhaustive scan | Resumable walk with a continuation token | **queued** |
 | `thread` store asymmetry | Derive the warning from Outlook's store list; also scan for the same asymmetry elsewhere | **queued** |
-| Timeout defects | Fold all three into the timeout-raising pass | **queued** |
-| COM host kill | Keep the hard kill, document it, add a brief wait before killing, make the kill outcome-aware | **queued** |
+| Timeout defects | Fold all three into the timeout-raising pass | **shipped** (uncommitted) |
+| COM host kill | Keep the hard kill, document it, add a brief wait before killing, make the kill outcome-aware | **shipped** (uncommitted) |
 | `top` ceiling | Leave at 100; rely on resumption | **decided, no work** |
 | Remaining gap-map rows | Clear **all** of them before the release | **queued** |
 | Work order | Infrastructure first: corpus, second PST, live tier on the VM | **in progress** |
 | `update_draft` | **(d)** make it re-entrant: record intent first, so a retry completes rather than repeats | **queued** |
-| Sweep timeout | **(d)** make expiry graceful **and** distinguish budget expiry from unresponsiveness at the supervisor | **queued** |
+| Sweep timeout | **(d)** make expiry graceful **and** distinguish budget expiry from unresponsiveness at the supervisor | **shipped** (uncommitted) |
 | H3 (undated mail invisible to the sweep) | Check whether DASL can express "or the property is absent" first; failing that, report it; full fallback enumeration only if it proves common | **queued** |
 
-## 2. Timeout values agreed (measurement still pending for the sweep)
+## 2. Timeout values - SHIPPED (uncommitted) on 2026-08-19
 
-| Constant | Now | Target |
-| --- | --- | --- |
-| `ExhaustiveTimeBudgetMs` | 105 s | 600 s |
-| `SweepBudgetMs` | 30 s | 180 s **(blocked, see below)** |
-| `ThreadWalkBudgetMs` | 30 s | 180 s |
-| `SearchIndexTimeoutSeconds` | 15 s | 60 s |
-| `OperationDeadlineMs` | 120 s | 300 s |
-| `ConnectDeadlineMs` | 90 s | 180 s |
-| `MoveBatchBudgetMs` | 120 s | 240 s, strictly below its deadline |
-| `HealthProbeDeadlineMs` | 5 s | **unchanged, deliberately** |
+| Constant | Was | Now | Derivation |
+| --- | --- | --- | --- |
+| `ExhaustiveTimeBudgetMs` | 105 s | **600 s** | `ExhaustiveScanDeadlineMs - ResultReturnHeadroomMs` |
+| `ExhaustiveScanDeadlineMs` | (did not exist) | **615 s** | new `ComHostOperationClass.ExhaustiveScan` |
+| `SweepBudgetMs` | 30 s | **180 s** | measured: ~12 s per store x 5 stores, x3 headroom |
+| `SweepWorkBudgetMs` | (did not exist) | **165 s** | `SweepBudgetMs - ResultReturnHeadroomMs` |
+| `ThreadWalkBudgetMs` | 30 s | **180 s** | `= SweepBudgetMs`, unchanged expression |
+| `SearchIndexTimeoutSeconds` | 15 s | **60 s** | with `OleDbIndexClient.DefaultCommandTimeoutSeconds` 30 -> 60 to stay its ceiling |
+| `SearchBudgetMs` | 45 s | **240 s** | `SearchIndexTimeoutSeconds * 1000 + SweepBudgetMs` |
+| `OperationDeadlineMs` | 120 s | **300 s** | the hang detector; 4.5x the slowest healthy operation measured |
+| `ConnectDeadlineMs` | 90 s | **180 s** | 60% of the operation deadline, the ratio it already had |
+| `MoveBatchBudgetMs` | 120 s | **240 s** | 80% of the operation deadline, strictly below it |
+| `MinimumItemBudgetMs` | (did not exist) | **1 s** | floor below which a batch item is not attempted |
+| `ResultReturnHeadroomMs` | 15 s | **15 s** | deliberately NOT scaled - it covers one answer's size, not the budget's length |
+| `HealthProbeDeadlineMs` | 5 s | **5 s** | unchanged, deliberately |
+| `HandshakeBudgetMs` / floor | 30 s / 10 s | **30 s / 10 s** | unchanged as values; the floor now yields to a caller-declared budget |
 
-**The blocker:** `BudgetCompositionTests` asserts `SearchIndexTimeoutSeconds * 1000 + SweepBudgetMs`
-fits inside `OperationDeadlineMs`. At 180 s the sum is 195 s and the test fails before anything
-reaches a mailbox, so the sweep cannot move alone - the operation deadline moves with it. That is
-consistent with the maintainer's instruction ("serious headroom everywhere") but it is why the two
-must be changed in one pass.
+**The blocker is gone**, and it is why this had to be one pass: `BudgetCompositionTests` asserts
+`SearchIndexTimeoutSeconds * 1000 + SweepBudgetMs` fits inside `OperationDeadlineMs`. The sum is now
+240 s inside 300 s. Moving the sweep alone would have failed that test before anything reached a
+mailbox.
+
+**The sweep budget is measured, not preferred** (measurement delivered mid-pass, 2026-08-19). One
+PST outside the local index, 20,000 items across the four arrival-path folders with real received
+dates, 1,612 of them inside the seven-day fallback window so the 200-per-folder cap engages: four
+sweeps of that ONE store took 13.6 s, 11.8 s, 10.7 s and 11.9 s. The maintainer's profile mounts
+five stores, so the extrapolation is **~60 s against a 30 s budget** - the direct explanation for
+the sweep timeout seen on the real profile. 180 s is 3x that, and the margin is headroom rather
+than luxury because the corpus is a fast local PST and Exchange is slower per item. A second figure
+from the same run matters to a constant this pass did NOT change: the frame high-water from one
+store's sweep was 10,734,599 bytes (~13.5 KB per item over 758 items), so five unindexed stores
+extrapolates to ~54 MB against the 64 MB frame limit - `SweepBodyBytesBudget` (32 MiB) bites first,
+which is exactly its design intent. The 432 KB previously measured on the real profile was bounded
+by the old 30 s timeout, not by any item cap, so raising the budget is what makes the body budget
+load-bearing. Both figures are now in `Docs/magic-numbers.md`.
 
 **Why `HealthProbeDeadlineMs` stays at 5 s** (an autonomous call, per the maintainer's "you decide
 in context"): it is the diagnostic run precisely when Outlook is wedged. A health check that also
@@ -82,6 +101,85 @@ why.
    this store" I originally asked for. The object model cannot express the narrower rule, so the
    narrower version would read as a proof without being one.
 
+8. **Gave the exhaustive scan its own deadline CLASS, and then passed that deadline explicitly
+   from `MailService` as well.** The class alone is not enough and the reason is mechanical:
+   `RemoteComGateway.Run<T>(operation)` bounds the whole lambda with an AGGREGATE equal to the
+   ordinary operation deadline, and `EffectiveDeadlineMilliseconds` clamps each call to what is
+   left of it - so a 615 s class deadline would have been clipped straight back to 300 s. The
+   exhaustive lambda makes exactly one contract call, so the aggregate and the call deadline are
+   the same number, and the call site passes `ComOperationBudgets.ExhaustiveScanDeadlineMs` with
+   `allowConnectFloor: true`. The class is still load-bearing rather than decorative: it is where
+   the number lives, `DeadlineFor` returns it, T1 pins that the two agree and that the class
+   deadline exceeds the ordinary one. **The cost:** with an explicit budget, the
+   `OUTLOOKAI_COMHOST_DEADLINE_MS` test override no longer shortens the exhaustive path. No CI
+   test uses that override on an exhaustive scan today, so nothing broke; a future one would have
+   to pass its own budget.
+
+9. **Made the move/archive batch budget a real aggregate, not just a smaller number.** The decided
+   change was 240 s "strictly below its deadline", which fixes the T1 assertion. It does not fix
+   the arithmetic: the check runs BEFORE each item and each item was a fresh gateway call with a
+   full deadline of its own, so the batch could still overshoot by a whole extra deadline (240 +
+   300 = 540 s). Each item is now dispatched with what is LEFT of the batch budget, with
+   `MinimumItemBudgetMs = 1 s` as the floor below which the item is reported "not attempted"
+   rather than refused by the COM host's dispatch floor as a bare timeout, and a per-item
+   `TimeoutException` is caught and reported per item saying the move's outcome is UNKNOWN. The
+   items opt into `allowConnectFloor: true`, the same way the sweep does, so the first move on a
+   fresh host still gets its cold-start allowance. **Review this one**: it touches the move path,
+   which is a mutating path, and it was not literally what was asked for.
+
+10. **Fixed the handshake floor by rule rather than by class.** The inventory suggested letting a
+    `HealthProbe`-class operation use its own deadline. That would not have fixed the actual
+    defect: `outlook_health`'s gateway calls are `GetStoreDetails`, which classifies as
+    `Operation` with an explicit 5 s budget, so the class is the wrong key. The rule used instead
+    is the one already written two lines away for the cold-start CONNECT floor: an explicit
+    caller budget outranks a floor, with `allowConnectFloor` as the opt-out for the sweep. Cost:
+    on a genuinely cold host, `outlook_health`'s first call now has 5 s to start the child and
+    may report the COM half as unreachable. That is health degrading, which is health working;
+    the next call (no explicit budget) starts the child with the full floor.
+
+11. **Raised the two live-tier bounds that this pass would otherwise have broken**, though neither
+    was in the task. `LiveDisconnectRecoveryTests.ScenarioClock`'s per-step budget was 180 s with
+    a remark that this was "1.5x `OperationDeadlineMs` (120 s)"; at 300 s the remark was false and
+    the bound would have abandoned COM calls the shipped product is still waiting on, so the step
+    is now `max(LiveInboxArrival.DeadlineSeconds, 1.5x OperationDeadlineMs)` and the prose says
+    so. `Phase3LiveMcpToolShapeTests` ran a whole stdio session, ending in an exhaustive scan, on
+    a flat six-minute budget; it now derives that from `ExhaustiveScanDeadlineMs`. Neither is in
+    the CI suite, so neither shows up in the test count.
+
+12. **Split the sweep's budget expiry into its own coverage code (`sweep_time_budget`) rather than
+    reusing `time_budget`.** The existing code belongs to the folder-scoped subtree walk's 2 s
+    bound and its advice says "scope narrower, or pass include_subfolders:false" - advice that
+    cannot be acted on over a default-folder sweep, which is shallow by construction. Same rule
+    the codebase already applied when it split `item_cap` from `item_cap_unsorted`: two bounds
+    with different remedies need two codes. The flag is deliberately NOT attributed per store,
+    because the stores the sweep never reached are exactly the ones with no per-store entry to
+    attribute it to.
+
+13. **Wrote the in-process budget as a `DispatchProxy` over `IOutlookSession`.** It is the only way
+    to check a clock between contract calls without hand-writing 26 forwarding methods. The known
+    hazard is that reflection wraps everything in `TargetInvocationException`, which this
+    repository has already paid for once - a reflective layer on the COM-host path flattened every
+    deliberate error into "Exception has been thrown by the target of an invocation", breaking both
+    the tool layer's advice and `ComGateway`'s disconnect rebuild. Failures are re-thrown through
+    `ExceptionDispatchInfo`, and T1 asserts a `COMException` crosses the proxy with its type,
+    message and HRESULT intact.
+
+14. **Wrote the `send_outcome_unknown` audit line as best-effort**, unlike every other write on the
+    send path, where a failed append refuses the operation (D4: no send without its line). The
+    operation this line describes has already happened or already failed; throwing an audit error
+    over it would replace the one message the caller most needs with a message about a log file.
+
+15. **Did not add a stop-request protocol**, per the decision - and the reason is worth keeping
+    where the next reader will find it: `ComHostServer.ServeAsync` calls `Invoke` synchronously
+    inside its read loop, so while wedged the child is not reading the pipe and a stop frame is
+    structurally undeliverable rather than merely slow. That is now written at `KillChild` and in
+    `McpServer/Docs/com-host.md`.
+
+16. **Two things this pass changed are provably unguarded by any non-live test**, established by
+    mutation rather than assumed: reverting `ComGateway`'s budget overload to a pass-through, and
+    removing the 250 ms clean-exit wait, both leave the whole suite green. Recorded in `TODO.md`
+    with the options rather than papered over.
+
 ## 4. VM state (`OutlookAI-TestVM`)
 
 - Guest credentials for PowerShell Direct: `vmadmin` / `***REDACTED-CREDENTIAL***`.
@@ -109,6 +207,25 @@ why.
   either direction, and accepts the `1601-01-01` floor literal - so the displacement guard's
   recovery statement should essentially never fire. Not taken under a mapi scope, so the `T2` probe
   still stands.
+- **Sweep cost, MEASURED 2026-08-19 on the VM corpus** (one PST outside the local index, 20,000
+  items across the four arrival-path folders with real received dates: Inbox 10,912, Sent 4,964,
+  Deleted 2,467, Junk 1,663; 1,612 inside the seven-day fallback window, so the 200-per-folder cap
+  engages in at least two folders). Four sweeps, same corpus: **13,624 / 11,818 / 10,652 / 11,889
+  ms**, `itemsSeen` 758 in all four. Codes: `no_index_frontier` + `item_cap_unsorted` on every one,
+  plus `body_cap` with `itemsBodyCapped=2` on the term-matching-nothing run. **~12 s for ONE store
+  with the cap engaged; five stores extrapolates to ~60 s against the old 30 s budget** - the direct
+  explanation for the sweep timeout on the real profile. This is a fast LOCAL PST; Exchange is
+  slower per item.
+- **Frame high-water from that same corpus: 10,734,599 bytes** - 10.2 MB over 758 items, ~13.5 KB
+  per item, from a SINGLE store. Five unindexed stores extrapolates to ~54 MB against the 64 MB
+  frame limit, so `SweepBodyBytesBudget` (32 MiB) bites first, which is its design intent. This
+  supersedes the reading of the 432 KB measured on the real profile: that was bounded by the 30 s
+  sweep timeout, not by the item caps, so raising the sweep budget is what makes the body budget
+  load-bearing.
+- **`item_cap_unsorted` fired on every sweep of that corpus**, i.e. `Table.Sort` genuinely does not
+  apply on that store and the answer correctly reports the cap cut arbitrarily rather than claiming
+  the oldest mail is what is missing. The 2026-08-18 H2 fix, observed working against real data
+  rather than in a test.
 - **Corpus build throughput:** 50.9 items/s without the move rung. With the move rung each item is
   written twice, so budget roughly double.
 

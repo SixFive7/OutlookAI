@@ -324,22 +324,24 @@ public sealed class LiveDisconnectRecoveryTests
     /// invented here.
     /// </para>
     /// <para>
-    /// <b>Per step: 180 s</b> - one <see cref="LiveInboxArrival.DeadlineSeconds"/>, which is
-    /// the live tier's own allowance for the slowest real thing it waits on (a mail crossing
-    /// a real mail server). It is also 1.5x <c>ComOperationBudgets.OperationDeadlineMs</c>
-    /// (120 s), the point at which the product itself declares a single Outlook operation
-    /// wedged and reclaims the COM host. So no step here is bounded more tightly than either
-    /// rule the codebase already lives by, and a slow-but-working machine cannot trip it:
-    /// nothing this test asks for is a mail round trip, and everything it asks for is one
-    /// operation the shipped product would have abandoned an entire minute earlier.
+    /// <b>Per step: the LARGER of the live tier's arrival allowance and 1.5x the product's
+    /// own operation deadline.</b> <see cref="LiveInboxArrival.DeadlineSeconds"/> (180 s) is
+    /// the live tier's allowance for the slowest real thing it waits on, a mail crossing a
+    /// real mail server. <c>ComOperationBudgets.OperationDeadlineMs</c> is the point at which
+    /// the product itself declares a single Outlook operation wedged and reclaims the COM
+    /// host, and every step here is one such operation - so a step bounded BELOW that number
+    /// would abandon calls the shipped product is still happily waiting on. It used to be
+    /// the arrival allowance alone, with a remark that it was "also 1.5x" the deadline; when
+    /// that deadline was raised to 300 s on 2026-08-19 the remark stopped being true and the
+    /// bound stopped being safe, so the relationship is computed now instead of asserted.
     /// </para>
     /// <para>
-    /// <b>Whole scenario: 900 s</b> - five of those. The test's own condition waits already
-    /// account for 393 s in the worst case (60 + 120 + 15 + 30 + 3 + 45 + 120), and on top of
-    /// that it drives two full Outlook exits, two cold starts, a degraded search and three
-    /// health reports. 900 s leaves well over 250 s of headroom above a plausible slow-machine
-    /// run, and still fails in two thirds of the time the 2026-08-18 run had already burned
-    /// when it was stopped by hand.
+    /// <b>Whole scenario: five steps.</b> The test's own condition waits already account for
+    /// 393 s in the worst case (60 + 120 + 15 + 30 + 3 + 45 + 120), and on top of that it
+    /// drives two full Outlook exits, two cold starts, a degraded search and three health
+    /// reports. Five steps leaves ample headroom above a plausible slow-machine run while
+    /// still failing far inside the time the 2026-08-18 run had burned when it was stopped
+    /// by hand.
     /// </para>
     /// <para>
     /// A step that expires ABANDONS its worker thread, deliberately. The thread is inside a
@@ -352,8 +354,11 @@ public sealed class LiveDisconnectRecoveryTests
     /// </summary>
     private sealed class ScenarioClock
     {
-        private static readonly TimeSpan StepBudget = TimeSpan.FromSeconds(LiveInboxArrival.DeadlineSeconds);
-        private static readonly TimeSpan ScenarioBudget = TimeSpan.FromSeconds(5 * LiveInboxArrival.DeadlineSeconds);
+        private static readonly TimeSpan StepBudget = TimeSpan.FromSeconds(Math.Max(
+            LiveInboxArrival.DeadlineSeconds,
+            (int)(ComOperationBudgets.OperationDeadlineMs * 1.5 / 1000)));
+
+        private static readonly TimeSpan ScenarioBudget = TimeSpan.FromSeconds(5 * StepBudget.TotalSeconds);
 
         private readonly Stopwatch _clock = Stopwatch.StartNew();
         private readonly ITestOutputHelper _output;

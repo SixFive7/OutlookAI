@@ -155,6 +155,20 @@ namespace OutlookAI.ComHost.Supervision
         internal const long HealthProbeDeadlineMilliseconds = ComOperationBudgets.HealthProbeDeadlineMs;
 
         /// <summary>
+        /// Budget for one exhaustive scan, which gets a class of its own rather than
+        /// sharing <see cref="DefaultOperationDeadlineMilliseconds"/>.
+        /// <para>
+        /// The scan is the one operation whose expiry is a documented ANSWER - it stops at
+        /// the next folder boundary and returns what it found with a coverage gap - so it
+        /// is a work limit, and a work limit is allowed to be long. Every other tool keeps
+        /// the ordinary hang detector, which is the entire reason this is a class and not a
+        /// larger shared number: raising the shared one would have made <c>read</c> and
+        /// <c>move_mail</c> wait ten minutes to discover a wedged Outlook.
+        /// </para>
+        /// </summary>
+        internal const long ExhaustiveScanDeadlineMilliseconds = ComOperationBudgets.ExhaustiveScanDeadlineMs;
+
+        /// <summary>
         /// Ceiling on the COM host pipe handshake - the parent's wait for the child to
         /// connect AND report ready, shared with the child's own wait for the parent's pipe
         /// (<c>Program.ConnectTimeoutMs</c>). One handshake, one number.
@@ -187,10 +201,40 @@ namespace OutlookAI.ComHost.Supervision
         /// <summary>
         /// How long the child start handshake may take, given the deadline of the operation
         /// that triggered it. Pure so T1 can pin the boundaries.
+        /// <para>
+        /// <paramref name="callerDeclaredBudget"/> is the fix for the defect this floor
+        /// introduced. <c>outlook_health</c> asks for an explicit 5 s and its description
+        /// promises the same, but <c>HandshakeBudgetFor(5000)</c> returned the 10 s floor -
+        /// and the handshake runs BEFORE the deadline clock starts, so the one tool that
+        /// must always answer had the longest cold-host preamble in the product, twice over
+        /// because health makes two gateway calls. An explicit budget is a deliberate
+        /// statement of intent and already outranks the cold-start CONNECT floor two lines
+        /// away in <c>ComHostSupervisor.InvokeCoreAsync</c>; it now outranks this one on
+        /// exactly the same terms and with exactly the same opt-out
+        /// (<c>allowConnectFloor</c>, which the freshness sweep uses to keep paying for a
+        /// cold start).
+        /// </para>
+        /// <para>
+        /// The floor survives untouched for everyone else, which is what it was for: the
+        /// only caller that shortens the deadline WITHOUT declaring its own budget is the
+        /// test suite via <c>OUTLOOKAI_COMHOST_DEADLINE_MS</c>, and that suite is testing
+        /// the timeout path rather than the start path. What a caller with an explicit
+        /// budget loses is the ability to start a fresh child on a loaded box inside 5 s;
+        /// what it gains is a tool that keeps the promise printed in its own description,
+        /// and health's failure mode is a degraded report that says which half could not be
+        /// reached, which is health working rather than health failing.
+        /// </para>
         /// </summary>
-        internal static long HandshakeBudgetFor(long operationDeadlineMilliseconds)
+        internal static long HandshakeBudgetFor(long operationDeadlineMilliseconds, bool callerDeclaredBudget = false)
         {
-            if (operationDeadlineMilliseconds <= HandshakeFloorMilliseconds)
+            if (operationDeadlineMilliseconds <= HandshakeFloorMilliseconds && !callerDeclaredBudget)
+            {
+                return HandshakeFloorMilliseconds;
+            }
+
+            // A caller-declared budget of zero or less is not a budget; fall back to the
+            // floor rather than to an instant refusal.
+            if (callerDeclaredBudget && operationDeadlineMilliseconds < 1)
             {
                 return HandshakeFloorMilliseconds;
             }
@@ -407,6 +451,49 @@ namespace OutlookAI.ComHost.Supervision
                 : BreakerVerdict.Open;
         }
 
+        /// <summary>
+        /// Whether a deadline expiry is evidence that OUTLOOK is unresponsive, or merely
+        /// that the WORK ran past a budget its own caller chose. Only the first kind counts
+        /// toward <see cref="UnresponsiveTimeoutThreshold"/>.
+        /// <para>
+        /// WHY THIS EXISTS. Before it, every expiry was evidence. The freshness sweep runs
+        /// on an explicit budget on every single search, so two ordinary slow searches on a
+        /// large mailbox opened the breaker and every COM request then failed fast for
+        /// <see cref="UnresponsiveCooldownMilliseconds"/> - a self-inflicted outage whose
+        /// only cause was the size of the mailbox. Observed on the maintainer's real
+        /// profile. Raising the budgets makes it rarer without making it wrong.
+        /// </para>
+        /// <para>
+        /// THE RULE. A caller that hands the gateway its own budget is stating how much of
+        /// ITS work it is prepared to pay for, and it always has somewhere to degrade to -
+        /// the sweep falls back to index-only results and says so. Reaching that budget
+        /// says the work was big, not that the host is deaf. The unqualified class
+        /// deadlines are the hang detectors, and their expiry does count: the ordinary
+        /// operation deadline, the connect deadline, the exhaustive scan's own class
+        /// deadline (whose INNER budget stops it gracefully long before, so reaching the
+        /// outer one really is a wedge), and the health probe - which is dispatched for the
+        /// express purpose of finding out, and is the only class whose short budget is
+        /// itself the instrument.
+        /// </para>
+        /// <para>
+        /// A caller-declared budget still kills the child on expiry. Nothing else can
+        /// reclaim a blocked COM call, and the child serves requests serially, so leaving a
+        /// wedged one in place would block every later request. What changes is only what
+        /// the supervisor CONCLUDES from it.
+        /// </para>
+        /// </summary>
+        internal static bool TimeoutIndicatesUnresponsiveness(
+            ComHostOperationClass operationClass, long? callerBudgetMilliseconds)
+        {
+            if (operationClass == ComHostOperationClass.HealthProbe)
+            {
+                return true;
+            }
+
+            return callerBudgetMilliseconds is not > 0
+                || callerBudgetMilliseconds.Value >= DeadlineFor(operationClass, null);
+        }
+
         /// <summary>Decides the fate of a request that has not yet answered.</summary>
         internal static InFlightVerdict DecideInFlight(InFlightInput input)
         {
@@ -455,6 +542,7 @@ namespace OutlookAI.ComHost.Supervision
             {
                 ComHostOperationClass.Connect => ConnectDeadlineMilliseconds,
                 ComHostOperationClass.HealthProbe => HealthProbeDeadlineMilliseconds,
+                ComHostOperationClass.ExhaustiveScan => ExhaustiveScanDeadlineMilliseconds,
                 _ => DefaultOperationDeadlineMilliseconds,
             };
         }
@@ -501,5 +589,13 @@ namespace OutlookAI.ComHost.Supervision
 
         /// <summary>A health probe, which must degrade rather than block.</summary>
         HealthProbe = 2,
+
+        /// <summary>
+        /// An exhaustive folder scan: the one operation a caller picks BECAUSE
+        /// completeness matters more than speed, and the one whose budget expiry is a
+        /// documented answer rather than an incident. It has its own deadline so that
+        /// giving it ten minutes does not give every other tool ten minutes.
+        /// </summary>
+        ExhaustiveScan = 3,
     }
 }

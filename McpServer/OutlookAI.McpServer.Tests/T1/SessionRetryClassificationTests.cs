@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 
 using OutlookAI.ComHost.Host;
+using OutlookAI.ComHost.Supervision;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 
@@ -76,6 +77,46 @@ public sealed class SessionRetryClassificationTests
         // Not just send: a re-run of any of these leaves a second draft, a second move
         // attempt against an item that is no longer where it was, or a second file on disk.
         Assert.False(ComSessionOperations.IsRetryable(operation));
+    }
+
+    /// <summary>
+    /// The classification reaches the CALLER too, not only the retry decision.
+    /// <para>
+    /// When one request wedges and its COM host is reclaimed, every innocent sibling dies
+    /// with the connection and is told why. That message used to end "This request itself
+    /// was not at fault; retry it." for all of them alike - correct for a read, and
+    /// actively dangerous for a mutation: the child was terminated at an unknown point, so
+    /// a killed <c>TrySendDraft</c> may already have submitted the mail and a killed
+    /// <c>TryUpdateDraft</c> may have applied part of its sequence. "Retry it" is then
+    /// advice to send twice.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(IOutlookSession.SweepFoldersNewerThan), true)]
+    [InlineData(nameof(IOutlookSession.ExhaustiveScan), true)]
+    [InlineData(nameof(IOutlookSession.TryReadItem), true)]
+    [InlineData(nameof(IOutlookSession.TrySendDraft), false)]
+    [InlineData(nameof(IOutlookSession.TryUpdateDraft), false)]
+    [InlineData(nameof(IOutlookSession.TryMoveItemToPath), false)]
+    [InlineData("SomeMethodAddedLater", false)]
+    public void AnInterruptedRequest_IsToldWhetherItIsSafeToRetry(string operation, bool retryable)
+    {
+        foreach (string? cause in new[] { null, "'TryUpdateDraft' exceeded its 300000 ms budget." })
+        {
+            string message = ComHostSupervisor.DescribeInterruption(operation, cause);
+
+            Assert.Contains(operation, message, System.StringComparison.Ordinal);
+            if (retryable)
+            {
+                Assert.Contains("retrying it is safe", message, System.StringComparison.Ordinal);
+                Assert.DoesNotContain("UNKNOWN", message, System.StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Contains("UNKNOWN", message, System.StringComparison.Ordinal);
+                Assert.DoesNotContain("retrying it is safe", message, System.StringComparison.Ordinal);
+            }
+        }
     }
 
     [Fact]
