@@ -96,6 +96,68 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Snippet length per hit (0 disables snippets).</summary>
         public int SnippetChars { get; set; } = MailService.SnippetCharsDefault;
+
+        /// <summary>
+        /// Continuation handle from a previous exhaustive scan's
+        /// <c>exhaustive.nextToken</c>: continue that walk instead of starting a new one
+        /// (F2). Opaque, and only meaningful with <see cref="Exhaustive"/>.
+        /// <para>
+        /// Every other argument must arrive UNCHANGED; a resume whose question differs is
+        /// refused rather than silently honoured or silently ignored, because both of those
+        /// answer a different question under a claim of continuity.
+        /// <see cref="Top"/> and <see cref="SnippetChars"/> are the exceptions and may
+        /// differ per page: they shape the presentation of one page, not the question.
+        /// </para>
+        /// </summary>
+        public string? ResumeToken { get; set; }
+    }
+
+    /// <summary>
+    /// How far a paged exhaustive scan has got, in fields a caller can act on WITHOUT the
+    /// token (F2). Present exactly when the scan stopped early.
+    /// <para>
+    /// It is what makes the continuation survivable: the token lives in one server process,
+    /// so a server restart loses it - and a caller holding this block continues by hand with
+    /// <c>folder</c> and <c>before</c>, which are parameters <c>search</c> already has. That
+    /// is why the token itself can afford to be ten characters of context instead of a
+    /// kilobyte of self-describing state.
+    /// </para>
+    /// </summary>
+    public sealed class ScanPositionInfo
+    {
+        /// <summary>Mail folders the chain has finished, across every page so far.</summary>
+        public int FoldersDone { get; set; }
+
+        /// <summary>Mail folders in scope, counted by this page's own ordered enumeration.</summary>
+        public int FoldersTotal { get; set; }
+
+        /// <summary>Store-relative path of the folder the next page starts in.</summary>
+        public string? ResumeFolder { get; set; }
+
+        /// <summary>True when the next page resumes PART WAY THROUGH that folder rather than at its top.</summary>
+        public bool ResumeWithinFolder { get; set; }
+
+        /// <summary>
+        /// The inclusive received-date bound the next page restricts on, when the folder's
+        /// table sorted. Absent on the other two rungs, which have no date to resume from.
+        /// </summary>
+        public DateTime? ResumeCursorUtc { get; set; }
+
+        /// <summary>
+        /// Which rung of the resumption ladder the next page will use: <c>date</c> (the
+        /// folder sorted, so resumption is a narrower query), <c>ordinal</c> (the sort was
+        /// refused, so it is a verified row skip) or <c>restart</c> (the folder is re-read
+        /// from the top with duplicate suppression).
+        /// <para>
+        /// It is a cost signal and it is also evidence: <c>date</c> on a folder means
+        /// <c>Table.Sort</c> works there, which is the open question behind the freshness
+        /// sweep's own item cap.
+        /// </para>
+        /// </summary>
+        public string? ResumeTier { get; set; }
+
+        /// <summary>Pages of this chain served so far, this one included.</summary>
+        public int Page { get; set; }
     }
 
     /// <summary>One agent-facing hit: compact triage payload (v3.MD sections 8/12).</summary>
@@ -405,6 +467,23 @@ namespace OutlookAI.Core.Services
         /// </para>
         /// </summary>
         public IReadOnlyList<string>? ItemCappedFoldersUnsorted { get; set; }
+
+        /// <summary>
+        /// Folders where the sweep added the received-date COLUMN successfully and
+        /// <c>Table.Sort</c> then threw anyway. Null when none did.
+        /// <para>
+        /// A pure diagnostic: it raises no coverage code, changes no advice and never
+        /// degrades an answer. It is here to settle from real sweeps, rather than from a
+        /// probe, WHY the sort has been observed not to apply - Microsoft documents that a
+        /// sort property may be referenced "by their explicit string names only; cannot
+        /// reference properties by their namespaces", and the shipped call passes a
+        /// namespace. If that is the cause, this equals the folders swept on every store and
+        /// every profile; if a provider is at fault it varies by store. Until 2026-08-19 one
+        /// <c>catch</c> covered the column add and the sort together, so
+        /// <see cref="ItemCappedFoldersUnsorted"/> could not say which had failed.
+        /// </para>
+        /// </summary>
+        public int? SortRefusedFolders { get; set; }
 
         /// <summary>
         /// True when the scoped sweep hit <c>MaxScopedSweepFolders</c> and stopped walking
@@ -744,6 +823,81 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Scan wall-clock cost.</summary>
         public long ElapsedMs { get; set; }
+
+        /// <summary>
+        /// Which bound ENDED the walk: <c>complete</c>, <c>time_budget</c> or
+        /// <c>result_cap</c> (<c>ComScanStopReasons</c>). RECORDED by the walk at the moment
+        /// it stopped, never derived here from <see cref="Truncated"/> and
+        /// <see cref="TimedOut"/>.
+        /// <para>
+        /// Those two are independent booleans and both can be true, while their remedies
+        /// point in opposite directions - measured: on Exchange the token exists because of
+        /// the time budget (a 108 144-item folder at roughly 12 items/s), on a local PST
+        /// because of the result cap (roughly 1 200 items/s, so the clock never fires). A
+        /// budget stop means "keep resuming, there is no cheaper route"; a cap stop means
+        /// "keep resuming, or narrow with folder/after, and narrowing is cheaper". An agent
+        /// that cannot tell them apart gives the wrong advice about half the time.
+        /// </para>
+        /// <para>
+        /// <see cref="DepthLimitReached"/> is deliberately NOT a value here: the depth guard
+        /// bounds one subtree and every sibling branch is still walked, so it never ends a
+        /// walk however true it is.
+        /// </para>
+        /// </summary>
+        public string? StopReason { get; set; }
+
+        /// <summary>
+        /// The handle that continues this scan, or null when there is nothing left to do
+        /// (F2). Pass it back as <c>resume_token</c> with every other argument unchanged.
+        /// <para>
+        /// Absent EXACTLY when the walk covered its scope, so a paging caller terminates on
+        /// this field being missing rather than on a count - a count cannot distinguish "the
+        /// last page happened to be short" from "there is no more".
+        /// </para>
+        /// <para>
+        /// It can also be absent on a scan that DID stop, when no resumable position could be
+        /// formed; the advice says so in that case rather than leaving the caller to infer
+        /// completeness from a missing field.
+        /// </para>
+        /// </summary>
+        public string? NextToken { get; set; }
+
+        /// <summary>
+        /// Hits returned across every page of this token chain, this page included.
+        /// <para>
+        /// <c>top</c> counts PER PAGE, which is how every other paging surface here behaves,
+        /// and the accumulation across pages is exactly the context cost the <c>top</c> cap of
+        /// 100 exists to bound. This number is what makes that cost visible so an agent can
+        /// stop deliberately instead of discovering it afterwards.
+        /// </para>
+        /// </summary>
+        public int? ItemsReturnedTotal { get; set; }
+
+        /// <summary>Where the next page carries on. Present exactly when the walk stopped early.</summary>
+        public ScanPositionInfo? Position { get; set; }
+
+        /// <summary>
+        /// Folders that appeared in scope since the token was issued (added, moved, or
+        /// renamed into an earlier position) plus folders the chain had finished that are no
+        /// longer there. The appeared ones are SCANNED, never skipped; the departed ones were
+        /// already covered. Zero on a scan that was not resumed.
+        /// </summary>
+        public int? TreeChangedFolders { get; set; }
+
+        /// <summary>True when the folder the previous page stopped inside was gone on resume.</summary>
+        public bool? CursorFolderMissing { get; set; }
+
+        /// <summary>True when a resumed folder had to be re-read from its beginning.</summary>
+        public bool? ResumedUnsorted { get; set; }
+
+        /// <summary>True when a resumed folder's recorded row position no longer identified the same row.</summary>
+        public bool? ResumePositionLost { get; set; }
+
+        /// <summary>True when the per-folder duplicate-suppression set filled, so duplicates may now appear.</summary>
+        public bool? DedupCapacityReached { get; set; }
+
+        /// <summary>True when this page continues an earlier scan rather than starting one.</summary>
+        public bool? Resumed { get; set; }
     }
 
     /// <summary>

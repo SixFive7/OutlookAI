@@ -83,6 +83,19 @@ namespace OutlookAI.Core.Com
             int timeBudgetMs = 0);
 
         /// <summary>Index-bypassing COM scan, bounded by item count and time budget.</summary>
+        /// <param name="resumeFrom">
+        /// Where a previous page of this same scan stopped, or null to start at the top of
+        /// the scope. It carries the finished-folder set and the within-folder cursor, and
+        /// the child treats it as authoritative rather than re-deriving it.
+        /// <para>
+        /// The state travels DOWN on every page and is held in the server PARENT between
+        /// them, deliberately. The failure this mode is bounded against - a scan that runs
+        /// past its deadline - ends with the supervisor killing the COM host child, so state
+        /// kept in the child would be destroyed by exactly the event that makes resumption
+        /// necessary. Re-running one page still changes nothing, so the operation stays
+        /// classified read-only and retryable.
+        /// </para>
+        /// </param>
         ComExhaustiveResult ExhaustiveScan(
             string storeDisplayName,
             IReadOnlyList<string>? folderPath,
@@ -92,7 +105,8 @@ namespace OutlookAI.Core.Com
             int maxItems,
             int timeBudgetMs,
             SearchIn searchIn = SearchInValues.Default,
-            bool includeSubfolders = false);
+            bool includeSubfolders = false,
+            ComScanCursor? resumeFrom = null);
 
         /// <summary>Opens one item and snapshots it. Null with <paramref name="error"/> set when it cannot be opened.</summary>
         ComItemDetail? TryReadItem(

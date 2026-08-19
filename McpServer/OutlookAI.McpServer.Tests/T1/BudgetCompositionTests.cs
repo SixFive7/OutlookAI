@@ -80,6 +80,39 @@ public sealed class BudgetCompositionTests
     }
 
     /// <summary>
+    /// A continuation token has to outlive the page that issues it, with room to spare.
+    /// <para>
+    /// The relationship, not the number: a time-to-live shorter than one full-budget page is
+    /// unusable BY CONSTRUCTION - the caller receives a handle that expired while the scan
+    /// that produced it was still running - and nothing else in the system would notice,
+    /// because every refusal it produces is a well-formed, correctly worded answer. The
+    /// margin is deliberate too: a caller who lets one full page run and then spends as long
+    /// again deciding what to do with it still has a whole page of slack.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AScanContinuationOutlivesTheScanPageThatIssuesIt()
+    {
+        double ttlMs = ExhaustiveScanCursors.DefaultTimeToLive.TotalMilliseconds;
+
+        Assert.True(
+            ttlMs > ComOperationBudgets.ExhaustiveScanDeadlineMs,
+            $"the continuation time-to-live ({ttlMs} ms) must exceed one page's own deadline "
+            + $"({ComOperationBudgets.ExhaustiveScanDeadlineMs} ms); at or below it, a token can expire before the "
+            + "page that issued it has even returned");
+
+        Assert.True(
+            ttlMs >= 2 * ComOperationBudgets.ExhaustiveScanDeadlineMs,
+            $"the continuation time-to-live ({ttlMs} ms) is meant to cover a full page plus as long again to think "
+            + $"about the answer, i.e. at least 2x {ComOperationBudgets.ExhaustiveScanDeadlineMs} ms");
+
+        Assert.True(
+            ExhaustiveScanCursors.Capacity > 0 && ExhaustiveScanCursors.Capacity <= 32,
+            "concurrent paged scans are bounded, and lower than the send path's 32 pending tokens because a scan "
+            + "session carries a finished-folder set and a suppression set rather than one hash");
+    }
+
+    /// <summary>
     /// The exhaustive advice text and the tool description quote the SAME number the
     /// constant holds. Both are rendered as whole seconds.
     /// </summary>

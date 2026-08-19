@@ -105,12 +105,28 @@ namespace OutlookAI.Core.Com
         /// nothing to restrict on it emits <see cref="AdmitEveryClassClause"/>, which
         /// selects every item in the folder.
         /// </summary>
+        /// <param name="resumeAtOrBeforeUtc">
+        /// The date cursor a resumed scan continues from, as an INCLUSIVE upper bound. It is
+        /// separate from <paramref name="beforeUtc"/> and not a replacement for it: the
+        /// caller's own bound is exclusive and stays exactly as they wrote it, while this one
+        /// has to admit the cursor instant itself so that items sharing it are reachable at
+        /// all. Everything already returned AT that instant is excluded by EntryID afterwards
+        /// (the cursor's tie set), because a date alone cannot separate them.
+        /// <para>
+        /// Folding resumption into the restriction rather than into a row position is the
+        /// whole reason the date rung is the preferred one: the provider evaluates it as part
+        /// of the query it was going to evaluate anyway, so skipping costs nothing, and
+        /// nothing depends on an unsorted table returning rows in the same order twice - which
+        /// MAPI documents it need not do.
+        /// </para>
+        /// </param>
         public static string Build(
             IReadOnlyList<string>? terms,
             DateTime? sinceUtc,
             DateTime? beforeUtc,
             ExhaustiveEngine engine,
-            SearchIn searchIn = SearchInValues.Default)
+            SearchIn searchIn = SearchInValues.Default,
+            DateTime? resumeAtOrBeforeUtc = null)
         {
             if (sinceUtc.HasValue && beforeUtc.HasValue && sinceUtc.Value >= beforeUtc.Value)
             {
@@ -127,6 +143,11 @@ namespace OutlookAI.Core.Com
             if (beforeUtc.HasValue)
             {
                 clauses.Add(DateReceivedProp + " < '" + DaslDateLiteral.FormatUtc(beforeUtc.Value) + "'");
+            }
+
+            if (resumeAtOrBeforeUtc.HasValue)
+            {
+                clauses.Add(DateReceivedProp + " <= '" + DaslDateLiteral.FormatUtc(resumeAtOrBeforeUtc.Value) + "'");
             }
 
             if (terms != null)

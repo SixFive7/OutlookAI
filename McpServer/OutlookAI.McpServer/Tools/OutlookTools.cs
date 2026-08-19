@@ -119,7 +119,9 @@ public static class OutlookTools
             + "the other modes, so a folder scope walks the subtree - which on a big subtree can hit the 600 s "
             + "budget; pass include_subfolders=false to scan just the named folder, and check "
             + "foldersScanned/foldersSkipped plus advice for partial coverage. Use it when the index looks stale "
-            + "or wrong, or when completeness matters more than speed.")]
+            + "or wrong, or when completeness matters more than speed. A scan that stops early returns "
+            + "exhaustive.nextToken; pass it back as resume_token to continue, and read exhaustive.stopReason for "
+            + "why it stopped.")]
         bool exhaustive = false,
         [Description("Store display name to search in (see list_accounts). Omit for all stores (required when "
             + "exhaustive=true). The scope is honoured exactly and never silently widened. A store the profile has "
@@ -161,6 +163,23 @@ public static class OutlookTools
             + "means more matches exist beyond top: narrow with store/folder/from/after rather than raising it.")]
         int top = 25,
         [Description("Snippet length per hit (0-1000, default 200; 0 = no snippets).")] int snippet_chars = 200,
+        // The whole continuation contract lives on THIS string, deliberately. The tool
+        // description is at 1791 of the client's measured 2048-code-unit cut and the cut is
+        // per string with no per-tool bucket, so 257 units is nowhere near enough for a
+        // paging contract - and spending them would put the DEGRADED RESULTS paragraph one
+        // edit away from being truncated again, which is the exact defect that rewrite fixed.
+        // Parameter descriptions are measured by DescriptionBudgetCiTests and are NOT cut by
+        // the client, and the payload (stopReason, position, nextToken, advice) is uncapped.
+        [Description("Continue a previous exhaustive scan: pass the value of that result's exhaustive.nextToken. "
+            + "It is opaque - never parse it or build one. Every OTHER argument must be repeated unchanged; a "
+            + "resume whose query, store, folder, dates or filters differ is REFUSED rather than silently answering "
+            + "a different question. top and snippet_chars may differ per page, and top counts PER PAGE - "
+            + "exhaustive.itemsReturnedTotal is the running total across the chain. Each page hands you the next "
+            + "token, so the one you just used stops working; keep the newest. Page until exhaustive.nextToken is "
+            + "ABSENT, which is the only signal that the scan covered its scope - a short page is not one. If the "
+            + "token expires or this server restarts, nothing is lost: re-run the same search with folder and before "
+            + "taken from the previous result's exhaustive.position instead.")]
+        string? resume_token = null,
         CancellationToken cancellationToken = default)
     {
         return await GuardAsync(cancellationToken, () =>
@@ -170,6 +189,7 @@ public static class OutlookTools
                 Query = query,
                 SearchIn = SearchInValues.Parse(search_in),
                 Exhaustive = exhaustive,
+                ResumeToken = resume_token,
                 Store = store,
                 Folder = folder,
                 IncludeSubfolders = include_subfolders,

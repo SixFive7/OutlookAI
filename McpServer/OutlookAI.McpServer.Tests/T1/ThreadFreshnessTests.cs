@@ -411,7 +411,38 @@ public sealed class ThreadFreshnessTests
                     PostCapFilters = new[] { "from" },
                     ItemsFilteredOut = 23,
                 }),
+
+            // Gap F2's five. The first is the general fact - this answer is ONE PAGE of a
+            // longer scan - and it is what keeps degraded honest on the final page of a
+            // chain, which by itself covered everything it was asked for. The other four are
+            // only reachable on a page that already carries it.
+            (FreshMerge.ScanGapResumed, new ExhaustiveInfo { FoldersScanned = 4, Resumed = true }),
+            (FreshMerge.ScanGapTreeChanged, new ExhaustiveInfo { FoldersScanned = 4, TreeChangedFolders = 2 }),
+            (FreshMerge.ScanGapResumedUnsorted, new ExhaustiveInfo { FoldersScanned = 4, ResumedUnsorted = true }),
+            (
+                FreshMerge.ScanGapResumePositionLost,
+                new ExhaustiveInfo { FoldersScanned = 4, ResumePositionLost = true }),
+            (
+                FreshMerge.ScanGapDedupCapacity,
+                new ExhaustiveInfo { FoldersScanned = 4, DedupCapacityReached = true }),
         };
+    }
+
+    [Fact]
+    public void TheCursorFolderVanishing_RaisesTreeChanged_EvenWithNoFolderCount()
+    {
+        // The one tree-change that LOSES mail: the folder the chain stopped inside is gone,
+        // so its unread remainder is uncovered. It carries no count of its own, so a
+        // condition written only over TreeChangedFolders would miss exactly the case that
+        // matters most.
+        ExhaustiveInfo scan = new ExhaustiveInfo { FoldersScanned = 4, CursorFolderMissing = true };
+
+        Assert.Contains(FreshMerge.ScanGapTreeChanged, FreshMerge.DescribeExhaustiveCoverageGaps(scan)!);
+        Assert.Equal(FreshMerge.FreshnessPartial, FreshMerge.ClassifyExhaustiveFreshness(scan));
+
+        scan.CoverageGaps = new[] { FreshMerge.ScanGapTreeChanged };
+        string line = Assert.Single(MailService.DescribeExhaustiveCoverage(scan, top: 25));
+        Assert.Contains("NOT covered", line, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -772,34 +772,45 @@
   not answer. It was accepted on the standing rule that completeness outranks speed, so the number
   is worth having rather than worth acting on.
 
-- [ ] **Decide F2: the exhaustive scan truncates in ARBITRARY tree order, and there is no way to page past it.**
-  The worst row left in `Docs/completeness-gaps.md`, and it is a design change rather than a
-  reporting one, so it is the maintainer's call rather than an agent's. The scan never sorts the
-  folder table (`Com/OutlookComSession.cs`, no `t.Sort` on the scan path - contrast the sweep, which
-  sorts newest-first), so when `maxItems` stops the walk what is missing is whole folders nobody
-  opened, chosen by whatever order the tree came in. `truncated: true` and `result_cap` say the
-  answer is short and the advice already refuses to say "raise top", because `top` is capped at 100
-  and re-running re-walks the same tree and stops in the same place. So it is honestly REPORTED and
-  genuinely UNACTIONABLE, which is why closing it needs a decision:
-  - **(a) order the walk** - a stable, documented traversal order (stores by display name, then
-    depth-first with siblings by name, i.e. what `list_folders` already promises) makes the
-    truncation reproducible and lets a caller narrow by folder with confidence. It does not make
-    the answer complete, and it does not sort by DATE, which is what a caller usually wants.
-  - **(b) order the items** - sort each folder's table newest-first as the sweep does, so the cap
-    keeps the newest matches across the folders it reached. Costs a `Sort` per folder, changes what
-    a capped scan returns, and still says nothing about folders never opened.
-  - **(c) make it resumable** - a continuation token carrying the walk position, so a capped scan
-    can be paged. The most useful and the most work; it also needs a stable order (a), so (a) is a
-    prerequisite rather than an alternative.
-  - **(d) leave it** - the mode is for correctness over speed and the remedy in the advice (a
-    tighter `folder`/`after` bound) does work; the cost is that "narrow it yourself" is the only
-    answer for a large store.
+- [x] **F2 DECIDED AND SHIPPED (uncommitted, 2026-08-19): the exhaustive scan is resumable.**
+  The maintainer chose **(c) make it resumable**, and **(a) order the walk** came with it as its
+  stated prerequisite rather than as an alternative. They also chose to leave `top` at 100 and rely
+  on resumption, because payload is context and context is the scarce resource. What shipped:
+  `ExhaustiveScan` enumerates its scope in the shared sibling order first (so `foldersTotal` is
+  honest even when the walk covered four of thirty-two), then walks that list; a stop returns
+  `exhaustive.nextToken` over walk state in the SERVER PARENT (`ExhaustiveScanCursors`); per folder
+  the ladder is date cursor, validated ordinal, folder restart with EntryID suppression, and
+  `position.resumeTier` says which paid. `Docs/completeness-gaps.md` F2 carries the full record.
+  **Still needs a live profile** - the whole of `T2/LiveResumableScanTests`, which is the only tier
+  that can prove a paged scan returns exactly what an unpaged one returns.
 
-  Nothing shipped on 2026-08-18 constrains this choice: the depth guard added to `ScanFolderTree`
-  (gap F4) bounds the recursion and latches a flag, and it neither imposes nor forbids an order -
-  a sorted walk visits the same folders at the same depths. The one thing worth knowing before
-  choosing: `exhaustive.depthLimitReached` and `result_cap` are independent, so an ordered walk
-  would still need both.
+- [ ] **Settle whether `Table.Sort` has EVER applied - run `T2/LiveTableSortProbeTests` and act on the answer.**
+  Potentially the largest single defect found on 2026-08-19, and it is unresolved rather than fixed.
+  Microsoft's `Table.Sort` reference says a sort property may be referenced "by their explicit string
+  names only; cannot reference properties by their namespaces". `SweepFolder` passes
+  `urn:schemas:httpmail:datereceived`, which is a namespace. If the documentation holds for this call
+  then the freshness sweep has **never sorted on any store for any user**, its 200-item cap has always
+  cut arbitrarily, and the tier whose entire purpose is recent mail has been returning an arbitrary
+  200 rather than the newest 200 - a completeness defect, not only a reporting one. It would also mean
+  this session's reading of `item_cap_unsorted` ("the sort genuinely does not apply on that store") is
+  wrong: it would not apply anywhere.
+  - **Four read-only PowerShell probes could not settle it.** Every property form - the namespace
+    form, `ReceivedTime`, the DASL proptag form, `SentOn` - and every argument shape, including the
+    no-argument form, failed identically with `DISP_E_PARAMNOTOPTIONAL`. That uniformity is the tell:
+    it is PowerShell late binding against the `Table` COM object, not Outlook's verdict.
+  - **The probe is written and NOT run:** `T2/LiveTableSortProbeTests`, read-only, one table per
+    store, both spellings, each in its own try/catch, printing a per-store verdict and a single
+    ANSWER line. `Category=Live`, so it needs the configured dev machine.
+  - **Two cheap things shipped alongside it, and one deliberately did not.** The `catch` that wrapped
+    `Columns.Add` and `Sort` together is split, so `sortApplied: false` can say which failed; the
+    folders where the column WAS added and `Sort` still threw are counted into
+    `sweep.sortRefusedFolders`, which answers the question from ordinary telemetry (equal to the
+    folders swept, everywhere, means the property name is the cause). **The sort call itself was NOT
+    changed**, because changing it before the probe runs destroys the evidence.
+  - **If the hypothesis holds:** change `SweepFolder`'s `Sort` to the explicit property name, re-check
+    H2's advice sentence (it becomes true for the first time), and note that the resumable scan's date
+    rung becomes the normal path rather than the lucky one. **If it does not:** `item_cap_unsorted` is
+    correct as it stands and the scan will live on its ordinal and restart rungs on this profile.
 
 - [ ] **Verify the exhaustive scan's depth guard against a live profile - the half of F4 that T1 cannot reach.**
   F4 was closed on 2026-08-18 and is pinned by T1 `ScanDepthAndSweepScopeTests` end to end from

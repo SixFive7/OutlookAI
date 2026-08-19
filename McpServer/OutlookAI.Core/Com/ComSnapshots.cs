@@ -498,6 +498,232 @@ namespace OutlookAI.Core.Com
         public int? ItemClass { get; }
     }
 
+    /// <summary>
+    /// Where a resumable exhaustive scan left off, handed back to the child unchanged on the
+    /// next page. OPAQUE TO THE PARENT: the MCP server stores it beside its continuation
+    /// token and never reads a field of it, so the walk's own rules can change without the
+    /// parent learning a second copy of them.
+    /// <para>
+    /// A plain DTO with one public constructor whose parameter names match its properties,
+    /// because <c>RemoteSessionProxy</c> serializes contract arguments with
+    /// System.Text.Json (<c>JsonSerializerDefaults.Web</c>) - anything it cannot round-trip
+    /// would cross the process boundary as nulls and resume in the wrong place.
+    /// </para>
+    /// </summary>
+    public sealed class ComScanCursor
+    {
+        /// <summary>Creates a cursor.</summary>
+        public ComScanCursor(
+            IReadOnlyList<string>? completedFolderEntryIds = null,
+            string? folderEntryId = null,
+            string? tier = null,
+            DateTime? dateCursorUtc = null,
+            IReadOnlyList<string>? tieEntryIds = null,
+            int rowOrdinal = 0,
+            string? watermarkEntryId = null,
+            IReadOnlyList<string>? emittedEntryIds = null,
+            bool dedupCapacityReached = false)
+        {
+            CompletedFolderEntryIds = completedFolderEntryIds;
+            FolderEntryId = folderEntryId;
+            Tier = tier;
+            DateCursorUtc = dateCursorUtc;
+            TieEntryIds = tieEntryIds;
+            RowOrdinal = rowOrdinal;
+            WatermarkEntryId = watermarkEntryId;
+            EmittedEntryIds = emittedEntryIds;
+            DedupCapacityReached = dedupCapacityReached;
+        }
+
+        /// <summary>
+        /// Every mail folder the chain has already finished, by EntryID. It is the ONE thing
+        /// that can prove no folder was skipped, and it is why the walk state lives in the
+        /// server parent rather than in a self-describing token: it is far too big for the
+        /// wire an agent reads.
+        /// <para>
+        /// <c>PidTagEntryId</c> is a LONG-TERM id, so a rename or a move within the store
+        /// preserves it and the set survives both. A cross-store move changes it and reads
+        /// here exactly like a deletion, which is handled the same way.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<string>? CompletedFolderEntryIds { get; }
+
+        /// <summary>The folder to resume INSIDE, or null to start at the first unfinished folder.</summary>
+        public string? FolderEntryId { get; }
+
+        /// <summary>Which rung of the resumption ladder produced this cursor: date, ordinal or restart.</summary>
+        public string? Tier { get; }
+
+        /// <summary>Received date of the last item admitted from the cursor folder (tier <c>date</c> only).</summary>
+        public DateTime? DateCursorUtc { get; }
+
+        /// <summary>
+        /// Items already admitted at exactly <see cref="DateCursorUtc"/> (tier <c>date</c>).
+        /// The date restriction on resume is inclusive, so without this set every item
+        /// sharing the cursor's instant would come back a second time.
+        /// </summary>
+        public IReadOnlyList<string>? TieEntryIds { get; }
+
+        /// <summary>Rows consumed from the cursor folder's table (tier <c>ordinal</c>).</summary>
+        public int RowOrdinal { get; }
+
+        /// <summary>
+        /// EntryID of the row at <see cref="RowOrdinal"/> - 1 (tier <c>ordinal</c>). MAPI
+        /// documents no row order for an unsorted table, so the skip is a GUESS; comparing
+        /// this id after the skip is what turns it into a verified precondition, and a
+        /// mismatch falls to the restart rung instead of resuming somewhere wrong.
+        /// </summary>
+        public string? WatermarkEntryId { get; }
+
+        /// <summary>
+        /// Items already returned FROM THE CURSOR FOLDER, for the restart rung's duplicate
+        /// suppression. Scoped to one folder rather than to the session: once a folder is
+        /// finished nothing can re-read it, so carrying its ids further would only cost wire.
+        /// </summary>
+        public IReadOnlyList<string>? EmittedEntryIds { get; }
+
+        /// <summary>
+        /// True once <see cref="EmittedEntryIds"/> hit its cap, so duplicate suppression has
+        /// stopped. Latched rather than recomputed: the page that overflowed is the page that
+        /// has to say so, and every later page of the same chain inherits the doubt.
+        /// </summary>
+        public bool DedupCapacityReached { get; }
+    }
+
+    /// <summary>
+    /// How far a resumable exhaustive scan got, in terms a caller can act on WITHOUT the
+    /// token. That is deliberate: the token lives in one server process, so an MCP-server
+    /// restart loses it - and a caller holding this block can continue by hand with the
+    /// <c>folder</c> and <c>before</c> parameters that already exist.
+    /// </summary>
+    public sealed class ComScanPosition
+    {
+        /// <summary>Creates a position.</summary>
+        public ComScanPosition(
+            ComScanCursor cursor,
+            int foldersDone,
+            int foldersTotal,
+            string? resumeFolderPath = null,
+            bool resumeWithinFolder = false,
+            DateTime? resumeCursorUtc = null,
+            string? resumeTier = null)
+        {
+            Cursor = cursor;
+            FoldersDone = foldersDone;
+            FoldersTotal = foldersTotal;
+            ResumeFolderPath = resumeFolderPath;
+            ResumeWithinFolder = resumeWithinFolder;
+            ResumeCursorUtc = resumeCursorUtc;
+            ResumeTier = resumeTier;
+        }
+
+        /// <summary>The opaque cursor to hand back on the next page.</summary>
+        public ComScanCursor Cursor { get; }
+
+        /// <summary>Mail folders finished across the whole chain.</summary>
+        public int FoldersDone { get; }
+
+        /// <summary>Mail folders in scope, counted by the ordered enumeration this page ran.</summary>
+        public int FoldersTotal { get; }
+
+        /// <summary>Store-relative path of the folder the next page starts in.</summary>
+        public string? ResumeFolderPath { get; }
+
+        /// <summary>True when the next page resumes PART WAY THROUGH that folder.</summary>
+        public bool ResumeWithinFolder { get; }
+
+        /// <summary>The date cursor the next page restricts on, when the folder sorted.</summary>
+        public DateTime? ResumeCursorUtc { get; }
+
+        /// <summary>Which rung the next page will use: date, ordinal or restart.</summary>
+        public string? ResumeTier { get; }
+    }
+
+    /// <summary>One <c>Table.Sort</c> attempt in the read-only sort probe.</summary>
+    public sealed class ComTableSortAttempt
+    {
+        /// <summary>Creates an attempt record.</summary>
+        public ComTableSortAttempt(
+            string? property,
+            bool columnAdded,
+            string? columnError,
+            bool sortApplied,
+            string? sortError,
+            string? firstRowEntryId,
+            DateTime? firstRowReceivedUtc)
+        {
+            Property = property;
+            ColumnAdded = columnAdded;
+            ColumnError = columnError;
+            SortApplied = sortApplied;
+            SortError = sortError;
+            FirstRowEntryId = firstRowEntryId;
+            FirstRowReceivedUtc = firstRowReceivedUtc;
+        }
+
+        /// <summary>The property spelling asked for, or null for the untouched baseline table.</summary>
+        public string? Property { get; }
+
+        /// <summary>Whether <c>Columns.Add</c> accepted that spelling.</summary>
+        public bool ColumnAdded { get; }
+
+        /// <summary>Why <c>Columns.Add</c> refused it, or null.</summary>
+        public string? ColumnError { get; }
+
+        /// <summary>Whether <c>Table.Sort</c> returned without throwing.</summary>
+        public bool SortApplied { get; }
+
+        /// <summary>Why <c>Table.Sort</c> refused it, or null.</summary>
+        public string? SortError { get; }
+
+        /// <summary>EntryID of the first row after the attempt - the evidence the order changed.</summary>
+        public string? FirstRowEntryId { get; }
+
+        /// <summary>Received date of the first row, when the column could be read.</summary>
+        public DateTime? FirstRowReceivedUtc { get; }
+    }
+
+    /// <summary>
+    /// What one folder's table did when asked to sort newest-first under each spelling of
+    /// the received-date property. Read-only diagnostic; nothing here reaches the MCP tools.
+    /// </summary>
+    public sealed class ComTableSortProbe
+    {
+        /// <summary>Creates a probe result.</summary>
+        public ComTableSortProbe(
+            string storeDisplayName,
+            string folderName,
+            int rowCount,
+            ComTableSortAttempt baseline,
+            IReadOnlyList<ComTableSortAttempt> attempts)
+        {
+            StoreDisplayName = storeDisplayName;
+            FolderName = folderName;
+            RowCount = rowCount;
+            Baseline = baseline;
+            Attempts = attempts;
+        }
+
+        /// <summary>Store the folder lives in.</summary>
+        public string StoreDisplayName { get; }
+
+        /// <summary>Leaf name of the probed folder.</summary>
+        public string FolderName { get; }
+
+        /// <summary>Rows the unfiltered table reports, or -1 when <c>GetRowCount</c> refused.</summary>
+        public int RowCount { get; }
+
+        /// <summary>
+        /// The same table with NO sort asked for. Without it, "the first row is the newest"
+        /// after a successful sort proves nothing - the provider might have returned that
+        /// order anyway.
+        /// </summary>
+        public ComTableSortAttempt Baseline { get; }
+
+        /// <summary>One record per property spelling tried, in the order they were tried.</summary>
+        public IReadOnlyList<ComTableSortAttempt> Attempts { get; }
+    }
+
     /// <summary>Result of one exhaustive folder/date-bounded COM scan (COM-free data).</summary>
     public sealed class ComExhaustiveResult
     {
@@ -512,7 +738,15 @@ namespace OutlookAI.Core.Com
             bool timedOut,
             int rowsDropped = 0,
             int rowsUnreadable = 0,
-            bool depthLimitReached = false)
+            bool depthLimitReached = false,
+            string stopReason = ComScanStopReasons.Complete,
+            ComScanPosition? position = null,
+            int treeChangedFoldersAdded = 0,
+            int treeChangedFoldersMissing = 0,
+            bool cursorFolderMissing = false,
+            bool resumedUnsorted = false,
+            bool resumePositionLost = false,
+            bool dedupCapacityReached = false)
         {
             Items = items;
             FoldersScanned = foldersScanned;
@@ -524,6 +758,14 @@ namespace OutlookAI.Core.Com
             RowsDropped = rowsDropped;
             RowsUnreadable = rowsUnreadable;
             DepthLimitReached = depthLimitReached;
+            StopReason = stopReason;
+            Position = position;
+            TreeChangedFoldersAdded = treeChangedFoldersAdded;
+            TreeChangedFoldersMissing = treeChangedFoldersMissing;
+            CursorFolderMissing = cursorFolderMissing;
+            ResumedUnsorted = resumedUnsorted;
+            ResumePositionLost = resumePositionLost;
+            DedupCapacityReached = dedupCapacityReached;
         }
 
         /// <summary>Matched mail items with their REAL EntryIDs.</summary>
@@ -571,6 +813,69 @@ namespace OutlookAI.Core.Com
         /// silently would be the completeness defect the mode is chosen to avoid.
         /// </summary>
         public bool DepthLimitReached { get; }
+
+        /// <summary>
+        /// Which bound ENDED the walk: one of <see cref="ComScanStopReasons"/>. RECORDED at
+        /// the moment the walk stops, never derived afterwards from
+        /// <see cref="Truncated"/> / <see cref="TimedOut"/>.
+        /// <para>
+        /// Both of those can be true at once and their remedies point in different
+        /// directions - a budget stop means "keep resuming, there is no cheaper route", a cap
+        /// stop means "keep resuming, or narrow, and narrowing is cheaper" - so deriving the
+        /// reason would guess wrong roughly half the time it matters. And
+        /// <see cref="DepthLimitReached"/> never stops the walk at all, so it can never be a
+        /// stop reason however true it is.
+        /// </para>
+        /// </summary>
+        public string StopReason { get; }
+
+        /// <summary>Where to carry on, or null when the walk covered its whole scope.</summary>
+        public ComScanPosition? Position { get; }
+
+        /// <summary>
+        /// Folders found in scope on this page that the chain had not finished and had not
+        /// seen: added, moved, or renamed into an earlier position. They are SCANNED, never
+        /// skipped - the count exists so the caller learns the tree moved under the answer.
+        /// </summary>
+        public int TreeChangedFoldersAdded { get; }
+
+        /// <summary>
+        /// Folders the chain had already finished that are no longer in scope: deleted, or
+        /// moved out. Nothing is lost - they were covered - but the tree moved.
+        /// </summary>
+        public int TreeChangedFoldersMissing { get; }
+
+        /// <summary>
+        /// True when the folder the previous page stopped inside was gone. The walk resumes
+        /// at the next folder in the stable order rather than throwing, and the folder's
+        /// unread remainder is a genuine hole.
+        /// </summary>
+        public bool CursorFolderMissing { get; }
+
+        /// <summary>True when a folder had to be re-read from the beginning because its table would not sort.</summary>
+        public bool ResumedUnsorted { get; }
+
+        /// <summary>True when the ordinal rung's watermark did not match, so the row order had not held.</summary>
+        public bool ResumePositionLost { get; }
+
+        /// <summary>True when the per-folder duplicate-suppression set filled, so duplicates may now appear.</summary>
+        public bool DedupCapacityReached { get; }
+    }
+
+    /// <summary>
+    /// The three ways an exhaustive walk can end. One vocabulary, spelled once, because the
+    /// value crosses a process boundary as a string and is compared on both sides.
+    /// </summary>
+    public static class ComScanStopReasons
+    {
+        /// <summary>The walk covered its whole scope; there is nothing left to resume.</summary>
+        public const string Complete = "complete";
+
+        /// <summary>The wall-clock budget stopped it. Resuming is the only route to the rest.</summary>
+        public const string TimeBudget = "time_budget";
+
+        /// <summary>The result cap stopped it. Resuming works, and narrowing is cheaper.</summary>
+        public const string ResultCap = "result_cap";
     }
 
     /// <summary>How a derived draft is created from its source mail (v3.MD section 3: threading ONLY via these).</summary>
@@ -1269,8 +1574,10 @@ namespace OutlookAI.Core.Com
             IReadOnlyList<string>? itemCappedFoldersUnsorted = null,
             int bodiesTruncated = 0,
             bool bodyBudgetExhausted = false,
-            bool sweepBudgetExpired = false)
+            bool sweepBudgetExpired = false,
+            int sortRefusedFolders = 0)
         {
+            SortRefusedFolders = sortRefusedFolders;
             SweepBudgetExpired = sweepBudgetExpired;
             BodiesTruncated = bodiesTruncated;
             BodyBudgetExhausted = bodyBudgetExhausted;
@@ -1289,6 +1596,23 @@ namespace OutlookAI.Core.Com
             StoresUnnamed = storesUnnamed;
             ItemCappedFoldersUnsorted = itemCappedFoldersUnsorted ?? Array.Empty<string>();
         }
+
+        /// <summary>
+        /// Folders where the sweep added the received-date COLUMN successfully and
+        /// <c>Table.Sort</c> then threw anyway. A pure diagnostic: it raises no coverage
+        /// code, changes no advice and never degrades an answer.
+        /// <para>
+        /// It is here to settle, from a real sweep rather than from a probe, why the sweep's
+        /// sort has been observed not to apply. Microsoft documents that a sort property may
+        /// be referenced "by their explicit string names only; cannot reference properties by
+        /// their namespaces", and the shipped call passes a namespace. If that is the cause,
+        /// this number equals the number of folders swept on EVERY store and every profile;
+        /// if the provider is at fault it varies by store. Until 2026-08-19 one <c>catch</c>
+        /// wrapped the column add and the sort together, so the two failures were
+        /// indistinguishable and no telemetry could tell them apart.
+        /// </para>
+        /// </summary>
+        public int SortRefusedFolders { get; }
 
         /// <summary>
         /// Stores this sweep reached whose display name Outlook would not report, so they

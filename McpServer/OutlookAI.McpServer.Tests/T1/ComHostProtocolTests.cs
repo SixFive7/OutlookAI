@@ -499,6 +499,134 @@ public sealed class ComHostProtocolTests
     }
 
     [Fact]
+    public void AScanCursor_SurvivesTheProcessBoundaryInBothDirections()
+    {
+        // GAP F2. The walk state is produced in the child, held in the parent, and handed
+        // back DOWN on the next page - so it crosses this boundary twice, and a field that
+        // does not survive either hop is a page that silently resumes somewhere else. The
+        // whole design rests on the child being stateless about its own continuation, which
+        // is precisely what makes the round trip load-bearing rather than incidental.
+        ComScanCursor cursor = new ComScanCursor(
+            completedFolderEntryIds: new[] { "FOLDER-A", "FOLDER-B" },
+            folderEntryId: "FOLDER-C",
+            tier: "ordinal",
+            dateCursorUtc: new DateTime(2026, 6, 11, 8, 14, 22, DateTimeKind.Utc),
+            tieEntryIds: new[] { "TIE-1" },
+            rowOrdinal: 4211,
+            watermarkEntryId: "ROW-4210",
+            emittedEntryIds: new[] { "EMITTED-1", "EMITTED-2" },
+            dedupCapacityReached: true);
+
+        string cursorJson = JsonSerializer.Serialize(cursor, ComHostProtocol.Json);
+        ComScanCursor? readCursor = JsonSerializer.Deserialize<ComScanCursor>(cursorJson, ComHostProtocol.Json);
+
+        Assert.NotNull(readCursor);
+        Assert.Equal(new[] { "FOLDER-A", "FOLDER-B" }, readCursor!.CompletedFolderEntryIds!.ToArray());
+        Assert.Equal("FOLDER-C", readCursor.FolderEntryId);
+        Assert.Equal("ordinal", readCursor.Tier);
+        Assert.Equal(new DateTime(2026, 6, 11, 8, 14, 22, DateTimeKind.Utc), readCursor.DateCursorUtc);
+        Assert.Equal(new[] { "TIE-1" }, readCursor.TieEntryIds!.ToArray());
+        Assert.Equal(4211, readCursor.RowOrdinal);
+        Assert.Equal("ROW-4210", readCursor.WatermarkEntryId);
+        Assert.Equal(new[] { "EMITTED-1", "EMITTED-2" }, readCursor.EmittedEntryIds!.ToArray());
+        Assert.True(readCursor.DedupCapacityReached);
+    }
+
+    [Fact]
+    public void AStoppedScansPositionAndItsStopReason_CrossTheWire()
+    {
+        // stopReason is recorded where the walk stops, which is in the child, so it can only
+        // reach an agent by crossing here. Both bounds are set on this fixture on purpose:
+        // the value that survives has to be the RECORDED one, not one a receiver could have
+        // recomputed from the booleans - because from those two the answer is a coin toss.
+        ComExhaustiveResult original = new ComExhaustiveResult(
+            Array.Empty<ComMailBrief>(),
+            foldersScanned: 4,
+            foldersSkipped: 0,
+            engine: "ci_phrasematch",
+            instantSearchEnabled: true,
+            truncated: true,
+            timedOut: true,
+            stopReason: ComScanStopReasons.TimeBudget,
+            position: new ComScanPosition(
+                new ComScanCursor(folderEntryId: "FOLDER-C", tier: "date"),
+                foldersDone: 4,
+                foldersTotal: 32,
+                resumeFolderPath: "Archive/2019",
+                resumeWithinFolder: true,
+                resumeCursorUtc: new DateTime(2026, 6, 11, 8, 14, 22, DateTimeKind.Utc),
+                resumeTier: "date"),
+            treeChangedFoldersAdded: 1,
+            treeChangedFoldersMissing: 2,
+            cursorFolderMissing: true,
+            resumedUnsorted: true,
+            resumePositionLost: true,
+            dedupCapacityReached: true);
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComExhaustiveResult? read = JsonSerializer.Deserialize<ComExhaustiveResult>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Equal(ComScanStopReasons.TimeBudget, read!.StopReason);
+        Assert.NotNull(read.Position);
+        Assert.Equal(4, read.Position!.FoldersDone);
+        Assert.Equal(32, read.Position.FoldersTotal);
+        Assert.Equal("Archive/2019", read.Position.ResumeFolderPath);
+        Assert.True(read.Position.ResumeWithinFolder);
+        Assert.Equal("date", read.Position.ResumeTier);
+        Assert.Equal("FOLDER-C", read.Position.Cursor.FolderEntryId);
+        Assert.Equal(1, read.TreeChangedFoldersAdded);
+        Assert.Equal(2, read.TreeChangedFoldersMissing);
+        Assert.True(read.CursorFolderMissing);
+        Assert.True(read.ResumedUnsorted);
+        Assert.True(read.ResumePositionLost);
+        Assert.True(read.DedupCapacityReached);
+    }
+
+    [Fact]
+    public void ACompletedScan_CarriesNoPosition_AcrossTheWire()
+    {
+        // The termination signal itself. A caller pages until the token is absent, and the
+        // token is absent exactly when the child sent no position - so a serializer that
+        // materialised an empty position here would turn "finished" into an endless loop.
+        ComExhaustiveResult original = new ComExhaustiveResult(
+            Array.Empty<ComMailBrief>(),
+            foldersScanned: 32,
+            foldersSkipped: 0,
+            engine: "ci_phrasematch",
+            instantSearchEnabled: true,
+            truncated: false,
+            timedOut: false);
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComExhaustiveResult? read = JsonSerializer.Deserialize<ComExhaustiveResult>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Equal(ComScanStopReasons.Complete, read!.StopReason);
+        Assert.Null(read.Position);
+    }
+
+    [Fact]
+    public void TheSweepsRefusedSortCount_CrossesTheWire()
+    {
+        // The number that settles, from real sweeps rather than from a probe, whether
+        // Table.Sort is refused everywhere: it counts folders where the date COLUMN was added
+        // and the sort still threw. Measured in the child, so it only exists to a reader if
+        // it survives this hop.
+        ComSweepResult original = new ComSweepResult(
+            Array.Empty<ComMailBrief>(),
+            foldersSwept: 20,
+            foldersSkipped: 0,
+            sortRefusedFolders: 20);
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComSweepResult? read = JsonSerializer.Deserialize<ComSweepResult>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Equal(20, read!.SortRefusedFolders);
+    }
+
+    [Fact]
     public void ComFolderTree_CarriesWhatBoundedTheWalkAcrossTheWire()
     {
         // The walk runs in the CHILD and its bounds decide list_folders' truncated flag,

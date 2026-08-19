@@ -1286,11 +1286,10 @@ namespace OutlookAI.Core.Com
 
                     // Stable order leg 1: stores by display name (ties broken by
                     // profile position so equal names still page deterministically).
-                    storeOrder.Sort((a, b) =>
-                    {
-                        int byName = string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
-                        return byName != 0 ? byName : a.Index.CompareTo(b.Index);
-                    });
+                    // The SAME comparator the sibling folders use - it was a copy of it
+                    // until 2026-08-19, and two copies of a rule this small are how the two
+                    // legs of one "stable order" drift apart without anything failing.
+                    storeOrder.Sort(CompareSiblings);
 
                     foreach ((string name, int index) in storeOrder)
                     {
@@ -1909,7 +1908,8 @@ namespace OutlookAI.Core.Com
                         itemCappedFoldersUnsorted: tally.ItemCappedUnsorted,
                         bodiesTruncated: tally.BodiesTruncated,
                         bodyBudgetExhausted: tally.BodyBudgetExhausted,
-                        sweepBudgetExpired: tally.SweepBudgetExpired);
+                        sweepBudgetExpired: tally.SweepBudgetExpired,
+                        sortRefusedFolders: tally.SortRefused);
                 }
 
                 // The counters, attributed to the store they happened in. The scalar
@@ -2016,7 +2016,12 @@ namespace OutlookAI.Core.Com
                                         WindowFor(windows, storeName, sinceUtc), perFolderCap, includeBodies, items,
                                         tally,
                                         out int rowsUnreadable,
-                                        out bool sortApplied);
+                                        out bool sortApplied,
+                                        out bool sortRefused);
+                                    if (sortRefused)
+                                    {
+                                        tally.SortRefused++;
+                                    }
 
                                     // Counted whatever the outcome, and attributed to this
                                     // store: rows lost inside a folder are this store's
@@ -2090,7 +2095,8 @@ namespace OutlookAI.Core.Com
                     tally.Failed, tally.ItemCapped, tally.FolderCapReached,
                     tally.DepthLimitReached, tally.TimeBudgetExceeded, absent, perStore,
                     tally.RowsUnreadable, storesUnnamed, tally.ItemCappedUnsorted,
-                    tally.BodiesTruncated, tally.BodyBudgetExhausted, tally.SweepBudgetExpired);
+                    tally.BodiesTruncated, tally.BodyBudgetExhausted, tally.SweepBudgetExpired,
+                    tally.SortRefused);
             });
         }
 
@@ -2252,6 +2258,23 @@ namespace OutlookAI.Core.Com
             /// unknown.
             /// </summary>
             internal List<string> ItemCappedUnsorted { get; } = new List<string>();
+
+            /// <summary>
+            /// Folders where the date COLUMN was added and <c>Table.Sort</c> then threw
+            /// anyway, counted over every folder swept rather than only the capped ones.
+            /// <para>
+            /// It exists to settle one question from the field instead of from a probe:
+            /// Microsoft documents that a sort property may be referenced "by their explicit
+            /// string names only; cannot reference properties by their namespaces", and this
+            /// sweep passes a namespace. If that is the cause then the sort is refused on
+            /// every folder of every store for every user - a number this counter shows at a
+            /// glance - rather than being unavailable on particular providers, which is what
+            /// the repository has assumed. Until 2026-08-19 one <c>catch</c> covered the
+            /// column add and the sort together, so the two were indistinguishable and
+            /// <c>sortApplied:false</c> read as stronger evidence than it was.
+            /// </para>
+            /// </summary>
+            internal int SortRefused { get; set; }
 
             internal bool FolderCapReached { get; set; }
 
@@ -2510,7 +2533,13 @@ namespace OutlookAI.Core.Com
                     ns, folderObject, storeName, storeId, null, sinceUtc, perFolderCap, includeBodies, items,
                     tally,
                     out int rowsUnreadable,
-                    out bool sortApplied);
+                    out bool sortApplied,
+                    out bool sortRefused);
+                if (sortRefused)
+                {
+                    tally.SortRefused++;
+                }
+
                 tally.RowsUnreadable += rowsUnreadable;
                 if (outcome == SweepOutcome.Failed)
                 {
@@ -7438,7 +7467,8 @@ namespace OutlookAI.Core.Com
             int maxItems,
             int timeBudgetMs,
             SearchIn searchIn = SearchInValues.Default,
-            bool includeSubfolders = false)
+            bool includeSubfolders = false,
+            ComScanCursor? resumeFrom = null)
         {
             EnsureNotDisposed();
             if (string.IsNullOrWhiteSpace(storeDisplayName))
@@ -7501,14 +7531,21 @@ namespace OutlookAI.Core.Com
                     }
                 }
 
-                ExhaustiveScanState state = new ExhaustiveScanState(maxItems, TimeSpan.FromMilliseconds(timeBudgetMs))
+                ExhaustiveScanState state = new ExhaustiveScanState(
+                    maxItems, TimeSpan.FromMilliseconds(timeBudgetMs), resumeFrom)
                 {
+                    Terms = terms,
+                    SinceUtc = sinceUtc,
+                    BeforeUtc = beforeUtc,
+                    SearchIn = searchIn,
+                    InstantSearch = instantSearch,
                     CiFilter = instantSearch
                         ? ExhaustiveDaslFilter.Build(terms, sinceUtc, beforeUtc, ExhaustiveEngine.CiPhraseMatch, searchIn)
                         : null,
                     LikeFilter = ExhaustiveDaslFilter.Build(terms, sinceUtc, beforeUtc, ExhaustiveEngine.Like, searchIn),
                 };
 
+                List<ScanFolderRef> folders = new List<ScanFolderRef>();
                 try
                 {
                     // A whole-store scan always recurses; a folder-scoped one follows the
@@ -7516,7 +7553,25 @@ namespace OutlookAI.Core.Com
                     // folder-scoped exhaustive scan was unconditionally shallow while the
                     // index tier's folder scope was recursive).
                     bool recurse = folderPath == null || folderPath.Count == 0 || includeSubfolders;
-                    ScanFolderTree(_namespace!, scanRoot, storeDisplayName, storeId, recurse, state, depth: 0);
+
+                    // PASS 1 - enumerate the mail folders in scope, in the stable order, and
+                    // nothing else. It buys three things one combined pass cannot: a real
+                    // foldersTotal even when the walk stops after four folders, an ordered
+                    // list that turns resumption into index arithmetic instead of recursion
+                    // state, and the ONLY vantage point from which "a folder appeared before
+                    // the cursor" is visible at all. Its cost is structure reads that pass 2
+                    // would have paid anyway, and it is bounded by the same depth guard and
+                    // the same deadline.
+                    EnumerateScanFolders(
+                        scanRoot,
+                        folderPath == null || folderPath.Count == 0 ? string.Empty : string.Join("/", folderPath),
+                        recurse,
+                        state,
+                        folders,
+                        depth: 0);
+
+                    // PASS 2 - open and filter them, skipping what the chain has finished.
+                    ScanEnumeratedFolders(_namespace!, folders, storeDisplayName, storeId, state);
                 }
                 finally
                 {
@@ -7536,58 +7591,136 @@ namespace OutlookAI.Core.Com
                     state.TimedOut,
                     state.RowsDropped,
                     state.RowsUnreadable,
-                    state.DepthLimitReached);
+                    state.DepthLimitReached,
+                    state.StopReason,
+                    state.BuildPosition(folders.Count),
+                    state.TreeChangedFoldersAdded,
+                    state.TreeChangedFoldersMissing,
+                    state.CursorFolderMissing,
+                    state.ResumedUnsorted,
+                    state.ResumePositionLost,
+                    state.DedupCapacityReached);
             });
         }
 
         /// <summary>
-        /// Walks one store's (or one folder's) subtree, filtering every mail folder it
-        /// reaches. <paramref name="depth"/> is 0 at the scanned root and bounds the
-        /// recursion at <see cref="FolderWalkDepthGuard"/>, exactly as
-        /// <see cref="DecideSweepWalk"/> bounds the sweep's walk and <c>CollectFolders</c>
-        /// bounds the listing walk.
+        /// One mail folder in scope, as the ordered enumeration found it. Holds no COM
+        /// reference: the folder is re-opened by EntryID when its turn comes, which is what
+        /// lets a page that starts ten minutes later resume into the same folder without
+        /// having kept anything alive across the gap.
+        /// </summary>
+        private sealed class ScanFolderRef
+        {
+            internal ScanFolderRef(string entryId, string name, string path)
+            {
+                EntryId = entryId;
+                Name = name;
+                Path = path;
+            }
+
+            /// <summary>Long-term EntryID: survives a rename and a move within the store.</summary>
+            internal string EntryId { get; }
+
+            /// <summary>Leaf name, carried so the item snapshots do not re-read it.</summary>
+            internal string Name { get; }
+
+            /// <summary>Store-relative path, for the resume position a caller can act on.</summary>
+            internal string Path { get; }
+        }
+
+        /// <summary>The three rungs of the per-folder resumption ladder, spelled once.</summary>
+        internal static class ScanResumeTiers
+        {
+            /// <summary>
+            /// The folder's table sorted, so the position is a DATE and resumption is a
+            /// narrower query rather than a row offset. Immune to insertions, deletions and
+            /// row shuffling, and the skip costs nothing because the provider folds it into
+            /// the restriction it was going to evaluate anyway.
+            /// </summary>
+            internal const string Date = "date";
+
+            /// <summary>
+            /// The sort was refused, so the position is a row COUNT plus the EntryID that was
+            /// at the row before it. MAPI documents no order for an unsorted table, so the
+            /// skip is a guess - the watermark is what turns it into a verified precondition,
+            /// and a mismatch drops to <see cref="Restart"/> rather than resuming wrongly.
+            /// </summary>
+            internal const string Ordinal = "ordinal";
+
+            /// <summary>
+            /// No position at all: read the folder from the beginning and suppress what was
+            /// already returned. Always correct, always the most expensive, and reported.
+            /// </summary>
+            internal const string Restart = "restart";
+        }
+
+        /// <summary>
+        /// Newest-first sort key for a folder table, in the two spellings Outlook accepts for
+        /// the same property.
         /// <para>
-        /// GAP F4, and it had two halves. The crash half: this was the last unbounded
-        /// recursion over Outlook's folder graph, and a cyclic or pathological tree is a
-        /// <c>StackOverflowException</c>, which .NET does not let anyone catch - it takes the
-        /// COM host down with it, which the parent reports as Outlook having gone away, and
-        /// two of those open the breaker for 30 s. The guard is one comparison.
-        /// </para>
-        /// <para>
-        /// The reporting half is why it is not just one comparison. Stopping the walk without
-        /// saying so would make this mode - the one a caller picks BECAUSE completeness
-        /// matters - go quiet about a subtree it never opened, which is the whole species of
-        /// defect this area keeps closing. So the stop LATCHES on the scan state, rides out
-        /// on the result, and reaches the payload as <c>exhaustive.depthLimitReached</c> plus
-        /// the <c>depth_limit</c> coverage code the sweep's walk already uses - same token,
-        /// same meaning, one vocabulary.
-        /// </para>
-        /// <para>
-        /// It bounds this subtree only; siblings are still walked. A tree deep enough to hit
-        /// 64 is already broken, but a walk that abandoned the remaining accounts over one
-        /// bad folder would lose far more than it saved.
+        /// Two of them because Microsoft's <c>Table.Sort</c> reference says a sort property
+        /// may be referenced "by their explicit string names only; cannot reference
+        /// properties by their namespaces", while its own <c>Columns.Add</c> reference
+        /// documents the namespace form as valid there - and the freshness sweep has shipped
+        /// the namespace form on BOTH calls since the beginning. Whether that is why its sort
+        /// has never applied is unsettled and is being answered by a live probe, so this
+        /// path does not assume either answer: it asks for the explicit name first, falls
+        /// back to the namespace form, and lets the ANSWER decide the cost (which rung pays)
+        /// rather than the correctness (every rung returns the same mail).
         /// </para>
         /// </summary>
-        private void ScanFolderTree(
-            dynamic ns,
+        private static readonly string[] DateSortProperties = { "ReceivedTime", "urn:schemas:httpmail:datereceived" };
+
+        /// <summary>
+        /// Most items whose EntryIDs one folder's cursor may carry for duplicate suppression.
+        /// <para>
+        /// It bounds the ONE structure in this design that would otherwise grow without
+        /// limit: the restart rung has to remember everything it has already returned from
+        /// the folder it keeps re-reading. An EntryID is around 140 characters, so 10 000 of
+        /// them is roughly 3 MB held in the parent and crossing the pipe once per page -
+        /// and 10 000 is 100 full pages spent inside a single folder, which is far past the
+        /// point where narrowing the scan is the better answer. Beyond it the suppression
+        /// STOPS and says so (<c>dedup_capacity</c>) rather than silently dropping rows or
+        /// silently returning duplicates.
+        /// </para>
+        /// </summary>
+        public const int ScanCursorEmittedIdCap = 10_000;
+
+        /// <summary>
+        /// Enumerates the mail folders in scope, in the walk's stable order, WITHOUT opening
+        /// a single table. <paramref name="path"/> is this folder's own store-relative path
+        /// (empty at a whole-store root, so its children read "Inbox" exactly as
+        /// <c>list_folders</c> reports them), and <paramref name="depth"/> is 0 at the
+        /// scanned root.
+        /// <para>
+        /// GAP F4 lives here now, unchanged in meaning: the recursion is bounded at
+        /// <see cref="FolderWalkDepthGuard"/> and hitting it LATCHES, because a walk that
+        /// abandoned a subtree without saying so would make the one mode chosen BECAUSE
+        /// completeness matters go quiet about folders it never opened. The deadline is
+        /// checked here too - a wide tree can spend a budget on structure alone.
+        /// </para>
+        /// <para>
+        /// A mail folder whose EntryID will not read is counted SKIPPED rather than scanned.
+        /// It could be scanned, but it could never be recorded as finished, so a chain that
+        /// scanned it would re-scan it on every page and could never terminate; and the same
+        /// unreadable id is what a resumed page would need to recognise it by.
+        /// </para>
+        /// </summary>
+        private void EnumerateScanFolders(
             object folderObject,
-            string storeName,
-            string storeId,
+            string path,
             bool recurse,
             ExhaustiveScanState state,
+            List<ScanFolderRef> into,
             int depth)
         {
-            // The deadline is evaluated PER FOLDER, not only inside the per-row drain:
-            // a folder whose filter matches zero rows never entered the drain loop, so a
-            // wide low-yield subtree used to overrun the budget without bound while
-            // timedOut stayed false (soak fix 15).
-            if (state.CheckDeadline() || state.ShouldStop)
+            if (state.CheckDeadline())
             {
                 return;
             }
 
             // Same guard and same comparison as the other two walks, so "too deep" means one
-            // thing in this server. Checked before the folder is filtered rather than before
+            // thing in this server. Checked before the folder is recorded rather than before
             // it is descended into: the folder AT the offending depth is not scanned either,
             // and saying so is what the latch is for.
             if (depth > FolderWalkDepthGuard)
@@ -7597,10 +7730,11 @@ namespace OutlookAI.Core.Com
             }
 
             dynamic folder = folderObject;
+            string name = TryGetString(() => (string?)folder.Name) ?? string.Empty;
 
-            // Only mail folders are filtered (DefaultItemType 0 = olMailItem); other
-            // folder types still get their subtrees visited (a calendar folder can hold
-            // mail subfolders).
+            // Only mail folders are filtered (DefaultItemType 0 = olMailItem); other folder
+            // types still get their subtrees visited, because a calendar folder can hold mail
+            // subfolders.
             int defaultItemType = -1;
             try
             {
@@ -7612,10 +7746,18 @@ namespace OutlookAI.Core.Com
 
             if (defaultItemType == 0)
             {
-                ScanSingleFolder(ns, folderObject, storeName, storeId, state);
+                string? entryId = TryGetString(() => (string?)folder.EntryID);
+                if (string.IsNullOrEmpty(entryId))
+                {
+                    state.FoldersSkipped++;
+                }
+                else
+                {
+                    into.Add(new ScanFolderRef(entryId!, name, path));
+                }
             }
 
-            if (!recurse || state.ShouldStop)
+            if (!recurse)
             {
                 return;
             }
@@ -7626,13 +7768,24 @@ namespace OutlookAI.Core.Com
                 subFolders = folder.Folders;
                 dynamic folderCollection = (dynamic)subFolders!;
                 int count = folderCollection.Count;
-                for (int i = 1; i <= count && !state.ShouldStop; i++)
+
+                // The shared comparator, not a second copy of it: a continuation token is
+                // only as correct as the order it resumes into, and list_folders already
+                // promises this exact order to the caller who will read the resume path.
+                List<(string Name, int Index)> order = OrderSiblingsByName(folderCollection, count);
+                for (int i = 0; i < order.Count; i++)
                 {
+                    if (state.CheckDeadline())
+                    {
+                        return;
+                    }
+
                     object? child = null;
                     try
                     {
-                        child = folderCollection[i];
-                        ScanFolderTree(ns, child!, storeName, storeId, true, state, depth + 1);
+                        child = folderCollection[order[i].Index];
+                        string childPath = path.Length == 0 ? order[i].Name : path + "/" + order[i].Name;
+                        EnumerateScanFolders(child!, childPath, true, state, into, depth + 1);
                     }
                     finally
                     {
@@ -7652,13 +7805,150 @@ namespace OutlookAI.Core.Com
             }
         }
 
-        private void ScanSingleFolder(dynamic ns, object folderObject, string storeName, string storeId, ExhaustiveScanState state)
+        /// <summary>
+        /// Opens and filters the enumerated folders in order, skipping the ones the chain has
+        /// already finished and resuming INSIDE the one it stopped in.
+        /// <para>
+        /// The whole tree is re-walked on every page rather than jumped into, and that is
+        /// what makes "no folder was skipped" provable rather than assumed. A folder that is
+        /// neither finished nor the cursor and sits BEFORE the cursor in the stable order
+        /// appeared, moved or was renamed since the token was issued - it is scanned, and the
+        /// caller is told the tree moved. A finished folder that is no longer in scope was
+        /// deleted or moved out; nothing is lost, and the caller is told that too.
+        /// </para>
+        /// </summary>
+        private void ScanEnumeratedFolders(
+            dynamic ns,
+            List<ScanFolderRef> folders,
+            string storeName,
+            string storeId,
+            ExhaustiveScanState state)
+        {
+            // Pure in-memory reconciliation first, so the tree-changed counts are complete
+            // even when the scanning loop below stops after one folder.
+            int cursorIndex = -1;
+            int completedSeen = 0;
+            for (int i = 0; i < folders.Count; i++)
+            {
+                if (state.CompletedFolders.Contains(folders[i].EntryId))
+                {
+                    completedSeen++;
+                }
+
+                if (state.CursorFolderEntryId != null
+                    && string.Equals(state.CursorFolderEntryId, folders[i].EntryId, StringComparison.OrdinalIgnoreCase))
+                {
+                    cursorIndex = i;
+                }
+            }
+
+            state.TreeChangedFoldersMissing = state.CompletedFolders.Count - completedSeen;
+            if (state.CursorFolderEntryId != null && cursorIndex < 0)
+            {
+                // The folder this chain stopped inside is gone. Resume at the next unfinished
+                // folder in the stable order rather than throwing: the rest of the scope is
+                // still worth covering, and the hole is named rather than hidden.
+                state.CursorFolderMissing = true;
+                state.DropCursor();
+            }
+            else if (cursorIndex > 0)
+            {
+                for (int i = 0; i < cursorIndex; i++)
+                {
+                    if (!state.CompletedFolders.Contains(folders[i].EntryId))
+                    {
+                        state.TreeChangedFoldersAdded++;
+                    }
+                }
+            }
+
+            for (int i = 0; i < folders.Count; i++)
+            {
+                ScanFolderRef reference = folders[i];
+                if (state.CompletedFolders.Contains(reference.EntryId))
+                {
+                    state.FoldersDone++;
+                    continue;
+                }
+
+                if (state.ShouldStop || state.CheckDeadline())
+                {
+                    // Stopped between folders: the next page starts at the top of this one.
+                    state.SetResumeAtFolderStart(reference.EntryId, reference.Path);
+                    return;
+                }
+
+                bool isCursorFolder = state.CursorFolderEntryId != null
+                    && string.Equals(state.CursorFolderEntryId, reference.EntryId, StringComparison.OrdinalIgnoreCase);
+                ScanOneFolder(ns, reference, storeName, storeId, state, isCursorFolder);
+                if (state.ShouldStop)
+                {
+                    return;
+                }
+
+                // A folder counts as FINISHED even when it was skipped - its table would
+                // not open under either engine, so it is already reported as a coverage hole
+                // (foldersSkipped, folders_skipped) and a chain that retried it on every page
+                // could never terminate. Progress is slightly generous; termination is not
+                // optional.
+                state.FoldersDone++;
+                state.NoteFolderFinished(reference.EntryId);
+            }
+        }
+
+        /// <summary>Re-opens one enumerated folder by EntryID and scans it.</summary>
+        private void ScanOneFolder(
+            dynamic ns,
+            ScanFolderRef reference,
+            string storeName,
+            string storeId,
+            ExhaustiveScanState state,
+            bool isCursorFolder)
+        {
+            object? folderObject = null;
+            try
+            {
+                try
+                {
+                    folderObject = ns.GetFolderFromID(reference.EntryId, storeId);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    state.FoldersSkipped++;
+                    return;
+                }
+
+                if (folderObject == null)
+                {
+                    state.FoldersSkipped++;
+                    return;
+                }
+
+                ScanSingleFolder(ns, folderObject, reference, storeName, storeId, state, isCursorFolder);
+            }
+            finally
+            {
+                Release(folderObject);
+            }
+        }
+
+        private void ScanSingleFolder(
+            dynamic ns,
+            object folderObject,
+            ScanFolderRef reference,
+            string storeName,
+            string storeId,
+            ExhaustiveScanState state,
+            bool isCursorFolder)
         {
             dynamic folder = folderObject;
-            string? folderName = TryGetString(() => (string?)folder.Name);
+            string? folderName = reference.Name.Length == 0 ? null : reference.Name;
 
-            string filter = state.CiFilter != null && !state.CiBroken ? state.CiFilter : state.LikeFilter;
-            bool triedCi = ReferenceEquals(filter, state.CiFilter);
+            FolderResumePlan plan = state.PlanFor(isCursorFolder);
+            string filter = plan.DateBoundUtc.HasValue
+                ? state.BuildFilter(plan.DateBoundUtc.Value, useCi: state.CiFilter != null && !state.CiBroken)
+                : (state.CiFilter != null && !state.CiBroken ? state.CiFilter : state.LikeFilter);
+            bool triedCi = state.CiFilter != null && !state.CiBroken;
 
             object? table = null;
             try
@@ -7673,7 +7963,9 @@ namespace OutlookAI.Core.Com
                     // to LIKE (feature-detect rule, v3.MD section 12).
                     state.CiBroken = true;
                     triedCi = false;
-                    filter = state.LikeFilter;
+                    filter = plan.DateBoundUtc.HasValue
+                        ? state.BuildFilter(plan.DateBoundUtc.Value, useCi: false)
+                        : state.LikeFilter;
                     table = folder.GetTable(filter);
                 }
 
@@ -7687,6 +7979,20 @@ namespace OutlookAI.Core.Com
                 }
 
                 dynamic t = (dynamic)table!;
+
+                // The date column comes first because Sort needs the property present and
+                // because the cursor is READ out of it. Both are attempted only where the
+                // ladder can use the answer: the ordinal and restart rungs deliberately leave
+                // the table in the same unsorted state their position was recorded against.
+                // The COLUMN is added on every rung, and only the SORT is gated. Building the
+                // table differently between pages is what would make the ordinal rung
+                // useless: its recorded position refers to rows of a table that had the date
+                // column, so a resumed page without it is not obviously the same table, and
+                // the watermark would fail on every resume for a reason that is this code's
+                // own doing rather than the provider's.
+                int dateIndex = TryAddDateColumn(t);
+                bool sorted = plan.MaySort && dateIndex >= 0 && TrySortNewestFirst(t);
+
                 int entryIdIndex = FindTableColumn(t, "EntryID");
                 if (entryIdIndex < 0)
                 {
@@ -7694,6 +8000,52 @@ namespace OutlookAI.Core.Com
                     return;
                 }
 
+                if (dateIndex < 0)
+                {
+                    dateIndex = FindDateColumn(t);
+                }
+
+                bool ordinalPositionHeld = false;
+                string tier = sorted ? ScanResumeTiers.Date : ScanResumeTiers.Ordinal;
+                if (plan.Tier == ScanResumeTiers.Restart || (plan.Tier == ScanResumeTiers.Date && !sorted))
+                {
+                    // A folder whose sort has stopped applying keeps its DATE BOUND (which is
+                    // still a correct upper bound) and drops to the restart rung, because an
+                    // unsorted page of that window cannot produce a new date cursor without
+                    // skipping everything it did not happen to admit.
+                    tier = ScanResumeTiers.Restart;
+                    state.ResumedUnsorted = true;
+                }
+
+                if (plan.Tier == ScanResumeTiers.Ordinal && plan.RowOrdinal > 0)
+                {
+                    if (TrySkipRows(t, plan.RowOrdinal, entryIdIndex, out string? landedOn)
+                        && landedOn != null
+                        && string.Equals(landedOn, plan.WatermarkEntryId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ordinalPositionHeld = true;
+                        state.RowsConsumedInFolder = plan.RowOrdinal;
+                    }
+                    else
+                    {
+                        // The row order did not hold, so the skip landed somewhere this code
+                        // cannot vouch for. Rewind and pay for correctness instead.
+                        state.ResumePositionLost = true;
+                        state.ResumedUnsorted = true;
+                        tier = ScanResumeTiers.Restart;
+                        try
+                        {
+                            t.MoveToStart();
+                        }
+                        catch (Exception ex) when (IsComCallFailure(ex))
+                        {
+                            state.FoldersSkipped++;
+                            return;
+                        }
+                    }
+                }
+
+                state.BeginFolder(reference.EntryId, reference.Path, tier, plan, ordinalPositionHeld);
                 state.FoldersScanned++;
                 while (!(bool)t.EndOfTable && !state.ShouldStop)
                 {
@@ -7718,6 +8070,19 @@ namespace OutlookAI.Core.Com
                             state.RowsUnreadable++;
                             continue;
                         }
+
+                        state.RowsConsumedInFolder++;
+                        state.LastRowEntryId = entryId;
+
+                        // Already returned by an earlier page of this chain. Not a drop and
+                        // not a failure: the row is exactly where it was meant to be, and
+                        // re-reading it is the price the restart rung was chosen to pay.
+                        if (state.AlreadyEmitted(entryId))
+                        {
+                            continue;
+                        }
+
+                        DateTime? received = ReadRowDate(values, dateIndex);
 
                         try
                         {
@@ -7754,11 +8119,7 @@ namespace OutlookAI.Core.Com
                             continue;
                         }
 
-                        state.Items.Add(brief);
-                        if (state.Items.Count >= state.MaxItems)
-                        {
-                            state.Truncated = true;
-                        }
+                        state.Admit(brief, entryId, received ?? brief.ReceivedTime);
                     }
                     finally
                     {
@@ -7777,13 +8138,224 @@ namespace OutlookAI.Core.Com
             }
         }
 
+        /// <summary>
+        /// Adds the received-date column to a table, trying each accepted spelling in turn,
+        /// and returns its position or -1. Separate from the sort BECAUSE the sweep's version
+        /// of this pair shares one <c>catch</c> and therefore cannot say which of the two
+        /// failed - which is precisely the fact needed to explain why its sort has never
+        /// applied.
+        /// </summary>
+        private int TryAddDateColumn(dynamic table)
+        {
+            for (int i = 0; i < DateSortProperties.Length; i++)
+            {
+                object? columns = null;
+                try
+                {
+                    columns = table.Columns;
+                    ((dynamic)columns!).Add(DateSortProperties[i]);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    continue;
+                }
+                finally
+                {
+                    Release(columns);
+                }
+
+                int index = FindTableColumn(table, DateSortProperties[i]);
+                if (index >= 0)
+                {
+                    return index;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>The date column's position when it is already on the table, or -1.</summary>
+        private int FindDateColumn(dynamic table)
+        {
+            for (int i = 0; i < DateSortProperties.Length; i++)
+            {
+                int index = FindTableColumn(table, DateSortProperties[i]);
+                if (index >= 0)
+                {
+                    return index;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>
+        /// Sorts a table newest-first, trying each accepted spelling of the property.
+        /// <c>Table.Sort</c> resets the cursor to before the first row, so it is called
+        /// before any skip and never after one.
+        /// </summary>
+        private bool TrySortNewestFirst(dynamic table)
+        {
+            for (int i = 0; i < DateSortProperties.Length; i++)
+            {
+                try
+                {
+                    table.Sort(DateSortProperties[i], true);
+                    return true;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Skips <paramref name="rows"/> rows in ONE round trip and reports the EntryID it
+        /// landed on, so the caller can check it against the watermark.
+        /// <para>
+        /// <c>Table.GetArray(n)</c> is documented to behave as if <c>GetNextRow</c> were
+        /// called n times, which is the only bulk skip the Table object offers - there is no
+        /// seek-to-row-N, and <c>FindRow</c> always restarts from the first row. Everything
+        /// about the returned array is checked rather than assumed (rank, bounds, row count),
+        /// because the alternative to a false answer here is a page that quietly starts in the
+        /// wrong place.
+        /// </para>
+        /// </summary>
+        private bool TrySkipRows(dynamic table, int rows, int entryIdIndex, out string? landedOn)
+        {
+            landedOn = null;
+            if (rows <= 0)
+            {
+                return true;
+            }
+
+            object? skipped;
+            try
+            {
+                skipped = table.GetArray(rows);
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return false;
+            }
+
+            if (skipped is not Array raw || raw.Rank != 2)
+            {
+                return false;
+            }
+
+            int rowBase = raw.GetLowerBound(0);
+            int columnBase = raw.GetLowerBound(1);
+            if (raw.GetLength(0) < rows || entryIdIndex >= raw.GetLength(1))
+            {
+                return false;
+            }
+
+            object? value;
+            try
+            {
+                value = raw.GetValue(rowBase + rows - 1, columnBase + entryIdIndex);
+            }
+            catch (Exception ex) when (ex is IndexOutOfRangeException || ex is ArgumentException)
+            {
+                return false;
+            }
+
+            landedOn = value as string;
+            return !string.IsNullOrEmpty(landedOn);
+        }
+
+        /// <summary>Reads a row's received date, or null when the column is absent or unusable.</summary>
+        private static DateTime? ReadRowDate(object[] values, int dateIndex)
+        {
+            if (dateIndex < 0 || dateIndex >= values.Length)
+            {
+                return null;
+            }
+
+            if (values[dateIndex] is DateTime received)
+            {
+                return received.Kind == DateTimeKind.Utc ? received : received.ToUniversalTime();
+            }
+
+            return null;
+        }
+
+        /// <summary>What a folder's resume state says to do when its turn comes.</summary>
+        private sealed class FolderResumePlan
+        {
+            internal FolderResumePlan(
+                string tier,
+                DateTime? dateBoundUtc,
+                int rowOrdinal,
+                string? watermarkEntryId,
+                HashSet<string> suppress,
+                bool maySort)
+            {
+                Tier = tier;
+                DateBoundUtc = dateBoundUtc;
+                RowOrdinal = rowOrdinal;
+                WatermarkEntryId = watermarkEntryId;
+                Suppress = suppress;
+                MaySort = maySort;
+            }
+
+            internal string Tier { get; }
+
+            internal DateTime? DateBoundUtc { get; }
+
+            internal int RowOrdinal { get; }
+
+            internal string? WatermarkEntryId { get; }
+
+            internal HashSet<string> Suppress { get; }
+
+            /// <summary>
+            /// False on the ordinal and restart rungs. Sorting a table whose recorded position
+            /// was taken unsorted would reorder the very rows the position refers to, so the
+            /// rung that cannot use a sort deliberately does not ask for one.
+            /// </summary>
+            internal bool MaySort { get; }
+        }
+
         private sealed class ExhaustiveScanState
         {
-            internal ExhaustiveScanState(int maxItems, TimeSpan budget)
+            private readonly HashSet<string> _completedFolders =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            private readonly ComScanCursor? _cursor;
+
+            private HashSet<string> _suppress = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            private HashSet<string> _emittedInFolder = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            private List<string> _emittedOrder = new List<string>();
+            private string? _folderEntryId;
+            private string? _folderPath;
+            private string _folderTier = ScanResumeTiers.Date;
+            private DateTime? _folderDateBoundUtc;
+            private DateTime? _lastAdmittedUtc;
+            private List<string> _tieEntryIds = new List<string>();
+            private bool _folderOpen;
+
+            internal ExhaustiveScanState(int maxItems, TimeSpan budget, ComScanCursor? resumeFrom)
             {
                 MaxItems = maxItems;
                 Budget = budget;
                 Clock = Stopwatch.StartNew();
+                _cursor = resumeFrom;
+                if (resumeFrom?.CompletedFolderEntryIds != null)
+                {
+                    foreach (string id in resumeFrom.CompletedFolderEntryIds)
+                    {
+                        if (!string.IsNullOrEmpty(id))
+                        {
+                            _ = _completedFolders.Add(id);
+                        }
+                    }
+                }
+
+                CursorFolderEntryId = string.IsNullOrEmpty(resumeFrom?.FolderEntryId) ? null : resumeFrom!.FolderEntryId;
+                DedupCapacityReached = resumeFrom != null && resumeFrom.DedupCapacityReached;
             }
 
             internal List<ComMailBrief> Items { get; } = new List<ComMailBrief>();
@@ -7797,6 +8369,16 @@ namespace OutlookAI.Core.Com
             internal string? CiFilter { get; set; }
 
             internal string LikeFilter { get; set; } = string.Empty;
+
+            internal IReadOnlyList<string>? Terms { get; set; }
+
+            internal DateTime? SinceUtc { get; set; }
+
+            internal DateTime? BeforeUtc { get; set; }
+
+            internal SearchIn SearchIn { get; set; } = SearchInValues.Default;
+
+            internal bool InstantSearch { get; set; }
 
             internal int FoldersScanned { get; set; }
 
@@ -7822,9 +8404,42 @@ namespace OutlookAI.Core.Com
             /// Latched when the walk refused a subtree past
             /// <see cref="FolderWalkDepthGuard"/> (gap F4). Deliberately NOT part of
             /// <see cref="ShouldStop"/>: the bound is per subtree, and every sibling branch
-            /// is still worth walking.
+            /// is still worth walking - which is also why it can never be a
+            /// <see cref="StopReason"/>.
             /// </summary>
             internal bool DepthLimitReached { get; set; }
+
+            /// <summary>
+            /// Which bound ENDED the walk, recorded by the code that ends it. First writer
+            /// wins, so when the cap and the budget both fire the reason is the one that
+            /// fired first - which is exactly the fact a derivation from the two booleans
+            /// afterwards cannot recover.
+            /// </summary>
+            internal string StopReason { get; private set; } = ComScanStopReasons.Complete;
+
+            internal int FoldersDone { get; set; }
+
+            internal int TreeChangedFoldersAdded { get; set; }
+
+            internal int TreeChangedFoldersMissing { get; set; }
+
+            internal bool CursorFolderMissing { get; set; }
+
+            internal bool ResumedUnsorted { get; set; }
+
+            internal bool ResumePositionLost { get; set; }
+
+            internal bool DedupCapacityReached { get; set; }
+
+            /// <summary>Rows consumed from the folder currently open, for the ordinal rung.</summary>
+            internal int RowsConsumedInFolder { get; set; }
+
+            /// <summary>EntryID of the last row consumed from the open folder, admitted or not.</summary>
+            internal string? LastRowEntryId { get; set; }
+
+            internal HashSet<string> CompletedFolders => _completedFolders;
+
+            internal string? CursorFolderEntryId { get; private set; }
 
             internal bool ShouldStop => Truncated || TimedOut;
 
@@ -7846,7 +8461,257 @@ namespace OutlookAI.Core.Com
                 }
 
                 TimedOut = true;
+                NoteStop(ComScanStopReasons.TimeBudget);
                 return true;
+            }
+
+            /// <summary>Forgets a cursor whose folder is no longer in scope.</summary>
+            internal void DropCursor()
+            {
+                CursorFolderEntryId = null;
+            }
+
+            /// <summary>The filter with a resumed scan's inclusive date bound folded in.</summary>
+            internal string BuildFilter(DateTime resumeAtOrBeforeUtc, bool useCi)
+            {
+                return ExhaustiveDaslFilter.Build(
+                    Terms,
+                    SinceUtc,
+                    BeforeUtc,
+                    useCi ? ExhaustiveEngine.CiPhraseMatch : ExhaustiveEngine.Like,
+                    SearchIn,
+                    resumeAtOrBeforeUtc);
+            }
+
+            /// <summary>What to do with the folder about to be opened.</summary>
+            internal FolderResumePlan PlanFor(bool isCursorFolder)
+            {
+                if (!isCursorFolder || _cursor == null)
+                {
+                    return new FolderResumePlan(
+                        ScanResumeTiers.Date,
+                        null,
+                        0,
+                        null,
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                        maySort: true);
+                }
+
+                string tier = string.IsNullOrEmpty(_cursor.Tier) ? ScanResumeTiers.Restart : _cursor.Tier!;
+                HashSet<string> suppress = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                Add(suppress, _cursor.TieEntryIds);
+                Add(suppress, _cursor.EmittedEntryIds);
+
+                return new FolderResumePlan(
+                    tier,
+                    _cursor.DateCursorUtc,
+                    _cursor.RowOrdinal,
+                    _cursor.WatermarkEntryId,
+                    suppress,
+                    maySort: tier == ScanResumeTiers.Date);
+            }
+
+            /// <summary>Starts recording a folder's own cursor state.</summary>
+            internal void BeginFolder(
+                string entryId, string path, string tier, FolderResumePlan plan, bool ordinalPositionHeld)
+            {
+                _folderOpen = true;
+                _folderEntryId = entryId;
+                _folderPath = path;
+                _folderTier = tier;
+                _folderDateBoundUtc = plan.DateBoundUtc;
+                _suppress = plan.Suppress;
+                _emittedInFolder = new HashSet<string>(plan.Suppress, StringComparer.OrdinalIgnoreCase);
+                _emittedOrder = new List<string>(plan.Suppress);
+                _lastAdmittedUtc = null;
+                _tieEntryIds = new List<string>();
+                // The row count carries over ONLY where the ordinal skip was performed AND
+                // verified. A watermark that did not match means the table was rewound, so
+                // keeping the old count would record a position measured from somewhere the
+                // cursor no longer is - which is the precise failure the watermark exists to
+                // catch, re-introduced one line below the catch.
+                if (ordinalPositionHeld)
+                {
+                    LastRowEntryId = plan.WatermarkEntryId;
+                }
+                else
+                {
+                    RowsConsumedInFolder = 0;
+                    LastRowEntryId = null;
+                }
+            }
+
+            /// <summary>Whether this row was already returned by an earlier page of the chain.</summary>
+            internal bool AlreadyEmitted(string entryId)
+            {
+                return _suppress.Contains(entryId);
+            }
+
+            /// <summary>Records one admitted item and the cursor facts it establishes.</summary>
+            internal void Admit(ComMailBrief brief, string entryId, DateTime? receivedUtc)
+            {
+                Items.Add(brief);
+
+                if (_emittedInFolder.Count < ScanCursorEmittedIdCap)
+                {
+                    if (_emittedInFolder.Add(entryId))
+                    {
+                        _emittedOrder.Add(entryId);
+                    }
+                }
+                else
+                {
+                    DedupCapacityReached = true;
+                }
+
+                if (receivedUtc.HasValue)
+                {
+                    if (!_lastAdmittedUtc.HasValue || receivedUtc.Value != _lastAdmittedUtc.Value)
+                    {
+                        _lastAdmittedUtc = receivedUtc.Value;
+                        _tieEntryIds = new List<string>();
+                    }
+
+                    _tieEntryIds.Add(entryId);
+                }
+                else
+                {
+                    // An admitted item with no readable date cannot extend a date cursor, and
+                    // pretending otherwise would move the bound past mail nobody returned. The
+                    // folder falls back to the ordinal rung, which needs no date at all.
+                    _lastAdmittedUtc = null;
+                    _folderTier = _folderTier == ScanResumeTiers.Date ? ScanResumeTiers.Ordinal : _folderTier;
+                }
+
+                if (Items.Count >= MaxItems)
+                {
+                    Truncated = true;
+                    NoteStop(ComScanStopReasons.ResultCap);
+                }
+            }
+
+            /// <summary>Marks a folder finished, so no later page opens it again.</summary>
+            internal void NoteFolderFinished(string entryId)
+            {
+                _ = _completedFolders.Add(entryId);
+                _folderOpen = false;
+                _folderEntryId = null;
+                _folderPath = null;
+            }
+
+            /// <summary>Records that the next page starts at the top of a folder it never opened.</summary>
+            internal void SetResumeAtFolderStart(string entryId, string path)
+            {
+                _folderOpen = true;
+                _folderEntryId = entryId;
+                _folderPath = path;
+                _folderTier = ScanResumeTiers.Date;
+                _folderDateBoundUtc = null;
+                _lastAdmittedUtc = null;
+                _tieEntryIds = new List<string>();
+                _emittedInFolder = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                _emittedOrder = new List<string>();
+                RowsConsumedInFolder = 0;
+                LastRowEntryId = null;
+            }
+
+            /// <summary>
+            /// Where the next page carries on, or null when the walk covered its whole scope.
+            /// <para>
+            /// Null is what a looping caller terminates on, so it is produced from the STOP
+            /// REASON and not from a count: a scan that stopped is resumable even when it
+            /// returned nothing, and a scan that finished is not resumable even when it
+            /// returned <c>top</c> items exactly.
+            /// </para>
+            /// </summary>
+            internal ComScanPosition? BuildPosition(int foldersTotal)
+            {
+                if (StopReason == ComScanStopReasons.Complete)
+                {
+                    return null;
+                }
+
+                string tier = _folderTier;
+                DateTime? dateCursor = null;
+                List<string>? ties = null;
+                int rowOrdinal = 0;
+                string? watermark = null;
+                List<string>? emitted = null;
+
+                if (_folderOpen && tier == ScanResumeTiers.Date && _lastAdmittedUtc.HasValue)
+                {
+                    dateCursor = _lastAdmittedUtc;
+                    ties = _tieEntryIds;
+                }
+                else if (_folderOpen && tier == ScanResumeTiers.Ordinal)
+                {
+                    rowOrdinal = RowsConsumedInFolder;
+                    watermark = LastRowEntryId;
+                    if (rowOrdinal <= 0 || string.IsNullOrEmpty(watermark))
+                    {
+                        // Nothing was consumed, so there is no position to verify. Starting
+                        // the folder over costs one re-read and can never resume wrongly.
+                        tier = ScanResumeTiers.Restart;
+                        rowOrdinal = 0;
+                        watermark = null;
+                    }
+                }
+                else if (_folderOpen && tier == ScanResumeTiers.Date)
+                {
+                    // The folder sorted but admitted nothing this page, so no date cursor
+                    // exists yet. Its own date bound (if it had one) still holds.
+                    tier = _folderDateBoundUtc.HasValue ? ScanResumeTiers.Restart : ScanResumeTiers.Date;
+                }
+
+                if (tier == ScanResumeTiers.Restart && _folderOpen)
+                {
+                    dateCursor = _folderDateBoundUtc;
+                    emitted = _emittedOrder;
+                }
+
+                ComScanCursor cursor = new ComScanCursor(
+                    new List<string>(_completedFolders),
+                    _folderOpen ? _folderEntryId : null,
+                    _folderOpen ? tier : null,
+                    dateCursor,
+                    ties,
+                    rowOrdinal,
+                    watermark,
+                    emitted,
+                    DedupCapacityReached);
+
+                return new ComScanPosition(
+                    cursor,
+                    FoldersDone,
+                    foldersTotal,
+                    _folderOpen ? _folderPath : null,
+                    _folderOpen && (dateCursor.HasValue || rowOrdinal > 0 || (emitted != null && emitted.Count > 0)),
+                    dateCursor,
+                    _folderOpen ? tier : null);
+            }
+
+            private void NoteStop(string reason)
+            {
+                if (StopReason == ComScanStopReasons.Complete)
+                {
+                    StopReason = reason;
+                }
+            }
+
+            private static void Add(HashSet<string> into, IReadOnlyList<string>? values)
+            {
+                if (values == null)
+                {
+                    return;
+                }
+
+                for (int i = 0; i < values.Count; i++)
+                {
+                    if (!string.IsNullOrEmpty(values[i]))
+                    {
+                        _ = into.Add(values[i]);
+                    }
+                }
             }
         }
 
@@ -7897,10 +8762,12 @@ namespace OutlookAI.Core.Com
             List<ComMailBrief> results,
             SweepTally tally,
             out int rowsUnreadable,
-            out bool sortApplied)
+            out bool sortApplied,
+            out bool sortRefused)
         {
             rowsUnreadable = 0;
             sortApplied = false;
+            sortRefused = false;
             dynamic folder = folderObject;
             string? folderName = TryGetString(() => (string?)folder.Name);
             // Year-first UTC literal (DaslDateLiteral). This one is the dangerous one to get
@@ -7915,29 +8782,58 @@ namespace OutlookAI.Core.Com
             {
                 table = folder.GetTable(filter);
                 dynamic t = (dynamic)table!;
+
+                // TWO try blocks, not one, and the split is the whole point. Until
+                // 2026-08-19 a single catch wrapped the column add AND the sort, so
+                // sortApplied:false could not say which of the two failed - and the
+                // difference decides whether the sweep's cap advice ("the OLDEST of this
+                // window was dropped") has ever been true. Microsoft documents that a sort
+                // property may be named "by their explicit string names only; cannot
+                // reference properties by their namespaces", and this call passes a
+                // namespace. If that is why sortApplied has been false, then the sort is
+                // refused on every store for every user rather than being unavailable on
+                // some - and only the split can tell those apart from the field.
+                //
+                // Sort needs the property present as a column; late-bound COM maps
+                // E_INVALIDARG to ArgumentException, hence the broad catch on each half.
+                bool columnAdded = false;
                 try
                 {
-                    // Sort needs the property present as a column; late-bound COM maps
-                    // E_INVALIDARG to ArgumentException, hence the broad catch.
                     object? columns = null;
                     try
                     {
                         columns = t.Columns;
                         ((dynamic)columns!).Add("urn:schemas:httpmail:datereceived");
+                        columnAdded = true;
                     }
                     finally
                     {
                         Release(columns);
                     }
-
-                    t.Sort("urn:schemas:httpmail:datereceived", true);
-                    sortApplied = true;
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
-                    // The sweep still works unsorted - every row in the window is still read
-                    // until the cap fires. What stops working is the CLAIM attached to the
-                    // cap, so the failure is reported instead of swallowed (gap H2).
+                    // The column could not be added, so the sort was never asked for.
+                }
+
+                if (columnAdded)
+                {
+                    try
+                    {
+                        t.Sort("urn:schemas:httpmail:datereceived", true);
+                        sortApplied = true;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        // The column IS there and Outlook still refused to order by it. That
+                        // is the observation the namespace-reference hypothesis predicts, and
+                        // it is counted so a single real sweep can settle it.
+                        //
+                        // The sweep still works unsorted - every row in the window is still
+                        // read until the cap fires. What stops working is the CLAIM attached
+                        // to the cap, so the failure is reported instead of swallowed (H2).
+                        sortRefused = true;
+                    }
                 }
 
                 int entryIdIndex = FindTableColumn(t, "EntryID");
@@ -8626,6 +9522,70 @@ namespace OutlookAI.Core.Com
         /// </summary>
         public const int FolderWalkDepthGuard = 64;
 
+        /// <summary>
+        /// One folder's children in the walk's STABLE ORDER: by name, case-insensitive
+        /// ordinal, with the provider's own collection position breaking ties. Returns the
+        /// (name, 1-based index) pairs so the caller re-fetches each child by index rather
+        /// than holding COM references across the sort.
+        /// <para>
+        /// ONE helper, called by every walk that needs a reproducible traversal, and that
+        /// sharing is the point rather than tidiness. Microsoft documents no ordering at all
+        /// for <c>Folder.Folders</c>, so the order is reproducible only because this code
+        /// makes it so - and a second copy of the comparator would let the folder listing and
+        /// the resumable scan drift into two different "stable" orders, at which point a
+        /// continuation token would resume into a tree the caller was never shown.
+        /// </para>
+        /// <para>
+        /// The price of ordering by NAME is that renaming a folder moves it in the walk. That
+        /// is handled where it belongs - the resumable scan validates its position against the
+        /// set of folders it has already finished, by EntryID - rather than by sorting on an
+        /// EntryID nobody can read, which would also make <c>list_folders</c>' promised order
+        /// meaningless to a human.
+        /// </para>
+        /// </summary>
+        private List<(string Name, int Index)> OrderSiblingsByName(dynamic folderCollection, int count)
+        {
+            List<(string Name, int Index)> order = new List<(string, int)>(count < 0 ? 0 : count);
+            for (int i = 1; i <= count; i++)
+            {
+                object? probe = null;
+                try
+                {
+                    probe = folderCollection[i];
+                    order.Add(((string)((dynamic)probe!).Name, i));
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                }
+                finally
+                {
+                    Release(probe);
+                }
+            }
+
+            order.Sort(CompareSiblings);
+            return order;
+        }
+
+        /// <summary>
+        /// The walk order itself, as a pure comparison: folder name first
+        /// (<see cref="StringComparison.OrdinalIgnoreCase"/>), the provider's own collection
+        /// position second. Public and static so T1 can pin the order every walk promises,
+        /// over a rule that otherwise only exists inside a COM loop no test can run.
+        /// <para>
+        /// The tiebreak is not decoration. Two sibling folders may legitimately share a name
+        /// (Outlook allows it in some stores, and a repaired PST can produce it), and without
+        /// a second key the sort would be unstable exactly where a resumable scan needs it
+        /// most - the same two folders could swap places between pages, so one would be
+        /// scanned twice and the other never.
+        /// </para>
+        /// </summary>
+        public static int CompareSiblings((string Name, int Index) a, (string Name, int Index) b)
+        {
+            int byName = string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+            return byName != 0 ? byName : a.Index.CompareTo(b.Index);
+        }
+
         private void CollectFolders(
             object folderObject,
             string storeDisplayName,
@@ -8653,29 +9613,7 @@ namespace OutlookAI.Core.Com
                 // ordinal; collection position breaks ties) so the flattened
                 // depth-first list - and with it any offset paging - is deterministic
                 // regardless of the provider's enumeration order.
-                List<(string Name, int Index)> order = new List<(string, int)>(count);
-                for (int i = 1; i <= count; i++)
-                {
-                    object? probe = null;
-                    try
-                    {
-                        probe = folderCollection[i];
-                        order.Add(((string)((dynamic)probe!).Name, i));
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                    }
-                    finally
-                    {
-                        Release(probe);
-                    }
-                }
-
-                order.Sort((a, b) =>
-                {
-                    int byName = string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
-                    return byName != 0 ? byName : a.Index.CompareTo(b.Index);
-                });
+                List<(string Name, int Index)> order = OrderSiblingsByName(folderCollection, count);
 
                 foreach ((string name, int index) in order)
                 {
@@ -8991,6 +9929,223 @@ namespace OutlookAI.Core.Com
             }
 
             throw new IOException("Could not find a free file name in the target directory.");
+        }
+
+        /// <summary>
+        /// READ-ONLY diagnostic: asks one folder's table to sort newest-first under each
+        /// spelling of the received-date property in turn, and reports what Outlook did.
+        /// Opens no item, writes nothing, and touches no mailbox state.
+        /// <para>
+        /// <b>Why it exists.</b> The freshness sweep sorts with
+        /// <c>Table.Sort("urn:schemas:httpmail:datereceived", true)</c>, and Microsoft's
+        /// <c>Table.Sort</c> reference states that sort properties may be referenced "by
+        /// their explicit string names only; cannot reference properties by their
+        /// namespaces" - which is exactly what that call does. If the documentation holds,
+        /// the sweep has never sorted on any store for any user, its 200-item cap has always
+        /// cut arbitrarily rather than dropping the oldest of the window, and the tier whose
+        /// whole purpose is recent mail has been returning an arbitrary 200. That is a
+        /// correctness claim in a shipped payload sentence, so it is settled by observation
+        /// rather than by reading.
+        /// </para>
+        /// <para>
+        /// <b>Why in C#.</b> Four read-only PowerShell probes failed identically on every
+        /// property form AND on the no-argument form, which is PowerShell late-binding
+        /// against the <c>Table</c> COM object rather than Outlook's verdict. Early-bound
+        /// interop has no such problem, which is why this lives here and is driven from the
+        /// live test tier.
+        /// </para>
+        /// <para>
+        /// Each attempt gets a FRESH table. A successful sort would otherwise leave the next
+        /// attempt reading rows somebody else ordered, and the first row's date is the whole
+        /// evidence that a sort that did not throw actually did something.
+        /// </para>
+        /// </summary>
+        /// <param name="storeDisplayName">Store to probe, by display name.</param>
+        /// <param name="folderPath">Store-relative folder path; null or empty probes the store's Inbox.</param>
+        /// <param name="sortProperties">
+        /// Property spellings to try, in order. Null uses the two the product itself
+        /// uses - the explicit built-in name and the namespace reference - which is the exact
+        /// comparison the question needs.
+        /// </param>
+        public ComTableSortProbe ProbeTableSort(
+            string storeDisplayName,
+            IReadOnlyList<string>? folderPath,
+            IReadOnlyList<string>? sortProperties = null)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(storeDisplayName))
+            {
+                throw new ArgumentException("Store display name must not be blank.", nameof(storeDisplayName));
+            }
+
+            IReadOnlyList<string> properties = sortProperties != null && sortProperties.Count > 0
+                ? sortProperties
+                : DateSortProperties;
+
+            return _runner.Run(() =>
+            {
+                object? folderObject = null;
+                try
+                {
+                    if (folderPath != null && folderPath.Count > 0)
+                    {
+                        folderObject = WalkToFolder(storeDisplayName, folderPath, out string? walkError);
+                        if (folderObject == null)
+                        {
+                            throw new InvalidOperationException(
+                                "Folder '" + string.Join("/", folderPath) + "' was not found in store '"
+                                + storeDisplayName + "' (" + (walkError ?? "unknown") + ").");
+                        }
+                    }
+                    else
+                    {
+                        dynamic? store = FindStoreByDisplayName(storeDisplayName);
+                        if (store == null)
+                        {
+                            throw new InvalidOperationException(
+                                "Store '" + storeDisplayName + "' was not found in Outlook.");
+                        }
+
+                        try
+                        {
+                            // 6 = olFolderInbox.
+                            folderObject = store.GetDefaultFolder(6);
+                        }
+                        finally
+                        {
+                            Release(store);
+                        }
+                    }
+
+                    string folderLabel = TryGetString(() => (string?)((dynamic)folderObject!).Name) ?? "?";
+                    string filter = ExhaustiveDaslFilter.Build(
+                        null, null, null, ExhaustiveEngine.Like, SearchInValues.Default);
+
+                    ProbeOneTable(folderObject!, filter, null, out int rowCount, out ComTableSortAttempt baseline);
+                    List<ComTableSortAttempt> attempts = new List<ComTableSortAttempt>();
+                    for (int i = 0; i < properties.Count; i++)
+                    {
+                        ProbeOneTable(folderObject!, filter, properties[i], out int _, out ComTableSortAttempt attempt);
+                        attempts.Add(attempt);
+                    }
+
+                    return new ComTableSortProbe(storeDisplayName, folderLabel, rowCount, baseline, attempts);
+                }
+                finally
+                {
+                    Release(folderObject);
+                }
+            });
+        }
+
+        /// <summary>
+        /// One probe attempt over a fresh table: add the column, sort by it, read the first
+        /// row. Column and sort are caught SEPARATELY - the entire question is which of the
+        /// two fails, and a shared catch is precisely what has made the shipped flag
+        /// unreadable.
+        /// </summary>
+        private void ProbeOneTable(
+            object folderObject,
+            string filter,
+            string? sortProperty,
+            out int rowCount,
+            out ComTableSortAttempt attempt)
+        {
+            rowCount = -1;
+            object? table = null;
+            bool columnAdded = false;
+            string? columnError = null;
+            bool sortApplied = false;
+            string? sortError = null;
+            DateTime? firstRowUtc = null;
+            string? firstRowEntryId = null;
+
+            try
+            {
+                dynamic folder = folderObject;
+                table = folder.GetTable(filter);
+                dynamic t = (dynamic)table!;
+
+                try
+                {
+                    rowCount = (int)t.GetRowCount();
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    rowCount = -1;
+                }
+
+                if (sortProperty != null)
+                {
+                    object? columns = null;
+                    try
+                    {
+                        columns = t.Columns;
+                        ((dynamic)columns!).Add(sortProperty);
+                        columnAdded = true;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        columnError = Describe(ex);
+                    }
+                    finally
+                    {
+                        Release(columns);
+                    }
+
+                    try
+                    {
+                        t.Sort(sortProperty, true);
+                        sortApplied = true;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        sortError = Describe(ex);
+                    }
+                }
+
+                int entryIdIndex = FindTableColumn(t, "EntryID");
+                int dateIndex = FindDateColumn(t);
+                if (!(bool)t.EndOfTable)
+                {
+                    object? row = null;
+                    try
+                    {
+                        row = t.GetNextRow();
+                        object[] values = (object[])((dynamic)row!).GetValues();
+                        if (entryIdIndex >= 0 && entryIdIndex < values.Length)
+                        {
+                            firstRowEntryId = values[entryIdIndex] as string;
+                        }
+
+                        firstRowUtc = ReadRowDate(values, dateIndex);
+                    }
+                    finally
+                    {
+                        Release(row);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                sortError = sortError ?? Describe(ex);
+            }
+            finally
+            {
+                Release(table);
+            }
+
+            attempt = new ComTableSortAttempt(
+                sortProperty, columnAdded, columnError, sortApplied, sortError, firstRowEntryId, firstRowUtc);
+        }
+
+        /// <summary>Type, message and HRESULT of a COM failure, for a diagnostic report.</summary>
+        private static string Describe(Exception ex)
+        {
+            string hresult = ex is COMException com
+                ? " (0x" + com.HResult.ToString("X8", CultureInfo.InvariantCulture) + ")"
+                : string.Empty;
+            return ex.GetType().Name + hresult + ": " + ex.Message;
         }
 
         /// <summary>

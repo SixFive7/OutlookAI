@@ -382,6 +382,13 @@ namespace OutlookAI.Core.Services
         private readonly SendConfirmationTokens _sendTokens;
         private readonly ServerDraftRegistry _draftRegistry = new ServerDraftRegistry();
         private readonly DraftUpdateIntents _updateIntents = new DraftUpdateIntents();
+
+        /// <summary>
+        /// Walk state for paged exhaustive scans (F2). Per process and unpersisted, on the
+        /// rule the other three of its kind already state: a restarted server never ran the
+        /// earlier pages and must not claim it can continue one.
+        /// </summary>
+        private readonly ExhaustiveScanCursors _scanCursors = new ExhaustiveScanCursors();
         private readonly SweepCache _sweepCache = new SweepCache();
         private readonly BodyCache _bodies = new BodyCache();
         private readonly ConcurrentDictionary<string, CachedHit> _hits =
@@ -670,6 +677,18 @@ namespace OutlookAI.Core.Services
             if (request.Exhaustive)
             {
                 return RunExhaustive(request, terms, top);
+            }
+
+            // A continuation handle only means anything to the scan that issued it. Ignoring
+            // one here would be the silent half of the failure the refusals exist to prevent:
+            // the caller believes they are continuing a walk, and gets a fresh indexed search
+            // that answers a different question and says nothing about it.
+            if (!string.IsNullOrWhiteSpace(request.ResumeToken))
+            {
+                throw new ArgumentException(
+                    "resume_token continues an EXHAUSTIVE scan and has no meaning without it. Pass exhaustive:true "
+                    + "with the same arguments the scan started with, or drop resume_token.",
+                    nameof(request));
             }
 
             FolderScopeResolution? folderScope = null;
@@ -1539,13 +1558,21 @@ namespace OutlookAI.Core.Services
                         advice.Add("The " + (ExhaustiveTimeBudgetMs / 1000).ToString(CultureInfo.InvariantCulture)
                             + " s time budget stopped the scan after "
                             + exhaustive.FoldersScanned.ToString(CultureInfo.InvariantCulture)
-                            + " folder(s) - results are partial. Narrow the folder/date bounds, or pass "
-                            + "include_subfolders:false to scan just the named folder.");
+                            + " folder(s) - results are partial. "
+                            + ResumeRemedy(exhaustive, "Nothing is cheaper than continuing here: the budget stopped "
+                                + "this page mid-walk, so re-running the same search would re-walk the same folders "
+                                + "and stop in the same place.")
+                            + " Narrowing the folder/date bounds, or include_subfolders:false to scan just the named "
+                            + "folder, makes each page cover more of what you actually want.");
                         break;
 
                     case FreshMerge.ScanGapResultCap:
                         advice.Add("Result cap (" + top.ToString(CultureInfo.InvariantCulture)
-                            + ") stopped the scan - results may be incomplete. Narrow the folder/date bounds or raise top.");
+                            + ") stopped the scan - results may be incomplete. "
+                            + ResumeRemedy(exhaustive, "Raising top will not help beyond "
+                                + SearchTopCap.ToString(CultureInfo.InvariantCulture) + ".")
+                            + " Narrowing the folder/date bounds is the CHEAPER remedy when you know what you are "
+                            + "looking for: it stops the walk having to reach these matches at all.");
                         break;
 
                     case FreshMerge.ScanGapFoldersSkipped:
@@ -1598,6 +1625,59 @@ namespace OutlookAI.Core.Services
                             + "filter that runs after the cap.");
                         break;
 
+                    case FreshMerge.ScanGapResumed:
+                        advice.Add("These results CONTINUE an earlier exhaustive scan (page "
+                            + (exhaustive.Position?.Page ?? 0).ToString(CultureInfo.InvariantCulture)
+                            + "; " + (exhaustive.ItemsReturnedTotal ?? 0).ToString(CultureInfo.InvariantCulture)
+                            + " item(s) returned across the chain so far, "
+                            + (exhaustive.Position == null
+                                ? "folder progress unknown"
+                                : exhaustive.Position.FoldersDone.ToString(CultureInfo.InvariantCulture) + " of "
+                                    + exhaustive.Position.FoldersTotal.ToString(CultureInfo.InvariantCulture)
+                                    + " folder(s) finished")
+                            + "). This page is NOT the whole answer, and top counts per page - every page you pull "
+                            + "adds to the total above, so decide deliberately when to stop rather than paging until "
+                            + "the token runs out.");
+                        break;
+
+                    case FreshMerge.ScanGapTreeChanged:
+                        advice.Add("Folders were added, moved, renamed or removed inside the scope between pages of "
+                            + "this scan ("
+                            + (exhaustive.TreeChangedFolders ?? 0).ToString(CultureInfo.InvariantCulture)
+                            + "). Ones that appeared were SCANNED rather than skipped and ones that left had already "
+                            + "been covered, so ordinarily nothing is missing"
+                            + (exhaustive.CursorFolderMissing == true
+                                ? " - EXCEPT that the folder this scan had stopped inside is gone, so whatever it "
+                                    + "still held is NOT covered by these results. Check list_folders for where it "
+                                    + "went and scan that path directly."
+                                : ". Mail that arrived in an already-finished folder after that folder was scanned is "
+                                    + "not covered either; a fresh search with a tighter 'after' bound picks it up."));
+                        break;
+
+                    case FreshMerge.ScanGapResumedUnsorted:
+                        advice.Add("A folder had to be re-read from its beginning to resume, because Outlook would "
+                            + "not sort its table. Nothing is duplicated and nothing is lost - items already returned "
+                            + "are suppressed by id - but each further page of that folder re-reads everything before "
+                            + "it, so the cost grows page by page. A narrower 'after'/'before' window, or a folder "
+                            + "scope aimed at that folder alone, is the cheap remedy.");
+                        break;
+
+                    case FreshMerge.ScanGapResumePositionLost:
+                        advice.Add("A resumed folder's recorded position no longer identified the same item, so the "
+                            + "table's row order had not held between pages - which MAPI allows, since an unsorted "
+                            + "table has no guaranteed order and its rows follow the folder live. The folder was "
+                            + "restarted with duplicate suppression rather than resumed into an unknown position, so "
+                            + "these results are still correct and this page cost more than it should have.");
+                        break;
+
+                    case FreshMerge.ScanGapDedupCapacity:
+                        advice.Add("Duplicate suppression for the folder being re-read has reached its capacity, so "
+                            + "items already returned by an earlier page of this scan MAY appear again from here on. "
+                            + "De-duplicate by id if you are accumulating results. Reaching this means one folder has "
+                            + "been paged through many times - narrow the scan (folder, after/before) instead of "
+                            + "continuing.");
+                        break;
+
                     default:
                         // Same rule as the sweep's: a code with no sentence is a partial
                         // result an agent can see and cannot explain. T1 pins that every
@@ -1610,6 +1690,93 @@ namespace OutlookAI.Core.Services
             }
 
             return advice;
+        }
+
+        /// <summary>
+        /// The one clause both stop-reason sentences share: what to do about a walk that
+        /// stopped, given whether a continuation handle could be issued for it.
+        /// <para>
+        /// Both branches matter. WITH a token, the remedy is concrete and the sentence names
+        /// the field, because "narrow it yourself" was the only answer this mode had for a
+        /// large store and it is no longer the best one. WITHOUT a token the answer that
+        /// looks the same - a missing <c>nextToken</c> - would otherwise read as completeness,
+        /// so the absence is stated rather than left to be inferred.
+        /// </para>
+        /// </summary>
+        private static string ResumeRemedy(ExhaustiveInfo exhaustive, string context)
+        {
+            if (!string.IsNullOrEmpty(exhaustive.NextToken))
+            {
+                return "Continue where it stopped: pass exhaustive.nextToken back as resume_token with every other "
+                    + "argument unchanged"
+                    + (exhaustive.Position?.ResumeFolder == null
+                        ? string.Empty
+                        : " (next up: '" + exhaustive.Position.ResumeFolder + "')")
+                    + ". " + context;
+            }
+
+            return "This scan could NOT be made resumable, so exhaustive.nextToken is absent - do not read that "
+                + "absence as completeness. " + context;
+        }
+
+        /// <summary>
+        /// Why a <c>resume_token</c> was refused, and what to do instead. FIVE distinct
+        /// messages for five distinct causes, because the remedies genuinely differ: a
+        /// malformed handle is a caller bug, an unknown one usually means the server
+        /// restarted, an expired one means the chain aged out, a superseded one means a later
+        /// page already exists, and a changed request means the caller asked something else.
+        /// <para>
+        /// Every refusal that can name the chain's POSITION does, because the alternative is
+        /// throwing away work that cost minutes: the position is expressed in <c>folder</c>
+        /// and <c>before</c>, which are parameters <c>search</c> already has, so recovery
+        /// needs no token at all. That is also what makes a superseded replay safe to refuse
+        /// outright - keeping older tokens live would need a snapshot of the suppression set
+        /// per position, which is a lot of memory for a rare case, and honouring one without
+        /// that snapshot would suppress exactly the rows the replay exists to return.
+        /// </para>
+        /// </summary>
+        public static string DescribeResumeRefusal(
+            ScanTokenDecision decision,
+            ExhaustiveScanSession? session,
+            IReadOnlyList<string>? changedArguments)
+        {
+            string recovery = session == null ? string.Empty : " " + session.DescribeRecovery();
+            switch (decision)
+            {
+                case ScanTokenDecision.Malformed:
+                    return "resume_token is not a continuation handle this server issues (they look like "
+                        + "'scan-' followed by 32 hex characters). Pass back exactly the value from a previous "
+                        + "result's exhaustive.nextToken, or omit it to start a fresh scan.";
+
+                case ScanTokenDecision.Unknown:
+                    return "resume_token is not known to this server: continuation state lives in the running "
+                        + "process and is lost when it restarts, and it is also dropped once its scan finishes. "
+                        + "Continue by re-running this search with 'folder' and 'before' set from the previous "
+                        + "result's exhaustive.position, or omit resume_token to start a fresh scan.";
+
+                case ScanTokenDecision.Expired:
+                    return "resume_token has expired - a paged scan stays resumable for a limited time after its "
+                        + "last page, and this one aged out." + recovery
+                        + " Or omit resume_token to start a fresh scan.";
+
+                case ScanTokenDecision.Superseded:
+                    return "resume_token has been superseded: a later page of the same scan was already served, so "
+                        + "this handle names a position the scan has moved past. Use the newest result's "
+                        + "exhaustive.nextToken." + recovery;
+
+                case ScanTokenDecision.RequestChanged:
+                    return "resume_token belongs to a scan of a DIFFERENT query, so continuing it would answer a "
+                        + "different question than the one it started: "
+                        + (changedArguments == null || changedArguments.Count == 0
+                            ? "one or more arguments changed"
+                            : string.Join(", ", changedArguments) + " changed")
+                        + ". Re-issue the call with the original arguments (only top and snippet_chars may differ "
+                        + "between pages), or drop resume_token to start a fresh scan for the new question."
+                        + recovery;
+
+                default:
+                    return "resume_token could not be used.";
+            }
         }
 
         /// <summary>
@@ -2661,6 +2828,29 @@ namespace OutlookAI.Core.Services
 
             IReadOnlyList<string>? folderSegments = ParseFolderSegments(request.Folder);
 
+            // The continuation contract (F2). The fingerprint is taken from the request the
+            // caller just made, and a resume is honoured only where it matches the request
+            // the chain was opened for - answering a different question under a claim of
+            // continuity is the failure this whole mechanism is built against, and both ways
+            // of not refusing (honour it silently, ignore it silently) are that failure.
+            string fingerprint = ExhaustiveScanCursors.FingerprintOf(request, terms);
+            ExhaustiveScanSession? session = null;
+            ComScanCursor? resumeFrom = null;
+            if (!string.IsNullOrWhiteSpace(request.ResumeToken))
+            {
+                ScanTokenDecision decision = _scanCursors.Resolve(request.ResumeToken, fingerprint, out session);
+                if (decision != ScanTokenDecision.Valid)
+                {
+                    IReadOnlyList<string> changed = decision == ScanTokenDecision.RequestChanged && session != null
+                        ? ExhaustiveScanCursors.DifferingArguments(session.Fingerprint, fingerprint)
+                        : Array.Empty<string>();
+                    throw new ArgumentException(
+                        DescribeResumeRefusal(decision, session, changed), nameof(request));
+                }
+
+                resumeFrom = session!.Cursor;
+            }
+
             Stopwatch stopwatch = Stopwatch.StartNew();
 
             // The scan runs on its OWN deadline, not the shared one. Two numbers, one
@@ -2682,7 +2872,8 @@ namespace OutlookAI.Core.Services
                     maxItems: top,
                     timeBudgetMs: ExhaustiveTimeBudgetMs,
                     searchIn: request.SearchIn,
-                    includeSubfolders: request.IncludeSubfolders),
+                    includeSubfolders: request.IncludeSubfolders,
+                    resumeFrom: resumeFrom),
                 ComOperationBudgets.ExhaustiveScanDeadlineMs,
                 allowConnectFloor: true);
             stopwatch.Stop();
@@ -2768,7 +2959,54 @@ namespace OutlookAI.Core.Services
                     request.From != null, request.UnreadOnly == true, request.HasAttachments.HasValue),
                 ItemsFilteredOut = scanItemsFilteredOut,
                 ElapsedMs = stopwatch.ElapsedMilliseconds,
+                StopReason = scan.StopReason,
+                Resumed = resumeFrom != null ? true : (bool?)null,
+                TreeChangedFolders = scan.TreeChangedFoldersAdded + scan.TreeChangedFoldersMissing > 0
+                    ? scan.TreeChangedFoldersAdded + scan.TreeChangedFoldersMissing
+                    : (int?)null,
+                CursorFolderMissing = scan.CursorFolderMissing ? true : (bool?)null,
+                ResumedUnsorted = scan.ResumedUnsorted ? true : (bool?)null,
+                ResumePositionLost = scan.ResumePositionLost ? true : (bool?)null,
+                DedupCapacityReached = scan.DedupCapacityReached ? true : (bool?)null,
             };
+
+            // The token, and the three states it has. A walk that COVERED its scope closes
+            // its chain (the state exists to make a next page possible, and there is no next
+            // page). A walk that stopped WITH a position gets the handle for that position. A
+            // walk that stopped WITHOUT one gets no handle at all, and the advice says so -
+            // rather than leaving a caller to read a missing field as completeness, which is
+            // exactly what the field's own absence means in the other case.
+            if (string.Equals(scan.StopReason, ComScanStopReasons.Complete, StringComparison.Ordinal))
+            {
+                _scanCursors.Complete(session);
+                exhaustive.ItemsReturnedTotal = (session?.ItemsReturnedTotal ?? 0) + summaries.Count;
+            }
+            else if (scan.Position != null)
+            {
+                exhaustive.NextToken = _scanCursors.Issue(
+                    session, fingerprint, scan.Position, summaries.Count, out ExhaustiveScanSession issued);
+                session = issued;
+                exhaustive.ItemsReturnedTotal = issued.ItemsReturnedTotal;
+            }
+            else
+            {
+                _scanCursors.NoteUnresumablePage(session, summaries.Count);
+                exhaustive.ItemsReturnedTotal = (session?.ItemsReturnedTotal ?? summaries.Count);
+            }
+
+            if (scan.Position != null)
+            {
+                exhaustive.Position = new ScanPositionInfo
+                {
+                    FoldersDone = scan.Position.FoldersDone,
+                    FoldersTotal = scan.Position.FoldersTotal,
+                    ResumeFolder = scan.Position.ResumeFolderPath,
+                    ResumeWithinFolder = scan.Position.ResumeWithinFolder,
+                    ResumeCursorUtc = scan.Position.ResumeCursorUtc,
+                    ResumeTier = scan.Position.ResumeTier,
+                    Page = session?.PagesServed ?? 1,
+                };
+            }
 
             // The codes first, then the prose from the codes, then the verdict recomputed
             // from the same codes - the order the sweep and the thread walk already use, so
@@ -3897,6 +4135,12 @@ namespace OutlookAI.Core.Services
             }
 
             info.ItemCappedFoldersUnsorted = arbitrary.Count == 0 ? null : arbitrary;
+
+            // NOT store-filtered, unlike the two lists above, and deliberately: it is a
+            // count rather than a set of labels, so there is nothing to attribute, and the
+            // question it answers - does Table.Sort work at all - is about the call and not
+            // about any one store.
+            info.SortRefusedFolders = result.SortRefusedFolders > 0 ? result.SortRefusedFolders : (int?)null;
         }
 
         /// <summary>

@@ -378,6 +378,79 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public const string ScanGapPostCapFilter = "post_cap_filter";
 
+        /// <summary>
+        /// Exhaustive-scan coverage hole: THIS ANSWER IS ONE PAGE of a longer scan, reached
+        /// by a continuation token (F2).
+        /// <para>
+        /// It is a hole in the plainest sense - the page in hand is not the whole answer -
+        /// and it is the code that keeps <c>degraded</c> honest across a paged scan. Without
+        /// it the LAST page of a chain, which by itself covered everything it was asked for,
+        /// would report <c>freshness: "live"</c> and no <c>degraded</c> flag at all, and an
+        /// agent relaying that page would tell the user the search was complete when it had
+        /// seen a hundred of several thousand matches.
+        /// </para>
+        /// <para>
+        /// Every other resumption code implies this one, which is what keeps them from
+        /// weakening the flag on their own: they are only reachable on a page that already
+        /// carries it.
+        /// </para>
+        /// </summary>
+        public const string ScanGapResumed = "scan_resumed";
+
+        /// <summary>
+        /// Exhaustive-scan coverage hole: folders were added, moved or removed inside the
+        /// scope between two pages of one chain (F2).
+        /// <para>
+        /// A folder that appeared before the cursor is SCANNED rather than skipped, and a
+        /// finished folder that vanished had already been covered - so in the ordinary case
+        /// no mail is lost and the code reports motion rather than absence. The case that
+        /// does lose mail is the folder the chain stopped INSIDE disappearing, which takes
+        /// its unread remainder with it; that one is reported here too, and the advice names
+        /// it, because a caller cannot tell the two apart from a count.
+        /// </para>
+        /// </summary>
+        public const string ScanGapTreeChanged = "tree_changed";
+
+        /// <summary>
+        /// Exhaustive-scan coverage hole: a resumed folder was re-read from its beginning
+        /// because its table would not sort, so rows already covered were read a second time.
+        /// <para>
+        /// The ANSWER is still right - the rows read again are suppressed by EntryID - so
+        /// what this code reports is cost, and cost that grows with every page spent in the
+        /// same folder. The cheap remedy is a narrower <c>after</c>/<c>before</c> window,
+        /// which is why the code exists rather than the scan simply being slower in silence.
+        /// </para>
+        /// </summary>
+        public const string ScanGapResumedUnsorted = "resumed_unsorted";
+
+        /// <summary>
+        /// Exhaustive-scan coverage hole: a resumed folder's recorded row position no longer
+        /// identified the same row, so the table's order had not held between pages.
+        /// <para>
+        /// MAPI documents that an unsorted table has no guaranteed row order and that rows
+        /// are LIVE - additions and deletions in the folder are reflected in them - so this
+        /// is a documented possibility rather than a fault. It is reported instead of being
+        /// resumed through, because carrying on from a position that no longer means anything
+        /// is precisely how a paged scan silently skips mail. The folder is restarted with
+        /// duplicate suppression, so nothing is lost and the page costs more.
+        /// </para>
+        /// </summary>
+        public const string ScanGapResumePositionLost = "resume_position_lost";
+
+        /// <summary>
+        /// Exhaustive-scan coverage hole: the per-folder duplicate-suppression set reached its
+        /// cap, so items already returned by an earlier page of this chain may come back
+        /// again (F2).
+        /// <para>
+        /// The cap is a bound on server memory and on what crosses the process boundary each
+        /// page. Reaching it means one folder has been re-read across a hundred pages, which
+        /// is far past the point where narrowing the scan is the better answer. Duplicates
+        /// are the failure mode chosen deliberately: the alternative - dropping rows to stay
+        /// inside the cap - would lose mail in the mode picked BECAUSE completeness matters.
+        /// </para>
+        /// </summary>
+        public const string ScanGapDedupCapacity = "dedup_capacity";
+
         /// <summary>Whether a search's window leaves the freshness sweep anything to find.</summary>
         public enum SweepWindowVerdict
         {
@@ -681,6 +754,35 @@ namespace OutlookAI.Core.Services
                 && exhaustive.PostCapFilters.Count > 0)
             {
                 gaps.Add(ScanGapPostCapFilter);
+            }
+
+            // The resumption codes (F2), after the bounds and before nothing. ScanGapResumed
+            // comes first of them because the other four are only reachable on a page that
+            // already carries it, and a reader should meet the general fact before its
+            // consequences.
+            if (exhaustive.Resumed == true)
+            {
+                gaps.Add(ScanGapResumed);
+            }
+
+            if (exhaustive.TreeChangedFolders > 0 || exhaustive.CursorFolderMissing == true)
+            {
+                gaps.Add(ScanGapTreeChanged);
+            }
+
+            if (exhaustive.ResumedUnsorted == true)
+            {
+                gaps.Add(ScanGapResumedUnsorted);
+            }
+
+            if (exhaustive.ResumePositionLost == true)
+            {
+                gaps.Add(ScanGapResumePositionLost);
+            }
+
+            if (exhaustive.DedupCapacityReached == true)
+            {
+                gaps.Add(ScanGapDedupCapacity);
             }
 
             return gaps.Count == 0 ? null : gaps;

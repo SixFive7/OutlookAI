@@ -21,7 +21,8 @@ reasoning, and flagged for review rather than buried.
 | Live tier | Move the intermediate tier to the VM; keep the ability to run everything against the real system before a release | **queued** |
 | `Stick-Test` VM + scratch | Delete both | **done** |
 | Installed MCP server | Leave disabled until the release | **done, nothing to do** |
-| Exhaustive scan | Resumable walk with a continuation token | **in progress**, design in `tmp-aitrace/resumable-scan-design.md` |
+| Exhaustive scan | Resumable walk with a continuation token | **shipped** (uncommitted, 2026-08-19) - gap F2 closed; design in `tmp-aitrace/resumable-scan-design.md`, record in `Docs/completeness-gaps.md` F2 |
+| `Table.Sort` namespace reference | Settle whether the sweep's sort has ever worked; write it as a read-only T2 test and do NOT run it | **probe written, NOT run** (`T2/LiveTableSortProbeTests`); the split `catch` and `sweep.sortRefusedFolders` shipped alongside |
 | `thread` store asymmetry | Derive the warning from Outlook's store list; also scan for the same asymmetry elsewhere | **queued** |
 | Timeout defects | Fold all three into the timeout-raising pass | **shipped** `4502c92` |
 | COM host kill | Keep the hard kill, document it, add a brief wait before killing, make the kill outcome-aware | **shipped** `4502c92` |
@@ -345,6 +346,145 @@ converted as each row is next touched.
     resulting CS0162 into a build failure - a mutation that does not compile proves nothing, so
     they were rewritten as runtime-false conditions.
 
+27. **F2's four open questions, decided as the maintainer recommended - and a fifth they did not
+    ask about, which I added.** The design document's section 8 left four open; the maintainer gave
+    their preference on each and invited me to overrule with reasons. I overruled none, and the
+    reasoning below is mine rather than a restatement, because "I agreed" is not a record.
+    - **Q1 - `top` is PER PAGE, with `itemsReturnedTotal` as the chain total.** Per chain was the
+      only real alternative and it defeats the thing it appears to serve: a five-page scan that
+      returns 100 items in TOTAL cannot deliver completeness at all, which is the whole point of
+      resuming. Per page matches `list_folders`' `offset`, and the accumulated context - the actual
+      cost `top` = 100 exists to bound - is made VISIBLE rather than bounded, so an agent stops
+      deliberately instead of discovering the bill afterwards. The `scan_resumed` sentence states
+      the total in words as well as in a field.
+    - **Q2 - a superseded token is REFUSED, and the refusal carries the position.** Keeping the last
+      K tokens live was the tempting option and it is quietly wrong: the chain's suppression set has
+      already advanced past the replayed position, so honouring the replay would suppress exactly
+      the rows the replay exists to return. Fixing that needs a snapshot of the suppression set per
+      position, which is a lot of memory for a rare case. Refusing costs nothing ONLY because the
+      refusal names the folder and the date to continue from, in `folder` and `before` - parameters
+      that already exist - so a lost response costs one round trip rather than the whole scan.
+    - **Q3 - a resumable stop still sets `degraded: true`.** The answer in hand is incomplete, and
+      `degraded` is the flag the tool description tells an agent to relay to a human. Dropping it
+      because a remedy exists is the "looks complete and quietly is not" failure the whole
+      coverage-code system was built against, and it would be invisible - the payload would gain a
+      field and lose a flag. No `resumable: true` was added either: a second boolean before anything
+      branches on it is how a payload grows fields nobody reads. `nextToken` present or absent
+      already says it.
+    - **Q4 (the document's) - the `Table.Sort` fix is NOT taken, only the probe and the split.** The
+      document recommended probe-then-fix and the maintainer's Part 2 said the same in stronger
+      terms: write the test, do not run it. Changing the sort call before the probe runs would
+      destroy the evidence, so the call is untouched.
+    - **Q4 (the maintainer's) - `stopReason` is RECORDED where the walk stops, not derived.** This
+      is the one they stated instead of the document's Q4, and it is right for a mechanical reason:
+      `truncated` and `timedOut` are independent and both can be true, so any derivation picks one
+      by accident of which `if` came first - and the two remedies point in opposite directions (a
+      budget stop means "keep resuming, there is no cheaper route", a cap stop means "keep resuming,
+      or narrow, and narrowing is cheaper"). `depthLimitReached` is excluded from the vocabulary
+      entirely, because the depth guard never ends a walk.
+    - **The fifth, mine: `scan_resumed`.** Not in the design and not asked for. Without it the LAST
+      page of a chain - which by itself covered everything it was asked for - reports
+      `stopReason: complete`, no coverage code, `freshness: "live"` and no `degraded` flag, and an
+      agent relaying that page tells the user the search was complete when it saw a hundred of
+      several thousand matches. **Q3's decision is unenforceable without it**, because `freshness` is
+      recomputed from the codes rather than from a boolean. It also gives the other four resumption
+      codes their footing: each is only reachable on a page that already carries `scan_resumed`, so
+      none of them weakens `degraded` on its own.
+
+28. **Where the walk state lives, and the two places it deliberately does not.** Server parent, not
+    the COM child and not the wire. **Not the child**, for a mechanical reason: the failure this
+    design exists for is a scan running past its deadline, which ends with the supervisor killing
+    that child - state kept there would be destroyed by exactly the event that makes resumption
+    necessary. **Not the wire**, because proving no folder was skipped requires the SET of finished
+    folders, and at ~140 characters per EntryID that is kilobytes per page in each direction,
+    against a standing decision that payload is context and context is the scarce resource. A
+    self-describing token would additionally have to give up duplicate suppression and
+    added-folder detection, which are the two failures the brief names. The one thing parent-side
+    state cannot survive - an MCP-server restart - is covered without any state at all:
+    `exhaustive.position` carries the resume folder and date in plain fields, so the caller
+    continues with `folder` and `before`.
+
+29. **Two passes over the folder tree per page, decided against one.** The scan enumerates its scope
+    in the stable order first (structure reads only, no `GetTable`), then walks that list, re-opening
+    each folder by EntryID. A single combined walk is one fewer traversal and cannot produce three
+    things: an honest `foldersTotal` when the walk stops after four folders of thirty-two, index
+    arithmetic instead of recursion state for resumption, and any vantage point from which "a folder
+    appeared BEFORE the cursor" is visible - which is the detection the whole server-side-state
+    argument rests on. **The cost is one `GetFolderFromID` per scanned folder** (32 on the
+    maintainer's store) plus a second structure traversal, against a per-folder `GetTable` that
+    dominates both. Recorded because it is a real cost nobody asked me to pay.
+
+30. **One number in this design is unmeasured and it is the one that decides whether the design is
+    cheap.** Re-opening a resumed folder's table - `Folder.GetTable(filter)` with a date restriction
+    over 108,144 items - is measured nowhere. Sensitivity: at 10 s it is roughly 8% overhead across
+    the Archive's ~15 pages; at 60 s it is roughly 50%, and the design would then want fewer, longer
+    pages. `T2/LiveResumableScanTests` records wall clock per page, so one live run measures it as a
+    side effect. I did not reopen the 600 s budget or the `top` ceiling over it; I recorded the
+    sensitivity instead.
+
+31. **The sweep's refused-sort counter is my call, and it is more than the brief asked for.**
+    Splitting the `catch` alone makes the two failures distinguishable IN THE CODE and answerable by
+    nobody, since neither half reaches a payload - so "answerable from telemetry rather than from a
+    probe" would still have needed the probe. `sweep.sortRefusedFolders` counts folders where the
+    column WAS added and `Sort` then threw; equal to the folders swept, on every store, is the
+    namespace-reference hypothesis confirmed from an ordinary search. It raises no coverage code,
+    changes no advice and never degrades an answer - a diagnostic beside `rowsDropped`, not a hole.
+    The sort CALL is untouched, deliberately.
+
+32. **A third copy of the sibling comparator, found by the mutation pass's own anchor check.**
+    `ListFolders` sorted STORES with a hand-written copy of the same name-then-index comparison the
+    sibling sort used, so "stable order leg 1" and "leg 2" were two copies of one rule. Both now call
+    the shared `OutlookComSession.CompareSiblings`, which is also what T1 pins. Worth recording for
+    how it surfaced: the mutation script refuses to run unless every anchor is unique, and the
+    duplicate is precisely what that check reported.
+
+33. **Two live tests written and NOT run**, per instruction, both read-only.
+    `T2/LiveResumableScanTests` holds F2's real acceptance - a scan paged at `top: 2` must return the
+    same EntryID set as one unpaged run, with no duplicates - which no stand-in can prove, because a
+    stand-in returns whatever the test tells it to. `T2/LiveTableSortProbeTests` settles the sort
+    question: one table per store, both property spellings, column add and sort caught separately,
+    the first row's date read in each case, a printed per-store verdict and one ANSWER line. It
+    asserts only that it RAN, because every other outcome answers the question - including "neither
+    spelling sorts", which refutes the hypothesis as usefully as confirming it would.
+
+34. **Mutation check: 18 decision lines reverted, 16 caught on the first pass, 2 not - and one of
+    those two was a real hole in my own tests, now closed.** Each was reverted, built clean, run
+    against the whole non-live suite, and restored; the pass is serial by construction and refuses
+    to start unless every anchor is unique.
+    - **NOT CAUGHT, and fixed: `M01` - the request-fingerprint comparison.** Making a mismatched
+      resume resolve as `Valid` left all 1,949 tests green. That is the worst shape a coverage gap
+      can have: the fingerprint itself, the argument diff and all five refusal messages were pinned,
+      so the area LOOKED covered while the one line that decides whether a continuation answers the
+      question it started was unprotected. Three tests now cover it - the store-level comparison, the
+      same refusal end to end through `MailService` (including that the chain survives it, so a
+      mistyped argument does not throw away the minutes page one cost), and a `resume_token` passed
+      WITHOUT `exhaustive`, which was being silently ignored and is now refused. Re-run after: CAUGHT.
+    - **NOT CAUGHT, and recorded rather than papered over: `M18` - the sweep's refused-sort
+      counter.** It lives in `SweepFolder`, behind a COM call no non-live test can execute. Exactly
+      the same class as `sortApplied` itself, which `TODO.md` already carries as live-only, and the
+      same cheap substitute applies (a temporary build that forces the branch). Re-run after the new
+      tests: NOT CAUGHT, as expected.
+    - Caught, with the guard that noticed: superseded token refused; expired refused AS expired
+      rather than as unknown; malformed handle its own answer; a resumable stop still degrading the
+      answer; `stopReason` recorded rather than derived; a resumed page saying so; `scan_resumed`
+      raised; a vanished cursor folder raising `tree_changed`; the resume date bound inclusive;
+      sibling order breaking ties by collection position; `folder` inside the fingerprint; the chain
+      total accumulating; the store evicting at capacity; a stop with no token saying so instead of
+      looking complete; a finished chain releasing its state; the final page reporting the whole
+      chain's total.
+
+35. **Method note, and it is the same hazard section 25 records wearing different clothes.** To
+    re-run two mutations I wrote `import mutate` - which EXECUTES the module, so it restarted the
+    whole 18-mutation pass. The tool call was killed at its 10-minute limit, and a killed process
+    does not run its `finally`, so **one mutation (`M05`, suppressing `degraded` when a token
+    exists) was left APPLIED to the working tree**. It was found by scanning the tree for every
+    mutation's replacement text rather than by any test - the suite was green at the time, because
+    the pass had not reached the test step. Two things now guard it: the subset runner is a separate
+    script that never imports the full one, and the anchor check is run in BOTH directions
+    afterwards (every original present exactly once, every replacement absent). The general rule
+    worth keeping: a mutation script must be safe to KILL, and the only way to know a tree is clean
+    after one is to check it rather than to trust the `finally`.
+
 ## 4. VM state (`OutlookAI-TestVM`)
 
 - Guest credentials for PowerShell Direct: `vmadmin` / `***REDACTED-CREDENTIAL***`.
@@ -387,10 +527,17 @@ converted as each row is next touched.
   supersedes the reading of the 432 KB measured on the real profile: that was bounded by the 30 s
   sweep timeout, not by the item caps, so raising the sweep budget is what makes the body budget
   load-bearing.
-- **`item_cap_unsorted` fired on every sweep of that corpus**, i.e. `Table.Sort` genuinely does not
-  apply on that store and the answer correctly reports the cap cut arbitrarily rather than claiming
-  the oldest mail is what is missing. The 2026-08-18 H2 fix, observed working against real data
-  rather than in a test.
+- **`item_cap_unsorted` fired on every sweep of that corpus**, and the answer correctly reported the
+  cap as having cut arbitrarily rather than claiming the oldest mail is what is missing. The
+  2026-08-18 H2 fix, observed working against real data rather than in a test. **DOWNGRADED
+  2026-08-19:** this entry originally read "i.e. `Table.Sort` genuinely does not apply on that
+  store", which is a stronger claim than the evidence supports. What was observed is that the sort
+  CALL was refused; the shipped `catch` wrapped `Columns.Add` and `Sort` together, so it could not
+  even say which of the two failed. Microsoft documents that a sort property may be referenced "by
+  their explicit string names only; cannot reference properties by their namespaces" and the call
+  passes a namespace - a store-INDEPENDENT explanation that fits "every sweep" better than a
+  per-store one does. The `catch` is now split and `sweep.sortRefusedFolders` counts the folders
+  where the column was added and the sort still threw; `T2/LiveTableSortProbeTests` settles it.
 - **Corpus build throughput:** 50.9 items/s without the move rung. With the move rung each item is
   written twice, so budget roughly double.
 
