@@ -83,6 +83,22 @@ project - which targets net10 alone, while CI builds `OutlookAI.Core` explicitly
 because it means every commit before `db34923` this session was verified against a weaker bar than
 I stated at the time.
 
+**Did NOT run the sort probe against the production mailbox, though it is written and ready.**
+`T2/LiveTableSortProbeTests` would settle the largest open question of the session - whether the
+freshness sweep's sort has ever worked - and the probe itself is strictly read-only. What stopped
+me is its fixture: it builds the store-count tripwire baseline, and that tripwire was **rewritten
+this session and has never once executed**. Exercising a rewritten safety guard against a real
+mailbox, unsupervised, while its owner is asleep, to gain a measurement obtainable later at no
+risk, is the wrong trade. Run it with:
+
+    dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj --filter "FullyQualifiedName~LiveTableSortProbeTests"
+
+Its final ANSWER line covers all four outcomes, and refuting the hypothesis is as useful as
+confirming it. The same reasoning applies to `T2/LiveResumableScanTests`, which is the acceptance
+no stand-in can give. **Both are why the live-tier-on-the-VM work is now the unblocking item**
+rather than one queued item among several: on the VM there is no production mail to protect and no
+maintainer activity to confuse the tripwire with.
+
 ## 3. Decisions taken autonomously - REVIEW THESE
 
 **H3 measured to zero, and deliberately not fixed.** DASL *can* express absence: Microsoft documents
