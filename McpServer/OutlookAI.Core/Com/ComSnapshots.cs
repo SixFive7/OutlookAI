@@ -780,6 +780,83 @@ namespace OutlookAI.Core.Com
         public string FilePath { get; }
     }
 
+    /// <summary>
+    /// What a REPEAT of an interrupted <c>update_draft</c> needs in order to finish the
+    /// first attempt rather than perform it a second time.
+    /// <para>
+    /// <b>Why this has to cross the process boundary at all.</b> One contract method is
+    /// not one COM call: <c>TryUpdateDraft</c> is roughly twenty sequential cross-process
+    /// calls with no transaction around them, and the deadline kill terminates the COM
+    /// host between two of them far more often than inside one. The child that died
+    /// reported nothing, so the only thing a second attempt can rely on is what was
+    /// written down BEFORE the first attempt started - in the parent, which survives the
+    /// kill - plus what it can see on the draft now.
+    /// </para>
+    /// <para>
+    /// <b>Both fields are a PRE-IMAGE, not a progress log.</b> Progress cannot be
+    /// recorded: only the dying process knew it. What is recorded instead is the state the
+    /// draft was in before anything was applied, which is enough to compute the remaining
+    /// work from the draft's current state - and enough to repair the one field a partial
+    /// attempt DESTROYS. Assigning <c>Subject</c> makes Outlook regenerate
+    /// PR_CONVERSATION_INDEX, so a second attempt that captured the index live would
+    /// capture the regenerated one and "restore" it over itself; the original is only
+    /// still knowable because it was written down first.
+    /// </para>
+    /// <para>
+    /// Absent (null) means an ordinary first attempt, and every step then behaves exactly
+    /// as it always has.
+    /// </para>
+    /// </summary>
+    public sealed class ComDraftUpdateResume
+    {
+        /// <summary>Creates a resume record.</summary>
+        public ComDraftUpdateResume(
+            IReadOnlyList<string>? attachmentNamesBefore = null,
+            string? conversationIndex = null,
+            string? conversationTopic = null)
+        {
+            AttachmentNamesBefore = attachmentNamesBefore ?? Array.Empty<string>();
+            ConversationIndex = conversationIndex;
+            ConversationTopic = conversationTopic;
+        }
+
+        /// <summary>
+        /// Attachment file names the draft carried before the first attempt, in index
+        /// order. It is what lets a repeat tell "this file is already on because attempt
+        /// one put it there" from "the draft always had one by that name", which by name
+        /// alone is indistinguishable.
+        /// </summary>
+        public IReadOnlyList<string> AttachmentNamesBefore { get; }
+
+        /// <summary>PR_CONVERSATION_INDEX as it was BEFORE the first attempt, so a repeat restores the thread rather than the regenerated value.</summary>
+        public string? ConversationIndex { get; }
+
+        /// <summary>PR_CONVERSATION_TOPIC as it was BEFORE the first attempt, for the same reason.</summary>
+        public string? ConversationTopic { get; }
+
+        /// <summary>
+        /// The conversation index to restore after a subject change: the RECORDED one when
+        /// this call is a repeat, the live one otherwise.
+        /// <para>
+        /// A named method rather than a <c>??</c> inside the COM sequence, because the wrong
+        /// order here is invisible. Assigning Subject regenerates the index, so a repeat that
+        /// preferred the live value would faithfully restore the value the interrupted
+        /// attempt had already destroyed, report <c>conversationTopicPreserved: true</c>, and
+        /// leave the draft out of its thread.
+        /// </para>
+        /// </summary>
+        public static string? ThreadIndexFor(ComDraftUpdateResume? resume, string? live)
+        {
+            return resume?.ConversationIndex ?? live;
+        }
+
+        /// <summary>The conversation topic to restore, chosen on the same rule and for the same reason.</summary>
+        public static string? ThreadTopicFor(ComDraftUpdateResume? resume, string? live)
+        {
+            return resume?.ConversationTopic ?? live;
+        }
+    }
+
     /// <summary>Result of one draft-creation operation (COM-free data).</summary>
     public sealed class ComDraftCreateResult
     {

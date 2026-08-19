@@ -1828,6 +1828,16 @@ namespace OutlookAI.Core.Services
         /// <summary>Always "updated" on success (a refusal comes back as an error object).</summary>
         public string Status { get; set; } = "updated";
 
+        /// <summary>
+        /// Present and true only when this call FINISHED an earlier update whose outcome was
+        /// unknown, instead of performing a fresh revision. Absent on an ordinary update, so
+        /// an agent never has to read it to know nothing unusual happened.
+        /// </summary>
+        public bool? Resumed { get; set; }
+
+        /// <summary>What <see cref="Resumed"/> means for the fields beside it; present only with it.</summary>
+        public string? ResumedAdvice { get; set; }
+
         /// <summary>The hit id the draft was referenced by, when one was used.</summary>
         public string? Id { get; set; }
 

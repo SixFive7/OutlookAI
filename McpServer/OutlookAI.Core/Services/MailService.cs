@@ -381,6 +381,7 @@ namespace OutlookAI.Core.Services
         private readonly IComGateway _gateway;
         private readonly SendConfirmationTokens _sendTokens;
         private readonly ServerDraftRegistry _draftRegistry = new ServerDraftRegistry();
+        private readonly DraftUpdateIntents _updateIntents = new DraftUpdateIntents();
         private readonly SweepCache _sweepCache = new SweepCache();
         private readonly BodyCache _bodies = new BodyCache();
         private readonly ConcurrentDictionary<string, CachedHit> _hits =
@@ -4576,46 +4577,272 @@ namespace OutlookAI.Core.Services
             }
 
             (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
+            IReadOnlyList<string> attachmentPaths = files.Select(f => f.Path).ToList();
 
-            ComDraftUpdateResult updated = _gateway.Run(s =>
+            // THE IDEMPOTENCE KEY. Derived here, from the request as it will reach Outlook -
+            // never supplied by the caller (see DraftUpdateIntents.KeyFor). It is what makes
+            // a repeat identifiable as a repeat rather than as a second, identical edit.
+            string intentKey = DraftUpdateIntents.KeyFor(
+                entryId, draftBody, subject?.Trim(), toList, ccList, bccList, parsedImportance,
+                requestReadReceipt, signatureOverride, attachmentPaths, removeNames, display);
+            ComDraftUpdateResume? resume = _updateIntents.Resume(intentKey, entryId);
+            bool resumed = resume != null;
+            string? resolvedStoreId = storeId;
+
+            ComDraftUpdateResult updated;
+            string? lastComError = null;
+            try
             {
-                string? error = null;
-                ComDraftUpdateResult? r = s.TryUpdateDraft(
-                    entryId, storeId, draftBody, subject?.Trim(), toList, ccList, bccList,
-                    parsedImportance, requestReadReceipt, signatureOverride,
-                    files.Select(f => f.Path).ToList(), removeNames, display, out error);
-
-                if (ShouldSearchOtherStores(storeId, r != null, error))
+                updated = _gateway.Run(s =>
                 {
-                    // This loop was unreachable until the COM layer began setting
-                    // "ItemNotFound" on a failed open: TryUpdateDraft reported that failure
-                    // as a bare "COMException 0x...", so a direct EntryID naming a draft
-                    // outside the DEFAULT store never got its second attempt and the caller
-                    // saw an opaque COM code instead. Now that it runs, it stops the moment
-                    // a store OPENS the draft - update_draft appends attachments and can
-                    // re-apply a signature, so carrying on past a store that answered would
-                    // risk doing that twice.
-                    foreach (ComStoreDetail store in GetStoreDetails(s))
+                    // Record the intent BEFORE the first mutating call, because the whole
+                    // point is that it outlives the process making that call. The pre-image
+                    // read is the same READ the resume needs, costs at most two round trips
+                    // on a ~20-call operation, and is skipped when nothing in the request is
+                    // something a blind repeat could get wrong.
+                    if (!resumed)
                     {
-                        r = s.TryUpdateDraft(
-                            entryId, store.StoreId, draftBody, subject?.Trim(), toList, ccList, bccList,
-                            parsedImportance, requestReadReceipt, signatureOverride,
-                            files.Select(f => f.Path).ToList(), removeNames, display, out error);
-                        if (!KeepSearchingStores(r != null, error))
+                        ComDraftUpdateResume? preImage = CapturePreImage(
+                            s, entryId, ref resolvedStoreId, subject, attachmentPaths);
+                        if (preImage != null)
                         {
-                            break;
+                            _updateIntents.Begin(intentKey, entryId, preImage);
                         }
                     }
-                }
 
-                return r ?? throw BuildDraftRefusal("update_draft", error, entryId);
-            });
+                    string? error = null;
+                    ComDraftUpdateResult? r = s.TryUpdateDraft(
+                        entryId, resolvedStoreId, draftBody, subject?.Trim(), toList, ccList, bccList,
+                        parsedImportance, requestReadReceipt, signatureOverride,
+                        attachmentPaths, removeNames, resume, display, out error);
+
+                    if (ShouldSearchOtherStores(resolvedStoreId, r != null, error))
+                    {
+                        // This loop was unreachable until the COM layer began setting
+                        // "ItemNotFound" on a failed open: TryUpdateDraft reported that failure
+                        // as a bare "COMException 0x...", so a direct EntryID naming a draft
+                        // outside the DEFAULT store never got its second attempt and the caller
+                        // saw an opaque COM code instead. Now that it runs, it stops the moment
+                        // a store OPENS the draft - update_draft appends attachments and can
+                        // re-apply a signature, so carrying on past a store that answered would
+                        // risk doing that twice. In practice the pre-image read above has
+                        // already resolved the store by READING, so this is now the fallback
+                        // for a draft no read could find rather than the ordinary path.
+                        foreach (ComStoreDetail store in GetStoreDetails(s))
+                        {
+                            r = s.TryUpdateDraft(
+                                entryId, store.StoreId, draftBody, subject?.Trim(), toList, ccList, bccList,
+                                parsedImportance, requestReadReceipt, signatureOverride,
+                                attachmentPaths, removeNames, resume, display, out error);
+                            if (!KeepSearchingStores(r != null, error))
+                            {
+                                break;
+                            }
+                        }
+                    }
+
+                    lastComError = error;
+                    return r ?? throw BuildDraftRefusal("update_draft", error, entryId);
+                });
+            }
+            catch (Exception) when (string.Equals(lastComError, ComErrorTokens.ItemNotFound, StringComparison.Ordinal))
+            {
+                // The draft was never OPENED - by any store - so nothing was applied and there
+                // is nothing to finish. It is the one failure outside DraftRefusedException
+                // that still proves the negative, and without this it would be swallowed by
+                // the unknown-outcome branch below and told to re-issue a call against an id
+                // that does not resolve.
+                _updateIntents.Settle(intentKey);
+                throw;
+            }
+            catch (DraftRefusedException refusal) when (string.Equals(refusal.Reason, ComFailureRefusal, StringComparison.Ordinal))
+            {
+                // The ONE refusal that does not prove the draft was left alone: it comes from
+                // the catch-all around the whole ~20-call sequence, so it can arrive after the
+                // body was committed through the inspector or after an attachment went. The
+                // intent therefore stays PENDING, and the refusal keeps its type - the tool
+                // layer branches on that - while gaining the advice that fits what is known.
+                throw new DraftRefusedException(
+                    refusal.Reason, AuditUpdateOutcomeUnknown(intentKey, entryId, hitId, resumed, refusal));
+            }
+            catch (DraftRefusedException)
+            {
+                // Every OTHER refusal is proof of the negative: each is decided before anything
+                // is written (BuildDraftRefusal), and the one that is not - a body replace that
+                // failed - discards its own inspector so the draft survives untouched. So the
+                // intent is settled: there is nothing left to complete.
+                _updateIntents.Settle(intentKey);
+                throw;
+            }
+            catch (Exception ex) when (ex is not ArgumentException)
+            {
+                // Everything else - the deadline expiring and the COM host being killed, the
+                // pipe dying under a sibling request, an unclassified COM failure part-way
+                // through the sequence - leaves the intent PENDING on purpose. Nobody can
+                // state what was applied, so the record has to outlive the failure for the
+                // repeat that can finish it.
+                throw new InvalidOperationException(
+                    AuditUpdateOutcomeUnknown(intentKey, entryId, hitId, resumed, ex), ex);
+            }
+
+            _updateIntents.Settle(intentKey);
 
             // EntryIDs are not stable - re-key the registry so a following discard_draft
             // still recognises the draft this call just rewrote (D46/C2).
             _draftRegistry.Replace(entryId, updated.Draft.EntryId);
-            AuditUpdate(updated, draftBody, hitId);
-            return ToUpdateOutcome(updated, hitId, draftBody, htmlAdjustments, removeNames);
+            if (!string.Equals(entryId, updated.Draft.EntryId, StringComparison.OrdinalIgnoreCase))
+            {
+                // A pre-image is addressed by EntryID, and a re-keyed draft is no longer at
+                // that address - keeping one would offer a resume over an id that is gone.
+                _updateIntents.Forget(entryId);
+            }
+
+            AuditUpdate(updated, draftBody, hitId, resumed);
+            return ToUpdateOutcome(updated, hitId, draftBody, htmlAdjustments, removeNames, resumed);
+        }
+
+        /// <summary>The one refusal code that does NOT prove the draft was left alone.</summary>
+        internal const string ComFailureRefusal = "com_failure";
+
+        /// <summary>
+        /// Reads what a repeat of this update would otherwise be unable to know, BEFORE the
+        /// first attempt writes anything. Null means no pre-image could be taken, and no
+        /// intent is then recorded at all - a resume this server cannot vouch for is worse
+        /// than no resume.
+        /// <para>
+        /// Both halves are conditional, because each is only needed by a step a blind repeat
+        /// would get wrong. The conversation index/topic matter only when the subject
+        /// changes, since assigning Subject is what makes Outlook regenerate the index. The
+        /// attachment names matter only when files are being attached, because that is the
+        /// one case where "is this file already on?" cannot be answered from the request
+        /// alone: by name, the copy the first attempt added and a copy the draft always had
+        /// are the same thing.
+        /// </para>
+        /// <para>
+        /// It doubles as the store resolver. A bare EntryID whose draft lives outside the
+        /// default store is now found by a READ, so the mutating call goes straight to the
+        /// right store instead of being offered to each store in turn.
+        /// </para>
+        /// </summary>
+        private ComDraftUpdateResume? CapturePreImage(
+            IOutlookSession session,
+            string entryId,
+            ref string? storeId,
+            string? subject,
+            IReadOnlyList<string> attachmentPaths)
+        {
+            if (subject == null && attachmentPaths.Count == 0)
+            {
+                // Nothing in this request is order-coupled or accumulating, so every step of
+                // it is safe to replay and an empty pre-image is the whole truth.
+                return new ComDraftUpdateResume();
+            }
+
+            string? error = null;
+            ComDraftInfo? info = session.TryGetMailInfo(entryId, storeId, out error);
+            if (info == null && ShouldSearchOtherStores(storeId, false, error))
+            {
+                foreach (ComStoreDetail store in GetStoreDetails(session))
+                {
+                    info = session.TryGetMailInfo(entryId, store.StoreId, out error);
+                    if (!KeepSearchingStores(info != null, error))
+                    {
+                        if (info != null)
+                        {
+                            storeId = store.StoreId;
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            if (info == null)
+            {
+                return null;
+            }
+
+            storeId ??= info.StoreId;
+
+            // An attachment snapshot that FAILED and one of a draft with no attachments are
+            // both an empty list - the contract has no error channel here. The consequence is
+            // bounded and it falls the safe way: only a RESUME reads this list (a first
+            // attempt uses what it sees on the live item), and an understated pre-image makes
+            // a resume attach too little rather than twice. That is visible in the attachment
+            // list the call returns and fixable by attaching again; the opposite mistake is a
+            // silent duplicate.
+            IReadOnlyList<string> attachmentNames = attachmentPaths.Count == 0
+                ? Array.Empty<string>()
+                : session.SnapshotAttachmentsById(info.EntryId, storeId)
+                    .Select(a => a.FileName ?? string.Empty)
+                    .ToList();
+
+            return new ComDraftUpdateResume(
+                attachmentNames,
+                subject == null ? null : info.ConversationIndex,
+                subject == null ? null : info.ConversationTopic);
+        }
+
+        /// <summary>
+        /// Records an update whose outcome nobody can state, and builds the message the
+        /// caller gets. The same shape as the send path's <c>send_outcome_unknown</c> and
+        /// for the same reason: the audit ordering is mutate-then-record, so a kill leaves a
+        /// MISSING line rather than a wrong one, and a missing line is a gap nothing looks
+        /// for. This states it instead.
+        /// <para>
+        /// The append is best-effort, as it is for a send: the operation this line describes
+        /// has already happened or already failed, and replacing the one message the caller
+        /// needs with a message about a log file would be the wrong trade.
+        /// </para>
+        /// </summary>
+        private string AuditUpdateOutcomeUnknown(string intentKey, string entryId, string? hitId, bool wasResume, Exception cause)
+        {
+            bool resumable = _updateIntents.Resume(intentKey, entryId) != null;
+            try
+            {
+                Audit.AuditLog.Append(
+                    "update_draft_outcome_unknown",
+                    ("entryId", entryId),
+                    ("hitId", hitId),
+                    ("resumable", resumable ? "true" : "false"),
+                    ("wasResume", wasResume ? "true" : null),
+                    ("reason", cause.GetType().Name));
+            }
+            catch (InvalidOperationException)
+            {
+                // outlook_health reports an unwritable audit log; this message must survive it.
+            }
+
+            return DescribeUpdateOutcomeUnknown(cause.Message, resumable);
+        }
+
+        /// <summary>
+        /// What a caller is told when an update did not answer. Pure and public so T1 pins
+        /// it: the words are the whole point, and the path cannot be exercised without a real
+        /// Outlook wedged mid-sequence.
+        /// <para>
+        /// The advice INVERTS when an intent was recorded, and that inversion is the whole of
+        /// the re-entrancy work as the caller experiences it. Without a record the honest
+        /// answer is the one every killed mutation gets - the outcome is unknown, look before
+        /// you act. With one, the identical call IS the remedy: it converges on the end state
+        /// the first attempt was aiming at instead of performing it again, so files it had
+        /// already removed are not lost and files it had already attached are not doubled.
+        /// </para>
+        /// </summary>
+        public static string DescribeUpdateOutcomeUnknown(string causeMessage, bool resumable)
+        {
+            string opening = "The draft revision did not answer, so WHETHER IT WAS APPLIED IS UNKNOWN: update_draft is a "
+                + "sequence of steps inside Outlook and it may have completed only some of them. ";
+            string remedy = resumable
+                ? "RE-ISSUE THIS EXACT CALL - same id, same arguments - and it will FINISH what the first attempt started "
+                + "rather than repeat it: a file it had already attached is not attached twice, a file it had already "
+                + "removed stays removed, and the draft's place in its conversation is restored from what was recorded "
+                + "before the first attempt ran. Change any argument and it becomes a NEW update instead, so read the "
+                + "draft first if you want something different. "
+                : "Do NOT simply retry it: nothing was recorded that a retry could resume from, so read the draft and "
+                + "decide from what it actually contains. ";
+
+            return opening + remedy + "(Underlying failure: " + causeMessage + ")";
         }
 
         /// <summary>
@@ -4683,6 +4910,11 @@ namespace OutlookAI.Core.Services
 
             AuditDiscard(discarded, hitId);
             _draftRegistry.Forget(entryId);
+
+            // The draft is in Deleted Items and its EntryID is dead, so any pre-image held for
+            // it describes an item at an address nothing will resolve. Dropping it here keeps
+            // the resume offer from outliving the thing it would complete.
+            _updateIntents.Forget(entryId);
             _draftRegistry.Register(discarded.NewEntryId);
             return new DiscardDraftOutcome
             {
@@ -4738,9 +4970,19 @@ namespace OutlookAI.Core.Services
                         "The draft could not be opened - it may have been deleted, moved or already sent. "
                         + "Re-check with read, or re-run search for a fresh id.");
                 default:
-                    return RefuseDraft("com_failure", operation, entryId,
-                        "The draft could not be " + (operation == "discard_draft" ? "discarded" : "updated")
-                        + " (" + (comError ?? "unknown") + "). Nothing was changed. Check outlook_health and retry.");
+                    // "Nothing was changed" is true of every NAMED refusal above and was not
+                    // true here: an unclassified COM failure is the one that can arrive
+                    // part-way through the sequence, after the body has been committed
+                    // through the inspector or after an attachment has gone. update_draft
+                    // therefore says what it actually knows, and points at the repeat that
+                    // can finish the job; discard_draft keeps its own wording because its
+                    // sequence is a different shape.
+                    return RefuseDraft(ComFailureRefusal, operation, entryId,
+                        operation == "discard_draft"
+                            ? "The draft could not be discarded (" + (comError ?? "unknown")
+                                + "). Nothing was changed. Check outlook_health and retry."
+                            : "Outlook failed part-way through the revision (" + (comError ?? "unknown")
+                                + "). Check outlook_health.");
             }
         }
 
@@ -4763,7 +5005,7 @@ namespace OutlookAI.Core.Services
             return new DraftRefusedException(reason, message);
         }
 
-        private static void AuditUpdate(ComDraftUpdateResult updated, ComDraftBody? body, string? hitId)
+        private static void AuditUpdate(ComDraftUpdateResult updated, ComDraftBody? body, string? hitId, bool resumed)
         {
             try
             {
@@ -4771,6 +5013,7 @@ namespace OutlookAI.Core.Services
                     "update_draft",
                     ("entryId", updated.Draft.EntryId),
                     ("hitId", hitId),
+                    ("resumed", resumed ? "true" : null),
                     ("store", updated.Draft.StoreDisplayName),
                     ("folder", updated.Draft.ParentFolderName),
                     ("account", updated.Draft.SendUsingAccountSmtp),
@@ -4834,7 +5077,8 @@ namespace OutlookAI.Core.Services
             string? hitId,
             ComDraftBody? body,
             IReadOnlyList<string> htmlAdjustments,
-            IReadOnlyList<string> requestedRemovals)
+            IReadOnlyList<string> requestedRemovals,
+            bool resumed)
         {
             IReadOnlyList<RecipientView> recipients = CapRecipients(updated.Draft.Recipients, out int total, out bool truncated);
             IReadOnlyList<string>? unresolved = CapUnresolvedRecipients(
@@ -4848,6 +5092,8 @@ namespace OutlookAI.Core.Services
             return new UpdateDraftOutcome
             {
                 Status = "updated",
+                Resumed = resumed ? true : (bool?)null,
+                ResumedAdvice = resumed ? ResumedUpdateAdvice : null,
                 Id = hitId,
                 EntryId = updated.Draft.EntryId,
                 Store = updated.Draft.StoreDisplayName,
@@ -4888,6 +5134,19 @@ namespace OutlookAI.Core.Services
         /// guessed: re-supplying <c>signature</c> makes the update re-insert the signature
         /// file, and the picture is then embedded as it goes in.
         /// </summary>
+        /// <summary>
+        /// What a caller is told when this update FINISHED an earlier one rather than
+        /// performing a fresh revision. It matters because the two look identical in the
+        /// payload otherwise, and the difference decides what "changed" means: the fields
+        /// listed are the end state this call converged on, not necessarily the writes it
+        /// made itself.
+        /// </summary>
+        internal const string ResumedUpdateAdvice =
+            "This call COMPLETED an earlier update_draft whose outcome was unknown - the COM host ended before it "
+            + "answered - rather than revising the draft a second time. Attachments were reconciled against what the "
+            + "draft actually held, and the conversation index was restored from the state recorded before that first "
+            + "attempt, so the draft is in the state the original request asked for. Nothing was applied twice.";
+
         internal const string InlineImagesDroppedAdvice =
             "Inline image(s) the draft carried were lost by this revision: they were still linked to a file "
             + "on disk rather than embedded, and re-rendering the document cannot preserve such a link. "

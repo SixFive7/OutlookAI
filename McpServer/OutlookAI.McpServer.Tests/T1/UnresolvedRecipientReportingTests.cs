@@ -251,7 +251,7 @@ public sealed class UnresolvedRecipientReportingTests
             conversationTopicPreserved: null);
 
         return (UpdateDraftOutcome)Invoke(
-            "ToUpdateOutcome", updated, null, null, Array.Empty<string>(), Array.Empty<string>());
+            "ToUpdateOutcome", updated, null, null, Array.Empty<string>(), Array.Empty<string>(), false);
     }
 
     private static object Invoke(string method, params object?[] args)

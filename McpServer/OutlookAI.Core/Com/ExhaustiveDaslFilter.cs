@@ -68,10 +68,16 @@ namespace OutlookAI.Core.Com
         /// <para>
         /// REVIEWED 2026-08-18, and KEPT. The question was whether some other always-true
         /// predicate is more clearly correct. None is, and the reason is structural rather
-        /// than a preference: a DASL restriction is three-valued, so EVERY predicate over a
-        /// property silently excludes a row whose property is absent. Swapping this one for
-        /// a comparison, or for a negation, moves that risk around instead of removing it,
-        /// and lands on syntax this codebase has never emitted. The only construction that
+        /// than a preference: MAPI documents the result of a restriction over a property the
+        /// message does NOT have as UNDEFINED - not false - so a row whose property is absent
+        /// is admitted or dropped at the provider's discretion, and no predicate over that
+        /// property can promise either. The distinction is not pedantry (corrected
+        /// 2026-08-19): "excluded" invites the inference that <c>NOT (...)</c> therefore
+        /// ADMITS such a row, which is exactly the reasoning that made a broken fix for the
+        /// sweep's date restriction look viable - negating an undefined value leaves it
+        /// undefined. Swapping this predicate for a comparison, or for a negation, moves that
+        /// risk around instead of removing it, and lands on syntax this codebase has never
+        /// emitted. The only construction that
         /// removes it is no restriction at all (<c>Folder.GetTable()</c> with no argument),
         /// which was considered and not taken: PR_MESSAGE_CLASS is required on every MAPI
         /// message and is what Outlook itself reads to decide which item type to hand back,

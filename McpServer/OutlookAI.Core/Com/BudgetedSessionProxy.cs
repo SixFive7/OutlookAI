@@ -124,7 +124,9 @@ namespace OutlookAI.Core.Com
                 throw new ArgumentNullException(nameof(targetMethod));
             }
 
-            long elapsed = (long)Stopwatch.GetElapsedTime(_startTimestamp).TotalMilliseconds;
+            // Stopwatch.GetElapsedTime is net7+; Core still gates on net48 for the v3.1
+            // event host, so the same arithmetic is written out.
+            long elapsed = (Stopwatch.GetTimestamp() - _startTimestamp) * 1000L / Stopwatch.Frequency;
             if (!CanDispatch(_budgetMilliseconds, elapsed))
             {
                 throw new TimeoutException(BudgetExhaustedMessage(targetMethod.Name, _budgetMilliseconds));

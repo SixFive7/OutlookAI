@@ -4854,6 +4854,25 @@ namespace OutlookAI.Core.Com
         /// </para>
         /// Preconditions are all fail-closed: mail item, UNSENT, and living in a Drafts
         /// folder.
+        /// <para>
+        /// RE-ENTRANT (2026-08-19). This method is ~20 sequential cross-process calls with
+        /// no transaction, and the deadline kill terminates the host BETWEEN two of them
+        /// far more often than inside one - so the ordinary failure is a half-applied
+        /// draft, and the <c>finally</c> blocks written to leave a draft untouched are
+        /// exactly what <c>TerminateProcess</c> skips. <paramref name="resume"/> carries
+        /// the pre-image the parent recorded before the first attempt, and the two steps
+        /// that a blind repeat would get wrong use it: attachments converge on the
+        /// requested END STATE rather than replaying add/remove (see
+        /// <see cref="DraftAttachmentPlan"/>), and the conversation index/topic restored
+        /// after a subject change comes from the record rather than from a live read that
+        /// would return the value the interrupted attempt already regenerated.
+        /// </para>
+        /// <para>
+        /// It does NOT assume a partial attempt persisted. Whether an unsaved property
+        /// write survives the death of the automation client is undocumented by Microsoft
+        /// either way; converging on the end state is correct if it survived AND if it did
+        /// not, because both are just states the draft can be observed in.
+        /// </para>
         /// </summary>
         public ComDraftUpdateResult? TryUpdateDraft(
             string entryIdHex,
@@ -4868,6 +4887,7 @@ namespace OutlookAI.Core.Com
             ComSignatureOverride? signatureOverride,
             IReadOnlyList<string> attachmentsToAdd,
             IReadOnlyList<string> attachmentsToRemove,
+            ComDraftUpdateResume? resume,
             bool display,
             out string? error)
         {
@@ -4986,10 +5006,34 @@ namespace OutlookAI.Core.Com
                         : ns.GetItemFromID(entryIdHex);
                     dynamic draft = fresh!;
 
-                    // Attachments: removals first, then additions, so removing and adding
-                    // the same file name in one call means REPLACE.
-                    List<string> removed = RemoveAttachmentsByName(draft, attachmentsToRemove);
-                    (List<string> added, List<string> failedToAttach) = AddAttachmentsToDraft((object)draft, attachmentsToAdd);
+                    // Attachments: ADDITIONS FIRST, then removals, and both from a plan
+                    // computed against what the draft carries right now.
+                    //
+                    // The order is the reverse of what it was, and the reversal is the
+                    // cheap half of surviving a kill: with removals first, the window
+                    // between them and the additions is a draft that has LOST the user's
+                    // files; with additions first it is a draft that has a DUPLICATE. A
+                    // duplicate is visible and undoable, a loss is neither. Replace
+                    // semantics survive the swap because Attachments.Add appends, so the
+                    // copies that existed before this call are exactly the lowest-indexed
+                    // ones - which is precisely what the plan's removals name.
+                    // Skipped entirely when no attachment work was asked for: enumerating
+                    // the collection is one COM call per attachment, and the plan over an
+                    // empty request is empty whatever the draft holds.
+                    IReadOnlyList<string> namesNow = attachmentsToAdd.Count == 0 && attachmentsToRemove.Count == 0
+                        ? Array.Empty<string>()
+                        : AttachmentFileNames(draft);
+                    DraftAttachmentWork plan = DraftAttachmentPlan.BuildForAttempt(
+                        resume, namesNow, attachmentsToAdd, attachmentsToRemove);
+
+                    (List<string> added, List<string> failedToAttach) = AddAttachmentsToDraft((object)draft, plan.PathsToAdd);
+                    List<string> removed = RemoveAttachments(draft, plan.Removals);
+
+                    // What an interrupted attempt already applied is reported as applied.
+                    // The caller asked for an end state; telling it the file was "not
+                    // found" would describe this attempt rather than the outcome.
+                    added.AddRange(plan.AlreadyAttached);
+                    removed.AddRange(plan.AlreadyRemoved);
                     if (removed.Count > 0)
                     {
                         changed.Add("attachmentsRemoved");
@@ -5027,9 +5071,17 @@ namespace OutlookAI.Core.Com
                     bool? topicPreserved = null;
                     if (subject != null)
                     {
-                        string? currentTopic = TryGetString(() => (string?)draft.ConversationTopic)
-                            ?? TryGetPropertyString(draft, ConversationTopicDasl);
-                        string? currentIndex = TryGetString(() => (string?)draft.ConversationIndex);
+                        // On a REPEAT the live values are worthless: if the interrupted
+                        // attempt got as far as assigning Subject, Outlook has already
+                        // regenerated the index, so reading it here would capture the
+                        // damage and "restore" it over itself. The recorded pre-image is
+                        // the only place the original still exists.
+                        string? currentTopic = ComDraftUpdateResume.ThreadTopicFor(
+                            resume,
+                            TryGetString(() => (string?)draft.ConversationTopic)
+                                ?? TryGetPropertyString(draft, ConversationTopicDasl));
+                        string? currentIndex = ComDraftUpdateResume.ThreadIndexFor(
+                            resume, TryGetString(() => (string?)draft.ConversationIndex));
 
                         draft.Subject = subject;
                         changed.Add("subject");
@@ -5631,19 +5683,78 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// Removes attachments by FILE NAME (case-insensitive), descending because
-        /// <c>Attachments.Delete</c> reindexes. Returns the names actually removed - a name
-        /// that matched nothing simply does not appear, and the caller reports that.
+        /// The draft's attachment file names in index order - the input the plan is
+        /// computed from, and the only identity an attachment has at this layer.
+        /// <para>
+        /// A name that cannot be read is kept as an empty entry rather than dropped: the
+        /// plan counts POSITIONS as well as names, and silently shortening the list would
+        /// make a later removal delete the wrong one.
+        /// </para>
         /// </summary>
-        private static List<string> RemoveAttachmentsByName(dynamic mail, IReadOnlyList<string>? names)
+        private static IReadOnlyList<string> AttachmentFileNames(dynamic mail)
+        {
+            List<string> names = new List<string>();
+            object? attachments = null;
+            try
+            {
+                attachments = mail.Attachments;
+                dynamic collection = (dynamic)attachments!;
+                int count = collection.Count;
+                for (int i = 1; i <= count; i++)
+                {
+                    object? attachment = null;
+                    try
+                    {
+                        attachment = collection[i];
+                        names.Add(TryGetString(() => (string?)((dynamic)attachment!).FileName) ?? string.Empty);
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        names.Add(string.Empty);
+                    }
+                    finally
+                    {
+                        Release(attachment);
+                    }
+                }
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+            }
+            finally
+            {
+                Release(attachments);
+            }
+
+            return names;
+        }
+
+        /// <summary>
+        /// Executes a plan's removals: for each name, its N LOWEST-INDEXED instances,
+        /// deleted descending because <c>Attachments.Delete</c> reindexes.
+        /// <para>
+        /// Lowest-indexed rather than "every match" is what keeps replace semantics
+        /// working now that the additions run FIRST: the count came from the draft as it
+        /// was before this call attached anything, and additions append, so the first N are
+        /// exactly the copies the caller asked to be rid of.
+        /// </para>
+        /// Returns the names actually removed - a name that matched nothing simply does not
+        /// appear, and the caller reports that.
+        /// </summary>
+        private static List<string> RemoveAttachments(dynamic mail, IReadOnlyList<DraftAttachmentRemoval> removals)
         {
             List<string> removed = new List<string>();
-            if (names == null || names.Count == 0)
+            if (removals == null || removals.Count == 0)
             {
                 return removed;
             }
 
-            HashSet<string> wanted = new HashSet<string>(names, StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, int> budget = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (DraftAttachmentRemoval removal in removals)
+            {
+                budget[removal.FileName] = removal.Count;
+            }
+
             object? attachments = null;
             try
             {
@@ -5659,8 +5770,9 @@ namespace OutlookAI.Core.Com
                     {
                         attachment = collection[i];
                         string? fileName = TryGetString(() => (string?)((dynamic)attachment!).FileName);
-                        if (fileName != null && wanted.Contains(fileName))
+                        if (fileName != null && budget.TryGetValue(fileName, out int remaining) && remaining > 0)
                         {
+                            budget[fileName] = remaining - 1;
                             doomed.Add(i);
                             doomedNames.Add(fileName);
                         }

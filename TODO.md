@@ -83,6 +83,46 @@
         a measured whole-profile sweep of ~60 s, it should never fire in ordinary use, which is
         the point and also the reason it will stay unexercised.
 
+- [ ] **Residual gaps left by the 2026-08-19 re-entrant `update_draft` pass.** The intent record,
+  the idempotence key, the attachment reconciler and the add-before-remove reorder all landed and
+  are pinned in T1 `DraftUpdateReentrancyTests`. These did not, and each is here because a mutation
+  check proved it unguarded rather than because it was guessed at.
+
+  - [ ] **The attachment enumeration guard is provably unguarded** (mutation M15, 2026-08-19):
+        making `TryUpdateDraft` enumerate the draft's attachments even when the request touches
+        none leaves all 1,921 tests green. It is a cost guard - one COM call per attachment on
+        every body-only revision - with no observable payload, so nothing outside a live profile
+        can see it. Options: accept and rely on T2; or count contract-level COM calls in a live
+        fixture, which nothing does today.
+  - [ ] **The COM-side EXECUTION of the plan is unguarded by any non-live test.** `DraftAttachmentPlan`
+        is pinned state by state, and the two decisions the COM sequence makes were lifted out so they
+        could be reverted (`BuildForAttempt`, `ComDraftUpdateResume.ThreadIndexFor`). What no T1 can
+        reach is `RemoveAttachments` deleting the N lowest-indexed instances of a name, and the fact
+        that additions now run before removals - both are `dynamic` COM against a live
+        `Attachments` collection. Reversing the order back leaves the suite green. T2
+        `LiveUpdateDiscardTests` is where it would be exercised; extending it to assert the ORDER
+        needs a way to observe a mid-sequence state, which nothing has today.
+  - [ ] **`discard_draft`'s `com_failure` still claims "Nothing was changed", and it cannot.**
+        `TryDiscardDraft` performs the soft delete and then does a best-effort re-locate in Deleted
+        Items, so a COM failure after the delete reaches the same catch-all and reports a deletion
+        that happened as one that did not. `update_draft`'s half of that wording was corrected in
+        this pass; the discard half was left alone deliberately - it is a different sequence, the
+        item is recoverable from Deleted Items either way, and changing a deletion path's message
+        without a live run to check it is not a trade worth making at 4am.
+  - [ ] **Nothing verifies that an interrupted attempt's partial writes are DURABLE.** The whole
+        design is deliberately indifferent to it - it converges on the end state from whatever the
+        draft is observed to hold - but the question is still unanswered and worth answering, because
+        it decides how often the resume does anything at all. Whether Outlook keeps an unsaved
+        `Attachments.Add` / `Attachment.Delete` when the automation client dies is undocumented by
+        Microsoft (`tmp-aitrace/kill-safety.md` section 2.3). Measurable on the dev machine with
+        `OUTLOOKAI_COMHOST_FAULT=hang:TryUpdateDraft` plus a read of the draft afterwards.
+  - [ ] **The gap map's remaining line-number citations are stale.** Checked 2026-08-19: all nine
+        `OutlookComSession.cs` references had drifted (converted to symbols in this pass), and the
+        `MailService.cs`, `MailModels.cs` and `OutlookTools.cs` ones are stale too - `MailService.cs:220`
+        lands in an unrelated comment, `:612` and `:3995` on bare `</summary>` lines. Convert each as
+        its row is next touched; a stale number reads as evidence and points the next reader at
+        unrelated code.
+
 - [x] **DONE (2026-08-18) - Audit the codebase for other timers and time-based behaviour.**
   The sweep is finished. The three halves, and what each one turned up:
 

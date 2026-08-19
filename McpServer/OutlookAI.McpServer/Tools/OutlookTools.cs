@@ -644,8 +644,8 @@ public static class OutlookTools
         + "RECIPIENTS ARE REPLACED (the opposite of the draft tools' cc/bcc, which append): to/cc/bcc each REPLACE that "
         + "whole list, which is the only way to REMOVE someone. To add a recipient, pass the full new list. A list you do "
         + "not pass is left untouched.\n\n"
-        + "ATTACHMENTS ARE ADDED: attachments adds files; remove_attachments removes them by file name. Both in one call = "
-        + "replace (removals run first).\n\n"
+        + "ATTACHMENTS ARE ADDED: attachments adds files; remove_attachments removes them by file name. Both in one call "
+        + "replaces the old copy.\n\n"
         + "SIGNATURE IMAGES survive a revision: they are stored embedded in the draft, so re-rendering keeps them. The one "
         + "exception is a draft composed by an older version of this server, whose signature image is still LINKED to a "
         + "file on disk - such a link cannot survive the re-render. That is never silent: the result reports "
@@ -679,8 +679,9 @@ public static class OutlookTools
         string? signature = null,
         [Description(AttachmentsHint)] string[]? attachments = null,
         [Description("File names to REMOVE from the draft, exactly as reported in the attachments list (e.g. "
-            + "\"offer.pdf\"). Removals happen before additions, so listing a name here and attaching a new file with the "
-            + "same name replaces it. Names that match nothing come back in attachmentsNotFound instead of failing.")]
+            + "\"offer.pdf\"). Listing a name here and attaching a new file with the same name REPLACES it - the new file "
+            + "goes on first and the old copy is deleted after, so an interruption leaves a duplicate rather than losing "
+            + "the file. Names that match nothing come back in attachmentsNotFound instead of failing.")]
         string[]? remove_attachments = null,
         [Description("Re-open the revised draft in an Outlook window for the user (default true, like the draft tools). "
             + "Pass false when the user is not watching or the draft is already open and you do not want it refocused.")]

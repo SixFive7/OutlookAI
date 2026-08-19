@@ -28,7 +28,7 @@ reasoning, and flagged for review rather than buried.
 | `top` ceiling | Leave at 100; rely on resumption | **decided, no work** |
 | Remaining gap-map rows | Clear **all** of them before the release | **queued** |
 | Work order | Infrastructure first: corpus, second PST, live tier on the VM | **in progress** |
-| `update_draft` | **(d)** make it re-entrant: record intent first, so a retry completes rather than repeats | **queued** |
+| `update_draft` | **(d)** make it re-entrant: record intent first, so a retry completes rather than repeats | **shipped** (uncommitted) |
 | Sweep timeout | **(d)** make expiry graceful **and** distinguish budget expiry from unresponsiveness at the supervisor | **shipped** (uncommitted) |
 | H3 (undated mail invisible to the sweep) | Check whether DASL can express "or the property is absent" first; failing that, report it; full fallback enumeration only if it proves common | **answered by measurement - NOT fixed, see section 3** |
 
@@ -91,11 +91,17 @@ PST, and H3's hypothesised shape is imported, copied or restored mail. The row s
 downgraded, with the measurement attached. Evidence and the reusable probe are in the session trace
 folder under Downloads (`tmp-aitrace/h3-measurement.md`, `h3-probe.ps1`).
 
-**Two corrections the repo owes, from the same research and not yet applied:** `ExhaustiveDaslFilter`
-and `QUESTIONS.md` say a DASL predicate *"silently excludes"* absent-property rows, where MAPI
-documents the result as *undefined* - as written it invites precisely the wrong inference, that
-`NOT (...)` therefore admits them. And the gap map cites the sweep restriction by a line number that
-has moved twice; cite it by the `SweepFolder` symbol instead.
+**Two corrections the repo owed, from the same research - BOTH APPLIED 2026-08-19.**
+`ExhaustiveDaslFilter` and `QUESTIONS.md` now say MAPI documents the result of a restriction over an
+absent property as **undefined** rather than "silently excludes", and both name the inference that
+wording invited - that `NOT (...)` therefore admits such a row - because that is the reasoning that
+made a broken fix look viable. The gap map's H3 row now cites `SweepFolder` by symbol. **Checking
+the rest turned the second correction into a systemic finding:** *every one* of the map's nine
+`OutlookComSession.cs` line references had drifted off its subject, by between 60 and 900 lines,
+and several `MailService.cs` ones had too (`:220` lands in an unrelated comment, `:612` and `:3995`
+on bare `</summary>` lines). All nine `OutlookComSession.cs` citations are converted to method
+names, the map carries a standing "cite by symbol" rule, and the remainder is in `TODO.md` to be
+converted as each row is next touched.
 
 1. **Overrode the corpus generator's date-fidelity refusal** with `--allow-undated`, reasoning that
    an all-recent corpus is still the sweep's worst case. **Wrong, twice over.** Undated items are
@@ -199,6 +205,138 @@ has moved twice; cite it by the `SweepFolder` symbol instead.
     mutation rather than assumed: reverting `ComGateway`'s budget overload to a pass-through, and
     removing the 250 ms clean-exit wait, both leave the whole suite green. Recorded in `TODO.md`
     with the options rather than papered over.
+
+17. **Put the `update_draft` intent record in the PARENT PROCESS, in memory, and not on the draft.**
+    The decision the maintainer gave was (d) - record intent first - and it left open where. Three
+    candidates were weighed. A property on the draft travels with the item and a second server
+    instance can see it, which is genuinely more than parent-side state offers; it was rejected on
+    three grounds, of which the first is decisive. **It can only be written by the process that
+    dies**, so it is exactly as unreliable as the thing it records - and the failure being defended
+    against is precisely that this process is terminated between two COM calls. It also needs a
+    SECOND mutation to clear it, which is one more window for the same kill, and it writes server
+    bookkeeping onto the user's own mail, which this product does not do anywhere else (the same
+    instinct behind soft-delete-only discard and bit-identical signatures). The audit log was
+    rejected as the *mechanism* for the opposite reason - it is append-only and its documented
+    ordering is mutate-then-record, so it can state that an outcome is unknown but cannot be read
+    back as resumable state; it now gets an `update_draft_outcome_unknown` line anyway, on the same
+    reasoning as `send_outcome_unknown`. `ServerDraftRegistry` was rejected as the *home* because it
+    is an allowlist of ids and would have had to grow a second meaning. So: a new
+    `Services/DraftUpdateIntents`, per-process and unpersisted like `ServerDraftRegistry` and
+    `SendConfirmationTokens`, on their stated rule - **a restarted process never observed the draft
+    and must not claim it can complete an update it cannot vouch for**. When the record is gone the
+    caller gets the pre-existing answer (outcome unknown, look before acting), which is a smaller
+    guarantee and never a wrong one.
+
+18. **The idempotence key is DERIVED BY THE SERVER, not supplied by the caller** - deliberately the
+    opposite choice from the send path's confirm token, and the reason is that the two mechanisms
+    want opposite things. The send token is caller-supplied *because* its purpose is friction: a
+    human has to say yes. Re-entrancy has to work when the caller does nothing special, because the
+    caller that most needs it is an agent re-issuing the call that just failed - and a caller-supplied
+    key would additionally let two DIFFERENT requests claim one identity, a worse failure than the
+    one it prevents. The key is SHA-256 over the draft id plus every argument that reaches Outlook,
+    canonicalised presence-first so an OMITTED list and an EMPTY list cannot hash the same (they mean
+    "leave alone" and "clear"). **Identical arguments alone are NOT a retry**, which was the sharpest
+    question in the task: only a request whose outcome is still unknown is resumable, a call that
+    ANSWERED settles its record, and any other update to the same draft drops it. So the only way
+    into resume mode is to re-issue exactly the call that was interrupted, before anything else
+    intervened.
+
+19. **The replayability classification, established from the code, and what it forced.** Reading the
+    ~20-call sequence rather than assuming: body/signature replace (replayable - it rewrites the
+    draft region), recipients replace per class (replayable - clear then set), subject, importance
+    and read-receipt (replayable - assignment), `Save`/`Display` (replayable). **Attachment ADD is
+    the only accumulating step**; attachment REMOVE by name is idempotent in itself and destructive
+    only in sequence. And one row nobody had named: **the conversation-index restore is
+    ORDER-COUPLED and NOT replayable**, because its input is captured live and is destroyed by the
+    subject write it compensates for - a repeat reading it live would faithfully restore the value
+    the interrupted attempt had already regenerated, report `conversationTopicPreserved: true`, and
+    leave the draft out of its thread. That row is what makes the pre-image load-bearing beyond
+    attachments.
+    **The design that follows: converge on the END STATE, do not replay the STEPS.** Progress cannot
+    be recorded, because only the process that died knew it; the pre-image plus the draft's current
+    contents can always be compared. `Com/DraftAttachmentPlan` does that as pure logic, and a FIRST
+    attempt is its identity case (before == now reduces it to remove-every-match plus add-everything,
+    which is exactly the two loops it replaced) - so the re-entrant path is not a second mode with
+    its own semantics. **It is also indifferent to whether a partial attempt persisted at all**,
+    which matters because Microsoft documents neither outcome for an unsaved change when the
+    automation client dies: both are just states the draft can be observed in.
+    **One case is deliberately NOT resolved and is redone instead:** a name that is both removed and
+    added (a replace). The old copy and the new copy are the same name, so no pre-image can tell
+    "nothing applied" from "both halves applied". The plan deletes every current copy and re-attaches
+    every requested path, which converges from all three reachable states because the source is a
+    file on disk. Cost: repeated work in a rare path. Reviewed and accepted.
+
+20. **Did the reorder too (the (b) that (d) does not exclude), because it was close to free.**
+    Additions now run BEFORE removals, and removals delete the N LOWEST-INDEXED instances of each
+    name, counted before anything was attached. Replace semantics survive because `Attachments.Add`
+    appends, so the pre-existing copies are exactly the low-indexed ones. The gain is the shape of
+    the danger window: with removals first it holds a draft that has LOST the user's file; with
+    additions first it holds a duplicate, which is visible and undoable. **No intermediate `Save()`
+    was added** - that would deliberately CREATE durable partial states that today may not exist.
+
+21. **Corrected a message that was simply untrue, for `update_draft` only.** `BuildDraftRefusal`'s
+    catch-all `com_failure` branch told the caller "Nothing was changed". That holds for every NAMED
+    refusal beside it - each is decided before anything is written - and does not hold for the
+    catch-all, which wraps the whole ~20-call sequence and can fire after the body has been committed
+    through the inspector or after an attachment has gone. It now says the outcome is unknown and
+    points at the repeat, and its intent is kept pending rather than settled. **`discard_draft`'s half
+    of the same branch was left alone**: it is a different sequence, the item is recoverable from
+    Deleted Items either way, and changing a deletion path's wording without a live run to check it is
+    not a trade worth making unsupervised. Recorded in `TODO.md`.
+
+22. **Fixed a build break that was already on master, because CI builds the file it is in.**
+    `dotnet build McpServer/OutlookAI.Core/OutlookAI.Core.csproj` fails for the **net48** target at
+    HEAD `23dca4f`: `BudgetedSessionProxy` (added the previous day) uses `DispatchProxy`, which is not
+    in net48's default reference set, and `Stopwatch.GetElapsedTime`, which is net7+. The
+    `mcpserver.yml` workflow builds that csproj explicitly, so the branch is red regardless of this
+    work; the test project only builds net10, which is why the suite stayed green and nothing noticed.
+    Fixed with the `System.Reflection.DispatchProxy` package for net48 and the elapsed-time arithmetic
+    written out. **This is the net48 gate doing its job** - it exists so Core cannot acquire a
+    dependency the v3.1 event host could not take. The new code in this pass was written net48-clean
+    for the same reason (no `SHA256.HashData`, no `ArgumentNullException.ThrowIfNull`, no `Math.Clamp`).
+
+23. **The pre-image read doubles as the store resolver, which removes a mutating fan-out.** Taking it
+    costs at most two extra READS and only when the request contains something a blind repeat could
+    get wrong - a subject change (conversation index/topic) or files to attach (attachment names); a
+    body-and-recipients update pays nothing. Because that read resolves which store holds the draft,
+    the mutating cross-store loop below it no longer fires in the ordinary case: a bare EntryID in a
+    non-default store used to be found by offering `TryUpdateDraft` to each store in turn. The loop is
+    kept as the fallback for a draft no read could find. **If the pre-image cannot be taken at all, no
+    intent is recorded** and the caller gets the old "do not retry" advice - a resume this server
+    cannot vouch for is worse than no resume.
+
+24. **The gap map's line numbers are systemically stale, not just H3's.** Checked all 40 citations:
+    every one of the nine `OutlookComSession.cs` references had drifted off its subject, by between
+    60 and 900 lines, and `MailService.cs:220` / `:612` / `:3995` land in unrelated comments or on
+    bare `</summary>` lines. All nine are converted to method names, the map gained a standing
+    "cite by symbol" rule with the measurement attached, and the remainder is in `TODO.md`.
+
+25. **Method note, recorded because it cost real time and would repeat.** Two mutation passes were
+    run concurrently by mistake. Each saves the file it is about to mutate and restores that copy
+    afterwards, so the second pass captured the FIRST pass's mutation as its "original" and restored
+    it permanently - re-applying a reverted decision line silently, in a tree that still built and
+    still passed 1,919 tests because the mutation it re-applied is one only a resumed call can
+    observe. Caught by re-checking every anchor before the third run rather than by any test.
+    Mutation passes are serial by construction; the script now verifies its anchors first.
+    Separately, **six NUL bytes** had been written into `DraftUpdateIntents.cs` where single-space
+    string literals were intended, and the canonicalisation was rewritten presence-first so no
+    sentinel value exists to be corrupted in the first place.
+
+26. **Mutation check: 15 decision lines reverted, 14 caught, 1 not.** Each was reverted, built,
+    run against the whole non-live suite, and restored. Caught (with the test that noticed):
+    ignoring the pre-image on a repeat; preferring the live conversation index over the recorded
+    one; recording the intent AFTER the mutating call (2 tests); a successful update not settling
+    its intent; a new intent not dropping the draft's other pending ones; an unclassified COM
+    failure settling the intent; the killed-update message never offering the repeat; the plan not
+    reporting what an interrupted attempt already removed; a replaced name planned as an ordinary
+    addition; a stale intent never expiring; an omitted list hashing like an empty one; the
+    pre-image read taken for every update; a draft no store could open treated as an unknown
+    outcome; a discard not dropping its pending pre-image. **NOT caught: the guard that skips
+    enumerating attachments on an update that touches none** - a COM-side cost guard with no
+    observable payload; recorded in `TODO.md` rather than papered over. Four of the fifteen had to
+    be re-expressed because `if (false)` is constant-folded and `TreatWarningsAsErrors` turns the
+    resulting CS0162 into a build failure - a mutation that does not compile proves nothing, so
+    they were rewritten as runtime-false conditions.
 
 ## 4. VM state (`OutlookAI-TestVM`)
 

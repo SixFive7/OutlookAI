@@ -55,6 +55,14 @@
   <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
     <!-- dynamic (late-bound Outlook/ADODB COM) needs the C# runtime binder on .NET Framework. -->
     <Reference Include="Microsoft.CSharp" />
+    <!--
+      System.Reflection.DispatchProxy is in the box on net10.0 and NOT in net48's default
+      reference set, so BudgetedSessionProxy (added 2026-08-19 with the in-process budget)
+      compiled on one target and broke the other. The net48 gate exists precisely so Core
+      cannot acquire a dependency the v3.1 event host could not take, and this is what it
+      caught; the package is Microsoft's own out-of-band build of the same type.
+    -->
+    <PackageReference Include="System.Reflection.DispatchProxy" Version="4.7.1" />
   </ItemGroup>
 
 </Project>

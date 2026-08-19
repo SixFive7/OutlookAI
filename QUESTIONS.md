@@ -241,10 +241,15 @@ since a dated meeting request is not `kind='email'`).
 **Two smaller items from the same commit, settled.**
 
 1. **The `PR_MESSAGE_CLASS like '%'` predicate stays.** The question was whether a different
-   always-true predicate is more clearly correct. None is, and the reason is structural: a DASL
-   restriction is three-valued, so EVERY predicate over a property excludes a row whose property is
-   absent - a different predicate moves that risk rather than removing it, onto syntax this codebase
-   has never emitted. The only construction that removes it is no restriction at all
+   always-true predicate is more clearly correct. None is, and the reason is structural: MAPI
+   documents the result of a restriction over a property the message does NOT have as **undefined**,
+   not false, so a row whose property is absent may be admitted or dropped at the provider's
+   discretion and no predicate over that property can promise either. (Corrected 2026-08-19 - this
+   read "excludes", which invites the inference that `NOT (...)` therefore admits such a row. It does
+   not: negating an undefined value leaves it undefined, and that inference is what made a broken fix
+   for the sweep's date restriction look viable.) A different predicate moves that risk rather than
+   removing it, onto syntax this codebase has never emitted. The only construction that removes it is
+   no restriction at all
    (`Folder.GetTable()` with no argument), which was considered and not taken: PR_MESSAGE_CLASS is
    required on every MAPI message and is what Outlook itself reads to choose the item type it hands
    back, so the absent case is unreachable through the object model, while dropping the filter changes

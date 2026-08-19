@@ -187,7 +187,11 @@ namespace OutlookAI.Core.Com
             ComDraftOptions? options,
             out string? error);
 
-        /// <summary>Edits an existing draft in place.</summary>
+        /// <summary>
+        /// Edits an existing draft in place. <paramref name="resume"/> is null for an
+        /// ordinary call and carries the pre-image recorded before an earlier attempt when
+        /// this call is a REPEAT of one the COM host was killed part-way through.
+        /// </summary>
         ComDraftUpdateResult? TryUpdateDraft(
             string entryIdHex,
             string? storeId,
@@ -201,6 +205,7 @@ namespace OutlookAI.Core.Com
             ComSignatureOverride? signatureOverride,
             IReadOnlyList<string> attachmentsToAdd,
             IReadOnlyList<string> attachmentsToRemove,
+            ComDraftUpdateResume? resume,
             bool display,
             out string? error);
 
