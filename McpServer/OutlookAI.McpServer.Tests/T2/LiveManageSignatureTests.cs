@@ -15,7 +15,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// account only - original registry values read first, restored exactly in finally,
 /// and the restoration asserted.
 /// </summary>
-[Collection("LiveSignatureManage")]
+[Collection(LiveCollections.SignatureManage)]
 [Trait("Category", "Live")]
 public sealed class LiveManageSignatureTests
 {
@@ -33,6 +33,7 @@ public sealed class LiveManageSignatureTests
     private string Hub => _fixture.Settings.TestHubStoreDisplayName;
 
     [Fact]
+    [Trait("LiveTier", "Portable")]
     public void FullLifecycle_CreateUpdateDelete_WithAlwaysOnBackups_AndAuditLines()
     {
         string name = _fixture.TestSignatureName("Cycle");
@@ -111,6 +112,8 @@ public sealed class LiveManageSignatureTests
     }
 
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "MailAccount")]
     public void DefaultAssignment_HubAccountOnly_SetThenCleared_OriginalsRestoredExactly()
     {
         string name = _fixture.TestSignatureName("Dflt");

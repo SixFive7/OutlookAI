@@ -153,6 +153,23 @@ public sealed class LiveMoveArchiveFixture : IDisposable
     {
         try
         {
+            DisposeCore();
+        }
+        finally
+        {
+            // Outside the teardown on purpose, exactly like LiveLifecycleFixture's copy: a
+            // tripwire that can be swallowed is not one. Whether this is where the run gets
+            // verified depends on the FILTER, which LiveTierRunPlan knows and this fixture
+            // does not.
+            LiveStoreCountTripwire.CollectionFinished(LiveCollections.MoveArchive);
+        }
+    }
+
+    /// <summary>This fixture's own teardown, separated so the tripwire signal cannot be skipped.</summary>
+    private void DisposeCore()
+    {
+        try
+        {
             // Folders first (their tagged contents purge into Deleted Items), then
             // the item sweep - the same order the tests use.
             LiveOutlookTestMailer.DeleteTestFolders(Settings.TestHubStoreDisplayName);
@@ -247,7 +264,7 @@ public sealed class LiveMoveArchiveFixture : IDisposable
     }
 }
 
-[CollectionDefinition("LiveMoveArchive")]
+[CollectionDefinition(LiveCollections.MoveArchive)]
 public sealed class LiveMoveArchiveCollection : ICollectionFixture<LiveMoveArchiveFixture>
 {
 }

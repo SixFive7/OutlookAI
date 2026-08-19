@@ -15,6 +15,9 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// clear the search UI afterwards. Output stays content-free for business stores (S4).
 /// </summary>
 [Trait("Category", "Live")]
+[Trait("LiveTier", "Portable")]
+[Trait("Requires", "InteractiveDesktop")]
+[Collection(LiveCollections.McpToolShape)]
 public sealed class Phase3LiveMcpToolShapeTests
 {
     private readonly ITestOutputHelper _output;

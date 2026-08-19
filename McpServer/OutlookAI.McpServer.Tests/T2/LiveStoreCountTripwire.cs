@@ -19,8 +19,10 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// Fail-closed, like <c>SignatureDirectorySnapshot</c>: if the baseline cannot be taken
 /// the live tier REFUSES to run, because an unmeasured mailbox cannot be proven
 /// untouched. Every live collection fixture calls <see cref="EnsureBaseline"/> in its
-/// constructor (a throw there fails the whole collection), and the last-ordered fixture
-/// calls <see cref="Verify"/> in Dispose.
+/// constructor (a throw there fails the whole collection) and
+/// <see cref="CollectionFinished"/> in its Dispose; the comparison happens when the last
+/// guarded collection OF THIS RUN finishes, which <see cref="LiveTierRunPlan"/> works out
+/// from the filtered collection list rather than assuming a whole-tier run.
 /// </para>
 /// <para>
 /// Being that single funnel, it is also where <see cref="LiveOutlookPreflight"/> gates the
@@ -99,6 +101,11 @@ public static class LiveStoreCountTripwire
 
             _hub = settings.TestHubStoreDisplayName;
             _lazyHierarchyStores = settings.ExpectedDelegateStoreDisplayNames.ToList();
+
+            // Printed before the first COM call: a run that turns out to have been pointed
+            // at the wrong machine's settings should say so at the top of the log, not be
+            // inferred afterwards from which tests behaved oddly.
+            Console.WriteLine("[tripwire] live-test settings: " + settings.Describe() + ".");
             try
             {
                 _keepAlive = OutlookComSession.Connect(allowStartingOutlook: true);
@@ -122,11 +129,52 @@ public static class LiveStoreCountTripwire
     }
 
     /// <summary>
+    /// Signals that one guarded collection has finished, and verifies the run when nothing
+    /// guarded comes after it.
+    /// <para>
+    /// Every live collection fixture calls this from its dispose, because which collection
+    /// ends the run is a property of the FILTER, not of the suite. A run selecting one test
+    /// class ends at that class's collection; a whole-tier run ends at
+    /// <see cref="LiveCollections.Lifecycle"/>, which the collection orderer forces last.
+    /// Before this existed only the second case was verified, so every filtered run - which
+    /// is how the tier is used on a test machine - paid for a baseline and threw it away.
+    /// </para>
+    /// <para>
+    /// When the run plan is <see cref="GuardedCollectionPosition.Unknown"/> (nothing
+    /// published, so the collection orderer did not run) this verifies and stays ARMED, so
+    /// each later collection boundary is checked too. That costs a census per collection and
+    /// is the deliberate trade: an unverified run is the only outcome that must not happen.
+    /// </para>
+    /// </summary>
+    public static void CollectionFinished(string collectionName)
+    {
+        ArgumentNullException.ThrowIfNull(collectionName);
+        GuardedCollectionPosition position = LiveTierRunPlan.PositionOf(collectionName);
+        if (position == GuardedCollectionPosition.NotLast)
+        {
+            return;
+        }
+
+        Verify(final: position == GuardedCollectionPosition.Last);
+    }
+
+    /// <summary>
     /// Re-censuses and compares. Throws naming the store, the folder, the items and where
     /// they went when anything was removed outside the hub, and ends with an attribution
     /// line saying how far the evidence actually goes. Runs once; later calls are no-ops.
     /// </summary>
     public static void Verify()
+    {
+        Verify(final: true);
+    }
+
+    /// <summary>
+    /// The comparison, with <paramref name="final"/> saying whether this is the last word on
+    /// the run. A final verification latches (later calls are no-ops) and releases the
+    /// keep-alive COM reference; a non-final one does neither, so the baseline survives to be
+    /// compared again at the next collection boundary.
+    /// </summary>
+    private static void Verify(bool final)
     {
         Dictionary<string, IReadOnlyDictionary<string, FolderCensus>> baseline;
         string hub;
@@ -138,7 +186,7 @@ public static class LiveStoreCountTripwire
                 return;
             }
 
-            _verified = true;
+            _verified = final;
             baseline = _baseline;
             hub = _hub;
             lazyStores = _lazyHierarchyStores;
@@ -161,7 +209,9 @@ public static class LiveStoreCountTripwire
             Console.WriteLine("[tripwire] suspected loss - re-censusing to confirm.");
             CensusPass recheck = Capture(baseline.Keys.ToList(), "confirmation", hub, baseline);
             TripwireVerdict second = StoreCountTripwire.Evaluate(baseline, recheck.Census, hub, lazyStores);
-            List<string> confirmed = verdict.Failures.Intersect(second.Failures, StringComparer.Ordinal).ToList();
+            HashSet<string> secondKeys = new(second.FailureRecords.Select(f => f.Key), StringComparer.Ordinal);
+            List<TripwireFailure> confirmed =
+                verdict.FailureRecords.Where(f => secondKeys.Contains(f.Key)).ToList();
             if (confirmed.Count == 0)
             {
                 Console.WriteLine("[tripwire] not reproducible on the second census - treating as enumeration noise.");
@@ -180,15 +230,20 @@ public static class LiveStoreCountTripwire
             $"[tripwire] post-run census in {stopwatch.ElapsedMilliseconds} ms ({after.Describe()}); "
             + $"{verdict.Failures.Count} failure(s), {verdict.Notes.Count} note(s).");
 
-        // Releases COM references only - Outlook keeps running (S7: never kill/close).
-        OutlookComSession? keepAlive;
-        lock (Gate)
+        // Releases COM references only - Outlook keeps running (S7: never kill/close). Held
+        // on a non-final pass: releasing the last reference to an Outlook the tests started
+        // arms its idle self-exit, and the run is not over yet.
+        if (final)
         {
-            keepAlive = _keepAlive;
-            _keepAlive = null;
-        }
+            OutlookComSession? keepAlive;
+            lock (Gate)
+            {
+                keepAlive = _keepAlive;
+                _keepAlive = null;
+            }
 
-        keepAlive?.Dispose();
+            keepAlive?.Dispose();
+        }
 
         if (verdict.Failed)
         {
@@ -196,7 +251,11 @@ public static class LiveStoreCountTripwire
         }
     }
 
-    /// <summary>Test hook: forgets the baseline so a self-test can drive the guard.</summary>
+    /// <summary>
+    /// Test hook: forgets the baseline AND the run plan so a self-test can drive the guard.
+    /// The two are reset together because a plan left over from one case would decide
+    /// whether the next one verifies.
+    /// </summary>
     internal static void ResetForTests()
     {
         lock (Gate)
@@ -207,6 +266,8 @@ public static class LiveStoreCountTripwire
             _hub = null;
             _verified = false;
         }
+
+        LiveTierRunPlan.ResetForTests();
     }
 
     /// <summary>

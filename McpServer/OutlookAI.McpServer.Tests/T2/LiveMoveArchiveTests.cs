@@ -15,8 +15,11 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// resolution across ALL FIVE stores. Everything created is deleted via the tested
 /// allowlist helpers (items AND the test folder) with zero-remaining asserts.
 /// </summary>
-[Collection("LiveMoveArchive")]
+[Collection(LiveCollections.MoveArchive)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "MultipleStores")]
+[Trait("Requires", "Transport")]
 public sealed class LiveMoveArchiveTests
 {
     private readonly LiveMoveArchiveFixture _fixture;

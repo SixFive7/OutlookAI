@@ -20,7 +20,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// threading/quoted content/body-above-signature stay intact throughout. All draft
 /// artifacts tagged + deleted (S3, stable zero).
 /// </summary>
-[Collection("LivePhase4")]
+[Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
 public sealed class LiveSignatureTests
 {
@@ -40,6 +40,7 @@ public sealed class LiveSignatureTests
     private string Marker => _fixture.RunMarker;
 
     [Fact]
+    [Trait("LiveTier", "Portable")]
     public void ListSignatures_SeesTestSignature_WithExcerpt_AndAccountRows()
     {
         using TestSignature sig = TestSignature.Create(Marker);
@@ -70,6 +71,9 @@ public sealed class LiveSignatureTests
     }
 
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "Transport")]
     public void ReplyDraft_WithSignatureOverride_InsertsAboveQuote_ThenReplaceBranchReapplies()
     {
         using TestSignature sig = TestSignature.Create(Marker);
@@ -141,6 +145,8 @@ public sealed class LiveSignatureTests
     }
 
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "MailAccount")]
     public void NewDraft_WithSignatureOverride_AppliedOnAccountWithoutDefault()
     {
         using TestSignature sig = TestSignature.Create(Marker);
@@ -196,6 +202,7 @@ public sealed class LiveSignatureTests
     }
 
     [Fact]
+    [Trait("LiveTier", "Portable")]
     public void TestSignatureLifecycle_LeavesZeroLeftovers()
     {
         string directory = SignatureCatalog.DefaultSignatureDirectory;

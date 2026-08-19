@@ -464,6 +464,54 @@ public sealed class StoreCountTripwireTests
     }
 
     [Fact]
+    public void AConfirmingCensus_MatchesOnTheSubjectOfTheFailure_NotOnItsTallies()
+    {
+        // A suspected loss is re-censused and only what fails BOTH times is reported. That
+        // comparison used to be made on the rendered message, which carries the folder's
+        // before/after counts and how many items arrived - and every one of those moves when
+        // a single mail lands between the two censuses. On a real profile during a 27-minute
+        // run that is ordinary, so a genuine mass deletion could be dismissed as "enumeration
+        // noise". The key names the SUBJECT of the failure and nothing that moves.
+        var baseline = Baseline();
+        SetItems(baseline, Other, "Inbox", Item("id-a"), Item("id-b"));
+
+        var after = Baseline();
+        SetItems(after, Other, "Inbox", Item("id-a"));
+
+        var confirmation = Baseline();
+        SetItems(confirmation, Other, "Inbox", Item("id-a"), Item("id-arrived-since"));
+
+        TripwireVerdict first = StoreCountTripwire.Evaluate(baseline, after, Hub);
+        TripwireVerdict second = StoreCountTripwire.Evaluate(baseline, confirmation, Hub);
+
+        Assert.True(first.Failed);
+        Assert.True(second.Failed);
+
+        // The messages differ - the second census saw an arrival - so a string intersection
+        // would report nothing and wave the loss through.
+        Assert.NotEqual(first.Failures.Single(), second.Failures.Single());
+        Assert.Empty(first.Failures.Intersect(second.Failures, StringComparer.Ordinal));
+
+        // The keys agree, so the loss is confirmed.
+        Assert.Equal(first.FailureRecords.Single().Key, second.FailureRecords.Single().Key);
+    }
+
+    [Fact]
+    public void FailureKeys_SeparateTheKindTheStoreAndTheFolder()
+    {
+        var baseline = Baseline();
+        SetItems(baseline, Other, "Inbox", Item("id-a"));
+
+        var after = Baseline();
+        SetItems(after, Other, "Inbox");
+
+        TripwireFailure failure = Assert.Single(StoreCountTripwire.Evaluate(baseline, after, Hub).FailureRecords);
+
+        Assert.Equal("items-removed|" + Other + "|Inbox", failure.Key);
+        Assert.Contains("ITEMS REMOVED", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FolderCensus_CountsWhatItWalked()
     {
         FolderCensus walked = FolderCensus.WithItems(new[] { Item("a"), Item("b") });

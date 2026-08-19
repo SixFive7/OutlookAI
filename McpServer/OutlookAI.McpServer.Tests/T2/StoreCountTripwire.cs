@@ -74,18 +74,56 @@ public sealed class FolderCensus
     }
 }
 
+/// <summary>
+/// One failure, as a stable SUBJECT and a human message about it.
+/// <para>
+/// The two are separate because they are compared for different purposes. The message
+/// carries the tallies a reader needs - what the folder held before, what it holds now, how
+/// many items arrived - and every one of those moves when a mail lands. The key names only
+/// the thing that failed: this kind of failure, in this store, in this folder. Confirming a
+/// suspected loss means asking whether the SAME thing failed twice, and asking that of the
+/// rendered message instead would mean one arriving mail could dismiss a real deletion as
+/// enumeration noise.
+/// </para>
+/// </summary>
+public readonly struct TripwireFailure
+{
+    /// <summary>Builds one failure.</summary>
+    /// <param name="key">Stable subject: kind, store and folder. Never a count.</param>
+    /// <param name="message">The reportable line, tallies included.</param>
+    public TripwireFailure(string key, string message)
+    {
+        Key = key;
+        Message = message;
+    }
+
+    /// <summary>What failed, in terms that do not move between two censuses seconds apart.</summary>
+    public string Key { get; }
+
+    /// <summary>The line a human reads.</summary>
+    public string Message { get; }
+}
+
 /// <summary>Verdict of one before/after comparison. Failures fail the suite; notes are informational.</summary>
 public sealed class TripwireVerdict
 {
-    internal TripwireVerdict(IReadOnlyList<string> failures, IReadOnlyList<string> notes, string? attribution = null)
+    internal TripwireVerdict(
+        IReadOnlyList<TripwireFailure> failures, IReadOnlyList<string> notes, string? attribution = null)
     {
-        Failures = failures;
+        FailureRecords = failures;
+        Failures = failures.Select(f => f.Message).ToList();
         Notes = notes;
         Attribution = attribution;
     }
 
     /// <summary>Losses: items or folders that left a mailbox the suite may not write to.</summary>
     public IReadOnlyList<string> Failures { get; }
+
+    /// <summary>
+    /// The same failures with their stable keys attached, for the confirmation census.
+    /// Materialised once alongside <see cref="Failures"/> so the two can never disagree.
+    /// </summary>
+    public IReadOnlyList<TripwireFailure> FailureRecords { get; }
 
     /// <summary>Benign observations (mail arriving elsewhere during the run, filing, hub churn).</summary>
     public IReadOnlyList<string> Notes { get; }
@@ -189,7 +227,7 @@ public static class StoreCountTripwire
         // deletion actually has.
         HashSet<string> lazyStores = new(lazyHierarchyStores ?? [], StringComparer.OrdinalIgnoreCase);
 
-        List<string> failures = new();
+        List<TripwireFailure> failures = new();
         List<string> notes = new();
         int taggedDepartures = 0;
         bool sawDepartures = false;
@@ -201,7 +239,9 @@ public static class StoreCountTripwire
             if (!after.TryGetValue(store.Key, out IReadOnlyDictionary<string, FolderCensus>? now))
             {
                 // A store present at the start and gone at the end is never benign.
-                failures.Add("  store '" + store.Key + "' could not be re-counted after the run (store missing).");
+                failures.Add(new TripwireFailure(
+                    "store-missing|" + store.Key,
+                    "  store '" + store.Key + "' could not be re-counted after the run (store missing)."));
                 continue;
             }
 
@@ -222,8 +262,10 @@ public static class StoreCountTripwire
                     }
                     else
                     {
-                        failures.Add("  FOLDER REMOVED: store '" + store.Key + "' folder '" + Display(folder.Key)
-                            + "' existed before the run and is gone (" + Count(folder.Value.Count) + " before).");
+                        failures.Add(new TripwireFailure(
+                            "folder-removed|" + store.Key + "|" + folder.Key,
+                            "  FOLDER REMOVED: store '" + store.Key + "' folder '" + Display(folder.Key)
+                            + "' existed before the run and is gone (" + Count(folder.Value.Count) + " before)."));
                     }
 
                     continue;
@@ -257,8 +299,10 @@ public static class StoreCountTripwire
                 }
                 else
                 {
-                    failures.Add("  FOLDER ADDED: store '" + store.Key + "' folder '" + Display(folder.Key)
-                        + "' did not exist before the run (" + Count(folder.Value.Count) + " items).");
+                    failures.Add(new TripwireFailure(
+                        "folder-added|" + store.Key + "|" + folder.Key,
+                        "  FOLDER ADDED: store '" + store.Key + "' folder '" + Display(folder.Key)
+                        + "' did not exist before the run (" + Count(folder.Value.Count) + " items)."));
                 }
             }
         }
@@ -267,7 +311,9 @@ public static class StoreCountTripwire
         {
             if (!before.ContainsKey(storeName))
             {
-                failures.Add("  store '" + storeName + "' appeared during the run and was never baselined.");
+                failures.Add(new TripwireFailure(
+                    "store-appeared|" + storeName,
+                    "  store '" + storeName + "' appeared during the run and was never baselined."));
             }
         }
 
@@ -281,7 +327,7 @@ public static class StoreCountTripwire
     /// </summary>
     private static void EvaluateByCount(
         string store, string folderKey, int wasCount, int nowCount, bool exempt, bool isHub,
-        List<string> failures, List<string> notes)
+        List<TripwireFailure> failures, List<string> notes)
     {
         int delta = nowCount - wasCount;
         if (delta == 0)
@@ -291,9 +337,11 @@ public static class StoreCountTripwire
 
         if (delta < 0 && !exempt)
         {
-            failures.Add("  ITEMS LOST: store '" + store + "' folder '" + Display(folderKey) + "' "
+            failures.Add(new TripwireFailure(
+                "items-lost|" + store + "|" + folderKey,
+                "  ITEMS LOST: store '" + store + "' folder '" + Display(folderKey) + "' "
                 + Count(wasCount) + " -> " + Count(nowCount) + " (" + Count(delta)
-                + "); counted only, so WHICH items left is not known (folder above the identity budget).");
+                + "); counted only, so WHICH items left is not known (folder above the identity budget)."));
         }
         else if (!isHub)
         {
@@ -311,7 +359,7 @@ public static class StoreCountTripwire
     /// </summary>
     private static void EvaluateByIdentity(
         string store, string folderKey, FolderCensus was, FolderCensus now, bool exempt,
-        RelocationIndex relocations, List<string> failures, List<string> notes,
+        RelocationIndex relocations, List<TripwireFailure> failures, List<string> notes,
         ref int taggedDepartures, ref bool sawDepartures)
     {
         HashSet<string> present = new(now.Items!.Select(i => i.Id), StringComparer.Ordinal);
@@ -364,9 +412,11 @@ public static class StoreCountTripwire
         string rest = removed.Count > MaxReportedDepartures
             ? " and " + Count(removed.Count - MaxReportedDepartures) + " more"
             : string.Empty;
-        failures.Add("  ITEMS REMOVED: store '" + store + "' folder '" + Display(folderKey) + "' lost "
+        failures.Add(new TripwireFailure(
+            "items-removed|" + store + "|" + folderKey,
+            "  ITEMS REMOVED: store '" + store + "' folder '" + Display(folderKey) + "' lost "
             + Count(removed.Count) + " item(s) (" + Count(was.Count) + " -> " + Count(now.Count)
-            + ", " + Count(arrived) + " arriving): " + listed + rest + ".");
+            + ", " + Count(arrived) + " arriving): " + listed + rest + "."));
     }
 
     /// <summary>
@@ -390,7 +440,7 @@ public static class StoreCountTripwire
     /// deleting his own mail during a 27-minute run produces the same reading as a runaway
     /// test doing it, so the guard fails either way and hands over what it saw.
     /// </summary>
-    private static string? Attribute(IReadOnlyList<string> failures, int taggedDepartures, bool sawDepartures)
+    private static string? Attribute(IReadOnlyList<TripwireFailure> failures, int taggedDepartures, bool sawDepartures)
     {
         if (failures.Count == 0)
         {

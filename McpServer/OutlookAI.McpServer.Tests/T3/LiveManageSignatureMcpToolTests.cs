@@ -17,8 +17,9 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// the guarded LiveSignatureManage collection: the fixture's snapshot proves the real
 /// signatures bit-identical afterwards.
 /// </summary>
-[Collection("LiveSignatureManage")]
+[Collection(LiveCollections.SignatureManage)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "Portable")]
 public sealed class LiveManageSignatureMcpToolTests
 {
     private readonly LiveSignatureManageFixture _fixture;

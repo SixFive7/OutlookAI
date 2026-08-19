@@ -12,9 +12,12 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// S4: only counts/flags asserted).
 /// </summary>
 [Trait("Category", "Live")]
+[Collection(LiveCollections.McpToolShape)]
 public sealed class Phase7LiveMcpToolShapeTests
 {
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "SmallHubStore")]
     public async Task Search_TopOne_OnHubStore_SetsTruncated_AndTopHundredDoesNot()
     {
         LiveTestSettings settings = LiveTestSettings.Load();
@@ -50,6 +53,8 @@ public sealed class Phase7LiveMcpToolShapeTests
     }
 
     [Fact]
+    [Trait("LiveTier", "Portable")]
+    [Trait("Requires", "AddInRegistry")]
     public async Task Health_OverStdio_OnThisMachine_HasOutlookVersionAndTuning()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();

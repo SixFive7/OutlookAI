@@ -13,8 +13,10 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// read + save_attachment + content grep, and every artifact is deleted afterwards
 /// (S3: tag + unique marker double-match, this run's items only).
 /// </summary>
-[Collection("LivePhase2")]
+[Collection(LiveCollections.Phase2)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "Transport")]
 public sealed class LiveFreshModeTests
 {
     private static readonly TimeSpan ArrivalTimeout = TimeSpan.FromSeconds(120);

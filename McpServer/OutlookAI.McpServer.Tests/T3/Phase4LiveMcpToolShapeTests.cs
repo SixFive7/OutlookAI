@@ -14,8 +14,11 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// after assert with a 0-remaining count (S3). Output is content-free for business
 /// stores (S4) - everything logged here is agent-authored hub content or booleans.
 /// </summary>
-[Collection("LivePhase4")]
+[Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "MailAccount")]
+[Trait("Requires", "Transport")]
 public sealed class Phase4LiveMcpToolShapeTests
 {
     /// <summary>

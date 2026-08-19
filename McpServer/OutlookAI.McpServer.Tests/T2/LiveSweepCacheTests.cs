@@ -13,8 +13,9 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// A frontier advance between calls (new mail indexed mid-test on this live machine)
 /// legitimately invalidates the cache, so the rapid pair retries a few times.
 /// </summary>
-[Collection("LivePhase2")]
+[Collection(LiveCollections.Phase2)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "Portable")]
 public sealed class LiveSweepCacheTests
 {
     private readonly LivePhase2Fixture _fixture;

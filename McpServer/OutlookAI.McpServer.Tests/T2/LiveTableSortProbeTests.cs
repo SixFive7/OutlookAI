@@ -42,8 +42,9 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// The verdict is printed, per store, in the summary block at the end.
 /// </para>
 /// </summary>
-[Collection("LivePhase3")]
+[Collection(LiveCollections.Phase3)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "Portable")]
 public sealed class LiveTableSortProbeTests
 {
     /// <summary>The explicit built-in name Microsoft's own <c>Table.Sort</c> example uses.</summary>

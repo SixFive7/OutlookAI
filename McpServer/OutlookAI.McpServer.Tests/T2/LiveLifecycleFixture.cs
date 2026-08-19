@@ -55,15 +55,17 @@ public sealed class LiveLifecycleFixture : IDisposable
         }
         finally
         {
-            // LAST collection in the suite (SuiteCollectionOrderer forces it): re-count
-            // every watched store and fail loudly on any loss outside the hub. Outside the
-            // try/catch above on purpose - a tripwire that can be swallowed is not one.
-            LiveStoreCountTripwire.Verify();
+            // Forced last by SuiteCollectionOrderer, so in a WHOLE-TIER run this is where
+            // every watched store is re-counted and any loss outside the hub fails loudly.
+            // It is not asserted here, though: a filtered run may not contain this collection
+            // at all, so the decision belongs to LiveTierRunPlan. Outside the try/catch above
+            // on purpose - a tripwire that can be swallowed is not one.
+            LiveStoreCountTripwire.CollectionFinished(LiveCollections.Lifecycle);
         }
     }
 }
 
-[CollectionDefinition("LiveLifecycle")]
+[CollectionDefinition(LiveCollections.Lifecycle)]
 public sealed class LiveLifecycleCollection : ICollectionFixture<LiveLifecycleFixture>
 {
 }

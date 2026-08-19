@@ -19,8 +19,10 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// lag-tolerantly, and an audit line is asserted for EVERY step. All artifacts are
 /// hub-only (S2/D20), tagged + marker'd and deleted to stable zero (S3).
 /// </summary>
-[Collection("LivePhase5")]
+[Collection(LiveCollections.Phase5)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "Transport")]
 public sealed class Phase5LiveMcpToolShapeTests
 {
     /// <summary>

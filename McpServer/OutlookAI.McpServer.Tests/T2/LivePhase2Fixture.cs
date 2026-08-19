@@ -28,12 +28,29 @@ public sealed class LivePhase2Fixture : IDisposable
 
     public void Dispose()
     {
+        try
+        {
+            DisposeCore();
+        }
+        finally
+        {
+            // Outside the teardown on purpose, exactly like LiveLifecycleFixture's copy: a
+            // tripwire that can be swallowed is not one. Whether this is where the run gets
+            // verified depends on the FILTER, which LiveTierRunPlan knows and this fixture
+            // does not.
+            LiveStoreCountTripwire.CollectionFinished(LiveCollections.Phase2);
+        }
+    }
+
+    /// <summary>This fixture's own teardown, separated so the tripwire signal cannot be skipped.</summary>
+    private void DisposeCore()
+    {
         // Releases COM references only - Outlook keeps running (S7: never kill/close).
         Service.Dispose();
     }
 }
 
-[CollectionDefinition("LivePhase2")]
+[CollectionDefinition(LiveCollections.Phase2)]
 public sealed class LivePhase2Collection : ICollectionFixture<LivePhase2Fixture>
 {
 }

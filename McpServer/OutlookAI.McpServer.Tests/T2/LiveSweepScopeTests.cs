@@ -27,7 +27,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// afterwards. Business stores are not touched. Logging is counts, timings and
 /// self-authored markers only (S4).
 /// </summary>
-[Collection("LiveMoveArchive")]
+[Collection(LiveCollections.MoveArchive)]
 [Trait("Category", "Live")]
 public sealed class LiveSweepScopeTests
 {
@@ -49,6 +49,8 @@ public sealed class LiveSweepScopeTests
     // ------------------------------------------------ fix 1: cross-column AND (index tier)
 
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "SearchIndex")]
     public void IndexTier_TwoTerms_OneInSubjectOneInBody_AreFoundTogether()
     {
         // Ground truth: a hub mail carrying a word in its subject that its own body does
@@ -85,6 +87,8 @@ public sealed class LiveSweepScopeTests
     // -------------------------- fix 1 (tool tier) + fix 2, on ONE controlled corpus
 
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "Transport")]
     public void ControlledCorpus_CrossColumnTermsMatch_AndTheSweepFollowsTheSearchScope()
     {
         LiveOutlookTestMailer.DeleteTestFolders(Hub);
@@ -257,6 +261,7 @@ public sealed class LiveSweepScopeTests
     }
 
     [Fact]
+    [Trait("LiveTier", "Portable")]
     public void FolderScopedSweep_UnknownFolder_DegradesWithAdvice_NeverThrows()
     {
         Service.ClearSweepCache();
@@ -279,6 +284,7 @@ public sealed class LiveSweepScopeTests
     }
 
     [Fact]
+    [Trait("LiveTier", "Portable")]
     public void DefaultSweep_CoversTheArrivalPathFolders_WithinBudget()
     {
         // The default set is the freshness contract for every non-folder-scoped search:

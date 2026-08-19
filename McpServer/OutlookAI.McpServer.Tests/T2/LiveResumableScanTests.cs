@@ -24,8 +24,9 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// edited or deleted, so no test artifact exists to sweep up afterwards.
 /// </para>
 /// </summary>
-[Collection("LivePhase3")]
+[Collection(LiveCollections.Phase3)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "Portable")]
 public sealed class LiveResumableScanTests
 {
     /// <summary>

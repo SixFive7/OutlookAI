@@ -15,8 +15,10 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// the show calls drive is parked on the test-hub store with a no-match query (S2/S5:
 /// nothing but an empty result list ever appears).
 /// </summary>
-[Collection("LivePhase3")]
+[Collection(LiveCollections.Phase3)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "Portable")]
+[Trait("Requires", "InteractiveDesktop")]
 public sealed class LiveUiSearchBackendTests
 {
     private const string NoMatchQuery = "OutlookAiMcpNoSuchTerm7391";

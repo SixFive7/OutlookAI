@@ -8,12 +8,43 @@ using Xunit;
 namespace OutlookAI.McpServer.Tests.T2;
 
 /// <summary>
+/// What KIND of machine the live tier is running on. Declared by the settings file rather
+/// than sniffed, because every way of guessing it is a way of guessing it wrong: a profile
+/// that happens to have no delegate store today is not thereby a test machine.
+/// </summary>
+public enum LiveMachineProfile
+{
+    /// <summary>
+    /// A real working profile - mail accounts, delegate/shared mailboxes, a populated
+    /// Windows Search index. The default, so a settings file written before this field
+    /// existed keeps the strict validation it was written under.
+    /// </summary>
+    Production = 0,
+
+    /// <summary>
+    /// A dedicated test machine: PST stores only, no mail accounts, no delegate mailboxes,
+    /// nothing in the local search index. Tests that need any of those are
+    /// <c>LiveTier=ProfileBound</c> and must be filtered out; this value does not make them
+    /// pass, it makes the settings file honest about what the machine can offer.
+    /// </summary>
+    Portable = 1,
+}
+
+/// <summary>
 /// Machine-local settings for the T2 live tier, loaded from the gitignored
 /// live-fixtures/ folder: account/store identifiers must never be committed to this
-/// PUBLIC repo (v3.MD S6/D13). The file is created once on the dev machine.
+/// PUBLIC repo (v3.MD S6/D13). The file is created once per machine - see
+/// <c>Docs/live-tier-on-the-vm.md</c> for the two shapes it can take.
 /// </summary>
 public sealed class LiveTestSettings
 {
+    /// <summary>
+    /// What this machine is. Drives which of the blocks below are mandatory: a test machine
+    /// with no accounts cannot supply a real index probe term or a subject-only population,
+    /// and demanding them would only get them invented.
+    /// </summary>
+    public LiveMachineProfile MachineProfile { get; set; } = LiveMachineProfile.Production;
+
     /// <summary>Display name of the designated test-hub store (v3.MD S2/D14).</summary>
     public string TestHubStoreDisplayName { get; set; } = string.Empty;
 
@@ -59,25 +90,102 @@ public sealed class LiveTestSettings
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
             ?? throw new InvalidOperationException("Live-test settings file deserialized to null.");
 
+        Validate(settings);
+        return settings;
+    }
+
+    /// <summary>
+    /// The completeness rules, split by machine profile and separated from the file read so
+    /// CI pins them without a settings file existing at all.
+    /// <para>
+    /// Two things are required everywhere, because without them nothing can run and nothing
+    /// can be protected: the hub store to write in, and the list of stores the count tripwire
+    /// watches. The index probe term and the subject-only population are required on a
+    /// PRODUCTION profile only. They name real mail that a test machine does not have, and a
+    /// blanket requirement does not conjure it - it just gets a plausible-looking value typed
+    /// into the file, which is worse than an absent one because the tests that read it then
+    /// fail somewhere far away from the mistake.
+    /// </para>
+    /// </summary>
+    internal static void Validate(LiveTestSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
         if (string.IsNullOrWhiteSpace(settings.TestHubStoreDisplayName)
-            || settings.ExpectedStoreDisplayNames.Count == 0
-            || string.IsNullOrWhiteSpace(settings.ProbeTerm))
+            || settings.ExpectedStoreDisplayNames.Count == 0)
         {
-            throw new InvalidOperationException("Live-test settings file is incomplete.");
+            throw new InvalidOperationException(
+                "Live-test settings file is incomplete: testHubStoreDisplayName and at least one entry in "
+                + "expectedStoreDisplayNames are required on every machine (the hub is where the suite may "
+                + "write; expectedStoreDisplayNames is what the count tripwire watches).");
         }
 
-        if (settings.SubjectOnlyProbe == null
-            || string.IsNullOrWhiteSpace(settings.SubjectOnlyProbe.StoreDisplayName)
-            || string.IsNullOrWhiteSpace(settings.SubjectOnlyProbe.FolderPath)
-            || string.IsNullOrWhiteSpace(settings.SubjectOnlyProbe.SubjectTerm)
-            || string.IsNullOrWhiteSpace(settings.SubjectOnlyProbe.SenderFragment))
+        // A partial block is a mistake on any machine: it reads as configured and behaves as
+        // absent. Absent is allowed on a Portable machine; half-written never is.
+        if (settings.SubjectOnlyProbe != null && !settings.SubjectOnlyProbe.IsComplete)
+        {
+            throw new InvalidOperationException(
+                "Live-test settings have a partially filled 'subjectOnlyProbe' block. All four of "
+                + "storeDisplayName, folderPath, subjectTerm and senderFragment are needed, or leave the "
+                + "block out entirely.");
+        }
+
+        if (settings.MachineProfile != LiveMachineProfile.Production)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.ProbeTerm))
+        {
+            throw new InvalidOperationException(
+                "Live-test settings are missing 'probeTerm' (a word proven to hit this machine's search "
+                + "index). Required on a Production profile; set machineProfile to 'Portable' on a test "
+                + "machine that has no index.");
+        }
+
+        if (settings.SubjectOnlyProbe == null)
         {
             throw new InvalidOperationException(
                 "Live-test settings are missing the 'subjectOnlyProbe' block (storeDisplayName, folderPath, "
-                + "subjectTerm, senderFragment) required by the D40/SF-6 recall regression.");
+                + "subjectTerm, senderFragment) required by the D40/SF-6 recall regression. Required on a "
+                + "Production profile; set machineProfile to 'Portable' on a test machine that has no such "
+                + "population.");
+        }
+    }
+
+    /// <summary>
+    /// Refuses, on a Production profile, to let a test report success having proven nothing.
+    /// <para>
+    /// Several live tests discover their own population and return early when it is absent -
+    /// a delegate folder that is nested in Outlook and flat in the index, a hub account row
+    /// in the signature registry. On the machine those tests were written for, absent means
+    /// something is wrong with the machine, and returning green hides it. On a Portable
+    /// machine absent is simply the truth, and the test should not have been selected: it is
+    /// <c>LiveTier=ProfileBound</c>. So this throws on the first and no-ops on the second.
+    /// </para>
+    /// </summary>
+    /// <param name="what">The population that was not found, named as a reader would name it.</param>
+    public void RequireProductionPopulation(string what)
+    {
+        if (MachineProfile != LiveMachineProfile.Production)
+        {
+            return;
         }
 
-        return settings;
+        throw new InvalidOperationException(
+            "This machine declares machineProfile 'Production', where " + what + " is expected to exist. "
+            + "It was not found, so this test can prove nothing and refuses to report success. Either the "
+            + "machine or the live-test settings have drifted; a machine that genuinely lacks it should "
+            + "declare machineProfile 'Portable' and exclude LiveTier=ProfileBound tests.");
+    }
+
+    /// <summary>One line naming what this machine claims to be, printed at the start of a live run.</summary>
+    public string Describe()
+    {
+        return "machineProfile=" + MachineProfile
+            + ", stores=" + ExpectedStoreDisplayNames.Count
+            + ", delegateStores=" + ExpectedDelegateStoreDisplayNames.Count
+            + ", probeTerm=" + (string.IsNullOrWhiteSpace(ProbeTerm) ? "none" : "set")
+            + ", subjectOnlyProbe=" + (SubjectOnlyProbe == null ? "none" : "set");
     }
 }
 
@@ -102,6 +210,13 @@ public sealed class SubjectOnlyProbeSettings
 
     /// <summary>Sender-address fragment selecting exactly the same population (the independent expectation).</summary>
     public string SenderFragment { get; set; } = string.Empty;
+
+    /// <summary>True when all four coordinates are present. A block with three of them is a typo, not a choice.</summary>
+    public bool IsComplete =>
+        !string.IsNullOrWhiteSpace(StoreDisplayName)
+        && !string.IsNullOrWhiteSpace(FolderPath)
+        && !string.IsNullOrWhiteSpace(SubjectTerm)
+        && !string.IsNullOrWhiteSpace(SenderFragment);
 }
 
 /// <summary>
@@ -211,6 +326,23 @@ public sealed class LivePhase1Fixture : IDisposable
 
     public void Dispose()
     {
+        try
+        {
+            DisposeCore();
+        }
+        finally
+        {
+            // Outside the teardown on purpose, exactly like LiveLifecycleFixture's copy: a
+            // tripwire that can be swallowed is not one. Whether this is where the run gets
+            // verified depends on the FILTER, which LiveTierRunPlan knows and this fixture
+            // does not.
+            LiveStoreCountTripwire.CollectionFinished(LiveCollections.Phase1);
+        }
+    }
+
+    /// <summary>This fixture's own teardown, separated so the tripwire signal cannot be skipped.</summary>
+    private void DisposeCore()
+    {
         if (_session.IsValueCreated)
         {
             // Releases COM references only - Outlook keeps running (S7: never kill/close).
@@ -219,7 +351,7 @@ public sealed class LivePhase1Fixture : IDisposable
     }
 }
 
-[CollectionDefinition("LivePhase1")]
+[CollectionDefinition(LiveCollections.Phase1)]
 public sealed class LivePhase1Collection : ICollectionFixture<LivePhase1Fixture>
 {
 }

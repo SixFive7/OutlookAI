@@ -89,6 +89,23 @@ public sealed class LivePhase4Fixture : IDisposable
     {
         try
         {
+            DisposeCore();
+        }
+        finally
+        {
+            // Outside the teardown on purpose, exactly like LiveLifecycleFixture's copy: a
+            // tripwire that can be swallowed is not one. Whether this is where the run gets
+            // verified depends on the FILTER, which LiveTierRunPlan knows and this fixture
+            // does not.
+            LiveStoreCountTripwire.CollectionFinished(LiveCollections.Phase4);
+        }
+    }
+
+    /// <summary>This fixture's own teardown, separated so the tripwire signal cannot be skipped.</summary>
+    private void DisposeCore()
+    {
+        try
+        {
             // Final belt: purge anything of THIS run still tagged in the hub store.
             LiveOutlookTestMailer.DeleteTaggedArtifacts(Settings.TestHubStoreDisplayName, RunMarker);
         }
@@ -112,7 +129,7 @@ public sealed class LivePhase4Fixture : IDisposable
     }
 }
 
-[CollectionDefinition("LivePhase4")]
+[CollectionDefinition(LiveCollections.Phase4)]
 public sealed class LivePhase4Collection : ICollectionFixture<LivePhase4Fixture>
 {
 }

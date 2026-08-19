@@ -17,8 +17,13 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// immediately. Every artifact carries tag + run marker and is deleted after assert
 /// (S3); each test ends by proving 0 marker artifacts remain in the folders it touched.
 /// </summary>
-[Collection("LivePhase4")]
+[Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "MailAccount")]
+[Trait("Requires", "MultipleStores")]
+[Trait("Requires", "Transport")]
+[Trait("Requires", "InteractiveDesktop")]
 public sealed class LiveDraftTests
 {
     private const int OlFolderDrafts = 16;

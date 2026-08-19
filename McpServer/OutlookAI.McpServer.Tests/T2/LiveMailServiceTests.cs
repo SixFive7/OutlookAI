@@ -12,8 +12,12 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// online-only flags), list_folders, thread on both paths, and outlook_health. Logging is
 /// content-free for business stores (S4): counts, ids, timings, booleans only.
 /// </summary>
-[Collection("LivePhase2")]
+[Collection(LiveCollections.Phase2)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "SearchIndex")]
+[Trait("Requires", "MultipleStores")]
+[Trait("Requires", "DelegateStore")]
 public sealed class LiveMailServiceTests
 {
     private readonly LivePhase2Fixture _fixture;

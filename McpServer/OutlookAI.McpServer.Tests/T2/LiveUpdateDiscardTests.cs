@@ -27,8 +27,11 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// for a draft is invalidated by attaching a file to it.
 /// </para>
 /// </summary>
-[Collection("LivePhase4")]
+[Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "MailAccount")]
+[Trait("Requires", "Transport")]
 public sealed class LiveUpdateDiscardTests
 {
     private readonly LivePhase4Fixture _fixture;

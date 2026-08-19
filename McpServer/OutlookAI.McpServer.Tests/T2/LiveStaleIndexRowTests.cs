@@ -20,8 +20,12 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// no subject, sender or body reaches the output (S4), and nothing is written (S1).
 /// </para>
 /// </summary>
-[Collection("LivePhase2")]
+[Collection(LiveCollections.Phase2)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "SearchIndex")]
+[Trait("Requires", "DelegateStore")]
+[Trait("Requires", "ProbePopulation")]
 public sealed class LiveStaleIndexRowTests
 {
     private readonly LivePhase2Fixture _fixture;

@@ -19,8 +19,11 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// only and cleans up through the tested helpers.
 /// </para>
 /// </summary>
-[Collection("LivePhase1")]
+[Collection(LiveCollections.Phase1)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "SearchIndex")]
+[Trait("Requires", "Transport")]
 public sealed class LiveAttachmentKindRecallTests
 {
     /// <summary>TOP for the attachment-hit probe search, shared so a re-run is the SAME search.</summary>

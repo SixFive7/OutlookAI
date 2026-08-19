@@ -43,8 +43,10 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// every condition through ScenarioClock.WaitUntil, so the failure names the step, its
 /// budget, and the state observed when it expired.
 /// </summary>
-[Collection("LiveLifecycle")]
+[Collection(LiveCollections.Lifecycle)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "MailAccount")]
 public sealed class LiveDisconnectRecoveryTests
 {
     private readonly LiveLifecycleFixture _fixture;

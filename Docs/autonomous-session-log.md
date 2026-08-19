@@ -33,6 +33,15 @@ reasoning, and flagged for review rather than buried.
 | Sweep timeout | **(d)** make expiry graceful **and** distinguish budget expiry from unresponsiveness at the supervisor | **shipped** `4502c92` |
 | H3 (undated mail invisible to the sweep) | Check whether DASL can express "or the property is absent" first; failing that, report it; full fallback enumeration only if it proves common | **answered by measurement - NOT fixed, see section 3** |
 
+## 1b. Decisions given 2026-08-19, after the overnight run
+
+| Question | Answer | State |
+| --- | --- | --- |
+| The two corpus-generator defects (Outbox duplication; placement probe failing on a large folder) | **Fix both** | queued |
+| If the sort probe confirms the sweep has never sorted | **Fix immediately, AND re-measure the corpus** - the 180 s sweep budget was measured with the sort failing, so a working sort may change the cost | conditional on the probe |
+| `discard_draft`'s "Nothing was changed" wording | **Audit every such claim in the product**, not just that one - the phrase asserts atomicity and the product has been wrong about it once already | queued |
+| Authorising the `claude.ai` and `VF Dev` MCP servers | **Leave them** - nothing here depends on either | closed |
+
 ## 2. Timeout values - SHIPPED in `4502c92`
 
 | Constant | Was | Now | Derivation |

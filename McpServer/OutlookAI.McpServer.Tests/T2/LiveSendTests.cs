@@ -13,8 +13,11 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// audit log is asserted to contain NO send line for this run's drafts). All artifacts
 /// are hub-only drafts (S2/D20), tagged + marker'd, deleted after assert (S3).
 /// </summary>
-[Collection("LivePhase5")]
+[Collection(LiveCollections.Phase5)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "MailAccount")]
+[Trait("Requires", "MultipleStores")]
 public sealed class LiveSendTests
 {
     private readonly LivePhase5Fixture _fixture;

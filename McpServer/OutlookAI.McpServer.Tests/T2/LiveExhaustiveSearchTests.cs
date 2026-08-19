@@ -15,7 +15,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// vs exhaustive hits' EntryIDs surfaced through read (cache-only, no locate). Only the
 /// tiny hub store is scanned (S2); logging is counts/timings/terms only (S4).
 /// </summary>
-[Collection("LivePhase3")]
+[Collection(LiveCollections.Phase3)]
 [Trait("Category", "Live")]
 public sealed class LiveExhaustiveSearchTests
 {
@@ -35,6 +35,8 @@ public sealed class LiveExhaustiveSearchTests
     private string Hub => _fixture.Settings.TestHubStoreDisplayName;
 
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "SearchIndex")]
     public void Exhaustive_KnownAnswer_MatchesIndexAndGroundTruth_OnHubStore()
     {
         IReadOnlyList<OutlookAI.Core.Com.ComWalkedItem> corpus = _fixture.TestHubCorpus;
@@ -138,6 +140,7 @@ public sealed class LiveExhaustiveSearchTests
     }
 
     [Fact]
+    [Trait("LiveTier", "Portable")]
     public void Exhaustive_FolderBounded_ReturnsExactlyThatFoldersMatches()
     {
         IReadOnlyList<OutlookAI.Core.Com.ComWalkedItem> corpus = _fixture.TestHubCorpus;

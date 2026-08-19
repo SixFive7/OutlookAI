@@ -28,8 +28,12 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </para>
 /// All artifacts carry tag + run marker and are deleted through the tested helpers (S3).
 /// </summary>
-[Collection("LivePhase4")]
+[Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "MailAccount")]
+[Trait("Requires", "MultipleStores")]
+[Trait("Requires", "Transport")]
 public sealed class LiveDraftOptionsTests
 {
     private readonly LivePhase4Fixture _fixture;

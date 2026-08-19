@@ -24,7 +24,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// paths only, never a subject, sender or body (S4). Every write targets the hub (S2),
 /// carries the run tag + marker (S3) and is removed through the TESTED allowlist helpers.
 /// </summary>
-[Collection("LiveMoveArchive")]
+[Collection(LiveCollections.MoveArchive)]
 [Trait("Category", "Live")]
 public sealed class LiveFolderScopeTests
 {
@@ -46,6 +46,9 @@ public sealed class LiveFolderScopeTests
     // ==================================================== 1. the delegate defect (read-only)
 
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "DelegateStore")]
     public void DelegateSubfolders_AreReachableAgain_AndTheOldNestedShapeStillReturnsZero()
     {
         IReadOnlyList<string> delegates = _fixture.Settings.ExpectedDelegateStoreDisplayNames;
@@ -151,6 +154,9 @@ public sealed class LiveFolderScopeTests
     }
 
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "DelegateStore")]
     public void DelegateFirstLevelFolders_StillResolve_AndTheWholeMailboxIsUnfiltered()
     {
         foreach (string delegateStore in _fixture.Settings.ExpectedDelegateStoreDisplayNames)
@@ -194,6 +200,9 @@ public sealed class LiveFolderScopeTests
     // ============================================ 2. primary-store narrowing (read-only)
 
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void PrimaryStore_ExcludeSubfolders_NarrowsExactly_AndCostsNothing()
     {
         // A primary-store folder WITH children: recursive must return strictly more than
@@ -283,6 +292,8 @@ public sealed class LiveFolderScopeTests
     // ================================== 3. include_subfolders end to end (hub writes only)
 
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "MailAccount")]
     public void HubSubtree_SweepAndExhaustive_HonorIncludeSubfolders_AndTheCacheKeepsThemApart()
     {
         LiveOutlookTestMailer.DeleteTestFolders(Hub);
@@ -384,6 +395,8 @@ public sealed class LiveFolderScopeTests
     // ==================================== 4. escaping + the non-silent zero-row guard
 
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "MailAccount")]
     public void ApostropheInAFolderName_IsSearchable_InsteadOfThrowing()
     {
         LiveOutlookTestMailer.DeleteTestFolders(Hub);
@@ -442,6 +455,8 @@ public sealed class LiveFolderScopeTests
     }
 
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "SearchIndex")]
     public void UnresolvedFolderPath_IsReportedAsAResolutionProblem_NotAnEmptyResult()
     {
         Service.ClearSweepCache();
@@ -479,6 +494,7 @@ public sealed class LiveFolderScopeTests
     }
 
     [Fact]
+    [Trait("LiveTier", "Portable")]
     public void TopAboveTheCap_IsReportedAsAClamp()
     {
         SearchOutcome outcome = Service.Search(new SearchRequest

@@ -49,6 +49,23 @@ public sealed class LiveSignatureManageFixture : IDisposable
     {
         try
         {
+            DisposeCore();
+        }
+        finally
+        {
+            // Outside the teardown on purpose, exactly like LiveLifecycleFixture's copy: a
+            // tripwire that can be swallowed is not one. Whether this is where the run gets
+            // verified depends on the FILTER, which LiveTierRunPlan knows and this fixture
+            // does not.
+            LiveStoreCountTripwire.CollectionFinished(LiveCollections.SignatureManage);
+        }
+    }
+
+    /// <summary>This fixture's own teardown, separated so the tripwire signal cannot be skipped.</summary>
+    private void DisposeCore()
+    {
+        try
+        {
             // Belt: no test-prefixed signature entry may survive the suite (each test
             // already cleans up; exact-prefix enumeration only - 7d incident
             // discipline keeps this away from any mailbox and any real signature).
@@ -90,7 +107,7 @@ public sealed class LiveSignatureManageFixture : IDisposable
     }
 }
 
-[CollectionDefinition("LiveSignatureManage")]
+[CollectionDefinition(LiveCollections.SignatureManage)]
 public sealed class LiveSignatureManageCollection : ICollectionFixture<LiveSignatureManageFixture>
 {
 }

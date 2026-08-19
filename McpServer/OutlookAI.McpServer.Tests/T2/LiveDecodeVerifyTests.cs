@@ -23,8 +23,11 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// May start Outlook (S7/D17); never stops it. Logging is content-free (S4): counts,
 /// hex ids, hresults, timings - no subjects/bodies.
 /// </summary>
-[Collection("LivePhase1")]
+[Collection(LiveCollections.Phase1)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "SearchIndex")]
+[Trait("Requires", "MultipleStores")]
 public sealed class LiveDecodeVerifyTests
 {
     private const int SampleTarget = 25;

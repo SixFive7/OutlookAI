@@ -12,6 +12,11 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// Outlook (S7/D17). Output stays content-free for business stores (S4).
 /// </summary>
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "SearchIndex")]
+[Trait("Requires", "MultipleStores")]
+[Trait("Requires", "DelegateStore")]
+[Collection(LiveCollections.McpToolShape)]
 public sealed class LiveMcpToolShapeTests
 {
     private readonly ITestOutputHelper _output;

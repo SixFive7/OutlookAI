@@ -23,8 +23,12 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// Everything runs in the hub store only, tagged with the run marker, deleted through the
 /// tested helpers (S3); the one screenshot shows agent-authored content only (S5).
 /// </summary>
-[Collection("LivePhase4")]
+[Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "MailAccount")]
+[Trait("Requires", "Transport")]
+[Trait("Requires", "InteractiveDesktop")]
 public sealed class LiveHtmlDraftTests
 {
     private readonly LivePhase4Fixture _fixture;

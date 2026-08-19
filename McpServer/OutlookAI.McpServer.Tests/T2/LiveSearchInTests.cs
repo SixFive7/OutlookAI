@@ -28,8 +28,11 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// timings only (S4).
 /// </para>
 /// </summary>
-[Collection("LivePhase3")]
+[Collection(LiveCollections.Phase3)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "SearchIndex")]
+[Trait("Requires", "ProbePopulation")]
 public sealed class LiveSearchInTests
 {
     private const int MaxQueryMs = 2000;

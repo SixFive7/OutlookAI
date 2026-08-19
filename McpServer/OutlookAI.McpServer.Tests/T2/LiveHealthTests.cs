@@ -11,8 +11,11 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// writable, tuning managed by the Phase-6 add-in state (S4: assertions are
 /// content-free - counts, flags and version strings only).
 /// </summary>
-[Collection("LivePhase2")]
+[Collection(LiveCollections.Phase2)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "SearchIndex")]
+[Trait("Requires", "MultipleStores")]
 public sealed class LiveHealthTests
 {
     private readonly LivePhase2Fixture _fixture;

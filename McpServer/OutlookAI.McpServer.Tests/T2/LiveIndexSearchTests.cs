@@ -10,8 +10,12 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// content-free for business stores (S4): counts, ids, timings, booleans - never
 /// subjects/bodies.
 /// </summary>
-[Collection("LivePhase1")]
+[Collection(LiveCollections.Phase1)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "SearchIndex")]
+[Trait("Requires", "MultipleStores")]
+[Trait("Requires", "DelegateStore")]
 public sealed class LiveIndexSearchTests
 {
     private const int MaxQueryMs = 2000;

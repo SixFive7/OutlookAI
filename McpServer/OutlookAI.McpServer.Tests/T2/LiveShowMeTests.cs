@@ -17,7 +17,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// capture is window-rect only). All UI work targets the test-hub store (S2/S5);
 /// logging stays content-free for business stores (S4).
 /// </summary>
-[Collection("LivePhase3")]
+[Collection(LiveCollections.Phase3)]
 [Trait("Category", "Live")]
 public sealed class LiveShowMeTests
 {
@@ -44,6 +44,8 @@ public sealed class LiveShowMeTests
     private string Hub => _fixture.Settings.TestHubStoreDisplayName;
 
     [Fact]
+    [Trait("LiveTier", "Portable")]
+    [Trait("Requires", "InteractiveDesktop")]
     public void GotoFolder_HubFolder_ActiveExplorerCurrentFolderMatches()
     {
         // Locale-proof target: a real TOP-LEVEL folder path reported by list_folders
@@ -89,6 +91,9 @@ public sealed class LiveShowMeTests
     }
 
     [Fact]
+    [Trait("LiveTier", "ProfileBound")]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "InteractiveDesktop")]
     public void OpenInOutlook_HubMail_InspectorForRightEntryIdThenClosedByTest()
     {
         // A hub mail to display - prefer an already-read one (Display can mark unread
@@ -133,6 +138,8 @@ public sealed class LiveShowMeTests
     }
 
     [Fact]
+    [Trait("LiveTier", "Portable")]
+    [Trait("Requires", "InteractiveDesktop")]
     public void ShowSearchResults_ScopeFeatureTest_AndHubScopedScreenshot()
     {
         // Park the window on the hub store first: current_folder/subfolders scopes then

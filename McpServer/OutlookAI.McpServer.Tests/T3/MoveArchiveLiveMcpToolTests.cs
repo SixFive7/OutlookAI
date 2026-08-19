@@ -13,8 +13,10 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// are pinned on the wire. HUB ONLY (S2); everything is deleted via the allowlist
 /// helpers with zero-remaining asserts (items and the test folder).
 /// </summary>
-[Collection("LiveMoveArchive")]
+[Collection(LiveCollections.MoveArchive)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "Transport")]
 public sealed class MoveArchiveLiveMcpToolTests
 {
     /// <summary>

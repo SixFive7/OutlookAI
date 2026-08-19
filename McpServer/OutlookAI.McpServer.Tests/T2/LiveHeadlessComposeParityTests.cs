@@ -26,8 +26,10 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// because a test that only holds in ONE window state is precisely the gap D48 fell into.
 /// </para>
 /// </summary>
-[Collection("LivePhase4")]
+[Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "MailAccount")]
 public sealed class LiveHeadlessComposeParityTests
 {
     private readonly LivePhase4Fixture _fixture;

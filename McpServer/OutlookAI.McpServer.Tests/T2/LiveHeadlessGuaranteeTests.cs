@@ -15,8 +15,10 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// Delta-based, so it holds both against a headless autostarted Outlook (count 0) and
 /// a user session with open windows.
 /// </summary>
-[Collection("LiveLifecycle")]
+[Collection(LiveCollections.Lifecycle)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "MailAccount")]
 public sealed class LiveHeadlessGuaranteeTests
 {
     private readonly LiveLifecycleFixture _fixture;

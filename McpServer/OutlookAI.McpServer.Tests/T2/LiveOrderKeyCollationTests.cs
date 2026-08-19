@@ -26,8 +26,10 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// Logging is content-free (counts, positions, timings) per the S4 rule.
 /// </para>
 /// </summary>
-[Collection("LivePhase1")]
+[Collection(LiveCollections.Phase1)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "SearchIndex")]
 public sealed class LiveOrderKeyCollationTests
 {
     private const int ProbeTop = 500;

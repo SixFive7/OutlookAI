@@ -37,8 +37,10 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// bounded together with residual rows. Located mail items OUTSIDE the walk remain a
 /// hard failure.
 /// </summary>
-[Collection("LivePhase1")]
+[Collection(LiveCollections.Phase1)]
 [Trait("Category", "Live")]
+[Trait("LiveTier", "ProfileBound")]
+[Trait("Requires", "SearchIndex")]
 public sealed class LiveCompletenessOracleTests
 {
     private const int MinTerms = 3;
