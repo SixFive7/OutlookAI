@@ -144,12 +144,14 @@ Add `-p:Version=<major.minor.patch.build>` to reproduce the release's version st
 | Tier | What | Where it runs |
 |---|---|---|
 | **T1** unit | Pure logic: WS-SQL builder shapes (anti-patterns as negative tests), EntryID codec against recorded hex fixtures, payload caps/truncation, token store, validation | Anywhere, incl. CI |
-| **T2** live integration (`[Trait("Category", "Live")]`) | Against the real SystemIndex and a real Outlook profile | Dev machine only |
+| **T2** live integration (`[Trait("Category", "Live")]`) | Against the real SystemIndex and a real Outlook profile | Dev machine, plus the `LiveTier=Portable` subset on any configured machine |
 | **T3** MCP conformance | Spawns the built exe and speaks real JSON-RPC over stdio (`initialize`, `tools/list`, `tools/call`); CI-safe subset + live subset | Both |
 
 Live-test conventions:
 
-- Machine-local identifiers (store display names, a probe term) live in the **gitignored** `OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json` (`testHubStoreDisplayName`, `expectedStoreDisplayNames[]`, `expectedDelegateStoreDisplayNames[]`, `probeTerm`). The repo is public: account identifiers, live fixtures, audit logs, and screenshots are never committed.
+- Machine-local identifiers (store display names, a probe term) live in the **gitignored** `OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json` (`machineProfile`, `testHubStoreDisplayName`, `expectedStoreDisplayNames[]`, `expectedDelegateStoreDisplayNames[]`, `probeTerm`, `subjectOnlyProbe`). The repo is public: account identifiers, live fixtures, audit logs, and screenshots are never committed.
+- `machineProfile` says what the machine IS: `Production` (the default, and what an older settings file means) or `Portable`. It decides which blocks are mandatory - the hub and the watched stores everywhere, `probeTerm` and `subjectOnlyProbe` only on `Production`, because both name real mail a dedicated test machine does not have.
+- The live tier is split by a second trait. `LiveTier=Portable` (19 of 115 methods) runs on any configured machine; `LiveTier=ProfileBound` (96) needs the maintainer's own profile and carries at least one `Requires` value saying which part of it. `T1/LiveTierInventoryTests` enforces the classification in CI. **How to run either, how to configure a fresh machine, and what to check afterwards: `Docs/live-tier-on-the-vm.md`.**
 - All test writes target one designated low-value **test-hub mailbox** (configured in the settings file); other stores are read-only for tests except property-asserted, never-displayed identity checks.
 - Every test artifact carries the subject tag `[OutlookAI-McpTest]`; deletion requires BOTH the tag and a this-run EntryID/marker match. Cleanup loops until the zero count is **stable** (self-send copies can materialize after a first pass returns zero) and the suite ends with a cross-account sweep asserting zero tagged items.
 - Tests may start Outlook (headless COM start) and drive its UI, but never kill or restart it. Test output never prints subjects/bodies from business stores — counts, ids, hashes, booleans only.

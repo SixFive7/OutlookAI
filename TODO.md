@@ -835,6 +835,71 @@
   since `thread`'s `store` is documented as a speed hint rather than a filter - which is exactly
   C3's own reasoning for allowing it to widen.
 
+- [ ] **Decide what the test VM is FOR, because 96 of 115 live tests cannot move to it as it
+      stands.** The live tier is now split by trait (`LiveTier=Portable` vs `ProfileBound`, see
+      `Docs/live-tier-on-the-vm.md`), and the Portable subset is 19 tests. The limit is not
+      configuration; it is that a profile with no mail accounts cannot create a draft at all
+      (`NewDraft` resolves an Account by SMTP address and refuses when none matches), which takes
+      the draft, update/discard, HTML-draft and send families off the table whatever else is
+      arranged. Four directions, none of them started:
+  - [ ] **Add one dummy mail account to the VM** (POP/IMAP pointing nowhere, send disabled). Would
+        unblock the draft families, and it is the single highest-yield change. **The catch:** the
+        corpus generator refuses to run at all unless the profile has no accounts whatsoever, so
+        the order is corpus first, checkpoint, then account - and re-generating later means
+        removing the account again.
+  - [ ] **Give the hub store an SMTP-shaped display name.** Several tests use
+        `testHubStoreDisplayName` as an address (`to: Hub`, `FindAccountBySmtp(Hub)`), so a PST
+        called `Outlook Data File` fails them before anything else does. Cheap to try; unknown
+        whether Outlook tolerates it.
+  - [ ] **Accept 19 and stop.** Defensible: the 19 include both acceptances the project is blocked
+        on, the sweep-scope and sweep-cache behaviour, and the signature lifecycle. It means the
+        index, accounts, delegate stores and send path are only ever proven on the maintainer's
+        own profile, before a release.
+  - [ ] **Relax the tests instead of the machine** - make the account-count and store-count
+        assertions read from the settings rather than hardcoding three. Would move more tests, and
+        would weaken exactly the assertions that catch a misconfigured profile.
+
+- [ ] **Add the second PST to the test VM - it is what makes the count tripwire mean anything
+      there.** The tripwire exempts the hub store, so a machine whose only store IS the hub gives
+      it nothing to watch: it will census, report zero failures, and be structurally incapable of
+      reporting anything else. Recommended layout and the reason are in
+      `Docs/live-tier-on-the-vm.md` section 2.3. Add it through Outlook's own UI (File > Account
+      Settings > Data Files > Add) rather than a script - creating stores is not something the
+      tested helpers do, and mailbox mutation from ad-hoc shell code is the thing that once
+      destroyed real mail.
+
+- [ ] **Put a few hundred items in the SECOND store, not the corpus, or the identity half of the
+      count tripwire is never exercised.** The identity budget is 500 items per folder and 3,000
+      per store, so a small store is walked item by item and a corpus is not: all four populated
+      corpus folders (Inbox 10,912 / Sent 4,964 / Deleted 2,467 / Junk 1,663) are above the
+      per-folder limit and fall back to counts. Note also that the corpus store must be the HUB -
+      the Portable scans and sweeps all target the hub and take a "corpus too small" early return
+      against an empty one - so the second store is the only one the tripwire can watch anyway.
+
+- [ ] **Live-only, and unguarded by any non-live test: three decisions inside the count tripwire's
+      verification.** Established by construction rather than by mutation, because they sit behind
+      a COM census that no CI test can execute: `CollectionFinished`'s early return on `NotLast`;
+      the keep-alive release and the `_verified` latch in `Verify(final)`; and the key-based
+      intersection in the confirmation census. The KEY itself is pinned in
+      `T1/StoreCountTripwireTests`; the code that uses it is not. The cheap substitute is the same
+      one this file already records for `sortApplied`: a temporary build that forces the branch.
+
+- [ ] **Watch for the count tripwire firing on a PST's Junk folder.** The census marks self-pruning
+      folders by asking the store for its default Deleted Items, Junk and sync-issue folders. A PST
+      may refuse `GetDefaultFolder` for Junk, in which case a generator-made "Junk Email" folder is
+      an ordinary folder and a decrease in it FAILS rather than being noted. Nothing prunes it on a
+      machine with no accounts, so this should stay theoretical - but if the tripwire ever fires on
+      Junk, this is why, and the fix is to mark volatility by folder NAME as well as by default-folder
+      identity.
+
+- [ ] **Two live tests still degrade silently, and were left that way deliberately.**
+      `LiveDraftTests.ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain` and its `LiveSendTests` twin
+      loop over `expectedStoreDisplayNames`, so on a machine with fewer stores they sweep fewer and
+      still pass. Both are `ProfileBound`, so they do not run on a test machine; changing a sweep
+      assertion without a live run to check it was not a trade worth making unsupervised. The other
+      two of the four (`LiveStaleIndexRowTests`, `LiveManageSignatureTests.DefaultAssignment`) now
+      refuse on a Production profile.
+
 - [ ] **Retire v3 planning ignores** — once the local v3 planning files (`v3.MD`, `Docs/v3-probes/`) are no longer needed:
   - [ ] remove the "v3 planning documents" section at the bottom of `.gitignore`
   - [ ] delete the local plan-doc backup folder (location documented in v3.MD §0.8 D16 on the machine that holds it)

@@ -124,7 +124,15 @@ public sealed class LiveManageSignatureTests
             .FirstOrDefault(r => string.Equals(r.Account, Hub, StringComparison.OrdinalIgnoreCase));
         if (hubRow == null)
         {
-            _output.WriteLine("SKIP: hub account not present in the profile signature registry - nothing to test safely.");
+            // Same rule as the delegate probe: on a real profile the hub account IS in the
+            // signature registry, so its absence is a fault to report rather than a reason to
+            // pass. A machine with no mail accounts has no rows at all, which is why this test
+            // is LiveTier=ProfileBound.
+            _fixture.Settings.RequireProductionPopulation(
+                "the hub account's row in the profile signature registry");
+            _output.WriteLine(
+                "PROVED NOTHING: hub account not present in the profile signature registry, so the "
+                + "set-then-restore contract did not run.");
             return;
         }
 

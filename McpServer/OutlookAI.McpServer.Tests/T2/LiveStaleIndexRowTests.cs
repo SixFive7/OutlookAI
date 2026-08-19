@@ -44,7 +44,16 @@ public sealed class LiveStaleIndexRowTests
         if (probe == null || string.IsNullOrWhiteSpace(probe.StoreDisplayName)
             || string.IsNullOrWhiteSpace(probe.FolderName))
         {
-            _output.WriteLine("no delegateNestedFolderProbe configured - skipping the positive half.");
+            // On the machine this test was written for, an absent probe means the settings
+            // have drifted, and returning green would hide it: the whole point here is a
+            // delegate folder Outlook nests and the index publishes flat, and without one
+            // the test proves nothing at all. On a machine that has no delegate mailbox the
+            // absence is simply true - and this test is LiveTier=ProfileBound, so it should
+            // not have been selected there in the first place.
+            _fixture.Settings.RequireProductionPopulation("a delegateNestedFolderProbe population");
+            _output.WriteLine(
+                "PROVED NOTHING: no delegateNestedFolderProbe configured on this machine, so the "
+                + "positive half of this test did not run.");
             return;
         }
 

@@ -17,8 +17,8 @@ reasoning, and flagged for review rather than buried.
 | --- | --- | --- |
 | Tripwire strictness | Detect complications and re-run the affected tests, up to a maximum, rather than failing outright | **queued** |
 | Frame size | Cap bodies at the COM layer | **shipped** `b46cf8a` |
-| Second PST on the testbed | Add one via the tested helpers | **queued** |
-| Live tier | Move the intermediate tier to the VM; keep the ability to run everything against the real system before a release | **queued** |
+| Second PST on the testbed | Add one via the tested helpers | **queued - and now load-bearing, see section 3.36** |
+| Live tier | Move the intermediate tier to the VM; keep the ability to run everything against the real system before a release | **shipped** (uncommitted, 2026-08-19) - traits, guards, settings and runbook; 19 of 115 tests move, and section 3.37 says why the other 96 cannot |
 | `Stick-Test` VM + scratch | Delete both | **done** |
 | Installed MCP server | Leave disabled until the release | **done, nothing to do** |
 | Exhaustive scan | Resumable walk with a continuation token | **shipped** (uncommitted, 2026-08-19) - gap F2 closed; design in `tmp-aitrace/resumable-scan-design.md`, record in `Docs/completeness-gaps.md` F2 |
@@ -510,6 +510,127 @@ converted as each row is next touched.
     worth keeping: a mutation script must be safe to KILL, and the only way to know a tree is clean
     after one is to check it rather than to trust the `finally`.
 
+36. **The live tier's split is two TRAITS, not a filter string somebody has to remember - and
+    the classification is checked in CI.** The brief said not to narrow the tier quietly, and a
+    hand-maintained list of "tests that work on the VM" narrows it the first time somebody adds
+    a test and forgets. So every live test now carries `LiveTier` (`Portable` or `ProfileBound`,
+    exactly one) and, when ProfileBound, at least one `Requires` value naming a capability a
+    test machine cannot have: `SearchIndex`, `MailAccount`, `Transport`, `MultipleStores`,
+    `DelegateStore`, `SmallHubStore`, `ProbePopulation`. Two further values,
+    `InteractiveDesktop` and `AddInRegistry`, describe things a test machine CAN have and
+    constrain only how a run is launched. `T1/LiveTierInventoryTests` reads the assembly's own
+    attributes and fails when a live test has no tier, an unknown tier, a ProfileBound test with
+    no reason, a Portable test claiming a production-only capability, or a `Requires` value
+    outside the vocabulary. **The point is that reclassifying a test to make the VM subset look
+    bigger now requires deleting its reason, which is a visible act.** Counts today: 115 live
+    methods, 19 Portable, 96 ProfileBound, verified by `--list-tests` (discovery only, nothing
+    executed).
+
+37. **Only 19 of 115 can move, and the reason is structural rather than a matter of
+    configuration.** A profile with no mail accounts cannot create a draft at all -
+    `NewDraft` resolves an Account object by SMTP address and refuses when none matches - which
+    puts the whole draft, update/discard, HTML-draft and send families out of reach whatever
+    else is arranged. On top of that, `testHubStoreDisplayName` doubles as an SMTP address in
+    several tests (`to: Hub`, `FindAccountBySmtp(Hub)`), which a PST display name can never
+    satisfy; and several tests assume a hub small enough to page in one request, which a
+    20,000-item corpus is not. **This is the open question I could not decide** - see the end of
+    this section.
+
+38. **Found by reading, and fixed: a filtered live run took a store census and never compared
+    it.** `LiveStoreCountTripwire.Verify` was called from exactly one place -
+    `LiveLifecycleFixture.Dispose` - on the strength of `SuiteCollectionOrderer` forcing that
+    collection last. True for a whole-tier run; false for every filtered one, because a filter
+    that selects no LiveLifecycle test never constructs that fixture. So
+    `--filter "FullyQualifiedName~LiveTableSortProbeTests"` - the exact command section 2 of this
+    log hands the maintainer - would have taken the baseline, paid for it, connected to Outlook,
+    and thrown the census away, reporting green with the guard silently absent. Filtered runs are
+    not an edge case in the new world; they are the whole point of the VM.
+    **The fix uses the one vantage point that can see the run's shape:** xunit hands the
+    collection orderer the collections that survived the filter, before any fixture is
+    constructed. It now publishes that list to a new `LiveTierRunPlan`, every guarded fixture
+    calls `LiveStoreCountTripwire.CollectionFinished(...)` in its dispose, and the tripwire
+    verifies when nothing guarded remains. When no plan was published at all the answer is
+    `Unknown`, which verifies AND stays armed - a census per collection boundary, deliberately,
+    because an unverified run is the one outcome that must not happen.
+
+39. **Found by reading, and fixed: three live classes ran outside every guard.**
+    `LiveMcpToolShapeTests`, `Phase3LiveMcpToolShapeTests` and `Phase7LiveMcpToolShapeTests`
+    carried `Category=Live` and belonged to no collection, so xunit gave each an implicit one
+    with no fixture - no census, no health preflight, no verification. Nine live tests against
+    real mailboxes, one of which drives Outlook's UI and one of which runs a full exhaustive
+    scan. They now share a `LiveMcpToolShape` collection whose fixture exists only to be that
+    hook, and the collection orderer ranks it where those tests already ran (their implicit
+    names sorted after every "Live" name), so bringing them under the guard does not silently
+    move nine live tests to the front of an ordering that was arrived at by being bitten.
+
+40. **Found by reading, and fixed: the tripwire's confirmation census could dismiss a real
+    deletion as noise.** A suspected loss is re-censused and only what fails BOTH times is
+    reported - and the comparison was `verdict.Failures.Intersect(second.Failures)` over the
+    RENDERED message. Those messages carry the folder's before and after counts and how many
+    items arrived, so a single mail landing between the two censuses changes the string and the
+    failure drops out as "enumeration noise". On a real profile during a 27-minute run that is
+    ordinary. Failures now carry a stable `Key` (kind, store, folder - never a tally) beside the
+    message, and the intersection is on the key. **This is strictly stronger, never weaker:**
+    equal strings imply equal keys, so everything confirmed before is still confirmed, plus the
+    cases an arrival used to hide. The comment claiming the intersection required "the SAME
+    items" is corrected to say what it now does.
+
+41. **`machineProfile` in the live-test settings, so a second machine can be configured
+    honestly.** `LiveTestSettings.Load` required `probeTerm` and a complete `subjectOnlyProbe`
+    on every machine. Both name real mail: a word proven to hit this machine's search index, and
+    a population whose term is in the subject and not the body. A test machine has neither, and
+    a requirement that cannot be met honestly gets met dishonestly - somebody types a plausible
+    value and the tests that read it fail somewhere far away from the mistake. The file now
+    declares `Production` or `Portable`; the hub and the watched stores are required on both, the
+    two real-mail blocks only on Production. **`Production` is the default**, so the maintainer's
+    existing settings file keeps exactly the validation it was written under. A block that is
+    PRESENT must still be complete on either profile: three fields out of four reads as
+    configured and behaves as absent.
+
+42. **Two tests that reported success having proven nothing now refuse to, on a Production
+    profile.** `LiveStaleIndexRowTests` returns early when no `delegateNestedFolderProbe` is
+    configured and `LiveManageSignatureTests.DefaultAssignment` when the hub account has no row
+    in the signature registry - each writing a line to the test output and passing green. On the
+    machine they were written for, absent means the machine or the settings have drifted, and
+    green hides it. They now call `RequireProductionPopulation`, which throws on Production and
+    no-ops on Portable, and the Portable path prints `PROVED NOTHING:` rather than `SKIP:`.
+    **The two `ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain` tests were left alone** although
+    they degrade the same way (the "three accounts" loop collapses to whatever the settings
+    list): they are ProfileBound, so they do not run on a test machine, and changing a sweep
+    assertion without a live run to check it is not a trade worth making unsupervised.
+
+43. **Mutation check: 13 decision lines reverted.** Results in the report; the pass is serial by
+    construction, refuses to start unless every anchor is unique AND no replacement is already
+    present, and is verified afterwards by a SEPARATE script that checks both directions - which
+    is the only thing that can be trusted after a kill, since a killed process skips its
+    `finally`. The verifier caught its own false positive on the first attempt (a mutation that
+    DELETES a line has a replacement that is a substring of the original, so it looks applied in
+    a clean tree) and refused to start rather than proceeding, which is the right failure.
+    **Deliberately not mutation-checked, because no non-live test can reach them:**
+    `CollectionFinished`'s early return on `NotLast`, the keep-alive release and the latch in
+    `Verify(final)`, and the key-based intersection inside `Verify` itself - all of them behind a
+    COM census. The KEY is pinned; the intersection that uses it is not.
+
+44. **The count tripwire's first run is predicted in `Docs/live-tier-on-the-vm.md` section 6, and
+    the headline is that the VM as it stands cannot exercise it.** With one PST that is also the
+    hub, `PlanFor` gives the hub a count-only plan and `Evaluate` exempts it, so the guard
+    censuses, identifies nothing, and cannot fail. A second store is what gives it something to
+    watch - and the numbers say what SHAPE that store wants. A 20,000-item corpus is the wrong
+    shape: all four populated folders (Inbox 10,912 / Sent 4,964 / Deleted 2,467 / Junk 1,663) are
+    above the 500-item per-folder limit, so every one falls back to counts and the 3,000-item
+    per-store budget goes almost entirely unspent. **A small store of a few hundred items
+    exercises the identity path completely**, which is the half that was rewritten.
+
+45. **Which store is the hub is not a free choice, and I got it wrong first time.** The obvious
+    layout - corpus as a watched non-hub store, small empty store as the hub - is backwards. The
+    Portable subset is mostly scans and sweeps and every one of them targets the HUB:
+    `LiveResumableScanTests` pages through it, `LiveExhaustiveSearchTests` bounds a scan to one of
+    its folders, `LiveSweepScopeTests` sweeps its arrival-path folders. Against an empty hub they
+    all take their "corpus too small" early return and report green having proven nothing - which
+    is precisely the failure mode this whole pass exists to remove, reintroduced by the store
+    layout. **So: corpus IS the hub, and a small bystander store is what the tripwire watches.**
+    Caught by re-reading my own runbook against the test list rather than by anything failing.
+
 ## 4. VM state (`OutlookAI-TestVM`)
 
 - Guest credentials for PowerShell Direct: `vmadmin` / `***REDACTED-CREDENTIAL***`.
@@ -602,3 +723,18 @@ wraps the column add and the sort together, so `sortApplied: false` cannot say w
 - Whether the sweep recognises the substitute Junk folder the generator creates in a PST. If it does
   not, sweep measurements cover ~92% of the corpus rather than all of it.
 - Everything in `TODO.md` marked as needing a live profile.
+- **The count tripwire has still never executed**, and now neither has the run-plan machinery that
+  decides when it verifies. The pure logic on both sides is pinned in CI; the COM census and the
+  `CollectionFinished` -> `Verify` path are not, and cannot be from a non-live test.
+- **Nobody has run the `LiveTier=Portable` subset anywhere.** The classification is enforced by
+  `T1/LiveTierInventoryTests` and the filter expression is verified by discovery
+  (`--list-tests --filter "Category=Live&LiveTier=Portable"` selects 19 of 115), but no test in that
+  subset has been executed on a machine other than the maintainer's, so "Portable" means "reads as
+  runnable there" and not yet "ran there".
+- **Bringing the three stdio shape classes into a collection changes when they run.** Their implicit
+  collection names sorted after every "Live" name, so `SuiteCollectionOrderer` now ranks the new
+  `LiveMcpToolShape` collection late on purpose, to keep them where they were. That reasoning is
+  from reading xunit's ordering, not from a live run.
+- **The census cost on the maintainer's own profile.** Up to 3,000 items walked per non-hub store,
+  four late-bound property reads each, at least twice per run, over five stores. Never measured. On
+  a local PST it should be milliseconds; Exchange is a different question.

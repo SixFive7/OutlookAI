@@ -368,6 +368,40 @@ if ($comHostFilesScanned -eq 0) {
     }
 }
 
+# ---------------------------------------------------------------------------------------------
+# 11. Live-tier capability vocabulary.
+#     T1/LiveTierInventoryTests holds the vocabulary a live test may use to say WHY it cannot run
+#     on a dedicated test machine, and Docs/live-tier-on-the-vm.md is where a human reads it.
+#     Add a capability to the C# and not the runbook and the runbook silently under-reports what
+#     keeps 96 of 115 tests on one machine - which is the document somebody uses to decide whether
+#     a test can be moved. C# and Markdown cannot see each other, so this is the mechanism.
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+$inventorySource = Read-Source 'McpServer/OutlookAI.McpServer.Tests/T1/LiveTierInventoryTests.cs'
+$runbook = Read-Source 'Docs/live-tier-on-the-vm.md'
+if ($inventorySource -and $runbook) {
+    # Only the production-only block: those are the values that decide the Portable/ProfileBound
+    # split, and the runbook lists them inline as the reason vocabulary.
+    $block = [regex]::Match($inventorySource,
+        'ProductionOnlyCapabilities\s*=\s*\{(?<body>[^}]*)\}')
+    if (-not $block.Success) {
+        Fail "live-tier capability vocabulary" "could not find ProductionOnlyCapabilities in LiveTierInventoryTests.cs - the file changed shape and this check no longer proves anything."
+    } else {
+        $capabilities = @([regex]::Matches($block.Groups['body'].Value, '"([A-Za-z]+)"') |
+            ForEach-Object { $_.Groups[1].Value })
+        if ($capabilities.Count -eq 0) {
+            Fail "live-tier capability vocabulary" "ProductionOnlyCapabilities parsed as empty, which cannot be right - the pattern stopped matching and this check has switched itself off."
+        } else {
+            $undocumented = @($capabilities | Where-Object { $runbook -cnotmatch [regex]::Escape("``$_``") } | Sort-Object)
+            if ($undocumented.Count -gt 0) {
+                Fail "live-tier capability vocabulary" "LiveTierInventoryTests allows $($undocumented -join ', ') but Docs/live-tier-on-the-vm.md never mentions $(if ($undocumented.Count -eq 1) { 'it' } else { 'them' }). The runbook is what somebody reads to decide whether a live test can move to a test machine; a capability missing from it reads as one fewer reason a test is pinned to the dev machine."
+            } else {
+                Pass "live-tier capability vocabulary" "$($capabilities.Count) capabilities, all documented in the runbook"
+            }
+        }
+    }
+}
+
 Write-Host ""
 if ($script:Failures.Count -gt 0) {
     foreach ($f in $script:Failures) {
