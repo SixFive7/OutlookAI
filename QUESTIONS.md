@@ -273,6 +273,95 @@ truncated search or on none of them - and whether it accepts the `1601-01-01 00:
 Until that runs, the guarantee rests on construction rather than on measurement; the failure mode of
 an unaccepted literal is a flagged short answer (`index.candidatesExhausted`), never a silent one.
 
+## Q9 - How much of a mailbox the count tripwire should identify, now that identifying is cheap
+
+**Primer.** The tripwire censuses every store before and after a live run. Every folder is counted;
+folders inside a budget are also walked item by item, which is what lets a firing say WHICH items
+left and lets it prove that an item was FILED rather than deleted. The budget is 500 items per
+folder and 3,000 per store. It was set when the walk cost five cross-process calls per item, and on
+2026-08-20 that cost refused the whole live tier - one delegate store's census exceeded the
+3-minute STA budget. The walk is now a bulk `Table.GetArray` read: the same 3,000 items cost about
+fifteen calls instead of fifteen thousand. So the reason the budget is where it is has largely gone,
+and the budget was deliberately left alone because moving it changes what the guard proves.
+
+**Why it matters.** At 500 per folder, a 4,918-item Sent Items and a 108,144-item Archive are
+counted and not identified. In those folders the guard can see that items left but not which ones,
+cannot tell a deletion from a filing, and is blind to a deletion masked by an arrival. Those are
+exactly the folders a runaway test would do the most damage in.
+
+**Options.** *(a)* Leave 500/3,000 - the guard covers the folders a person works in, and everything
+else is still count-guarded. *(b)* Raise to about 5,000 per folder and 25,000 per store, which
+covers Sent Items and most working folders and costs roughly 125 table calls per store. *(c)* Raise
+the per-folder limit but keep a tight per-store budget, so one huge folder cannot consume the whole
+allowance. *(d)* Raise only for non-delegate stores, on the reasoning that delegate stores are the
+slow ones and the least likely to be written to. *(e)* Identify everything, no budget - honest but
+unbounded, and a 108,144-item Archive is roughly 550 table calls and tens of MB of EntryIDs held
+twice.
+
+**Recommendation.** *(b)*, once one live run has printed what the census actually costs. The whole
+argument for the old number was cost, the cost measurement has never been taken, and the first run
+after this change prints per-store timings precisely so the next move is made on a number rather
+than an argument.
+
+**Default if nobody answers.** 500/3,000 stays. The guard is not weaker than it was yesterday; it
+is simply not stronger than it could be.
+
+## Q10 - Whether to raise the census STA timeout, and what to do about a store that is still slow
+
+**Primer.** Every census runs on its own short-lived STA thread with a 3-minute join. That budget is
+already per store - `CaptureMailFolderCensus` is one `RunSta` call per store - so the sometimes
+suggested "make it per store rather than per operation" is already true. On 2026-08-20 one store
+exceeded it and the live tier refused to run, correctly, but the refusal could not say whether the
+time went into the folder tree or the item walk.
+
+**Why it matters.** A live run costs about half an hour of a real mailbox's day. Failing at the
+census wastes the whole slot. Raising the timeout risks turning a wedged Outlook into a longer wait
+instead of a faster answer.
+
+**Options.** *(a)* Leave it at 3 minutes; the term that blew it has been removed and a repeat
+failure will now say where the time went. *(b)* Raise it to 6-10 minutes so the first post-fix run
+completes and produces the measurement even if a store is slower than expected. *(c)* Make it
+adaptive: a short budget for the first store, extended for later ones once one store's real cost is
+known. *(d)* Keep 3 minutes but let a single store's census FAIL SOFT into a count-only census for
+that store, rather than refusing the tier - explicitly weaker, and it would need saying in the
+verdict.
+
+**Recommendation.** *(a)*. Diagnosis was the thing missing, not headroom, and it has been added: the
+per-store log line and the progress in the refusal message make one more failed run cheap and
+informative. *(d)* is the one to avoid - it converts a fail-closed guard into a fail-quiet one.
+
+**Default if nobody answers.** 3 minutes stays.
+
+## Q11 - Does an Outlook `Table` report date-time values in UTC or in local time
+
+**Primer.** This repository now contains two opposite readings of the same variant.
+`CensusTableRow.ReadUtc` (the tripwire census) takes a `DateTimeKind.Unspecified` value from a table
+as already-UTC. `OutlookComSession.ReadRowDate` (the shipped exhaustive scan and freshness sweep)
+takes the same value and calls `ToUniversalTime()` on it, which treats it as local. A COM-marshalled
+`VT_DATE` always arrives as `Unspecified`, so exactly one of the two is wrong on any given machine,
+by the size of the local UTC offset.
+
+**Why it matters, and it is not symmetric.** In the census, being wrong is cosmetic: every value at
+both ends of every comparison comes through the one method, so items still match each other, and
+only the instant printed beside a departed item would be offset. In `ReadRowDate` it is not
+cosmetic: the value becomes `_lastAdmittedUtc`, which becomes a resumed exhaustive scan's inclusive
+"at or before" date bound. A bound two hours early skips the mail received in those two hours, and
+the scan reports itself complete - in the one search mode a caller chooses BECAUSE completeness
+matters.
+
+**Options.** *(a)* Settle it with one live read and fix whichever side is wrong.
+*(b)* Fix `ReadRowDate` to match the census on the documentation alone. *(c)* Leave both; the census
+is self-consistent and the scan's error is bounded by the local offset.
+
+**Recommendation.** *(a)*, and it is nearly free: `T2/LiveTableSortProbeTests` already reports
+`FirstRowReceivedUtc` through `ReadRowDate`. Reading the same item's `MailItem.ReceivedTime` beside
+it in that probe answers the question for both call sites in one live read. Note that the probe has
+been written and deliberately not run since 2026-08-19, so this rides along with whatever run
+settles the `Table.Sort` question.
+
+**Default if nobody answers.** Both stay as they are. The census is safe; the scan carries an
+unquantified resume gap of at most one UTC offset.
+
 ## Decision log
 
 Answers move here with the date and the reasoning, so a future reader sees not just what was chosen

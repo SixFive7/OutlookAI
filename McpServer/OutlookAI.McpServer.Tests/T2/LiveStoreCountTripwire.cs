@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using OutlookAI.Core.Com;
 
 namespace OutlookAI.McpServer.Tests.T2;
@@ -292,18 +293,40 @@ public static class LiveStoreCountTripwire
         foreach (string store in stores)
         {
             CensusIdentityPlan plan = PlanFor(store, hubStoreDisplayName, repeatOf);
+            Stopwatch storeClock = Stopwatch.StartNew();
             try
             {
                 census[store] = LiveOutlookTestMailer.CaptureMailFolderCensus(store, plan);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
+                // The plan doubles as the census's progress record, and it is the only thing
+                // still readable when the STA call TIMED OUT rather than failed - the census
+                // thread may even still be running. Without it a timeout says which store
+                // was too slow and nothing about WHY, which is exactly the position the
+                // 2026-08-20 refusal left the maintainer in: no way to tell a slow folder
+                // tree from a slow item walk. A count here may be a moment stale; it is a
+                // diagnostic, and nothing decides anything from it.
                 throw new InvalidOperationException(
                     "REFUSING to run the live tier: the " + phase + " per-store census for '" + store
                     + "' could not be taken (" + ex.GetType().Name + ": " + ex.Message
-                    + "). An unmeasured mailbox cannot be proven untouched.",
+                    + ") after " + storeClock.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture)
+                    + " ms, having reached " + plan.Describe()
+                    + ". An unmeasured mailbox cannot be proven untouched.",
                     ex);
             }
+
+            storeClock.Stop();
+
+            // Per store, not just per pass: a profile where ONE mailbox costs minutes and
+            // the other four cost milliseconds is invisible in a single total, and that is
+            // the shape this census actually has on an Exchange profile with delegate
+            // mailboxes that may not be cached locally.
+            Console.WriteLine(
+                "[tripwire] " + phase + " census of '" + store + "': "
+                + census[store].Count.ToString(CultureInfo.InvariantCulture) + " mail folder(s), "
+                + plan.Describe() + ", "
+                + storeClock.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms.");
 
             folders += plan.IdentifiedFolders;
             items += plan.IdentifiedItems;

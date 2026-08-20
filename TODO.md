@@ -342,6 +342,101 @@
   `--logger "console;verbosity=normal"`.** Run it verbose and read what it is doing before touching
   anything.
 
+- [x] **DONE (2026-08-20) - The count tripwire's census could not finish on a real Exchange
+  profile, so the live tier refused to run at all.** The first run since the census began
+  capturing identities ended before a single test executed:
+
+  ```
+  REFUSING to run the live tier: the baseline per-store census for 'info@voipfabric.com'
+  could not be taken (TimeoutException: Test mailer STA operation timed out.).
+  ```
+
+  **The refusal itself is correct and is unchanged** - an unmeasured mailbox cannot be proven
+  untouched, and fail-closed is the whole point of the guard. What was wrong is that the
+  census was too expensive to complete.
+
+  **The cost driver, established by counting the calls the census makes rather than by
+  guessing.** Per store, per census pass, the old census cost roughly: 15 calls of setup,
+  12 for the six `GetDefaultFolder` volatile probes, about 8 per folder for the tree walk
+  (`Name`, `EntryID`, `DefaultItemType`, `Folders`, `Folders.Count`, the child fetch, `Items`,
+  `Items.Count`) - and then **five cross-process calls for every item walked**: `Items[i]`,
+  which OPENS the message, plus `EntryID`, `ReceivedTime`, `Size` and `Subject`. At the
+  3,000-item per-store budget that last term alone is **15,000 round trips, about 94% of the
+  whole census**, and everything else is two orders of magnitude smaller. It needs only 12 ms
+  per call - or ~60 ms per item opened - to exceed the 3-minute STA budget, and a shared or
+  delegate Exchange mailbox that is not cached locally is squarely in that range. The
+  prediction of "well under a second" was made about two local PSTs, where it was right.
+
+  **The fix: the walk is a bulk table read.** `Folder.GetTable` with `ReceivedTime` and `Size`
+  added as columns (`EntryID` and `Subject` are already default columns), read
+  `CensusTableRowBatch` = 200 rows at a time through `Table.GetArray`, which is one round trip
+  per 200 items instead of five per item. The same 3,000 items now cost about **fifteen calls
+  instead of 15,000**, and the folder tree walk becomes the dominant term. Nothing about the
+  budget moved: it now bounds bytes and memory rather than round trips.
+
+  **What it still proves - all of it.** Same counts (still `Items.Count`), same per-item
+  EntryID identity, same move-stable fingerprint (received instant plus size, no subject and
+  no body), same tag flag, same fail-closed refusal, same "a folder whose walk fails degrades
+  to a count, never to nothing". Three cross-checks now have to agree before a walk is
+  accepted: the table hands back exactly as many rows as the count promised, no EntryID
+  repeats, and the count is unchanged afterwards.
+
+  **What changed, precisely, and it is two things.**
+  1. A folder whose table will not carry all four columns is recorded as a COUNT, where the
+     old code would have produced identity without a fingerprint. That is deliberate:
+     identity without a fingerprint cannot prove a filing, so it would turn a person filing
+     mail during a run into a suite failure, and identity without a subject would say
+     "undecidable" over a removal the suite itself caused. The number of folders that fell
+     back is now printed, so this cannot happen quietly.
+  2. The fingerprint's received instant comes from the table's date column, and an
+     unspecified `DateTimeKind` is read as UTC (what Microsoft documents for the `Table`
+     object, and the contract `DaslDateLiteral` already states for this solution). If that
+     reading were wrong the tripwire's DECISIONS would not change - every value at both ends
+     of a comparison comes through the same method - and only the instant printed beside a
+     departed item would be offset by the machine's UTC offset.
+
+  **A silent timeout is now a diagnosis.** Each store's census prints its own folder count,
+  what identifying it cost and its elapsed ms, and a refusal names how far the census had got
+  when it stopped (`CensusIdentityPlan` doubles as the progress record). The 2026-08-20
+  failure could not distinguish a slow folder tree from a slow item walk; the next one will.
+
+  Pinned by 16 new T1 tests (`CensusTableRowTests`, plus two in `CensusIdentityPlanTests`).
+  The projection, the column map and the bulk-read shape check were deliberately written as
+  PURE functions in `T2\CensusTableRow` so CI can reach them - the COM walk around them still
+  cannot be executed by any non-live test.
+
+  **Mutation-checked: 26 decision lines, 15 caught, 11 not** (table:
+  `tmp-aitrace/mutation-table.md`). The split is clean and structural - every line a non-live
+  test can reach was caught, and **all 11 that were not are inside `CaptureMailFolderCensus`,
+  which no non-live test can execute a line of**. They are, with what each would need:
+  `plan.NoteFolderMeasured()` and `plan.NoteDegradedToCount()` at their call sites; the negative
+  and empty `expectedCount` guards; the `!columns.IsUsable` degradation; the per-batch
+  `Math.Min` that asks only for the rows still owed; the `EndOfTable` check after the walk; the
+  `ConfirmUnchanged` re-read; `AddCensusColumn` trying both spellings; and the two log lines in
+  `LiveStoreCountTripwire.Capture`. Each needs the same thing: a seam that lets a fake stand in
+  for `Folder`, `Items` and `Table`, which is the cheap substitute already proposed for the
+  census generally elsewhere in this file. Until then they are covered by a live run and by
+  nothing else.
+
+  **STILL OPEN - three questions for the maintainer:**
+
+  1. **Should the per-folder identity limit rise now that identity is nearly free?** At 500 a
+     4,918-item Sent Items and a 108,144-item Archive are counted, not identified, so a
+     deletion there is detected but unnamed, and a filing OUT of them cannot be proven. The
+     old objection was cost and it has largely gone: 5,000 items is 25 `GetArray` calls.
+     Raising it changes what the guard proves, so it is not being changed as a side effect of
+     making the census affordable. Options: leave at 500; raise to ~5,000 per folder with the
+     per-store budget raised to match; or raise only for non-delegate stores.
+  2. **Should the 3-minute STA timeout move?** It is already per store (one `RunSta` per
+     store), so a "per store rather than per operation" change buys nothing. It was left
+     alone: the fix removes the term that could plausibly exceed it, and raising a timeout
+     without evidence moves a silent failure later. If the next run fails again it will now
+     say where, which is the cheaper way to buy the evidence.
+  3. **`AnUnspecifiedKindIsReadAsUtc_SoTwoCensusesAgree` cannot fail on a UTC machine.** It
+     catches the mutation here (nl-NL, UTC+2 in August) and would not catch it on a CI runner
+     set to UTC, because the two readings coincide there. No way was found to pin it
+     machine-independently; it is recorded rather than papered over.
+
 - [x] **DONE (2026-08-18) - The store-count tripwire could not tell the user apart from the
   tests, and said so loudly.** The 26.8-minute run passed all 107 tests and then FAILED at
   teardown:
@@ -397,12 +492,13 @@
      "the mailbox was in use" declaration to the live-test settings that downgrades
      non-attributable removals to a loud warning, or require an idle machine. None was
      implemented, because a switch that can silence this guard is the maintainer's call.
-  2. **What the identity census costs on this profile has never been measured.** The
+  2. ~~**What the identity census costs on this profile has never been measured.** The
      estimate is seconds, not minutes, because the budget bounds it at 3,000 items per store
-     per census and the walk is late-bound COM. `[tripwire] baseline: ... identified N
-     folder(s)/M item(s), T ms` now prints the real number on every run - read it on the
-     first live run and raise or lower `CensusIdentityPlan.DefaultPerStoreItemBudget`
-     accordingly.
+     per census and the walk is late-bound COM.~~ **ANSWERED THE HARD WAY, 2026-08-20: that
+     estimate was wrong and the census timed out, refusing the whole tier.** The reasoning
+     held for a local PST and not for an Exchange mailbox, where five late-bound calls per
+     item are five server round trips. See the 2026-08-20 entry above; the walk is a bulk
+     table read now, and the budget stayed where it was.
 
 - [ ] **PENDING TASK - process `C:\Source\SixFive7\BrowserAI\.work	runcation-prompt-for-sibling-project.md`.**
   The maintainer asked for this at 09:00 on 2026-08-18. It is expected to be the portable

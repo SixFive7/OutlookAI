@@ -93,6 +93,41 @@ public sealed class CensusIdentityPlanTests
     }
 
     [Fact]
+    public void ThePlanRecordsHowFarACensusGot_SoATimeoutCanSayWhereItStopped()
+    {
+        // On 2026-08-20 the live tier refused to start because one store's census exceeded
+        // the STA budget, and the refusal could not distinguish a slow folder tree from a
+        // slow item walk. These counters are the only reading still available when the
+        // census thread has not come back, so they are part of the guard's diagnosis.
+        CensusIdentityPlan plan = CensusIdentityPlan.Baseline();
+
+        plan.NoteFolderMeasured();
+        plan.NoteFolderMeasured();
+        plan.NoteFolderMeasured();
+        plan.Spend(12);
+        plan.NoteDegradedToCount();
+
+        Assert.Equal(3, plan.MeasuredFolders);
+        Assert.Equal(1, plan.FoldersDegradedToCount);
+        Assert.Contains("3 folder(s) measured", plan.Describe(), StringComparison.Ordinal);
+        Assert.Contains("12 item(s) identified", plan.Describe(), StringComparison.Ordinal);
+        Assert.Contains("1 folder(s) fell back to counting", plan.Describe(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void APlanThatWalkedEverythingItWantedTo_SaysNothingAboutFallbacks()
+    {
+        // The fallback clause is the loud half: a table missing its columns on every folder
+        // would disable the identity reading, and that must not be a line a reader has to
+        // notice is ABSENT. So it appears only when it happened.
+        CensusIdentityPlan plan = CensusIdentityPlan.Baseline();
+        plan.NoteFolderMeasured();
+        plan.Spend(4);
+
+        Assert.DoesNotContain("fell back", plan.Describe(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ACountOnlyPlan_WalksNothing()
     {
         CensusIdentityPlan plan = CensusIdentityPlan.CountOnly();

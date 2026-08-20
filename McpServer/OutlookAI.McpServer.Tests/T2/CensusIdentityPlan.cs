@@ -7,9 +7,17 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// <para>
 /// Identity is what lets the guard say WHICH items left rather than only how many, and it
 /// is the only way it can tell a filing from a deletion. It is optional because it is not
-/// free: a real profile holds a 6,000-item Archive, a 5,000-item Sent Items and a 20,000
+/// free: a real profile holds a 108,000-item Archive, a 10,000-item Sent Items and a 20,000
 /// item Deleted Items, and walking all of that twice per run would cost more than the run.
 /// So the census counts everything and walks what it can afford.
+/// </para>
+/// <para>
+/// Since 2026-08-20 the walk is a BULK TABLE READ rather than an item-by-item one, so what
+/// this budget bounds has changed: it used to bound round trips (five per item, which is
+/// what exceeded the STA timeout on an Exchange store), and now it bounds bytes on the wire
+/// and rows held in memory. The numbers were left where they were on purpose - moving them
+/// changes what the guard proves, and that is the maintainer's call, not a side effect of
+/// making the census affordable.
 /// </para>
 /// <para>
 /// Two shapes, and the difference matters. A BASELINE plan spends a budget and records what
@@ -22,7 +30,11 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </para>
 /// <para>
 /// Used from one census at a time (each store's walk is a blocking STA call), so the
-/// remaining budget is plain mutable state and needs no locking.
+/// remaining budget is plain mutable state and needs no locking. It doubles as the census's
+/// PROGRESS record, which is the one thing the caller can still read when that STA call
+/// times out: the counters are plain <c>int</c> writes on the census thread and plain reads
+/// on the caller's, so a reading taken after a timeout may be a moment stale but can never
+/// be torn. Diagnostics only - nothing decides anything from these.
 /// </para>
 /// </summary>
 public sealed class CensusIdentityPlan
@@ -64,6 +76,22 @@ public sealed class CensusIdentityPlan
 
     /// <summary>Items walked so far under this plan - the number that costs census time.</summary>
     public int IdentifiedItems { get; private set; }
+
+    /// <summary>
+    /// Mail folders this census has reached at all, walked or merely counted. Exists so a
+    /// census that RUNS OUT OF TIME can say where it was: on 2026-08-20 the live tier
+    /// refused to start because one store's census exceeded the STA budget, and the refusal
+    /// could not distinguish a slow folder tree from a slow item walk.
+    /// </summary>
+    public int MeasuredFolders { get; private set; }
+
+    /// <summary>
+    /// Folders this plan chose to walk and could not, so they were recorded as counts. A
+    /// non-zero value is not a failure, but it IS the number that says how much of the
+    /// identity reading a run actually got: a table missing its columns on every folder
+    /// would disable the identity half of the guard, and it must not do that silently.
+    /// </summary>
+    public int FoldersDegradedToCount { get; private set; }
 
     /// <summary>
     /// Counts only. Used for the designated test mailbox, which this guard exempts anyway
@@ -138,10 +166,27 @@ public sealed class CensusIdentityPlan
         }
     }
 
+    /// <summary>Records that one more mail folder was reached, before deciding what to do with it.</summary>
+    public void NoteFolderMeasured()
+    {
+        MeasuredFolders++;
+    }
+
+    /// <summary>Records a folder this plan wanted to walk and had to record as a count instead.</summary>
+    public void NoteDegradedToCount()
+    {
+        FoldersDegradedToCount++;
+    }
+
     /// <summary>One line for the console, so the first live run reports what this actually cost.</summary>
     public string Describe()
     {
-        return IdentifiedFolders.ToString(CultureInfo.InvariantCulture) + " folder(s), "
+        string line = MeasuredFolders.ToString(CultureInfo.InvariantCulture) + " folder(s) measured, "
+            + IdentifiedFolders.ToString(CultureInfo.InvariantCulture) + " folder(s), "
             + IdentifiedItems.ToString(CultureInfo.InvariantCulture) + " item(s) identified";
+        return FoldersDegradedToCount == 0
+            ? line
+            : line + ", " + FoldersDegradedToCount.ToString(CultureInfo.InvariantCulture)
+                + " folder(s) fell back to counting";
     }
 }

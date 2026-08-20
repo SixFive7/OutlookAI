@@ -65,6 +65,21 @@ public static class LiveOutlookTestMailer
     public static readonly int[] SyncIssuesFolderIds = { 20, 19, 21, 22 };
 
     /// <summary>
+    /// Rows the tripwire census asks a folder table for in one <c>Table.GetArray</c> call.
+    /// <para>
+    /// This is the number that turned the census from unaffordable into cheap, so it is
+    /// worth saying what it trades. Upwards it saves round trips and there are barely any
+    /// left to save: at 200 the whole 3,000-item per-store budget costs about fifteen calls,
+    /// and the per-folder overhead already dominates. Downwards it bounds what one call
+    /// materialises in this process - up to 200 rows of EntryIDs and SUBJECTS at a time,
+    /// which is the only moment another mailbox's subjects exist here at all (they are
+    /// projected to one boolean each and dropped; S3/S4). 200 keeps that transient small
+    /// while leaving the round-trip saving essentially complete.
+    /// </para>
+    /// </summary>
+    public const int CensusTableRowBatch = 200;
+
+    /// <summary>
     /// Sends a mail from <paramref name="smtpAddress"/> to itself (refuses to run when
     /// that account is not in the profile - the D20 grant is telefonie-to-telefonie
     /// only). Returns the UTC send timestamp.
@@ -766,10 +781,10 @@ public static class LiveOutlookTestMailer
     /// Every folder is COUNTED. Folders within <paramref name="plan"/>'s budget are also
     /// WALKED, so the tripwire can say which items left rather than only how many: a count
     /// cannot tell a deletion from a filing, and cannot see an item removed while another
-    /// arrives. The walk reads EntryID, ReceivedTime and Size, and reads the Subject only
-    /// to set a boolean saying whether it carried <see cref="SubjectTag"/> - the subject
-    /// itself never leaves this method, so no other mailbox's content is stored or logged
-    /// (S3/S4).
+    /// arrives. The walk is a bulk <c>Folder.GetTable</c> read of four columns - EntryID,
+    /// ReceivedTime, Size and Subject - and the subject is projected to a boolean saying
+    /// whether it carried <see cref="SubjectTag"/> and then dropped, so no other mailbox's
+    /// content is stored or logged (S3/S4).
     /// </para>
     /// <para>
     /// Throws if the store cannot be enumerated - the tripwire is fail-closed. A folder
@@ -927,6 +942,7 @@ public static class LiveOutlookTestMailer
         dynamic? items = null;
         try
         {
+            plan.NoteFolderMeasured();
             items = folder.Items;
             int count = (int)items.Count;
             if (!plan.ShouldIdentify(key, isVolatile, count))
@@ -934,9 +950,10 @@ public static class LiveOutlookTestMailer
                 return FolderCensus.CountOnly(count);
             }
 
-            List<CensusItem>? walked = WalkFolderItems(items, count);
+            List<CensusItem>? walked = WalkFolderItems(folder, items, count);
             if (walked == null)
             {
+                plan.NoteDegradedToCount();
                 return FolderCensus.CountOnly(count);
             }
 
@@ -950,95 +967,207 @@ public static class LiveOutlookTestMailer
     }
 
     /// <summary>
-    /// Reads one folder item by item, or returns null when the folder moved under the walk
-    /// (mail arriving mid-census) and the reading cannot be trusted. Null means "count this
-    /// folder instead", never "assume nothing changed".
+    /// Reads one folder in BULK from its <c>Table</c>, or returns null when the folder
+    /// moved under the read (mail arriving mid-census) or the table could not answer what
+    /// the census needs. Null means "count this folder instead", never "assume nothing
+    /// changed".
     /// <para>
-    /// Deliberately does NOT use <c>Items.SetColumns</c>. It would be much faster, but it
-    /// changes which properties are readable and is documented to leave some of them empty -
-    /// and an EntryID that comes back blank here would read as an item that vanished, which
-    /// is the one wrong answer this guard must never give. The identity budget in
-    /// <see cref="CensusIdentityPlan"/> is what keeps the cost bounded instead.
+    /// WHY A TABLE. Until 2026-08-20 this walked <c>Items[i]</c> and read four properties
+    /// off each item: five cross-process calls per item, up to the 3,000-item store budget,
+    /// so 15,000 round trips for one store of one census pass. That is affordable against a
+    /// local PST and it is not affordable against an Exchange mailbox, where a shared or
+    /// delegate store may not be cached at all and every one of those calls is a server
+    /// round trip - it needs only 12 ms per call to exceed the 3-minute STA budget, and on
+    /// 2026-08-20 one store did exactly that and refused the whole live tier.
+    /// <c>Table.GetArray</c> returns <see cref="CensusTableRowBatch"/> rows of exactly the
+    /// columns asked for in ONE call, so the same 3,000 items cost about fifteen.
+    /// </para>
+    /// <para>
+    /// WHY THIS IS NOT THE <c>Items.SetColumns</c> TRAP THIS CODE USED TO AVOID.
+    /// <c>SetColumns</c> leaves the ITEM in place and documents that some of its properties
+    /// come back empty - so a blank EntryID would read as an item that had vanished, which
+    /// is the one wrong answer this guard must never give. A table row is not an item: its
+    /// EntryID is a column read straight out of the contents table, and a row that does not
+    /// produce one is DETECTED here and abandons the folder to a count. Every other shape
+    /// failure is treated the same way, because the alternative to a weaker reading is a
+    /// false one.
+    /// </para>
+    /// <para>
+    /// Three independent cross-checks have to agree before a walk is accepted: the table
+    /// must hand back exactly as many rows as <c>Items.Count</c> promised, no EntryID may
+    /// repeat, and the count must still be the same afterwards. Any disagreement means the
+    /// reading spans two moments and is discarded.
     /// </para>
     /// </summary>
-    private static List<CensusItem>? WalkFolderItems(dynamic items, int expectedCount)
+    private static List<CensusItem>? WalkFolderItems(dynamic folder, dynamic items, int expectedCount)
     {
-        List<CensusItem> walked = new(expectedCount);
-        HashSet<string> seen = new(StringComparer.Ordinal);
-        for (int i = 1; i <= expectedCount; i++)
+        if (expectedCount < 0)
         {
-            dynamic? item = null;
+            return null;
+        }
+
+        // An empty folder needs no table at all, and there are a lot of them (Outbox, the
+        // sync-issue folders, unused subfolders). It still gets the confirmation read: an
+        // item arriving into it mid-census makes even "it was empty" a two-moment reading.
+        if (expectedCount == 0)
+        {
+            return ConfirmUnchanged(items, 0) ? new List<CensusItem>() : null;
+        }
+
+        dynamic? table = null;
+        try
+        {
             try
             {
-                item = items[i];
-                string id = (string)item.EntryID;
-                if (string.IsNullOrEmpty(id) || !seen.Add(id))
-                {
-                    // A blank id, or the same item twice: the collection shifted under the
-                    // index walk. Anything derived from this reading would be fiction.
-                    return null;
-                }
-
-                walked.Add(new CensusItem(id, ReadFingerprint(item), ReadIsTagged(item)));
+                table = folder.GetTable();
             }
-            catch (Exception ex) when (ex is COMException or RuntimeBinderException or InvalidCastException)
+            catch (Exception ex) when (OutlookAI.Core.Com.OutlookComSession.IsComCallFailure(ex))
             {
                 return null;
             }
-            finally
+
+            dynamic t = table!;
+            AddCensusColumn(t, CensusTableRow.ReceivedColumnNames);
+            AddCensusColumn(t, CensusTableRow.SizeColumnNames);
+
+            CensusColumnMap columns = MapCensusColumns(t);
+            if (!columns.IsUsable)
             {
-                Release(item);
+                // The table cannot say when an item arrived, how big it is, or whether it is
+                // the suite's own. Identity without those is identity that cannot prove a
+                // filing or name an actor, so this folder is recorded as a count instead -
+                // the same treatment a folder above the budget gets.
+                return null;
             }
-        }
 
-        // Re-read the count: if it moved while we walked, the list is a mix of two moments.
-        try
-        {
-            return (int)items.Count == expectedCount ? walked : null;
+            List<CensusItem> walked = new(expectedCount);
+            HashSet<string> seen = new(StringComparer.Ordinal);
+            while (walked.Count < expectedCount)
+            {
+                int wanted = Math.Min(CensusTableRowBatch, expectedCount - walked.Count);
+                object? batch;
+                try
+                {
+                    batch = t.GetArray(wanted);
+                }
+                catch (Exception ex) when (OutlookAI.Core.Com.OutlookComSession.IsComCallFailure(ex))
+                {
+                    return null;
+                }
+
+                // Shape is checked rather than assumed, and the check lives in the pure
+                // half so a CI test can reach it: no non-live test can execute a single
+                // line of this method.
+                if (!CensusTableRow.TryReadBlock(batch, wanted, columns.ColumnCount, out Array? rows)
+                    || !CensusTableRow.ProjectRows(rows!, columns, walked, seen))
+                {
+                    return null;
+                }
+            }
+
+            // The folder promised expectedCount rows and delivered them; if the table still
+            // has more, the folder grew while it was being read.
+            try
+            {
+                if (!(bool)t.EndOfTable)
+                {
+                    return null;
+                }
+            }
+            catch (Exception ex) when (OutlookAI.Core.Com.OutlookComSession.IsComCallFailure(ex))
+            {
+                return null;
+            }
+
+            return ConfirmUnchanged(items, expectedCount) ? walked : null;
         }
-        catch (Exception ex) when (ex is COMException or RuntimeBinderException or InvalidCastException)
+        finally
         {
-            return null;
+            Release(table);
         }
     }
 
     /// <summary>
-    /// A key that survives a move between folders, so an item filed into another folder is
-    /// recognisable there. EntryIDs do not survive a move; a received instant and a size do.
-    /// Both are metadata - no subject, no sender, no body (S3).
+    /// Re-reads the folder's count and says whether it is still what the walk was based on.
+    /// A count that moved means the item list is a mix of two moments.
     /// </summary>
-    private static string? ReadFingerprint(dynamic item)
+    private static bool ConfirmUnchanged(dynamic items, int expectedCount)
     {
         try
         {
-            DateTime received = ((DateTime)item.ReceivedTime).ToUniversalTime();
-            int size = (int)item.Size;
-            return received.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture)
-                + "/" + size.ToString(CultureInfo.InvariantCulture);
-        }
-        catch (Exception ex) when (ex is COMException or RuntimeBinderException or InvalidCastException)
-        {
-            // Drafts and report items have no received time. They still carry an EntryID,
-            // so they are still censused - they just cannot be traced across a move.
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Whether this item is the live tier's own. The subject is read here and DISCARDED -
-    /// only the boolean is kept, so a delegate mailbox's subjects never reach a census, a
-    /// log or a failure message.
-    /// </summary>
-    private static bool ReadIsTagged(dynamic item)
-    {
-        try
-        {
-            string? subject = (string?)item.Subject;
-            return subject != null && subject.IndexOf(SubjectTag, StringComparison.OrdinalIgnoreCase) >= 0;
+            return (int)items.Count == expectedCount;
         }
         catch (Exception ex) when (ex is COMException or RuntimeBinderException or InvalidCastException)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Adds one census column to a table, trying each accepted spelling in turn. Silent on
+    /// failure by design: whether the column actually landed is decided afterwards by
+    /// <see cref="MapCensusColumns"/> reading the table back, which is the only answer that
+    /// cannot disagree with what the rows contain.
+    /// </summary>
+    private static void AddCensusColumn(dynamic table, IReadOnlyList<string> spellings)
+    {
+        foreach (string spelling in spellings)
+        {
+            dynamic? columns = null;
+            try
+            {
+                columns = table.Columns;
+                columns!.Add(spelling);
+                return;
+            }
+            catch (Exception ex) when (OutlookAI.Core.Com.OutlookComSession.IsComCallFailure(ex))
+            {
+            }
+            finally
+            {
+                Release(columns);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads the table's column names ONCE and hands them to the pure mapper. One pass
+    /// rather than one lookup per column, because <c>Columns[i].Name</c> is a round trip
+    /// and this method is the reason a folder costs a fixed handful of them instead of a
+    /// handful per column per row.
+    /// </summary>
+    private static CensusColumnMap MapCensusColumns(dynamic table)
+    {
+        dynamic? columns = null;
+        try
+        {
+            columns = table.Columns;
+            int count = (int)columns!.Count;
+            List<string> names = new(count);
+            for (int i = 1; i <= count; i++)
+            {
+                dynamic? column = null;
+                try
+                {
+                    column = columns[i];
+                    names.Add((string)column!.Name);
+                }
+                finally
+                {
+                    Release(column);
+                }
+            }
+
+            return CensusTableRow.MapColumns(names);
+        }
+        catch (Exception ex) when (OutlookAI.Core.Com.OutlookComSession.IsComCallFailure(ex))
+        {
+            // An unusable map, which the caller turns into a count-only folder.
+            return new CensusColumnMap(-1, -1, -1, -1, 0);
+        }
+        finally
+        {
+            Release(columns);
         }
     }
 

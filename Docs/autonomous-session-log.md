@@ -825,6 +825,113 @@ converted as each row is next touched.
     `CreateDirectory` succeeds and a later `File.Copy` fails. It now names that directory when
     one exists and says nothing when it does not, which is the distinction the two tests pin.
 
+58. **The census cost driver was established by COUNTING CALLS, not by measuring, and that is
+    said out loud because nothing here may run against the mailbox.** Per store per pass the
+    old census cost ~15 setup calls, 12 for the six `GetDefaultFolder` volatile probes, ~8 per
+    folder for the tree walk, and **five cross-process calls per item walked** - `Items[i]`
+    (which OPENS the message) plus `EntryID`, `ReceivedTime`, `Size` and `Subject`. At the
+    3,000-item budget the last term is **15,000 round trips, ~94% of the census**, and the
+    next largest term is smaller by two orders of magnitude. It needs 12 ms per call, or ~60
+    ms per item opened, to exceed the 3-minute budget - the range a non-cached Exchange
+    delegate store sits in, and `info@voipfabric.com` is a delegate store. This is arithmetic
+    over the code plus a per-call cost model; it is not a measurement, and the first run after
+    the fix is what will turn it into one.
+
+59. **`Table.GetArray`, not `Table.GetNextRow`, and the difference is the whole point.**
+    `GetNextRow` + `Row.GetValues` is the idiom shipped in four places in Core and is
+    therefore the better-proven one, but it is two round trips per ROW. `GetArray(n)` is one
+    per n rows: at a batch of 200 the per-store budget goes from 15,000 calls to about
+    fifteen. The cost is that a 2-D variant array carries no labels, so nothing in it
+    distinguishes it from its own transpose. That is handled by checking BOTH dimensions
+    against numbers already known - the rows requested and the column count the table
+    reported - which leaves a transpose acceptable only when a folder happens to have exactly
+    as many rows left as the table has columns, and the EntryID and duplicate checks then
+    reject that. Every shape failure abandons the folder to a COUNT, so the worst case of
+    being wrong about `GetArray` is a weaker reading, never a false one.
+
+60. **The 3-minute STA timeout was NOT raised, and "make it per store" was already true.**
+    `CaptureMailFolderCensus` is one `RunSta` per store, so the budget has always been per
+    store; the direction that suggested changing that buys nothing. Raising it was rejected on
+    its own terms: it moves a silent failure later without evidence, and the term that could
+    plausibly exceed it has been removed. What was added instead is the evidence - each
+    store's census now prints its folder count, what identifying it cost and its elapsed ms,
+    and a refusal names how far the census had got. `CensusIdentityPlan` doubles as that
+    progress record, which is the only reading still available when the STA thread has not
+    come back; the counters are plain int writes read from another thread, so a post-timeout
+    reading may be stale but cannot be torn. It is offered to the maintainer as an open
+    question rather than decided (`TODO.md`, 2026-08-20 entry, question 2).
+
+61. **The identity budget was deliberately left at 500/3,000.** With the walk 250x cheaper the
+    obvious move is to raise it, and raising it changes WHAT THE GUARD PROVES - a 4,918-item
+    Sent Items would go from counted to identified. That is a decision about the guard, not a
+    side effect of making it affordable, so the numbers did not move and the question is
+    written up instead.
+
+62. **One thing the census no longer does, and it is a deliberate trade.** A folder whose
+    table will not carry all four columns is now recorded as a COUNT, where the old per-item
+    walk would have produced identity with a null fingerprint. Identity without a fingerprint
+    cannot prove a filing, so it turns a person filing mail during a run into a suite failure;
+    identity without a subject cannot tell the suite's own mail from anyone else's, so a
+    removal the suite caused would be attributed "undecidable". Both are worse than a count.
+    The alternative I rejected was keeping the item-by-item walk as a per-folder fallback:
+    that would mix two fingerprint derivations inside one census, and a departure read one way
+    could then not be matched to its arrival read the other - a false "ITEMS REMOVED" line
+    manufactured by the fallback itself. How many folders fell back is now printed, so the
+    degenerate case (no store carries the columns at all) cannot happen quietly.
+
+63. **The census reads an unspecified `DateTimeKind` from a table as UTC, and Core reads the
+    same variant as LOCAL. Exactly one of them is wrong, and it is not the census that pays.**
+    `CensusTableRow.ReadUtc` takes `Unspecified` as already-UTC (what Microsoft documents for
+    the `Table` object, and the contract `DaslDateLiteral` states for this solution).
+    `OutlookComSession.ReadRowDate` does the opposite: `Kind != Utc ? ToUniversalTime()`, which
+    on a COM-marshalled `VT_DATE` (always `Unspecified`) subtracts the local offset. If the
+    census's reading is right, then in the census only the instant PRINTED beside a departed
+    item can ever be off, because both ends of every comparison come through the one method -
+    but `ReadRowDate` feeds `_lastAdmittedUtc`, which becomes the resumed exhaustive scan's
+    inclusive `at or before` date bound, so a bound two hours early would SKIP the mail
+    received in those two hours and the scan would report itself complete. **Not fixed here:
+    it is shipped Core behaviour, outside this task, and which way it is wrong is a
+    measurement rather than a reading.** It is cheap to settle: `T2/LiveTableSortProbeTests`
+    already reports `FirstRowReceivedUtc` through `ReadRowDate`, so comparing it against the
+    same item's `MailItem.ReceivedTime` on one live read decides it for both call sites.
+
+64. **The projection, the column map and the bulk-read shape check were written as PURE
+    functions on purpose (`T2/CensusTableRow`).** Everything in `LiveOutlookTestMailer`'s
+    census is unreachable from CI - no non-live test can open a folder - so the decisions that
+    matter were moved to the one side a test can reach: what makes a row identify an item,
+    which column spellings are accepted, and what shape of block may be believed. That is why
+    16 of the mutations below could be caught at all; the ones inside the COM walk could not
+    be, and are listed as such rather than left implied.
+
+65. **Mutation check: 26 decision lines reverted, 15 caught, 11 not - and the split is exactly
+    the seam between the pure half and the COM half.** Every one of the 15 lines a non-live test
+    can reach was caught; every one of the 11 that were not caught is inside
+    `CaptureMailFolderCensus`, which no non-live test can execute a line of. That is a
+    structural gap, already recorded in `TODO.md` for the census generally, and it is why the
+    projection, the column map and the bulk-read shape check were extracted as pure functions in
+    the first place - before that extraction the number reachable from CI would have been about
+    four. Full table in `tmp-aitrace/mutation-table.md`; the 11 are listed in `TODO.md` with what
+    each would need. **Two of the 26 are worth naming.** M09 (`a fingerprint needs both halves`)
+    was caught by the COMPILER rather than a test, which is the cheapest possible catch and worth
+    knowing about. M01 (`the bulk read rejects anything that is not a 2-D block`) came back NOT
+    CAUGHT on the first pass and exposed a real hole in my own test: the rank case used a 1-D
+    array of four entries while asking for two rows, so the ROW-COUNT check rejected it and the
+    rank check was never exercised. A rank-1 array of exactly the requested length was added and
+    M01 was re-run and caught. That is the second time in this repository a mutation has found a
+    test that looked like it covered the area and did not.
+
+66. **A pre-existing non-live test now fails on this machine, and it is not this change.**
+    `T3/OutlookAvailabilityCiTests.SearchAlwaysAnswers_AndSaysWhetherItIsComplete` drives the
+    SHIPPED MCP server executable over stdio against the real Windows Search index and the real
+    Outlook, and asserts that a `search` answers within 100 s. It measured **139.1 s**. It passed
+    at the start of this session (2028 of 2028) and failed 4 of 4 afterwards, including against a
+    mutation of a constant in the TEST assembly, which that server process cannot see. Outlook has
+    been up for 40 hours with 10,791 s of CPU on it. So the final count is **2045 passed, 1
+    failed, 2046 total**, and the one failure is the machine, not the change - which is stated
+    rather than rounded off, because a suite reported as green when it is not is how a real
+    failure gets waved through later. Worth a look separately: a test whose pass depends on the
+    developer's Outlook being un-busy will keep doing this.
+
 ## 4. VM state (`OutlookAI-TestVM`)
 
 - Guest credentials for PowerShell Direct: `vmadmin` / `***REDACTED-CREDENTIAL***`.
@@ -880,6 +987,16 @@ converted as each row is next touched.
   where the column was added and the sort still threw; `T2/LiveTableSortProbeTests` settles it.
 - **Corpus build throughput:** 50.9 items/s without the move rung. With the move rung each item is
   written twice, so budget roughly double.
+- **Tripwire census call budget, COUNTED FROM THE CODE rather than timed** (2026-08-20, and the
+  distinction matters - nothing in this session was allowed to touch the mailbox). Per store, per
+  census pass, BEFORE the change: ~15 setup calls, 12 for the six `GetDefaultFolder` volatile
+  probes, ~8 per folder for the tree walk, and 5 cross-process calls per item walked, so
+  **~15,000 round trips at the 3,000-item budget - about 94% of the whole census**. AFTER: the
+  item term becomes ~1 call per 200 rows plus ~25 fixed per identified folder, so **about 15 calls
+  for the same 3,000 items**, and the folder tree walk (~8 calls x up to 165 folders on a delegate
+  store) becomes the largest remaining term at ~1,300 calls. The threshold that broke it: 12 ms
+  per call, or ~60 ms per item opened, exceeds the 3-minute STA budget - which is ordinary for a
+  shared Exchange mailbox that is not cached locally.
 
 ## 5b. Two research outputs worth reading before the next work starts
 
@@ -929,6 +1046,27 @@ wraps the column add and the sort together, so `sortApplied: false` cannot say w
   collection names sorted after every "Live" name, so `SuiteCollectionOrderer` now ranks the new
   `LiveMcpToolShape` collection late on purpose, to keep them where they were. That reasoning is
   from reading xunit's ordering, not from a live run.
-- **The census cost on the maintainer's own profile.** Up to 3,000 items walked per non-hub store,
-  four late-bound property reads each, at least twice per run, over five stores. Never measured. On
-  a local PST it should be milliseconds; Exchange is a different question.
+- ~~**The census cost on the maintainer's own profile.** Up to 3,000 items walked per non-hub
+  store, four late-bound property reads each, at least twice per run, over five stores. Never
+  measured. On a local PST it should be milliseconds; Exchange is a different question.~~
+  **ANSWERED 2026-08-20, by the census failing:** the baseline for `info@voipfabric.com` exceeded
+  the 3-minute STA budget and refused the whole live tier. Exchange was indeed a different
+  question. The walk is a bulk table read now (section 3.58-3.64); what remains unverified is
+  everything below.
+- **What the census costs AFTER the table change has still never been timed** - the arithmetic
+  says the item term drops from ~15,000 round trips per store to ~15 and that the folder tree
+  walk (~8 calls per folder, up to 165 folders on a delegate store) becomes the dominant term,
+  but no live run has happened. Every store now prints its own elapsed ms, so the next run is
+  the measurement.
+- **Whether `Columns.Add` accepts `Size` and `ReceivedTime` on a real Exchange folder table.**
+  Both have a fallback spelling and a folder whose columns will not land degrades to a count, so
+  being wrong is safe - but if it happens on every folder, the identity half of the guard is
+  effectively off. That is exactly what the new `N folder(s) fell back to counting` line in the
+  census log is for; read it on the first run.
+- **Whether `Table.GetArray` hands back rows-by-columns on this provider.** The repository's own
+  `TrySkipRows` already reads it that way, both dimensions are checked against known numbers
+  before a block is believed, and a mismatch counts the folder rather than inventing items. Still
+  a reading of documentation and of one untested code path, not an observation.
+- **Whether an Outlook `Table` reports date-time values in UTC or in local time** - see section
+  3.63. The census is safe either way; `OutlookComSession.ReadRowDate` is not, because its value
+  becomes a resumed scan's date bound.
