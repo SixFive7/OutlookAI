@@ -69,6 +69,30 @@ store layout - and how to generate the seed corpus, so it can be rebuilt when de
 another machine. That matters more than usual because two of this session's measurements only mean
 anything against a corpus of known shape.
 
+## 1d. VM build shape - decided 2026-08-20
+
+**Three stores, not two.** The earlier pair of answers did not compose: a plain near-empty data
+file cannot serve as an index-tier fixture, and indexing the corpus would destroy the unindexed
+testbed that made this session's sweep measurements possible. So:
+
+| Store | Indexed | Purpose |
+| --- | --- | --- |
+| Corpus A | **yes** | index-tier tests, and the shape 96 of 115 live tests want |
+| Corpus B | **no** | the degraded path: no index frontier, seven-day fallback window, the sweep and frame measurements |
+| Plain bystander | n/a | the absent-arrival-folders shape (Q5), and the store the tripwire watches - it must be one the tests never touch, which is why it is not a fixture |
+
+**Dummy account: unroutable server, send enabled.** Drafts, updates and discards become reachable;
+a send queues in the Outbox and can never leave, so delivery is physically impossible on a machine
+whose purpose is running destructive tests unattended. **Open sub-task, to be checked rather than
+assumed:** whether any live test asserts on Sent Items *after* a successful send. If some do, those
+need a local SMTP sink; if none do, the unroutable account is sufficient and the sink is not built.
+
+**Tripwire on a suspected loss: re-census first, re-run only if it persists.** A person reading
+their mail produces a one-off delta; a test that deletes something reproduces it. A second census
+costs seconds against a 27-minute tier run and separates ambient activity from a real fault without
+running a single test. Re-running the plausibly-implicated tests is the fallback when the delta
+survives the second census, bounded by a maximum.
+
 ## 2. Timeout values - SHIPPED in `4502c92`
 
 | Constant | Was | Now | Derivation |
