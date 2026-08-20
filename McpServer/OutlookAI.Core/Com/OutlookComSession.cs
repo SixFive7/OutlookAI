@@ -975,15 +975,24 @@ namespace OutlookAI.Core.Com
         /// <paramref name="targetDirectory"/> (created if missing). Never overwrites: an
         /// existing name gets a numeric suffix. Returns the full saved path.
         /// </summary>
+        /// <param name="attemptedPath">
+        /// The path the write was aimed at, reported even when the call fails. A
+        /// <c>SaveAsFile</c> that throws part-way leaves whatever it had written, and without
+        /// this the caller was told the save failed and never told where to look for the
+        /// remains - a file at a name it could not predict, because a clashing name gets a
+        /// numeric suffix chosen in here.
+        /// </param>
         public string? TrySaveAttachment(
             string entryIdHex,
             string? storeId,
             int attachmentIndex,
             string targetDirectory,
             out long sizeBytes,
+            out string? attemptedPath,
             out string? error)
         {
             EnsureNotDisposed();
+            attemptedPath = null;
             if (string.IsNullOrWhiteSpace(entryIdHex))
             {
                 throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
@@ -995,6 +1004,7 @@ namespace OutlookAI.Core.Com
             }
 
             string? capturedError = null;
+            string? capturedPath = null;
             long capturedSize = 0;
             string? path = _runner.Run<string?>(() =>
             {
@@ -1048,8 +1058,27 @@ namespace OutlookAI.Core.Com
 
                     Directory.CreateDirectory(targetDirectory);
                     string fullPath = MakeUniquePath(targetDirectory, SanitizeFileName(fileName));
+
+                    // Published BEFORE the write, so a SaveAsFile that throws part-way can
+                    // still tell the caller where the remains are.
+                    capturedPath = fullPath;
                     ((dynamic)attachment!).SaveAsFile(fullPath);
-                    capturedSize = new FileInfo(fullPath).Length;
+
+                    // Past this line the file is WRITTEN. Measuring it is reporting, not
+                    // saving, so it must not be able to turn a completed save into a
+                    // reported failure - which is exactly what it did while this sat bare
+                    // inside the try: an IOException from the size read answered
+                    // "Attachment could not be saved" over a file that was saved in full.
+                    try
+                    {
+                        capturedSize = new FileInfo(fullPath).Length;
+                    }
+                    catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException)
+                    {
+                        // Size unknown; the path is what the caller needs and it is returned.
+                        capturedSize = 0;
+                    }
+
                     return fullPath;
                 }
                 catch (COMException ex)
@@ -1076,6 +1105,7 @@ namespace OutlookAI.Core.Com
             });
 
             sizeBytes = capturedSize;
+            attemptedPath = capturedPath;
             error = capturedError;
             return path;
         }
@@ -3399,9 +3429,11 @@ namespace OutlookAI.Core.Com
             bool display,
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
+            out string? savedDraftEntryId,
             out string? error)
         {
             EnsureNotDisposed();
+            savedDraftEntryId = null;
             if (string.IsNullOrWhiteSpace(accountSmtpAddress))
             {
                 throw new ArgumentException("Account SMTP address must not be blank.", nameof(accountSmtpAddress));
@@ -3423,6 +3455,7 @@ namespace OutlookAI.Core.Com
             }
 
             string? capturedError = null;
+            string? capturedSavedEntryId = null;
             ComDraftCreateResult? result = _runner.Run<ComDraftCreateResult?>(() =>
             {
                 // D49: an unpinned session kills the Outlook it composes in - see
@@ -3500,6 +3533,13 @@ namespace OutlookAI.Core.Com
                     _ = AddAttachmentsToDraft(draft, options?.AttachmentPaths);
                     draft.Save();
 
+                    // The draft is now a real item in the mailbox, and everything below can
+                    // still fail. Its id is captured HERE so the caller can register it for
+                    // cleanup even on the failure path - without this the caller never learns
+                    // it, discard_draft's registry gate can never match it, and a failed
+                    // new_draft leaves an orphan the product itself cannot remove.
+                    capturedSavedEntryId = TryGetString(() => (string?)draft.EntryID);
+
                     // The GetInspector touch leaves a HIDDEN Inspector alive inside
                     // Outlook (it shows up in Application.Inspectors - Phase-4 live
                     // finding). The Word compose path already closed it via
@@ -3512,6 +3552,15 @@ namespace OutlookAI.Core.Com
                     }
 
                     mail = RelocateToFolderIfNeeded(mail!, draftsFolder!, out bool moved, out string? initialFolder, out bool inDraftsFolder);
+
+                    // A relocate is a Move, and a Move mints a new EntryID - so the id
+                    // captured after Save is stale the moment this succeeds. Re-read it, or
+                    // the cleanup handle would point at an address nothing resolves.
+                    if (moved)
+                    {
+                        capturedSavedEntryId = TryGetString(() => (string?)((dynamic)mail!).EntryID) ?? capturedSavedEntryId;
+                    }
+
                     if (display)
                     {
                         ((dynamic)mail!).Display();
@@ -3562,6 +3611,7 @@ namespace OutlookAI.Core.Com
                 }
             });
 
+            savedDraftEntryId = capturedSavedEntryId;
             error = capturedError;
             return result;
         }
@@ -3584,9 +3634,11 @@ namespace OutlookAI.Core.Com
             bool display,
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
+            out string? savedDraftEntryId,
             out string? error)
         {
             EnsureNotDisposed();
+            savedDraftEntryId = null;
             if (string.IsNullOrWhiteSpace(sourceEntryIdHex))
             {
                 throw new ArgumentException("Source EntryID must not be blank.", nameof(sourceEntryIdHex));
@@ -3603,6 +3655,7 @@ namespace OutlookAI.Core.Com
             }
 
             string? capturedError = null;
+            string? capturedSavedEntryId = null;
             ComDraftCreateResult? result = _runner.Run<ComDraftCreateResult?>(() =>
             {
                 // D49: an unpinned session kills the Outlook it composes in - see
@@ -3729,6 +3782,10 @@ namespace OutlookAI.Core.Com
                     _ = AddAttachmentsToDraft(draft, options?.AttachmentPaths);
                     draft.Save();
 
+                    // Captured here for the same reason as the new-draft path: the draft is
+                    // real from this line on, and every step below it can still fail.
+                    capturedSavedEntryId = TryGetString(() => (string?)draft.EntryID);
+
                     // Same hidden-Inspector cleanup as the new-draft path: only needed
                     // when the composition fell back to the HTML path, because the Word
                     // path already closed the held Inspector with Close(olSave).
@@ -3762,6 +3819,11 @@ namespace OutlookAI.Core.Com
                         draftsFolderName = TryGetString(() => (string?)((dynamic)draftsFolder).Name);
                         draftsFolderEntryId = TryGetString(() => (string?)((dynamic)draftsFolder).EntryID);
                         mail = RelocateToFolderIfNeeded(mail!, draftsFolder, out moved, out initialFolder, out inDraftsFolder);
+                        if (moved)
+                        {
+                            // A Move mints a new EntryID; the cleanup handle has to follow it.
+                            capturedSavedEntryId = TryGetString(() => (string?)((dynamic)mail!).EntryID) ?? capturedSavedEntryId;
+                        }
                     }
 
                     if (display)
@@ -3816,6 +3878,7 @@ namespace OutlookAI.Core.Com
                 }
             });
 
+            savedDraftEntryId = capturedSavedEntryId;
             error = capturedError;
             return result;
         }
@@ -4179,6 +4242,15 @@ namespace OutlookAI.Core.Com
         /// subtree (deletion semantics - the server has no delete surface), the Outbox,
         /// non-mail folders, and the item's current folder. The result carries old/new
         /// EntryIDs (EntryIDs CHANGE on any move) and the source path as undo address.
+        /// <para>
+        /// <b>The refusals are not free.</b> Folders are resolved and created BEFORE the
+        /// target guard runs, so "Refused: moving to Deleted Items is deletion semantics"
+        /// can be answered over a folder this call just created inside Deleted Items - and
+        /// a multi-segment path can fail at segment two having created segment one.
+        /// <paramref name="createdFolderPaths"/> is reported on every path for that reason.
+        /// The order is not accidental and is not worth swapping: the guard needs the
+        /// resolved target folder object to check what it is.
+        /// </para>
         /// </summary>
         public ComMoveItemResult? TryMoveItemToPath(
             string entryIdHex,
@@ -4186,9 +4258,11 @@ namespace OutlookAI.Core.Com
             IReadOnlyList<string> targetSegments,
             bool createMissing,
             string? requireStoreDisplayName,
+            out IReadOnlyList<string>? createdFolderPaths,
             out string? error)
         {
             EnsureNotDisposed();
+            createdFolderPaths = null;
             if (string.IsNullOrWhiteSpace(entryIdHex))
             {
                 throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
@@ -4200,6 +4274,12 @@ namespace OutlookAI.Core.Com
             }
 
             string? capturedError = null;
+
+            // Declared OUT HERE, not inside the work item, because it has to survive the
+            // failure paths. Folder creation happens before the target guard runs, so a
+            // refused move can already have made folders - and while this was a local it
+            // died with the null return and the caller was never told.
+            List<string> capturedCreatedPaths = new List<string>();
             ComMoveItemResult? result = _runner.Run<ComMoveItemResult?>(() =>
             {
                 dynamic ns = _namespace!;
@@ -4243,7 +4323,7 @@ namespace OutlookAI.Core.Com
                         return null;
                     }
 
-                    List<string> createdPaths = new List<string>();
+                    List<string> createdPaths = capturedCreatedPaths;
                     targetFolder = ResolveOrCreateFolder(ownStore, targetSegments, createMissing, createdPaths, out string? resolveError);
                     if (targetFolder == null)
                     {
@@ -4274,6 +4354,7 @@ namespace OutlookAI.Core.Com
                 }
             });
 
+            createdFolderPaths = capturedCreatedPaths.Count > 0 ? capturedCreatedPaths : null;
             error = capturedError;
             return result;
         }
@@ -5446,6 +5527,14 @@ namespace OutlookAI.Core.Com
         /// the new body, then flush with <c>Close(olSave)</c>. Any failure closes the
         /// inspector with <c>olDiscard</c> so a half-written document never reaches the
         /// item, and reports the error instead of falling back to an appending splice.
+        /// <para>
+        /// <b>That guarantee holds only while this process lives.</b> It is a
+        /// <c>finally</c>, and the failure update_draft is most often killed by -
+        /// <c>TerminateProcess</c> on a deadline expiry - is exactly the one that skips
+        /// <c>finally</c> blocks. <c>TryUpdateDraft</c>'s own remarks say so and the
+        /// re-entrant design exists because of it; it is repeated here so the sentence
+        /// above is not read as unconditional at the place it is written.
+        /// </para>
         /// </summary>
         private static (bool Ok, string? Error) ReviseHeldDocument(
             object draftObject,
@@ -5591,6 +5680,11 @@ namespace OutlookAI.Core.Com
                     // untouched rather than half-rewritten. (On the success path the
                     // inspector was already closed with olDiscard after the explicit
                     // save.)
+                    //
+                    // TRUE ONLY IF THIS PROCESS SURVIVES. A killed COM host runs no
+                    // finally, so the untouched-draft promise covers a failed revision and
+                    // not a reclaimed one - which is why the caller records its intent
+                    // first and why the killed-update message says the outcome is unknown.
                     try
                     {
                         ((dynamic)inspector!).Close(1); // olDiscard

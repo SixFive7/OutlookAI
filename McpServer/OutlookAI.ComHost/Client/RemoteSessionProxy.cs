@@ -67,6 +67,12 @@ namespace OutlookAI.ComHost.Client
                     + "the request (fewer ids, a smaller folder scope) and try again.");
             }
 
+            // Recorded BEFORE the round trip, because the failure this serves is one that
+            // never comes back: a call that raises a bare COMException carries no operation
+            // name of its own, and the tool layer needs one to decide whether "retry" is
+            // safe advice.
+            ComHostRequestContext.NoteOperation(targetMethod.Name);
+
             ComHostInvocationResult invocation = _supervisor.InvokeAsync(
                     targetMethod.Name,
                     arguments.Count == 0 ? null : arguments,

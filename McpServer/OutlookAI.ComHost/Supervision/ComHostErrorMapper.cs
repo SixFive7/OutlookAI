@@ -18,8 +18,17 @@ namespace OutlookAI.ComHost.Supervision
     /// </summary>
     internal static class ComHostErrorMapper
     {
-        /// <summary>Turns a wire error into the closest equivalent exception.</summary>
-        internal static Exception ToException(ComHostError error)
+        /// <summary>
+        /// Turns a wire error into the closest equivalent exception.
+        /// </summary>
+        /// <param name="error">The failure as the child described it.</param>
+        /// <param name="operation">
+        /// The contract operation the parent sent, when it is known. The wire error carries
+        /// no operation name of its own, and one failure needs it: an answer too large to
+        /// frame is reported over an operation that RAN, so whether the caller may repeat it
+        /// depends entirely on whether that operation changes mail.
+        /// </param>
+        internal static Exception ToException(ComHostError error, string? operation = null)
         {
             ArgumentNullException.ThrowIfNull(error);
 
@@ -41,7 +50,7 @@ namespace OutlookAI.ComHost.Supervision
                     // it: the child stamps this name onto the wire error directly, because
                     // the failure happens while ENCODING the reply - past the point where
                     // throwing could still produce one.
-                    return new ComHostResponseTooLargeException(message);
+                    return new ComHostResponseTooLargeException(message, operation);
 
                 case nameof(COMException):
                     return error.HResult is int hr
@@ -224,10 +233,31 @@ namespace OutlookAI.ComHost.Supervision
         {
         }
 
+        /// <summary>Creates the exception for a request the host was serving when it died.</summary>
+        /// <param name="message">What the caller is told, from <c>ComHostSupervisor.DescribeInterruption</c>.</param>
+        /// <param name="outcome">
+        /// The machine-readable half of that same sentence - see
+        /// <see cref="OutlookAI.Core.Com.MutationOutcome"/>. Carried separately because the
+        /// prose is what a model reads and the field is what it can branch on, and only the
+        /// site that knew the operation name can fill it in.
+        /// </param>
+        public ComHostUnavailableException(string message, string? outcome)
+            : base(message)
+        {
+            Outcome = outcome;
+        }
+
         /// <summary>Creates the exception with an inner cause.</summary>
         public ComHostUnavailableException(string message, Exception inner)
             : base(message, inner)
         {
         }
+
+        /// <summary>
+        /// Whether the interrupted request took effect, when the raising site could say.
+        /// Null for the states where nothing was ever dispatched (no host, start backoff),
+        /// which is deliberately not the same as claiming nothing changed.
+        /// </summary>
+        public string? Outcome { get; }
     }
 }

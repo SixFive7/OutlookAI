@@ -2447,11 +2447,34 @@ namespace OutlookAI.Core.Services
         /// <summary>Echo of the input id (hit id or EntryID) this result belongs to.</summary>
         public string Id { get; set; } = string.Empty;
 
-        /// <summary>True when the item was moved (and its audit line written).</summary>
+        /// <summary>True when the item was moved AND its audit line was written.</summary>
+        /// <remarks>
+        /// Both halves matter, and that is exactly why <see cref="Ok"/> is not enough on its
+        /// own: a move that succeeded and could not be audited reports <c>Ok=false</c> over
+        /// an item that really did move. Read <see cref="Outcome"/> before concluding
+        /// anything from a false.
+        /// </remarks>
         public bool Ok { get; set; }
 
-        /// <summary>Failure reason (present only when not ok; nothing was moved for this item).</summary>
+        /// <summary>Failure reason, present only when not ok.</summary>
+        /// <remarks>
+        /// This used to be documented as "nothing was moved for this item", which the
+        /// product contradicted in its own code twice over: the audit-failure message says
+        /// "The item WAS moved...", and the per-item timeout message says the outcome is
+        /// UNKNOWN. Both travelled through this field. The parenthesis is gone and
+        /// <see cref="Outcome"/> carries the answer.
+        /// </remarks>
         public string? Error { get; set; }
+
+        /// <summary>
+        /// What happened to this item, when it did not simply move: <c>unchanged</c> (it is
+        /// where it was), <c>applied</c> (it MOVED - the failure is downstream of the move,
+        /// and newEntryId/fromFolder are absent because the reporting step is what failed),
+        /// or <c>unknown</c> (the move may or may not have taken effect - find the item
+        /// before acting). Omitted when <see cref="Ok"/> is true, where it would only repeat
+        /// the boolean.
+        /// </summary>
+        public string? Outcome { get; set; }
 
         /// <summary>Store the item lives in (moves are same-store).</summary>
         public string? Store { get; set; }
@@ -2484,7 +2507,13 @@ namespace OutlookAI.Core.Services
         /// <summary>Echo of the store-relative target folder path.</summary>
         public string TargetFolder { get; set; } = string.Empty;
 
-        /// <summary>Store-relative paths of folders created for this call (create_folder=true), when any.</summary>
+        /// <summary>
+        /// Store-relative paths of folders created for this call (create_folder=true), when
+        /// any - INCLUDING folders created by an item whose move then failed or was refused.
+        /// Folders are made before the target guard runs, so a refused move can leave one
+        /// behind; this used to be filled from successful moves alone and said nothing.
+        /// This server cannot delete folders, so an unwanted one has to be removed in Outlook.
+        /// </summary>
         public IReadOnlyList<string>? CreatedFolders { get; set; }
 
         /// <summary>Per-item results, input order.</summary>

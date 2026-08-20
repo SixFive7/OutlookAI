@@ -267,7 +267,8 @@ public static class OutlookTools
 
     [McpServerTool(Name = "save_attachment")]
     [Description("Save one attachment of a mail to disk so you can open/read the file yourself. "
-        + "Use the attachment 'index' from a read result. Never overwrites - existing names get a numeric suffix. Returns the absolute path.")]
+        + "Use the attachment 'index' from a read result. Never overwrites - existing names get a numeric suffix. Returns the absolute path."
+        + OutcomeHint)]
     public static async Task<CallToolResult> SaveAttachment(
         [Description("Hit id or EntryID of the mail (for attachment-content hits: the hit itself).")] string id,
         [Description("1-based attachment index from read's attachments list.")] int attachment_index,
@@ -285,7 +286,8 @@ public static class OutlookTools
         + "list_folders). SAME-STORE ONLY: each item moves within the store it lives in - cross-store moves are rejected "
         + "with a clear per-item error (run one call per store). Moving CHANGES an item's EntryID: use newEntryId afterwards; "
         + "old hit ids/index rows go stale briefly (re-run search). Moving to Deleted Items or the Outbox is refused - this "
-        + "server cannot delete mail. Needs Outlook (starts it headless if needed); never opens windows.")]
+        + "server cannot delete mail. Needs Outlook (starts it headless if needed); never opens windows."
+        + OutcomeHint)]
     public static async Task<CallToolResult> MoveMail(
         [Description("1-50 hit ids (e.g. h12) or full EntryID hex strings. Each item is moved within its own store.")]
         string[] ids,
@@ -309,7 +311,8 @@ public static class OutlookTools
         + "a clear error and NOTHING is created. Takes 1-50 ids (hit ids or EntryIDs), which may span accounts - each goes "
         + "to its own account's Archive. Content-preserving, fully audited and REVERSIBLE like move_mail: results carry "
         + "fromFolder + oldEntryId/newEntryId (undo = move_mail with newEntryId and folder=fromFolder). Archiving changes "
-        + "EntryIDs; re-run search for fresh ids. Needs Outlook (starts it headless if needed); never opens windows.")]
+        + "EntryIDs; re-run search for fresh ids. Needs Outlook (starts it headless if needed); never opens windows."
+        + OutcomeHint)]
     public static async Task<CallToolResult> ArchiveMail(
         [Description("1-50 hit ids (e.g. h12) or full EntryID hex strings; may span accounts.")]
         string[] ids,
@@ -439,7 +442,8 @@ public static class OutlookTools
     [McpServerTool(Name = "open_in_outlook")]
     [Description("Show the user a mail: opens it in a visible Outlook message window (starts Outlook if needed). "
         + "Use when the user asks to see a mail, or to hand a found mail over for human reading/action. "
-        + "Pass a hit id from search/thread or a full EntryID. The window stays open for the user - do not try to close it.")]
+        + "Pass a hit id from search/thread or a full EntryID. The window stays open for the user - do not try to close it."
+        + OutcomeHint)]
     public static async Task<CallToolResult> OpenInOutlook(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to display.")] string id,
         CancellationToken cancellationToken = default)
@@ -449,7 +453,8 @@ public static class OutlookTools
 
     [McpServerTool(Name = "goto_folder")]
     [Description("Navigate the user's Outlook window to a folder (like clicking it in the folder pane). "
-        + "Starts Outlook and opens a window if none is visible. Omit 'folder' for the store's Inbox.")]
+        + "Starts Outlook and opens a window if none is visible. Omit 'folder' for the store's Inbox."
+        + OutcomeHint)]
     public static async Task<CallToolResult> GotoFolder(
         [Description("Store display name (see list_accounts).")] string store,
         [Description("Store-relative folder path (from list_folders), e.g. 'Inbox' or 'Projects/2026'. Omit for Inbox.")] string? folder = null,
@@ -464,7 +469,8 @@ public static class OutlookTools
         + "query supports Outlook search syntax (free text plus e.g. from:name, hasattachments:yes). "
         + "Optional store/folder navigate the window there first; scope controls the search breadth from that folder. "
         + "When Outlook's UI search runs server-assisted (local search tuning off), the result carries an 'advice' note that "
-        + "the displayed list may diverge from agent search results - relay it to the user.")]
+        + "the displayed list may diverge from agent search results - relay it to the user."
+        + OutcomeHint)]
     public static async Task<CallToolResult> ShowSearchResults(
         [Description("Search text for the Outlook search box (free text and Outlook query syntax).")] string query,
         [Description("current_folder (default - that folder only, no subfolders; the search tool's folder scope DOES "
@@ -490,6 +496,17 @@ public static class OutlookTools
     private const string BccHint = "Bcc recipient address(es), separated by ';' or ','. ADDED to the draft like cc; other "
         + "recipients never see them. Unresolvable addresses come back in unresolvedRecipients (capped - see "
         + "unresolvedRecipientsTruncated / unresolvedRecipientsTotal).";
+
+    // The one clause that teaches the machine-readable half of an error, appended to every
+    // tool that can change something. It is written ONCE and shared, because a per-tool
+    // paraphrase is how a vocabulary drifts - and because the client's 2048-code-unit
+    // description cut is per string, so 13 copies of ~190 units each cost nothing against
+    // any single tool's budget (largest after this change: update_draft, comfortably inside).
+    // Deliberately NOT on the read-only tools: they can only ever answer "unchanged", and
+    // search is the one description already near the cut.
+    private const string OutcomeHint = "\n\nON FAILURE, the error carries outcome: \"unchanged\" (nothing happened), "
+        + "\"applied\" (it DID happen - only the reply failed) or \"unknown\" (look at the current state before "
+        + "repeating the call).";
 
     private const string ImportanceHint = "Message importance: 'low', 'normal' or 'high'. Omit for Outlook's default (normal).";
 
@@ -525,7 +542,8 @@ public static class OutlookTools
     [Description("Create a NEW email draft for the user - saved into the chosen account's Drafts folder with that account's "
         + "identity and signature, and opened on screen (default) so the user can review, edit and send it themselves. "
         + "NOTHING IS SENT by this tool. Supply EITHER body (plain text, line breaks preserved) OR body_html (real HTML, for a "
-        + "formatted letter); either way the text is placed above the signature.")]
+        + "formatted letter); either way the text is placed above the signature."
+        + OutcomeHint)]
     public static async Task<CallToolResult> NewDraft(
         [Description("Sending account SMTP address (see list_accounts) - determines the From identity, the Drafts folder and the signature.")]
         string account,
@@ -561,7 +579,8 @@ public static class OutlookTools
     [McpServerTool(Name = "reply_draft")]
     [Description("Create a REPLY draft to a mail (hit id from search/thread, or EntryID) via Outlook's own Reply - "
         + "threading and the quoted original are preserved and the right account's signature is applied; your text goes above the quote. "
-        + "The draft is saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT.")]
+        + "The draft is saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT."
+        + OutcomeHint)]
     public static async Task<CallToolResult> ReplyDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
         [Description("Plain-text reply body. Placed ABOVE the quoted original. Use body_html instead when the reply needs formatting; "
@@ -593,7 +612,8 @@ public static class OutlookTools
     [McpServerTool(Name = "replyall_draft")]
     [Description("Create a REPLY-ALL draft to a mail (hit id or EntryID) via Outlook's own ReplyAll - all original recipients kept, "
         + "threading and quoted history preserved, correct signature applied, your text above the quote. "
-        + "Saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT.")]
+        + "Saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT."
+        + OutcomeHint)]
     public static async Task<CallToolResult> ReplyAllDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
         [Description("Plain-text reply body. Placed ABOVE the quoted original. Use body_html instead when the reply needs formatting; "
@@ -625,7 +645,8 @@ public static class OutlookTools
     [McpServerTool(Name = "forward_draft")]
     [Description("Create a FORWARD draft of a mail (hit id or EntryID) via Outlook's own Forward - quoted content and attachments "
         + "carried over, correct signature applied, your text above the quote. "
-        + "Saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT.")]
+        + "Saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT."
+        + OutcomeHint)]
     public static async Task<CallToolResult> ForwardDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to forward.")] string id,
         [Description("To recipient address(es), separated by ';' or ','.")] string to,
@@ -672,7 +693,8 @@ public static class OutlookTools
         + "inlineImagesDropped with advice, and passing signature restores the signature and its images in embedded form.\n\n"
         + "Only saved, UNSENT drafts in a Drafts folder can be updated - a sent mail, a received mail or an item elsewhere "
         + "is refused with a clear reason and nothing is changed. Any pending send confirm_token for the draft is "
-        + "invalidated by the update.")]
+        + "invalidated by the update."
+        + OutcomeHint)]
     public static async Task<CallToolResult> UpdateDraft(
         [Description("The draft to revise: the entryId a draft tool returned (preferred), or a hit id of a saved, UNSENT draft.")]
         string id,
@@ -733,7 +755,10 @@ public static class OutlookTools
         + "Items. It cannot empty anything and it cannot delete permanently.\n\n"
         + "It is a SOFT delete - exactly like pressing Delete in Outlook: the draft moves to Deleted Items and the result "
         + "carries newEntryId plus fromFolder, so it can be put back with move_mail. Anything it refuses comes back as a "
-        + "clear error saying why - it never silently does nothing. Every discard is audit-logged.")]
+        + "clear error saying why - it never silently does nothing. A failure that is NOT a refusal is a different "
+        + "case: if Outlook fails during the delete itself, whether the draft was deleted is UNKNOWN and the error "
+        + "says so - look in Deleted Items rather than assuming nothing happened. Every discard is audit-logged."
+        + OutcomeHint)]
     public static async Task<CallToolResult> DiscardDraft(
         [Description("The draft to discard: the entryId a draft tool returned for a draft created in THIS session.")]
         string id,
@@ -751,7 +776,8 @@ public static class OutlookTools
         + "draft and its current content. Re-confirm with the user, then call send again WITH the token. Tokens expire after "
         + "~2 minutes, work exactly once, and are invalidated by any change to the draft. The From identity is always the "
         + "account owning the draft's store, hard-verified immediately before transport (mismatch aborts - this tool can never "
-        + "send from a different account). Every step is audit-logged.")]
+        + "send from a different account). Every step is audit-logged."
+        + OutcomeHint)]
     public static async Task<CallToolResult> Send(
         [Description("The draft to send: the entryId returned by a draft tool (preferred) or a hit id of a saved, UNSENT draft.")]
         string id,
@@ -792,7 +818,127 @@ public static class OutlookTools
             WritingRulesGate.ErrorType,
             WritingRulesGate.RetryMessage,
             WritingRulesGate.Clarification,
+            // Provably unchanged, and one of the few places that word is earned: the gate
+            // runs BEFORE GuardAsync, decides from a registry read and a hash, and starts no
+            // COM host at all.
+            outcome: MutationOutcome.Unchanged,
             writingRules: rules);
+    }
+
+    /// <summary>
+    /// The advice attached to a draft refusal, which is NOT the same for every refusal.
+    /// <para>
+    /// This is the defect the 2026-08-19 audit ranked worst, and it is worth stating plainly
+    /// because it cost a shipped fix. <c>db34923</c> corrected
+    /// <c>MailService.BuildDraftRefusal</c> so an unclassified COM failure stops claiming
+    /// "Nothing was changed" - it wraps a ~20-call sequence and can land after the body was
+    /// rewritten - and the correction reached the <c>message</c> field. The tool layer then
+    /// attached ONE advice string to every reason code, so the very same payload said the
+    /// outcome was UNKNOWN in its message and that nothing had changed in its advice. The
+    /// reason was already on the exception; the branch is one comparison.
+    /// </para>
+    /// <para>
+    /// Pure and internal so T1 pins it. The old shape could not be tested at all, which is
+    /// exactly why nothing caught it.
+    /// </para>
+    /// </summary>
+    internal static string DraftRefusalAdvice(string? reason)
+    {
+        return IsUnknownOutcomeRefusal(reason)
+            ? "WHETHER THE DRAFT WAS CHANGED IS UNKNOWN - this failure comes from inside the sequence, not from a "
+                + "precondition, so read the draft before deciding what to do next. The message says which remedy fits."
+            : "Nothing was changed or deleted. Check the draft with read, or create a new draft instead.";
+    }
+
+    /// <summary>The machine-readable half of <see cref="DraftRefusalAdvice"/>.</summary>
+    internal static string DraftRefusalOutcome(string? reason)
+    {
+        return IsUnknownOutcomeRefusal(reason) ? MutationOutcome.Unknown : MutationOutcome.Unchanged;
+    }
+
+    /// <summary>
+    /// The one refusal code raised by the catch-all around the whole COM sequence rather
+    /// than by a precondition checked before the first write.
+    /// </summary>
+    private static bool IsUnknownOutcomeRefusal(string? reason)
+    {
+        return string.Equals(reason, MailService.ComFailureRefusal, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// What an agent is told when Outlook rejected a call with a bare COM error, keyed on
+    /// whether the call it rejected changes mail.
+    /// <para>
+    /// This used to be "Outlook rejected the operation; check outlook_health and retry" for
+    /// everything alike. For a search that is right. For <c>TrySendDraft</c> or
+    /// <c>TryMoveItemToPath</c> it is an instruction to perform an unrecalled change a second
+    /// time, over a failure family that Outlook documents as MAY OR MAY NOT have executed.
+    /// </para>
+    /// <para>
+    /// A null operation name means no COM call was dispatched for this request, or that the
+    /// failure could not be attributed to one. It is deliberately NOT treated as a mutation
+    /// or as a read: the answer is that no outcome is being stated.
+    /// </para>
+    /// </summary>
+    internal static string ComFailureAdvice(string? operationName)
+    {
+        if (string.IsNullOrEmpty(operationName))
+        {
+            return "Outlook rejected the operation; check outlook_health. Which Outlook call failed could not be "
+                + "attributed, so whether anything was changed is NOT stated here - if this call changes mail (a draft, "
+                + "a move, a send, a saved file), check the current state before repeating it.";
+        }
+
+        return MutationOutcome.ForInterrupted(operationName) == MutationOutcome.Unchanged
+            ? MutationOutcome.DescribeInterrupted(operationName) + " Check outlook_health and retry."
+            : MutationOutcome.DescribeInterrupted(operationName)
+                + " Check outlook_health, then read the item or search for it and decide from what you find - do not "
+                + "simply repeat this call.";
+    }
+
+    /// <summary>
+    /// What an agent is told when the COM host was killed for breaching a deadline.
+    /// <para>
+    /// This was "Outlook did not answer within the time budget and the COM host was restarted,
+    /// so the next call starts clean" for every operation alike. Both halves are true and both
+    /// are about the HOST; a caller reads them as a statement about their mail, and the child
+    /// was terminated at an unknown point, so a killed draft creation or move may well have
+    /// taken effect. It is the COMMON way out of a killed child - the other, a host that dies
+    /// under a sibling request, has said the right thing since ComHostSupervisor gained
+    /// DescribeInterruption - and nine tools reached only this one.
+    /// </para>
+    /// <para>Pure and internal so T1 pins both halves; the path needs a real wedged Outlook.</para>
+    /// </summary>
+    internal static string TimeoutAdvice(string? operationName)
+    {
+        string tail = " The COM host was restarted, so the next call starts clean; Outlook itself may be busy, showing "
+            + "a dialog, or not responding - check outlook_health, and search still returns indexed results meanwhile.";
+
+        return MutationOutcome.ForInterrupted(operationName) == MutationOutcome.Unknown
+            ? MutationOutcome.DescribeInterrupted(operationName) + tail
+                + " Before repeating this call, look at the current state (read the item, or search for it)."
+            : MutationOutcome.DescribeInterrupted(operationName) + tail;
+    }
+
+    /// <summary>
+    /// What an agent is told when Outlook answered and the answer was too big to return.
+    /// <para>
+    /// The work RAN - the child completes the operation and only the framing of the reply
+    /// fails - so "nothing failed and nothing was changed" was self-contradictory over a
+    /// mutation, and "retrying the SAME request will refuse again" was an invitation to
+    /// perform that mutation a second time for nothing.
+    /// </para>
+    /// </summary>
+    internal static string ResponseTooLargeAdvice(string? operationName)
+    {
+        string tail = " outlook_health reports the largest message that has crossed and the ceiling it must fit under.";
+
+        return MutationOutcome.ForCompleted(operationName) == MutationOutcome.Applied
+            ? MutationOutcome.DescribeAnswerLost(operationName)
+                + " Read the item back to see the result instead of repeating the call." + tail
+            : MutationOutcome.DescribeAnswerLost(operationName)
+                + " Retrying the SAME request will refuse again - ask for less: a narrower time window, a single "
+                + "folder or store, or a smaller limit." + tail;
     }
 
     /// <summary>
@@ -807,6 +953,11 @@ public static class OutlookTools
     /// </summary>
     private static async Task<CallToolResult> GuardAsync<T>(CancellationToken cancellationToken, Func<T> operation)
     {
+        // The operation trace is armed OUTSIDE the ambient budget scope and lives for the
+        // whole tool call: it records which contract calls this request dispatched, so a
+        // failure that carries no operation name of its own - a bare COMException, a stray
+        // cancellation - can still be told apart from a read.
+        using IDisposable trace = ComHostRequestContext.TraceOperations();
         try
         {
             // The ambient context is established here, on the caller's execution context,
@@ -830,8 +981,17 @@ public static class OutlookTools
             // SDK's generic handler and reach the agent as the message-redacted
             // "An error occurred invoking '<tool>'." - silence-adjacent, and exactly the
             // symptom this whole design exists to remove. So it is answered here instead.
+            //
+            // "Retry" was unconditional here and carried the same defect as the COMException
+            // arm below: a cancelled move or send may already have happened.
+            string? cancelledIn = ComHostRequestContext.LastOperationName;
+            string? cancelledOutcome = cancelledIn == null ? null : MutationOutcome.ForInterrupted(cancelledIn);
             return Error("Cancelled", ex.Message,
-                "The operation was cancelled before it completed. Retry; if it repeats, check outlook_health.");
+                cancelledOutcome == MutationOutcome.Unknown
+                    ? MutationOutcome.DescribeInterrupted(cancelledIn)
+                        + " Do NOT simply retry: read the item or search for it first and decide from what you find."
+                    : "The operation was cancelled before it completed. Retry; if it repeats, check outlook_health.",
+                outcome: cancelledOutcome);
         }
         catch (ComHostStartingException ex)
         {
@@ -839,6 +999,8 @@ public static class OutlookTools
                 "Nothing is wrong. Outlook was not running (or is still coming up) and is being started in the "
                 + "background; this returned at once instead of making you wait. Retry after the stated delay. search "
                 + "works meanwhile and returns indexed mail.",
+                // Provable: this is raised WITHOUT contacting Outlook, so no call was made.
+                outcome: MutationOutcome.Unchanged,
                 retryAfterSeconds: ex.RetryAfterSeconds);
         }
         catch (ComHostUnresponsiveException ex)
@@ -847,41 +1009,64 @@ public static class OutlookTools
                 "This answered immediately instead of waiting on a call that would not return. TELL THE USER Outlook is "
                 + "not responding and that restarting Outlook fixes it now. search still returns indexed mail meanwhile. "
                 + "Outlook is re-checked automatically, so this also clears by itself. outlook_health shows the state.",
+                // Same reason as OutlookStarting: refused before anything is dispatched.
+                outcome: MutationOutcome.Unchanged,
                 retryAfterSeconds: ex.RetryAfterSeconds);
         }
         catch (ComHostTimeoutException ex)
         {
+            // "so the next call starts clean" is true of the HOST and says nothing about the
+            // mail, which is what a caller actually needs to know: the child was killed at an
+            // unknown point, so a killed draft creation or move may well have taken effect.
+            // This is the common way out of a killed child - the other, a host that dies
+            // under a sibling request, has said the right thing since ComHostSupervisor
+            // gained DescribeInterruption. This arm now says it too.
             return Error("Timeout", ex.Message,
-                "Outlook did not answer within the time budget and the COM host was restarted, so the next call starts "
-                + "clean. Outlook itself may be busy, showing a dialog, or not responding - check outlook_health. "
-                + "search still returns indexed results meanwhile.");
+                TimeoutAdvice(ex.Operation),
+                outcome: MutationOutcome.ForInterrupted(ex.Operation));
         }
         catch (ComHostUnavailableException ex)
         {
             return Error("ComHostUnavailable", ex.Message,
                 "The Outlook COM host could not be started or stopped unexpectedly. outlook_health reports its state; "
-                + "search still returns indexed results without it.");
+                + "search still returns indexed results without it.",
+                // Null unless the host died holding a request: "could not be started" is not
+                // the same claim as "your mail is untouched", and only the raising site knew.
+                outcome: ex.Outcome);
         }
         catch (ComHostResponseTooLargeException ex)
         {
+            // The only claim in the product that asserted a mutation both happened and did
+            // not: the work runs to completion and only the FRAMING of the answer fails, so
+            // "nothing was changed" was self-contradictory over any mutating operation - and
+            // "retrying the SAME request will refuse again" was an invitation to perform that
+            // change twice for nothing.
             return Error("ResponseTooLarge", ex.Message,
-                "Outlook answered, but the answer was too big to return in one piece, so it was refused. Nothing "
-                + "failed and nothing was changed - retrying the SAME request will refuse again. Ask for less: a "
-                + "narrower time window, a single folder or store, or a smaller limit. outlook_health reports the "
-                + "largest message that has crossed and the ceiling it must fit under.");
+                ResponseTooLargeAdvice(ex.Operation),
+                outcome: MutationOutcome.ForCompleted(ex.Operation));
         }
         catch (SendRefusedException ex)
         {
             return Error("SendRefused", ex.Message,
                 "Nothing was sent. If automatic sending is still explicitly wanted and the draft is unchanged, request a fresh "
                 + "token by calling send without confirm_token and re-confirm with the user.",
-                ex.Reason);
+                ex.Reason,
+                // Every SendRefused is decided before Send() - the token gate, the content
+                // hash, the identity readback - so this one really is provable.
+                outcome: MutationOutcome.Unchanged);
         }
         catch (DraftRefusedException ex)
         {
             return Error("DraftRefused", ex.Message,
-                "Nothing was changed or deleted. Check the draft with read, or create a new draft instead.",
-                ex.Reason);
+                DraftRefusalAdvice(ex.Reason),
+                ex.Reason,
+                outcome: DraftRefusalOutcome(ex.Reason));
+        }
+        catch (OperationOutcomeException ex)
+        {
+            // A service-layer failure that already knows what happened to the mail and says
+            // so in its own message; this arm only carries the machine-readable half out.
+            return Error("OperationFailed", ex.Message, null, outcome: ex.Outcome);
         }
         catch (OutlookUnavailableException ex)
         {
@@ -895,10 +1080,12 @@ public static class OutlookTools
         }
         catch (COMException ex)
         {
+            string? failedIn = ComHostRequestContext.LastOperationName;
             return Error(
                 "ComFailure",
                 string.Format(CultureInfo.InvariantCulture, "{0} 0x{1:X8}", ex.GetType().Name, ex.HResult),
-                "Outlook rejected the operation; check outlook_health and retry.");
+                ComFailureAdvice(failedIn),
+                outcome: failedIn == null ? null : MutationOutcome.ForInterrupted(failedIn));
         }
         catch (ComHostRemoteException ex)
         {
@@ -939,6 +1126,7 @@ public static class OutlookTools
         string message,
         string? advice,
         string? reason = null,
+        string? outcome = null,
         int? retryAfterSeconds = null,
         string? writingRules = null)
     {
@@ -946,9 +1134,18 @@ public static class OutlookTools
         // 'retryAfterSeconds' is machine-readable retry guidance for the transient states
         // (Outlook starting, Outlook unresponsive). 'writingRules' carries the user's own
         // writing prompt on the one error that exists to deliver it, and is last because it
-        // is the only field that runs to pages. All three are omitted for everything else by
-        // the null-ignoring serializer, so the existing error shape is unchanged.
-        var payload = new { error = new { type, reason, message, advice, retryAfterSeconds, writingRules } };
+        // is the only field that runs to pages. All of them are omitted for everything else
+        // by the null-ignoring serializer, so the existing error shape is unchanged.
+        //
+        // 'outcome' is the 2026-08-19 atomicity audit's machine-readable half: unchanged |
+        // applied | unknown, meaning "did the thing this call asked for take effect". It sits
+        // beside 'reason' because it is the same kind of value - something to branch on
+        // rather than read - and it exists because prose could not carry it. Sixteen
+        // hand-written non-effect claims were found wrong, each one wrong the same way, and a
+        // sentence is the one thing no test can check. Absent means this server is NOT
+        // stating an outcome, which is deliberately different from stating that nothing
+        // changed.
+        var payload = new { error = new { type, reason, outcome, message, advice, retryAfterSeconds, writingRules } };
         return new CallToolResult
         {
             IsError = true,

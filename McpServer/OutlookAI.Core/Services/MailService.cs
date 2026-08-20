@@ -3244,7 +3244,8 @@ namespace OutlookAI.Core.Services
             (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
             (string path, long size) = _gateway.Run(s =>
             {
-                string? saved = s.TrySaveAttachment(entryId, storeId, attachmentIndex, directory, out long sizeBytes, out string? error);
+                string? saved = s.TrySaveAttachment(
+                    entryId, storeId, attachmentIndex, directory, out long sizeBytes, out string? attempted, out string? error);
                 if (ShouldSearchOtherStores(storeId, saved != null, error))
                 {
                     // Direct EntryID without a known store, and ONLY when the item could not
@@ -3256,7 +3257,8 @@ namespace OutlookAI.Core.Services
                     // behind per store while the call still reported failure.
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
-                        saved = s.TrySaveAttachment(entryId, store.StoreId, attachmentIndex, directory, out sizeBytes, out error);
+                        saved = s.TrySaveAttachment(
+                            entryId, store.StoreId, attachmentIndex, directory, out sizeBytes, out attempted, out error);
                         if (!KeepSearchingStores(saved != null, error))
                         {
                             break;
@@ -3266,7 +3268,7 @@ namespace OutlookAI.Core.Services
 
                 if (saved == null)
                 {
-                    throw new InvalidOperationException("Attachment could not be saved (" + (error ?? "unknown") + ").");
+                    throw BuildAttachmentSaveFailure(error, attempted, directory);
                 }
 
                 return (saved, sizeBytes);
@@ -3284,19 +3286,61 @@ namespace OutlookAI.Core.Services
             }
             catch (InvalidOperationException ex)
             {
-                throw new InvalidOperationException(
+                throw new OperationOutcomeException(
+                    Com.MutationOutcome.Applied,
                     "Attachment was saved to '" + path + "' but the audit line could not be written: " + ex.Message, ex);
             }
 
             return new SaveAttachmentOutcome
             {
                 Id = hitId,
-                EntryId = entryId,
-                AttachmentIndex = attachmentIndex,
+                EntryId = entryId,                AttachmentIndex = attachmentIndex,
                 FileName = Path.GetFileName(path),
                 SavedPath = path,
                 SizeBytes = size,
             };
+        }
+
+        /// <summary>
+        /// What save_attachment answers when the write failed, and whether it may claim the
+        /// disk was left alone.
+        /// <para>
+        /// "Attachment could not be saved" was false in two directions at once. A
+        /// <c>SaveAsFile</c> that throws part-way leaves whatever it had already written, at
+        /// a path the caller was never told - and a clashing name gets a numeric suffix
+        /// chosen inside the COM layer, so the caller could not even guess it. The path is
+        /// now reported on the failure path and named here.
+        /// </para>
+        /// <para>
+        /// The other direction was worse and is fixed at its source: the size read that
+        /// followed the save sat inside the same <c>try</c>, so an IOException from
+        /// <c>FileInfo.Length</c> reported "could not be saved" over a file that was saved
+        /// in full. It is best-effort now, in
+        /// <c>OutlookComSession.TrySaveAttachment</c>.
+        /// </para>
+        /// </summary>
+        private static Exception BuildAttachmentSaveFailure(string? comError, string? attemptedPath, string directory)
+        {
+            bool nothingWasWritten =
+                string.Equals(comError, Com.ComErrorTokens.ItemNotFound, StringComparison.Ordinal)
+                || (comError != null && comError.StartsWith("AttachmentIndexOutOfRange", StringComparison.Ordinal));
+
+            if (nothingWasWritten)
+            {
+                // Both are decided before Directory.CreateDirectory runs, so nothing reached
+                // the disk - the only two codes here that can say so.
+                return new OperationOutcomeException(
+                    Com.MutationOutcome.Unchanged,
+                    "The attachment could not be saved (" + comError + "). Nothing was written to disk. "
+                    + "Re-run read for a current attachment list, or re-run search for a fresh id.");
+            }
+
+            return new OperationOutcomeException(
+                Com.MutationOutcome.Unknown,
+                "The attachment save failed (" + (comError ?? "unknown") + "). A PARTIAL OR COMPLETE FILE MAY EXIST at "
+                + (attemptedPath ?? directory)
+                + " - check it before retrying, and delete it if it is truncated. Retrying writes to a NEW name rather "
+                + "than replacing it, because this tool never overwrites.");
         }
 
         // ------------------------------------------------------------------ thread
@@ -3829,7 +3873,7 @@ namespace OutlookAI.Core.Services
                     }
                 }
 
-                return d ?? throw new InvalidOperationException("Item could not be displayed (" + (error ?? "unknown") + ").");
+                return d ?? throw BuildDisplayFailure(error);
             });
 
             // open_in_outlook is a UI action, not a data write - audit stays best-effort.
@@ -3851,6 +3895,33 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
+        /// What open_in_outlook answers when it failed, and whether it may claim the item
+        /// was left alone.
+        /// <para>
+        /// <c>Display()</c> is the LAST call in the sequence, so a failure reported over it
+        /// is precisely the case where the window may already be on screen and the mail may
+        /// already have been marked read. "Item could not be displayed" said the opposite.
+        /// </para>
+        /// </summary>
+        private static Exception BuildDisplayFailure(string? comError)
+        {
+            if (string.Equals(comError, Com.ComErrorTokens.ItemNotFound, StringComparison.Ordinal))
+            {
+                // Set at the open and nowhere else: nothing was displayed and nothing read.
+                return new OperationOutcomeException(
+                    Com.MutationOutcome.Unchanged,
+                    "The item could not be opened, so nothing was displayed. Re-run search - it may have moved "
+                    + "(EntryIDs change on moves).");
+            }
+
+            return new OperationOutcomeException(
+                Com.MutationOutcome.Unknown,
+                "Displaying the item failed (" + (comError ?? "unknown") + "). IT MAY STILL HAVE OPENED on the user's "
+                + "screen and been MARKED READ - Display is the last step, so a failure reported here can follow it. "
+                + "Ask the user what they can see rather than opening it again.");
+        }
+
+        /// <summary>
         /// Navigates the Outlook window to a folder (ActiveExplorer().CurrentFolder).
         /// Omitting the folder goes to the store's Inbox (root when it has none). Creates
         /// and shows an Explorer when Outlook runs headless.
@@ -3866,7 +3937,7 @@ namespace OutlookAI.Core.Services
             ComExplorerState state = _gateway.Run(s =>
             {
                 ComExplorerState? result = s.TryGotoFolder(store, segments, out string? error);
-                return result ?? throw new InvalidOperationException(BuildNavigationError(error, store, folder));
+                return result ?? throw BuildNavigationError(error, store, folder);
             });
 
             return new GotoFolderOutcome
@@ -3919,7 +3990,7 @@ namespace OutlookAI.Core.Services
             ComExplorerState state = _gateway.Run(s =>
             {
                 ComExplorerState? result = s.TryShowSearchResults(query, olScope, store, segments, out string? error);
-                return result ?? throw new InvalidOperationException(BuildNavigationError(error, store, folder));
+                return result ?? throw BuildNavigationError(error, store, folder);
             });
 
             // Effective registry state, re-read per call (policy hive authoritative):
@@ -3970,19 +4041,42 @@ namespace OutlookAI.Core.Services
             return (scope ?? string.Empty).Trim().ToLowerInvariant();
         }
 
-        private static string BuildNavigationError(string? error, string? store, string? folder)
+        /// <summary>
+        /// What goto_folder and show_search_results answer when they failed.
+        /// <para>
+        /// The two named codes are resolution failures, decided before any window is touched.
+        /// The catch-all is not: by the time it can fire, <c>EnsureVisibleExplorer</c> may
+        /// have CREATED and shown an Explorer window, <c>CurrentFolder</c> may have been set,
+        /// and for show_search_results <c>Explorer.Search</c> may already be running - the
+        /// only thing left to throw is the state snapshot afterwards. "Outlook could not show
+        /// the requested view" reads as though the user's screen is untouched, and it may not
+        /// be. These two are the one part of the audit that was left unread; reading them put
+        /// this row in the same class as the rest.
+        /// </para>
+        /// </summary>
+        private static Exception BuildNavigationError(string? error, string? store, string? folder)
         {
             if (error == "StoreNotFound")
             {
-                return "Store '" + store + "' was not found in Outlook. Use list_accounts for store display names.";
+                return new OperationOutcomeException(
+                    Com.MutationOutcome.Unchanged,
+                    "Store '" + store + "' was not found in Outlook, so nothing was opened or moved on screen. "
+                    + "Use list_accounts for store display names.");
             }
 
             if (error == "FolderNotFound")
             {
-                return "Folder '" + folder + "' was not found in store '" + store + "'. Use list_folders for store-relative paths.";
+                return new OperationOutcomeException(
+                    Com.MutationOutcome.Unchanged,
+                    "Folder '" + folder + "' was not found in store '" + store + "', so nothing was opened or moved on "
+                    + "screen. Use list_folders for store-relative paths.");
             }
 
-            return "Outlook could not show the requested view (" + (error ?? "unknown") + ").";
+            return new OperationOutcomeException(
+                Com.MutationOutcome.Unknown,
+                "Outlook could not confirm the requested view (" + (error ?? "unknown") + "). THE WINDOW MAY HAVE MOVED "
+                + "ANYWAY: an Explorer can have been created and shown, the current folder set, and a search started "
+                + "before this failed. Ask the user what they can see before navigating again.");
         }
 
         /// <summary>
@@ -4281,8 +4375,18 @@ namespace OutlookAI.Core.Services
                 files.Select(f => f.Path).ToList());
             ComDraftCreateResult created = _gateway.Run(s =>
             {
-                ComDraftCreateResult? r = s.TryCreateNewDraft(account, toList, subject!, draftBody, display, signatureOverride, options, out string? error);
-                return r ?? throw new InvalidOperationException(BuildDraftError(error, account));
+                ComDraftCreateResult? r = s.TryCreateNewDraft(
+                    account, toList, subject!, draftBody, display, signatureOverride, options,
+                    out string? savedEntryId, out string? error);
+
+                // REGISTERED BEFORE the call is judged, and that ordering is the fix. The
+                // draft is committed by Save() and four COM steps follow it; a failure in any
+                // of them used to end here with the id never learned, so the item sat in
+                // Drafts where discard_draft - which can only reach ids this registry holds -
+                // was structurally unable to touch it. Registering an id for a draft that
+                // then succeeded costs nothing: the success path registers the same id again.
+                _draftRegistry.Register(savedEntryId);
+                return r ?? throw BuildDraftCreationFailure(error, account, savedEntryId);
             });
 
             _draftRegistry.Register(created.Draft.EntryId);
@@ -4482,7 +4586,10 @@ namespace OutlookAI.Core.Services
             IReadOnlyList<string> toList = to ?? Array.Empty<string>();
             ComDraftCreateResult created = _gateway.Run(s =>
             {
-                ComDraftCreateResult? r = s.TryCreateDerivedDraft(entryId, storeId, kind, toList, draftBody, display, signatureOverride, options, out string? error);
+                ComDraftCreateResult? r = s.TryCreateDerivedDraft(
+                    entryId, storeId, kind, toList, draftBody, display, signatureOverride, options,
+                    out string? savedEntryId, out string? error);
+                _draftRegistry.Register(savedEntryId);
                 if (ShouldSearchOtherStores(storeId, r != null, error))
                 {
                     // Direct EntryID without a known store: retry across stores (same
@@ -4503,7 +4610,14 @@ namespace OutlookAI.Core.Services
                     // move_mail do.
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
-                        r = s.TryCreateDerivedDraft(entryId, store.StoreId, kind, toList, draftBody, display, signatureOverride, options, out error);
+                        r = s.TryCreateDerivedDraft(
+                            entryId, store.StoreId, kind, toList, draftBody, display, signatureOverride, options,
+                            out savedEntryId, out error);
+
+                        // Every attempt registers its own saved draft. The loop stops at the
+                        // first store that opened the item, so at most one orphan is possible
+                        // now - but "at most one" is still one, and it is reachable.
+                        _draftRegistry.Register(savedEntryId);
                         if (!KeepSearchingStores(r != null, error))
                         {
                             // A store that opened the item and then failed answers the
@@ -4514,9 +4628,7 @@ namespace OutlookAI.Core.Services
                     }
                 }
 
-                return r ?? throw new InvalidOperationException(
-                    "The source mail could not be opened or the draft could not be created (" + (error ?? "unknown")
-                    + "). Re-run search - the item may have moved.");
+                return r ?? throw BuildDerivedDraftFailure(error, savedEntryId);
             });
 
             return (hitId, entryId, created, draftBody, htmlAdjustments, files);
@@ -4591,19 +4703,86 @@ namespace OutlookAI.Core.Services
             };
         }
 
-        private static string BuildDraftError(string? error, string account)
+        /// <summary>
+        /// What new_draft answers when the create failed, and whether it may claim the
+        /// mailbox is untouched.
+        /// <para>
+        /// "The draft could not be created" was flatly wrong for the catch-all: <c>Save()</c>
+        /// commits the item and then four COM steps follow it - the hidden-inspector close,
+        /// the relocate into Drafts, the optional Display, and the snapshot reads - so a
+        /// failure in any of them is reported over a draft that EXISTS. Repeating the call
+        /// on that advice makes a second one.
+        /// </para>
+        /// <para>
+        /// The two named codes above it are decided before anything is created and keep
+        /// their wording, which is what earns them <c>unchanged</c>.
+        /// </para>
+        /// </summary>
+        private static Exception BuildDraftCreationFailure(string? error, string account, string? savedDraftEntryId)
         {
             if (error == "AccountNotFound")
             {
-                return "Account '" + account + "' was not found in the Outlook profile. Use list_accounts for the exact account SMTP addresses.";
+                return new OperationOutcomeException(
+                    Com.MutationOutcome.Unchanged,
+                    "Account '" + account + "' was not found in the Outlook profile. Nothing was created. "
+                    + "Use list_accounts for the exact account SMTP addresses.");
             }
 
             if (error == "AccountHasNoDeliveryStore")
             {
-                return "Account '" + account + "' has no delivery store; a draft cannot be filed for it.";
+                return new OperationOutcomeException(
+                    Com.MutationOutcome.Unchanged,
+                    "Account '" + account + "' has no delivery store; a draft cannot be filed for it. Nothing was created.");
             }
 
-            return "The draft could not be created (" + (error ?? "unknown") + ").";
+            return new OperationOutcomeException(Com.MutationOutcome.Unknown, DescribeDraftCreationOutcomeUnknown(error, savedDraftEntryId));
+        }
+
+        /// <summary>
+        /// The twin of <see cref="BuildDraftCreationFailure"/> for reply/replyall/forward,
+        /// which has the same shape and the same post-Save window.
+        /// </summary>
+        private static Exception BuildDerivedDraftFailure(string? error, string? savedDraftEntryId)
+        {
+            if (string.Equals(error, Com.ComErrorTokens.ItemNotFound, StringComparison.Ordinal))
+            {
+                // Set at GetItemFromID and nowhere else, so nothing had been created yet.
+                return new OperationOutcomeException(
+                    Com.MutationOutcome.Unchanged,
+                    "The source mail could not be opened, so no draft was created. Re-run search - the item may have moved.");
+            }
+
+            return new OperationOutcomeException(
+                Com.MutationOutcome.Unknown,
+                "The source mail could not be opened or the draft could not be created ("
+                + (error ?? "unknown") + "). " + DescribeSavedDraftResidue(savedDraftEntryId));
+        }
+
+        /// <summary>
+        /// What a caller is told about a draft that may be sitting in Drafts after a failed
+        /// creation. Pure and public so T1 pins it: this is the sentence that decides whether
+        /// an agent goes looking, and it cannot be reached without a real Outlook failing
+        /// between two COM calls.
+        /// </summary>
+        public static string DescribeDraftCreationOutcomeUnknown(string? comError, string? savedDraftEntryId)
+        {
+            return "The draft creation did not complete (" + (comError ?? "unknown") + "). "
+                + DescribeSavedDraftResidue(savedDraftEntryId);
+        }
+
+        /// <summary>
+        /// The residue half of the two sentences above: what exists, and what to do about it.
+        /// Two cases, because they want different actions - a known id can be read or
+        /// discarded directly, an unknown one has to be looked for.
+        /// </summary>
+        private static string DescribeSavedDraftResidue(string? savedDraftEntryId)
+        {
+            return savedDraftEntryId != null
+                ? "A DRAFT WAS ALREADY SAVED before the failure and it is still in Drafts, with entryId "
+                    + savedDraftEntryId + " - read it to see what it holds, and discard_draft it if it is not wanted. "
+                    + "Do NOT simply retry, or the mailbox ends up with two."
+                : "A DRAFT MAY HAVE BEEN SAVED to Drafts before the failure - check Drafts before retrying, because "
+                    + "retrying can leave a second one.";
         }
 
         /// <summary>
@@ -4655,7 +4834,8 @@ namespace OutlookAI.Core.Services
             }
             catch (InvalidOperationException ex)
             {
-                throw new InvalidOperationException(
+                throw new OperationOutcomeException(
+                    Com.MutationOutcome.Applied,
                     "The draft was created (EntryID " + created.Draft.EntryId
                     + ") but the audit line could not be written: " + ex.Message, ex);
             }
@@ -4925,8 +5105,8 @@ namespace OutlookAI.Core.Services
                 // through the sequence - leaves the intent PENDING on purpose. Nobody can
                 // state what was applied, so the record has to outlive the failure for the
                 // repeat that can finish it.
-                throw new InvalidOperationException(
-                    AuditUpdateOutcomeUnknown(intentKey, entryId, hitId, resumed, ex), ex);
+                throw new OperationOutcomeException(
+                    Com.MutationOutcome.Unknown, AuditUpdateOutcomeUnknown(intentKey, entryId, hitId, resumed, ex), ex);
             }
 
             _updateIntents.Settle(intentKey);
@@ -4945,8 +5125,19 @@ namespace OutlookAI.Core.Services
             return ToUpdateOutcome(updated, hitId, draftBody, htmlAdjustments, removeNames, resumed);
         }
 
-        /// <summary>The one refusal code that does NOT prove the draft was left alone.</summary>
-        internal const string ComFailureRefusal = "com_failure";
+        /// <summary>
+        /// The one refusal code that does NOT prove the draft was left alone: it is raised by
+        /// the catch-all around the whole COM sequence, not by a precondition checked before
+        /// the first write.
+        /// <para>
+        /// PUBLIC because the tool layer has to branch on it too. It attached one advice
+        /// string ("Nothing was changed or deleted.") to every reason code, so an interrupted
+        /// update_draft returned one payload whose message said the outcome was UNKNOWN and
+        /// whose advice said nothing had changed - undoing, one layer up, the fix that had
+        /// just shipped. A shared constant is what stops that being re-decided by hand.
+        /// </para>
+        /// </summary>
+        public const string ComFailureRefusal = "com_failure";
 
         /// <summary>
         /// Reads what a repeat of this update would otherwise be unable to know, BEFORE the
@@ -5181,7 +5372,23 @@ namespace OutlookAI.Core.Services
 
         /// <summary>
         /// Maps a COM-side refusal code from update/discard to the user-facing refusal.
-        /// Every one of these means NOTHING was changed or deleted.
+        /// <para>
+        /// This used to say "Every one of these means NOTHING was changed or deleted", which
+        /// the <c>default:</c> branch inside the method itself contradicts and has since
+        /// <c>db34923</c>. Every NAMED code is decided before the first write, so those do
+        /// prove the negative; the catch-all wraps the whole COM sequence and proves nothing.
+        /// </para>
+        /// <para>
+        /// For <c>discard_draft</c> the open route is <c>MailItem.Delete()</c> itself, which
+        /// sits bare inside <c>OutlookComSession.TryDiscardDraft</c>'s outer <c>try</c>.
+        /// Worth writing down because the obvious candidate is the wrong one: the best-effort
+        /// re-locate that follows the delete cannot reach this branch at all, since
+        /// <c>TryFindDiscardedCopy</c> has its own <c>catch when (IsComCallFailure(ex))</c>
+        /// covering every COM-failure type the session recognises. So the reachable failure is
+        /// the deletion call, whose family includes <c>RPC_S_CALL_FAILED</c> - documented as
+        /// MAY OR MAY NOT have executed on the server. One mutating call with that semantic is
+        /// enough to make "nothing was deleted" unassertable.
+        /// </para>
         /// </summary>
         private static Exception BuildDraftRefusal(string operation, string? comError, string entryId)
         {
@@ -5214,23 +5421,30 @@ namespace OutlookAI.Core.Services
                         "The draft could not be opened - it may have been deleted, moved or already sent. "
                         + "Re-check with read, or re-run search for a fresh id.");
                 default:
-                    // "Nothing was changed" is true of every NAMED refusal above and was not
+                    // "Nothing was changed" is true of every NAMED refusal above and is not
                     // true here: an unclassified COM failure is the one that can arrive
                     // part-way through the sequence, after the body has been committed
-                    // through the inspector or after an attachment has gone. update_draft
-                    // therefore says what it actually knows, and points at the repeat that
-                    // can finish the job; discard_draft keeps its own wording because its
-                    // sequence is a different shape.
+                    // through the inspector or after an attachment has gone. Each operation
+                    // says what IT knows, because the two sequences fail in different shapes
+                    // and want opposite remedies - update_draft points at the repeat that can
+                    // finish the job, discard_draft points at Deleted Items.
                     return RefuseDraft(ComFailureRefusal, operation, entryId,
                         operation == "discard_draft"
-                            ? "The draft could not be discarded (" + (comError ?? "unknown")
-                                + "). Nothing was changed. Check outlook_health and retry."
+                            ? "Outlook failed while discarding the draft (" + (comError ?? "unknown")
+                                + "). WHETHER THE DRAFT WAS DELETED IS UNKNOWN: the delete is a single call with no "
+                                + "answer, and the disconnect family it can fail with documents a call as MAY OR MAY "
+                                + "NOT have executed on the server. LOOK IN DELETED ITEMS for the draft before doing "
+                                + "anything else - it is a soft delete, so if it is there it can be put back with "
+                                + "move_mail. Check outlook_health too."
                             : "Outlook failed part-way through the revision (" + (comError ?? "unknown")
                                 + "). Check outlook_health.");
             }
         }
 
-        /// <summary>Audit-logs the refusal and builds the exception (nothing was changed).</summary>
+        /// <summary>
+        /// Audit-logs the refusal and builds the exception. It does NOT imply the draft was
+        /// left alone - see <see cref="BuildDraftRefusal"/>; the reason code is what says so.
+        /// </summary>
         private static DraftRefusedException RefuseDraft(string reason, string operation, string? entryId, string message)
         {
             try
@@ -5287,7 +5501,8 @@ namespace OutlookAI.Core.Services
             }
             catch (InvalidOperationException ex)
             {
-                throw new InvalidOperationException(
+                throw new OperationOutcomeException(
+                    Com.MutationOutcome.Applied,
                     "The draft was updated (EntryID " + updated.Draft.EntryId
                     + ") but the audit line could not be written: " + ex.Message, ex);
             }
@@ -5309,7 +5524,8 @@ namespace OutlookAI.Core.Services
             }
             catch (InvalidOperationException ex)
             {
-                throw new InvalidOperationException(
+                throw new OperationOutcomeException(
+                    Com.MutationOutcome.Applied,
                     "The draft was discarded (EntryID " + discarded.OldEntryId
                     + ", now in " + (discarded.ToFolder ?? "Deleted Items")
                     + ") but the audit line could not be written: " + ex.Message, ex);
@@ -5502,7 +5718,8 @@ namespace OutlookAI.Core.Services
                 // pointing the wrong way too: re-confirming after an unknown-outcome send
                 // is exactly how a duplicate gets sent. Hence the explicit instruction to
                 // look before re-sending.
-                throw new InvalidOperationException(AuditSendOutcomeUnknown(state, hitId, ex), ex);
+                throw new OperationOutcomeException(
+                    Com.MutationOutcome.Unknown, AuditSendOutcomeUnknown(state, hitId, ex), ex);
             }
 
             if (sent == null)
@@ -5641,20 +5858,36 @@ namespace OutlookAI.Core.Services
 
             if (sendError == "SendIdentityVerificationFailed")
             {
+                // "Nothing was sent" is true and was never the misleading half. What was
+                // missing is that the abort is not a no-op on the DRAFT: SendUsingAccount is
+                // written to the item BEFORE the readback that failed, and no path restores
+                // it, so "the send was aborted" invited the reader to think the draft is as
+                // they left it.
                 return RefuseSend("identity_verification_failed", entryId, store, account,
                     "The sending identity could not be verified on the draft (SendUsingAccount readback mismatch) - the send was "
-                    + "aborted to avoid sending from the wrong account. Nothing was sent.");
+                    + "aborted to avoid sending from the wrong account. Nothing was sent. NOTE: this attempt WROTE the draft's "
+                    + "send-account pin before the check failed and did not restore it, so open the draft and confirm the From "
+                    + "account before doing anything else with it.");
             }
 
             if (sendError != null && sendError.StartsWith("SendCallFailed:", StringComparison.Ordinal))
             {
-                return new InvalidOperationException(
+                return new OperationOutcomeException(
+                    Com.MutationOutcome.Unknown,
                     "Outlook's Send call failed (" + sendError.Substring("SendCallFailed:".Length)
                     + "). The mail MAY be sitting in the Outbox - verify before retrying.");
             }
 
-            return new InvalidOperationException(
-                "The draft could not be re-opened for sending (" + (sendError ?? "unknown") + "). Nothing was sent.");
+            // "Could not be re-opened" named one step out of the whole sequence and named the
+            // wrong one: this is the catch-all, so the failure can be anywhere between the
+            // open and the moment before Send(). "Nothing was sent" survives the audit
+            // unchanged and is why the outcome is unchanged - Send() has its own catch above,
+            // which is what makes the negative provable here rather than hoped for.
+            return new OperationOutcomeException(
+                Com.MutationOutcome.Unchanged,
+                "The send was abandoned before Outlook was asked to send (" + (sendError ?? "unknown")
+                + "). Nothing was sent. The attempt may have rewritten the draft's send-account pin, so check the "
+                + "draft's From account before trying again.");
         }
 
         /// <summary>
@@ -5739,7 +5972,8 @@ namespace OutlookAI.Core.Services
             }
             catch (InvalidOperationException ex)
             {
-                throw new InvalidOperationException(
+                throw new OperationOutcomeException(
+                    Com.MutationOutcome.Applied,
                     "The mail WAS SENT (draft EntryID " + sent.EntryIdAtSend
                     + ") but the audit line could not be written: " + ex.Message, ex);
             }
@@ -5998,7 +6232,10 @@ namespace OutlookAI.Core.Services
                     allowConnectFloor: true);
                 if (moved == null)
                 {
-                    return FailedItem(id, DescribeMoveFailure(moveError, target.StoreRelativePath, requestedStore: null, createFolder: false));
+                    return FailedItem(
+                        id,
+                        DescribeMoveFailure(moveError, target.StoreRelativePath, requestedStore: null, createFolder: false),
+                        MoveFailureOutcome(moveError));
                 }
 
                 return CompleteMove("archive_mail", id, hitId, moved, out auditFailed);
@@ -6012,11 +6249,11 @@ namespace OutlookAI.Core.Services
                 // Per item, not per batch. The item's own budget is what expired, so the
                 // rest of the batch is still worth attempting - and the item is a mutation
                 // whose outcome nobody can now state, which the message has to say.
-                return FailedItem(id, BatchItemTimedOutMessage(ex.Message));
+                return FailedItem(id, BatchItemTimedOutMessage(ex.Message), Com.MutationOutcome.Unknown);
             }
             catch (Exception ex) when (ex is InvalidOperationException || OutlookComSession.IsComCallFailure(ex))
             {
-                return FailedItem(id, ex.Message);
+                return FailedItem(id, ex.Message, OutcomeOf(ex));
             }
         }
 
@@ -6045,17 +6282,26 @@ namespace OutlookAI.Core.Services
 
             try
             {
+                // The created-folder list is collected from EVERY attempt, successful or
+                // not: folders are created before the target guard runs, so a refusal can
+                // arrive over a folder this call has just made (row 6 of the 2026-08-19
+                // atomicity audit). It used to be read only off the success result.
+                List<string> createdHere = new List<string>();
                 (ComMoveItemResult? moved, string? comError) = _gateway.Run(
                     s =>
                 {
-                    ComMoveItemResult? r = s.TryMoveItemToPath(entryId, storeId, segments, createFolder, requestedStore, out string? e);
+                    ComMoveItemResult? r = s.TryMoveItemToPath(
+                        entryId, storeId, segments, createFolder, requestedStore, out IReadOnlyList<string>? madeFolders, out string? e);
+                    AddCreatedFolders(createdHere, madeFolders);
                     if (ShouldSearchOtherStores(storeId, r != null, e))
                     {
                         // Direct EntryID without a known store: retry across stores
                         // (same pattern as read/draft ops).
                         foreach (ComStoreDetail candidate in GetStoreDetails(s))
                         {
-                            r = s.TryMoveItemToPath(entryId, candidate.StoreId, segments, createFolder, requestedStore, out e);
+                            r = s.TryMoveItemToPath(
+                                entryId, candidate.StoreId, segments, createFolder, requestedStore, out madeFolders, out e);
+                            AddCreatedFolders(createdHere, madeFolders);
                             if (!KeepSearchingStores(r != null, e))
                             {
                                 break;
@@ -6068,9 +6314,20 @@ namespace OutlookAI.Core.Services
                     itemBudgetMs,
                     allowConnectFloor: true);
 
+                foreach (string created in createdHere)
+                {
+                    if (!createdFolders.Contains(created, StringComparer.OrdinalIgnoreCase))
+                    {
+                        createdFolders.Add(created);
+                    }
+                }
+
                 if (moved == null)
                 {
-                    return FailedItem(id, DescribeMoveFailure(comError, targetFolderEcho, requestedStore, createFolder));
+                    return FailedItem(
+                        id,
+                        DescribeMoveFailure(comError, targetFolderEcho, requestedStore, createFolder, createdHere),
+                        MoveFailureOutcome(comError));
                 }
 
                 foreach (string created in moved.CreatedFolderPaths)
@@ -6090,11 +6347,11 @@ namespace OutlookAI.Core.Services
             catch (TimeoutException ex)
             {
                 // Per item, not per batch - see ArchiveOne's twin.
-                return FailedItem(id, BatchItemTimedOutMessage(ex.Message));
+                return FailedItem(id, BatchItemTimedOutMessage(ex.Message), Com.MutationOutcome.Unknown);
             }
             catch (Exception ex) when (ex is InvalidOperationException || OutlookComSession.IsComCallFailure(ex))
             {
-                return FailedItem(id, ex.Message);
+                return FailedItem(id, ex.Message, OutcomeOf(ex));
             }
         }
 
@@ -6123,10 +6380,16 @@ namespace OutlookAI.Core.Services
             catch (InvalidOperationException ex)
             {
                 auditFailed = true;
+
+                // Ok=false over an item that MOVED. This is the case that no wording could
+                // repair and that the outcome field exists for: the message has always said
+                // the move happened, while the field it travels in was documented as
+                // "nothing was moved for this item".
                 return FailedItem(
                     id,
                     "The item WAS moved (newEntryId " + moved.NewEntryId + ", fromFolder '" + moved.FromFolderPath
-                    + "') but the audit line could not be written: " + ex.Message);
+                    + "') but the audit line could not be written: " + ex.Message,
+                    Com.MutationOutcome.Applied);
             }
 
             if (hitId != null && _hits.TryGetValue(hitId, out CachedHit? cached))
@@ -6147,9 +6410,76 @@ namespace OutlookAI.Core.Services
             };
         }
 
-        private static MoveItemView FailedItem(string id, string error)
+        /// <summary>
+        /// A per-item failure. <paramref name="outcome"/> is what repairs the field
+        /// <c>Ok</c> could never carry: <c>Ok=false</c> spans "not moved", "moved but not
+        /// audited" and "nobody knows", and a boolean has room for two of those.
+        /// </summary>
+        private static MoveItemView FailedItem(string id, string error, string outcome = Com.MutationOutcome.Unchanged)
         {
-            return new MoveItemView { Id = id, Ok = false, Error = error };
+            return new MoveItemView { Id = id, Ok = false, Error = error, Outcome = outcome };
+        }
+
+        /// <summary>
+        /// The outcome a per-item catch-all may claim. An <see cref="OperationOutcomeException"/>
+        /// already knows; anything else reaching a catch-all around a move is by definition
+        /// not proof that the item stayed put, so it answers unknown rather than the
+        /// comfortable default.
+        /// </summary>
+        private static string OutcomeOf(Exception ex)
+        {
+            return ex is OperationOutcomeException stated ? stated.Outcome : Com.MutationOutcome.Unknown;
+        }
+
+        /// <summary>Adds newly created folder paths without duplicating one two attempts both report.</summary>
+        private static void AddCreatedFolders(List<string> into, IReadOnlyList<string>? created)
+        {
+            if (created == null)
+            {
+                return;
+            }
+
+            foreach (string path in created)
+            {
+                if (!into.Contains(path, StringComparer.OrdinalIgnoreCase))
+                {
+                    into.Add(path);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Whether a refused or failed move left the item where it was. Every NAMED code is
+        /// decided before <c>Move()</c> is called, so those are provably unchanged; the
+        /// catch-all wraps the move itself and proves nothing.
+        /// </summary>
+        public static string MoveFailureOutcome(string? comError)
+        {
+            if (comError == null)
+            {
+                return Com.MutationOutcome.Unknown;
+            }
+
+            if (comError.StartsWith("CrossStoreTarget:", StringComparison.Ordinal))
+            {
+                return Com.MutationOutcome.Unchanged;
+            }
+
+            switch (comError)
+            {
+                case "ItemNotFound":
+                case "NotAMailItem":
+                case "TargetFolderNotFound":
+                case "TargetFolderCreateFailed":
+                case "TargetNotAMailFolder":
+                case "TargetIsDeletedItems":
+                case "TargetIsOutbox":
+                case "AlreadyInTargetFolder":
+                case "RootFolderUnavailable":
+                    return Com.MutationOutcome.Unchanged;
+                default:
+                    return Com.MutationOutcome.Unknown;
+            }
         }
 
         /// <summary>
@@ -6197,7 +6527,44 @@ namespace OutlookAI.Core.Services
         /// Maps content-free COM move errors to agent-actionable per-item error text
         /// (pure, public for T1 pinning).
         /// </summary>
-        public static string DescribeMoveFailure(string? comError, string targetFolder, string? requestedStore, bool createFolder)
+        /// <param name="createdFolderPaths">
+        /// Folders this call created before it failed. They are named in the message because
+        /// nothing else reports them: <c>createdFolders</c> on the outcome used to be filled
+        /// from the SUCCESS result alone, so <c>move_mail</c> to <c>Deleted Items/foo</c> with
+        /// <c>create_folder: true</c> created <c>foo</c> inside Deleted Items and answered
+        /// with a refusal that mentioned no folder at all.
+        /// </param>
+        public static string DescribeMoveFailure(
+            string? comError,
+            string targetFolder,
+            string? requestedStore,
+            bool createFolder,
+            IReadOnlyList<string>? createdFolderPaths = null)
+        {
+            return DescribeMoveRefusal(comError, targetFolder, requestedStore, createFolder)
+                + DescribeCreatedFolderResidue(createdFolderPaths);
+        }
+
+        /// <summary>
+        /// The created-folder clause, empty when the call created none. Separate so the
+        /// refusal sentences below stay readable and so T1 can pin the clause on its own.
+        /// </summary>
+        private static string DescribeCreatedFolderResidue(IReadOnlyList<string>? createdFolderPaths)
+        {
+            if (createdFolderPaths == null || createdFolderPaths.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            return " NOTE: " + createdFolderPaths.Count.ToString(CultureInfo.InvariantCulture)
+                + (createdFolderPaths.Count == 1 ? " folder was" : " folders were")
+                + " CREATED before this failed and " + (createdFolderPaths.Count == 1 ? "it is" : "they are")
+                + " still there: " + string.Join(", ", createdFolderPaths)
+                + ". Delete " + (createdFolderPaths.Count == 1 ? "it" : "them")
+                + " in Outlook if unwanted - this server cannot remove folders.";
+        }
+
+        private static string DescribeMoveRefusal(string? comError, string targetFolder, string? requestedStore, bool createFolder)
         {
             if (comError != null && comError.StartsWith("CrossStoreTarget:", StringComparison.Ordinal))
             {
@@ -6231,7 +6598,14 @@ namespace OutlookAI.Core.Services
                 case "RootFolderUnavailable":
                     return "The item's store root could not be opened; retry when Outlook is responsive (see outlook_health).";
                 default:
-                    return "The move failed (" + (comError ?? "unknown") + "). Check outlook_health and retry.";
+                    // Every case above is decided BEFORE Move() runs. This one is not: it is
+                    // the catch-all around the whole sequence, so it can fire with the item
+                    // already moved. "Check outlook_health and retry" was therefore advice to
+                    // re-run a move whose first attempt may have succeeded, against an
+                    // EntryID that a successful move has already invalidated.
+                    return "The move failed (" + (comError ?? "unknown") + "). WHETHER THE MOVE TOOK EFFECT IS UNKNOWN - "
+                        + "find the item before retrying (search for it, or list the target folder), because a move that "
+                        + "did happen has already changed its EntryID. Check outlook_health too.";
             }
         }
 
@@ -6857,7 +7231,8 @@ namespace OutlookAI.Core.Services
             }
             catch (InvalidOperationException ex)
             {
-                throw new InvalidOperationException(
+                throw new OperationOutcomeException(
+                    Com.MutationOutcome.Applied,
                     "The signature operation succeeded (" + outcome.Action + " '" + outcome.Name + "'"
                     + (outcome.BackupPath != null ? ", backup at " + outcome.BackupPath : string.Empty)
                     + ") but the audit line could not be written: " + ex.Message, ex);

@@ -754,6 +754,38 @@ public sealed class ComHostProtocolTests
     }
 
     [Fact]
+    public void ACollectionOutputParameter_SurvivesTheExactPairOfCallsTheProxyMakes()
+    {
+        // TryMoveItemToPath gained `out IReadOnlyList<string>? createdFolderPaths` so a
+        // refused move can name the folders it created before the refusal. That is the FIRST
+        // collection-typed out parameter on this contract, and it crosses the pipe by a
+        // generic pair of calls nothing had exercised: ComHostServer.CollectOutputs
+        // serializes it against the DECLARED type, RemoteSessionProxy.WriteBackOutputs
+        // deserializes it against the same one. An interface target is the part worth
+        // proving - if System.Text.Json could not construct one, the whole fix would be inert
+        // in production while every T1 test that substitutes the session stayed green.
+        IReadOnlyList<string> created = new List<string> { "Archive/2026", "Archive/2026/Acme" };
+
+        JsonElement wire = JsonSerializer.SerializeToElement(created, typeof(IReadOnlyList<string>), ComHostProtocol.Json);
+        object? back = wire.Deserialize(typeof(IReadOnlyList<string>), ComHostProtocol.Json);
+
+        IReadOnlyList<string> rebuilt = Assert.IsAssignableFrom<IReadOnlyList<string>>(back);
+        Assert.Equal(created, rebuilt);
+    }
+
+    [Fact]
+    public void AnAbsentCollectionOutputParameter_CrossesAsNullRatherThanAsAnEmptyList()
+    {
+        // The distinction is load-bearing in the other direction: "no folders were created"
+        // must not arrive as an empty list that the caller then reports as a created-folder
+        // section with nothing in it.
+        JsonElement wire = JsonSerializer.SerializeToElement(
+            (IReadOnlyList<string>?)null, typeof(IReadOnlyList<string>), ComHostProtocol.Json);
+
+        Assert.Equal(JsonValueKind.Null, wire.ValueKind);
+    }
+
+    [Fact]
     public async Task Error_PreservesTypeHResultAndReason()
     {
         // Guard branches on exception TYPE and ComGateway keys its disconnect-retry on

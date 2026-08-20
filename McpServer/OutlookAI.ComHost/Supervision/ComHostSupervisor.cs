@@ -400,8 +400,10 @@ namespace OutlookAI.ComHost.Supervision
 
             if (!response.Ok)
             {
-                throw ComHostErrorMapper.ToException(response.Error
-                    ?? new ComHostError { Type = "Exception", Message = "The COM host reported a failure with no detail." });
+                throw ComHostErrorMapper.ToException(
+                    response.Error
+                        ?? new ComHostError { Type = "Exception", Message = "The COM host reported a failure with no detail." },
+                    operation);
             }
 
             Volatile.Write(ref _childHasServed, true);
@@ -749,7 +751,9 @@ namespace OutlookAI.ComHost.Supervision
                 if (_pending.TryRemove(entry.Key, out PendingRequest? pending))
                 {
                     _ = pending.Completion.TrySetException(
-                        new ComHostUnavailableException(DescribeInterruption(pending.Operation, cause)));
+                        new ComHostUnavailableException(
+                            DescribeInterruption(pending.Operation, cause),
+                            MutationOutcome.ForInterrupted(pending.Operation)));
                 }
             }
         }

@@ -460,9 +460,23 @@ namespace OutlookAI.Core.Services
             return entries;
         }
 
+        /// <summary>
+        /// Copies a signature's whole file set aside before anything touches it.
+        /// <para>
+        /// The claim in the failure message - the operation was aborted and nothing was
+        /// modified - is TRUE of the USER'S SIGNATURES, and it is the reason this runs first:
+        /// nothing below it has executed when it throws. The 2026-08-19 atomicity audit
+        /// confirmed it and named the one thing it did not mention, which is that a
+        /// half-written BACKUP directory can survive - <c>CreateDirectory</c> succeeds and a
+        /// later <c>File.Copy</c> fails. That is not the user's data and it is not a failure,
+        /// but it is a directory nobody asked for, so it is named rather than left to be
+        /// found.
+        /// </para>
+        /// </summary>
         private static string BackupFileSet(
             string root, string name, IReadOnlyList<string> existing, string backupRoot, Func<DateTime> utcNow)
         {
+            string? created = null;
             try
             {
                 string stamp = utcNow().ToString(BackupTimestampFormat, CultureInfo.InvariantCulture);
@@ -473,6 +487,10 @@ namespace OutlookAI.Core.Services
                 }
 
                 Directory.CreateDirectory(backupPath);
+
+                // Recorded only once the directory really exists, so the message can tell a
+                // partial backup apart from a backup root that could not be written at all.
+                created = backupPath;
                 foreach (string entry in existing)
                 {
                     if (Directory.Exists(entry))
@@ -489,9 +507,14 @@ namespace OutlookAI.Core.Services
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
             {
-                throw new InvalidOperationException(
+                throw new OperationOutcomeException(
+                    Com.MutationOutcome.Unchanged,
                     "The automatic backup of signature '" + name + "' failed (" + ex.Message
-                    + ") - the " + "operation was ABORTED and nothing was modified.", ex);
+                    + ") - the operation was ABORTED and your signatures were not modified."
+                    + (created != null
+                        ? " An INCOMPLETE BACKUP folder was left at " + created + " - delete it if you do not want it."
+                        : string.Empty),
+                    ex);
             }
         }
 

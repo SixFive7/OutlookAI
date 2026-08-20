@@ -388,7 +388,7 @@ public sealed class DraftUpdateReentrancyTests : IDisposable
         RecordingSession session = new RecordingSession { FailNextUpdate = true };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
-        _ = Assert.Throws<InvalidOperationException>(() => service.UpdateDraft(DraftId, subject: "New subject"));
+        _ = Assert.Throws<OperationOutcomeException>(() => service.UpdateDraft(DraftId, subject: "New subject"));
 
         Assert.Equal(
             new[] { nameof(IOutlookSession.TryGetMailInfo), nameof(IOutlookSession.TryUpdateDraft) },
@@ -403,7 +403,7 @@ public sealed class DraftUpdateReentrancyTests : IDisposable
         RecordingSession session = new RecordingSession { FailNextUpdate = true };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
-        _ = Assert.Throws<InvalidOperationException>(() => service.UpdateDraft(DraftId, subject: "New subject"));
+        _ = Assert.Throws<OperationOutcomeException>(() => service.UpdateDraft(DraftId, subject: "New subject"));
         Assert.Null(session.LastResume);
 
         session.FailNextUpdate = false;
@@ -424,7 +424,7 @@ public sealed class DraftUpdateReentrancyTests : IDisposable
         RecordingSession session = new RecordingSession { FailNextUpdate = true };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
-        _ = Assert.Throws<InvalidOperationException>(() => service.UpdateDraft(DraftId, subject: "New subject"));
+        _ = Assert.Throws<OperationOutcomeException>(() => service.UpdateDraft(DraftId, subject: "New subject"));
 
         session.FailNextUpdate = false;
         _ = service.UpdateDraft(DraftId, subject: "A different subject");
@@ -515,7 +515,7 @@ public sealed class DraftUpdateReentrancyTests : IDisposable
         _ = service.UpdateDraft(DraftId, subject: "First");
 
         session.FailNextUpdate = true;
-        _ = Assert.Throws<InvalidOperationException>(() => service.UpdateDraft(DraftId, subject: "Second"));
+        _ = Assert.Throws<OperationOutcomeException>(() => service.UpdateDraft(DraftId, subject: "Second"));
 
         session.FailNextUpdate = false;
         _ = service.DiscardDraft(DraftId);

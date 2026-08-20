@@ -35,6 +35,80 @@
   files. That gap was fixed in the same work — an in-place upgrade will not leave a stale
   COM host holding its own image open.
 
+- [ ] **Residual questions from the 2026-08-19/20 atomicity-claims sweep.** All 31 claims of
+  non-effect were enumerated, 16 were wrong and all 16 are fixed (`Docs/completeness-gaps.md`
+  section 7b, T1 `AtomicityClaimsTests`). These are the things reading could not settle, and the
+  two wrinkles beside the send path that are NOT the audited defect.
+
+  - [ ] **Which HRESULTs Outlook actually raises from `MailItem.Delete()`, `Move()` and
+        `Display()` when the RPC channel breaks mid-call.** The may-or-may-not reading of
+        `RPC_S_CALL_FAILED` is documented and is this repo's own stated basis for the retry
+        classification, but whether these three calls produce it in practice is unmeasured. It
+        decides whether the unknown-outcome wording on those three paths describes a rare event or
+        a theoretical one. **The wording was deliberately fixed WITHOUT waiting for it**, on the
+        maintainer's reasoning: a claim about what did not happen should not rest on an unmeasured
+        probability. Measurable on the VM with `OUTLOOKAI_COMHOST_FAULT` plus a read afterwards.
+  - [ ] **Whether a MUTATING response can actually exceed the 64 MB frame.** Row J8's verdict is
+        "false by construction": `ComDraftUpdateResult` and `ComDraftCreateResult` carry no body,
+        only recipients and attachment metadata, and no realistic 64 MB case could be constructed
+        by reading - a recipient count in the hundreds of thousands would be needed. The serialised
+        size of a `ComDraftUpdateResult` is measured nowhere. The fix is one `if` either way, so
+        this is a curiosity rather than a blocker.
+  - [ ] **Whether `TryDiscardDraft` can reach its catch-all through a NON-`IsComCallFailure`
+        exception after `Delete()`.** A `NullReferenceException` or `InvalidOperationException`
+        from `collection.Count` or the indexer inside `TryFindDiscardedCopy` would escape
+        `_runner.Run` entirely rather than becoming `com_failure`, and what `PumpedStaRunner` does
+        with such an escape was not established. It changes which message the caller gets, not
+        whether the delete happened.
+  - [ ] **Whether soft-deleted drafts actually survive on the maintainer's profile.** The discard
+        fix leans on recoverability from Deleted Items. Outlook's "empty Deleted Items on exit"
+        option and Exchange retention tags can both remove the item, and neither is visible from
+        this codebase. The message says to look in Deleted Items, which is right in either case;
+        what is unknown is how often looking will find anything.
+  - [ ] **`send` catches `TimeoutException` only** - noted by the audit and NOT part of the defect
+        it was auditing, so deliberately left alone in that pass. A child that dies for any other
+        reason raises `ComHostUnavailableException`, which is not a `TimeoutException`, so that
+        path is saved by `ComHostSupervisor.DescribeInterruption` instead. The outcome is right by
+        a different route rather than by this `catch`, which means the send path's own
+        `send_outcome_unknown` audit line is NOT written for it. Worth widening the filter, or at
+        least writing down that the audit line is conditional on which way the child died.
+  - [ ] **`SendUsingAccount` is written to the user's draft before the identity readback and is
+        never restored.** The "Nothing was sent" claims stay true, and the messages now SAY the pin
+        may have been rewritten (rows 9 and 10) - but saying so is a smaller fix than restoring it.
+        Restoring needs the previous value captured before the putref and put back on every failure
+        path, which is one more mutating call on a path that is currently refusing to mutate
+        anything, so it wants a decision rather than a quiet fix.
+  - [ ] **Seven decision lines from this pass are provably unguarded, established by mutation
+        rather than assumed.** Each was reverted, built, run against the whole non-live suite and
+        restored; 30 of 37 were caught, and eight of those thirty only after the gap they exposed
+        was closed with a new test. The full table is in `tmp-aitrace/mutation-table.md`.
+        - **Five live in `OutlookComSession`, behind a COM call no non-live test can execute**,
+          which is the same class as `sortApplied` and the attachment-plan execution already
+          recorded above: the saved-draft id being published on the failure path and re-read after
+          the relocate (row 5's COM half), `TryMoveItemToPath` reporting created folders on the
+          failure path (row 6's COM half), `TrySaveAttachment` reporting the attempted path, and
+          the size read being best-effort (row 11's two halves). Every T1 test substitutes the
+          session, so a test can only prove that the SERVICE layer uses what it is given. What
+          each is worth is not in doubt - the shapes are read off the code - but they are
+          unexercised until a live run. The cheap substitute is the one already used elsewhere: a
+          temporary build that forces the branch.
+        - **`CompleteMove`'s audit-failure branch** (`Ok=false` over an item that MOVED, reported
+          as `outcome: applied`) needs `AuditLog.Append` to FAIL, and it writes to
+          `%LOCALAPPDATA%\OutlookAI` through a path that is not injectable. `AppendTo` takes a
+          directory and is used by `AuditLogTests`; wiring the service layer to it would make this
+          reachable, and is a bigger change than the row it guards.
+        - **The supervisor's own wiring for the interrupted-request outcome** needs a child that
+          dies while holding a request. Both ends are pinned separately - the value
+          (`MutationOutcome.ForInterrupted`) and the carrier
+          (`ComHostUnavailableException.Outcome`) - so what is unguarded is the line that joins
+          them.
+
+  - [ ] **The `outcome` field is not consumed by anything yet.** It is additive and null-omitted,
+        the tool descriptions teach it, and T1 asserts a `com_failure` never carries `unchanged` -
+        but no agent behaviour depends on it, so its value is currently "the claim is testable"
+        rather than "the claim is acted on". If it turns out nothing ever branches on it, the
+        honest conclusion is that the prose was the whole fix and the field is cost.
+
 - [ ] **Residual gaps left by the 2026-08-19 timeout pass.** The values, the three inventory
   defects, the graceful sweep expiry and the kill work all landed; these did not, and each one
   is written down because a mutation check proved it unguarded rather than because it was
@@ -102,13 +176,18 @@
         `Attachments` collection. Reversing the order back leaves the suite green. T2
         `LiveUpdateDiscardTests` is where it would be exercised; extending it to assert the ORDER
         needs a way to observe a mid-sequence state, which nothing has today.
-  - [ ] **`discard_draft`'s `com_failure` still claims "Nothing was changed", and it cannot.**
-        `TryDiscardDraft` performs the soft delete and then does a best-effort re-locate in Deleted
-        Items, so a COM failure after the delete reaches the same catch-all and reports a deletion
-        that happened as one that did not. `update_draft`'s half of that wording was corrected in
-        this pass; the discard half was left alone deliberately - it is a different sequence, the
-        item is recoverable from Deleted Items either way, and changing a deletion path's message
-        without a live run to check it is not a trade worth making at 4am.
+  - [x] **DONE (2026-08-20) - `discard_draft`'s `com_failure` no longer claims "Nothing was
+        changed".** Fixed as part of the full atomicity sweep below. **The reason recorded here was
+        wrong and is corrected rather than inherited:** this entry said the post-delete re-locate
+        reaches the catch-all. It does not - `TryFindDiscardedCopy` has its own
+        `catch when (IsComCallFailure(ex))` covering all six COM-failure types the session
+        recognises, so that route is closed, and between `Delete()` and the return there is nothing
+        but a null check and a managed constructor. The route that IS open is `Delete()` itself,
+        sitting bare in `TryDiscardDraft`'s outer `try`, whose disconnect family includes
+        `RPC_S_CALL_FAILED` - which this repository already documents as MAY OR MAY NOT have
+        executed on the server. One mutating call with that semantic is enough, and it is a stronger
+        argument than the one it replaces because it does not depend on a second failure after the
+        first.
   - [ ] **Nothing verifies that an interrupted attempt's partial writes are DURABLE.** The whole
         design is deliberately indifferent to it - it converges on the end state from whatever the
         draft is observed to hold - but the question is still unanswered and worth answering, because

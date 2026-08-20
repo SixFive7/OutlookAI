@@ -39,7 +39,7 @@ reasoning, and flagged for review rather than buried.
 | --- | --- | --- |
 | The two corpus-generator defects (Outbox duplication; placement probe failing on a large folder) | **Fix both** | queued |
 | If the sort probe confirms the sweep has never sorted | **Fix immediately, AND re-measure the corpus** - the 180 s sweep budget was measured with the sort failing, so a working sort may change the cost | conditional on the probe |
-| `discard_draft`'s "Nothing was changed" wording | **Audit every such claim in the product**, not just that one - the phrase asserts atomicity and the product has been wrong about it once already | queued |
+| `discard_draft`'s "Nothing was changed" wording | **Audit every such claim in the product**, not just that one - the phrase asserts atomicity and the product has been wrong about it once already | **audit delivered** (`tmp-aitrace/atomicity-claims.md`, 31 claims, 16 wrong); **fix shipped** (uncommitted, 2026-08-20) |
 | Authorising the `claude.ai` and `VF Dev` MCP servers | **Leave them** - nothing here depends on either | closed |
 
 ## 1c. Decisions given 2026-08-20
@@ -55,6 +55,16 @@ question.
 | Orphaned draft after a failed `new_draft` | **Both fixes**, with registering the id before the post-save steps as the substance |
 | Folders created before a refused move | **Fix now**, accepting the result-shape change |
 | Wording vs measurement for the disconnect claims | **Fix the wording regardless** - a claim about what did not happen must not rest on an unmeasured probability |
+
+**All five atomicity answers are SHIPPED (uncommitted, 2026-08-20).** All 31 claims were
+enumerated, 16 were wrong, 16 are fixed. The `outcome` field is on the error object and on
+`MoveItemView`; the two behavioural fixes landed (a failed create registers its draft's id before
+the call is judged, a refused move reports the folders it created); the shared opening sentence is
+`Core/Com/MutationOutcome`, keyed on `ComSessionOperations.IsRetryable`, with every site keeping its
+own remedy clause. Pinned by T1 `AtomicityClaimsTests` (33 tests), including the assertion that was
+missing when `db34923` shipped - the tool layer's `advice`, not only the `message`. The rows and
+what each now says are in `Docs/completeness-gaps.md` section 7b; what reading could not settle is
+in `TODO.md`.
 | `HealthProbeDeadlineMs` at 5 s | **Keep** |
 | Move batch as a real aggregate | **Keep, with a live batch exercise before release** |
 | `scan_resumed` on every resumed page | **Keep** |
@@ -681,6 +691,139 @@ converted as each row is next touched.
     is precisely the failure mode this whole pass exists to remove, reintroduced by the store
     layout. **So: corpus IS the hub, and a small bystander store is what the tripwire watches.**
     Caught by re-reading my own runbook against the test list rather than by anything failing.
+
+46. **Where the shared helper lives, and why only the OPENING sentence is shared.** The audit
+    recommended Direction C plus a scoped Direction A, and I took it without changing the shape.
+    The helper is `Core/Com/MutationOutcome` - Core rather than ComHost, because `MailService`
+    needs it as much as `OutlookTools` and `ComHostServer` do, and Core is what all three can
+    see. It exposes the three-value vocabulary and four functions: `ForInterrupted` /
+    `ForCompleted` (the field) and `DescribeInterrupted` / `DescribeAnswerLost` (the sentence).
+    **Two sentences rather than one with a flag**, deliberately: they say opposite things - one
+    means "nobody can tell", the other means "it SUCCEEDED and repeating it would do it twice" -
+    and folding them into one function with a boolean is how that distinction gets lost by the
+    third caller. **Only the opening is shared**: every site appends its own remedy, because
+    update means repeat the identical call, send means check the Outbox, create means check
+    Drafts, discard means check Deleted Items and move means find the item first. A shared
+    sentence that tried to carry all five would be worse than the per-site prose it replaced,
+    and specific remedies are exactly what makes `DescribeSendOutcomeUnknown` the good one.
+    Each site calls the classification ONCE and branches its remedy on the returned value, so
+    there is one decision per site rather than two that could disagree.
+
+47. **`ComSessionOperations.IsRetryable` needed an operation NAME at three sites that had none,
+    and I added an ambient trace rather than guessing.** Rows 3, 7 and 15 all key on the same
+    classification, but only row 7 (`ComHostTimeoutException`) already carried the name.
+    - Row 3: `ComHostResponseTooLargeException` gained an `Operation`, filled by the supervisor,
+      which has it in scope where it rebuilds the child's error. The child-side message is fixed
+      in `ComHostServer.TooLarge` at the same time, so both halves of the same claim agree.
+    - Row 15: a bare `COMException` reaching the tool layer carries nothing. `ComHostRequestContext`
+      now records the last dispatched contract operation for the current request, stamped by
+      `RemoteSessionProxy` before each round trip. **The recorder is a mutable object held by the
+      `AsyncLocal`, not a string**, and that is load-bearing: an `AsyncLocal` ASSIGNMENT made
+      inside a `Task.Run` body does not flow back out to the awaiting caller, so a string would
+      have read as null in exactly the `catch` that needs it. The reference flows in, the proxy
+      mutates the shared object, `GuardAsync` reads it after the await.
+    - **A null trace states NO outcome at all**, rather than defaulting either way. A request that
+      dispatched no COM call may still have failed for a reason this server cannot classify, and
+      answering `unchanged` there would be the same habit the whole audit is about.
+    **Review this one**: it is new ambient state on a hot path, and the cost is one field write
+    per contract call.
+
+48. **A new exception type, `OperationOutcomeException`, so the SERVICE layer can state an
+    outcome too.** The tool layer can classify what it catches; it cannot classify an
+    `InvalidOperationException` that `MailService` threw deliberately with an accurate message of
+    its own. Rather than sniff messages, the eleven such throws now carry the value: derived from
+    `InvalidOperationException` so every existing `catch` still matches (the move batch catches
+    that type per item), never crosses the COM pipe because every site is parent-side, and
+    invisible to invariant 10 for the same reason. **The alternative I rejected** was attaching
+    the outcome only where the tool layer could derive it, which would have left row 5 - the row
+    with the real user harm - with no field at all.
+
+49. **A failed create reports `unknown`, not `applied`, even when the draft's id is known.** The
+    draft exists, so `applied` is arguable. I took `unknown` because the requested operation is
+    "a complete draft, filed in Drafts, optionally on screen" and a failure part-way through
+    demonstrably did not deliver that - and because an agent reading `applied` will read it as
+    success. The message carries the id either way, which is what makes the difference
+    actionable; the field only has to be safe.
+
+50. **The `outcome` clause went on all 13 mutating tools' descriptions, and on none of the
+    read-only ones.** One shared `OutcomeHint` const of ~190 units, appended rather than
+    paraphrased per tool, because a paraphrased vocabulary drifts. The client's cut is per
+    string with no per-tool bucket (measured 2026-08-18), so 13 copies cost nothing against any
+    single budget: the largest description after the change is `update_draft`, and `search` -
+    the one already near the cut at 1791 of 2048 - is read-only and untouched. **Not put in the
+    `initialize` instructions**, although that would have been one copy instead of thirteen:
+    that string is injected into EVERY session including ones where the tools are deferred
+    name-only, and it is pinned verbatim by T3, so it is the wrong place for a contract that
+    only matters once a mutating tool is actually called.
+
+51. **`ComHostSupervisor.DescribeInterruption` was NOT rewritten.** It is the site the audit
+    called the model, its remedy is the specific one, and T1 pins both halves. It gained the
+    outcome VALUE (carried on `ComHostUnavailableException`) and nothing else. Reusing its shape
+    was the instruction; rewriting its words would have been a regression dressed as
+    consistency.
+
+52. **Read `BuildNavigationError`, which the audit listed as the one function it left unread.**
+    It is three branches. `StoreNotFound` and `FolderNotFound` are resolution failures decided
+    before any window is touched and keep their claim. The catch-all is NOT: by the time it can
+    fire, `EnsureVisibleExplorer` may have created and shown an Explorer, `CurrentFolder` may
+    have been set, and for `show_search_results` `Explorer.Search` may already be running - the
+    only thing left to throw is the state snapshot afterwards. So "Outlook could not show the
+    requested view" was the same defect as the rest of the sweep, in the two tools nobody had
+    checked. It is now "Outlook could not CONFIRM the requested view ... THE WINDOW MAY HAVE
+    MOVED ANYWAY".
+
+53. **The `FileInfo.Length` fix is a behaviour change nobody asked for, and it is the right one.**
+    `TrySaveAttachment` measured the saved file inside the same `try` as the save, so an
+    `IOException` from the size read answered "Attachment could not be saved" over a file that
+    was saved in full - a false negative on a completed write. Measuring is reporting; it must
+    not be able to fail the thing it reports on. The size now falls back to 0 when unreadable,
+    which is a smaller lie than the one it replaces and is visible beside a path that exists.
+
+54. **Two tests I changed rather than added.** Four `DraftUpdateReentrancyTests` cases used
+    `Assert.Throws<InvalidOperationException>`, which is an EXACT type match in xunit, so the new
+    subclass broke them. They now assert the subclass, which is strictly stronger - the same
+    cases additionally pin that the outcome field travels.
+
+55. **Mutation check: 37 decision lines reverted, 30 caught, 7 not - and EIGHT of the thirty
+    were caught only after the gap they exposed was closed.** Each was reverted, built, run
+    against the whole non-live suite and restored. The table, with what noticed each one, is in
+    `tmp-aitrace/mutation-table.md`; the seven that remain are in `TODO.md` with what each would
+    need. The eight closed gaps are the useful half of the exercise and are worth naming, because
+    every one of them was a test that LOOKED like it covered the area:
+    - the per-item timeout outcome was pinned for `move_mail` and not for `archive_mail`, which
+      keeps its own copy of the same arm on its own COM call;
+    - the send path's two messages (rows 9 and 10) had no test at all until one drove the real
+      two-step token flow against a stand-in;
+    - the framing refusal was only ever exercised over a READ (`GetProfileName`), so the branch
+      the whole row is about - what it says over a MUTATION - was unreachable; it now runs over
+      `TrySaveAttachment`, which is classified mutating and returns a string, so an oversized
+      answer is one line of setup rather than a fabricated 64 MB draft result;
+    - the tool layer's timeout and too-large advice were inline in `catch` arms, so no test could
+      reach them; both are now pure internal helpers beside `ComFailureAdvice`, which is the
+      shape that made row 15 assertable in the first place;
+    - the derived-draft failure had no test distinguishing "the source was never opened" from
+      "a draft may already be sitting in Drafts", which is the difference between the two
+      answers.
+
+56. **Method note, and it is the same hazard as sections 25 and 35 wearing a third disguise.**
+    The mutation script restored each revert with `text.replace(new, old, 1)`, which is correct
+    only while the REPLACEMENT is unique - and a mutation that DELETES a block has a replacement
+    made of ordinary code. M12's was `if (moved == null)`, which occurs in both `ArchiveOne` and
+    `MoveOne`, so the restore inserted MoveOne's block into ArchiveOne against names that do not
+    exist there. **M13 to M36 then all failed to BUILD and proved nothing**, and the verifier
+    PASSED on that tree, because M12's original text really was present exactly once - in the
+    wrong place. The splice is now by INDEX in both directions, which cannot be ambiguous.
+    **The lesson that generalises: a two-directional text check is not enough after a mutation
+    pass; only a build is.** Separately, one background run was killed mid-mutation and left M30
+    applied - the documented kill hazard, caught by the verifier and restored by hand - so the
+    remaining mutations were run in small chunks to bound what a kill could cost.
+
+57. **Row 18 was verdict TRUE and got the optional half anyway.** The signature backup's
+    "the operation was ABORTED and nothing was modified" is true of the USER'S signatures, and it
+    is true for the reason that makes any such claim assertable: the backup runs before anything
+    touches them. What it never mentioned is that a half-written BACKUP directory can survive -
+    `CreateDirectory` succeeds and a later `File.Copy` fails. It now names that directory when
+    one exists and says nothing when it does not, which is the distinction the two tests pin.
 
 ## 4. VM state (`OutlookAI-TestVM`)
 

@@ -32,6 +32,7 @@ namespace OutlookAI.ComHost.Client
         private static readonly AsyncLocal<long?> CurrentDeadlineOverride = new AsyncLocal<long?>();
         private static readonly AsyncLocal<AggregateBudget?> CurrentAggregate = new AsyncLocal<AggregateBudget?>();
         private static readonly AsyncLocal<bool> CurrentConnectFloorOptIn = new AsyncLocal<bool>();
+        private static readonly AsyncLocal<OperationTrace?> CurrentTrace = new AsyncLocal<OperationTrace?>();
 
         /// <summary>The cancellation token of the MCP request being served, or None.</summary>
         public static CancellationToken Token => CurrentToken.Value;
@@ -61,6 +62,54 @@ namespace OutlookAI.ComHost.Client
         /// </summary>
         public static bool AllowConnectFloor => CurrentConnectFloorOptIn.Value;
 
+        /// <summary>
+        /// The last <see cref="OutlookAI.Core.Com.IOutlookSession"/> operation this request
+        /// dispatched to the COM host, or null when it dispatched none.
+        /// <para>
+        /// It exists for one job: a raw <see cref="System.Runtime.InteropServices.COMException"/>
+        /// or a stray cancellation reaches the tool layer carrying no operation name, and the
+        /// advice attached to it used to say "retry" to every caller alike - right for a read
+        /// and, for a move or a send, an invitation to do it twice. The name is what
+        /// <c>ComSessionOperations.IsRetryable</c> needs in order to answer honestly.
+        /// </para>
+        /// <para>
+        /// It is the LAST call rather than the failing one, which is the best answer
+        /// obtainable here and never a worse one: the COM host serves requests serially, so
+        /// the last call dispatched is the one that was in flight. Null when nothing was
+        /// dispatched, and callers must treat null as "do not state an outcome" rather than
+        /// as a mutation, because a failure raised before any COM work changed nothing.
+        /// </para>
+        /// </summary>
+        public static string? LastOperationName => CurrentTrace.Value?.Last;
+
+        /// <summary>
+        /// Starts recording dispatched operation names for the current logical call. The
+        /// recorder is a mutable object held by an <see cref="AsyncLocal{T}"/> rather than a
+        /// string value, and that is load-bearing: an AsyncLocal ASSIGNMENT made inside a
+        /// <c>Task.Run</c> body does not flow back out to the awaiting caller, so a string
+        /// would always read as null exactly where it is needed. The reference flows in, the
+        /// proxy mutates the shared object, and the caller reads it after the await.
+        /// </summary>
+        public static IDisposable TraceOperations()
+        {
+            TraceScope scope = new TraceScope(CurrentTrace.Value);
+            CurrentTrace.Value = new OperationTrace();
+            return scope;
+        }
+
+        /// <summary>
+        /// Records that <paramref name="operationName"/> is being dispatched. A no-op when
+        /// nothing is tracing, so the session proxy never has to ask.
+        /// </summary>
+        public static void NoteOperation(string operationName)
+        {
+            OperationTrace? trace = CurrentTrace.Value;
+            if (trace != null)
+            {
+                trace.Note(operationName);
+            }
+        }
+
         /// <summary>Establishes the ambient context for the current logical call.</summary>
         public static IDisposable Enter(
             CancellationToken cancellationToken,
@@ -82,6 +131,46 @@ namespace OutlookAI.ComHost.Client
                 : null;
 
             return scope;
+        }
+
+        /// <summary>
+        /// The mutable recorder behind <see cref="LastOperationName"/>. Volatile because it
+        /// is written on the pool thread the service layer runs on and read on the thread
+        /// that awaited it.
+        /// </summary>
+        private sealed class OperationTrace
+        {
+            private volatile string? _last;
+
+            internal string? Last => _last;
+
+            internal void Note(string operationName)
+            {
+                if (!string.IsNullOrWhiteSpace(operationName))
+                {
+                    _last = operationName;
+                }
+            }
+        }
+
+        private sealed class TraceScope : IDisposable
+        {
+            private readonly OperationTrace? _previous;
+            private bool _disposed;
+
+            internal TraceScope(OperationTrace? previous)
+            {
+                _previous = previous;
+            }
+
+            public void Dispose()
+            {
+                if (!_disposed)
+                {
+                    _disposed = true;
+                    CurrentTrace.Value = _previous;
+                }
+            }
         }
 
         /// <summary>An aggregate budget as an absolute start plus a total, so it survives async hops.</summary>

@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using OutlookAI.ComHost.Protocol;
+using OutlookAI.Core.Com;
 
 namespace OutlookAI.ComHost.Host
 {
@@ -122,6 +123,13 @@ namespace OutlookAI.ComHost.Host
         /// answer was too big; the operation is what tells the caller WHICH request to ask
         /// for less of, and it is known here and nowhere further up.
         /// </para>
+        /// <para>
+        /// It used to end "The work itself succeeded and nothing was changed", unconditionally,
+        /// which for a mutating operation asserts both halves of a contradiction: the work ran
+        /// to completion - <c>Invoke</c> returns before anything is framed - so a draft was
+        /// created, an item was moved or a mail was sent, and the sentence said nothing had
+        /// been. It now branches on the same classification the rest of the product uses.
+        /// </para>
         /// </summary>
         private static ComHostResponse TooLarge(ComHostRequest request, ComHostProtocolException refusal)
         {
@@ -129,7 +137,7 @@ namespace OutlookAI.ComHost.Host
                 request.Id,
                 nameof(ComHostResponseTooLargeException),
                 $"The answer to '{request.Operation}' was too large to return in one piece: {refusal.Message} "
-                + "The work itself succeeded and nothing was changed; only the reply was refused.");
+                + MutationOutcome.DescribeAnswerLost(request.Operation));
         }
 
         /// <summary>Pushes an unsolicited event to the parent (e.g. Outlook exited).</summary>

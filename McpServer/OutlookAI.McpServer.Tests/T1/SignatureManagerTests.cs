@@ -1,4 +1,5 @@
 using System.Text;
+using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
 using Xunit;
 
@@ -195,10 +196,43 @@ public sealed class SignatureManagerTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(_backupRoot)!);
         File.WriteAllText(_backupRoot, "not a directory");
 
-        Assert.Throws<InvalidOperationException>(() =>
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(() =>
             Manage(new ManageSignatureRequest { Action = "delete", Name = "Protected" }));
 
         Assert.True(File.Exists(Path.Combine(_dir, "Protected.htm")), "a failed backup must leave the signature untouched");
+
+        // The claim this message makes is EARNED: the backup runs before anything touches the
+        // user's files, so "nothing was modified" is provable here rather than hoped for -
+        // which is what the 2026-08-19 atomicity audit checked it for.
+        Assert.Equal(MutationOutcome.Unchanged, failure.Outcome);
+        Assert.Contains("your signatures were not modified", failure.Message, StringComparison.Ordinal);
+
+        // And nothing to clean up: the backup ROOT could not be created, so no directory was
+        // left behind and the message must not send anyone looking for one.
+        Assert.DoesNotContain("INCOMPLETE BACKUP", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ABackupThatFailedPartWay_NamesTheFolderItLeftBehind()
+    {
+        // The one thing the audit found that the message did not mention: CreateDirectory can
+        // succeed and a later File.Copy fail, leaving a half-written backup. The user's
+        // signatures are still untouched - that is why the outcome stays "unchanged" - but a
+        // directory nobody asked for now exists, and it should be named rather than found.
+        SeedSignature("Protected", withResources: false);
+
+        string source = Path.Combine(_dir, "Protected.htm");
+        using (File.Open(source, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(() =>
+                Manage(new ManageSignatureRequest { Action = "delete", Name = "Protected" }));
+
+            Assert.Equal(MutationOutcome.Unchanged, failure.Outcome);
+            Assert.Contains("INCOMPLETE BACKUP", failure.Message, StringComparison.Ordinal);
+            Assert.Contains(_backupRoot, failure.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.True(File.Exists(source), "a failed backup must leave the signature untouched");
     }
 
     [Fact]

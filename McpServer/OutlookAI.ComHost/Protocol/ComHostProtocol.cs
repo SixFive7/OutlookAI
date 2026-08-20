@@ -180,18 +180,28 @@ namespace OutlookAI.ComHost.Protocol
     /// exact request that cannot succeed.
     /// </para>
     /// <para>
-    /// Nothing failed in Outlook when this is raised and nothing was changed: the work
-    /// completed, and only the reply was refused. That is why it is not modelled as a
-    /// transport fault.
+    /// Nothing failed in Outlook when this is raised: the work COMPLETED, and only the
+    /// reply was refused. That is why it is not modelled as a transport fault - and it is
+    /// also why the wording here used to be wrong. "Nothing was changed" is true of a
+    /// search whose answer was too big and false of a draft that was created, so
+    /// <see cref="Operation"/> carries the name the tool layer needs to tell the two apart.
     /// </para>
     /// </summary>
     public sealed class ComHostResponseTooLargeException : Exception
     {
         /// <summary>Creates the exception.</summary>
-        public ComHostResponseTooLargeException(string message)
+        public ComHostResponseTooLargeException(string message, string? operation = null)
             : base(message)
         {
+            Operation = operation;
         }
+
+        /// <summary>
+        /// The contract operation whose answer was refused, or null when the parent could
+        /// not attribute it. Null must not be read as "a read": callers state no outcome at
+        /// all rather than guess one.
+        /// </summary>
+        public string? Operation { get; }
     }
 
     /// <summary>A parent -> child operation request.</summary>

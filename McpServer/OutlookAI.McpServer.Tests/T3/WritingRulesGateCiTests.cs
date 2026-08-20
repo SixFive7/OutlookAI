@@ -84,6 +84,13 @@ public sealed class WritingRulesGateCiTests
         Assert.Contains("body_html", advice, StringComparison.Ordinal);
         Assert.Contains("exactly one of body or body_html", advice, StringComparison.Ordinal);
 
+        // The outcome field, ON THE WIRE. It is the machine-readable half of every failure
+        // (unchanged | applied | unknown) and this is the one error reachable in CI without an
+        // Outlook, so it is where the field's presence and serialisation get proved. "unchanged"
+        // is earned here rather than assumed: the gate runs before GuardAsync, decides from a
+        // registry read and a hash, and starts no COM host at all.
+        Assert.Equal("unchanged", error.GetProperty("outcome").GetString());
+
         _output.WriteLine($"gate rejection: {payload.GetRawText()}");
     }
 

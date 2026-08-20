@@ -124,12 +124,17 @@ namespace OutlookAI.Core.Com
         IReadOnlyList<ComAttachmentInfo> SnapshotAttachmentsById(string entryId, string? storeId);
 
         /// <summary>Saves one attachment to disk; reports the written path and its size.</summary>
+        /// <param name="attemptedPath">
+        /// Where the write was aimed, reported on the failure path too: a save that throws
+        /// part-way leaves a partial file at a name the caller cannot predict.
+        /// </param>
         string? TrySaveAttachment(
             string entryIdHex,
             string? storeId,
             int attachmentIndex,
             string targetDirectory,
             out long sizeBytes,
+            out string? attemptedPath,
             out string? error);
 
         /// <summary>Resolves an index hit to a real item by folder path and subject/time match.</summary>
@@ -162,12 +167,21 @@ namespace OutlookAI.Core.Com
         ComArchiveFolderInfo? TryResolveArchiveFolder(string storeDisplayName, out string? error);
 
         /// <summary>Moves an item to a folder identified by store-relative path.</summary>
+        /// <param name="createdFolderPaths">
+        /// Store-relative paths of folders this call CREATED, reported whether the move then
+        /// succeeded or not. On the failure path it used to die with a local: folders are
+        /// created before the target guard runs, so a move into <c>Deleted Items/foo</c> with
+        /// <c>create_folder: true</c> made <c>foo</c> inside Deleted Items and then answered
+        /// "Refused: moving to Deleted Items is deletion semantics" with nothing anywhere
+        /// saying a folder now existed there.
+        /// </param>
         ComMoveItemResult? TryMoveItemToPath(
             string entryIdHex,
             string? storeId,
             IReadOnlyList<string> targetSegments,
             bool createMissing,
             string? requireStoreDisplayName,
+            out IReadOnlyList<string>? createdFolderPaths,
             out string? error);
 
         /// <summary>Moves an item to a folder identified by EntryID.</summary>
@@ -179,6 +193,15 @@ namespace OutlookAI.Core.Com
             out string? error);
 
         /// <summary>Creates a new draft.</summary>
+        /// <param name="savedDraftEntryId">
+        /// The EntryID of the draft as soon as <c>Save()</c> committed it, reported EVEN WHEN
+        /// the call then fails. Four things happen after that save inside the same try - the
+        /// hidden inspector close, the relocate to Drafts, the optional Display and the
+        /// snapshot reads - and a COM failure in any of them used to lose the id, leaving a
+        /// real draft in the mailbox that <c>discard_draft</c> was structurally unable to
+        /// reach, because its registry gate only knows ids the caller was told. It is
+        /// re-read after the relocate, since a move mints a new one.
+        /// </param>
         ComDraftCreateResult? TryCreateNewDraft(
             string accountSmtpAddress,
             IReadOnlyList<string> toRecipients,
@@ -187,9 +210,15 @@ namespace OutlookAI.Core.Com
             bool display,
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
+            out string? savedDraftEntryId,
             out string? error);
 
         /// <summary>Creates a reply, reply-all or forward draft via Outlook's own derivation.</summary>
+        /// <param name="savedDraftEntryId">
+        /// Same contract as <see cref="TryCreateNewDraft"/>'s: the id of the saved draft,
+        /// reported even when a later step fails, so a failed derivation cannot leave an
+        /// orphan out of the cleanup tool's reach.
+        /// </param>
         ComDraftCreateResult? TryCreateDerivedDraft(
             string sourceEntryIdHex,
             string? sourceStoreId,
@@ -199,6 +228,7 @@ namespace OutlookAI.Core.Com
             bool display,
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
+            out string? savedDraftEntryId,
             out string? error);
 
         /// <summary>

@@ -270,6 +270,58 @@ public sealed class ComHostErrorFidelityTests
     }
 
     [Fact]
+    public async Task AnAnswerTooLargeToFrame_OverAMUTATION_SaysTheWorkStandsRatherThanThatNothingChanged()
+    {
+        // The 2026-08-19 atomicity audit's row 3, and the only claim in the product that
+        // asserted a mutation both happened and did not. ServeAsync runs Invoke to COMPLETION
+        // and only then tries to write the answer, so a framing refusal is reported over work
+        // that already took effect - and the sentence said "The work itself succeeded and
+        // nothing was changed", unconditionally, under the name of whichever operation ran.
+        //
+        // TrySaveAttachment is the operation used here because it is classified MUTATING and
+        // returns a string, so an oversized answer is one line of setup rather than a
+        // fabricated 64 MB draft result.
+        const int Ceiling = 4096;
+        string oversized = new string('x', 64 * 1024);
+
+        await using Boundary boundary = await Boundary.StartAsync(
+            ScriptedSession.Create(
+                _ => null,
+                operation => operation == nameof(IOutlookSession.TrySaveAttachment) ? oversized : null),
+            maxFrameBytes: Ceiling);
+
+        Exception surfaced = await boundary.FailureOfAsync(nameof(IOutlookSession.TrySaveAttachment));
+        ComHostResponseTooLargeException typed = Assert.IsType<ComHostResponseTooLargeException>(surfaced);
+
+        Assert.DoesNotContain("nothing was changed", typed.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SUCCEEDED", typed.Message, StringComparison.Ordinal);
+
+        // And the operation reaches the parent, which is what lets the tool layer choose
+        // between "ask for less" and "do not do that again".
+        Assert.Equal(nameof(IOutlookSession.TrySaveAttachment), typed.Operation);
+    }
+
+    [Fact]
+    public async Task AnAnswerTooLargeToFrame_OverAREAD_KeepsTheSentenceThatIsTrueOfIt()
+    {
+        // The other half. Removing the claim everywhere would be a different bug: over a
+        // search the work really did change nothing, and "ask for less" really is the remedy.
+        const int Ceiling = 4096;
+
+        await using Boundary boundary = await Boundary.StartAsync(
+            ScriptedSession.Create(
+                _ => null,
+                operation => operation == nameof(IOutlookSession.GetProfileName) ? new string('x', 64 * 1024) : null),
+            maxFrameBytes: Ceiling);
+
+        Exception surfaced = await boundary.FailureOfAsync(nameof(IOutlookSession.GetProfileName));
+        ComHostResponseTooLargeException typed = Assert.IsType<ComHostResponseTooLargeException>(surfaced);
+
+        Assert.Contains("nothing was changed", typed.Message, StringComparison.Ordinal);
+        Assert.Equal(nameof(IOutlookSession.GetProfileName), typed.Operation);
+    }
+
+    [Fact]
     public async Task ARefusedAnswer_IsCounted_SoHealthCanSayItHappened()
     {
         // outlook_health reports the count, and a refusal that leaves no trace is a caller
@@ -442,7 +494,12 @@ public sealed class ComHostErrorFidelityTests
 
             Assert.False(response.Ok, operation + " answered successfully; it was asked to fail.");
             Assert.NotNull(response.Error);
-            return ComHostErrorMapper.ToException(response.Error!);
+
+            // The operation is passed because the supervisor passes it: the wire error carries
+            // no operation name, and one failure needs it - an answer too large to frame is
+            // reported over an operation that RAN, so whether the caller may repeat it depends
+            // entirely on whether that operation changes mail.
+            return ComHostErrorMapper.ToException(response.Error!, operation);
         }
 
         public async ValueTask DisposeAsync()
