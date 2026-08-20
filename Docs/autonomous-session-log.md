@@ -42,6 +42,33 @@ reasoning, and flagged for review rather than buried.
 | `discard_draft`'s "Nothing was changed" wording | **Audit every such claim in the product**, not just that one - the phrase asserts atomicity and the product has been wrong about it once already | queued |
 | Authorising the `claude.ai` and `VF Dev` MCP servers | **Leave them** - nothing here depends on either | closed |
 
+## 1c. Decisions given 2026-08-20
+
+**STANDING INSTRUCTION: do not ask about release timing.** The maintainer will say when it is
+time. Asking again is noise, not diligence. This survives compaction; do not reintroduce the
+question.
+
+| Question | Answer |
+| --- | --- |
+| Atomicity audit | **Fix all of it now** - every row, not the three prose-only ones |
+| `outcome: unchanged / applied / unknown` payload field | **Add it** |
+| Orphaned draft after a failed `new_draft` | **Both fixes**, with registering the id before the post-save steps as the substance |
+| Folders created before a refused move | **Fix now**, accepting the result-shape change |
+| Wording vs measurement for the disconnect claims | **Fix the wording regardless** - a claim about what did not happen must not rest on an unmeasured probability |
+| `HealthProbeDeadlineMs` at 5 s | **Keep** |
+| Move batch as a real aggregate | **Keep, with a live batch exercise before release** |
+| `scan_resumed` on every resumed page | **Keep** |
+| Corpus generator's no-accounts guard, no override | **Keep** |
+| Sort probe | **Run on both** the production profile and the VM |
+| Second PST vs profiles | **Both.** Profiles solve the account constraint; the second PST is the absent-arrival-folders shape AND the tripwire's bystander - with one store that is also the hub, the tripwire censuses it, identifies nothing and CANNOT fail |
+| Boundary of "all tests possible on the VM" | **Two stores, one indexed and one not**, so both search tiers are exercisable there. Delegate stores and real transport stay production-only. **Explicitly NOT** a faked delegate store: delegate mailboxes are indexed without folder nesting, which is real Outlook behaviour a local PST cannot reproduce, and faking it would give false confidence in the area this product has most often been surprised by |
+
+**The VM goal is now "all tests possible there", not the 19 that move today**, and the VM must be
+**reproducible from nothing**: how to build it - Windows, Office, the add-in, the profiles, the
+store layout - and how to generate the seed corpus, so it can be rebuilt when deleted or moved to
+another machine. That matters more than usual because two of this session's measurements only mean
+anything against a corpus of known shape.
+
 ## 2. Timeout values - SHIPPED in `4502c92`
 
 | Constant | Was | Now | Derivation |
