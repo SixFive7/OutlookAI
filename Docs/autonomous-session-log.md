@@ -103,6 +103,47 @@ costs seconds against a 27-minute tier run and separates ambient activity from a
 running a single test. Re-running the plausibly-implicated tests is the fallback when the delta
 survives the second census, bounded by a maximum.
 
+## 1e. Test-execution policy - decided 2026-08-23
+
+**The whole cycle moves to the test VM. The maintainer's mailbox comes out of the loop.**
+
+The trigger: `Category!=Live` does NOT mean "does not touch Outlook". Sixteen tier-3 files spawn
+the real server, which spawns a COM host, which attaches to the maintainer's production Outlook,
+and they call `outlook_health`, `search` and `list_accounts` through it. Several are named
+`...CiToolShapeTests`. Every verification run this session has been reading their real mailbox.
+Reads only - nothing was created, moved, edited or deleted - but it was neither intended nor
+declared, and the label is a lie.
+
+**Interim policy, effective immediately, until the VM is ready:**
+
+    dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj \
+      --filter "Category!=Live&FullyQualifiedName!~Tests.T3."
+
+Measured: **1,927 tests in 9 seconds, 0.05 s of Outlook CPU** (noise). The full non-live suite is
+2,081 tests in about two minutes and hammers Outlook. So **92% of the tests need nine seconds and
+no mailbox**; the remaining 8% cost two minutes and a real Outlook. Verifying with the narrow filter
+plus a both-framework build of `OutlookAI.Core` is the standing bar until the VM can run the rest.
+
+**Target arrangement: VM by default, plus a pre-release gate against the real profile.** The gate is
+not "run everything"; a gate that repeats what the VM already proved is a slow ritual. It must
+specifically cover what only a real profile can show - the latency-sensitive constants, the
+delegate-store paths, real transport, and real message-class diversity. What belongs in it is being
+derived; the analysis lives in the session trace folder as `vm-coverage-analysis.md`.
+
+**Known losses, to be quantified by that analysis rather than assumed:** a local data file served
+~1,200 items/second in this session's measurements where Exchange served ~12, so every budget,
+timeout, breaker and hang detector validated on the VM is validated against latency two orders of
+magnitude wrong - the 180 s sweep budget exists BECAUSE of the 12/s figure and the VM would have
+said 5 s was ample. Delegate stores are indexed without folder nesting, which no local data file
+reproduces. And at least four of this session's findings came only from real data: the census
+timing out on a slow delegate store, the sweep budget needing a real store count, the frame
+high-water measured from real bodies, and H3 answered by counting 43,048 real items.
+
+**The corpus must grow to match**: message-class diversity (NDRs, read receipts, meeting requests,
+sharing invitations, posts), items with no delivery time, very large bodies, deep folder trees, a
+folder that fails to open, a store whose display name cannot be read. Several of those are shapes
+this project has FIXED BLIND in the last few days, with no test able to produce them.
+
 ## 2. Timeout values - SHIPPED in `4502c92`
 
 | Constant | Was | Now | Derivation |
