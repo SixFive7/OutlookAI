@@ -57,6 +57,34 @@ not because it is unsafe.
 not running; `send` catches only `TimeoutException`; `SendUsingAccount` is written before the
 identity readback and never restored.
 
+## Send-path and startup decisions - 2026-08-23, late
+
+**1. `list_accounts` starting Outlook is ACCEPTED as-is (option a).** The question was whether a
+call that reads like a query should launch a mail client. It turns out it does not launch anything
+visible: the server starts Outlook **headless** - the code says so in as many words, and
+`outlook_health` carries a `headless` field which read `true` on the test VM. No window, and no tray
+icon either, so it is less visible than the tray-only case the maintainer was willing to accept.
+The declaration and the health-style guard were therefore dropped as unnecessary.
+**Carried caveat:** headless is not free. That Outlook holds the data-file locks and keeps running,
+and this project's own history records a wedge involving precisely the COM-activated
+`OUTLOOK.EXE -Embedding` form. Invisible is not the same as harmless.
+
+**2. The interrupted-send message keys on whether `Send()` was reached, not on which exception
+arrived (option c).** Today the careful wording - naming the Outbox and Sent Items, stating the
+outcome is unknown, saying explicitly not to send again - hangs off a `catch` on
+`TimeoutException`, so it covers one failure mode of several while a generic path answers the rest.
+Invert it: once `Send()` has been issued, ANY failure gets the specific message. What the caller
+needs to know was never determined by the exception type; it is determined by whether the mail may
+already be on its way.
+
+**3. The send path must verify identity BEFORE writing the account pin, then restore if a window
+remains.** Today it writes `SendUsingAccount` onto the draft and only then verifies, so a refused
+send leaves the draft altered - contradicting a refusal that says nothing happened, and possibly
+sending later from the wrong account. Reordering removes the problem rather than compensating for
+it, and it matters that the alternative - restoring on the failure path - means adding a MUTATING
+call to a path that is currently refusing to mutate, which is exactly why this was deferred when it
+was first found.
+
 ## Standing rules
 
 - **Completeness outranks performance, whatever the cost.**
