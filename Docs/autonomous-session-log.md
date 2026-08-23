@@ -1,252 +1,96 @@
-# RESUME HERE - state of play at 2026-08-23
+# RESUME HERE - state of play at 2026-08-23, late
 
-**Read this section first after any context loss. Everything below it is history and reasoning.**
+**Read this first after any context loss.** Everything below it is history and reasoning.
 
-## Where things stand
+## Position
 
-`HEAD` = `ff6bdde` plus UNCOMMITTED tier-3 classification work (below). **1,936 tests pass in
-5 seconds** under the narrow filter and **2,085 in 98 seconds** under `Category!=Live`;
-`OutlookAI.Core` builds clean for net48 and net10; `check-pinned-constants.ps1` reports 11/11.
+`HEAD` = `17b113b`, tree clean, nothing running. **1,936 tests in 6 seconds with no mailbox
+contact.** `OutlookAI.Core` builds clean for net48 and net10. `check-pinned-constants.ps1` 11/11.
+The test VM is running, eight checkpoints intact, C: 370 GB free.
 
-**`Category!=Live` no longer touches a mailbox.** That is the change of 2026-08-23: it used to,
-through sixteen tier-3 files whose names claimed otherwise. The interim `Tests.T3.` exclusion is
-therefore no longer needed for SAFETY - it is now only a speed choice, 5 s against 98 s, and both
-commands are honest:
+**Verification command - the standing bar:**
 
     dotnet build McpServer/OutlookAI.Core/OutlookAI.Core.csproj
-    dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj \
-      --filter "Category!=Live&FullyQualifiedName!~Tests.T3."   # 1,936 in 5 s
-    dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj \
-      --filter "Category!=Live"                                 # 2,085 in 98 s, adds the stdio tier
+    dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj --filter "Category!=Live&FullyQualifiedName!~Tests.T3."
     pwsh -File .github/scripts/check-pinned-constants.ps1
 
-**The evidence for that, measured 2026-08-23**, because "it no longer touches the mailbox" is
-exactly the kind of claim this project has been burned by:
+`Category!=Live` is now honest (commit `7a38458`) - measured, no COM host spawned across 481
+process samples. The narrow filter is still used because tier 3 spawns server processes and is slow,
+not because it is unsafe.
 
-* The whole non-live stdio tier except the supervision class - 140 tests, 65 s - was run while a
-  sampler polled the process list every 120 ms. **Zero `OutlookAI.ComHost` processes across 481
-  samples.** Every COM call the server makes goes through that child, so none was made, and
-  `outlook_health` (the only tool that also queries the Windows Search index in-process) is no
-  longer called by any of them.
-* `ComHostSupervisionCiTests` DOES spawn a host, deliberately, so it needed a different
-  measurement: 7 tests, 35 s, OUTLOOK.EXE processor time +0.188 s against an idle rate of
-  0.0038 s/s measured over 277 s on the same machine, which predicts +0.133 s. No attach. The
-  reason it cannot attach is structural: `ComHostServer.Invoke` applies the injected fault BEFORE
-  `method.Invoke` on the routing proxy, and that proxy is the only caller of `ComGateway.Run`.
+## Everything outstanding, in one list
 
-Counts, before and after (the test project is net10 only; `OutlookAI.Core` is what gates net48):
-narrow **1,927 -> 1,936** (+2 classification pins, +7 decision-matrix cases); `Category!=Live`
-**2,082 -> 2,085** (-10 moved to the live tier, +13 new); live tier **116 -> 127 methods**,
-`LiveTier=Portable` **20 -> 31**.
+**Decided, not built:**
+1. Corpus freshness assertion, then re-anchor on restore. A fixed anchor means every "last N days"
+   window selects nothing after ~6 weeks **and every test still passes**.
+2. Four tests that return early rather than assert must fail instead - including the one asserting
+   that search always answers, which on an indexless machine asserted nothing.
+3. A local SMTP sink that delivers back. An unroutable dummy account leaves a permanent tagged
+   Outbox artifact and the mandatory zero-artifact sweep fails on it forever.
+4. A third tier value `VmCapable`, and push `Requires` from class level to method level. Class-level
+   attribution is why 96 tests looked impossible when only 15 are.
+5. Fault hooks for shapes fixed blind - a folder that throws on open, a store whose display name
+   cannot be read (**no way to produce this on any machine, so that fix has never once executed**),
+   an item with no delivery time.
+6. The pre-release measurement gate. An agent reads all the numbers; compares against THIS machine's
+   own history; movement in either direction counts; bias is to fail. **Numbers stay local - never
+   in the repo, never in release notes.** Baseline history belongs under `%LOCALAPPDATA%`.
+7. **The VM build**, now two Windows ACCOUNTS rather than two data files - see the section on why a
+   profile cannot split the index. Plus profiles, the sink, three stores, and a build-from-nothing
+   runbook with seed instructions.
 
-## The tier-3 classification (2026-08-23, uncommitted)
+**Bug queue:**
+8. **Mutation-verify `bea7fc9`** (the sort fix). Committed and green but its pass never ran; the
+   killed agent left one mutation applied which had to be found from the failures alone.
+9. **Re-measure the sweep budget.** 180 s was derived while the sort was silently failing, so it
+   rests on a measurement of broken behaviour.
+10. Corpus generator's two defects: ~5,500 duplicate Outbox items on a large build, deterministic;
+    and the placement probe's folder-table check failing against a folder with many items.
+11. Live move-batch exercise before release - making that batch a real aggregate changed behaviour
+    on a mutating path.
+12. Tripwire re-census-then-re-run, bounded by a maximum.
+13. **All remaining gap-map rows** - the maintainer said clear every one.
+14. `thread`'s store asymmetry plus a scan for the same shape elsewhere.
+15. Restore the installed MCP server - deferred to the release.
 
-**What was wrong.** Tier 3 spawns the real server, which spawns a COM host, which attaches to
-whatever Outlook is on the machine - so what a tier-3 test touches is decided by the TOOL it calls,
-and nothing about its name or its signature says which. Sixteen files sat outside `Category=Live`,
-several named `...CiToolShapeTests`, and eleven of their tests called `outlook_health`,
-`list_accounts` or `search`. Every verification run this session read the real mailbox as a result.
+**Reported, not fixed, needing a decision at some point:** `list_accounts` starts Outlook when it is
+not running; `send` catches only `TimeoutException`; `SendUsingAccount` is written before the
+identity readback and never restored.
 
-**Why most of it was innocent.** Nearly every tier-3 call is answered by argument validation before
-any COM work: an unknown hit id (`h424242`) fails in `ResolveToEntryId`, a blank account fails in
-`NewDraft`, an exhaustive `search` without `store` fails in `RunExhaustive` before even the index
-is queried, `save_attachment` with index 0 fails on the 1-based check, `discard_draft` for an
-EntryID this process never created fails on the draft registry, and `list_signatures` /
-`manage_signature` never touch `_gateway` at all. `ComHostSupervisionCiTests` is innocent for a
-different reason worth knowing: its `list_accounts` calls are faulted in `ComHostServer` ABOVE the
-routing proxy, so no Outlook session is ever asked for.
+## Standing rules
 
-**Which marker, and why not a third scheme.** The live tier already had the vocabulary: a selector
-trait (`Category=Live`, then `LiveTier=Portable|ProfileBound`) and a reason trait
-(`Requires=<capability>`), enforced by `T1/LiveTierInventoryTests`. The tier-3 tests take exactly
-that, with one new PORTABLE capability, `OutlookInstance` - an Outlook to attach to and nothing of
-the maintainer's own profile, so the VM runs them unchanged. A category RENAME was considered and
-rejected: `Category!=Live` appears in the workflow, in `CLAUDE.md`, in the README and in every
-runbook, and renaming it would have bought nothing that reusing `Live` did not.
-
-**Enforcement, in two layers.** `McpStdioClient` refuses to SEND a `tools/call` for
-`outlook_health`, `list_accounts` or `list_folders` unless the test passes
-`McpStdioClient.OutlookReachingToolsAllowed`; those three reach Outlook for every argument shape.
-`T1/LiveTierInventoryTests.EveryStdioTestReachingOutlook_DeclaresIt` then reads that literal back
-out of the compiled IL of every tier-3 class (async state machines and lambda display classes
-included), and fails unless the class carrying it is `Category=Live` with
-`Requires=OutlookInstance`. A literal rather than a bool precisely so the pin can see it - a bool
-compiles to `ldc.i4.1`, indistinguishable from every other true. An IL read rather than a roster of
-class names because a roster only catches a new CLASS, and the drift that started this was a new
-method in an old one. `T3/StdioClientMailboxGuardTests` proves the refusal itself, because a guard
-that only runs when it is being violated is a guard nobody notices losing.
-
-The one exemption is a class that injects a COM-host fault, and it deliberately does not extend to
-`outlook_health`, whose Windows Search index probe no fault specification can reach.
-
-**What it still cannot judge:** whether a `search`, `read`, `thread`, draft or move call reaches
-Outlook depends on its ARGUMENTS, and the pin reads names. A bounded exhaustive `search` is the
-realistic case that would slip through.
-
-**One deliberate test change, not just a re-label.** `McpStdioConformanceTests` closed with a smoke
-`tools/call` to `outlook_health` - the only step of that run that touched a mailbox. Marking the
-whole class live would have cost CI the initialize contract, the `instructions` equality pin, the
-21-tool roster and the stdin-close proof, none of which is duplicated elsewhere. The smoke call is
-now `list_signatures`, which is also assembled in OutlookAI.Core and reads only the signature
-directory, so CI still proves all four verbs end to end; the `outlook_health` smoke moved into the
-live class intact.
-
-## What I am doing right now
-
-One read-only agent is running: a per-test analysis of what the VM can and cannot prove, writing
-`vm-coverage-analysis.md` into the session trace folder. It answers three things - which tests
-cannot run on the VM at all, which run but prove less, and what insight is lost that is not a test.
-When it lands, the VM build follows.
-
-## The goal, in one paragraph
-
-Get the entire test cycle off the maintainer's production Outlook and onto the test VM, seeded well
-enough to exercise everything that can be exercised there, with a pre-release gate against the real
-profile covering only what the VM genuinely cannot show. Then finish the outstanding bug queue. No
-release until the maintainer says so - **do not ask about release timing, it is settled**.
-
-## Outstanding work, in order
-
-1. **Build the VM properly.** Three stores (indexed corpus, unindexed corpus, a bystander the tests
-   never touch), two Outlook profiles (one with no accounts because the corpus generator refuses any
-   profile that has one, one with a dummy account on an unroutable server so drafts work and a send
-   can never leave), and a **build-from-nothing runbook including seed-data instructions** - the
-   machine must be rebuildable when it is deleted or moved.
-2. **Grow the corpus** to shapes it does not have: message-class diversity (NDRs, read receipts,
-   meeting requests, sharing invitations, posts), items with no delivery time, very large bodies,
-   deep folder trees, a folder that fails to open, a store whose display name cannot be read.
-   Several of those are cases this project has FIXED BLIND, with no test able to produce them.
-3. **DONE 2026-08-23 (uncommitted) - the tier-3 label is honest.** Truth established per TEST,
-   not per file: of the 100 tier-3 methods outside the live tier, **89 never leave argument
-   validation** and eleven reached Outlook. Eleven of the sixteen files were entirely innocent -
-   `DescriptionBudgetCiTests`, `DraftOptionsCiToolShapeTests`, `HtmlBodyCiToolShapeTests`,
-   `MoveArchiveCiToolShapeTests`, `Phase3CiToolShapeTests`, `Phase4CiToolShapeTests`,
-   `Phase5CiToolShapeTests`, `SearchSchemaCiTests`, `SoakBatchCCiToolShapeTests`,
-   `SoakToolSurfaceCiTests`, `WritingRulesGateCiTests`. The guilty tests moved to
-   `ComHostSupervisionLiveTests` (4 of 11), `OutlookAvailabilityLiveTests` (4 of 4, renamed from
-   `...CiTests`) and `OutlookHealthLiveToolShapeTests` (1 from Phase2, 1 from Phase7, 1 lifted out
-   of `McpStdioConformanceTests`), all carrying `Category=Live` + `LiveTier=Portable` +
-   `Requires=OutlookInstance` in the guarded `LiveMcpToolShape` collection. See the section below
-   for the marker and its enforcement. Residual gaps are four TODO.md sub-items, the largest being
-   that `list_accounts` STARTS Outlook on a machine where it is installed but closed.
-4. **Mutation-verify `bea7fc9`.** The sort fix is committed and green but its mutation pass never
-   ran - the agent was killed partway. **It left one mutation applied** (the sort-property array
-   with its two spellings swapped) which I found and restored; that is why the pass matters.
-5. **Re-measure the sweep budget.** 180 s was measured while the sort was silently failing. A
-   working sort changes what the sweep does per folder.
-6. **The corpus generator's two defects**: ~5,500 duplicate items land in the Outbox on a large
-   build, deterministically; and the placement probe's folder-table check fails against a folder
-   with many items, so it refuses a placement that works.
-7. **Live move-batch exercise** before release - making that batch a real aggregate changed
-   behaviour on a mutating path.
-8. **Tripwire re-census-then-re-run** logic, bounded by a maximum.
-9. **Remaining gap-map rows** - the maintainer said clear ALL of them before a release.
-10. **`thread`'s store asymmetry** plus a scan for the same shape elsewhere.
-11. **Restore the installed MCP server** - deliberately moved aside, so `outlookai` fails to start
-    in every Claude Code session on that machine. Deferred until the release.
-
-## Decisions given 2026-08-23, second batch
-
-| # | Question | Answer |
-| --- | --- | --- |
-| 1 | The corpus decays into a lie - a fixed anchor means every "last N days" window selects nothing after ~6 weeks, and every test still passes | **Assert freshness first** (a test that fails when the newest corpus item is older than the widest window under test), **then re-anchor on restore**. Regenerating was rejected: it throws away a snapshot we hold measurements against |
-| 2 | Four tests pass while asserting almost nothing when their precondition is unmet, each by a documented early return - including the one asserting that search always answers | **Make each fail rather than return.** They are live-tier now, run deliberately against a machine chosen to satisfy their preconditions, so an unmet precondition is a finding about the machine |
-| 3 | The unroutable dummy account leaves a permanent tagged Outbox artifact, which the mandatory zero-artifact sweep fails on forever | **A local SMTP sink that delivers back**, so self-addressed mail round-trips and the six arrival tests become runnable. Exempting the Outbox from the sweep was rejected - that guard exists because mail was once destroyed |
-| 4 | `Portable` was defined as "no mail accounts, nothing indexed" and the decided VM has both | **Add a third tier value, `VmCapable`**, and push capability reasons from class level down to method level. The class-level attribution is why 96 tests looked impossible when only 15 are |
-| 5 | Shapes fixed blind - a folder that throws on open, a store whose display name cannot be read, an item with no delivery time. No way was found to produce the unreadable store name on ANY machine, so that fix has never once executed | **Extend the existing COM-host fault-injection hook**, and use a genuinely permissions-denied folder for the folder case. Extends a proven mechanism rather than adding a second |
-
-## The pre-release measurement gate - decided 2026-08-23
-
-**Shape.** Not a test re-run. Roughly ninety live tests already pass on the VM, so repeating them
-against the real profile costs thirty to forty minutes of exclusive mailbox access and proves
-nothing new. The gate instead runs a small fixed set of operations and records what only a real
-profile can show: sweep and scan elapsed times across five stores, frame high-water from real
-bodies, index frontier age, folders reached, `sweep.sortRefusedFolders`. Ten to fifteen minutes.
-
-**How it decides.** An agent reads **all** the numbers and judges whether there is cause for alarm
-or a course correction - not a threshold check. Thresholds alone are known to be insufficient here,
-and the proof is in this session: the frame high-water read 432 KB against a 64 MB ceiling, which
-is 0.66% and looks perfect. It was 432 KB **because the sweep was timing out at thirty seconds
-before it could gather more**. A measurement bounded by another defect reads exactly like a healthy
-one, and every threshold anyone would write passes it. It only became visible when the VM produced
-10.7 MB for a single store and the two sat side by side.
-
-So the comparison is against **this machine's own previous values**, and movement in **either
-direction** beyond a tolerance is a finding - a number falling unexpectedly is as interesting as one
-rising, because that is precisely what 432 KB was.
-
-**Bias: fail aggressively.** The maintainer's instruction. A slow leak of performance degradation
-across releases is the thing this exists to catch, and it is exactly what a permissive gate misses,
-because no single release moves the number much.
-
-**Where the numbers live: LOCAL ONLY, and never in the repo or the release notes.** The maintainer's
-words: these are measurements of their machine, useful only relative to older values from the same
-system, not representative of anyone else's, and publishing them leaks statistics about their
-mailbox - volumes, folder shapes, mail rates. The baseline history therefore cannot be committed
-either, or it is pushed. It belongs under `%LOCALAPPDATA%`, as machine-local data, alongside the
-audit log the product already keeps there.
-
-## The indexed/unindexed split needs two Windows ACCOUNTS, not two data files - measured 2026-08-23
-
-**The three-store design assumed one profile could hold an indexed corpus beside an unindexed one.
-It cannot.** Windows Search expresses the Outlook scope as a single URL per user account -
-`mapi16://{S-1-5-21-...}/` - covering that user's entire profile. There is no per-store granularity
-at the crawl-scope level, so two data files mounted in one profile are indexed or not indexed
-together. Read from
-`HKLM\SOFTWARE\Microsoft\Windows Search\CrawlScopeManager\Windows\SystemIndex\WorkingSetRules` on
-the test VM.
-
-**Decision: two Windows user accounts on the VM.** Each account has its own SID and therefore its
-own mapi scope, and a scope is a rule that can be excluded - so one account's profile is indexed and
-the other's is not, both stable and simultaneous. Rejected: mounting and unmounting data files
-between runs (makes runs depend on each other and on indexer timing), toggling the search service
-(makes "unindexed" mean "index temporarily broken", which is a different state from the one the
-degraded path exercises), and dropping the indexed corpus (gives up the tier most tests want).
-
-**Not automated, deliberately.** Excluding the second account's scope is a one-time build step and
-the runbook is written for a human, so a checkbox in Indexing Options is an adequate instruction.
-What needed establishing was whether the model can express it, and it can.
-
-**Still unverified, and it should be checked during the build rather than assumed:** whether
-excluding a `mapi16://` scope actually prevents that profile's mail being indexed, as opposed to
-only hiding it from queries.
-
-**Method note, third occurrence.** PowerShell's late binding could not drive `CSearchManager`, the
-same way it could not drive `Table.GetRows` or `Table.Sort` earlier: the object arrives as
-`System.__ComObject` with no type information and every call fails in a way that reads like the API
-refusing rather than the binder. Where a COM object must be driven from PowerShell, use
-`$obj.GetType().InvokeMember(...)` against the runtime type, or write the probe in C# where the
-interop is early-bound. Two probes were lost to this before it was recognised.
-
-## Standing rules that outlive any compaction
-
-- **Completeness outranks performance, whatever the cost.** The maintainer has said this repeatedly.
-- **Never ask about release timing.** They will say when.
+- **Completeness outranks performance, whatever the cost.**
+- **Never ask about release timing.** Settled. They will say.
 - **Never run the live tier or touch the mailbox from a subagent.** I run live tests; agents write
-  them. Agents must also not touch Hyper-V or the VM scratch folder.
-- **Verify both target frameworks.** A net48 break reached master this session because only the
-  net10 test project was checked.
+  them. Agents must not touch Hyper-V or the VM scratch folder.
+- **Verify both frameworks.** A net48 break reached master because only net10 was checked.
 - **Only a build proves a tree clean after a mutation pass.** Restore by index, never by matching
-  replacement text; a killed process skips its cleanup; passes must be serial.
-- **Commit research into the repo.** The scratch folder was deleted once and took the long-form
-  analyses with it. The findings survived only because they had been folded into this log,
-  `TODO.md`, `Docs/magic-numbers.md`, `Docs/completeness-gaps.md` and `QUESTIONS.md`.
+  replacement text; a killed process skips cleanup; passes must be serial.
+- **Commit research into the repo.** The scratch folder was deleted once and took every long-form
+  analysis with it.
+- **No windows, no focus theft.** `-WindowStyle Hidden` belongs on `Start-Process`, never inside
+  `-ArgumentList` where it is a no-op. Output must go to a file: an elevated process's stdout cannot
+  reach the caller.
+- **PowerShell cannot drive these COM objects by late binding** - `Table.GetRows`, `Table.Sort`,
+  `CSearchManager` all failed in a way that reads like the API refusing. Use
+  `$obj.GetType().InvokeMember(...)` or write the probe in C#.
+- **The guest runs Windows PowerShell 5.1** via PowerShell Direct: no `??`, no ternary.
 
-## The largest findings of this session, for context
+## The biggest findings, for context
 
-- **The freshness sweep has never sorted.** It passed a namespace-qualified property name to
-  `Table.Sort`, which refuses it; the failure was swallowed. Measured on five real stores: the
-  explicit name applied 5/5, the namespace form was refused 5/5. So the 200-item cap has always cut
-  an arbitrary slice, in the tier whose entire purpose is recent mail. Fixed in `bea7fc9`.
-- **Budgets were roughly half the measured work.** The sweep needed ~60 s across five stores against
-  a 30 s budget, which is why the COM host was being killed and replaced during ordinary searches.
-- **Sixteen atomicity claims were false** - the product told callers nothing had changed when nobody
-  could know. Fixed in `7b4cfd9`.
-- **The tripwire could not take a baseline at all** on the real profile, and its census is now a
-  table read rather than opening every message: 5 stores, 159 folders, 2,044 items in 16.9 seconds,
-  where one store previously exceeded a three-minute limit.
+- **The freshness sweep never sorted**, for the life of the feature, on any store - it passed a
+  namespace-qualified property name that `Table.Sort` refuses, and the failure was swallowed. So its
+  200-item cap always cut an arbitrary slice. Measured 5/5 stores. Fixed in `bea7fc9`.
+- **Budgets were about half the measured work**, which is why the COM host was being killed during
+  ordinary searches.
+- **Sixteen atomicity claims were false** - the product said nothing had changed when nobody could
+  know. Fixed in `7b4cfd9`.
+- **The tripwire could not take a baseline at all** on the real profile; its census now reads a
+  table instead of opening every message - 5 stores, 159 folders, 2,044 items in 16.9 s.
+- **`Category!=Live` read the real mailbox on every verification run** for the whole session.
 
 ---
+
 
 # Autonomous session log - 2026-08-18/19
 
