@@ -163,7 +163,12 @@ public static class LiveStoreCountTripwire
     /// Re-censuses and compares. Throws naming the store, the folder, the items and where
     /// they went when anything was removed outside the hub, and ends with an attribution
     /// line saying how far the evidence actually goes. Runs once; later calls are no-ops.
-    /// </summary>
+    /// <para>
+    /// A suspected loss is not reported straight away: it goes through
+    /// <see cref="TripwireRetryLadder"/>, which is bounded (2 re-censuses, then 1 re-run) and
+    /// which reports whatever it did in both directions - a run that passed on the second
+    /// census says so, in the same summary line a clean run uses.
+    /// </para>
     public static void Verify()
     {
         Verify(final: true);
@@ -198,28 +203,22 @@ public static class LiveStoreCountTripwire
         stopwatch.Stop();
 
         TripwireVerdict verdict = StoreCountTripwire.Evaluate(baseline, after.Census, hub, lazyStores);
+        TripwireRetryReport retry = TripwireRetryReport.NotNeeded();
         if (verdict.Failed)
         {
-            // Confirm before crying: one more census, and only what fails BOTH times is
-            // reported. COM enumeration under a busy Outlook is not perfectly repeatable.
-            //
-            // Failure lines name EntryIDs now, so this intersection is stricter than it was:
-            // the SAME items must be missing both times, not merely the same tally. That is
-            // the right direction - a line that changes between two censuses seconds apart
-            // was describing enumeration noise, not a deletion.
-            Console.WriteLine("[tripwire] suspected loss - re-censusing to confirm.");
-            CensusPass recheck = Capture(baseline.Keys.ToList(), "confirmation", hub, baseline);
-            TripwireVerdict second = StoreCountTripwire.Evaluate(baseline, recheck.Census, hub, lazyStores);
-            HashSet<string> secondKeys = new(second.FailureRecords.Select(f => f.Key), StringComparer.Ordinal);
-            List<TripwireFailure> confirmed =
-                verdict.FailureRecords.Where(f => secondKeys.Contains(f.Key)).ToList();
-            if (confirmed.Count == 0)
-            {
-                Console.WriteLine("[tripwire] not reproducible on the second census - treating as enumeration noise.");
-            }
-
+            // Confirm before crying, but BOUNDED and on the record: every retry is a chance
+            // to convert a real loss into a pass, so the ladder stops the moment two censuses
+            // agree, and whatever it did is printed whether it ends in a pass or a failure.
+            // TripwireRetryLadder owns the policy; this only supplies the censuses.
+            Console.WriteLine(
+                "[tripwire] suspected loss - re-censusing to confirm (at most "
+                + TripwireRetryLadder.MaxReCensuses + ", ~" + TripwireRetryLadder.ReCensusGapSeconds
+                + " s apart; then at most " + TripwireRetryLadder.MaxImplicatedReRuns
+                + " bounded re-run of the implicated tests).");
+            retry = TripwireRetryLadder.Resolve(verdict, new LiveRetrySource(baseline, hub, lazyStores));
             verdict = new TripwireVerdict(
-                confirmed, verdict.Notes, confirmed.Count > 0 ? verdict.Attribution : null);
+                retry.Confirmed, verdict.Notes, retry.Failed ? verdict.Attribution : null);
+            Console.WriteLine(retry.Describe());
         }
 
         foreach (string note in verdict.Notes)
@@ -229,7 +228,7 @@ public static class LiveStoreCountTripwire
 
         Console.WriteLine(
             $"[tripwire] post-run census in {stopwatch.ElapsedMilliseconds} ms ({after.Describe()}); "
-            + $"{verdict.Failures.Count} failure(s), {verdict.Notes.Count} note(s).");
+            + $"{verdict.Failures.Count} failure(s), {verdict.Notes.Count} note(s); {retry.Summary}.");
 
         // Releases COM references only - Outlook keeps running (S7: never kill/close). Held
         // on a non-final pass: releasing the last reference to an Outlook the tests started
@@ -248,7 +247,97 @@ public static class LiveStoreCountTripwire
 
         if (verdict.Failed)
         {
-            throw new InvalidOperationException(verdict.Describe());
+            throw new InvalidOperationException(
+                verdict.Describe() + Environment.NewLine + retry.Describe());
+        }
+    }
+
+    /// <summary>
+    /// The live half of <see cref="TripwireRetryLadder"/>: real censuses, a real wait, and an
+    /// honest refusal to pretend it can drive the re-run rung.
+    /// </summary>
+    private sealed class LiveRetrySource : ITripwireRetrySource
+    {
+        private readonly Dictionary<string, IReadOnlyDictionary<string, FolderCensus>> _baseline;
+        private readonly string _hub;
+        private readonly IReadOnlyList<string> _lazyStores;
+
+        internal LiveRetrySource(
+            Dictionary<string, IReadOnlyDictionary<string, FolderCensus>> baseline,
+            string hub,
+            IReadOnlyList<string> lazyStores)
+        {
+            _baseline = baseline;
+            _hub = hub;
+            _lazyStores = lazyStores;
+        }
+
+        /// <summary>
+        /// Blocks the teardown for the gap. Deliberate: the alternative is comparing two
+        /// censuses taken in the same instant, which would confirm every transient reading
+        /// it was supposed to filter out.
+        /// </summary>
+        public void Wait(TimeSpan gap)
+        {
+            Console.WriteLine(
+                "[tripwire] waiting " + gap.TotalSeconds.ToString("0", CultureInfo.InvariantCulture)
+                + " s before the next census.");
+            Thread.Sleep(gap);
+        }
+
+        /// <summary>
+        /// One more census against the SAME baseline. Throws exactly as the first pass does
+        /// when a store cannot be censused, which refuses the run rather than clearing it.
+        /// </summary>
+        public TripwireVerdict ReCensus(int attempt)
+        {
+            CensusPass again = Capture(
+                _baseline.Keys.ToList(),
+                "re-census " + attempt.ToString(CultureInfo.InvariantCulture),
+                _hub,
+                _baseline);
+            return StoreCountTripwire.Evaluate(_baseline, again.Census, _hub, _lazyStores);
+        }
+
+        /// <summary>
+        /// The guarded collections this run actually executed, which is as far as the evidence
+        /// goes. A before/after census cannot name an actor at all (that is why the attribution
+        /// line says so), and the write allowlist confines the suite to the hub, so a failure
+        /// OUTSIDE the hub points at no collection in particular - only at this run. On a
+        /// filtered run that is already a short list, which is the whole reason it is worth
+        /// naming rather than saying "the tier".
+        /// </summary>
+        public IReadOnlyList<string> ImplicatedBy(IReadOnlyList<TripwireFailure> persisting)
+        {
+            IReadOnlyList<string>? ordered = LiveTierRunPlan.Current;
+            if (ordered == null)
+            {
+                return LiveCollections.All;
+            }
+
+            List<string> guarded = ordered.Where(LiveCollections.IsGuarded).ToList();
+            return guarded.Count > 0 ? guarded : LiveCollections.All;
+        }
+
+        /// <summary>
+        /// NOT ATTEMPTED, and that is a deliberate refusal rather than an omission. A re-run
+        /// means starting a second xunit run of this assembly from inside the first one's
+        /// teardown: it would re-enter the fixtures that are currently disposing, re-take a
+        /// baseline over a profile mid-teardown, and write to a mailbox at a moment when
+        /// nothing is left to sweep the artifacts away. So the rung is reported as
+        /// <see cref="TripwireReRunOutcome.Inconclusive"/> - which fails the run - and the
+        /// command the maintainer should run is printed instead. An unperformed experiment
+        /// exonerates nothing, so this can only ever make the tier fail, never pass.
+        /// </summary>
+        public TripwireReRunOutcome ReRun(IReadOnlyList<string> implicated, int attempt)
+        {
+            Console.WriteLine(
+                "[tripwire] the bounded re-run cannot be driven from inside the suite's own teardown - it would "
+                + "re-enter the fixtures that are disposing right now. Run it by hand, once, over the "
+                + implicated.Count.ToString(CultureInfo.InvariantCulture) + " collection(s) that ran: "
+                + string.Join(", ", implicated) + ". If the same failure(s) come back, the suite is removing "
+                + "mail; if they do not, the delta was ambient.");
+            return TripwireReRunOutcome.Inconclusive;
         }
     }
 

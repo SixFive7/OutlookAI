@@ -80,6 +80,30 @@ public static class LiveOutlookTestMailer
     public const int CensusTableRowBatch = 200;
 
     /// <summary>
+    /// How long any ordinary mailer STA operation may run before the join gives up and calls
+    /// it a timeout. Unchanged at three minutes: it is a HANG detector for a wedged Outlook,
+    /// not a work allowance, and every operation it covers is a handful of COM calls.
+    /// </summary>
+    internal static readonly TimeSpan DefaultStaBudget = TimeSpan.FromMinutes(3);
+
+    /// <summary>
+    /// The census's own STA join, and the rung directly above
+    /// <see cref="CensusIdentityPlan.DefaultIdentityTimeBudgetMs"/>.
+    /// <para>
+    /// DERIVED rather than chosen, and the derivation is the point. The identity walk now
+    /// stops itself after its own budget and lets the store be counted; that can only happen
+    /// if the join outlives the budget by enough to finish the counting underneath it. Set
+    /// them equal - or leave the census on the ordinary 3-minute join, which is what it had
+    /// before - and the outer timer fires first, killing a census that was working perfectly
+    /// well inside its own budget and refusing the whole live tier. This repository has
+    /// already shipped that failure once (the inner sweep budget equal to the outer deadline,
+    /// 2026-08-18), which is why the ordering is pinned in T1 rather than left to reading.
+    /// </para>
+    /// </summary>
+    internal static readonly TimeSpan CensusStaBudget =
+        TimeSpan.FromMilliseconds(CensusIdentityPlan.DefaultIdentityTimeBudgetMs) + DefaultStaBudget;
+
+    /// <summary>
     /// Sends a mail from <paramref name="smtpAddress"/> to itself (refuses to run when
     /// that account is not in the profile - the D20 grant is telefonie-to-telefonie
     /// only). Returns the UTC send timestamp.
@@ -788,14 +812,18 @@ public static class LiveOutlookTestMailer
     /// </para>
     /// <para>
     /// Throws if the store cannot be enumerated - the tripwire is fail-closed. A folder
-    /// whose WALK fails or comes back inconsistent degrades to a count, never to nothing.
+    /// whose WALK fails or comes back inconsistent degrades to a count, never to nothing, and
+    /// so does a folder the identity TIME budget can no longer afford: this call runs under
+    /// <see cref="CensusStaBudget"/> precisely so that budget can expire inside it and leave
+    /// the counting to finish, instead of the join killing the store's census outright.
     /// </para>
     /// </summary>
     public static IReadOnlyDictionary<string, FolderCensus> CaptureMailFolderCensus(
         string storeDisplayName, CensusIdentityPlan plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        return RunSta<IReadOnlyDictionary<string, FolderCensus>>(() =>
+        return RunSta<IReadOnlyDictionary<string, FolderCensus>>(
+            () =>
         {
             dynamic app = CreateOutlookApplication();
             dynamic? ns = null;
@@ -856,7 +884,8 @@ public static class LiveOutlookTestMailer
                 Release(ns);
                 Release(app);
             }
-        });
+        },
+            CensusStaBudget);
     }
 
     private static void CollectMailFolderCensus(
@@ -1818,8 +1847,9 @@ public static class LiveOutlookTestMailer
         });
     }
 
-    private static T RunSta<T>(Func<T> work)
+    private static T RunSta<T>(Func<T> work, TimeSpan? budget = null)
     {
+        TimeSpan join = budget ?? DefaultStaBudget;
         T result = default!;
         Exception? failure = null;
         var thread = new Thread(() =>
@@ -1839,9 +1869,11 @@ public static class LiveOutlookTestMailer
         };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        if (!thread.Join(TimeSpan.FromMinutes(3)))
+        if (!thread.Join(join))
         {
-            throw new TimeoutException("Test mailer STA operation timed out.");
+            throw new TimeoutException(
+                "Test mailer STA operation timed out after "
+                + join.TotalSeconds.ToString("0", CultureInfo.InvariantCulture) + " s.");
         }
 
         if (failure != null)

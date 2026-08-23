@@ -342,6 +342,74 @@
   `--logger "console;verbosity=normal"`.** Run it verbose and read what it is doing before touching
   anything.
 
+- [x] **DONE (2026-08-24) - The tripwire's response to a suspected loss is bounded, and the
+  census identity walk has a clock of its own.** Two maintainer decisions, both about the
+  live tier's mailbox-safety machinery.
+
+  **1. The retry ladder (`T2\TripwireRetryLadder`).** A suspected loss used to get exactly one
+  confirmation census, whose only report was a single console line - and if the second census
+  did not reproduce it, the run passed with nothing in the output to say a suspected loss had
+  ever been seen. Now:
+
+  - **at most 2 re-censuses, ~30 s apart**, each intersecting the survivors by failure KEY;
+  - **stop the moment two censuses agree** - the second re-census is not taken if the first
+    one cleared the delta;
+  - **if it survives both, at most 1 re-run of the plausibly-implicated tests** (the guarded
+    collections this run actually executed, which on a filtered run is a short list);
+  - **if it still persists, fail loudly.**
+
+  The two rungs answer different questions, which is why both exist: re-censusing asks "is
+  this reading real?" (COM enumeration under a busy Outlook is not perfectly repeatable),
+  re-running asks "did the suite do it?" (a person reading their own mail produces a one-off
+  delta; a test that deletes reproduces it).
+
+  **Every retry is a chance to convert a real loss into a pass**, so the loudness is part of
+  the feature rather than decoration: the report names every attempt, what persisted, what
+  cleared and what appeared for the first time; a delta that survives even one re-census is
+  shouted whatever the final verdict; a pass that took retries carries the whole record and
+  says so in the same summary line a clean run uses (`retry: 2 re-census(es), 1 re-run(s),
+  verdict PASSED (survived a re-census)` vs `retry: none needed`); and spending a bound is an
+  escalation with its own `BOUND REACHED` line, never a quiet give-up. Affordable because the
+  census is now cheap: 16.9 s a pass, so two are ~34 s of work against a 27-minute tier run.
+
+  **The re-run rung is deliberately not attempted in-process.** Starting a second xunit run
+  from inside the first one's teardown would re-enter the fixtures that are disposing and
+  write to a mailbox with nothing left to sweep it. The live source therefore returns
+  `Inconclusive` - which FAILS - and prints the command to run by hand. An experiment nobody
+  performed exonerates nothing, so this can only ever make the tier stricter. Wiring a real
+  re-run driver (the VM harness, or a script) is a one-method change; the policy is already
+  pinned for both outcomes.
+
+  Pinned by 12 new T1 tests (`TripwireRetryLadderTests`) against a fake census source - no
+  COM, no Outlook, no mailbox, no wall clock. The fake THROWS when the ladder asks for one
+  more census than the case scripted, so a ladder that loses its bound fails fast and by name
+  instead of hanging.
+
+  **2. The census identity budget is 120 s (`CensusIdentityPlan.DefaultIdentityTimeBudgetMs`).**
+  Question 2 below - "should the 3-minute STA timeout move?" - is answered, and the answer is
+  that it was the wrong knob. The identity walk had no clock of its own at all: it shared the
+  mailer's 3-minute STA join with the folder-tree walk and everything else, so nothing could
+  stop a slow walk except the join killing the whole store's census and refusing the tier -
+  exactly what happened on 2026-08-20. The walk now stops itself after 120 s and the folders
+  it did not reach are COUNTED, the same degradation the per-store item budget and an unusable
+  table already produce, printed as `IDENTITY TIME BUDGET EXPIRED (120 s) - N folder(s)
+  counted instead of walked`. Every folder is still counted, so the count rule still guards
+  the whole store, and a store that cannot be counted still refuses the tier.
+
+  120 s is a **ceiling to be narrowed from VM measurements, not a target**: the only trial
+  that exists is 16.9 s for the whole 5-store pass, one run is not a distribution, and the
+  risk is asymmetric - too low kills a working operation, too high costs nothing when the work
+  finishes early. The size budgets (500 per folder, 3,000 per store, 4x growth headroom) did
+  NOT move; they decide what the guard proves, which is question 1 below and still open.
+
+  **The rung above moved with it.** `LiveOutlookTestMailer.CensusStaBudget` is now the identity
+  ceiling plus the ordinary 3-minute join (300 s), because a budget that can never expire -
+  something above it fires first - is not a budget, and this repository has already shipped
+  that failure once (the sweep's inner soft budget equal to its outer hard deadline,
+  2026-08-18). `DefaultStaBudget` stays at 3 minutes for every other mailer operation: it is a
+  hang detector for a wedged Outlook, not a work allowance. Pinned by 9 new T1 tests
+  (`CensusIdentityBudgetTests`), the ordering and the derivation included.
+
 - [x] **DONE (2026-08-20) - The count tripwire's census could not finish on a real Exchange
   profile, so the live tier refused to run at all.** The first run since the census began
   capturing identities ended before a single test executed:
@@ -427,11 +495,14 @@
      Raising it changes what the guard proves, so it is not being changed as a side effect of
      making the census affordable. Options: leave at 500; raise to ~5,000 per folder with the
      per-store budget raised to match; or raise only for non-delegate stores.
-  2. **Should the 3-minute STA timeout move?** It is already per store (one `RunSta` per
+  2. ~~**Should the 3-minute STA timeout move?** It is already per store (one `RunSta` per
      store), so a "per store rather than per operation" change buys nothing. It was left
      alone: the fix removes the term that could plausibly exceed it, and raising a timeout
-     without evidence moves a silent failure later. If the next run fails again it will now
-     say where, which is the cheaper way to buy the evidence.
+     without evidence moves a silent failure later.~~ **ANSWERED 2026-08-24: it was the wrong
+     knob.** The join is a hang detector and stays at 3 minutes for every other operation; what
+     was missing was a budget belonging to the identity walk itself, which is now 120 s, and
+     the census's own join is that plus the ordinary 3 minutes so the budget can expire inside
+     it. See the 2026-08-24 entry above.
   3. **`AnUnspecifiedKindIsReadAsUtc_SoTwoCensusesAgree` cannot fail on a UTC machine.** It
      catches the mutation here (nl-NL, UTC+2 in August) and would not catch it on a CI runner
      set to UTC, because the two readings coincide there. No way was found to pin it
@@ -1238,6 +1309,10 @@
       intersection in the confirmation census. The KEY itself is pinned in
       `T1/StoreCountTripwireTests`; the code that uses it is not. The cheap substitute is the same
       one this file already records for `sortApplied`: a temporary build that forces the branch.
+      **Narrowed 2026-08-24:** the intersection moved out of `Verify` into `T2\TripwireRetryLadder`
+      and is now pinned by `T1/TripwireRetryLadderTests` against a fake census source, bounds and
+      reporting included. What is left live-only is the LiveRetrySource wiring around it - the
+      three censuses it takes, the 30 s waits, and the collections it names as implicated.
 
 - [ ] **Watch for the count tripwire firing on a PST's Junk folder.** The census marks self-pruning
       folders by asking the store for its default Deleted Items, Junk and sync-issue folders. A PST
