@@ -1,5 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
+
+using OutlookAI.Core.Com;
+using OutlookAI.Core.Services;
+
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T3;
@@ -70,15 +74,43 @@ public sealed class OutlookAvailabilityCiTests
         }
     }
 
+    /// <summary>
+    /// What this test is FOR, and what it deliberately stopped asserting.
+    /// <para>
+    /// It is a correctness test about one contract: a <c>search</c> always answers, and the
+    /// answer always says whether it is complete. It used to carry a wall-clock assertion as
+    /// well - the search must return inside 100 s - and that half was measuring the
+    /// developer's Outlook rather than the product. It passed for months and then failed 4 of
+    /// 4 at 139 s against an Outlook that had been up for 40 hours, including against a
+    /// mutation of a constant the server process cannot even see. A test that goes red for
+    /// reasons that are not defects is how a suite stops being believed, which is the rule
+    /// this file's own header states.
+    /// </para>
+    /// <para>
+    /// The timing contract has a better home and already lives there:
+    /// <see cref="ATransientOutlookState_AnswersFastAndCarriesRetryGuidance"/> asserts that a
+    /// COM-needing tool does not sit on the caller, and the budget composition itself is
+    /// pinned arithmetically in T1 <c>BudgetCompositionTests</c> where no mailbox can move it.
+    /// </para>
+    /// <para>
+    /// The client budget is DERIVED rather than left at the old flat 180 s: that number was
+    /// below the budget a slow search is entitled to spend, so dropping the assertion without
+    /// raising it would have replaced a failed assertion with a cancelled round trip and
+    /// proved nothing at all.
+    /// </para>
+    /// </summary>
     [Fact]
     public async Task SearchAlwaysAnswers_AndSaysWhetherItIsComplete()
     {
-        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(TimeSpan.FromSeconds(180));
+        // What a search may legitimately cost end to end: its own composed budget plus the
+        // handshake that precedes it on this client.
+        TimeSpan clientBudget = TimeSpan.FromMilliseconds(
+            MailService.SearchBudgetMs + ComOperationBudgets.HandshakeBudgetMs);
 
-        (JsonElement result, TimeSpan elapsed) = await CallAsync(
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(clientBudget);
+
+        (JsonElement result, TimeSpan _) = await CallAsync(
             client, "search", new { query = "invoice", top = 3 });
-
-        Assert.True(elapsed < TimeSpan.FromSeconds(100), $"search took {elapsed.TotalSeconds:F1}s");
 
         JsonElement payload = PayloadOf(result);
         if (payload.TryGetProperty("error", out _))

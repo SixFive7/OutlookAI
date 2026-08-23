@@ -238,31 +238,25 @@ public static class CensusTableRow
     }
 
     /// <summary>
-    /// A table's date value as UTC.
+    /// A table's date value as UTC, through the ONE helper the shipped code uses.
     /// <para>
-    /// An UNSPECIFIED kind is taken as already-UTC. That is what Microsoft documents for the
-    /// <c>Table</c> object (it returns date-time values in UTC, unlike the object model,
-    /// which returns local time) and it is the contract the rest of this solution already
-    /// follows for an unspecified kind (<c>DaslDateLiteral.FormatUtc</c>). If that reading
-    /// were ever wrong the tripwire's DECISIONS would not change - every value in every
-    /// census comes through this one method, so two censuses still agree with each other -
-    /// and only the instant PRINTED beside a departed item would be offset by the machine's
-    /// UTC offset.
+    /// It used to be a second implementation, and the two disagreed:
+    /// <c>OutlookComSession.ReadRowDate</c> called <c>ToUniversalTime</c> on an unspecified
+    /// kind (treating it as local) while this one took it as already-UTC. A COM-marshalled
+    /// date is always unspecified, so exactly one of them was wrong on any machine and
+    /// neither could see the other. Both now call
+    /// <see cref="OutlookAI.Core.Com.ComDateValue.FromTableValue"/>, so the reading can be
+    /// corrected in one place if the live probe says it must be.
+    /// </para>
+    /// <para>
+    /// The census is the SAFE side of that disagreement either way: every value at both ends
+    /// of every comparison comes through this method, so two censuses still agree with each
+    /// other, and only the instant PRINTED beside a departed item would be offset.
     /// </para>
     /// </summary>
     private static DateTime? ReadUtc(object? value)
     {
-        if (value is not DateTime moment)
-        {
-            return null;
-        }
-
-        return moment.Kind switch
-        {
-            DateTimeKind.Utc => moment,
-            DateTimeKind.Local => moment.ToUniversalTime(),
-            _ => DateTime.SpecifyKind(moment, DateTimeKind.Utc),
-        };
+        return OutlookAI.Core.Com.ComDateValue.FromTableValue(value);
     }
 
     /// <summary>

@@ -7749,21 +7749,84 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// Newest-first sort key for a folder table, in the two spellings Outlook accepts for
-        /// the same property.
+        /// Newest-first sort keys for an ARRIVAL folder's table, in the order they are tried:
+        /// the explicit built-in name first, the namespace reference only as a last resort.
         /// <para>
-        /// Two of them because Microsoft's <c>Table.Sort</c> reference says a sort property
-        /// may be referenced "by their explicit string names only; cannot reference
-        /// properties by their namespaces", while its own <c>Columns.Add</c> reference
-        /// documents the namespace form as valid there - and the freshness sweep has shipped
-        /// the namespace form on BOTH calls since the beginning. Whether that is why its sort
-        /// has never applied is unsettled and is being answered by a live probe, so this
-        /// path does not assume either answer: it asks for the explicit name first, falls
-        /// back to the namespace form, and lets the ANSWER decide the cost (which rung pays)
-        /// rather than the correctness (every rung returns the same mail).
+        /// <b>The order is the whole point, and it is now measured rather than argued.</b>
+        /// Microsoft's <c>Table.Sort</c> reference says a sort property may be referenced "by
+        /// their explicit string names only; cannot reference properties by their
+        /// namespaces", while its own <c>Columns.Add</c> reference documents the namespace
+        /// form as valid there. A read-only probe over five stores of a real profile
+        /// (<c>T2/LiveTableSortProbeTests</c>, 2026-08-23) found exactly that:
+        /// <c>Sort("ReceivedTime")</c> applied on 5 of 5 stores and
+        /// <c>Sort("urn:schemas:httpmail:datereceived")</c> was refused on 5 of 5 with
+        /// <c>ArgumentException</c>, and the first row read today's mail under the explicit
+        /// name against dates years old under the namespace form.
+        /// </para>
+        /// <para>
+        /// The namespace form is KEPT as the last rung rather than deleted. It is one profile
+        /// on one Outlook build, a provider that does accept it costs nothing to serve, and on
+        /// a healthy profile the rung never pays because the explicit name is tried first.
+        /// What settles that in the field is <c>sweep.sortRefusedFolders</c>, which now reads
+        /// zero wherever the explicit name is accepted.
         /// </para>
         /// </summary>
         private static readonly string[] DateSortProperties = { "ReceivedTime", "urn:schemas:httpmail:datereceived" };
+
+        /// <summary>
+        /// Newest-first sort keys for a SENT folder, which has a different natural key: mail a
+        /// person sent was never received, so its arrival-order property is the submit time
+        /// and not the delivery time.
+        /// <para>
+        /// This is the same asymmetry the sweep's own DASL restriction already carries - it
+        /// selects on <c>urn:schemas:httpmail:datereceived</c> OR
+        /// <c>urn:schemas:httpmail:date</c> precisely because a sent item may only have the
+        /// second - and sorting by received time alone undoes half of it: an item admitted by
+        /// the submit-time clause with no delivery time sorts as the OLDEST row under
+        /// <c>ReceivedTime</c> and is the first thing the 200-item cap drops, which is the
+        /// opposite of what a freshness tier is for.
+        /// </para>
+        /// <para>
+        /// <c>ReceivedTime</c> is the second rung rather than an alternative to the first,
+        /// because most sent copies do carry one and it is the spelling this profile has
+        /// measured working. Both namespace forms sit below both explicit names, for the
+        /// reason given on <see cref="DateSortProperties"/>.
+        /// </para>
+        /// </summary>
+        private static readonly string[] SentDateSortProperties =
+        {
+            "SentOn", "ReceivedTime", "urn:schemas:httpmail:date", "urn:schemas:httpmail:datereceived",
+        };
+
+        /// <summary>
+        /// The sort keys the freshness sweep offers ONE folder, in the order it tries them,
+        /// chosen from what the sweep already knows that folder is.
+        /// <para>
+        /// PURE and public so the rule the shipped defect broke is pinned where CI can reach
+        /// it: no COM call is needed to check that the FIRST spelling tried is an explicit
+        /// built-in name, and a namespace reference in that position is the entire bug this
+        /// method exists to make impossible to reintroduce.
+        /// </para>
+        /// <para>
+        /// A null kind is a folder-scoped sweep's subtree walk, which is handed arbitrary
+        /// folders and has no cheap way to recognise a sent folder among them: comparing
+        /// EntryIDs against a store's default folders costs COM round trips per folder, and
+        /// matching on a folder NAME is locale-dependent guesswork. It therefore gets the
+        /// arrival ladder, which is right for every folder mail arrives in and merely
+        /// suboptimal for a user's own copy of Sent Items reached by path. Recorded in
+        /// TODO.md rather than left implied.
+        /// </para>
+        /// </summary>
+        /// <param name="folderKind">
+        /// One of <see cref="DefaultSweepFolderKinds"/>, or null when the sweep is walking a
+        /// caller-named subtree and does not know.
+        /// </param>
+        public static IReadOnlyList<string> SweepSortProperties(string? folderKind)
+        {
+            return string.Equals(folderKind, "sent", StringComparison.OrdinalIgnoreCase)
+                ? SentDateSortProperties
+                : DateSortProperties;
+        }
 
         /// <summary>
         /// Most items whose EntryIDs one folder's cursor may carry for duplicate suppression.
@@ -8213,7 +8276,12 @@ namespace OutlookAI.Core.Com
                             continue;
                         }
 
-                        state.Admit(brief, entryId, received ?? brief.ReceivedTime);
+                        // Both halves of this fallback are UTC. brief.ReceivedTime comes off
+                        // an OPENED item and is local wall time with an unspecified kind, so
+                        // handing it straight to a cursor named Utc put a local instant into
+                        // the next page's date bound whenever a single row's date column was
+                        // unreadable while the folder's sort still held.
+                        state.Admit(brief, entryId, received ?? ComDateValue.FromItemValue(brief.ReceivedTime));
                     }
                     finally
                     {
@@ -8266,6 +8334,69 @@ namespace OutlookAI.Core.Com
             }
 
             return -1;
+        }
+
+        /// <summary>
+        /// Orders a SWEPT folder's table newest-first, pairing each <c>Columns.Add</c> with a
+        /// <c>Table.Sort</c> under the SAME spelling and reporting the two outcomes
+        /// separately.
+        /// <para>
+        /// Paired, where the scan's <see cref="TryAddDateColumn"/> and
+        /// <see cref="TrySortNewestFirst"/> are deliberately not, because the two callers want
+        /// different things. The scan adds the column on EVERY rung and gates only the sort,
+        /// so that a resumed page reads a table built the same way the page that recorded its
+        /// position did. The sweep has no resumption and no cursor to protect: it wants the
+        /// first spelling that both goes on the table and orders it, and nothing else.
+        /// </para>
+        /// <para>
+        /// <paramref name="columnAdded"/> is what separates "Outlook would not carry this
+        /// property at all" from "the property is on the table and Outlook still refused to
+        /// order by it". Only the second is counted into <c>sweep.sortRefusedFolders</c>, and
+        /// keeping them apart is what let a live probe rather than a guess settle why the
+        /// sweep's sort had never applied.
+        /// </para>
+        /// </summary>
+        private static void TryOrderSweptTable(
+            dynamic table,
+            IReadOnlyList<string> properties,
+            out bool columnAdded,
+            out bool sortApplied)
+        {
+            columnAdded = false;
+            sortApplied = false;
+            for (int i = 0; i < properties.Count; i++)
+            {
+                object? columns = null;
+                try
+                {
+                    columns = table.Columns;
+                    ((dynamic)columns!).Add(properties[i]);
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    // This spelling will not go on the table, so no sort was ever asked for
+                    // under it. Try the next one.
+                    continue;
+                }
+                finally
+                {
+                    Release(columns);
+                }
+
+                columnAdded = true;
+                try
+                {
+                    table.Sort(properties[i], true);
+                    sortApplied = true;
+                    return;
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    // The column IS there and Outlook still refused to order by it. Fall
+                    // through to the next spelling; if none is accepted the caller reports the
+                    // folder rather than swallowing it.
+                }
+            }
         }
 
         /// <summary>The date column's position when it is already on the table, or -1.</summary>
@@ -8361,7 +8492,19 @@ namespace OutlookAI.Core.Com
             return !string.IsNullOrEmpty(landedOn);
         }
 
-        /// <summary>Reads a row's received date, or null when the column is absent or unusable.</summary>
+        /// <summary>
+        /// Reads a row's received date as UTC, or null when the column is absent or
+        /// unusable. The BOUNDS check is the only decision left here.
+        /// <para>
+        /// The time-zone reading moved to <see cref="ComDateValue.FromTableValue"/> because
+        /// this method and the live tripwire census used to derive the same table value in
+        /// OPPOSITE directions - one treating an unspecified kind as local, the other as UTC
+        /// - and neither could see the other. This value becomes a resumed exhaustive scan's
+        /// inclusive "at or before" bound, so a reading one offset too early skips the mail
+        /// in that window and reports the scan complete, in the one mode a caller picks
+        /// because completeness matters.
+        /// </para>
+        /// </summary>
         private static DateTime? ReadRowDate(object[] values, int dateIndex)
         {
             if (dateIndex < 0 || dateIndex >= values.Length)
@@ -8369,12 +8512,7 @@ namespace OutlookAI.Core.Com
                 return null;
             }
 
-            if (values[dateIndex] is DateTime received)
-            {
-                return received.Kind == DateTimeKind.Utc ? received : received.ToUniversalTime();
-            }
-
-            return null;
+            return ComDateValue.FromTableValue(values[dateIndex]);
         }
 
         /// <summary>What a folder's resume state says to do when its turn comes.</summary>
@@ -8877,58 +9015,28 @@ namespace OutlookAI.Core.Com
                 table = folder.GetTable(filter);
                 dynamic t = (dynamic)table!;
 
-                // TWO try blocks, not one, and the split is the whole point. Until
-                // 2026-08-19 a single catch wrapped the column add AND the sort, so
-                // sortApplied:false could not say which of the two failed - and the
-                // difference decides whether the sweep's cap advice ("the OLDEST of this
-                // window was dropped") has ever been true. Microsoft documents that a sort
-                // property may be named "by their explicit string names only; cannot
-                // reference properties by their namespaces", and this call passes a
-                // namespace. If that is why sortApplied has been false, then the sort is
-                // refused on every store for every user rather than being unavailable on
-                // some - and only the split can tell those apart from the field.
+                // Until 2026-08-23 both calls below passed a NAMESPACE reference, which
+                // Microsoft's Table.Sort reference documents as invalid ("by their explicit
+                // string names only; cannot reference properties by their namespaces") and
+                // which a real profile then refused on 5 of 5 stores. The sort had therefore
+                // never applied, anywhere, for anyone, and the 200-item cap had always cut an
+                // arbitrary slice out of the tier whose entire purpose is recent mail.
                 //
-                // Sort needs the property present as a column; late-bound COM maps
-                // E_INVALIDARG to ArgumentException, hence the broad catch on each half.
-                bool columnAdded = false;
-                try
-                {
-                    object? columns = null;
-                    try
-                    {
-                        columns = t.Columns;
-                        ((dynamic)columns!).Add("urn:schemas:httpmail:datereceived");
-                        columnAdded = true;
-                    }
-                    finally
-                    {
-                        Release(columns);
-                    }
-                }
-                catch (Exception ex) when (IsComCallFailure(ex))
-                {
-                    // The column could not be added, so the sort was never asked for.
-                }
+                // The ladder now leads with the explicit name and is chosen per folder kind,
+                // because a sent folder's natural key is the submit time and not the delivery
+                // time (SweepSortProperties). The two outcomes stay SEPARATE: the split
+                // shipped on 2026-08-19 to tell "the column would not go on" apart from "the
+                // column is there and Outlook still refused to order by it", and it is what
+                // makes sweep.sortRefusedFolders readable as zero on a healthy profile.
+                //
+                // Late-bound COM maps E_INVALIDARG to ArgumentException, hence the broad
+                // catch on each half inside the helper.
+                TryOrderSweptTable(t, SweepSortProperties(folderKind), out bool columnAdded, out sortApplied);
 
-                if (columnAdded)
-                {
-                    try
-                    {
-                        t.Sort("urn:schemas:httpmail:datereceived", true);
-                        sortApplied = true;
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                        // The column IS there and Outlook still refused to order by it. That
-                        // is the observation the namespace-reference hypothesis predicts, and
-                        // it is counted so a single real sweep can settle it.
-                        //
-                        // The sweep still works unsorted - every row in the window is still
-                        // read until the cap fires. What stops working is the CLAIM attached
-                        // to the cap, so the failure is reported instead of swallowed (H2).
-                        sortRefused = true;
-                    }
-                }
+                // The sweep still works unsorted - every row in the window is read until the
+                // cap fires. What stops working is the CLAIM attached to the cap, so the
+                // failure is reported instead of swallowed (H2).
+                sortRefused = columnAdded && !sortApplied;
 
                 int entryIdIndex = FindTableColumn(t, "EntryID");
                 if (entryIdIndex < 0)
@@ -10081,36 +10189,7 @@ namespace OutlookAI.Core.Com
                 object? folderObject = null;
                 try
                 {
-                    if (folderPath != null && folderPath.Count > 0)
-                    {
-                        folderObject = WalkToFolder(storeDisplayName, folderPath, out string? walkError);
-                        if (folderObject == null)
-                        {
-                            throw new InvalidOperationException(
-                                "Folder '" + string.Join("/", folderPath) + "' was not found in store '"
-                                + storeDisplayName + "' (" + (walkError ?? "unknown") + ").");
-                        }
-                    }
-                    else
-                    {
-                        dynamic? store = FindStoreByDisplayName(storeDisplayName);
-                        if (store == null)
-                        {
-                            throw new InvalidOperationException(
-                                "Store '" + storeDisplayName + "' was not found in Outlook.");
-                        }
-
-                        try
-                        {
-                            // 6 = olFolderInbox.
-                            folderObject = store.GetDefaultFolder(6);
-                        }
-                        finally
-                        {
-                            Release(store);
-                        }
-                    }
-
+                    folderObject = ResolveProbeFolder(storeDisplayName, folderPath);
                     string folderLabel = TryGetString(() => (string?)((dynamic)folderObject!).Name) ?? "?";
                     string filter = ExhaustiveDaslFilter.Build(
                         null, null, null, ExhaustiveEngine.Like, SearchInValues.Default);
@@ -10231,6 +10310,209 @@ namespace OutlookAI.Core.Com
 
             attempt = new ComTableSortAttempt(
                 sortProperty, columnAdded, columnError, sortApplied, sortError, firstRowEntryId, firstRowUtc);
+        }
+
+        /// <summary>
+        /// Opens the folder a read-only probe was pointed at: a store-relative path when one
+        /// is given, that store's Inbox otherwise. Shared by both probes rather than copied,
+        /// because a second copy of a resolution rule is how two diagnostics come to disagree
+        /// about which folder they measured.
+        /// </summary>
+        private object ResolveProbeFolder(string storeDisplayName, IReadOnlyList<string>? folderPath)
+        {
+            if (folderPath != null && folderPath.Count > 0)
+            {
+                object? walked = WalkToFolder(storeDisplayName, folderPath, out string? walkError);
+                if (walked == null)
+                {
+                    throw new InvalidOperationException(
+                        "Folder '" + string.Join("/", folderPath) + "' was not found in store '"
+                        + storeDisplayName + "' (" + (walkError ?? "unknown") + ").");
+                }
+
+                return walked;
+            }
+
+            dynamic? store = FindStoreByDisplayName(storeDisplayName);
+            if (store == null)
+            {
+                throw new InvalidOperationException("Store '" + storeDisplayName + "' was not found in Outlook.");
+            }
+
+            try
+            {
+                // 6 = olFolderInbox.
+                return store.GetDefaultFolder(6);
+            }
+            finally
+            {
+                Release(store);
+            }
+        }
+
+        /// <summary>
+        /// READ-ONLY diagnostic: reads ONE item's received date three ways and reports all
+        /// three, so the time zone an Outlook <c>Table</c> reports in stops being a matter of
+        /// opinion.
+        /// <para>
+        /// <b>Why it exists.</b> A COM-marshalled date always arrives with
+        /// <see cref="DateTimeKind.Unspecified"/>, so nothing in the value says which zone it
+        /// is in, and this solution has held both answers at once: the live tripwire census
+        /// took an unspecified kind as already-UTC while <c>ReadRowDate</c> called
+        /// <c>ToUniversalTime</c> on it. In the census being wrong is cosmetic. In
+        /// <c>ReadRowDate</c> it is not: the value becomes a resumed exhaustive scan's
+        /// inclusive "at or before" bound, and a bound one offset too early SKIPS the mail in
+        /// that window while reporting the scan complete.
+        /// </para>
+        /// <para>
+        /// <b>What settles it.</b> The table's raw value, the same value through the shared
+        /// helper, and <c>MailItem.ReceivedTime</c> off the OPENED item, all for the item the
+        /// row's own EntryID names - so the comparison cannot be between two different items,
+        /// which is the trap an earlier eyeballed two-hour gap fell into. If the raw table
+        /// value equals the item's own value, the table reports LOCAL time; if it equals the
+        /// item's value converted to UTC, the table reports UTC.
+        /// </para>
+        /// <para>
+        /// <b>What it touches.</b> One table, one row, one item opened by EntryID for two
+        /// property reads. It creates nothing, moves nothing, deletes nothing, saves nothing
+        /// and never calls <c>Application.Quit</c>. Opening an item does not change its read
+        /// state. Nothing it returns carries a subject, a sender or a body.
+        /// </para>
+        /// </summary>
+        /// <param name="storeDisplayName">Store to probe, by display name.</param>
+        /// <param name="folderPath">Store-relative folder path; null or empty probes the Inbox.</param>
+        /// <param name="maxRowsExamined">
+        /// How far to look for a row that carries BOTH an EntryID and a date. The first row of
+        /// an unsorted table can easily be an item with no received time (a draft, a report),
+        /// which would answer nothing, so a few rows are read rather than exactly one.
+        /// </param>
+        public ComTableDateKindProbe ProbeTableDateKind(
+            string storeDisplayName,
+            IReadOnlyList<string>? folderPath = null,
+            int maxRowsExamined = 50)
+        {
+            EnsureNotDisposed();
+            if (string.IsNullOrWhiteSpace(storeDisplayName))
+            {
+                throw new ArgumentException("Store display name must not be blank.", nameof(storeDisplayName));
+            }
+
+            return _runner.Run(() =>
+            {
+                object? folderObject = null;
+                object? table = null;
+                try
+                {
+                    folderObject = ResolveProbeFolder(storeDisplayName, folderPath);
+                    dynamic folder = folderObject!;
+                    string folderLabel = TryGetString(() => (string?)folder.Name) ?? "?";
+                    string? storeId = TryGetString(() => (string?)folder.StoreID);
+
+                    string filter = ExhaustiveDaslFilter.Build(
+                        null, null, null, ExhaustiveEngine.Like, SearchInValues.Default);
+                    table = folder.GetTable(filter);
+                    dynamic t = (dynamic)table!;
+
+                    int dateIndex = TryAddDateColumn(t);
+                    int entryIdIndex = FindTableColumn(t, "EntryID");
+                    if (dateIndex < 0 || entryIdIndex < 0)
+                    {
+                        return ComTableDateKindProbe.Failed(
+                            storeDisplayName,
+                            folderLabel,
+                            0,
+                            "the table would not carry both an EntryID and a received-date column, so no item can "
+                            + "be read two ways.");
+                    }
+
+                    int examined = 0;
+                    while (!(bool)t.EndOfTable && examined < maxRowsExamined)
+                    {
+                        object? row = null;
+                        try
+                        {
+                            examined++;
+                            row = t.GetNextRow();
+                            object[] values = (object[])((dynamic)row!).GetValues();
+                            if (entryIdIndex >= values.Length
+                                || !(values[entryIdIndex] is string entryId)
+                                || entryId.Length == 0
+                                || dateIndex >= values.Length
+                                || !(values[dateIndex] is DateTime rawTableValue))
+                            {
+                                continue;
+                            }
+
+                            return ReadItemBothWays(
+                                storeDisplayName, folderLabel, storeId, entryId, rawTableValue,
+                                ReadRowDate(values, dateIndex), examined);
+                        }
+                        finally
+                        {
+                            Release(row);
+                        }
+                    }
+
+                    return ComTableDateKindProbe.Failed(
+                        storeDisplayName,
+                        folderLabel,
+                        examined,
+                        "no row in the first " + examined.ToString(CultureInfo.InvariantCulture)
+                        + " carried both an EntryID and a date, so there was nothing to read two ways.");
+                }
+                finally
+                {
+                    Release(table);
+                    Release(folderObject);
+                }
+            });
+        }
+
+        /// <summary>
+        /// Opens the item a probed row names and reads its own received date, so the table's
+        /// reading and the object model's reading are of ONE item at ONE instant.
+        /// </summary>
+        private ComTableDateKindProbe ReadItemBothWays(
+            string storeDisplayName,
+            string folderLabel,
+            string? storeId,
+            string entryId,
+            DateTime rawTableValue,
+            DateTime? tableThroughHelper,
+            int rowsExamined)
+        {
+            object? item = null;
+            try
+            {
+                dynamic ns = _namespace!;
+                item = storeId == null ? ns.GetItemFromID(entryId) : ns.GetItemFromID(entryId, storeId);
+                DateTime? itemRaw = TryGetDateTime(() => (DateTime)((dynamic)item!).ReceivedTime);
+                return new ComTableDateKindProbe(
+                    storeDisplayName,
+                    folderLabel,
+                    rowsExamined,
+                    entryId,
+                    rawTableValue,
+                    rawTableValue.Kind.ToString(),
+                    tableThroughHelper,
+                    itemRaw,
+                    itemRaw.HasValue ? itemRaw.Value.Kind.ToString() : "none",
+                    ComDateValue.FromItemValue(itemRaw),
+                    (int)TimeZoneInfo.Local.GetUtcOffset(rawTableValue).TotalMinutes,
+                    itemRaw.HasValue
+                        ? null
+                        : "the item this row names has no readable ReceivedTime, so only the table half was read.");
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return ComTableDateKindProbe.Failed(
+                    storeDisplayName, folderLabel, rowsExamined,
+                    "the item the row names could not be opened: " + Describe(ex));
+            }
+            finally
+            {
+                Release(item);
+            }
         }
 
         /// <summary>Type, message and HRESULT of a COM failure, for a diagnostic report.</summary>

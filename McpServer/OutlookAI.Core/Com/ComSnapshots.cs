@@ -724,6 +724,107 @@ namespace OutlookAI.Core.Com
         public IReadOnlyList<ComTableSortAttempt> Attempts { get; }
     }
 
+    /// <summary>
+    /// One item's received date read three ways, which is what settles whether an Outlook
+    /// <c>Table</c> reports date-time values in UTC or in local time.
+    /// <para>
+    /// All three readings are of ONE item, found by the row's own EntryID, so a difference
+    /// between them is a difference in INTERPRETATION and not two different items. Read-only
+    /// diagnostic; nothing here reaches the MCP tools, and nothing here carries a subject, a
+    /// sender or a body.
+    /// </para>
+    /// </summary>
+    public sealed class ComTableDateKindProbe
+    {
+        /// <summary>Creates a reading.</summary>
+        public ComTableDateKindProbe(
+            string storeDisplayName,
+            string folderName,
+            int rowsExamined,
+            string? entryId,
+            DateTime? tableRawValue,
+            string tableRawKind,
+            DateTime? tableThroughSharedHelper,
+            DateTime? itemRawValue,
+            string itemRawKind,
+            DateTime? itemThroughSharedHelper,
+            int localOffsetMinutes,
+            string? error)
+        {
+            StoreDisplayName = storeDisplayName;
+            FolderName = folderName;
+            RowsExamined = rowsExamined;
+            EntryId = entryId;
+            TableRawValue = tableRawValue;
+            TableRawKind = tableRawKind;
+            TableThroughSharedHelper = tableThroughSharedHelper;
+            ItemRawValue = itemRawValue;
+            ItemRawKind = itemRawKind;
+            ItemThroughSharedHelper = itemThroughSharedHelper;
+            LocalOffsetMinutes = localOffsetMinutes;
+            Error = error;
+        }
+
+        /// <summary>A reading that could not be taken, carrying the reason instead.</summary>
+        public static ComTableDateKindProbe Failed(
+            string storeDisplayName, string folderName, int rowsExamined, string error)
+        {
+            return new ComTableDateKindProbe(
+                storeDisplayName, folderName, rowsExamined, null, null, "none", null, null, "none", null, 0, error);
+        }
+
+        /// <summary>Store the probed folder lives in.</summary>
+        public string StoreDisplayName { get; }
+
+        /// <summary>Leaf name of the probed folder.</summary>
+        public string FolderName { get; }
+
+        /// <summary>Rows read before one carried both an EntryID and a date.</summary>
+        public int RowsExamined { get; }
+
+        /// <summary>EntryID of the item all three readings describe, or null when none was read.</summary>
+        public string? EntryId { get; }
+
+        /// <summary>
+        /// The date column's value exactly as COM handed it over, with no conversion at all.
+        /// This is the number the whole question is about.
+        /// </summary>
+        public DateTime? TableRawValue { get; }
+
+        /// <summary>
+        /// The <see cref="DateTimeKind"/> COM gave that value. Expected to be
+        /// <c>Unspecified</c>; anything else would mean the marshaller is saying more than
+        /// this repository has assumed it says, which would itself settle the question.
+        /// </summary>
+        public string TableRawKind { get; }
+
+        /// <summary>The same value through <c>ComDateValue.FromTableValue</c>, which is what ships.</summary>
+        public DateTime? TableThroughSharedHelper { get; }
+
+        /// <summary>
+        /// <c>MailItem.ReceivedTime</c> off the OPENED item, unconverted. The object model is
+        /// documented to return local wall time, so this is the reference the table value is
+        /// judged against.
+        /// </summary>
+        public DateTime? ItemRawValue { get; }
+
+        /// <summary>The <see cref="DateTimeKind"/> COM gave the item's value.</summary>
+        public string ItemRawKind { get; }
+
+        /// <summary>The item's value through <c>ComDateValue.FromItemValue</c>.</summary>
+        public DateTime? ItemThroughSharedHelper { get; }
+
+        /// <summary>
+        /// This machine's UTC offset in minutes AT the probed instant, so the comparison
+        /// accounts for daylight saving rather than for today's offset. Zero makes the run
+        /// inconclusive: on a UTC machine both readings agree and neither is tested.
+        /// </summary>
+        public int LocalOffsetMinutes { get; }
+
+        /// <summary>Why no reading could be taken, or null when one was.</summary>
+        public string? Error { get; }
+    }
+
     /// <summary>Result of one exhaustive folder/date-bounded COM scan (COM-free data).</summary>
     public sealed class ComExhaustiveResult
     {
