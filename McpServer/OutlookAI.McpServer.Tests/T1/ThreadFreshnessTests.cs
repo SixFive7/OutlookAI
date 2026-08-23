@@ -174,11 +174,15 @@ public sealed class ThreadFreshnessTests
         ThreadLiveInfo unindexed = Walked(store: "alice@example.com");
         unindexed.StoresWithoutIndex = new[] { "Archive 2019.pst" };
 
+        ThreadLiveInfo unqueried = Walked(store: "alice@example.com");
+        unqueried.StoresNotQueried = new[] { "bob@example.com" };
+
         List<string> raised = new List<string>();
         raised.AddRange(FreshMerge.DescribeThreadCoverageGaps(capped, new[] { "alice@example.com" })!);
         raised.AddRange(FreshMerge.DescribeThreadCoverageGaps(
             Walked(store: "alice@example.com"), new[] { "shared@example.com" })!);
         raised.AddRange(FreshMerge.DescribeThreadCoverageGaps(unindexed, new[] { "alice@example.com" })!);
+        raised.AddRange(FreshMerge.DescribeThreadCoverageGaps(unqueried, new[] { "alice@example.com" })!);
 
         Assert.Equal(
             AllThreadGapCodes().OrderBy(c => c, System.StringComparer.Ordinal).ToList(),

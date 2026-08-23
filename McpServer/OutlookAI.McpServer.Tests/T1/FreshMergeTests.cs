@@ -458,6 +458,16 @@ public sealed class FreshMergeTests
                 ItemsBodyCappedUnmatched = 2,
             }));
 
+        // 12. The sweep was served from the ~10 s cache, so its live check of Outlook is that
+        //     old and an arrival inside the window is in neither tier (gap E3). Every counter
+        //     here reads complete - and it IS complete, for the moment it ran - which is why
+        //     this was silent: the hole is at the newest END of the window rather than
+        //     anywhere in the folder set, and the two fields that named it sat beside
+        //     freshness: "live".
+        data.Add((
+            FreshMerge.GapCachedSweep,
+            new SweepInfo { Performed = true, FoldersSwept = 4, Cached = true, CacheAgeSeconds = 7.4 }));
+
         return data;
     }
 

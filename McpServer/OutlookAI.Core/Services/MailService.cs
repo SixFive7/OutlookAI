@@ -908,6 +908,7 @@ namespace OutlookAI.Core.Services
             }
 
             AddTopClampAdvice(advice, request.Top, top);
+            AddSnippetClampAdvice(advice, request.SnippetChars, snippetChars);
 
             // After the list is sorted and trimmed: it describes what the caller GETS, not
             // what the tiers passed through.
@@ -958,6 +959,13 @@ namespace OutlookAI.Core.Services
                     CandidatesExhausted = indexResult.CandidatesExhausted ? true : (bool?)null,
                     StoreNotIndexed = indexAddressable ? (bool?)null : true,
                     FolderNotIndexed = folderNotIndexed,
+
+                    // Gaps B4/B5: what this tier read, and how it matched. The widest body
+                    // scope of the three and the only whole-word one, stated so the other two
+                    // blocks' answers mean something to compare against.
+                    BodyTextScope = FreshMerge.BodyTextScope(
+                        FreshMerge.BodyScopeBodyAndAttachments, request.SearchIn, terms.Count > 0),
+                    TermMatch = terms.Count > 0 ? FreshMerge.TermMatchWholeWord : null,
                 },
                 Scope = DescribeSearchScope(folderScope, request),
                 Staleness = new StalenessInfo
@@ -1179,6 +1187,34 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
+        /// The same discipline for <c>snippet_chars</c>, which was the last silent clamp on
+        /// this surface. It is cosmetic - no hit is added or lost by it - and that is exactly
+        /// why it was left: but a caller who asked for 5000 characters of context and got 1000
+        /// has a TRUNCATED snippet that reads like a whole one, and deciding from it that a
+        /// mail is irrelevant is a decision made on text that was cut. Every other cap here is
+        /// reported; this one is now too.
+        /// <para>
+        /// Both directions, because both are silent: a negative value becomes 0, which turns
+        /// snippets off entirely rather than shortening them.
+        /// </para>
+        /// </summary>
+        private static void AddSnippetClampAdvice(List<string> advice, int requestedChars, int effectiveChars)
+        {
+            if (requestedChars == effectiveChars)
+            {
+                return;
+            }
+
+            advice.Add("snippet_chars=" + requestedChars.ToString(CultureInfo.InvariantCulture) + " was "
+                + (requestedChars > effectiveChars ? "reduced" : "raised") + " to "
+                + effectiveChars.ToString(CultureInfo.InvariantCulture) + " (the accepted range is 0-"
+                + SnippetCharsCap.ToString(CultureInfo.InvariantCulture)
+                + "). Each snippet is the first " + effectiveChars.ToString(CultureInfo.InvariantCulture)
+                + " characters and may end mid-sentence, so judge relevance from the hit itself rather than from a "
+                + "snippet that looks whole; 'read' returns the full body.");
+        }
+
+        /// <summary>
         /// Reports every way the folder bound differs from what was asked (v3.MD
         /// constraints C2/C3). Nothing here changes the result set - it exists so the
         /// result set can never be misread. The C7 zero-row guard is separate
@@ -1338,6 +1374,20 @@ namespace OutlookAI.Core.Services
                             + "is in NEITHER tier - it is not findable by search at all. Confirm with outlook_health "
                             + "(index.perStore) or list_accounts (locallySearchable), and use exhaustive:true with "
                             + "store plus folder/after to read that store without the index.");
+                        break;
+
+                    case FreshMerge.GapCachedSweep:
+                        // Both numbers come out of the payload rather than being restated,
+                        // and the remedy is the only honest one: the entry has to expire
+                        // before another live sweep can happen, so an immediate retry is
+                        // served from the same cache and changes nothing.
+                        advice.Add("Freshness sweep was served from cache: its live check of Outlook ran "
+                            + (sweep.CacheAgeSeconds ?? 0).ToString("F1", CultureInfo.InvariantCulture)
+                            + " s ago, so mail that arrived since then is in neither the index nor this sweep. The "
+                            + "hole is at most that wide and closes by itself - the cache holds a sweep for "
+                            + SweepCache.DefaultTimeToLive.TotalSeconds.ToString("F0", CultureInfo.InvariantCulture)
+                            + " s, so a search after that sweeps live again. Only mail newer than "
+                            + "sweep.cacheAgeSeconds can be affected; everything else in this answer was checked.");
                         break;
 
                     case FreshMerge.GapNothingSwept:
@@ -1525,6 +1575,48 @@ namespace OutlookAI.Core.Services
                 + "was not matched - so these results are complete for subject and body but NOT for attachment text in "
                 + "that window, even though freshness reads 'live'. The gap closes by itself once those items are "
                 + "indexed; to check now, read the candidates or re-run with attachment_hits_only once they are.";
+        }
+
+        /// <summary>
+        /// The one sentence for <see cref="ExhaustiveInfo.BodyTextScope"/>, or null when this
+        /// query matched nothing against a body and the question does not arise (gap B4).
+        /// <para>
+        /// Generated FROM the fields, the same pairing <see cref="DescribeAttachmentTextGap"/>
+        /// has with its own, so the prose cannot claim a hole the payload does not carry.
+        /// </para>
+        /// <para>
+        /// WHY THIS TIER GETS A SENTENCE AND THE OTHERS DO NOT. It is the mode a caller
+        /// reaches for BECAUSE it is the complete one - the search description says so - and
+        /// it is the tier with the NARROWEST body scope of the three. An agent that switches
+        /// to <c>exhaustive:true</c> to find the term the sweep could not see inside an
+        /// attachment is switching to the tier least able to find it, and nothing said so.
+        /// It raises no coverage code and does not degrade the scan, for the arithmetic reason
+        /// <see cref="SweepInfo.AttachmentTextCovered"/> gives: it holds for every body search
+        /// this mode runs, and a flag that fires always devalues the ones that fire rarely.
+        /// </para>
+        /// <para>
+        /// Public and pure so T1 can pin both states without a mailbox.
+        /// </para>
+        /// </summary>
+        public static string? DescribeExhaustiveBodyTextGap(ExhaustiveInfo exhaustive)
+        {
+            if (exhaustive == null)
+            {
+                throw new ArgumentNullException(nameof(exhaustive));
+            }
+
+            if (exhaustive.BodyTextScope != FreshMerge.BodyScopePlainTextBody)
+            {
+                return null;
+            }
+
+            return "This scan matched the PLAIN-TEXT body property only - it bypasses the index, so it reads neither "
+                + "attachment content nor an HTML body Outlook would have rendered for you. Two consequences: a term "
+                + "sitting only inside an attachment is not matched here at all (the index tier is the only one that "
+                + "reads attachment text, and this mode does not use it), and a mail carrying an HTML body with no "
+                + "plain-text part beside it may not be matched on its body either. Subject matching is unaffected, "
+                + "and so is everything the index tier returns on an ordinary search - so for attachment text, search "
+                + "again WITHOUT exhaustive:true.";
         }
 
         /// <summary>
@@ -2051,6 +2143,13 @@ namespace OutlookAI.Core.Services
             // it from going missing on the paths that report the least.
             info.AttachmentTextCovered =
                 FreshMerge.AttachmentTextMatchable(request.SearchIn, terms.Count > 0) ? false : (bool?)null;
+
+            // Gap B4/B5, set here for the same reason and on the same principle: both state
+            // what this TIER reads and how it matches, which is as true of a sweep that was
+            // refused as of one that ran.
+            info.BodyTextScope = FreshMerge.BodyTextScope(
+                FreshMerge.BodyScopeItemBody, request.SearchIn, terms.Count > 0);
+            info.TermMatch = terms.Count > 0 ? FreshMerge.TermMatchSubstring : null;
 
             SweepWindowPlan windows = ResolveSweepWindows(request, staleness);
             widestFrontierUtc = windows.PerStoreBaseUtc == null || windows.PerStoreBaseUtc.Count == 0
@@ -2968,7 +3067,22 @@ namespace OutlookAI.Core.Services
                 ResumedUnsorted = scan.ResumedUnsorted ? true : (bool?)null,
                 ResumePositionLost = scan.ResumePositionLost ? true : (bool?)null,
                 DedupCapacityReached = scan.DedupCapacityReached ? true : (bool?)null,
+
+                // Gaps B2/B4/B5. The narrowest body scope of the three tiers, in the mode a
+                // caller picks BECAUSE it is the complete one - so the three facts an agent
+                // needs to read this answer correctly are stated rather than implied.
+                BodyTextScope = FreshMerge.BodyTextScope(
+                    FreshMerge.BodyScopePlainTextBody, request.SearchIn, terms.Count > 0),
+                TermMatch = FreshMerge.ExhaustiveTermMatch(scan.Engine, terms.Count > 0),
+                AttachmentTextCovered =
+                    FreshMerge.AttachmentTextMatchable(request.SearchIn, terms.Count > 0) ? false : (bool?)null,
             };
+
+            string? bodyTextGap = DescribeExhaustiveBodyTextGap(exhaustive);
+            if (bodyTextGap != null)
+            {
+                advice.Add(bodyTextGap);
+            }
 
             // The token, and the three states it has. A walk that COVERED its scope closes
             // its chain (the state exists to make a next page possible, and there is no next
@@ -3024,6 +3138,19 @@ namespace OutlookAI.Core.Services
             }
 
             AddTopClampAdvice(advice, request.Top, top);
+
+            // Found by the C5 asymmetry scan, and it is the same species: this mode registers
+            // every hit with snippetChars 0, so a snippet_chars the caller passed is not
+            // clamped here - it is dropped whole, and the ordinary search beside it honours
+            // and reports the same argument. An agent that asked for context and got hits
+            // with no snippet has no way to tell that from mail whose body is empty.
+            if (request.SnippetChars > 0)
+            {
+                advice.Add("snippet_chars=" + request.SnippetChars.ToString(CultureInfo.InvariantCulture)
+                    + " was ignored: an exhaustive scan returns hits without snippets, because it reads folders "
+                    + "directly and does not carry a body back for every item it matched. The hits are complete in "
+                    + "every other respect - use 'read' on the ones worth looking at.");
+            }
 
             // Staleness is best-effort context here: exhaustive works even when the
             // SystemIndex is unreachable (that is one of its jobs).
@@ -3402,12 +3529,17 @@ namespace OutlookAI.Core.Services
 
             // Derive the conversation id from the referenced hit when only id was given.
             string? effectiveStore = store;
+
+            // C5: WHERE the store came from decides which remedy clears the narrowing it
+            // causes, so the two cases are told apart here rather than guessed at later.
+            bool storeDerived = false;
             if (conversationId == null && id != null && _hits.TryGetValue(id, out CachedHit? referenced))
             {
                 conversationId = referenced.IndexHit?.ConversationId;
                 effectiveStore ??= referenced.IndexHit != null
                     ? FreshMerge.ResolveHitStore(referenced.IndexHit)
                     : referenced.Live?.StoreDisplayName;
+                storeDerived = effectiveStore != null && store == null;
             }
 
             string? scope = null;
@@ -3488,7 +3620,13 @@ namespace OutlookAI.Core.Services
             // indexed mailbox plus a data file Windows Search has never opened - a
             // conversation reaching into that data file produced no rows to compare and
             // nothing said the walk had covered one store of two.
-            NoteThreadStoresWithoutIndex(live);
+            IReadOnlyList<string> unindexed = NoteThreadStoresWithoutIndex(live);
+
+            // C5's half, and it has to read the same source for the same reason: the index
+            // query above was narrowed to one store on every call that named or derived one,
+            // so the rows it returned cannot name a store the scope excluded. Asking Outlook
+            // which stores exist is the one question the scope cannot suppress.
+            NoteThreadStoresNotQueried(live, scope == null ? null : effectiveStore, unindexed);
 
             live.CoverageGaps = FreshMerge.DescribeThreadCoverageGaps(live, indexStores);
             string freshness = FreshMerge.ClassifyThreadFreshness(live, indexStores);
@@ -3521,9 +3659,11 @@ namespace OutlookAI.Core.Services
                 Hits = hits,
                 Truncated = truncated,
                 ScopeWidened = scopeWidened ? true : (bool?)null,
+                ScopeStore = scope == null ? null : effectiveStore,
+                ScopeStoreDerived = scope != null && storeDerived ? true : (bool?)null,
                 Live = live,
                 Staleness = staleness,
-                Advice = DescribeThreadCoverage(live, freshness, effectiveStore, scopeWidened, top),
+                Advice = DescribeThreadCoverage(live, freshness, effectiveStore, scopeWidened, top, storeDerived),
                 ElapsedMs = stopwatch.ElapsedMilliseconds,
             };
         }
@@ -3666,11 +3806,16 @@ namespace OutlookAI.Core.Services
         /// "not established" and never "indexed".
         /// </para>
         /// </summary>
-        private void NoteThreadStoresWithoutIndex(ThreadLiveInfo live)
+        /// <returns>
+        /// The UNCAPPED list it reported, so <see cref="NoteThreadStoresNotQueried"/> can
+        /// subtract it. The capped one on the block would leave a store past the cap to be
+        /// claimed by the other code, whose remedy does not fit it.
+        /// </returns>
+        private IReadOnlyList<string> NoteThreadStoresWithoutIndex(ThreadLiveInfo live)
         {
             if (!live.Performed || live.MembersWalked <= 0 || string.IsNullOrEmpty(live.AnchorStore))
             {
-                return;
+                return Array.Empty<string>();
             }
 
             Stopwatch clock = Stopwatch.StartNew();
@@ -3687,12 +3832,66 @@ namespace OutlookAI.Core.Services
             IReadOnlyList<string> unwalked = FreshMerge.UnwalkedUnindexedStores(live, missing);
             if (unwalked.Count == 0)
             {
-                return;
+                return Array.Empty<string>();
             }
 
             live.StoresWithoutIndex = CapUnindexedStoreList(unwalked, out int total, out bool truncated);
             live.StoresWithoutIndexTruncated = truncated ? true : (bool?)null;
             live.StoresWithoutIndexTotal = truncated ? total : (int?)null;
+            return unwalked;
+        }
+
+        /// <summary>
+        /// Names the stores this conversation lookup asked NEITHER tier about because a
+        /// <c>store</c> scope narrowed the index query to one of them (gap C5), from the same
+        /// source and by the same discipline as the pass above: Outlook's store list, and a
+        /// pure rule (<see cref="FreshMerge.StoresScopedOutOfThreadLookup"/>) that decides
+        /// what the list means.
+        /// <para>
+        /// THE HOLE IT CLOSES, and why the evidence had to change. <c>unwalked_store</c> is
+        /// computed from the stores the conversation's index rows name. A scope narrows that
+        /// query, so it narrows the evidence - the parameter silences the code that would
+        /// have reported what the parameter cost. Two INDEXED accounts and a scope over one
+        /// of them therefore produced <c>freshness: "live"</c> with a member in the other
+        /// both absent and unmentioned. Asking Outlook which stores the profile has is the
+        /// one question a scope cannot narrow, which is exactly why C4's fix asks it too.
+        /// </para>
+        /// <para>
+        /// COST: nothing at all on an unscoped lookup, which returns before any COM at all,
+        /// and on a scoped one the store list and the probe verdicts are already in the
+        /// <see cref="StoreDetailsCacheTtl"/> caches the pass above just filled.
+        /// </para>
+        /// </summary>
+        private void NoteThreadStoresNotQueried(
+            ThreadLiveInfo live,
+            string? indexScopeStore,
+            IReadOnlyList<string> storesWithoutIndex)
+        {
+            if (string.IsNullOrEmpty(indexScopeStore)
+                || !live.Performed
+                || live.MembersWalked <= 0
+                || string.IsNullOrEmpty(live.AnchorStore))
+            {
+                // Nothing was narrowed, or nothing the exclusions could be applied to. This is
+                // a COST guard rather than the rule: StoresScopedOutOfThreadLookup answers
+                // "nothing" for every one of these states anyway, and it is where the rule
+                // lives and where T1 pins it. What the guard saves is one COM store-list read
+                // per unscoped lookup. Removing it is therefore invisible in the payload - a
+                // mutation pass will report it as surviving, and that is correct rather than a
+                // hole (measured 2026-08-23).
+                return;
+            }
+
+            IReadOnlyList<string> unqueried = FreshMerge.StoresScopedOutOfThreadLookup(
+                live, indexScopeStore, TryGetProfileStoreNames(), storesWithoutIndex);
+            if (unqueried.Count == 0)
+            {
+                return;
+            }
+
+            live.StoresNotQueried = CapUnindexedStoreList(unqueried, out int total, out bool truncated);
+            live.StoresNotQueriedTruncated = truncated ? true : (bool?)null;
+            live.StoresNotQueriedTotal = truncated ? total : (int?)null;
         }
 
         /// <summary>
@@ -3755,12 +3954,19 @@ namespace OutlookAI.Core.Services
         /// without a sentence is a partial answer an agent can see but cannot explain.
         /// </para>
         /// </summary>
+        /// <param name="scopeStoreDerived">
+        /// Whether the store scope was derived from the referenced hit rather than asked for.
+        /// It selects the REMEDY the <c>unqueried_store</c> sentence names, and there is no
+        /// safe default: telling a caller who passed no <c>store</c> to drop one would read
+        /// as advice they had already followed.
+        /// </param>
         public static IReadOnlyList<string>? DescribeThreadCoverage(
             ThreadLiveInfo live,
             string freshness,
             string? store,
             bool scopeWidened,
-            int top)
+            int top,
+            bool scopeStoreDerived = false)
         {
             List<string> advice = new List<string>();
             if (scopeWidened)
@@ -3815,6 +4021,28 @@ namespace OutlookAI.Core.Services
                             + "reaches into it cannot be established from here - it is not that the members were "
                             + "checked and found absent. Call thread again with an id from that account to walk it "
                             + "live, or search it with exhaustive:true.");
+                        break;
+
+                    case FreshMerge.ThreadGapUnqueriedStore:
+                        advice.Add("INCOMPLETE CONVERSATION - TELL THE USER: this lookup was narrowed to one store"
+                            + (store == null ? string.Empty : " ('" + store + "')")
+                            + ", so the index was never asked about "
+                            + (DescribeUnindexedStoreList(
+                                live.StoresNotQueried,
+                                live.StoresNotQueriedTruncated == true,
+                                live.StoresNotQueriedTotal,
+                                "live.storesNotQueriedTotal") ?? "the rest of this profile")
+                            + ", and Outlook walks a conversation inside ONE store (here '"
+                            + (live.AnchorStore ?? "?")
+                            + "'), so a member sitting there is covered by NEITHER tier. Whether this conversation "
+                            + "reaches into it cannot be established from here - it is not that the members were "
+                            + "checked and found absent. "
+                            + (scopeStoreDerived
+                                ? "The store scope was DERIVED from the hit you passed, not asked for: pass "
+                                    + "conversation_id as well as id and no store is derived, so the conversation "
+                                    + "is looked up across the whole profile."
+                                : "Call thread again without store to look this conversation up across the whole "
+                                    + "profile."));
                         break;
 
                     case FreshMerge.ThreadGapMemberCap:

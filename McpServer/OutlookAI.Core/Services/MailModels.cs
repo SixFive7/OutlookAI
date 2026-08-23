@@ -674,6 +674,30 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public bool? AttachmentTextCovered { get; set; }
 
+        /// <summary>
+        /// The text THIS tier matched the query's terms against
+        /// (<see cref="FreshMerge.BodyScopeItemBody"/>), or null when no term was matched
+        /// against a body at all (gap B4). Compare <see cref="IndexTierInfo.BodyTextScope"/>
+        /// and <see cref="ExhaustiveInfo.BodyTextScope"/>: the three differ, and until now
+        /// only the README said so.
+        /// </summary>
+        public string? BodyTextScope { get; set; }
+
+        /// <summary>
+        /// How THIS tier matched the query's terms
+        /// (<see cref="FreshMerge.TermMatchSubstring"/>), or null when it had no terms to
+        /// match (gap B5).
+        /// <para>
+        /// The sweep OVER-matches relative to the index's whole-word reading, which is the
+        /// safe direction for a freshness tier - a fresh mail that would be returned once
+        /// indexed is returned now - but "safe" is not the same as "unremarkable": it is why
+        /// a just-arrived mail can appear in a search and then drop out of the identical
+        /// search after the index catches up, and an agent that sees the two fields differ
+        /// can explain that instead of reporting a bug.
+        /// </para>
+        /// </summary>
+        public string? TermMatch { get; set; }
+
         /// <summary>Swept items dropped as already present in the index results.</summary>
         public int Duplicates { get; set; }
 
@@ -898,6 +922,46 @@ namespace OutlookAI.Core.Services
 
         /// <summary>True when this page continues an earlier scan rather than starting one.</summary>
         public bool? Resumed { get; set; }
+
+        /// <summary>
+        /// The text THIS tier matched the query's terms against
+        /// (<see cref="FreshMerge.BodyScopePlainTextBody"/>), or null when no term was matched
+        /// against a body at all (gap B4).
+        /// <para>
+        /// It is the NARROWEST of the three, and this is the mode a caller chooses when they
+        /// want the complete answer, so the mismatch matters here more than anywhere. The scan
+        /// restricts on <c>urn:schemas:httpmail:textdescription</c>, the MAPI plain-text body:
+        /// no attachment text (see <see cref="AttachmentTextCovered"/>) and no rendering step,
+        /// so a message that carries only an HTML body may have nothing in that property for
+        /// the restriction to match.
+        /// </para>
+        /// </summary>
+        public string? BodyTextScope { get; set; }
+
+        /// <summary>
+        /// How THIS tier matched the query's terms, from the engine it actually used
+        /// (<see cref="FreshMerge.ExhaustiveTermMatch"/>), or null when it had no terms
+        /// (gap B5). <see cref="Engine"/> has always carried the fact; this is the same fact
+        /// in the vocabulary the other two tiers now answer in, so an agent can compare them
+        /// without knowing what <c>ci_phrasematch</c> is.
+        /// </summary>
+        public string? TermMatch { get; set; }
+
+        /// <summary>
+        /// <c>false</c> when this query's terms could have matched inside an attachment and
+        /// the scan cannot look there; null when the question does not arise. Deliberately the
+        /// SAME name, the same never-true shape and the same rule as
+        /// <see cref="SweepInfo.AttachmentTextCovered"/> (gap B2) - the hole is the same hole
+        /// and a caller should not have to learn one vocabulary per tier.
+        /// <para>
+        /// It was missing here while being reported for the sweep, which put the claim the
+        /// wrong way round: an agent reading <c>sweep.attachmentTextCovered: false</c> and
+        /// nothing on the exhaustive block could reasonably conclude that switching to
+        /// <c>exhaustive:true</c> would find the attachment. It will not - only the index tier
+        /// ever reads attachment text, and exhaustive mode is the one that bypasses it.
+        /// </para>
+        /// </summary>
+        public bool? AttachmentTextCovered { get; set; }
     }
 
     /// <summary>
@@ -1043,6 +1107,24 @@ namespace OutlookAI.Core.Services
         /// (gap G6: it used to be advice-only).
         /// </summary>
         public bool? CandidatesExhausted { get; set; }
+
+        /// <summary>
+        /// The text THIS tier matched the query's terms against
+        /// (<see cref="FreshMerge.BodyScopeBodyAndAttachments"/> - the body stream plus every
+        /// attachment an IFilter could read), or null when no term was matched against a body
+        /// at all (gap B4). It is the WIDEST of the three, which is exactly why the other two
+        /// blocks now say what theirs is.
+        /// </summary>
+        public string? BodyTextScope { get; set; }
+
+        /// <summary>
+        /// How THIS tier matched the query's terms
+        /// (<see cref="FreshMerge.TermMatchWholeWord"/> - <c>CONTAINS</c> matches words, not
+        /// fragments), or null when it had no terms to match (gap B5). The freshness sweep
+        /// beside it matches substrings, so the merged answer is broader than the index alone
+        /// for anything newer than the frontier.
+        /// </summary>
+        public string? TermMatch { get; set; }
     }
 
     /// <summary>Index staleness snapshot attached to search results.</summary>
@@ -1431,6 +1513,43 @@ namespace OutlookAI.Core.Services
         public int? StoresWithoutIndexTotal { get; set; }
 
         /// <summary>
+        /// Stores the profile HAS that this lookup asked NEITHER tier about: the index query
+        /// was narrowed to one store and the walk covered one store, so about these two
+        /// there is no evidence in either direction (<see cref="FreshMerge.ThreadGapUnqueriedStore"/>,
+        /// gap C5). Null when there are none, and null whenever the index query ran
+        /// profile-wide - there the stronger <see cref="FreshMerge.ThreadGapUnwalkedStore"/>
+        /// can speak for itself.
+        /// <para>
+        /// It exists because a <c>store</c> scope narrows the very index rows
+        /// <c>unwalked_store</c> is computed from, so the parameter silences the code that
+        /// would have reported its own cost - and <c>thread</c> DERIVES that store from the
+        /// referenced hit whenever <c>id</c> is passed without <c>conversation_id</c>, which
+        /// is the shape an agent reaches for straight out of a search. So the narrowing, and
+        /// the silence, both arrive unrequested. Stores already named in
+        /// <see cref="StoresWithoutIndex"/> are left out: that code's remedy works and this
+        /// one's would not.
+        /// </para>
+        /// <para>
+        /// CAPPED at <see cref="MailService.UnindexedStoreListCap"/> - the same cap, from the
+        /// same constant, that both other store lists in this server carry. See
+        /// <see cref="StoresNotQueriedTruncated"/> and <see cref="StoresNotQueriedTotal"/>.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<string>? StoresNotQueried { get; set; }
+
+        /// <summary>
+        /// True when <see cref="StoresNotQueried"/> lists fewer stores than were found; null
+        /// when it is complete.
+        /// </summary>
+        public bool? StoresNotQueriedTruncated { get; set; }
+
+        /// <summary>
+        /// How many such stores were found, when that is more than the list shows. Null
+        /// otherwise - the list is then its own total.
+        /// </summary>
+        public int? StoresNotQueriedTotal { get; set; }
+
+        /// <summary>
         /// Coverage holes of this lookup, in the same vocabulary as
         /// <see cref="SweepInfo.CoverageGaps"/> (<see cref="FreshMerge.DescribeThreadCoverageGaps"/>).
         /// Null when the answer is whole.
@@ -1493,6 +1612,33 @@ namespace OutlookAI.Core.Services
         /// is not, so it is reported. Null when the scope was honoured or none was asked for.
         /// </summary>
         public bool? ScopeWidened { get; set; }
+
+        /// <summary>
+        /// The store display name the index half of this lookup was narrowed to, when it was
+        /// narrowed at all. Null means the conversation query ran over the whole profile.
+        /// <para>
+        /// Reported because the caller cannot otherwise tell: <c>thread</c> DERIVES a store
+        /// from the referenced hit whenever <c>id</c> is passed without <c>conversation_id</c>
+        /// (see <see cref="ScopeStoreDerived"/>), so a lookup nobody scoped comes back scoped.
+        /// It is stated even when nothing was lost by it - a single-store profile raises no
+        /// coverage code - because "which stores did this answer come from" is a question the
+        /// payload should answer without the caller reconstructing it from the hits.
+        /// </para>
+        /// </summary>
+        public string? ScopeStore { get; set; }
+
+        /// <summary>
+        /// True when <see cref="ScopeStore"/> was derived from the referenced hit rather than
+        /// asked for. Null when the caller passed <c>store</c> themselves, and null when
+        /// there was no scope.
+        /// <para>
+        /// It changes the REMEDY, which is why it is a field rather than a footnote: a scope
+        /// the caller chose is cleared by dropping <c>store</c>, and a derived one is cleared
+        /// by passing <c>conversation_id</c> beside <c>id</c>, since the derivation only
+        /// happens when the conversation id has to be recovered from the hit.
+        /// </para>
+        /// </summary>
+        public bool? ScopeStoreDerived { get; set; }
 
         /// <summary>The live conversation walk's own report. Always present.</summary>
         public ThreadLiveInfo? Live { get; set; }

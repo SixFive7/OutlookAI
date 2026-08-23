@@ -232,6 +232,31 @@ namespace OutlookAI.Core.Services
         public const string GapBodyCap = "body_cap";
 
         /// <summary>
+        /// Coverage hole: the freshness sweep was served from the short-lived cache, so its
+        /// live check of Outlook happened up to <see cref="SweepCache.DefaultTimeToLive"/>
+        /// ago and mail that arrived in between is in NEITHER tier (gap E3).
+        /// <para>
+        /// THE READING IT WITHDRAWS. <c>sweep.cached</c> and <c>sweep.cacheAgeSeconds</c> have
+        /// always been in the payload, and they were the only things saying so - beside
+        /// <c>freshness: "live"</c>, which is the single word an agent reads as "nothing is
+        /// missing". A caller had to know that the sweep reads up to the moment it RUNS, work
+        /// out that a nine-second-old sweep therefore ends nine seconds ago, and overrule the
+        /// verdict the payload gave them. The cache exists so that rapid iteration runs at
+        /// index speed and the trade was always understood; what was missing is that the
+        /// answer said it had made one.
+        /// </para>
+        /// <para>
+        /// The hole is BOUNDED and NAMED, which is what makes this worth a code rather than a
+        /// permanent qualifier: it is at most the TTL wide, <c>sweep.cacheAgeSeconds</c> says
+        /// exactly how wide on this call, and it clears itself - the next search after the
+        /// entry expires sweeps live. That is also why it does not cry wolf: it holds only for
+        /// a repeat search inside a ten-second window, not for every search anyone runs, which
+        /// is the test <see cref="SweepInfo.AttachmentTextCovered"/> is on the other side of.
+        /// </para>
+        /// </summary>
+        public const string GapCachedSweep = "cached_sweep";
+
+        /// <summary>
         /// Coverage hole: the live conversation walk stopped at the requested member cap,
         /// so it did not see the whole conversation. Unlike a search's <c>top</c>, which
         /// caps a date-SORTED match set, the walk reads the conversation table in Outlook's
@@ -280,6 +305,38 @@ namespace OutlookAI.Core.Services
         /// </para>
         /// </summary>
         public const string ThreadGapUnindexedStore = "unindexed_store";
+
+        /// <summary>
+        /// Coverage hole: the conversation's index query was NARROWED to one store, so the
+        /// index could not be asked about the rest of the profile, and the live walk covered
+        /// only the store it was anchored in - leaving whether this conversation reaches into
+        /// any other store unestablished by either tier (gap C5).
+        /// <para>
+        /// THE OTHER SILENT HALF OF C4, and the one that is silent BECAUSE of a parameter
+        /// rather than in spite of one. <see cref="ThreadGapUnwalkedStore"/> is computed from
+        /// the stores the conversation's index rows name; a <c>store</c> scope narrows that
+        /// query, so it narrows the evidence its own coverage code is read off. Point it at
+        /// two INDEXED accounts and it says nothing at all: the query saw one of them by
+        /// construction, the walk covered that same one, and a member in the second is both
+        /// absent from the answer and unreported by it.
+        /// </para>
+        /// <para>
+        /// It bites hardest where nobody asked for it. <c>thread</c> DERIVES the store from
+        /// the referenced hit when the caller passes <c>id</c> without <c>conversation_id</c>,
+        /// which is the shape every agent reaches for after a search - so the narrowing, and
+        /// the silence it causes, arrive without the caller having chosen either.
+        /// </para>
+        /// <para>
+        /// Its evidence is Outlook's own store list rather than the index rows, exactly as
+        /// <see cref="ThreadGapUnindexedStore"/>'s is, and for the same reason: the thing the
+        /// scope suppressed cannot be used to detect what the scope suppressed. Like that
+        /// code it makes the WEAKER claim - the question could not be asked, not that members
+        /// were found elsewhere - and it carries the remedy that clears it, which differs by
+        /// how the store arrived: drop <c>store</c>, or pass <c>conversation_id</c> beside
+        /// <c>id</c> so no store is derived.
+        /// </para>
+        /// </summary>
+        public const string ThreadGapUnqueriedStore = "unqueried_store";
 
         /// <summary>
         /// Exhaustive-scan coverage hole: the scan's wall-clock budget stopped it, so the
@@ -605,6 +662,14 @@ namespace OutlookAI.Core.Services
             if (!sweep.Performed)
             {
                 return gaps.Count == 0 ? null : gaps;
+            }
+
+            // Next, and before every folder-level code: this hole is at the NEWEST end of the
+            // window rather than anywhere in the folder set, and the newest end is what this
+            // tier exists for (gap E3).
+            if (sweep.Cached == true)
+            {
+                gaps.Add(GapCachedSweep);
             }
 
             // Everything the sweep meant to walk here turned out not to exist. That is a
@@ -941,6 +1006,14 @@ namespace OutlookAI.Core.Services
                 gaps.Add(ThreadGapUnindexedStore);
             }
 
+            // Read off the block for the same reason, and from the same kind of evidence:
+            // Outlook's store list, which is the one source a store scope cannot suppress.
+            // The rule is StoresScopedOutOfThreadLookup (gap C5).
+            if (live.StoresNotQueried != null && live.StoresNotQueried.Count > 0)
+            {
+                gaps.Add(ThreadGapUnqueriedStore);
+            }
+
             if (live.MemberCapReached)
             {
                 gaps.Add(ThreadGapMemberCap);
@@ -1002,6 +1075,91 @@ namespace OutlookAI.Core.Services
             }
 
             return unwalked;
+        }
+
+        /// <summary>
+        /// Which of the profile's stores this conversation lookup ASKED NEITHER TIER about -
+        /// the rule behind <see cref="ThreadGapUnqueriedStore"/> (gap C5), pure so T1 pins it
+        /// without a profile, an index or a mailbox.
+        /// <para>
+        /// Two exclusions, and they are the whole substance. The store the index query was
+        /// SCOPED to was asked. The store the walk was anchored in was walked member by
+        /// member, so its coverage is complete whatever the index did. What is left is every
+        /// other store the profile HAS, and about those this lookup holds no evidence in
+        /// either direction - which is precisely what the scope took away.
+        /// </para>
+        /// <para>
+        /// <paramref name="indexScopeStore"/> null or blank means the index query ran
+        /// profile-wide, so nothing was suppressed and this claims nothing:
+        /// <see cref="ThreadGapUnwalkedStore"/> is then computed from evidence that can
+        /// actually name another store, and it makes the STRONGER claim. That is the reading
+        /// to prefer wherever it is available, and the reason this rule is silent whenever it
+        /// is.
+        /// </para>
+        /// <para>
+        /// <paramref name="storesWithoutIndex"/> is subtracted rather than merged, and it must
+        /// be the UNCAPPED list. A store the index holds nothing for is already named by
+        /// <see cref="ThreadGapUnindexedStore"/>, whose remedy works; this code's remedy is to
+        /// drop the scope, which cannot help where there is no index tier to widen to. Naming
+        /// it under both would hand a caller a remedy that does nothing.
+        /// </para>
+        /// <para>
+        /// A null or empty <paramref name="profileStores"/> claims nothing, for the reason
+        /// every store rule in this server is built on: absence of a list is not evidence of
+        /// a store. The walk guards are the same three
+        /// <see cref="UnwalkedUnindexedStores"/> applies, and they are forced rather than
+        /// chosen - <see cref="DescribeThreadCoverageGaps"/> returns before any code when the
+        /// walk did not run, because "did not run" is <see cref="FreshnessIndexOnly"/> with
+        /// its own remedy.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string> StoresScopedOutOfThreadLookup(
+            ThreadLiveInfo live,
+            string? indexScopeStore,
+            IReadOnlyList<string>? profileStores,
+            IReadOnlyList<string>? storesWithoutIndex)
+        {
+            if (live == null)
+            {
+                throw new ArgumentNullException(nameof(live));
+            }
+
+            if (string.IsNullOrEmpty(indexScopeStore)
+                || !live.Performed
+                || live.MembersWalked <= 0
+                || string.IsNullOrEmpty(live.AnchorStore)
+                || profileStores == null
+                || profileStores.Count == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            HashSet<string> excluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                indexScopeStore!,
+                live.AnchorStore!,
+            };
+
+            foreach (string store in storesWithoutIndex ?? Array.Empty<string>())
+            {
+                if (!string.IsNullOrEmpty(store))
+                {
+                    excluded.Add(store);
+                }
+            }
+
+            List<string> unqueried = new List<string>(profileStores.Count);
+            foreach (string store in profileStores)
+            {
+                if (string.IsNullOrEmpty(store) || !excluded.Add(store))
+                {
+                    continue; // Blank, already excluded, or a duplicate of one already listed.
+                }
+
+                unqueried.Add(store);
+            }
+
+            return unqueried;
         }
 
         /// <summary>
@@ -1160,6 +1318,84 @@ namespace OutlookAI.Core.Services
         public static bool AttachmentTextMatchable(SearchIn searchIn, bool hasTerms)
         {
             return hasTerms && searchIn != SearchIn.SubjectOnly;
+        }
+
+        /// <summary>
+        /// Index tier: <c>System.Search.Contents</c>, the body stream PLUS the extracted text
+        /// of every attachment an IFilter could read.
+        /// </summary>
+        public const string BodyScopeBodyAndAttachments = "body_and_attachments";
+
+        /// <summary>
+        /// Freshness sweep: <c>MailItem.Body</c> read through Outlook, which is the item's
+        /// body as Outlook renders it to plain text (so an HTML mail HAS one) and nothing
+        /// else - no attachment is ever opened.
+        /// </summary>
+        public const string BodyScopeItemBody = "item_body";
+
+        /// <summary>
+        /// Exhaustive scan: the MAPI plain-text body property
+        /// (<c>urn:schemas:httpmail:textdescription</c>), matched provider-side. It is neither
+        /// of the other two: no attachment text, and no rendering step - a message carrying
+        /// only an HTML body may have nothing in this property at all, and MAPI documents a
+        /// restriction over a property the message does not have as UNDEFINED rather than
+        /// false, so such a mail is admitted or dropped at the provider's discretion.
+        /// </summary>
+        public const string BodyScopePlainTextBody = "plain_text_body";
+
+        /// <summary>
+        /// Which text a tier matched this query's terms against, or null when the question
+        /// does not arise - a subject-only search, or one with no terms at all (gap B4).
+        /// <para>
+        /// <c>search_in: "body"</c> named three different bodies and said so only in the
+        /// README: the index matched body plus attachment content, the sweep matched
+        /// <c>MailItem.Body</c>, and the exhaustive scan matched the plain-text body property.
+        /// A caller comparing two tiers' results, or choosing <c>exhaustive:true</c> BECAUSE
+        /// it is the complete one, had no field to read it off - and the third of those is the
+        /// narrowest of the three while belonging to the mode chosen for completeness.
+        /// </para>
+        /// <para>
+        /// The GATE is shared with <see cref="AttachmentTextMatchable"/> deliberately: "did
+        /// this query match anything against a body" is one rule, and two copies of it would
+        /// be two things to keep true. What each tier's answer IS stays a constant on the tier,
+        /// because that is a property of the code that reads the mail, not of the request.
+        /// </para>
+        /// </summary>
+        public static string? BodyTextScope(string tierBodyScope, SearchIn searchIn, bool hasTerms)
+        {
+            return AttachmentTextMatchable(searchIn, hasTerms) ? tierBodyScope : null;
+        }
+
+        /// <summary>Whole-word matching: a term matches a word, not a fragment of one.</summary>
+        public const string TermMatchWholeWord = "whole_word";
+
+        /// <summary>
+        /// Substring matching: a term matches anywhere inside the text, so it returns
+        /// everything the whole-word reading would and more.
+        /// </summary>
+        public const string TermMatchSubstring = "substring";
+
+        /// <summary>
+        /// How the EXHAUSTIVE scan matched terms, read off the engine it actually used, or
+        /// null when it had no terms to match (gap B5).
+        /// <para>
+        /// The engine string already carried this and only a human could read it:
+        /// <c>ci_phrasematch</c> is whole-word, <c>like</c> is a substring scan, and
+        /// <c>ci_phrasematch+like</c> means some folders downgraded part-way through. The
+        /// mixed case answers <see cref="TermMatchSubstring"/>, which is the honest reading of
+        /// a set of results that is broader than whole-word somewhere and cannot say where.
+        /// </para>
+        /// </summary>
+        public static string? ExhaustiveTermMatch(string? engine, bool hasTerms)
+        {
+            if (!hasTerms)
+            {
+                return null;
+            }
+
+            return engine != null && engine.IndexOf("like", StringComparison.Ordinal) >= 0
+                ? TermMatchSubstring
+                : TermMatchWholeWord;
         }
 
         /// <summary>
