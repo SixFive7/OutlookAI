@@ -97,6 +97,57 @@ in this file claiming nothing is drawn (on `ConsentPromptBehaviorAdmin=0`) was W
 argument - the runner sweeps pending job dirs), then poll for `exit.txt` and read `out.txt`.
 Verified working for Hyper-V and PowerShell Direct.
 
+## VM findings, 2026-08-24 - measured, not inferred
+
+**The corpus was NOT lost, and neither was its manifest.** Both scares were mine and both were
+wrong. Sequence, so nobody repeats it:
+
+1. The manifest was reported missing. It was at `C:\OutlookAI-Q5\corpus-vm2.jsonl` (2.79 MB) all
+   along - a guest directory nobody had recorded, missed because the search probed only the paths
+   the runbook names, and the drive-root sweep that would have found it was refused by a guard.
+   **The corpus is `vm2`, seed `7777`, anchor `2026-08-19`, 20,000 items** - now committed in
+   `Testbed/testbed.json` and independently confirmed by re-running the planner.
+2. The store then read as EMPTY. Verified by COM: root folder with 0 children, every default
+   folder 0 items. `list_folders` returning an empty tree was therefore CORRECT, not the defect it
+   looked like. Cause never established; the server's own audit log on that guest is 0 bytes, so
+   nothing was deleted through the product, and the PST write that looked suspicious was Outlook
+   starting up. The signature - a 1 GB file whose root shows no children while `GetDefaultFolder`
+   still resolves the special folders - fits a DAMAGED data file rather than deletion.
+3. **Reverting to `CP-09-CORPUS-20K-RECENT` restored it intact**: 14 folders, Inbox 10,912 / Sent
+   4,964 / Deleted 2,461 / Junk 1,663 = **exactly 20,000**, matching the plan.
+
+**A REVERT SILENTLY RESTORES A BURNED CREDENTIAL.** The checkpoint predates the password
+rotation, so the revert put the published password back and the guest authenticated on it.
+Re-rotated immediately and verified; the burned one is rejected again. **Any future revert must be
+followed by a rotation** - this is now recorded in the credential file itself.
+
+**Autologon was broken by the first rotation and is now fixed.** `AutoAdminLogon=1` with the
+password in an LSA secret the rotation did not update: the next reboot would have failed to log
+in, session 1 would not have existed, and every COM test on that VM would have stopped working
+with a cause that looks nothing like its effect. The guest registry `DefaultPassword` now carries
+the current value (plaintext inside an isolated throwaway guest - a deliberate, proportionate
+trade), and the account is set to never expire.
+
+**The Outbox duplication identity is CONFIRMED, not inferred.** The corpus generator leaves stray
+items in the Outbox; a previous analysis found the stray count equalled the plan's unread count
+exactly and said plainly it could not prove the mechanism without a build. Measured on the
+restored store: **Outbox 2,761 items, 2,761 unread, 0 read.** All unread, so the identity holds.
+The four placed folders sum to exactly 20,000, so the Outbox items are EXTRA - duplicates, not
+misplaced originals.
+
+**Two facts about the guest that govern everything and were written down nowhere:**
+- The guest has the .NET **runtime** 10.0.10 and **no SDK**. Nothing can be built there; binaries
+  are published on the host and copied in.
+- **PowerShell Direct lands in session 0, where Outlook can never finish starting.** Anything
+  needing COM must run as a scheduled task with `LogonType=Interactive`, which lands in session 1.
+
+**Elevation on the HOST: never use `Start-Process -Verb RunAs`.** Its UAC elevation takes the
+foreground even with `-WindowStyle Hidden` - measured the hard way, over the maintainer's game.
+Use the `\ClaudeElev` scheduled task (SYSTEM, session 0, no desktop): write `cmd.ps1` into
+`C:\ProgramData\ClaudeElev\jobs\<32-hex>\`, `Start-ScheduledTask -TaskName ClaudeElev`, then poll
+for `exit.txt` and read `out.txt`. Helper: `.work/elev` (`--start` prints the job id first, so a
+tool-call timeout cannot orphan the output).
+
 ## STILL OPEN - awaiting the maintainer
 
 **Q1+Q2, merged into one: collapse the test-tier vocabulary.** The maintainer's challenge was
