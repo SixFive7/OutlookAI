@@ -51,7 +51,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase3)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "Portable")]
 public sealed class LiveTableSortProbeTests
 {
     /// <summary>The explicit built-in name Microsoft's own <c>Table.Sort</c> example uses.</summary>
@@ -70,6 +69,7 @@ public sealed class LiveTableSortProbeTests
     }
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public void TableSort_AcceptsAnExplicitPropertyName_OrRefusesBoth_AndTheRunSaysWhich()
     {
         IReadOnlyList<ComStoreDetail> stores = _fixture.VerifySession.GetStoreDetails();
@@ -189,6 +189,7 @@ public sealed class LiveTableSortProbeTests
     /// </para>
     /// </summary>
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public void ATableDate_IsEitherUtcOrLocal_AndTheRunSaysWhich()
     {
         IReadOnlyList<ComStoreDetail> stores = _fixture.VerifySession.GetStoreDetails();

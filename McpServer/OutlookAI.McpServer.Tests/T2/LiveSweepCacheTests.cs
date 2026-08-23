@@ -15,7 +15,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase2)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "Portable")]
 public sealed class LiveSweepCacheTests
 {
     private readonly LivePhase2Fixture _fixture;
@@ -28,6 +27,7 @@ public sealed class LiveSweepCacheTests
     }
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public void RapidSearches_PayOneSweep_SecondServedFromCache()
     {
         MailService service = _fixture.Service;

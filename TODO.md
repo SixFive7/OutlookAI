@@ -1261,29 +1261,30 @@
   before the class work. **(d)** should not be taken; **(a)** should not be taken until the
   exhaustive-scan measurement has been run.
 
-- [ ] **Decide what the test VM is FOR, because 96 of 115 live tests cannot move to it as it
-      stands.** The live tier is now split by trait (`LiveTier=Portable` vs `ProfileBound`, see
-      `Docs/live-tier-on-the-vm.md`), and the Portable subset is 19 tests. The limit is not
-      configuration; it is that a profile with no mail accounts cannot create a draft at all
-      (`NewDraft` resolves an Account by SMTP address and refuses when none matches), which takes
-      the draft, update/discard, HTML-draft and send families off the table whatever else is
-      arranged. Four directions, none of them started:
-  - [ ] **Add one dummy mail account to the VM** (POP/IMAP pointing nowhere, send disabled). Would
-        unblock the draft families, and it is the single highest-yield change. **The catch:** the
-        corpus generator refuses to run at all unless the profile has no accounts whatsoever, so
-        the order is corpus first, checkpoint, then account - and re-generating later means
-        removing the account again.
-  - [ ] **Give the hub store an SMTP-shaped display name.** Several tests use
+- [x] **Decide what the test VM is FOR. Settled 2026-08-24: the answer is "nearly all of it", and
+      the "96 of 115 cannot move" figure was an artefact of how the tier was labelled, not a fact
+      about the machine.** The `LiveTier` axis is deleted; `Requires` is declared per method; the
+      bucket is computed from it. Measured after the pass: **127 live methods, 121 select onto the
+      VM, 6 cannot** - the six that need a delegate mailbox, which no test machine can be given.
+      The old 96 came from two compounding mistakes: a hand-maintained `LiveTier` that had to agree
+      with `Requires` and could disagree, and CLASS-level `Requires` that read as the union of
+      everything any method in the class needed. See `Docs/live-tier-on-the-vm.md` section 5. The
+      dummy account and the SMTP-shaped hub name below are DECIDED and part of the VM build, not
+      open questions; the last two directions are recorded as rejected.
+  - [ ] **Add one dummy mail account to the VM** (POP/IMAP pointing nowhere, send disabled).
+        DECIDED and part of the build - it is what makes `Requires=MailAccount` a VM capability.
+        **The catch stands:** the corpus generator refuses to run at all unless the profile has no
+        accounts whatsoever, so the order is corpus first, checkpoint, then account - and
+        re-generating later means removing the account again.
+  - [ ] **Give the hub store an SMTP-shaped display name.** DECIDED. Several tests use
         `testHubStoreDisplayName` as an address (`to: Hub`, `FindAccountBySmtp(Hub)`), so a PST
         called `Outlook Data File` fails them before anything else does. Cheap to try; unknown
-        whether Outlook tolerates it.
-  - [ ] **Accept 19 and stop.** Defensible: the 19 include both acceptances the project is blocked
-        on, the sweep-scope and sweep-cache behaviour, and the signature lifecycle. It means the
-        index, accounts, delegate stores and send path are only ever proven on the maintainer's
-        own profile, before a release.
-  - [ ] **Relax the tests instead of the machine** - make the account-count and store-count
-        assertions read from the settings rather than hardcoding three. Would move more tests, and
-        would weaken exactly the assertions that catch a misconfigured profile.
+        whether Outlook tolerates it - the one piece of the VM shape that is still unproven.
+  - REJECTED: **accept a 19-test subset and stop.** The subset was never 19 tests' worth of
+        coverage; it was a mislabelling. 121 of 127 select onto the machine as built.
+  - REJECTED: **relax the tests instead of the machine** - making the account-count and
+        store-count assertions read from the settings would weaken exactly the assertions that
+        catch a misconfigured profile, and it is no longer needed to move tests.
 
 - [ ] **Add the second PST to the test VM - it is what makes the count tripwire mean anything
       there.** The tripwire exempts the hub store, so a machine whose only store IS the hub gives
@@ -1299,8 +1300,9 @@
       per store, so a small store is walked item by item and a corpus is not: all four populated
       corpus folders (Inbox 10,912 / Sent 4,964 / Deleted 2,467 / Junk 1,663) are above the
       per-folder limit and fall back to counts. Note also that the corpus store must be the HUB -
-      the Portable scans and sweeps all target the hub and take a "corpus too small" early return
-      against an empty one - so the second store is the only one the tripwire can watch anyway.
+      the scans and sweeps that need nothing but an Outlook all target the hub and take a "corpus
+      too small" early return against an empty one - so the second store is the only one the
+      tripwire can watch anyway.
 
 - [ ] **Live-only, and unguarded by any non-live test: three decisions inside the count tripwire's
       verification.** Established by construction rather than by mutation, because they sit behind
@@ -1325,19 +1327,27 @@
 - [ ] **Two live tests still degrade silently, and were left that way deliberately.**
       `LiveDraftTests.ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain` and its `LiveSendTests` twin
       loop over `expectedStoreDisplayNames`, so on a machine with fewer stores they sweep fewer and
-      still pass. Both are `ProfileBound`, so they do not run on a test machine; changing a sweep
-      assertion without a live run to check it was not a trade worth making unsupervised. The other
-      two of the four (`LiveStaleIndexRowTests`, `LiveManageSignatureTests.DefaultAssignment`) now
-      refuse on a Production profile.
+      still pass. **This got sharper on 2026-08-24 and is now the more urgent half of this entry:**
+      both used to be `LiveTier=ProfileBound` and therefore never selected on a test machine, and
+      both are now in the VM bucket (`Requires=MailAccount,MultipleStores,Transport`), so a VM run
+      WILL schedule them and they will pass having swept whatever the machine happens to have.
+      Changing a sweep assertion without a live run to check it was not a trade worth making
+      unsupervised, so this is left for the first real VM run. The other two of the four
+      (`LiveStaleIndexRowTests`, `LiveManageSignatureTests.DefaultAssignment`) now refuse on a
+      Production profile.
 
 - [ ] **Residual gaps left by the 2026-08-23 tier-3 classification pass.** `Category!=Live`
       no longer reaches a mailbox: eleven T3 tests that called `outlook_health`,
       `list_accounts` or `search` moved into `ComHostSupervisionLiveTests`,
       `OutlookAvailabilityLiveTests` and `OutlookHealthLiveToolShapeTests`
-      (`Category=Live` + `LiveTier=Portable` + `Requires=OutlookInstance`), `McpStdioClient`
-      now refuses those three tools unless a test declares them, and
+      (`Category=Live` + `Requires=OutlookInstance`), `McpStdioClient` now refuses those three
+      tools unless a test declares them, and
       `T1/LiveTierInventoryTests.EveryStdioTestReachingOutlook_DeclaresIt` reads the
-      declaration back out of the IL. What that pass found and did NOT fix:
+      declaration back out of the IL. **Confirmed by measurement 2026-08-24:** the full
+      `--filter "Category!=Live"` runs 2,226 cases green on a machine with Outlook up, moving
+      Outlook's own CPU by 0.19 s in 107 s and lowering its handle count - so the standing local
+      `FullyQualifiedName!~Tests.T3.` half of the filter is no longer needed and CI's plain
+      `Category!=Live` is safe for the whole suite. What that pass found and did NOT fix:
 
   - [ ] **`list_accounts` starts Outlook, and nothing in the tool layer stops it.** The
         supervisor's liveness verdict for `NotRunning` is `MayStart`, which calls
@@ -1366,10 +1376,20 @@
         work, which is what the protocol-only half of T3 is built on - so they cannot be
         blanket-guarded, and a future test that calls one with arguments that DO reach Outlook
         would not be caught. A bounded exhaustive `search` is the realistic case.
-  - [ ] **`McpServer/README.md` said `LiveTier=Portable` was "19 of 115 methods".** The
-        measured figure after adding 11 methods is 31 of 127, so the documented number had
-        already drifted by one before this pass. Updated to the measured value; worth a
-        thought about whether that line should be generated rather than typed.
+  - [x] **`McpServer/README.md` said `LiveTier=Portable` was "19 of 115 methods".** Moot: the
+        trait it counted no longer exists. **`McpServer/README.md` is owned by another worktree
+        and was NOT edited here - it still describes the three-axis vocabulary and any
+        `LiveTier` figure in it is now wrong.** The same applies to `Docs/measurement-gate.md`
+        (line 96) and `Docs/vm-coverage-analysis.md` (line 817), both of which still print the
+        `FullyQualifiedName!~Tests.T3.` filter as standing advice.
+  - [x] **Three LIVE stdio classes named a guarded tool and never passed the client the contact
+        token**, so `McpStdioClient` would have thrown on their first `tools/call` -
+        `LiveMcpToolShapeTests.Status_Accounts_Folders_...`,
+        `Phase3LiveMcpToolShapeTests.ShowMe_And_ExhaustiveSearch_...` and
+        `Phase7LiveMcpToolShapeTests.Health_OverStdio_...`. Introduced with the guard itself and
+        invisible because the live tier is in no CI run. Fixed, and the matrix in
+        `LiveTierInventoryTests` gained a fourth verdict
+        (`ReachesOutlookWithoutTheClientToken`) so it cannot recur.
 
 - [ ] **Retire v3 planning ignores** — once the local v3 planning files (`v3.MD`, `Docs/v3-probes/`) are no longer needed:
   - [ ] remove the "v3 planning documents" section at the bottom of `.gitignore`

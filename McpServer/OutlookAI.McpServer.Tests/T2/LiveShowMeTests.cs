@@ -44,7 +44,6 @@ public sealed class LiveShowMeTests
     private string Hub => _fixture.Settings.TestHubStoreDisplayName;
 
     [Fact]
-    [Trait("LiveTier", "Portable")]
     [Trait("Requires", "InteractiveDesktop")]
     public void GotoFolder_HubFolder_ActiveExplorerCurrentFolderMatches()
     {
@@ -91,7 +90,6 @@ public sealed class LiveShowMeTests
     }
 
     [Fact]
-    [Trait("LiveTier", "ProfileBound")]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "InteractiveDesktop")]
     public void OpenInOutlook_HubMail_InspectorForRightEntryIdThenClosedByTest()
@@ -138,7 +136,6 @@ public sealed class LiveShowMeTests
     }
 
     [Fact]
-    [Trait("LiveTier", "Portable")]
     [Trait("Requires", "InteractiveDesktop")]
     public void ShowSearchResults_ScopeFeatureTest_AndHubScopedScreenshot()
     {

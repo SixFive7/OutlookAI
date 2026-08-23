@@ -13,9 +13,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase2)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "SearchIndex")]
-[Trait("Requires", "MultipleStores")]
 public sealed class LiveHealthTests
 {
     private readonly LivePhase2Fixture _fixture;
@@ -26,6 +23,8 @@ public sealed class LiveHealthTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void Health_OnThisMachine_ReportsOkWithFullDetail()
     {
         // Ensure the COM session exists so Outlook is definitely up (the fixture may

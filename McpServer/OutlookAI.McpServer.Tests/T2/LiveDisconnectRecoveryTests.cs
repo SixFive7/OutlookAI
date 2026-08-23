@@ -45,8 +45,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Lifecycle)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "MailAccount")]
 public sealed class LiveDisconnectRecoveryTests
 {
     private readonly LiveLifecycleFixture _fixture;
@@ -59,6 +57,7 @@ public sealed class LiveDisconnectRecoveryTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
     public void OutlookExit_ReleasesHeldRefsInBackground_HealthProbes_GatewayReattaches()
     {
         MailService service = _fixture.Service;

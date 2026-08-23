@@ -24,9 +24,9 @@ public enum LiveMachineProfile
 
     /// <summary>
     /// A dedicated test machine: PST stores only, no mail accounts, no delegate mailboxes,
-    /// nothing in the local search index. Tests that need any of those are
-    /// <c>LiveTier=ProfileBound</c> and must be filtered out; this value does not make them
-    /// pass, it makes the settings file honest about what the machine can offer.
+    /// nothing in the local search index. Tests that need any of those name it under
+    /// <c>Requires</c> and must be filtered out on that; this value does not make them pass,
+    /// it makes the settings file honest about what the machine can offer.
     /// </summary>
     Portable = 1,
 }
@@ -217,8 +217,8 @@ public sealed class LiveTestSettings
     /// a delegate folder that is nested in Outlook and flat in the index, a hub account row
     /// in the signature registry. On the machine those tests were written for, absent means
     /// something is wrong with the machine, and returning green hides it. On a Portable
-    /// machine absent is simply the truth, and the test should not have been selected: it is
-    /// <c>LiveTier=ProfileBound</c>. So this throws on the first and no-ops on the second.
+    /// machine absent is simply the truth, and the test should not have been selected: it names
+    /// what it needs under <c>Requires</c>. So this throws on the first and no-ops on the second.
     /// </para>
     /// </summary>
     /// <param name="what">The population that was not found, named as a reader would name it.</param>
@@ -233,7 +233,8 @@ public sealed class LiveTestSettings
             "This machine declares machineProfile 'Production', where " + what + " is expected to exist. "
             + "It was not found, so this test can prove nothing and refuses to report success. Either the "
             + "machine or the live-test settings have drifted; a machine that genuinely lacks it should "
-            + "declare machineProfile 'Portable' and exclude LiveTier=ProfileBound tests.");
+            + "declare machineProfile 'Portable' and filter out the tests whose Requires names "
+            + "what it does not have.");
     }
 
     /// <summary>One line naming what this machine claims to be, printed at the start of a live run.</summary>

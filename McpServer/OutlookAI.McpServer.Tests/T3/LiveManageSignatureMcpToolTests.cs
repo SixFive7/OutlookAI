@@ -19,7 +19,6 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// </summary>
 [Collection(LiveCollections.SignatureManage)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "Portable")]
 public sealed class LiveManageSignatureMcpToolTests
 {
     private readonly LiveSignatureManageFixture _fixture;
@@ -32,6 +31,7 @@ public sealed class LiveManageSignatureMcpToolTests
     }
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public async Task ManageSignature_FullCycle_OverRealStdio_WithBackupPathsAndAudit()
     {
         string name = _fixture.TestSignatureName("Wire");

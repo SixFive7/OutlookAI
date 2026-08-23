@@ -33,7 +33,7 @@ public sealed class LiveManageSignatureTests
     private string Hub => _fixture.Settings.TestHubStoreDisplayName;
 
     [Fact]
-    [Trait("LiveTier", "Portable")]
+    [Trait("Requires", "OutlookInstance")]
     public void FullLifecycle_CreateUpdateDelete_WithAlwaysOnBackups_AndAuditLines()
     {
         string name = _fixture.TestSignatureName("Cycle");
@@ -112,7 +112,6 @@ public sealed class LiveManageSignatureTests
     }
 
     [Fact]
-    [Trait("LiveTier", "ProfileBound")]
     [Trait("Requires", "MailAccount")]
     public void DefaultAssignment_HubAccountOnly_SetThenCleared_OriginalsRestoredExactly()
     {
@@ -127,7 +126,7 @@ public sealed class LiveManageSignatureTests
             // Same rule as the delegate probe: on a real profile the hub account IS in the
             // signature registry, so its absence is a fault to report rather than a reason to
             // pass. A machine with no mail accounts has no rows at all, which is why this test
-            // is LiveTier=ProfileBound.
+            // declares Requires=MailAccount.
             _fixture.Settings.RequireProductionPopulation(
                 "the hub account's row in the profile signature registry");
             _output.WriteLine(

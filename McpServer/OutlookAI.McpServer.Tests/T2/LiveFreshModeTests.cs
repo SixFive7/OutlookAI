@@ -15,8 +15,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase2)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "Transport")]
 public sealed class LiveFreshModeTests
 {
     private static readonly TimeSpan ArrivalTimeout = TimeSpan.FromSeconds(120);
@@ -32,6 +30,7 @@ public sealed class LiveFreshModeTests
     }
 
     [Fact]
+    [Trait("Requires", "Transport")]
     public void FreshSearch_FindsSelfSentMail_BeforeIndexCatchesUp_ThenCleansUp()
     {
         string hub = _fixture.Settings.TestHubStoreDisplayName;

@@ -26,7 +26,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase3)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "Portable")]
 public sealed class LiveResumableScanTests
 {
     /// <summary>
@@ -55,6 +54,7 @@ public sealed class LiveResumableScanTests
     private string Hub => _fixture.Settings.TestHubStoreDisplayName;
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public void APagedScan_ReturnsExactlyWhatOneUnpagedScanReturns_WithNoDuplicates()
     {
         // One page that covers the whole scope, as ground truth.
@@ -122,6 +122,7 @@ public sealed class LiveResumableScanTests
     }
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public void APagedScan_ReportsWhichRungItResumedOn_SoTheSortQuestionIsAnsweredInPassing()
     {
         // position.resumeTier is a cost signal AND evidence: "date" means Table.Sort works on
@@ -152,6 +153,7 @@ public sealed class LiveResumableScanTests
     }
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public void AResumeWithAChangedQuestion_IsRefused_AndTheRefusalNamesWhatChanged()
     {
         // The refusal path, against a real chain. Silently honouring it would answer a
@@ -182,6 +184,7 @@ public sealed class LiveResumableScanTests
     }
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public void ASupersededToken_IsRefusedWithThePositionNeededToCarryOnWithoutIt()
     {
         SearchOutcome first = Service.Search(NewRequest(SmallPage));

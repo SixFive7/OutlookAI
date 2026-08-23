@@ -21,8 +21,6 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// </summary>
 [Collection(LiveCollections.Phase5)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "Transport")]
 public sealed class Phase5LiveMcpToolShapeTests
 {
     /// <summary>
@@ -48,6 +46,7 @@ public sealed class Phase5LiveMcpToolShapeTests
     private string Marker => _fixture.RunMarker;
 
     [Fact]
+    [Trait("Requires", "Transport")]
     public async Task SendTool_TwoStepFlow_RoundTrip_OverRealStdio_WithAuditLines()
     {
         int auditBefore = CountAuditLines();

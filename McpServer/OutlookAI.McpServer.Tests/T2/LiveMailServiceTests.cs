@@ -14,10 +14,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase2)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "SearchIndex")]
-[Trait("Requires", "MultipleStores")]
-[Trait("Requires", "DelegateStore")]
 public sealed class LiveMailServiceTests
 {
     private readonly LivePhase2Fixture _fixture;
@@ -32,6 +28,8 @@ public sealed class LiveMailServiceTests
     private MailService Service => _fixture.Service;
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void RoundTrip_SearchThenRead_TenHitsAcrossStores()
     {
         List<HitSummary> hits = new();
@@ -99,6 +97,8 @@ public sealed class LiveMailServiceTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void Read_BodyOffsetPaging_TilesTheBody_FromTheCachedExtraction()
     {
         // A real mail with a body long enough to window (>= 120 chars).
@@ -167,6 +167,8 @@ public sealed class LiveMailServiceTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void Truncation_MailOver100KB_FlagsAndTotalsCorrect()
     {
         const int cap = 20000;
@@ -226,6 +228,8 @@ public sealed class LiveMailServiceTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void AttachmentHit_ReadParent_SaveToScratch()
     {
         HitSummary? attachmentHit = null;
@@ -283,6 +287,9 @@ public sealed class LiveMailServiceTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "DelegateStore")]
     public void ListAccounts_ExactAccountsDelegatesAndFlags()
     {
         AccountsOutcome outcome = Service.ListAccounts();
@@ -329,6 +336,8 @@ public sealed class LiveMailServiceTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void ListFolders_TestHub_FullTree_StableOrder_And_OffsetPaging()
     {
         FoldersOutcome outcome = Service.ListFolders(_fixture.Settings.TestHubStoreDisplayName);
@@ -362,6 +371,8 @@ public sealed class LiveMailServiceTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void Thread_IndexPath_AndComFallback()
     {
         // Recent hits with a conversation id from a busy store. SEVERAL of them, on
@@ -431,6 +442,8 @@ public sealed class LiveMailServiceTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void OutlookHealth_Live_ReportsProviderStalenessAndPerStoreRows()
     {
         HealthOutcome status = Service.Health();

@@ -12,10 +12,6 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// Outlook (S7/D17). Output stays content-free for business stores (S4).
 /// </summary>
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "SearchIndex")]
-[Trait("Requires", "MultipleStores")]
-[Trait("Requires", "DelegateStore")]
 [Collection(LiveCollections.McpToolShape)]
 public sealed class LiveMcpToolShapeTests
 {
@@ -29,6 +25,8 @@ public sealed class LiveMcpToolShapeTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public async Task Search_Read_SaveAttachment_Thread_GoldenShapes_OverRealStdio()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(TimeSpan.FromMinutes(6));
@@ -153,9 +151,13 @@ public sealed class LiveMcpToolShapeTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "DelegateStore")]
     public async Task Status_Accounts_Folders_GoldenShapes_OverRealStdio()
     {
-        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(TimeSpan.FromMinutes(6));
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
+            TimeSpan.FromMinutes(6), environment: null, McpStdioClient.OutlookReachingToolsAllowed);
 
         // --- outlook_health (the merged diagnostics tool, D37): index freshness block
         // with the per-store frontier rows and advice the old index_status carried.

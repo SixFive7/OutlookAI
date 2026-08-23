@@ -30,15 +30,13 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// <c>Category!=Live</c>.
 /// </para>
 /// <para>
-/// <c>LiveTier=Portable</c>: any Outlook profile satisfies these, the dedicated test VM
-/// included. They read no mail and write nothing - what they need is an Outlook, which is
-/// what <c>Requires=OutlookInstance</c> says.
+/// Any Outlook profile satisfies these, the dedicated test VM included. They read no mail and
+/// write nothing - what they need is an Outlook, which is what <c>Requires=OutlookInstance</c>
+/// says, and it is the whole of what they say.
 /// </para>
 /// </summary>
 [Collection(LiveCollections.McpToolShape)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "Portable")]
-[Trait("Requires", "OutlookInstance")]
 public sealed class OutlookAvailabilityLiveTests
 {
     /// <summary>Error types that mean "not now, try again" rather than "this went wrong".</summary>
@@ -66,6 +64,7 @@ public sealed class OutlookAvailabilityLiveTests
         result.TryGetProperty("isError", out JsonElement flag) && flag.GetBoolean();
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public async Task ATransientOutlookState_AnswersFastAndCarriesRetryGuidance()
     {
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
@@ -122,6 +121,7 @@ public sealed class OutlookAvailabilityLiveTests
     /// </para>
     /// </summary>
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public async Task SearchAlwaysAnswers_AndSaysWhetherItIsComplete()
     {
         // What a search may legitimately cost end to end: its own composed budget plus the
@@ -214,6 +214,7 @@ public sealed class OutlookAvailabilityLiveTests
     }
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public async Task RepeatedCalls_NeverEachPayAFullBudget()
     {
         // The regression this guards: before the liveness gate and the breaker, every
@@ -239,6 +240,7 @@ public sealed class OutlookAvailabilityLiveTests
     }
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public async Task HealthAlwaysAnswersQuickly_AndStatesOutlooksCondition()
     {
         // outlook_health is asked precisely when things are wrong, so it is the one tool

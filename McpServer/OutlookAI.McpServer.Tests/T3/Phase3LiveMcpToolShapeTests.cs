@@ -15,8 +15,6 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// clear the search UI afterwards. Output stays content-free for business stores (S4).
 /// </summary>
 [Trait("Category", "Live")]
-[Trait("LiveTier", "Portable")]
-[Trait("Requires", "InteractiveDesktop")]
 [Collection(LiveCollections.McpToolShape)]
 public sealed class Phase3LiveMcpToolShapeTests
 {
@@ -30,6 +28,7 @@ public sealed class Phase3LiveMcpToolShapeTests
     }
 
     [Fact]
+    [Trait("Requires", "InteractiveDesktop")]
     public async Task ShowMe_And_ExhaustiveSearch_GoldenShapes_OverRealStdio()
     {
         string hub = _settings.TestHubStoreDisplayName;
@@ -40,7 +39,9 @@ public sealed class Phase3LiveMcpToolShapeTests
         // for the show-me calls before it, rather than written as a flat six minutes: at six
         // minutes a scan the product would have completed was reported here as a hang.
         await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
-            TimeSpan.FromMilliseconds(ComOperationBudgets.ExhaustiveScanDeadlineMs) + TimeSpan.FromMinutes(6));
+            TimeSpan.FromMilliseconds(ComOperationBudgets.ExhaustiveScanDeadlineMs) + TimeSpan.FromMinutes(6),
+            environment: null,
+            McpStdioClient.OutlookReachingToolsAllowed);
         using OutlookComSession session = OutlookComSession.Connect(allowStartingOutlook: true);
 
         // --- goto_folder: golden shape + explorer folder path.

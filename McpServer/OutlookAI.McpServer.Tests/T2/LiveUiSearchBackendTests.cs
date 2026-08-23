@@ -17,8 +17,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase3)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "Portable")]
-[Trait("Requires", "InteractiveDesktop")]
 public sealed class LiveUiSearchBackendTests
 {
     private const string NoMatchQuery = "OutlookAiMcpNoSuchTerm7391";
@@ -33,6 +31,8 @@ public sealed class LiveUiSearchBackendTests
     }
 
     [Fact]
+    [Trait("Requires", "InteractiveDesktop")]
+    [Trait("Requires", "AddInRegistry")]
     public void FlippingUserHiveValue_DrivesAdviceAndHealthField_BothStates()
     {
         // The user-hive flip only controls the EFFECTIVE state while no policy-hive

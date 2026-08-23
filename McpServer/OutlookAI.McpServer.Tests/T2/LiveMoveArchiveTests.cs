@@ -17,9 +17,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.MoveArchive)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "MultipleStores")]
-[Trait("Requires", "Transport")]
 public sealed class LiveMoveArchiveTests
 {
     private readonly LiveMoveArchiveFixture _fixture;
@@ -38,6 +35,7 @@ public sealed class LiveMoveArchiveTests
     private MailService Service => _fixture.Service;
 
     [Fact]
+    [Trait("Requires", "MultipleStores")]
     public void ArchiveResolution_AllFiveStores_ReadOnly()
     {
         List<string> stores = _fixture.Settings.ExpectedStoreDisplayNames
@@ -63,6 +61,8 @@ public sealed class LiveMoveArchiveTests
     }
 
     [Fact]
+    [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "Transport")]
     public void MoveChain_TestFolderRoundTrip_Archive_Guards_Audit_Cleanup()
     {
         // Pre-clean: a crashed earlier run may have left a test folder behind - the

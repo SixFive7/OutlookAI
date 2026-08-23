@@ -17,8 +17,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Lifecycle)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "MailAccount")]
 public sealed class LiveHeadlessGuaranteeTests
 {
     private readonly LiveLifecycleFixture _fixture;
@@ -31,6 +29,7 @@ public sealed class LiveHeadlessGuaranteeTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
     public void NonShowMeOperations_NeverCreateAnOutlookWindow()
     {
         MailService service = _fixture.Service;
