@@ -450,5 +450,21 @@ McpServer/**/live-fixtures/
 McpServer/**/audit-logs/
 McpServer/**/screenshots/
 
-# Scratch: build output, verification logs, measurement runs. Machine-local, never published.
+# Measurement baselines — MACHINE LOCAL, NEVER COMMITTED (see Docs/measurement-gate.md).
+# .github/scripts/measurement-gate.ps1 records performance and coverage numbers under
+# %LOCALAPPDATA%\OutlookAI\Measurements and refuses to write inside any git working tree, so
+# nothing here should ever match. These rules are the second line: they stop a store that was
+# copied, exported or redirected into the tree from becoming tracked. The numbers are
+# statistics about one maintainer's machine, meaningful only against older numbers from that
+# same machine, not representative of anyone else's system, and this repository is public.
+# .github/scripts/check-measurement-privacy.ps1 fails the build if one lands anyway.
+Measurements/
+**/Measurements/
+history.jsonl
+annotations.jsonl
+*.comparison.json
+*.measurement-run.json
+measurement-history*
+
+# Agent scratch space: test output, logs, intermediate artifacts. Never part of a commit.
 .work/

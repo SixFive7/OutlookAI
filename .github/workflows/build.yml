@@ -29,6 +29,15 @@ jobs:
         shell: pwsh
         run: .github/scripts/check-pinned-constants.ps1
 
+      # Measurement baselines are machine-local by policy: they are statistics about one
+      # maintainer's machine, meaningful only against that machine's own history, and this
+      # repository is public. The gate itself refuses to write inside a git working tree, and
+      # .gitignore covers the shapes - this is the third line, and the only one that fails a
+      # build when the first two are bypassed (a force-add, a rename, a redirected store).
+      - name: Check no measurement data was committed
+        shell: pwsh
+        run: .github/scripts/check-measurement-privacy.ps1
+
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3
 
