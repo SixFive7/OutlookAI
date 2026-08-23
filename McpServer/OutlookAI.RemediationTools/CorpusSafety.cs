@@ -311,6 +311,34 @@ public static class CorpusSafety
     }
 
     /// <summary>
+    /// The predicate guarding an in-place REWRITE of an existing item - what
+    /// <c>corpus-reanchor</c> does when it moves a corpus forward in time. It is
+    /// <see cref="MayDelete"/> with one more key: the ordinal parsed out of the subject must
+    /// be the ordinal the caller believes it is addressing.
+    /// <para>
+    /// A rewrite is guarded exactly like a delete because the blast radius is the same
+    /// shape. Writing a delivery time onto somebody's mail is not recoverable from a manifest
+    /// and would not even be visible as damage; the extra ordinal check exists because a
+    /// rewrite, unlike a delete, is addressed PER ITEM from a plan, so an off-by-one in the
+    /// caller would otherwise write item N's dates onto item M and leave a corpus that
+    /// nothing could tell was wrong.
+    /// </para>
+    /// </summary>
+    public static bool MayRewrite(
+        string? entryId, string? subject, ISet<string> entryIdAllowlist, string corpusId, int expectedOrdinal)
+    {
+        ArgumentNullException.ThrowIfNull(entryIdAllowlist);
+        if (string.IsNullOrWhiteSpace(entryId) || subject == null || expectedOrdinal < 1)
+        {
+            return false;
+        }
+
+        return entryIdAllowlist.Contains(entryId)
+            && CorpusPlan.TryParseOrdinal(subject, corpusId, out int ordinal)
+            && ordinal == expectedOrdinal;
+    }
+
+    /// <summary>
     /// The only sanctioned way to build the allowlist <see cref="MayDelete"/> consults.
     /// It exists so the comparer is not left to the call site: EntryIDs are hex and are
     /// sometimes reported in a different case than they were recorded in, and an allowlist

@@ -32,6 +32,20 @@ things went wrong, and all three are now guarded rather than remembered:
    that VM because the profile has no mail account, and 5 532 queued messages on any profile
    that has one. The build now refuses unless the profile has **no accounts at all** - see
    "Before you run anything" below.
+
+   **The population is now identified, 2026-08-24.** The plan for that exact shape - corpus
+   `vm1`, seed 4242, 40 000 items - marks **5,532 items unread**, which `corpus-plan` now
+   prints as its own line. Not approximately: 5,532. So the queued items are precisely the
+   ones the plan wanted left unread, and the read state was the only thing the builder did
+   differently to them. It set `MailItem.UnRead` and then wrote `PR_MESSAGE_FLAGS` WHOLESALE,
+   as `MSGFLAG_READ` for a read item and as **0** for an unread one. Both are gone: the read
+   state now travels through a single read-modify-write that clears `MSGFLAG_SUBMIT` - the bit
+   that means "queued for delivery" - on every item, clears `MSGFLAG_UNSENT` only when the
+   placement rung calls for it, and preserves every bit it does not own.
+
+   **What is still unproved is the mechanism inside Outlook**, and only a build can prove it.
+   So `corpus-census` reports Outbox strays SPLIT BY THE PLAN'S INTENDED READ STATE. A small
+   build settles it: all-unread confirms the identity, an even split kills it.
 2. **Every item was filed as a draft**, because `Items.Add` + `Save` produces an UNSENT item
    and Outlook files unsent items in Drafts whatever folder they were added to. The sweep
    covers Inbox, Sent Items, Deleted Items and Junk Email and **not** Drafts, so a sweep over
@@ -42,6 +56,29 @@ things went wrong, and all three are now guarded rather than remembered:
    The truth is that an item the folder table carries no delivery time for is selected by
    **no** window, so the sweep sees fewer items, not more. The message now states the
    consequence as a count.
+
+**A corpus expires, and it does so silently (2026-08-24).** Everything above is measured
+against windows counted back from the corpus ANCHOR. Every test asks its question against the
+CLOCK. The two diverge from the moment the corpus is written, and roughly six weeks later a
+seven-day window selects nothing at all - while every test asking about that window still
+PASSES, because selecting nothing is a valid answer about an empty window. The measurement
+stops happening and nothing goes red.
+
+Two commands close that, and the live tier runs the first of them fail-closed at fixture time:
+
+* `corpus-verify` is PURE - no Outlook, no store, runnable on the host - and refuses when any
+  window under test has emptied. It derives the shift the store already carries from the
+  manifest, and prints each window as `now/at-anchor`.
+* `corpus-reanchor --to now --execute` is the repair. It shifts every item's received and
+  submit instants to an ABSOLUTE target, so it is idempotent and resumable; it never creates,
+  moves or removes an item; and it leaves the seed, the shape and the manifest header
+  untouched, so the corpus is still the corpus every earlier measurement was taken against.
+
+Regenerating instead was considered and rejected: the numbers above are held against THIS
+snapshot, and a regenerated corpus is a different population wearing the same figures.
+
+**Run `corpus-verify` before quoting any number on this page.** A measurement taken against a
+stale corpus is a measurement of an empty window.
 
 **Why a corpus is needed at all.** The two questions are about volume, and the developer
 profile cannot ask them. Every store on it is indexed, so the freshness sweep's window comes
@@ -90,7 +127,7 @@ proposed for the sweep should be justified against the harsher consequence.
 
 ---
 
-## Before you run anything - the two guards that now gate a build
+## Before you run anything - the guards that gate a build
 
 **The profile must have no mail accounts.** `corpus-build` reads `Session.Accounts`, compares
 each account's `DeliveryStore` to the target by `StoreID`, and refuses if there is any account
@@ -108,6 +145,21 @@ enumerates a folder through its table, so an item the table does not carry does 
 far as this measurement is concerned. `--allow-drafts-placement` overrides it and says in the
 same breath that the sweep will select 0 of N items.
 
+**The probe's table check now names the item it is looking for.** It used to ask the folder
+for every corpus subject in it and walk at most 2,000 rows. Against a folder that already held
+~22,000 corpus items it never reached the item it had just created, gave up, and reported it
+ABSENT from the folder's table - so the build refused a placement that works. The lookup is
+now filtered on the probe's own reserved ordinal, so it selects roughly one row; the row cap is
+a bound on a runaway rather than a search budget; and reaching it is reported as INCONCLUSIVE
+with its own refusal text, which blames the measurement instead of the store. The date probe's
+exclusion half had the same defect and is fixed the same way.
+
+**Every build censuses itself.** `corpus-census` re-reads the store and compares it against the
+plan: right count, right folders, one copy each, and nothing stranded in Drafts or the Outbox.
+It sets the build's exit code alongside the failure count, and it can be run on its own at any
+time. It exists because the first real build reported 40 000 items created and zero failures
+while every one of them sat in Drafts.
+
 **Run `corpus-probe` on its own first.** It is cheap, it creates and deletes a handful of
 throwaway items, and it answers both questions - placement and dates - before any long build.
 
@@ -120,9 +172,9 @@ OutlookAI.RemediationTools corpus-plan --corpus-id vm1 --seed 4242 --anchor 2026
 ```
 
 It prints, for the exact corpus that will be built: item count per folder, per size class and
-per age band; total and mean body bytes; how many bodies exceed 24 KB, 96 KB and
-`OutlookComSession.SweepBodyCharsCap`; and how many items fall inside 1, 7, 30, 60, 90 and 365
-days of the anchor. **Save this output beside the results.** Every measurement below is a
+per age band; the **unread** count; total and mean body bytes; how many bodies exceed 24 KB,
+96 KB and `OutlookComSession.SweepBodyCharsCap`; and how many items fall inside 1, 7, 30, 60,
+90 and 365 days of the anchor. **Save this output beside the results.** Every measurement below is a
 ratio against one of these numbers, and computing them after the fact from the store is both
 slower and less trustworthy than reading them off the plan that produced it.
 

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using OutlookAI.RemediationTools;
 
@@ -29,9 +30,9 @@ using OutlookAI.RemediationTools;
 /// Logging is S4-disciplined: counts/EntryIDs/booleans only for business stores;
 /// subject prefixes appear only for the designated test hub.
 ///
-/// Five further commands build and remove a SYNTHETIC MEASUREMENT CORPUS in a local .pst,
-/// which is how the freshness-sweep and exhaustive-scan budgets get measured against known
-/// volume instead of modelled (see Docs/corpus-measurement-plan.md):
+/// Eight further commands build, check, age and remove a SYNTHETIC MEASUREMENT CORPUS in a
+/// local .pst, which is how the freshness-sweep and exhaustive-scan budgets get measured
+/// against known volume instead of modelled (see Docs/corpus-measurement-plan.md):
 ///
 ///   corpus-plan     --corpus-id ... --seed N --anchor yyyy-MM-dd --count N
 ///       Pure. Prints what the corpus would contain - per folder, per size class, per age
@@ -50,6 +51,22 @@ using OutlookAI.RemediationTools;
 ///       Creates the corpus. Resumable and idempotent - it builds the ordinals the manifest
 ///       does not already record.
 ///
+///   corpus-census   --store ... --allow-store ... --corpus-id ... --count N [--manifest ...]
+///       READ-ONLY. Says whether the corpus in the store is the corpus the plan describes:
+///       right count, right folders, one copy each, and nothing stranded in Drafts or the
+///       Outbox. A build runs this on itself and fails if it is not clean.
+///
+///   corpus-verify   --corpus-id ... --seed N --anchor ... --count N --manifest ... [--window N]
+///       PURE - no Outlook, nothing written. Says whether the corpus can STILL answer the
+///       questions it exists for. A corpus anchored on a fixed date stops filling the narrow
+///       measurement windows within weeks, and every test asking about them keeps passing,
+///       because selecting nothing is a valid answer about an empty window.
+///
+///   corpus-reanchor ... --manifest ... --to now [--allow-backwards] [--execute]
+///       The repair for that: shifts every item's received and submit instants forward so the
+///       corpus's newest edge lands on --to. Idempotent, resumable, and it never creates,
+///       moves or removes an item. The seed, the shape and the manifest are unchanged.
+///
 ///   corpus-teardown --store ... --allow-store ... --corpus-id ... --manifest ... [--execute]
 ///       Removes exactly what the manifest records, by EntryID allowlist AND subject tag.
 ///
@@ -66,6 +83,18 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        // Every number this console prints is meant to be saved beside a measurement and
+        // compared against another machine's run. Under the machine's own culture a
+        // Dutch-locale VM writes 426.407.429 where an English one writes 426,407,429 - the
+        // same figure and not the same string - so a reader comparing two runs has to work
+        // out which convention each was written under. Several call sites already pass
+        // CultureInfo.InvariantCulture explicitly and several do not; setting it once here
+        // is what makes that impossible to get wrong in a line added later. It also makes
+        // every bare int.Parse in the option parser invariant, which is stricter than the
+        // machine default rather than looser.
+        CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
+        CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+
         try
         {
             if (args.Length == 0)
@@ -86,6 +115,9 @@ internal static class Program
                     "corpus-plan" => CorpusCommands.RunPlan(corpus, Console.Out),
                     "corpus-probe" => CorpusCommands.RunProbe(corpus, Console.Out),
                     "corpus-build" => CorpusCommands.RunBuild(corpus, Console.Out),
+                    "corpus-census" => CorpusCommands.RunCensus(corpus, Console.Out),
+                    "corpus-verify" => CorpusCommands.RunVerify(corpus, Console.Out),
+                    "corpus-reanchor" => CorpusCommands.RunReanchor(corpus, Console.Out),
                     "corpus-teardown" => CorpusCommands.RunTeardown(corpus, Console.Out),
                     "corpus-reindex" => CorpusCommands.RunReindex(corpus, Console.Out),
                     _ => Fail($"Unknown command '{args[0]}'."),
@@ -463,11 +495,14 @@ internal static class Program
         Console.WriteLine("refile:   --log <incident-deletion-log.txt> --server <registered OutlookAI.McpServer.exe>");
         Console.WriteLine("dedupe:   --store <primary store display name>");
         Console.WriteLine();
-        Console.WriteLine("Measurement corpus: corpus-plan | corpus-probe | corpus-build | corpus-teardown | corpus-reindex");
+        Console.WriteLine("Measurement corpus: corpus-plan | corpus-probe | corpus-build | corpus-census");
+        Console.WriteLine("                    corpus-verify | corpus-reanchor | corpus-teardown | corpus-reindex");
         Console.WriteLine("Common:   --corpus-id <id> --seed <n> --anchor <yyyy-MM-dd>   [--execute]");
         Console.WriteLine("Target:   --store <display name> --allow-store <display name> (repeatable; a local .pst only)");
         Console.WriteLine("Target:   the profile must have NO mail accounts (no override - see Program.cs)");
         Console.WriteLine("Build:    --count <n> --manifest <path> [--progress-every <n>]");
+        Console.WriteLine("Verify:   --count <n> --manifest <path> [--window <days> (repeatable)]   (pure - no Outlook)");
+        Console.WriteLine("Reanchor: --count <n> --manifest <path> --to <now|yyyy-MM-dd> [--allow-backwards]");
         Console.WriteLine("Override: [--allow-undated] [--allow-drafts-placement]  (each says what it costs)");
     }
 }

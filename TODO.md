@@ -836,6 +836,18 @@
       override. Stricter than "no account delivers here" because the object model cannot express
       the narrower rule - `SendUsingAccount` is per item, so any account may send a message that
       lives anywhere.
+
+      **The population is identified, 2026-08-24.** The plan for that shape marks **5,532 items
+      unread**, exactly - `corpus-plan` prints it now. So the queued items are precisely the ones
+      the plan wanted left unread, and the read state was the only thing the builder treated
+      differently: it set `MailItem.UnRead` and then wrote `PR_MESSAGE_FLAGS` WHOLESALE, as
+      `MSGFLAG_READ` for a read item and as **0** for an unread one. Both are gone. One
+      read-modify-write now carries the read state, clears `MSGFLAG_SUBMIT` on every item -
+      that is the bit meaning "queued for delivery" - clears `MSGFLAG_UNSENT` only when the
+      placement rung calls for it, and preserves every bit it does not own. **The mechanism
+      inside Outlook is still unproved and only a build can prove it**, so `corpus-census`
+      reports Outbox strays split by the plan's intended read state: a small build either
+      confirms the identity or kills it.
     - **Every item was filed as a draft**, so the sweep saw 6 of 40 000 in 234-367 ms.
       `Items.Add` + `Save` produces an UNSENT item and Outlook files those in Drafts whatever
       folder they were added to; the sweep covers Inbox/Sent/Deleted/Junk and not Drafts. The
@@ -847,6 +859,37 @@
       with all 40 000 items in Drafts the recovery path would have reported ZERO and teardown
       would have claimed a clean store. Drafts (16) and Outbox (4) are in the scan set now. Same
       lesson as the Outbox omission `ComMailbox.SweepFolderIds` already records.
+    - **Nothing in the tool noticed any of the three.** A person looking at Outlook found them.
+      `corpus-census` closes that: a read-only scan compared against the plan - right count,
+      right folders, one copy each, nothing stranded in Drafts or the Outbox - run by every
+      build on itself and settable as its exit code.
+
+  - **The placement probe's folder-table check is fixed, 2026-08-24.** Against an empty Inbox the
+    move rungs verified; with ~22,000 items present the same rungs reported the item correctly
+    parented and ABSENT from the folder's table, so the build refused a placement that works.
+    The refusal was right given what it observed and the observation was wrong: the filter asked
+    for every corpus subject in the folder and the walk stopped at its 2,000-row cap. It now
+    filters on the probe's own reserved ordinal (`CorpusPlan.DaslSubjectFragment`, bracket-free
+    so a `[` can never open a DASL character class), so it selects roughly one row; and reaching
+    the cap is reported as INCONCLUSIVE rather than as "not there", with a refusal that blames
+    the measurement instead of the store. The date probe's exclusion half had the same defect
+    and is fixed the same way.
+
+  - **A corpus expires silently, and now it does not (2026-08-24).** Anchored on a fixed instant,
+    it stops filling the narrow measurement windows within weeks, and every test asking about
+    them keeps PASSING because selecting nothing is a valid answer about an empty window.
+    `corpus-verify` is pure - no Outlook, no store - derives the shift already applied from the
+    manifest and refuses when any window under test has emptied; the live tier runs it
+    fail-closed at fixture time from a new `corpus` settings block. `corpus-reanchor --to now`
+    is the repair: an ABSOLUTE target, so it is idempotent and resumable, never creating, moving
+    or removing an item, guarded by EntryID allowlist AND subject tags AND the expected ordinal.
+    The manifest header's anchor is deliberately not rewritten - it is half the corpus's
+    identity - so the shift is derived from the item lines and the re-anchor appends a
+    replacement line per item.
+
+  - [ ] **Move `T2/CorpusFreshnessTests.cs` to T1.** It is pure - no Outlook, no COM, no settings
+    file, no `Category=Live` - and belongs beside `CorpusGeneratorTests`. It sits in T2 only
+    because T1 was owned by a parallel worktree while it was written. A rename, nothing else.
   - **Still to do: tear down `CP-07-CORPUS-40K` and re-run.** The 40 000 drafts are still in the
     PST; the manifest is 40 002 lines and a copy is outside the guest. Teardown deletes by
     EntryID allowlist AND tag, and now reaches Drafts.

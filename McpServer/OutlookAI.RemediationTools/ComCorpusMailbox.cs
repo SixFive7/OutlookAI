@@ -36,6 +36,10 @@ public static class ComCorpusMailbox
     private const string PrMessageFlags = "http://schemas.microsoft.com/mapi/proptag/0x0E070003";
 
     private const int MsgFlagRead = 0x1;
+
+    /// <summary>MSGFLAG_SUBMIT - "this message is queued for delivery". The bit that puts an item in the Outbox.</summary>
+    private const int MsgFlagSubmit = 0x4;
+
     private const int MsgFlagUnsent = 0x8;
 
     /// <summary>Default-folder id for Junk Email; a PST often has no such default folder.</summary>
@@ -99,7 +103,12 @@ public static class ComCorpusMailbox
     /// <summary>One corpus item found by a read-only scan.</summary>
     /// <param name="Ordinal">Ordinal parsed out of the subject.</param>
     /// <param name="EntryId">Its EntryID right now.</param>
-    /// <param name="FolderId">The default-folder id it was found under, or 0 for a builder-created folder.</param>
+    /// <param name="FolderId">
+    /// The default-folder id it was found under. For an item in a folder the builder created
+    /// because the store has no such default folder, this is the id that folder STANDS IN
+    /// FOR - so a census can compare it against the plan, which only ever speaks in default
+    /// folder ids.
+    /// </param>
     public sealed record ScanRow(int Ordinal, string EntryId, int FolderId);
 
     /// <summary>
@@ -307,10 +316,7 @@ public static class ComCorpusMailbox
             mail.Body = "placement probe";
             mail.Save();
 
-            if (CorpusPlacement.WritesSentFlag(method))
-            {
-                ApplySentFlag(mail!, isRead: true);
-            }
+            ApplyMessageFlags(mail!, isRead: true, clearUnsent: CorpusPlacement.WritesSentFlag(method));
 
             if (CorpusPlacement.RequiresMove(method))
             {
@@ -348,7 +354,8 @@ public static class ComCorpusMailbox
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
-                return new CorpusPlacementProbe(method, targetFolderName, false, false, sentFlag, null, ex.Message);
+                return new CorpusPlacementProbe(
+                    method, targetFolderName, false, false, sentFlag, null, ex.Message, true);
             }
             finally
             {
@@ -361,14 +368,22 @@ public static class ComCorpusMailbox
             // The decisive check. The freshness sweep enumerates a folder through its TABLE,
             // so an item the table does not carry does not exist as far as the measurement
             // is concerned - however correct its Parent looks.
-            bool inTable = TableContains(target, CorpusSubjectFilter(), entryId!);
+            TableLookup lookup = TableFind(target, ProbeSubjectFilter(corpusId), entryId!);
 
             return new CorpusPlacementProbe(
-                method, targetFolderName, parentMatches, inTable, sentFlag, parentName, null);
+                method,
+                targetFolderName,
+                parentMatches,
+                lookup == TableLookup.Found,
+                sentFlag,
+                parentName,
+                null,
+                lookup != TableLookup.Inconclusive);
         }
         catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
         {
-            return new CorpusPlacementProbe(method, targetFolderName, false, false, false, null, ex.Message);
+            return new CorpusPlacementProbe(
+                method, targetFolderName, false, false, false, null, ex.Message, true);
         }
         finally
         {
@@ -381,32 +396,78 @@ public static class ComCorpusMailbox
         }
     }
 
-    /// <summary>A bracket-free DASL LIKE restriction selecting corpus subjects and nothing else.</summary>
-    private static string CorpusSubjectFilter()
-        => "@SQL=" + "\"" + "urn:schemas:httpmail:subject" + "\"" + " LIKE '%" + CorpusPlan.DaslCountFragment + "%'";
+    /// <summary>
+    /// A bracket-free DASL LIKE restriction selecting ONE probe item: the corpus tag plus
+    /// the reserved probe ordinal.
+    /// <para>
+    /// It used to select the whole corpus, and that is what broke the probe against a large
+    /// folder: with ~22 000 corpus items already in the Inbox, the walk hit its row cap long
+    /// before it reached the item it had just created, and "I stopped looking" was reported
+    /// as "it is not there". A filter that names the item cannot have that failure mode, and
+    /// the row cap goes back to being a bound on a runaway rather than a search budget.
+    /// </para>
+    /// </summary>
+    private static string ProbeSubjectFilter(string corpusId)
+        => "@SQL=" + "\"" + "urn:schemas:httpmail:subject" + "\"" + " LIKE '%"
+            + CorpusPlan.DaslSubjectFragment(corpusId, CorpusPlan.ProbeOrdinal) + "%'";
 
     /// <summary>
-    /// The subject every throwaway probe item carries: both tags plus a reserved ordinal, so
-    /// a probe is deletable by exactly the same two-key rule as a corpus item, and findable
-    /// by the same scan if this process dies between creating one and deleting it.
+    /// The subject every throwaway probe item carries: both tags plus the reserved probe
+    /// ordinal, so a probe is deletable by exactly the same two-key rule as a corpus item,
+    /// findable by the same scan if this process dies between creating one and deleting it,
+    /// and selectable on its own by <see cref="ProbeSubjectFilter"/>.
     /// </summary>
     private static string ProbeSubject(string corpusId, string what)
         => CorpusPlan.SubjectTag + CorpusPlan.CorpusTagOpen + corpusId + "#"
-            + int.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture) + "] " + what;
+            + CorpusPlan.ProbeOrdinal.ToString("D7", System.Globalization.CultureInfo.InvariantCulture) + "] " + what;
 
     /// <summary>
-    /// Clears MSGFLAG_UNSENT and writes the read state, then saves. Writing the WHOLE value
-    /// is what clears the unsent bit; MSGFLAG_READ carries the state the plan asked for,
-    /// because forcing it on would destroy the unread population the corpus is meant to hold
-    /// and an unread-only filter would then select nothing.
+    /// Writes the read state, and - when the placement rung says so - clears MSGFLAG_UNSENT
+    /// so the store stops filing the item as a draft. MSGFLAG_SUBMIT is ALWAYS cleared.
+    /// <para>
+    /// <b>Read-modify-write, and that is the fix.</b> This used to write the whole value:
+    /// <c>MSGFLAG_READ</c> for a read item and <c>0</c> for an unread one. The first real
+    /// build queued 5 532 items for delivery into the Outbox, and 5 532 is EXACTLY the
+    /// number of items the plan for that shape marks unread - so whatever the store did with
+    /// them, the unread ones are the population it did it to, and the read state is the only
+    /// thing that distinguished them. Two things follow, and both are done here rather than
+    /// one: the value is now derived from what the item already carries instead of replacing
+    /// it wholesale (a blind write destroys MSGFLAG_HASATTACH, MSGFLAG_FROMME and anything
+    /// else the store set), and MSGFLAG_SUBMIT - the bit that MEANS "queued for delivery" -
+    /// is cleared explicitly on every item, whatever set it.
+    /// </para>
+    /// <para>
+    /// <b>And the read state no longer goes through <c>MailItem.UnRead</c>.</b> The build
+    /// used to set that property as well, on every item, before this ran; it is the object
+    /// model's view of the same MSGFLAG_READ bit, so it was redundant, and it was applied to
+    /// exactly the affected population. One property, one writer.
+    /// </para>
+    /// <para>
+    /// MSGFLAG_UNSENT is cleared only for the rungs that say so, because it is the bit that
+    /// decides where the item LIVES: clearing it on a control rung would make that rung stop
+    /// being a control. Writing the read bit does not move an item, so it is safe on all
+    /// four - and the corpus needs its unread population whichever rung places it, or an
+    /// unread-only filter selects nothing.
+    /// </para>
     /// </summary>
-    private static void ApplySentFlag(dynamic mail, bool isRead)
+    private static void ApplyMessageFlags(dynamic mail, bool isRead, bool clearUnsent)
     {
         dynamic? accessor = null;
         try
         {
             accessor = mail.PropertyAccessor;
-            accessor.SetProperty(PrMessageFlags, isRead ? MsgFlagRead : 0);
+            int current = TryReadStruct(() => (int)accessor!.GetProperty(PrMessageFlags)) ?? MsgFlagUnsent;
+            int wanted = current & ~MsgFlagSubmit;
+            if (clearUnsent)
+            {
+                wanted &= ~MsgFlagUnsent;
+            }
+
+            wanted = isRead ? (wanted | MsgFlagRead) : (wanted & ~MsgFlagRead);
+            if (wanted != current)
+            {
+                accessor.SetProperty(PrMessageFlags, wanted);
+            }
         }
         finally
         {
@@ -583,13 +644,14 @@ public static class ComCorpusMailbox
                             mail = (CorpusPlacement.CreatesInDrafts(placement) ? draftsItems! : items!).Add(0);
                             mail.Subject = spec.Subject;
                             mail.Body = plan.BuildBody(spec);
-                            mail.UnRead = !spec.IsRead;
                             mail.Save();
 
-                            if (CorpusPlacement.WritesSentFlag(placement))
-                            {
-                                ApplySentFlag(mail!, spec.IsRead);
-                            }
+                            // The read state is written HERE and nowhere else. It used to be
+                            // set through MailItem.UnRead as well, one line above the Save,
+                            // and the population that got UnRead = true is exactly the
+                            // population that ended up queued in the Outbox on the first
+                            // real build - see ApplyMessageFlags.
+                            ApplyMessageFlags(mail!, spec.IsRead, CorpusPlacement.WritesSentFlag(placement));
 
                             DateTime? readBack = ApplyDates(
                                 mail!, dateMethod, spec.ReceivedUtc + writeShift, spec.SentUtc + writeShift);
@@ -648,6 +710,156 @@ public static class ComCorpusMailbox
                         Release(folder);
                     }
 
+                    Release(store);
+                    Release(stores);
+                    Release(ns);
+                    Release(app);
+                }
+            },
+            timeout: null);
+    }
+
+    /// <summary>What a re-anchor did.</summary>
+    /// <param name="Rewritten">Items whose dates were written.</param>
+    /// <param name="AlreadyCorrect">Items the plan said were already carrying the target instant.</param>
+    /// <param name="Refused">Items the two-key-plus-ordinal rule declined to touch.</param>
+    /// <param name="Gone">Manifest entries whose item no longer exists.</param>
+    /// <param name="Failed">Writes that threw.</param>
+    /// <param name="Elapsed">Monotonic elapsed time.</param>
+    /// <param name="FirstError">The first failure's message, so a run that failed everywhere says why once.</param>
+    public sealed record ReanchorOutcome(
+        int Rewritten, int AlreadyCorrect, int Refused, int Gone, int Failed, TimeSpan Elapsed, string? FirstError);
+
+    /// <summary>
+    /// Writes the target instants onto the items a <see cref="CorpusReanchorPlan"/> names, in
+    /// one STA session, recording each one as it goes.
+    /// <para>
+    /// It NEVER creates, moves or removes anything - it opens an item by EntryID and writes
+    /// two date properties - and it touches an item only when the EntryID came from this
+    /// corpus's manifest, the subject re-read from the item still carries both tags, and the
+    /// ordinal in that subject is the ordinal being addressed
+    /// (<see cref="CorpusSafety.MayRewrite"/>).
+    /// </para>
+    /// <para>
+    /// <paramref name="record"/> is called with a replacement manifest line per item, before
+    /// the next item is opened. Manifest item lines are last-writer-wins by ordinal, so
+    /// appending is all that is needed: an interrupted re-anchor leaves a manifest that
+    /// describes exactly what the store now holds, and running it again finishes the job,
+    /// because the remaining work is derived from that manifest rather than from a cursor.
+    /// </para>
+    /// </summary>
+    /// <param name="reanchor">The work sheet, already decided.</param>
+    /// <param name="storeDisplayName">Target store; already vetted by <see cref="CorpusSafety.EvaluateStore"/>.</param>
+    /// <param name="corpusId">The corpus id every touched subject must carry.</param>
+    /// <param name="dateMethod">The date-write rung the probe verified on this store.</param>
+    /// <param name="writeShift">Pre-compensation added to every instant written; zero unless the probe found an offset.</param>
+    /// <param name="allowlist">EntryIDs this corpus's manifest records. Nothing outside it is opened.</param>
+    /// <param name="record">Called with every rewritten item; must persist it before returning.</param>
+    /// <param name="progress">Called every <paramref name="progressEvery"/> items.</param>
+    /// <param name="progressEvery">Progress interval in items.</param>
+    public static ReanchorOutcome Reanchor(
+        CorpusReanchorPlan reanchor,
+        string storeDisplayName,
+        string corpusId,
+        CorpusDateWriteMethod dateMethod,
+        TimeSpan writeShift,
+        ISet<string> allowlist,
+        Action<CorpusManifestItem> record,
+        Action<BuildProgress> progress,
+        int progressEvery)
+    {
+        ArgumentNullException.ThrowIfNull(reanchor);
+        ArgumentNullException.ThrowIfNull(allowlist);
+        ArgumentNullException.ThrowIfNull(record);
+        ArgumentNullException.ThrowIfNull(progress);
+        ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
+
+        Stopwatch elapsed = Stopwatch.StartNew();
+        return RunSta<ReanchorOutcome>(
+            () =>
+            {
+                dynamic app = CreateOutlookApplication();
+                dynamic? ns = null;
+                dynamic? stores = null;
+                dynamic? store = null;
+                int rewritten = 0;
+                int refused = 0;
+                int gone = 0;
+                int failed = 0;
+                string? firstError = null;
+                try
+                {
+                    ns = app.GetNamespace("MAPI");
+                    stores = ns.Stores;
+                    store = FindStore(stores, storeDisplayName)
+                        ?? throw new InvalidOperationException("Store not found for the corpus re-anchor.");
+                    string storeId = (string)store.StoreID;
+
+                    foreach (CorpusReanchorItem item in reanchor.Todo)
+                    {
+                        dynamic? mail = null;
+                        try
+                        {
+                            try
+                            {
+                                mail = ns!.GetItemFromID(item.EntryId, storeId);
+                            }
+                            catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                            {
+                                gone++;
+                                continue;
+                            }
+
+                            string? subject = TryRead<string>(() => (string)mail!.Subject);
+                            if (!CorpusSafety.MayRewrite(item.EntryId, subject, allowlist, corpusId, item.Ordinal))
+                            {
+                                refused++;
+                                continue;
+                            }
+
+                            DateTime? readBack = ApplyDates(
+                                mail!, dateMethod, item.ReceivedUtc + writeShift, item.SentUtc + writeShift);
+
+                            // FolderId and BodyBytes are recorded as 0: a re-anchor knows
+                            // neither and must not claim to. The manifest's own reader takes
+                            // the LAST line for an ordinal, and the only field a re-anchor is
+                            // entitled to restate is the instant it just wrote.
+                            var line = new CorpusManifestItem(
+                                item.Ordinal,
+                                item.EntryId,
+                                0,
+                                0,
+                                CorpusManifest.FormatUtc(readBack ?? item.ReceivedUtc));
+                            record(line);
+                            rewritten++;
+                        }
+                        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                        {
+                            failed++;
+                            firstError ??= ex.Message;
+                        }
+                        finally
+                        {
+                            Release(mail);
+                        }
+
+                        if ((rewritten + failed + refused + gone) % progressEvery == 0)
+                        {
+                            progress(new BuildProgress(
+                                rewritten,
+                                reanchor.AlreadyCorrect,
+                                failed,
+                                reanchor.Todo.Count - rewritten - failed - refused - gone,
+                                0,
+                                elapsed.Elapsed));
+                        }
+                    }
+
+                    return new ReanchorOutcome(
+                        rewritten, reanchor.AlreadyCorrect, refused, gone, failed, elapsed.Elapsed, firstError);
+                }
+                finally
+                {
                     Release(store);
                     Release(stores);
                     Release(ns);
@@ -861,7 +1073,10 @@ public static class ComCorpusMailbox
             try
             {
                 folder = store.Session.GetFolderFromID(created.EntryId);
-                CollectCorpusItems(folder!, 0, corpusId, rows);
+                // The folder id the substitute STANDS IN FOR, not 0. A census compares where
+                // an item is against where the plan puts it, and a Junk item found in the
+                // folder created because the PST has no Junk Email is where it belongs.
+                CollectCorpusItems(folder!, created.FolderId, corpusId, rows);
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
@@ -1093,10 +1308,7 @@ public static class ComCorpusMailbox
             mail.Body = "date fidelity probe";
             mail.Save();
 
-            if (CorpusPlacement.WritesSentFlag(placement))
-            {
-                ApplySentFlag(mail!, isRead: true);
-            }
+            ApplyMessageFlags(mail!, isRead: true, clearUnsent: CorpusPlacement.WritesSentFlag(placement));
 
             DateTime? readBack;
             try
@@ -1137,9 +1349,24 @@ public static class ComCorpusMailbox
                 Release(reopened);
             }
 
-            bool selected = TableContains(folder, DateWindowFilter(requestedUtc.AddDays(-1), requestedUtc.AddDays(1)), entryId!);
-            bool excluded = !TableContains(folder, DateWindowFilter(requestedUtc.AddDays(2), null), entryId!);
-            return new CorpusDateProbe(method, requestedUtc, writeUtc, readBack, selected, excluded, null);
+            TableLookup inside = TableFind(
+                folder, DateWindowFilter(corpusId, requestedUtc.AddDays(-1), requestedUtc.AddDays(1)), entryId!);
+            TableLookup outside = TableFind(
+                folder, DateWindowFilter(corpusId, requestedUtc.AddDays(2), null), entryId!);
+            if (inside == TableLookup.Inconclusive || outside == TableLookup.Inconclusive)
+            {
+                // Reported as an ERROR rather than as a negative result. A date rung that
+                // could not be checked is not a rung that failed, and treating it as one
+                // sends the ladder down to a worse method for no reason.
+                return new CorpusDateProbe(
+                    method, requestedUtc, writeUtc, readBack, false, false,
+                    "the folder table could not answer whether the item is in the window "
+                    + "(row cap reached, or the table could not be read)");
+            }
+
+            return new CorpusDateProbe(
+                method, requestedUtc, writeUtc, readBack,
+                inside == TableLookup.Found, outside == TableLookup.NotFound, null);
         }
         catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
         {
@@ -1163,10 +1390,16 @@ public static class ComCorpusMailbox
     /// <see cref="DaslDateLiteral"/> - the year-first form, because Outlook parses these in
     /// the MACHINE locale and a day-first literal silently returns the wrong rows.
     /// </summary>
-    private static string DateWindowFilter(DateTime fromUtc, DateTime? toUtc)
+    private static string DateWindowFilter(string corpusId, DateTime fromUtc, DateTime? toUtc)
     {
+        // Narrowed to the ONE probe ordinal, not to the whole corpus. The wide form had the
+        // same defect as the placement check: against a populated store the open-ended
+        // "everything newer than X" restriction returns thousands of rows, the walk stops at
+        // its cap, and "not found" is then indistinguishable from "not reached" - which is
+        // how the exclusion half of this probe could report a pass it had not proved.
         string received = "\"urn:schemas:httpmail:datereceived\"";
-        string filter = "@SQL=(\"urn:schemas:httpmail:subject\" LIKE '%" + CorpusPlan.DaslCountFragment + "%')"
+        string filter = "@SQL=(\"urn:schemas:httpmail:subject\" LIKE '%"
+            + CorpusPlan.DaslSubjectFragment(corpusId, CorpusPlan.ProbeOrdinal) + "%')"
             + " AND (" + received + " >= '" + DaslDateLiteral.FormatUtc(fromUtc) + "')";
         if (toUtc != null)
         {
@@ -1176,15 +1409,45 @@ public static class ComCorpusMailbox
         return filter;
     }
 
-    private static bool TableContains(dynamic folder, string filter, string entryId)
+    /// <summary>What a table lookup for one item concluded.</summary>
+    private enum TableLookup
+    {
+        /// <summary>The table returned the item.</summary>
+        Found,
+
+        /// <summary>The table was walked to its end and the item was not in it.</summary>
+        NotFound,
+
+        /// <summary>
+        /// The question was not answered: the row cap was reached with rows still to come, or
+        /// the table could not be read. Kept distinct from <see cref="NotFound"/> because
+        /// collapsing the two is what made a large folder look like a placement failure - a
+        /// probe gave up after 2 000 rows of a 22 000-row table, reported the item ABSENT,
+        /// and the build refused a placement that worked.
+        /// </summary>
+        Inconclusive,
+    }
+
+    /// <summary>
+    /// Asks a folder's table whether it carries one specific item. The FILTER is expected to
+    /// be selective enough to return roughly that one item - <see cref="ProbeTableRowCap"/>
+    /// is a bound on a runaway walk, not a search budget - and reaching it is reported as
+    /// <see cref="TableLookup.Inconclusive"/> rather than as an answer.
+    /// </summary>
+    private static TableLookup TableFind(dynamic folder, string filter, string entryId)
     {
         dynamic? table = null;
         try
         {
             table = folder.GetTable(filter);
             int walked = 0;
-            while (!(bool)table.EndOfTable && walked < ProbeTableRowCap)
+            while (walked < ProbeTableRowCap)
             {
+                if ((bool)table.EndOfTable)
+                {
+                    return TableLookup.NotFound;
+                }
+
                 dynamic? row = null;
                 try
                 {
@@ -1194,7 +1457,7 @@ public static class ComCorpusMailbox
                     if (values.Length > 0 && values[0] is string id
                         && string.Equals(id, entryId, StringComparison.OrdinalIgnoreCase))
                     {
-                        return true;
+                        return TableLookup.Found;
                     }
                 }
                 finally
@@ -1203,11 +1466,11 @@ public static class ComCorpusMailbox
                 }
             }
 
-            return false;
+            return TableLookup.Inconclusive;
         }
         catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
         {
-            return false;
+            return TableLookup.Inconclusive;
         }
         finally
         {
