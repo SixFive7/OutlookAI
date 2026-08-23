@@ -41,6 +41,13 @@ public static class LiveStoreCountTripwire
     private static bool _verified;
 
     /// <summary>
+    /// The retry bounds THIS machine is allowed to spend, decided once from the settings file's
+    /// declared machine profile. Held here rather than looked up at the point of use so a run
+    /// cannot be censused under one policy and retried under another.
+    /// </summary>
+    private static TripwireRetryPolicy _policy = TripwireRetryPolicy.None;
+
+    /// <summary>
     /// One COM session held for the whole live tier. The census itself opens and releases
     /// short-lived Outlook references; if the tests STARTED Outlook, releasing the last one
     /// arms its idle self-exit (~11.5 min - the measured headless lifetime), which then
@@ -103,10 +110,18 @@ public static class LiveStoreCountTripwire
             _hub = settings.TestHubStoreDisplayName;
             _lazyHierarchyStores = settings.ExpectedDelegateStoreDisplayNames.ToList();
 
+            // The retry bounds come from what the machine DECLARES itself to be, and from
+            // whether this process is itself somebody's bounded re-run. Both rungs of the
+            // ladder exist to separate the suite from a person, a rule, a retention policy or
+            // an Exchange sync; a machine that has none of those gets none of the bounds, and
+            // its first reading is the verdict.
+            _policy = TripwireRetryPolicy.For(settings.MachineProfile, TripwireReRunDriver.IsReRunChild);
+
             // Printed before the first COM call: a run that turns out to have been pointed
             // at the wrong machine's settings should say so at the top of the log, not be
             // inferred afterwards from which tests behaved oddly.
             Console.WriteLine("[tripwire] live-test settings: " + settings.Describe() + ".");
+            Console.WriteLine("[tripwire] retry " + _policy.Describe() + ".");
             try
             {
                 _keepAlive = OutlookComSession.Connect(allowStartingOutlook: true);
@@ -165,9 +180,17 @@ public static class LiveStoreCountTripwire
     /// line saying how far the evidence actually goes. Runs once; later calls are no-ops.
     /// <para>
     /// A suspected loss is not reported straight away: it goes through
-    /// <see cref="TripwireRetryLadder"/>, which is bounded (2 re-censuses, then 1 re-run) and
-    /// which reports whatever it did in both directions - a run that passed on the second
-    /// census says so, in the same summary line a clean run uses.
+    /// <see cref="TripwireRetryLadder"/> under this machine's <see cref="TripwireRetryPolicy"/>
+    /// - 2 re-censuses then 1 OUT-OF-PROCESS re-run on a Production profile, and NOTHING on any
+    /// other, where the post-run census is the verdict - and whatever it did is reported in
+    /// both directions: a run that passed on the second census says so, in the same summary
+    /// line a clean run uses.
+    /// </para>
+    /// <para>
+    /// A delta that SURVIVED a re-census and then cleared reports
+    /// <see cref="TripwireRunOutcome.PassedWithASurvivedDelta"/>: a pass for the reader, and a
+    /// throw all the same, so the process cannot exit zero on the one shape where a real loss
+    /// of mail could otherwise end as a green run.
     /// </para>
     public static void Verify()
     {
@@ -185,6 +208,7 @@ public static class LiveStoreCountTripwire
         Dictionary<string, IReadOnlyDictionary<string, FolderCensus>> baseline;
         string hub;
         IReadOnlyList<string> lazyStores;
+        TripwireRetryPolicy policy;
         lock (Gate)
         {
             if (_baseline == null || _hub == null || _verified)
@@ -196,6 +220,7 @@ public static class LiveStoreCountTripwire
             baseline = _baseline;
             hub = _hub;
             lazyStores = _lazyHierarchyStores;
+            policy = _policy;
         }
 
         Stopwatch stopwatch = Stopwatch.StartNew();
@@ -209,15 +234,13 @@ public static class LiveStoreCountTripwire
             // Confirm before crying, but BOUNDED and on the record: every retry is a chance
             // to convert a real loss into a pass, so the ladder stops the moment two censuses
             // agree, and whatever it did is printed whether it ends in a pass or a failure.
-            // TripwireRetryLadder owns the policy; this only supplies the censuses.
-            Console.WriteLine(
-                "[tripwire] suspected loss - re-censusing to confirm (at most "
-                + TripwireRetryLadder.MaxReCensuses + ", ~" + TripwireRetryLadder.ReCensusGapSeconds
-                + " s apart; then at most " + TripwireRetryLadder.MaxImplicatedReRuns
-                + " bounded re-run of the implicated tests).");
-            retry = TripwireRetryLadder.Resolve(verdict, new LiveRetrySource(baseline, hub, lazyStores));
+            // TripwireRetryLadder owns the rules; this supplies the censuses and the bounds
+            // this machine is entitled to.
+            Console.WriteLine("[tripwire] suspected loss - " + policy.Describe() + ".");
+            retry = TripwireRetryLadder.Resolve(
+                verdict, new LiveRetrySource(baseline, hub, lazyStores), policy);
             verdict = new TripwireVerdict(
-                retry.Confirmed, verdict.Notes, retry.Failed ? verdict.Attribution : null);
+                retry.Confirmed, verdict.Notes, retry.Confirmed.Count > 0 ? verdict.Attribution : null);
             Console.WriteLine(retry.Describe());
         }
 
@@ -245,11 +268,20 @@ public static class LiveStoreCountTripwire
             keepAlive?.Dispose();
         }
 
-        if (verdict.Failed)
-        {
-            throw new InvalidOperationException(
-                verdict.Describe() + Environment.NewLine + retry.Describe());
-        }
+        // Told to the process that started this one, if any, BEFORE the refusal: a parent
+        // driving the bounded re-run rung reads this to tell "the delta came back" from "some
+        // other test failed", and only the first of those earns the sentence about the suite
+        // removing mail. Getting this backwards would cost accuracy and nothing else - every
+        // marker a parent cannot trust maps to Inconclusive, which fails.
+        TripwireReRunDriver.RecordOwnVerdict(TripwireRunVerdict.RefusalFor(verdict, retry) != null);
+
+        // The whole decision AND the throw, in one call, because this method is behind a COM
+        // census that no CI test can execute: an `if` here is a condition a mutation can invert
+        // where nothing would notice, and that was measured rather than supposed. Enforce
+        // consults the RETRY REPORT as well as the rebuilt verdict, which is what makes PASSED
+        // WITH A SURVIVED DELTA fail - the ladder confirmed nothing, and a delta that was real
+        // at two separate readings still must not leave a green run behind it.
+        TripwireRunVerdict.Enforce(verdict, retry);
     }
 
     /// <summary>
@@ -320,24 +352,30 @@ public static class LiveStoreCountTripwire
         }
 
         /// <summary>
-        /// NOT ATTEMPTED, and that is a deliberate refusal rather than an omission. A re-run
-        /// means starting a second xunit run of this assembly from inside the first one's
-        /// teardown: it would re-enter the fixtures that are currently disposing, re-take a
-        /// baseline over a profile mid-teardown, and write to a mailbox at a moment when
-        /// nothing is left to sweep the artifacts away. So the rung is reported as
-        /// <see cref="TripwireReRunOutcome.Inconclusive"/> - which fails the run - and the
-        /// command the maintainer should run is printed instead. An unperformed experiment
-        /// exonerates nothing, so this can only ever make the tier fail, never pass.
+        /// Performed OUT OF PROCESS, which is the only thing that makes it safe.
+        /// <para>
+        /// Running it in this process would mean starting a second xunit run of this assembly
+        /// from inside the first one's teardown: it would re-enter the fixtures that are
+        /// currently disposing, re-take a baseline over a profile mid-teardown, and write to a
+        /// mailbox at the moment when nothing is left to sweep the artifacts away. A child
+        /// process shares none of that - it is an ordinary, fully guarded live run with its own
+        /// preflight, census, allowlist, sweep and verification, which is exactly the run this
+        /// rung used to print instructions for.
+        /// </para>
+        /// <para>
+        /// The decision is <see cref="TripwireReRunDriver"/>'s; this only names the selections.
+        /// Every way the child can fail to answer is
+        /// <see cref="TripwireReRunOutcome.Inconclusive"/>, which fails the run.
+        /// </para>
         /// </summary>
         public TripwireReRunOutcome ReRun(IReadOnlyList<string> implicated, int attempt)
         {
             Console.WriteLine(
-                "[tripwire] the bounded re-run cannot be driven from inside the suite's own teardown - it would "
-                + "re-enter the fixtures that are disposing right now. Run it by hand, once, over the "
+                "[tripwire] escalating to a bounded re-run over the "
                 + implicated.Count.ToString(CultureInfo.InvariantCulture) + " collection(s) that ran: "
                 + string.Join(", ", implicated) + ". If the same failure(s) come back, the suite is removing "
-                + "mail; if they do not, the delta was ambient.");
-            return TripwireReRunOutcome.Inconclusive;
+                + "mail; if they do not, the delta was ambient - and the run fails either way.");
+            return TripwireReRunDriver.Run(implicated, attempt);
         }
     }
 
@@ -355,6 +393,7 @@ public static class LiveStoreCountTripwire
             _baseline = null;
             _hub = null;
             _verified = false;
+            _policy = TripwireRetryPolicy.None;
         }
 
         LiveTierRunPlan.ResetForTests();

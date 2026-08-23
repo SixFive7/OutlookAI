@@ -19,6 +19,151 @@ public enum TripwireReRunOutcome
 }
 
 /// <summary>
+/// What one whole trip through the ladder means for the RUN, as opposed to what it means for
+/// the reader. Three values rather than a boolean, because two of them read as a pass and only
+/// one of them may leave the process with a zero exit code.
+/// </summary>
+public enum TripwireRunOutcome
+{
+    /// <summary>
+    /// Nothing was suspected, or a suspected delta was gone on the very first re-reading. The
+    /// only value that lets a run exit zero.
+    /// </summary>
+    Passed = 0,
+
+    /// <summary>
+    /// A suspected loss SURVIVED at least one re-census - so the items really were gone at two
+    /// separate readings - and then cleared, either on a later census or because the bounded
+    /// re-run did not reproduce it.
+    /// <para>
+    /// <b>A pass for the reader and a failure for automation, deliberately.</b> This is the one
+    /// place in the design where a real loss of mail could end as a green run: the delta is
+    /// real (two readings saw it), the re-run cannot pin it on the suite, and every other check
+    /// in the tier is happy. The maintainer's standing rule is to fail aggressively rather than
+    /// leak a slow degradation, so the headline says PASSED WITH A SURVIVED DELTA and the run
+    /// still exits non-zero.
+    /// </para>
+    /// </summary>
+    PassedWithASurvivedDelta = 1,
+
+    /// <summary>The delta survived everything the ladder could spend on it.</summary>
+    Failed = 2,
+}
+
+/// <summary>
+/// The three bounds the ladder is allowed to spend, as one value, so a machine can be given
+/// fewer of them than another WITHOUT any of the ladder's own rules moving.
+/// <para>
+/// <b>Why this is per machine and not per run.</b> The ladder's two rungs answer questions that
+/// only exist on a mailbox something OTHER than the suite can change. Re-censusing asks "did the
+/// mailbox settle?", and re-running asks "was it the suite or was it the person?" - and on a
+/// dedicated test machine there is no person, no server-side rule, no retention policy and no
+/// Exchange sync: the stores are PSTs, nobody is at the keyboard during a run, and the only
+/// transport is a loopback sink. There is nothing for those two questions to distinguish, so
+/// the honest bound there is ZERO and the first reading is the verdict.
+/// </para>
+/// <para>
+/// <b>An unknown profile gets NO retries.</b> Every retry is a chance to convert a real loss
+/// into a pass, so the direction that fails safe is the strict one: only the profile that
+/// explicitly declares itself <see cref="LiveMachineProfile.Production"/> - a real working
+/// mailbox with real people and a real server in it - buys the accommodation.
+/// </para>
+/// </summary>
+public sealed class TripwireRetryPolicy
+{
+    private TripwireRetryPolicy(string name, int maxReCensuses, int reCensusGapSeconds, int maxImplicatedReRuns)
+    {
+        if (maxReCensuses < 0 || reCensusGapSeconds < 0 || maxImplicatedReRuns < 0)
+        {
+            throw new ArgumentException("A retry policy cannot spend a negative number of anything.", nameof(name));
+        }
+
+        Name = name;
+        MaxReCensuses = maxReCensuses;
+        ReCensusGapSeconds = reCensusGapSeconds;
+        MaxImplicatedReRuns = maxImplicatedReRuns;
+    }
+
+    /// <summary>
+    /// The bounds a real working mailbox needs: 2 re-censuses ~30 s apart, then at most 1
+    /// bounded re-run. The numbers themselves stay on <see cref="TripwireRetryLadder"/>, which
+    /// is where they are documented and pinned.
+    /// </summary>
+    public static TripwireRetryPolicy Production { get; } = new(
+        "Production",
+        TripwireRetryLadder.MaxReCensuses,
+        TripwireRetryLadder.ReCensusGapSeconds,
+        TripwireRetryLadder.MaxImplicatedReRuns);
+
+    /// <summary>
+    /// No retries at all: the post-run census is the verdict. What a machine gets when nothing
+    /// but the suite can change a mailbox on it, and what an UNDECLARED machine gets too.
+    /// </summary>
+    public static TripwireRetryPolicy None { get; } = new("None", 0, 0, 0);
+
+    /// <summary>How this policy is named in the run's own output.</summary>
+    public string Name { get; }
+
+    /// <summary>Extra censuses a suspected loss may be given.</summary>
+    public int MaxReCensuses { get; }
+
+    /// <summary>Seconds between two censuses.</summary>
+    public int ReCensusGapSeconds { get; }
+
+    /// <summary>Times the plausibly-implicated tests may be run again.</summary>
+    public int MaxImplicatedReRuns { get; }
+
+    /// <summary>The gap as a <see cref="TimeSpan"/>, for the source that has to wait it out.</summary>
+    public TimeSpan ReCensusGap => TimeSpan.FromSeconds(ReCensusGapSeconds);
+
+    /// <summary>True when this policy would spend anything at all on a suspected loss.</summary>
+    public bool RetriesAtAll => MaxReCensuses > 0 || MaxImplicatedReRuns > 0;
+
+    /// <summary>
+    /// The policy for one machine. Only a declared <see cref="LiveMachineProfile.Production"/>
+    /// profile gets retries; everything else - <see cref="LiveMachineProfile.Portable"/>, and any
+    /// value added later that nobody has thought about - gets <see cref="None"/>.
+    /// </summary>
+    public static TripwireRetryPolicy For(LiveMachineProfile profile)
+    {
+        return profile == LiveMachineProfile.Production ? Production : None;
+    }
+
+    /// <summary>
+    /// The policy for one machine, with the recursion guard applied.
+    /// <para>
+    /// A process that IS the bounded re-run must not start a bounded re-run of its own, or the
+    /// ladder would recurse one live tier run at a time until something ran out. It keeps its
+    /// censuses - they are cheap and they stop the child crying wolf over a transient - and
+    /// loses the re-run rung, which is strictly stricter: a child with no re-run available
+    /// reports a delta it cannot clear, and the parent reads that as the delta coming back.
+    /// </para>
+    /// </summary>
+    public static TripwireRetryPolicy For(LiveMachineProfile profile, bool isReRunChild)
+    {
+        TripwireRetryPolicy policy = For(profile);
+        return isReRunChild ? policy.WithoutReRuns() : policy;
+    }
+
+    /// <summary>The same censuses, no re-runs.</summary>
+    public TripwireRetryPolicy WithoutReRuns()
+    {
+        return MaxImplicatedReRuns == 0
+            ? this
+            : new TripwireRetryPolicy(Name + " (re-run child)", MaxReCensuses, ReCensusGapSeconds, 0);
+    }
+
+    /// <summary>One line for the run's output, so a run says which bounds it was given.</summary>
+    public string Describe()
+    {
+        return RetriesAtAll
+            ? "policy " + Name + ": at most " + MaxReCensuses + " re-census(es) ~" + ReCensusGapSeconds
+                + " s apart, then at most " + MaxImplicatedReRuns + " bounded re-run(s)"
+            : "policy " + Name + ": NO RETRIES - the post-run census is the verdict";
+    }
+}
+
+/// <summary>
 /// Everything the retry ladder needs from the outside world, so the policy itself is pure and
 /// CI can drive every branch of it without an Outlook, a mailbox or a wall clock.
 /// </summary>
@@ -59,7 +204,7 @@ public sealed class TripwireRetryReport
 {
     private TripwireRetryReport(
         bool entered,
-        bool failed,
+        TripwireRunOutcome outcome,
         IReadOnlyList<TripwireFailure> confirmed,
         int reCensuses,
         int reRuns,
@@ -67,8 +212,34 @@ public sealed class TripwireRetryReport
         bool boundReached,
         IReadOnlyList<string> steps)
     {
+        // THE STRUCTURAL GUARANTEE, and the reason it lives in the constructor rather than in
+        // the code that builds reports. A report is the only thing the live tripwire consults
+        // when it decides whether to throw, and Failed is DERIVED from Outcome rather than
+        // stored beside it - so the only way to produce a run that exits zero is to produce a
+        // report whose Outcome is Passed. This invariant then makes that impossible whenever a
+        // delta survived a reading: not "we remembered to fail it" but "such a report cannot be
+        // constructed". Both directions, because either lie is the same lie.
+        if (survivedARecensus && outcome == TripwireRunOutcome.Passed)
+        {
+            throw new ArgumentException(
+                "A tripwire retry report cannot say a suspected loss SURVIVED a re-census and also report a "
+                + "clean pass. A delta seen at two separate readings is real, and the one shape in this design "
+                + "where real mail loss could end as a green run is exactly this one. Use "
+                + nameof(TripwireRunOutcome.PassedWithASurvivedDelta) + ", which reads as a pass and still "
+                + "fails the run.",
+                nameof(outcome));
+        }
+
+        if (!survivedARecensus && outcome == TripwireRunOutcome.PassedWithASurvivedDelta)
+        {
+            throw new ArgumentException(
+                "A tripwire retry report cannot claim a survived delta when nothing survived a re-census. "
+                + "The headline would tell a reader to go looking for items that were never missing twice.",
+                nameof(outcome));
+        }
+
         Entered = entered;
-        Failed = failed;
+        Outcome = outcome;
         Confirmed = confirmed;
         ReCensuses = reCensuses;
         ReRuns = reRuns;
@@ -80,8 +251,15 @@ public sealed class TripwireRetryReport
     /// <summary>False when nothing was suspected and the ladder was never entered.</summary>
     public bool Entered { get; }
 
-    /// <summary>True when the run must fail.</summary>
-    public bool Failed { get; }
+    /// <summary>What this trip means for the run. See <see cref="TripwireRunOutcome"/>.</summary>
+    public TripwireRunOutcome Outcome { get; }
+
+    /// <summary>
+    /// True when the run must fail. DERIVED, never stored: exactly one of the three outcomes
+    /// lets a run exit zero, so adding a fourth outcome fails the run until somebody decides
+    /// otherwise on purpose, and no report can carry a verdict that disagrees with itself.
+    /// </summary>
+    public bool Failed => Outcome != TripwireRunOutcome.Passed;
 
     /// <summary>The failures that survived everything. Empty on a pass.</summary>
     public IReadOnlyList<TripwireFailure> Confirmed { get; }
@@ -118,19 +296,28 @@ public sealed class TripwireRetryReport
                 return "[tripwire] no retry: the post-run census found nothing to confirm.";
             }
 
-            if (Failed)
+            if (Outcome == TripwireRunOutcome.Failed)
             {
                 return "[tripwire] RETRIED AND STILL FAILING: a suspected loss survived "
                     + Plural(ReCensuses, "re-census", "re-censuses") + " and "
                     + Plural(ReRuns, "re-run", "re-runs") + ".";
             }
 
-            return SurvivedARecensus
-                ? "[tripwire] RETRIED AND PASSED, BUT NOT ON THE FIRST READING: a suspected loss survived at "
-                    + "least one re-census before it cleared. Read the attempts below before trusting this pass."
+            return Outcome == TripwireRunOutcome.PassedWithASurvivedDelta
+                ? "[tripwire] " + SurvivedDeltaHeadline + ": a suspected loss survived at least one re-census "
+                    + "before it cleared, so the items really were gone at two separate readings. The retry "
+                    + "ladder's verdict is a PASS and THE RUN STILL EXITS NON-ZERO - a delta that survived a "
+                    + "reading is the one shape in this design where real mail loss could end as a green run. "
+                    + "Read the attempts below; the items named there are still worth a look."
                 : "[tripwire] RETRIED AND PASSED: the suspected loss was not reproducible on a second census.";
         }
     }
+
+    /// <summary>
+    /// The phrase a human reads for <see cref="TripwireRunOutcome.PassedWithASurvivedDelta"/>,
+    /// named once so the report, the refusal message and the pin cannot spell it differently.
+    /// </summary>
+    public const string SurvivedDeltaHeadline = "PASSED WITH A SURVIVED DELTA";
 
     /// <summary>One line for the run summary, so a clean run and a retried one never read alike.</summary>
     public string Summary
@@ -143,7 +330,12 @@ public sealed class TripwireRetryReport
             }
 
             return "retry: " + Count(ReCensuses) + " re-census(es), " + Count(ReRuns) + " re-run(s), verdict "
-                + (Failed ? "FAILED" : SurvivedARecensus ? "PASSED (survived a re-census)" : "PASSED");
+                + Outcome switch
+                {
+                    TripwireRunOutcome.Failed => "FAILED",
+                    TripwireRunOutcome.PassedWithASurvivedDelta => SurvivedDeltaHeadline + " (fails the run)",
+                    _ => "PASSED",
+                };
         }
     }
 
@@ -152,7 +344,7 @@ public sealed class TripwireRetryReport
     {
         return new TripwireRetryReport(
             entered: false,
-            failed: false,
+            outcome: TripwireRunOutcome.Passed,
             confirmed: Array.Empty<TripwireFailure>(),
             reCensuses: 0,
             reRuns: 0,
@@ -169,12 +361,19 @@ public sealed class TripwireRetryReport
             : Headline;
     }
 
+    /// <summary>
+    /// A trip that ended without a confirmed loss. The OUTCOME is not a parameter: it is
+    /// derived from whether anything survived a re-census, so "cleared" and "clean" are one
+    /// decision made in one place rather than two flags that can drift apart.
+    /// </summary>
     internal static TripwireRetryReport Cleared(
         int reCensuses, int reRuns, bool survivedARecensus, bool boundReached, IReadOnlyList<string> steps)
     {
         return new TripwireRetryReport(
             entered: true,
-            failed: false,
+            outcome: survivedARecensus
+                ? TripwireRunOutcome.PassedWithASurvivedDelta
+                : TripwireRunOutcome.Passed,
             confirmed: Array.Empty<TripwireFailure>(),
             reCensuses,
             reRuns,
@@ -187,16 +386,17 @@ public sealed class TripwireRetryReport
         IReadOnlyList<TripwireFailure> confirmed,
         int reCensuses,
         int reRuns,
+        bool survivedARecensus,
         bool boundReached,
         IReadOnlyList<string> steps)
     {
         return new TripwireRetryReport(
             entered: true,
-            failed: true,
+            outcome: TripwireRunOutcome.Failed,
             confirmed,
             reCensuses,
             reRuns,
-            survivedARecensus: true,
+            survivedARecensus,
             boundReached,
             steps);
     }
@@ -209,6 +409,63 @@ public sealed class TripwireRetryReport
     private static string Count(int value)
     {
         return value.ToString(CultureInfo.InvariantCulture);
+    }
+}
+
+/// <summary>
+/// The single place that decides whether a verified live run may finish quietly, and what it
+/// says when it may not.
+/// <para>
+/// It exists as a pure function for one reason: the line that acts on it - the throw at the end
+/// of <c>LiveStoreCountTripwire.Verify</c> - sits behind a COM census that no CI test can
+/// execute, so the DECISION is moved somewhere CI can drive every combination of it and only
+/// the throw is left behind the census. T1 pins the decision by value and reads the call back
+/// out of the compiled method.
+/// </para>
+/// </summary>
+public static class TripwireRunVerdict
+{
+    /// <summary>
+    /// The message a run must refuse with, or null when it may finish quietly.
+    /// <para>
+    /// Both halves are consulted, and the second is the one that matters here: a retry report
+    /// can fail a run that the rebuilt verdict calls clean. That is exactly the
+    /// <see cref="TripwireRunOutcome.PassedWithASurvivedDelta"/> case - nothing was CONFIRMED
+    /// as lost, and a delta was nevertheless real at two separate readings.
+    /// </para>
+    /// </summary>
+    public static string? RefusalFor(TripwireVerdict verdict, TripwireRetryReport retry)
+    {
+        ArgumentNullException.ThrowIfNull(verdict);
+        ArgumentNullException.ThrowIfNull(retry);
+        if (!verdict.Failed && !retry.Failed)
+        {
+            return null;
+        }
+
+        return verdict.Failed
+            ? verdict.Describe() + Environment.NewLine + retry.Describe()
+            : retry.Describe();
+    }
+
+    /// <summary>
+    /// Refuses the run, or returns quietly.
+    /// <para>
+    /// <b>The decision and the acting on it are one call on purpose.</b> The caller is
+    /// <c>LiveStoreCountTripwire.Verify</c>, which sits behind a COM census no CI test can
+    /// execute, so any <c>if</c> left in it is a condition a mutation can invert where nothing
+    /// would notice - measured: inverting exactly that condition passed the whole suite. There
+    /// is now no such condition there; the branch lives here, where CI drives both sides of it,
+    /// and all a mutation can do up there is remove the call, which is read out of the IL.
+    /// </para>
+    /// </summary>
+    public static void Enforce(TripwireVerdict verdict, TripwireRetryReport retry)
+    {
+        string? refusal = RefusalFor(verdict, retry);
+        if (refusal != null)
+        {
+            throw new InvalidOperationException(refusal);
+        }
     }
 }
 
@@ -234,6 +491,24 @@ public sealed class TripwireRetryReport
 /// <see cref="ReCensusGapSeconds"/>-second gaps) against a tier run of about 27 minutes.
 /// </para>
 /// <para>
+/// <b>Both rungs are a PRODUCTION accommodation, and the bounds say so.</b> Re-censusing and
+/// re-running exist to separate the suite from everything ELSE that can change a real mailbox
+/// during a 27-minute run: a person reading their own mail, a server-side rule, an Exchange
+/// sync, a retention policy, a delegate store whose folder hierarchy syncs lazily. A dedicated
+/// test machine has none of those - PST stores, nobody at the keyboard, a loopback sink for
+/// transport - so there is nothing for the two experiments to tell apart and the honest bound
+/// there is zero. <see cref="TripwireRetryPolicy"/> carries the numbers per machine profile;
+/// this class carries the rules, and they do not change with the numbers.
+/// </para>
+/// <para>
+/// <b>A pass that took a retry is not a green run.</b> A delta that survives even one re-census
+/// was real at two separate readings, so clearing it later reports
+/// <see cref="TripwireRunOutcome.PassedWithASurvivedDelta"/> - which reads as a pass and still
+/// fails the run. The invariant is enforced in <see cref="TripwireRetryReport"/>'s constructor
+/// rather than by remembering to set a flag: a report that says a delta survived and also
+/// reports a clean pass cannot be built.
+/// </para>
+/// <para>
 /// <b>The ladder.</b> The post-run census fails -&gt; up to <see cref="MaxReCensuses"/>
 /// re-censuses, <see cref="ReCensusGapSeconds"/> s apart, each intersecting the survivors by
 /// <see cref="TripwireFailure.Key"/> -&gt; if anything survives all of them, up to
@@ -246,9 +521,10 @@ public sealed class TripwireRetryReport
 public static class TripwireRetryLadder
 {
     /// <summary>
-    /// How many extra censuses a suspected loss may be given. Two, because the question a
-    /// re-census answers is "does this reading repeat?", and a third reading of the same answer
-    /// buys nothing while costing one more chance to pass by accident.
+    /// How many extra censuses a suspected loss may be given ON A PRODUCTION PROFILE. Two,
+    /// because the question a re-census answers is "does this reading repeat?", and a third
+    /// reading of the same answer buys nothing while costing one more chance to pass by
+    /// accident. A machine that declares any other profile gets <see cref="TripwireRetryPolicy.None"/>.
     /// </summary>
     public const int MaxReCensuses = 2;
 
@@ -276,8 +552,24 @@ public static class TripwireRetryLadder
     /// <param name="source">Where the extra censuses and the re-run come from.</param>
     public static TripwireRetryReport Resolve(TripwireVerdict suspected, ITripwireRetrySource source)
     {
+        return Resolve(suspected, source, TripwireRetryPolicy.Production);
+    }
+
+    /// <summary>
+    /// The same ladder under a stated set of bounds. Every rule is unchanged; only how many
+    /// times each rung may be climbed comes from <paramref name="policy"/>, so a machine where
+    /// nothing but the suite can change a mailbox can be given zero of both and have its first
+    /// reading be the verdict.
+    /// </summary>
+    /// <param name="suspected">The failing post-run comparison. A clean verdict is rejected.</param>
+    /// <param name="source">Where the extra censuses and the re-run come from.</param>
+    /// <param name="policy">The bounds this machine is allowed to spend.</param>
+    public static TripwireRetryReport Resolve(
+        TripwireVerdict suspected, ITripwireRetrySource source, TripwireRetryPolicy policy)
+    {
         ArgumentNullException.ThrowIfNull(suspected);
         ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(policy);
         if (!suspected.Failed)
         {
             throw new ArgumentException(
@@ -290,14 +582,15 @@ public static class TripwireRetryLadder
         HashSet<string> everSeen = new(survivors.Select(f => f.Key), StringComparer.Ordinal);
         List<string> steps = new()
         {
-            "post-run census: " + Count(survivors.Count) + " suspected failure(s) - " + Keys(survivors) + ".",
+            "post-run census: " + Count(survivors.Count) + " suspected failure(s) - " + Keys(survivors) + ". "
+                + policy.Describe() + ".",
         };
 
         int reCensuses = 0;
         bool survivedARecensus = false;
-        while (survivors.Count > 0 && reCensuses < MaxReCensuses)
+        while (survivors.Count > 0 && reCensuses < policy.MaxReCensuses)
         {
-            source.Wait(ReCensusGap);
+            source.Wait(policy.ReCensusGap);
             reCensuses++;
             TripwireVerdict again = source.ReCensus(reCensuses);
             HashSet<string> nowKeys = new(again.FailureRecords.Select(f => f.Key), StringComparer.Ordinal);
@@ -313,8 +606,8 @@ public static class TripwireRetryLadder
             }
 
             steps.Add(
-                "re-census " + Count(reCensuses) + " of " + Count(MaxReCensuses) + " (~"
-                + Count(ReCensusGapSeconds) + " s later): "
+                "re-census " + Count(reCensuses) + " of " + Count(policy.MaxReCensuses) + " (~"
+                + Count(policy.ReCensusGapSeconds) + " s later): "
                 + (persisted.Count > 0 ? "PERSISTED " : "persisted ") + Count(persisted.Count) + " of "
                 + Count(survivors.Count) + "; cleared: " + (cleared.Count == 0 ? "none" : Keys(cleared))
                 + "; new since the post-run census: "
@@ -334,9 +627,26 @@ public static class TripwireRetryLadder
         }
 
         steps.Add(
-            "BOUND REACHED: all " + Count(MaxReCensuses) + " re-census(es) are spent and " + Count(survivors.Count)
-            + " failure(s) survived every one - " + Keys(survivors)
-            + ". Escalating to a bounded re-run; this is an escalation, not a give-up.");
+            policy.MaxReCensuses == 0
+                ? "NO RE-CENSUS IS CONFIGURED on this machine profile (" + policy.Name + "), so the post-run "
+                    + "census is the verdict: " + Count(survivors.Count) + " failure(s) - " + Keys(survivors)
+                    + ". Nothing but the suite changes a mailbox here, so a count change outside the hub is a "
+                    + "fault by definition and there is no second reading that could make it not one."
+                : "BOUND REACHED: all " + Count(policy.MaxReCensuses) + " re-census(es) are spent and "
+                    + Count(survivors.Count) + " failure(s) survived every one - " + Keys(survivors)
+                    + ". Escalating to a bounded re-run; this is an escalation, not a give-up.");
+
+        if (policy.MaxImplicatedReRuns == 0)
+        {
+            // Short-circuited BEFORE ImplicatedBy, so a machine with no re-run rung never asks
+            // a question it has no way of answering. Strictly stricter than the alternative:
+            // there is no path from here that does not fail.
+            steps.Add(
+                "no re-run is permitted under this policy, and an experiment nobody performed exonerates "
+                + "nothing - FAILING.");
+            return TripwireRetryReport.Confirms(
+                survivors, reCensuses, reRuns: 0, survivedARecensus, boundReached: true, steps);
+        }
 
         IReadOnlyList<string> implicated = source.ImplicatedBy(survivors);
         if (implicated.Count == 0)
@@ -344,17 +654,18 @@ public static class TripwireRetryLadder
             steps.Add(
                 "no test could be named as plausibly implicated, so there is nothing to re-run and nothing that "
                 + "could exonerate the delta - FAILING.");
-            return TripwireRetryReport.Confirms(survivors, reCensuses, reRuns: 0, boundReached: true, steps);
+            return TripwireRetryReport.Confirms(
+                survivors, reCensuses, reRuns: 0, survivedARecensus, boundReached: true, steps);
         }
 
         int reRuns = 0;
         TripwireReRunOutcome outcome = TripwireReRunOutcome.Inconclusive;
-        while (reRuns < MaxImplicatedReRuns)
+        while (reRuns < policy.MaxImplicatedReRuns)
         {
             reRuns++;
             outcome = source.ReRun(implicated, reRuns);
             steps.Add(
-                "re-run " + Count(reRuns) + " of " + Count(MaxImplicatedReRuns) + " over "
+                "re-run " + Count(reRuns) + " of " + Count(policy.MaxImplicatedReRuns) + " over "
                 + Count(implicated.Count) + " implicated selection(s) (" + string.Join(", ", implicated) + "): "
                 + Describe(outcome) + ".");
             if (outcome != TripwireReRunOutcome.Inconclusive)
@@ -367,7 +678,8 @@ public static class TripwireRetryLadder
         {
             steps.Add(
                 "the delta did not come back when the implicated tests ran again, so the suite is not what removed "
-                + "it - the run passes ON THIS RECORD, and the items named above are still worth a look.");
+                + "it - the ladder's verdict is a pass ON THIS RECORD. It survived a re-census, so the run STILL "
+                + "FAILS and the items named above are the thing to look at.");
             return TripwireRetryReport.Cleared(
                 reCensuses, reRuns, survivedARecensus: true, boundReached: true, steps);
         }
@@ -376,9 +688,11 @@ public static class TripwireRetryLadder
             outcome == TripwireReRunOutcome.Reproduced
                 ? "the same failure(s) came back when the implicated tests ran again - THIS IS THE SUITE REMOVING "
                     + "MAIL. Stop and investigate."
-                : "the " + Count(MaxImplicatedReRuns) + " permitted re-run(s) produced no answer, and an experiment "
+                : "the " + Count(policy.MaxImplicatedReRuns)
+                    + " permitted re-run(s) produced no answer, and an experiment "
                     + "nobody could carry out exonerates nothing - FAILING.");
-        return TripwireRetryReport.Confirms(survivors, reCensuses, reRuns, boundReached: true, steps);
+        return TripwireRetryReport.Confirms(
+            survivors, reCensuses, reRuns, survivedARecensus, boundReached: true, steps);
     }
 
     private static string Describe(TripwireReRunOutcome outcome)

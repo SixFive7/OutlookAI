@@ -383,6 +383,209 @@
   `--logger "console;verbosity=normal"`.** Run it verbose and read what it is doing before touching
   anything.
 
+- [x] **DONE (2026-08-24) - The tripwire's re-run rung is real, out of process, and cannot end
+  in a green run; and the retry bounds are now a property of the MACHINE.** The maintainer's
+  two decisions, plus the investigation one of them asked for.
+
+  **1. The re-run driver (`T2\TripwireReRunDriver`).** The ladder's third rung used to return
+  `Inconclusive` and print a command for a human. It now performs the experiment:
+
+  - **Out of process, and that is the whole design.** `dotnet test <this project> --no-build
+    --filter <the implicated classes>`, started with `CreateNoWindow`, output captured to a log
+    beside a marker file. An in-process re-run would re-enter the fixtures that are disposing
+    right now, re-take a baseline over a profile mid-teardown, and write to a mailbox at the one
+    moment when nothing is left to sweep the artifacts away. A child process shares none of
+    that: it is an ordinary, fully guarded live run - its own preflight, census, write
+    allowlist, zero-artifact sweep and verification - which is exactly the run the old message
+    asked the maintainer to perform by hand.
+  - **The child's own tripwire is the oracle, and it answers through a file.** An exit code
+    cannot tell "the delta came back" from "an unrelated test failed" or "Outlook was wedged and
+    the tier refused", and only the first of those earns the loudest sentence in this
+    repository. So the child writes `Clean` or `TripwireFailed` to the path in
+    `OUTLOOKAI_TRIPWIRE_RERUN_MARKER`, and the parent classifies `(exit code, marker)`. Exactly
+    one combination - exit 0 AND a clean marker - clears anything; every other cell is
+    `Reproduced` or `Inconclusive`, and both fail.
+  - **Recursion is impossible by construction.** The same variable that tells the child where to
+    write is what marks it as a child, and a process that sees it takes
+    `TripwireRetryPolicy.WithoutReRuns`. One variable saying two things, because two variables
+    could disagree.
+  - **60-minute budget, and expiry does NOT kill the child.** Killing a live run mid-flight
+    leaves tagged artifacts in a real mailbox with nothing left to sweep them; an abandoned one
+    finishes its own teardown. The parent stops waiting, prints the PID and the log path, and
+    reports `Inconclusive` - which fails.
+  - **Every way it can fail to answer is `Inconclusive`.** No dotnet host, no project file, a
+    process that will not start, a filter that names nothing, a missing or corrupt marker: an
+    experiment nobody could carry out exonerates nothing.
+
+  **2. `PASSED WITH A SURVIVED DELTA` - a pass for the reader, non-zero for automation.** A
+  delta that survived even one re-census was real at two separate readings, so clearing it later
+  (at a second census, or because the re-run did not reproduce it) is the one shape in this
+  design where a real loss of mail could end as a green run. It now reports
+  `PASSED WITH A SURVIVED DELTA` and the run still fails.
+
+  **The distinction is structural, not cosmetic, and it is worth reading how.**
+  `TripwireRetryReport.Failed` is DERIVED (`Outcome != Passed`) rather than stored beside the
+  outcome, and the private constructor refuses to build a report that says a delta survived AND
+  reports a clean pass - both directions. So a survived-delta pass is not "a case somebody
+  remembered to fail": it cannot be constructed at all, by any factory or any caller. The line
+  that acts on it sits behind a COM census no CI test can execute, so the DECISION was moved out
+  into `TripwireRunVerdict.RefusalFor` - pure, pinned by value, with the closed set of ways out
+  asserted directly - and the call to it, the exception construction and the throw are read back
+  out of the compiled IL.
+
+  **3. The bounds are per machine profile (`TripwireRetryPolicy`).** `Production` keeps 2
+  re-censuses / 30 s / 1 re-run. **Every other profile, including any value nobody has
+  classified yet, gets `None`: 0/0/0, and the post-run census is the verdict.** The direction is
+  chosen on the asymmetry - every retry is a chance to convert a real loss into a pass, so an
+  unclassified machine gets the noisier answer and never the weaker one.
+
+  Pinned by 54 new T1 tests (`TripwireReRunDriverTests`) plus the 13 existing ladder tests. No
+  COM, no Outlook, no mailbox, no process started by any of them.
+
+  **Mutation check: 17 decision lines reverted, one at a time, and TWO SURVIVED THE FIRST PASS.**
+  Both survivors were lines behind something CI cannot execute, and both were fixed by moving
+  the decision rather than by adding a cleverer pin:
+
+  - **`if (refusal != null)` in `Verify` became `if (refusal != null && false)` and the entire
+    2,125-test suite passed.** The throw was still there, the exception was still constructed,
+    the IL pin still read both - and the guard no longer fired. The decision now lives in
+    `TripwireRunVerdict.Enforce`, where CI drives all four combinations, and `Verify` has no
+    condition of its own; the pin additionally asserts that it does not construct the exception,
+    because a throw up there would need a branch to guard it.
+  - **Writing the marker path to a differently-named environment variable passed the whole
+    suite** - that assignment was inside the process launch, so nothing in CI could reach it,
+    and getting it wrong silently re-arms recursion AND leaves the parent with no answer to
+    read. The content is decided in the pure `ChildEnvironment` now, pinned by value, and the
+    launch is read out of the IL for the call to it.
+
+  A third mutation was REFUSED rather than applied (its anchor line occurred three times), which
+  is the harness behaving correctly. After the two fixes, all 17 are killed, every file is
+  byte-identical to its pre-mutation state, and the build is clean after the final restore.
+
+  ---
+
+  **THE INVESTIGATION: "can we get the test to be always correct?"** Asked directly by the
+  maintainer, and the answer is a qualified YES on the VM, with one thing that must be fixed
+  first - and the reasoning behind the question is CONFIRMED IN OUTLINE BUT NOT IN ITS
+  STRONGEST FORM.
+
+  **What the tripwire cannot decide, and why.** A before/after reading of a mailbox records that
+  an item is gone, never who removed it. That is not a limitation of this implementation; it is
+  what MAPI offers. Every retry in the ladder is an attempt to work around it by experiment
+  rather than by evidence, so the ambiguity is the thing to remove, not the retries.
+
+  **Was the "enumeration noise" the original message blamed ever real? Mostly NO - and the one
+  real case is not what the comment described.** Four candidate sources were checked by reading
+  the census:
+
+  1. **A folder table shifting under the walk.** NOT a source of false failures. Three
+     independent cross-checks have to agree before a walk is accepted (`WalkFolderItems`): the
+     table must return exactly as many rows as `Items.Count` promised, no EntryID may repeat,
+     and the count must be unchanged afterwards. Any disagreement abandons the folder to a
+     COUNT. A shifting folder therefore produces a weaker reading, never a false one.
+  2. **An item's EntryID being reissued.** NOT a source. `RelocationIndex` indexes arrivals
+     inside the same folder as well as elsewhere in the store, and matches on the move-stable
+     fingerprint first, so a reissued id is exonerated as "filed". It fails only when the
+     fingerprint is null, which `CensusTableRow.Fingerprint` documents as the ordinary reading
+     for a draft or a report item (no received time).
+  3. **A delegate/shared store's folder hierarchy syncing lazily.** REAL, and the only measured
+     case: the comment in `StoreCountTripwire.Evaluate` records the same mailbox enumerating 165
+     folders in one census and 159 minutes later, with a real 450-item subfolder absent from the
+     second walk and present again afterwards. But it is handled by EXEMPTION, not by retries -
+     `lazyHierarchyStores` demotes folder-added/folder-removed to a note for delegate stores -
+     and it can only ever produce folder-level noise, never an item-level loss.
+  4. **The census's own identity-to-count degradation. REAL, code-visible, and it is a CENSUS
+     BUG rather than noise.** See the separate open item below.
+
+  So the sentence "COM enumeration under a busy Outlook is not perfectly repeatable" was never
+  supported by a measurement at the item level, and the code actively prevents the failure it
+  describes. What the re-census rung actually absorbs is (a) genuine concurrent change by a
+  human, a rule, a server policy or a sync during a 27-minute window - a production-only
+  accommodation, exactly as the reasoning behind the question supposed - and (b) the
+  degradation defect in (4), which should be fixed rather than absorbed.
+
+  **Is the VM free of the something-elses? Almost, and the exceptions are named.** PST stores
+  (no server-side retention, no lazy hierarchy, no cached-mode aging), nobody at the keyboard
+  during a run, and a loopback sink instead of real transport. Three things qualify it:
+
+  - **The VM DOES have a writer besides the tests: the POP3 dummy account.** Mail really
+    arrives during a run. It lands in the delivery store, which the runbook requires to be the
+    hub - and the hub is exempt. Even if it were not, the guard keys on DEPARTURES; arrivals
+    outside the hub are noted and never failed. So this is safe, but "any count change outside
+    the hub is a fault" is not literally true and should be stated as "any count DECREASE".
+  - **Outlook itself is a writer.** The Lifecycle collection bounces Outlook, and Outlook's own
+    housekeeping (junk filtering at POP3 delivery, empty-Deleted-Items-on-exit, AutoArchive) can
+    move items. Deleted Items, Junk and the Sync Issues subtree are already exempt as
+    self-pruning - *provided* `GetDefaultFolder` answers for them on a PST, which
+    `Docs/live-tier-on-the-vm.md` already flags as unverified. **AutoArchive must be off on the
+    VM**, and that is not recorded anywhere.
+  - **The suite is allowed to write to the store the tripwire watches.** This is the one that
+    breaks the premise, and it is the runbook's own open item 20: `LiveStoreWriteGuard` builds
+    `new StoreWriteAllowlist(hub, settings.ExpectedStoreDisplayNames, ...)`, so every watched
+    non-hub store - including the VM's bystander, the one store the guard exists to watch - is
+    granted draft-create and draft-delete. Until that grant is narrowed, "nothing but the suite
+    changes a mailbox here, so any decrease is a fault" is false in the one place it matters.
+    **`StoreWriteAllowlist`/`LiveStoreWriteGuard` were left alone deliberately: narrowing the
+    grant without a live run to check it is not a trade worth making unsupervised.**
+
+  **Why zero retries on the VM is nevertheless right, today.** Every VM-specific ambiguity above
+  is either arrival-shaped (noted, never failed) or already exempted, and the one real hole
+  makes the tier fail MORE rather than pass more. Zero retries costs nothing there and removes
+  the only mechanism that could turn a real loss into a pass. It is configured that way now, by
+  `machineProfile`, with no new settings field to get wrong.
+
+- [ ] **Fix the census's identity-to-count degradation, which is why the tripwire needs a
+  re-census at all on a stable mailbox.** Found by reading during the 2026-08-24 investigation.
+
+  **The defect.** Whether a folder is compared BY IDENTITY or BY COUNT is decided independently
+  on each pass, and the post-run decision is timing-dependent. `CensusIdentityPlan.Repeating`
+  refuses a folder that grew past `500 x 4`; `ShouldIdentify` refuses one once the 120 s
+  identity budget has expired for that store; and `WalkFolderItems` returns null - meaning
+  "count this folder" - on any COM call failure, a missing column, a row with no EntryID, a
+  duplicate EntryID, `EndOfTable` false, or a count that moved under the read. Any of those on
+  the post-run pass but not the baseline silently switches the folder from
+  `EvaluateByIdentity` to `EvaluateByCount`.
+
+  **Why that matters.** The count rule cannot exonerate a filing and cannot see a departure
+  masked by an arrival. So the SAME mailbox state yields `note: filed (not loss)` on one reading
+  and `ITEMS LOST` on the next, purely because the second reading was weaker. That is a census
+  that reports differently twice with nothing having changed - the thing the original "treating
+  as enumeration noise" message blamed on COM - and it is exactly the shape a re-census 30 s
+  later would clear, which is how it has been hiding.
+
+  **It also lies about itself.** `EvaluateByCount`'s failure text says
+  `(folder above the identity budget)`, which is one of at least five possible reasons and is
+  the wrong one whenever the cause was the clock, a transient COM failure or an unusable table.
+
+  Three ways to fix it, cheapest first:
+
+  1. **Re-walk the folder, not the run.** When a folder the baseline identified degrades on the
+     post-run pass, walk that one folder again immediately - one table read - before concluding
+     anything. Removes the timing dependence at its source and is the only option that makes the
+     re-census rung unnecessary for this class.
+  2. **Carry the reason.** `FolderCensus.CountOnly(count, reason)`, and a failure that names it:
+     "the post-run reading of this folder was WEAKER than the baseline's (identity time budget
+     expired)". Does not fix the false failure, but makes it self-explaining and removes the
+     wrong sentence.
+  3. **Refuse to compare a degraded pair at all** - treat baseline-identified plus
+     post-run-counted as an unmeasured folder and fail the run for that reason instead. Strictly
+     honest, and noisier than (1) by a lot.
+
+  (1) and (2) compose and are the recommendation. Nothing here was implemented: it changes what
+  the guard proves, which is the maintainer's call.
+
+- [ ] **Two things `Docs/live-tier-on-the-vm.md` should say, found while answering "can the
+  tripwire be always correct?" (2026-08-24).** Not edited here - another agent owns that file.
+  - **AutoArchive must be OFF in the VM's Outlook profile**, and it belongs in section 2 beside
+    the other profile settings. It is a client-side actor that moves items out of a PST on a
+    schedule, which is indistinguishable from mail loss to a before/after census, and it is the
+    one such actor a test machine can have.
+  - **Section 7's prediction is now wrong in one respect:** on a `Portable` profile the retry
+    ladder does not run at all (`TripwireRetryPolicy.None`), so a suspected loss on the VM fails
+    on the first reading with `NO RE-CENSUS IS CONFIGURED` rather than after two re-censuses and
+    a re-run. Open item 18 ("the re-census-then-re-run policy is decided and not built") is now
+    closed in both halves.
+
 - [x] **DONE (2026-08-24) - The tripwire's response to a suspected loss is bounded, and the
   census identity walk has a clock of its own.** Two maintainer decisions, both about the
   live tier's mailbox-safety machinery.
@@ -419,7 +622,11 @@
   `Inconclusive` - which FAILS - and prints the command to run by hand. An experiment nobody
   performed exonerates nothing, so this can only ever make the tier stricter. Wiring a real
   re-run driver (the VM harness, or a script) is a one-method change; the policy is already
-  pinned for both outcomes.
+  pinned for both outcomes. **SUPERSEDED 2026-08-24 by the entry above:** the driver is wired
+  and spawns a SEPARATE PROCESS, which is what makes the rung safe; and a re-run that clears a
+  delta now reports `PASSED WITH A SURVIVED DELTA` and still exits non-zero. The bounds are also
+  no longer universal - they belong to the `Production` machine profile, and every other profile
+  gets none.
 
   Pinned by 12 new T1 tests (`TripwireRetryLadderTests`) against a fake census source - no
   COM, no Outlook, no mailbox, no wall clock. The fake THROWS when the ladder asks for one

@@ -67,21 +67,27 @@ public sealed class TripwireRetryLadderTests
     }
 
     [Fact]
-    public void ADeltaThatSurvivesOneReCensusAndThenClears_PassesButIsLoudAboutIt()
+    public void ADeltaThatSurvivesOneReCensusAndThenClears_ReadsAsAPassAndStillFailsTheRun()
     {
         // The bounds are ceilings, not targets - but a reading that survived one census is no
-        // longer noise, and the report must say so even though the verdict is a pass.
+        // longer noise. The ladder's VERDICT is a pass and the RUN fails, which is the whole
+        // point of PassedWithASurvivedDelta: the items really were gone at two readings.
         FakeCensusSource source = new(Verdict(LostFromInbox), Verdict());
 
         TripwireRetryReport report = TripwireRetryLadder.Resolve(
             Verdict(LostFromInbox, FolderGone), source);
 
-        Assert.False(report.Failed);
+        Assert.Equal(TripwireRunOutcome.PassedWithASurvivedDelta, report.Outcome);
+        Assert.True(report.Failed);
+        Assert.Empty(report.Confirmed);
         Assert.Equal(2, source.ReCensuses);
         Assert.Equal(0, source.ReRuns);
         Assert.True(report.SurvivedARecensus);
-        Assert.Equal("retry: 2 re-census(es), 0 re-run(s), verdict PASSED (survived a re-census)", report.Summary);
-        Assert.Contains("NOT ON THE FIRST READING", report.Describe(), StringComparison.Ordinal);
+        Assert.Equal(
+            "retry: 2 re-census(es), 0 re-run(s), verdict PASSED WITH A SURVIVED DELTA (fails the run)",
+            report.Summary);
+        Assert.Contains("PASSED WITH A SURVIVED DELTA", report.Describe(), StringComparison.Ordinal);
+        Assert.Contains("STILL EXITS NON-ZERO", report.Describe(), StringComparison.Ordinal);
         Assert.Contains("PERSISTED 1 of 2", report.Describe(), StringComparison.Ordinal);
         Assert.Contains("cleared: " + FolderGone, report.Describe(), StringComparison.Ordinal);
         Assert.Contains("persisted 0 of 1", report.Describe(), StringComparison.Ordinal);
@@ -106,10 +112,14 @@ public sealed class TripwireRetryLadderTests
     }
 
     [Fact]
-    public void TheCappedReRun_ClearsTheDeltaWhenItDoesNotReproduce()
+    public void TheCappedReRun_ClearsTheDeltaWhenItDoesNotReproduce_AndTheRunStillFails()
     {
         // The one exoneration the ladder can actually make: a person's one-off deletion does
         // not come back when the implicated tests run again, while a test that deletes does.
+        // THE MAINTAINER'S DECISION: it clears the ladder's verdict and not the run. This is
+        // the exact shape where a real loss could otherwise end green - the delta survived two
+        // censuses, so the items are gone, and the re-run only says the suite is not who took
+        // them.
         FakeCensusSource source = new(Verdict(LostFromInbox), Verdict(LostFromInbox))
         {
             ReRunOutcome = TripwireReRunOutcome.NotReproduced,
@@ -118,18 +128,22 @@ public sealed class TripwireRetryLadderTests
 
         TripwireRetryReport report = TripwireRetryLadder.Resolve(Verdict(LostFromInbox), source);
 
-        Assert.False(report.Failed);
+        Assert.Equal(TripwireRunOutcome.PassedWithASurvivedDelta, report.Outcome);
+        Assert.True(report.Failed);
         Assert.Empty(report.Confirmed);
         Assert.Equal(1, source.ReRuns);
         Assert.True(report.BoundReached);
-        Assert.Equal("retry: 2 re-census(es), 1 re-run(s), verdict PASSED (survived a re-census)", report.Summary);
+        Assert.Equal(
+            "retry: 2 re-census(es), 1 re-run(s), verdict PASSED WITH A SURVIVED DELTA (fails the run)",
+            report.Summary);
 
         // A pass that took a re-run to reach carries the whole record with it.
         Assert.Contains(
             "re-run 1 of 1 over 2 implicated selection(s) (LiveMoveArchive, LivePhase4): not reproduced",
             report.Describe(),
             StringComparison.Ordinal);
-        Assert.Contains("passes ON THIS RECORD", report.Describe(), StringComparison.Ordinal);
+        Assert.Contains("pass ON THIS RECORD", report.Describe(), StringComparison.Ordinal);
+        Assert.Contains("the run STILL FAILS", report.Describe(), StringComparison.Ordinal);
         Assert.Contains(LostFromInbox, report.Describe(), StringComparison.Ordinal);
     }
 
