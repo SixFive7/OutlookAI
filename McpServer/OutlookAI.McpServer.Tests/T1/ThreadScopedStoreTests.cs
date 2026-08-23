@@ -205,18 +205,20 @@ public sealed class ThreadScopedStoreTests
     }
 
     [Fact]
-    public void TheSentence_TellsACallerWhoNEVERChoseOne_HowToStopItBeingDerived()
+    public void TheSentence_HasOneRemedy_BecauseOnlyAChosenScopeCanRaiseTheCode()
     {
-        // The remedy has to differ, and this is the case that decides whether the sentence is
-        // worth anything: telling a caller who passed no store to drop one reads as advice
-        // they had already followed, and leaves them with no way to clear the flag at all.
+        // There were two remedies until 2026-08-24 - drop the store you passed, or pass
+        // conversation_id beside id so no store is DERIVED - because a derived store used to
+        // narrow the lookup too. It no longer does, so this code can only be raised by a scope
+        // the caller chose, and the second remedy would name an argument that changes nothing.
+        // The sentence must not offer it: advice for a state the code cannot be in is worse
+        // than none, because a caller who follows it sees the warning stay.
         string line = Assert.Single(MailService.DescribeThreadCoverage(
-            Unqueried(), FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50,
-            scopeStoreDerived: true)!);
+            Unqueried(), FreshMerge.FreshnessPartial, AliceStore, scopeWidened: false, top: 50)!);
 
-        Assert.Contains("DERIVED", line, StringComparison.Ordinal);
-        Assert.Contains("conversation_id", line, StringComparison.Ordinal);
-        Assert.DoesNotContain("without store", line, StringComparison.Ordinal);
+        Assert.Contains("without store", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("conversation_id", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("DERIVED", line, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -315,9 +317,11 @@ public sealed class ThreadScopedStoreTests
         // was passed, a store used to be applied anyway, and the second account's members went
         // missing from a payload whose tool description promises the whole conversation.
         // Since 2026-08-24 only a store the CALLER named narrows the lookup, so there is no
-        // scope, nothing to report as derived, and no store the index went unasked about.
-        // Pinned end to end in T1/ThreadDerivedStoreScopeTests; asserted here because this
-        // file is where the old behaviour was pinned.
+        // scope and no store the index went unasked about. The DERIVATION is still reported -
+        // scopeStoreDerived now means a store was derived and deliberately not applied, which
+        // is what explains members from accounts other than the referenced hit's. Pinned end
+        // to end in T1/ThreadDerivedStoreScopeTests; asserted here because this file is where
+        // the old behaviour was pinned.
         using MailService service = Service(BothIndexed());
 
         SearchOutcome search = service.Search(
@@ -327,7 +331,7 @@ public sealed class ThreadScopedStoreTests
         ThreadOutcome outcome = service.Thread(conversationId: null, id: hitId, store: null);
 
         Assert.Null(outcome.ScopeStore);
-        Assert.Null(outcome.ScopeStoreDerived);
+        Assert.True(outcome.ScopeStoreDerived);
         Assert.Null(outcome.Live!.StoresNotQueried);
         Assert.DoesNotContain(
             outcome.Advice ?? Array.Empty<string>(),
@@ -339,9 +343,9 @@ public sealed class ThreadScopedStoreTests
     {
         // The case the derived/chosen split actually turns on, and the one the first pass of
         // this file missed: a hit id that COULD have supplied a store, beside a store the
-        // caller passed anyway. The derivation must not claim it, because the remedy printed
-        // beside it differs - telling this caller to pass conversation_id would send them the
-        // long way round an argument they can simply drop.
+        // caller passed anyway. The derivation must not claim it. Nothing was derived here -
+        // the caller's own store was used, and it narrowed the lookup - so reporting a
+        // derivation would describe a decision this call never made.
         using MailService service = Service(BothIndexed());
 
         SearchOutcome search = service.Search(

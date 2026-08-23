@@ -82,10 +82,35 @@ public sealed class ThreadDerivedStoreScopeTests
         // The statement itself, which is the only place the narrowing was ever real.
         Assert.DoesNotContain("SCOPE=", world.ConversationStatements.Single(), StringComparison.Ordinal);
 
-        // And the payload says a scope was not applied, rather than saying which one was.
+        // And the payload says a scope was not applied, rather than saying which one was -
+        // while scopeStoreDerived reports that a store WAS available to narrow to and was
+        // passed over, which is the field's meaning since it stopped being able to carry the
+        // old one.
         Assert.Null(outcome.ScopeStore);
-        Assert.Null(outcome.ScopeStoreDerived);
+        Assert.True(outcome.ScopeStoreDerived);
         Assert.Null(outcome.ScopeWidened);
+    }
+
+    [Fact]
+    public void TheDerivedStore_IsReportedAsPassedOver_WithNoRemedyBesideIt()
+    {
+        // scopeStoreDerived's meaning since the narrowing went away, and the reason it carries
+        // no advice: a store was there to narrow to and was deliberately not used, so no member
+        // is missing on its account and there is nothing for the caller to do about it. The
+        // advice list exists to name partial coverage; a sentence here would be a remedy for a
+        // decision that cost nothing, which is the kind that never clears.
+        StandIn world = new StandIn();
+        using MailService service = world.Service();
+
+        ThreadOutcome outcome = service.Thread(conversationId: null, id: world.SearchForAHitId(service), store: null);
+
+        Assert.True(outcome.ScopeStoreDerived);
+        Assert.Null(outcome.ScopeStore);
+        Assert.DoesNotContain(FreshMerge.ThreadGapUnqueriedStore, outcome.Live!.CoverageGaps!);
+        Assert.DoesNotContain(
+            outcome.Advice ?? Array.Empty<string>(),
+            a => a.Contains("DERIVED", StringComparison.Ordinal)
+                || a.Contains("narrowed to one store", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -186,6 +211,10 @@ public sealed class ThreadDerivedStoreScopeTests
 
         Assert.DoesNotContain("SCOPE=", world.ConversationStatements.Single(), StringComparison.Ordinal);
         Assert.Null(outcome.ScopeStore);
+
+        // And nothing was DERIVED either: the conversation id came from the caller, so the hit
+        // was never consulted for a store. The unscoped lookup here is the caller's own doing.
+        Assert.Null(outcome.ScopeStoreDerived);
         Assert.Contains(outcome.Hits, h => string.Equals(h.Store, BobStore, StringComparison.OrdinalIgnoreCase));
     }
 

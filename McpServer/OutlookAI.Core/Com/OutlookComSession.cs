@@ -1923,23 +1923,18 @@ namespace OutlookAI.Core.Com
                     // A folder-scoped sweep covers ONE store, so the whole tally is that
                     // store's. Reported per store anyway: the caller then has one rule for
                     // reading counters, instead of one rule per sweep shape.
-                    return new ComSweepResult(
-                        items, sweptFolders.Count, skipped, sweptFolders,
-                        tally.Failed, tally.ItemCapped, tally.FolderCapReached,
-                        tally.DepthLimitReached, tally.TimeBudgetExceeded,
+                    return BuildSweepResult(
+                        tally,
+                        items,
+                        sweptFolders,
+                        foldersSkipped: skipped,
                         foldersAbsent: 0,
                         perStore: new[]
                         {
                             new ComStoreSweepCounters(
                                 onlyStoreDisplayName!, sweptFolders.Count, skipped, tally.Failed, 0,
                                 tally.RowsUnreadable),
-                        },
-                        rowsUnreadable: tally.RowsUnreadable,
-                        itemCappedFoldersUnsorted: tally.ItemCappedUnsorted,
-                        bodiesTruncated: tally.BodiesTruncated,
-                        bodyBudgetExhausted: tally.BodyBudgetExhausted,
-                        sweepBudgetExpired: tally.SweepBudgetExpired,
-                        sortRefusedFolders: tally.SortRefused);
+                        });
                 }
 
                 // The counters, attributed to the store they happened in. The scalar
@@ -2048,10 +2043,7 @@ namespace OutlookAI.Core.Com
                                         out int rowsUnreadable,
                                         out bool sortApplied,
                                         out bool sortRefused);
-                                    if (sortRefused)
-                                    {
-                                        tally.SortRefused++;
-                                    }
+                                    tally.SortRefused = AddSortRefusal(tally.SortRefused, sortRefused);
 
                                     // Counted whatever the outcome, and attributed to this
                                     // store: rows lost inside a folder are this store's
@@ -2120,14 +2112,71 @@ namespace OutlookAI.Core.Com
                         bucket.RowsUnreadable));
                 }
 
-                return new ComSweepResult(
-                    items, sweptFolders.Count, skipped, sweptFolders,
-                    tally.Failed, tally.ItemCapped, tally.FolderCapReached,
-                    tally.DepthLimitReached, tally.TimeBudgetExceeded, absent, perStore,
-                    tally.RowsUnreadable, storesUnnamed, tally.ItemCappedUnsorted,
-                    tally.BodiesTruncated, tally.BodyBudgetExhausted, tally.SweepBudgetExpired,
-                    tally.SortRefused);
+                return BuildSweepResult(
+                    tally,
+                    items,
+                    sweptFolders,
+                    foldersSkipped: skipped,
+                    foldersAbsent: absent,
+                    perStore: perStore,
+                    storesUnnamed: storesUnnamed);
             });
+        }
+
+        /// <summary>
+        /// The ONE mapping from a finished sweep's counters to the result its caller reads.
+        /// <para>
+        /// Both sweep shapes end here - the whole-profile default-folder walk and the
+        /// folder-scoped subtree walk - because until 2026-08-24 they ended in two hand-copied
+        /// argument lists instead, one of them seventeen arguments long. Two copies of a
+        /// mapping is one copy that can be edited and one that nobody notices: a counter
+        /// dropped from either list reports zero, and zero is also what a healthy profile
+        /// reports, so nothing downstream can tell a missing wire from good news.
+        /// <c>sortRefusedFolders</c> is the one that made this worth removing - it exists to
+        /// answer "does <c>Table.Sort</c> work at all" from ordinary telemetry, and it is
+        /// answered by comparing against zero. Hard-coding it to 0 at EITHER site left the
+        /// whole suite green.
+        /// </para>
+        /// <para>
+        /// <c>foldersSwept</c> is computed here rather than passed, because both sites passed
+        /// <c>sweptFolders.Count</c> and a count that can disagree with the list beside it is
+        /// the same defect one size smaller.
+        /// </para>
+        /// <para>
+        /// Private, and pinned by reflection from T1 (<c>SweepRefusalTelemetryTests</c>) the
+        /// way <c>TryOrderSweptTable</c> already is: the tally is this class's own mutable
+        /// bookkeeping and publishing it to make one mapping testable would cost more than the
+        /// mapping is worth.
+        /// </para>
+        /// </summary>
+        private static ComSweepResult BuildSweepResult(
+            SweepTally tally,
+            IReadOnlyList<ComMailBrief> items,
+            IReadOnlyList<string> sweptFolders,
+            int foldersSkipped,
+            int foldersAbsent,
+            IReadOnlyList<ComStoreSweepCounters> perStore,
+            int storesUnnamed = 0)
+        {
+            return new ComSweepResult(
+                items,
+                sweptFolders.Count,
+                foldersSkipped,
+                sweptFolders,
+                tally.Failed,
+                tally.ItemCapped,
+                tally.FolderCapReached,
+                tally.DepthLimitReached,
+                tally.TimeBudgetExceeded,
+                foldersAbsent,
+                perStore,
+                tally.RowsUnreadable,
+                storesUnnamed,
+                tally.ItemCappedUnsorted,
+                tally.BodiesTruncated,
+                tally.BodyBudgetExhausted,
+                tally.SweepBudgetExpired,
+                tally.SortRefused);
         }
 
         /// <summary>
@@ -2565,10 +2614,7 @@ namespace OutlookAI.Core.Com
                     out int rowsUnreadable,
                     out bool sortApplied,
                     out bool sortRefused);
-                if (sortRefused)
-                {
-                    tally.SortRefused++;
-                }
+                tally.SortRefused = AddSortRefusal(tally.SortRefused, sortRefused);
 
                 tally.RowsUnreadable += rowsUnreadable;
                 if (outcome == SweepOutcome.Failed)
@@ -7829,6 +7875,49 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
+        /// Whether one swept folder's table REFUSED the newest-first sort, as opposed to never
+        /// carrying the sort column at all. The single fact <c>sweep.sortRefusedFolders</c> is
+        /// counted from.
+        /// <para>
+        /// The two failures are not the same event and only this one is telemetry. A column
+        /// Outlook will not carry means the property is not on that provider's table, so no
+        /// sort was ever asked for under it; a column that went ON and a <c>Sort</c> that threw
+        /// anyway means Outlook was asked, in a spelling it had just accepted as a column, and
+        /// said no. Until 2026-08-19 one <c>catch</c> covered both, so the counter could not
+        /// tell them apart - which is how the sweep's sort came to be refused on every folder
+        /// of every store for the whole life of the feature with nothing saying so.
+        /// </para>
+        /// <para>
+        /// PURE and public for the reason <see cref="SweepSortProperties"/> is: the decision
+        /// sits inside a COM-driven method no mailbox-free test can enter, so a mutation of it
+        /// - dropping <paramref name="columnAdded"/>, or hard-coding false - changed nothing
+        /// any test could see. A counter read by comparing against zero cannot afford that: a
+        /// zero from a healthy profile and a zero from a counter nobody wired up are the same
+        /// number.
+        /// </para>
+        /// </summary>
+        public static bool SweepSortWasRefused(bool columnAdded, bool sortApplied)
+        {
+            return columnAdded && !sortApplied;
+        }
+
+        /// <summary>
+        /// Adds one folder's sort outcome to a sweep's running refusal count. All either sweep
+        /// walk does with <see cref="SweepSortWasRefused"/>, in one place so the two walks
+        /// cannot drift apart, and pure so CI can reach it.
+        /// <para>
+        /// It looks too small to pin and is not: inverting the test turns a healthy profile's
+        /// zero into "every folder refused" and a broken profile's evidence into a zero, and
+        /// both readings would be believed, because this number is the only witness there is.
+        /// Reverting the guard at both call sites left the whole suite green.
+        /// </para>
+        /// </summary>
+        public static int AddSortRefusal(int refusedSoFar, bool sortRefused)
+        {
+            return sortRefused ? refusedSoFar + 1 : refusedSoFar;
+        }
+
+        /// <summary>
         /// Most items whose EntryIDs one folder's cursor may carry for duplicate suppression.
         /// <para>
         /// It bounds the ONE structure in this design that would otherwise grow without
@@ -9036,7 +9125,7 @@ namespace OutlookAI.Core.Com
                 // The sweep still works unsorted - every row in the window is read until the
                 // cap fires. What stops working is the CLAIM attached to the cap, so the
                 // failure is reported instead of swallowed (H2).
-                sortRefused = columnAdded && !sortApplied;
+                sortRefused = SweepSortWasRefused(columnAdded, sortApplied);
 
                 int entryIdIndex = FindTableColumn(t, "EntryID");
                 if (entryIdIndex < 0)

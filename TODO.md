@@ -1116,6 +1116,30 @@
 
   </details>
 
+- [ ] **The sweep's sort-refusal WIRING is still unguarded - measured on 2026-08-24, not assumed.**
+  The decisions either side of it are pinned in T1 `SweepRefusalTelemetryTests` (20 tests) as of
+  that day: `OutlookComSession.SweepSortWasRefused` (the refusal test), `AddSortRefusal` (the
+  counter) and the single `BuildSweepResult` both sweep shapes now return through, which replaced
+  two hand-copied seventeen-argument constructor calls. Re-running the mutation pass one at a time
+  proves the gain rather than claiming it: **M13, M14, M20+M21 and M22 are KILLED**. Two survive,
+  and both were re-measured rather than reasoned about:
+  - **The two call sites that feed the counter.** Inverting the argument at both -
+    `AddSortRefusal(tally.SortRefused, !sortRefused)` - builds clean and leaves all 2,099 tests
+    passing. The DECISION is reachable now; the line joining it to the walk is not, because the
+    walk is `SweepFolder` and no mailbox-free test can enter it.
+  - **M27, the scan's cursor fallback** - `received ?? ComDateValue.FromItemValue(brief.ReceivedTime)`
+    in `ScanSingleFolder`. Dropping the conversion, which is exactly the defect the line was added
+    to fix (a local instant handed to a cursor named Utc), also leaves the suite green. The VALUE
+    is pinned - `ComDateValueTests`, and `SweepSortMutationTests.ARowDate_IsReadThroughTheSharedTableHelper`
+    - but the fallback's own choice is not.
+
+  What either would need is the same thing, and it was **considered and refused on 2026-08-24**: a
+  stand-in harness for the whole of `SweepFolder`. The maintainer's reasoning is worth keeping -
+  the more faithful the fake, the more you end up testing your model of Outlook rather than
+  Outlook. The substitutes this file already names elsewhere apply: a temporary build that forces
+  the branch, or a live run. In the field the check is unchanged - `sweep.sortRefusedFolders`
+  reads zero on a healthy profile - which is what the extraction protects.
+
 - [ ] **Verify the exhaustive scan's depth guard against a live profile - the half of F4 that T1 cannot reach.**
   F4 was closed on 2026-08-18 and is pinned by T1 `ScanDepthAndSweepScopeTests` end to end from
   `ComExhaustiveResult` to the payload, plus the process-boundary round trip in
@@ -1172,12 +1196,19 @@
   rows that can finally name the other store. `staleness` widens with the lookup for the same
   reason. T1 `ThreadDerivedStoreScopeTests` (8 tests, four of which fail on the old behaviour);
   `ThreadScopedStoreTests.ADerivedStore_NoLongerNarrowsTheLookup` replaces the test that pinned it.
-  **One thing it leaves behind, undecided:** `ScopeStoreDerived` is now structurally unreachable -
-  a scope exists only when the caller named one, and a named store is not derived - so the field
-  can never appear in a payload and the "pass conversation_id instead" advice branch can never be
-  printed. Both were kept (they state the distinction the behaviour turns on, and the field is
-  published in `McpServer/README.md`). Decide whether to remove them, keep them as documentation,
-  or give the field the new meaning "a store was derived and deliberately NOT applied".
+  **What it left behind was settled on 2026-08-24, on the maintainer's decision: (c), give the
+  field its true new meaning.** `ScopeStoreDerived` was structurally unreachable as written - a
+  scope exists only when the caller named one, and a named store is not derived - so it could
+  never appear in a payload and the "pass conversation_id instead" advice branch could never
+  print. It now means **a store WAS derived and deliberately NOT applied**, which is the same
+  fact from the other side and is still worth a caller's while: it explains members from accounts
+  other than the referenced hit's, and it says where the narrowing went for a caller who wanted
+  it. It is purely informational and carries no advice sentence - nothing was narrowed, so
+  nothing is missing - and `DescribeThreadCoverage` lost the flag parameter along with the second
+  `unqueried_store` remedy, which escaped a narrowing that no longer happens. The field's meaning
+  moved in `McpServer/README.md` and on the C5 row with it. T1 `ThreadDerivedStoreReportingTests`
+  (2 tests, including a signature pin so the dead branch cannot return) plus the payload half in
+  `ThreadDerivedStoreScopeTests`.
 
 - [x] **Decide what to do about the freshness-sweep cache being unreachable for UNSCOPED searches.**
   Found 2026-08-23 while pinning E3, and verified against the history rather than inferred:
