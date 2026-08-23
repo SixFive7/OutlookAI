@@ -1125,7 +1125,10 @@ converted as each row is next touched.
 
 ## 4. VM state (`OutlookAI-TestVM`)
 
-- Guest credentials for PowerShell Direct: `vmadmin` / `***REDACTED-CREDENTIAL***`.
+- Guest credentials for PowerShell Direct are **not recorded here**. This repository is
+  public, so they live only in the gitignored live-test settings on the maintainer's
+  machine. An earlier revision of this file printed them in plain text; that value is
+  therefore compromised and must be treated as burned wherever it still appears.
 - **PowerShell Direct lands in session 0, where Outlook can never finish starting.** Anything
   needing COM runs as a scheduled task with `-LogonType Interactive`, which lands in session 1.
 - Checkpoints: `CP-01-WIN-CLEAN`, `CP-02-INSTALLER-STAGED`, `CP-03-OUTLOOKAI-INSTALLED`,
