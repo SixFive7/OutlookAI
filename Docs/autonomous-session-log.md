@@ -186,6 +186,38 @@ mailbox - volumes, folder shapes, mail rates. The baseline history therefore can
 either, or it is pushed. It belongs under `%LOCALAPPDATA%`, as machine-local data, alongside the
 audit log the product already keeps there.
 
+## The indexed/unindexed split needs two Windows ACCOUNTS, not two data files - measured 2026-08-23
+
+**The three-store design assumed one profile could hold an indexed corpus beside an unindexed one.
+It cannot.** Windows Search expresses the Outlook scope as a single URL per user account -
+`mapi16://{S-1-5-21-...}/` - covering that user's entire profile. There is no per-store granularity
+at the crawl-scope level, so two data files mounted in one profile are indexed or not indexed
+together. Read from
+`HKLM\SOFTWARE\Microsoft\Windows Search\CrawlScopeManager\Windows\SystemIndex\WorkingSetRules` on
+the test VM.
+
+**Decision: two Windows user accounts on the VM.** Each account has its own SID and therefore its
+own mapi scope, and a scope is a rule that can be excluded - so one account's profile is indexed and
+the other's is not, both stable and simultaneous. Rejected: mounting and unmounting data files
+between runs (makes runs depend on each other and on indexer timing), toggling the search service
+(makes "unindexed" mean "index temporarily broken", which is a different state from the one the
+degraded path exercises), and dropping the indexed corpus (gives up the tier most tests want).
+
+**Not automated, deliberately.** Excluding the second account's scope is a one-time build step and
+the runbook is written for a human, so a checkbox in Indexing Options is an adequate instruction.
+What needed establishing was whether the model can express it, and it can.
+
+**Still unverified, and it should be checked during the build rather than assumed:** whether
+excluding a `mapi16://` scope actually prevents that profile's mail being indexed, as opposed to
+only hiding it from queries.
+
+**Method note, third occurrence.** PowerShell's late binding could not drive `CSearchManager`, the
+same way it could not drive `Table.GetRows` or `Table.Sort` earlier: the object arrives as
+`System.__ComObject` with no type information and every call fails in a way that reads like the API
+refusing rather than the binder. Where a COM object must be driven from PowerShell, use
+`$obj.GetType().InvokeMember(...)` against the runtime type, or write the probe in C# where the
+interop is early-bound. Two probes were lost to this before it was recognised.
+
 ## Standing rules that outlive any compaction
 
 - **Completeness outranks performance, whatever the cost.** The maintainer has said this repeatedly.
