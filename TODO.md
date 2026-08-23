@@ -1075,7 +1075,7 @@
   `ThreadScopedStoreTests`. See the C5 row for what each field says and why the remedy differs by
   how the store arrived.
 
-- [ ] **Decide whether `thread` should apply a store scope it DERIVED (C5's remaining half).**
+- [x] **Decide whether `thread` should apply a store scope it DERIVED (C5's remaining half).**
   C5 is closed on reporting, and the underlying behaviour is untouched: a caller who passes `id`
   alone still gets a lookup narrowed to that hit's store, so a member in a second indexed account is
   still ABSENT - now named as unqueried rather than unmentioned. Three directions:
@@ -1094,8 +1094,21 @@
         filter). Widest and simplest to explain; pays the unscoped query on every call.
   Recommendation: **(b)**. It removes the defect exactly where nobody asked for it, keeps the hint
   a caller explicitly chose, and leaves the reporting that now exists to cover the case it keeps.
+  **DONE 2026-08-24 on the maintainer's decision: (b).** Only a store the CALLER named resolves to
+  an index scope; a derived one is still derived (the hit has to be opened anyway to recover the
+  conversation id) but is no longer applied. Verified rather than assumed: `unqueried_store` now
+  fires only where a caller chose a scope, and `unwalked_store` makes its stronger claim off index
+  rows that can finally name the other store. `staleness` widens with the lookup for the same
+  reason. T1 `ThreadDerivedStoreScopeTests` (8 tests, four of which fail on the old behaviour);
+  `ThreadScopedStoreTests.ADerivedStore_NoLongerNarrowsTheLookup` replaces the test that pinned it.
+  **One thing it leaves behind, undecided:** `ScopeStoreDerived` is now structurally unreachable -
+  a scope exists only when the caller named one, and a named store is not derived - so the field
+  can never appear in a payload and the "pass conversation_id instead" advice branch can never be
+  printed. Both were kept (they state the distinction the behaviour turns on, and the field is
+  published in `McpServer/README.md`). Decide whether to remove them, keep them as documentation,
+  or give the field the new meaning "a store was derived and deliberately NOT applied".
 
-- [ ] **Decide what to do about the freshness-sweep cache being unreachable for UNSCOPED searches.**
+- [x] **Decide what to do about the freshness-sweep cache being unreachable for UNSCOPED searches.**
   Found 2026-08-23 while pinning E3, and verified against the history rather than inferred:
   `MailService.ResolveSweepWindows` sets the unscoped window base to `DateTime.UtcNow -
   EmptyIndexSweepWindow`, and that value is the sweep cache key (`SweepCache.TryGetUsable` compares
@@ -1115,6 +1128,67 @@
         honest version of the status quo, at the cost of the iterate-fast behaviour D34 exists for.
   Recommendation: **(a)**. Measure the sweep cost on this profile before and after - the same
   measurement the sweep-budget re-measure item above needs anyway.
+  **DONE 2026-08-24 on the maintainer's decision: (a).** The two roles are now two fields on
+  `SweepWindowPlan`: `FallbackBaseUtc` (the WINDOW, still `UtcNow - EmptyIndexSweepWindow`) and
+  `CacheKeyBaseUtc` (the KEY, the frontier of the scope being searched). Reuse stays sound in the
+  only direction that matters - the wall clock moves forward, so a later request's fallback window
+  starts LATER than the entry's and the entry covers a superset of it, bounded by the 10 s TTL -
+  and a profile with no frontier at all still keys on the wall clock and still sweeps live every
+  time. T1 `SweepCacheKeyTests` (7 tests; two of them fail on the old key, the other five are the
+  guards that keep this a cost fix). **Still unmeasured, and the reason the row asked for it:** the
+  before/after sweep cost on the real profile. Nothing here changes what is swept, only how often.
+
+- [ ] **BLOCKED: the freshness sweep cannot go to 600 s while `ExhaustiveScanDeadlineMs` stays at
+      615 s. Decide which rung moves.** The maintainer's decision on 2026-08-23 was to set
+  `MailService.SweepBudgetMs` to a 600 s CEILING now and narrow it later from VM measurements,
+  because the current 180 s was derived from a measurement taken while the sweep's sort was
+  silently failing (`bea7fc9`) and therefore describes broken behaviour doing different work.
+  **The number was NOT applied**, because the ladder above it cannot hold it and the resolution is
+  not this session's to pick. The constant is still `180_000`.
+
+  The arithmetic, verified by running the suite at each value rather than by reading:
+  - `SearchBudgetMs = SearchIndexTimeoutSeconds * 1000 + SweepBudgetMs`, so a 600 s sweep makes it
+    **660 s**. T1 `BudgetCompositionTests.SearchBudget_IsComposedFromItsPartsAndFitsTheOperationDeadline`
+    requires that to fit inside `ComOperationBudgets.OperationDeadlineMs`.
+  - `ComHostPolicy.TimeoutIndicatesUnresponsiveness` treats a caller budget **at or above** the
+    class deadline as a hang detector, so at 600 s against a 300 s class deadline an ordinary slow
+    sweep starts counting toward the breaker again - the outage
+    `BudgetCompositionTests.OnlyAHangDetectorExpiring_CountsTowardTheBreaker` exists to prevent.
+    Both tests fail at 600 s; nothing else does.
+  - So `OperationDeadlineMs` must be **>= 660 s**. But T1 also requires
+    `ExhaustiveScanDeadlineMs > OperationDeadlineMs` - the exhaustive class exists precisely
+    because it is longer than the ordinary one - and that is frozen at **615 s** pending its own
+    unrun measurement (step 5 of `corpus-measurement-plan.md`). `660 <= X < 615` has no solution.
+  - The largest sweep budget the CURRENT ladder admits is **554 999 ms** (with
+    `OperationDeadlineMs` at 614 999 ms, one millisecond under the exhaustive class); a round
+    **540 s with `OperationDeadlineMs` at 600 s** passes all 2,039 tests, checked by running them.
+
+  This is the same shape as the blocker recorded against the 180 s proposal further up this file,
+  which was resolved by raising `OperationDeadlineMs` from 120 s to 300 s. The difference is that
+  there is now a second class above it. Directions:
+  - **(a) Raise `ExhaustiveScanDeadlineMs` with the sweep** - e.g. sweep 600 s, `OperationDeadlineMs`
+    675 s, exhaustive 690 s. Keeps the decided number and the class ordering. The cost is that the
+    ordinary hang detector, which is what reclaims a wedged Outlook for `read`, `move_mail` and
+    every other tool, becomes 11+ minutes - and `UnresponsiveTimeoutThreshold` is 2, so ~22 min to
+    fail fast. It also moves a constant that is the subject of an unrun measurement.
+  - **(b) Take 540 s now** (`OperationDeadlineMs` 600 s, exhaustive unchanged at 615 s). Ships a 3x
+    raise today, touches nothing frozen, and 540 s is still 45x the 12 s-per-store figure the
+    current number was extrapolated from. The cost is that it is a clamp, not the ceiling that was
+    decided, and the ordinary hang detector still goes to 10 min.
+  - **(c) Give the freshness sweep its own operation class**, as the exhaustive scan has
+    (`ComHostOperationClass.FreshnessSweep` + its own deadline). Then the sweep can have 600 s, the
+    ordinary hang detector stays at 300 s for every other tool, and the breaker rule compares the
+    sweep against its own class. This is the structurally correct answer and the one the per-class
+    mechanism was built for - it is also the largest change, touching `Core/Com` and the supervisor,
+    and `SearchBudgetMs`'s pin would have to name the sweep's class rather than the ordinary one.
+  - **(d) Decouple `SearchBudgetMs` from the class deadline.** It is a `const` that is never
+    dispatched - the only real dispatch on the search path is the sweep itself - so the pin is a
+    coherence claim ("no ordinary tool call outlives the hang detector") rather than a mechanism.
+    Weakening it would let `OperationDeadlineMs` sit at 610 s with a 600 s sweep. Cheapest, and the
+    least honest: it removes the check that caught this.
+  Recommendation: **(c)**, with **(b)** as the thing to ship first if the sweep budget is wanted
+  before the class work. **(d)** should not be taken; **(a)** should not be taken until the
+  exhaustive-scan measurement has been run.
 
 - [ ] **Decide what the test VM is FOR, because 96 of 115 live tests cannot move to it as it
       stands.** The live tier is now split by trait (`LiveTier=Portable` vs `ProfileBound`, see

@@ -271,11 +271,11 @@ public sealed class TierSemanticsReportingTests
         // the second served from the first's sweep. Before this the second answered
         // freshness "live" with nothing but a cache age to contradict it.
         //
-        // STORE-SCOPED deliberately, and it is not an arbitrary fixture choice: an unscoped
-        // search keys the cache on a window base recomputed from the wall clock every call
-        // (MailService.ResolveSweepWindows takes the unscoped fallback from DateTime.UtcNow),
-        // so no two unscoped searches share a key and none of them can ever hit. Reported
-        // separately; this test pins the reporting, not that defect.
+        // STORE-SCOPED deliberately, and it was not an arbitrary fixture choice: an unscoped
+        // search used to key the cache on a window base recomputed from the wall clock every
+        // call, so no two unscoped searches shared a key and none of them could ever hit. That
+        // defect is fixed (the unscoped key is the profile frontier again) and pinned in
+        // T1/SweepCacheKeyTests; this test pins the REPORTING, which is the same either way.
         using MailService service = Service(Index(), Sweep);
 
         SearchOutcome first = service.Search(ScopedRequest());

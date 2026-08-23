@@ -76,8 +76,21 @@ namespace OutlookAI.Core.Services
             public ComSweepResult Result { get; }
 
             /// <summary>
-            /// The unclamped sweep window start this result covers for a store NOT named in
-            /// <see cref="PerStoreBaseUtc"/>.
+            /// The window base this entry is KEYED on for a store NOT named in
+            /// <see cref="PerStoreBaseUtc"/>: the index frontier of the scope that was swept,
+            /// less the safety margin.
+            /// <para>
+            /// For a store-SCOPED sweep that is also the window it covered, because the two
+            /// are one value there. For an ALL-STORES sweep it is the profile-wide frontier,
+            /// while the window such a sweep actually opened for a store the catalog could not
+            /// name is <c>MailService.EmptyIndexSweepWindow</c> back from the wall clock - i.e.
+            /// WIDER. The caller keys on the frontier deliberately (see
+            /// <c>MailService.SweepWindowPlan.CacheKeyBaseUtc</c>): a wall-clock value never
+            /// repeats, so keying on it meant no unscoped search could ever hit. Reuse stays
+            /// sound because the clock only moves forward - a later request's fallback window
+            /// starts LATER than the entry's, so the entry covers a superset of it, and the
+            /// TTL bounds the difference to that window.
+            /// </para>
             /// </summary>
             public DateTime BaseGapStartUtc { get; }
 
@@ -89,10 +102,10 @@ namespace OutlookAI.Core.Services
             public IReadOnlyDictionary<string, DateTime> PerStoreBaseUtc { get; }
 
             /// <summary>
-            /// The window this entry covers for one store: its own if the sweep opened one,
-            /// otherwise the fallback base. Public so T1 pins the reuse rule from the
-            /// outside - this is the value the broad-entry check compares, and the whole
-            /// question the per-store windows raise for this cache.
+            /// The window base this entry is keyed on for one store: its own if the sweep
+            /// opened one, otherwise <see cref="BaseGapStartUtc"/>. Public so T1 pins the
+            /// reuse rule from the outside - this is the value the broad-entry check compares,
+            /// and the whole question the per-store windows raise for this cache.
             /// </summary>
             public DateTime WindowFor(string store)
             {

@@ -2012,6 +2012,32 @@ namespace OutlookAI.Core.Services
             /// <summary>Window start for a store with no frontier of its own (unclamped).</summary>
             internal DateTime FallbackBaseUtc { get; set; }
 
+            /// <summary>
+            /// The stable value the sweep CACHE is keyed on - the index frontier of the scope
+            /// being searched, which is the profile-wide one for an unscoped search.
+            /// <para>
+            /// SEPARATE FROM <see cref="FallbackBaseUtc"/> BECAUSE THE TWO ARE DIFFERENT JOBS,
+            /// and conflating them is what made the cache unreachable. The fallback is a WINDOW
+            /// - the widest one, handed to a store whose frontier could not be measured - so it
+            /// has to be read off the wall clock (<see cref="EmptyIndexSweepWindow"/> back from
+            /// now), and a wall-clock value differs on every call. The key is an IDENTITY - "the
+            /// index has not moved since the sweep I already have" - so it has to be stable
+            /// while the index is stable and to change exactly when the index ingests something.
+            /// Keying on the wall clock meant no two unscoped searches ever shared a key and
+            /// every one of them paid a full COM sweep; keying the fallback WINDOW on the
+            /// frontier would hand the one store whose window cannot be measured the narrowest
+            /// window on the profile. So they are two fields, not one.
+            /// </para>
+            /// <para>
+            /// A frontier that could not be established at all falls back to the same wall-clock
+            /// value, which cannot repeat - so a profile the index knows nothing about keeps
+            /// sweeping live, exactly as it does today. That is the safe direction and it is
+            /// deliberate: with no frontier there is nothing whose advance could invalidate an
+            /// entry, and the TTL alone is a weaker promise than this cache makes elsewhere.
+            /// </para>
+            /// </summary>
+            internal DateTime CacheKeyBaseUtc { get; set; }
+
             /// <summary>Per-store window starts (unclamped), empty for a store-scoped search.</summary>
             internal Dictionary<string, DateTime>? PerStoreBaseUtc { get; set; }
 
@@ -2071,8 +2097,10 @@ namespace OutlookAI.Core.Services
 
             if (request.Store != null)
             {
-                // Scoped: the search's own probe was already scoped to this store.
+                // Scoped: the search's own probe was already scoped to this store, so the
+                // window and the key are the same value - this store's frontier.
                 plan.FallbackBaseUtc = staleness.NewestIndexedReceivedUtc ?? emptyIndexBase;
+                plan.CacheKeyBaseUtc = plan.FallbackBaseUtc;
                 if (!staleness.NewestIndexedReceivedUtc.HasValue)
                 {
                     plan.AddStoreWithoutIndex(request.Store);
@@ -2081,7 +2109,11 @@ namespace OutlookAI.Core.Services
                 return plan;
             }
 
+            // Unscoped: the fallback WINDOW is the widest one (wall clock), and the cache KEY
+            // is the profile frontier. See SweepWindowPlan.CacheKeyBaseUtc for why those are
+            // two values rather than one.
             plan.FallbackBaseUtc = emptyIndexBase;
+            plan.CacheKeyBaseUtc = staleness.NewestIndexedReceivedUtc ?? emptyIndexBase;
             if (!staleness.NewestIndexedReceivedUtc.HasValue)
             {
                 // The profile-wide probe found no mail ANYWHERE: an unindexed profile, which
@@ -2159,6 +2191,13 @@ namespace OutlookAI.Core.Services
             info.StoresWithoutIndex = windows.StoresWithoutIndex;
 
             DateTime baseGapStart = windows.FallbackBaseUtc - SweepSafetyMargin;
+
+            // The key the sweep cache is looked up and stored under, which is the frontier of
+            // the scope being searched rather than the fallback WINDOW above. They are the
+            // same value for a store-scoped search and deliberately different for an unscoped
+            // one - see SweepWindowPlan.CacheKeyBaseUtc. The safety margin is subtracted from
+            // both so the key stays what it has always been: a window base, not a raw frontier.
+            DateTime cacheKeyBase = windows.CacheKeyBaseUtc - SweepSafetyMargin;
             Dictionary<string, DateTime>? perStoreBase = null;
             if (windows.PerStoreBaseUtc != null)
             {
@@ -2284,7 +2323,7 @@ namespace OutlookAI.Core.Services
             ComSweepResult effectiveResult;
             IReadOnlyList<ComMailBrief> sweptItems;
             if (_sweepCache.TryGet(
-                    baseGapStart, request.Store, folderKey, sweepRecursive, nowUtc,
+                    cacheKeyBase, request.Store, folderKey, sweepRecursive, nowUtc,
                     out SweepCache.CachedSweep? cachedSweep, perStoreBase)
                 && cachedSweep != null)
             {
@@ -2361,7 +2400,7 @@ namespace OutlookAI.Core.Services
                 if (!windowsClamped)
                 {
                     _sweepCache.Store(
-                        baseGapStart, request.Store, folderKey, sweepRecursive, sweepResult, info.ElapsedMs, nowUtc,
+                        cacheKeyBase, request.Store, folderKey, sweepRecursive, sweepResult, info.ElapsedMs, nowUtc,
                         perStoreBase);
                 }
             }
@@ -3530,8 +3569,8 @@ namespace OutlookAI.Core.Services
             // Derive the conversation id from the referenced hit when only id was given.
             string? effectiveStore = store;
 
-            // C5: WHERE the store came from decides which remedy clears the narrowing it
-            // causes, so the two cases are told apart here rather than guessed at later.
+            // C5: WHERE the store came from decides what is done with it, so the two cases are
+            // told apart here rather than guessed at later.
             bool storeDerived = false;
             if (conversationId == null && id != null && _hits.TryGetValue(id, out CachedHit? referenced))
             {
@@ -3542,13 +3581,37 @@ namespace OutlookAI.Core.Services
                 storeDerived = effectiveStore != null && store == null;
             }
 
+            // C5's behavioural half: a DERIVED store does not scope the lookup. Only a store
+            // the caller NAMED does.
+            //
+            // Passing `id` alone is the shape an agent reaches for straight out of a search,
+            // and it used to narrow the conversation query to that hit's store - so a member
+            // in a second indexed account was absent from a payload whose tool description
+            // promises the whole conversation. Nobody asked for that narrowing, and the
+            // reporting added with C5 could only ever say it had happened; naming the cost is
+            // not the same as not paying it. A scope the caller CHOSE is still applied,
+            // because that is a hint they can drop and a speed win on a large profile.
+            //
+            // WHAT IT BUYS BESIDES THE MEMBERS. The index rows are the evidence
+            // `unwalked_store` is computed from, so an unscoped query is what lets that code
+            // make its stronger claim - "this conversation demonstrably has members the walk
+            // did not cover" - instead of `unqueried_store`'s weaker "the question could not
+            // be asked". The weaker code now fires only where a caller really did choose a
+            // scope.
+            //
+            // WHAT IT COSTS: one unscoped ConversationID query per thread call, on a profile
+            // where the scoped one would have been cheaper. That is the accepted trade - the
+            // default call shape returning a partial conversation on every multi-store profile
+            // is the more expensive of the two.
             string? scope = null;
             bool scopeWidened = false;
-            if (effectiveStore != null)
+            if (store != null)
             {
                 try
                 {
-                    scope = ResolveScope(effectiveStore, null);
+                    // `store`, not `effectiveStore`: they are the same string on this branch,
+                    // and naming the parameter is what says the scope came from the caller.
+                    scope = ResolveScope(store, null);
 
                     // The second way to get no scope, added with the unindexed-store fix: a
                     // store the profile HAS and the index cannot address resolves to null
@@ -3660,6 +3723,12 @@ namespace OutlookAI.Core.Services
                 Truncated = truncated,
                 ScopeWidened = scopeWidened ? true : (bool?)null,
                 ScopeStore = scope == null ? null : effectiveStore,
+
+                // Unreachable since a derived store stopped scoping: a scope exists only when
+                // the caller named one, and a named one is not derived. Kept as the expression
+                // rather than as a hard null because it states the rule the behaviour above
+                // turns on, and because the two would have to change together if a derived
+                // scope were ever re-introduced.
                 ScopeStoreDerived = scope != null && storeDerived ? true : (bool?)null,
                 Live = live,
                 Staleness = staleness,
