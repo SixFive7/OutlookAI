@@ -42,6 +42,23 @@ public sealed class CorpusOptions
     /// <summary>Report progress every N items.</summary>
     public int ProgressEvery { get; private set; } = 250;
 
+    /// <summary>
+    /// Where <c>corpus-reanchor</c> should move the corpus's newest edge to. <c>now</c> is
+    /// accepted and is what an operator wants after restoring a checkpoint; a literal date is
+    /// accepted so a re-anchor can be reproduced exactly.
+    /// </summary>
+    public DateTime? ToUtc { get; private set; }
+
+    /// <summary>Whether a re-anchor may move the corpus BACKWARDS in time.</summary>
+    public bool AllowBackwards { get; private set; }
+
+    /// <summary>
+    /// The windows a freshness check judges the corpus against, in days. Repeatable, and
+    /// empty means <see cref="CorpusPlan.MeasurementWindowDays"/> - a caller that names its
+    /// own set is saying which questions it actually asks.
+    /// </summary>
+    public List<int> Windows { get; } = new();
+
     /// <summary>Build even when no date-write method verified.</summary>
     public bool AllowUndated { get; private set; }
 
@@ -125,6 +142,9 @@ public sealed class CorpusOptions
             case "allow-drafts-placement":
                 AllowDraftsPlacement = true;
                 break;
+            case "allow-backwards":
+                AllowBackwards = true;
+                break;
             case "execute":
                 Execute = true;
                 break;
@@ -161,6 +181,14 @@ public sealed class CorpusOptions
                 break;
             case "progress-every":
                 ProgressEvery = Math.Max(1, int.Parse(value, CultureInfo.InvariantCulture));
+                break;
+            case "to":
+                ToUtc = string.Equals(value, "now", StringComparison.OrdinalIgnoreCase)
+                    ? DateTime.UtcNow
+                    : ParseAnchor(value);
+                break;
+            case "window":
+                Windows.Add(int.Parse(value, CultureInfo.InvariantCulture));
                 break;
             default:
                 throw new ArgumentException($"Unknown option --{name}.");
@@ -248,6 +276,7 @@ public static class CorpusCommands
             + string.Join(", ", report.BySizeClass.Select(kv => kv.Key + "=" + kv.Value.ToString("N0", invariant))));
         output.WriteLine("  per date band         : "
             + string.Join(", ", report.ByDateBand.Select(kv => kv.Key + "=" + kv.Value.ToString("N0", invariant))));
+        output.WriteLine("  unread                : " + report.UnreadItems.ToString("N0", invariant));
         output.WriteLine("  selected by window    : "
             + string.Join(", ", report.WithinDays.Select(kv => kv.Key + "d=" + kv.Value.ToString("N0", invariant))));
     }
@@ -275,7 +304,7 @@ public static class CorpusCommands
             ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
         CorpusPlacementMethod placement = ReportPlacementProbes(placements, output);
         (bool placementOk, string placementMessage) =
-            CorpusPlacement.Decide(placement, options.AllowDraftsPlacement, Math.Max(options.Count, 1));
+            CorpusPlacement.Decide(placement, options.AllowDraftsPlacement, Math.Max(options.Count, 1), placements);
         output.WriteLine(placementMessage);
 
         DateTime probeInstant = planOptions.AnchorUtc.AddDays(-30);
@@ -343,7 +372,7 @@ public static class CorpusCommands
             ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
         CorpusPlacementMethod placement = ReportPlacementProbes(placements, output);
         (bool placementOk, string placementMessage) =
-            CorpusPlacement.Decide(placement, options.AllowDraftsPlacement, options.Count);
+            CorpusPlacement.Decide(placement, options.AllowDraftsPlacement, options.Count, placements);
         output.WriteLine(placementMessage);
         if (!placementOk)
         {
@@ -415,7 +444,224 @@ public static class CorpusCommands
             output.WriteLine($"  first failure: {outcome.FirstError}");
         }
 
-        return outcome.Failed == 0 ? 0 : 1;
+        // A build that reports success is not a build that produced a corpus. The first real
+        // one created 40 000 items with zero failures and put every one of them in Drafts,
+        // plus 5 532 copies in the Outbox, and said nothing. The census is a read-only scan
+        // of what is now in the store, compared against the plan, and it decides the exit
+        // code alongside the failure count.
+        bool clean = RunCensusPass(options, plan, output);
+        return outcome.Failed == 0 && clean ? 0 : 1;
+    }
+
+    /// <summary>
+    /// <c>corpus-census</c>: READ-ONLY. Scans the store and says whether the corpus that is
+    /// there is the corpus the plan describes - right count, right folders, one copy each,
+    /// and nothing stranded in Drafts or the Outbox. Safe at any time; it is what a build
+    /// runs on itself.
+    /// </summary>
+    public static int RunCensus(CorpusOptions options, TextWriter output)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(output);
+        if (options.Count < 1)
+        {
+            throw new ArgumentException("--count <n> is required - a census compares against a plan of a known size.");
+        }
+
+        var plan = new CorpusPlan(options.ToPlanOptions());
+        if (!Vet(options, output, out _))
+        {
+            return 1;
+        }
+
+        return RunCensusPass(options, plan, output) ? 0 : 1;
+    }
+
+    /// <summary>The census itself, shared by <c>corpus-census</c> and the build's own check.</summary>
+    private static bool RunCensusPass(CorpusOptions options, CorpusPlan plan, TextWriter output)
+    {
+        IReadOnlyList<ComCorpusMailbox.ScanRow> rows =
+            ComCorpusMailbox.Scan(options.Store!, plan.Options.CorpusId, LoadManifest(options.ManifestPath, output));
+        CorpusCensusReport census = CorpusCensus.Compare(
+            plan, options.Count, rows.Select(r => new CorpusSighting(r.Ordinal, r.FolderId)));
+        (bool clean, string message) = CorpusCensus.Decide(census);
+        output.WriteLine(message);
+        return clean;
+    }
+
+    /// <summary>
+    /// <c>corpus-verify</c>: PURE. Reads the manifest, works out what shift the store already
+    /// carries, and says whether the corpus can still answer the questions it exists for.
+    /// No Outlook, no store, nothing written - so it can run anywhere, including as the first
+    /// thing a test run does.
+    /// <para>
+    /// This is the check that converts a silent lie into a loud failure. A corpus anchored on
+    /// a fixed date stops filling the narrow measurement windows a few weeks later, and every
+    /// test asking about those windows keeps PASSING, because selecting nothing is a valid
+    /// answer about an empty window.
+    /// </para>
+    /// </summary>
+    public static int RunVerify(CorpusOptions options, TextWriter output)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(output);
+        if (options.Count < 1)
+        {
+            throw new ArgumentException("--count <n> is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.ManifestPath))
+        {
+            throw new ArgumentException(
+                "--manifest <path> is required. The shift the store already carries is derived from what the "
+                + "manifest records each item as holding; without it there is nothing to compare the plan against.");
+        }
+
+        var plan = new CorpusPlan(options.ToPlanOptions());
+        CorpusManifest manifest = LoadManifest(options.ManifestPath!, output)
+            ?? throw new ArgumentException($"Manifest not found: {options.ManifestPath}");
+
+        (TimeSpan applied, bool provable) =
+            CorpusReanchor.DeriveAppliedShift(plan, manifest, out int agreeing, out int dated);
+        output.WriteLine($"Manifest records {manifest.Items.Count:N0} item(s), {dated:N0} of them dated; "
+            + $"{agreeing:N0} agree on the shift now applied.");
+
+        CorpusFreshnessReport report = CorpusFreshness.Evaluate(
+            plan,
+            options.Count,
+            applied,
+            DateTime.UtcNow,
+            options.Windows.Count > 0 ? options.Windows : null,
+            provable);
+        (bool proceed, string message) = CorpusFreshness.Decide(report);
+        output.WriteLine(message);
+        return proceed ? 0 : 1;
+    }
+
+    /// <summary>
+    /// <c>corpus-reanchor</c>: moves every item's received and submit instants forward so the
+    /// corpus's newest edge lands where <c>--to</c> says, without regenerating anything.
+    /// Idempotent and resumable - it writes the items whose recorded instant is not already
+    /// the target one - and it never creates, moves or removes an item.
+    /// </summary>
+    public static int RunReanchor(CorpusOptions options, TextWriter output)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(output);
+        if (options.Count < 1)
+        {
+            throw new ArgumentException("--count <n> is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.ManifestPath))
+        {
+            throw new ArgumentException(
+                "--manifest <path> is required. A re-anchor addresses items by the EntryIDs the manifest records, "
+                + "and there is no other way for it to know what it is allowed to write to.");
+        }
+
+        if (options.ToUtc == null)
+        {
+            throw new ArgumentException("--to <now|yyyy-MM-dd|yyyy-MM-ddTHH:mm:ssZ> is required.");
+        }
+
+        CorpusPlanOptions planOptions = options.ToPlanOptions();
+        var plan = new CorpusPlan(planOptions);
+        if (!Vet(options, output, out _))
+        {
+            return 1;
+        }
+
+        CorpusManifest manifest = LoadManifest(options.ManifestPath!, output)
+            ?? throw new ArgumentException($"Manifest not found: {options.ManifestPath}");
+        CorpusManifestMismatch mismatch = manifest.CheckCompatible(planOptions, options.Store!);
+        if (mismatch != CorpusManifestMismatch.None)
+        {
+            output.WriteLine($"REFUSING to re-anchor: {CorpusManifest.Explain(mismatch)}.");
+            return 1;
+        }
+
+        (TimeSpan applied, bool provable) =
+            CorpusReanchor.DeriveAppliedShift(plan, manifest, out int agreeing, out int dated);
+        output.WriteLine($"Manifest records {manifest.Items.Count:N0} item(s), {dated:N0} dated, "
+            + $"{agreeing:N0} agreeing on the shift now applied.");
+        if (!provable)
+        {
+            output.WriteLine("REFUSING: the manifest cannot say what shift the store already carries, so this run "
+                + "could not tell an item it has already moved from one it has not. Rebuild the manifest with "
+                + "corpus-reindex first.");
+            return 1;
+        }
+
+        CorpusReanchorPlan work = CorpusReanchor.Build(plan, manifest, options.Count, options.ToUtc.Value);
+        (bool proceed, string message) = CorpusReanchor.Decide(work, applied, options.AllowBackwards);
+        output.WriteLine(message);
+        if (!proceed)
+        {
+            return 1;
+        }
+
+        if (!options.Execute)
+        {
+            output.WriteLine("Dry-run complete; nothing written, and the date probe was not run (it creates items). "
+                + "Re-run with --execute.");
+            return 0;
+        }
+
+        // The same two probes the build runs, and for the same reason: a re-anchor writes the
+        // same two date properties through the same PropertyAccessor, so it needs the rung
+        // this store verified AND the local-time compensation that rung required. Skipping
+        // them would move the whole corpus by the machine's UTC offset.
+        IReadOnlyList<CorpusPlacementProbe> placements =
+            ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
+        CorpusPlacementMethod placement = ReportPlacementProbes(placements, output);
+        DateTime probeInstant = work.TargetAnchorUtc.AddDays(-30);
+        IReadOnlyList<CorpusDateProbe> probes =
+            ComCorpusMailbox.ProbeDateFidelity(options.Store!, planOptions.CorpusId, probeInstant, placement);
+        CorpusDateWriteMethod chosen = ReportProbes(probes, output);
+        (bool dateOk, string dateMessage) = CorpusDateFidelity.Decide(chosen, options.AllowUndated, options.Count);
+        output.WriteLine(dateMessage);
+        if (!dateOk)
+        {
+            return 1;
+        }
+
+        TimeSpan writeShift = ShiftFrom(probes, chosen);
+        if (writeShift != TimeSpan.Zero)
+        {
+            output.WriteLine($"Applying a write shift of {writeShift} so the stored date lands on the requested one.");
+        }
+
+        using StreamWriter writer = OpenManifest(options.ManifestPath!, writeHeader: false, manifest.Header);
+        ComCorpusMailbox.ReanchorOutcome outcome = ComCorpusMailbox.Reanchor(
+            work,
+            options.Store!,
+            planOptions.CorpusId,
+            chosen,
+            writeShift,
+            CorpusSafety.BuildEntryIdAllowlist(manifest.EntryIds),
+            item =>
+            {
+                // Flushed per item, exactly as the build does: the run is long, it will be
+                // interrupted, and an unflushed line is an item the next run would rewrite
+                // for no reason.
+                writer.WriteLine(CorpusManifest.RenderLine(item));
+                writer.Flush();
+            },
+            p => output.WriteLine(
+                $"  progress: rewritten {p.Created:N0}, remaining {p.Remaining:N0}, failed {p.Failed:N0}, "
+                + $"{p.Elapsed:hh\\:mm\\:ss} elapsed"),
+            options.ProgressEvery);
+
+        output.WriteLine($"Re-anchor finished: rewritten {outcome.Rewritten:N0}, already correct "
+            + $"{outcome.AlreadyCorrect:N0}, refused by rule {outcome.Refused:N0}, already gone {outcome.Gone:N0}, "
+            + $"failed {outcome.Failed:N0}, in {outcome.Elapsed:hh\\:mm\\:ss}.");
+        if (outcome.FirstError != null)
+        {
+            output.WriteLine($"  first failure: {outcome.FirstError}");
+        }
+
+        return outcome.Failed == 0 && outcome.Refused == 0 && outcome.Gone == 0 ? 0 : 1;
     }
 
     /// <summary>
@@ -610,9 +856,9 @@ public static class CorpusCommands
         return TimeSpan.Zero;
     }
 
-    private static CorpusManifest? LoadManifest(string path, TextWriter output)
+    private static CorpusManifest? LoadManifest(string? path, TextWriter output)
     {
-        if (!File.Exists(path))
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
         {
             return null;
         }

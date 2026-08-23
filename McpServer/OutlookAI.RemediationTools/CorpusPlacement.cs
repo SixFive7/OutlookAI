@@ -61,6 +61,20 @@ public enum CorpusPlacementMethod
 /// <param name="SentFlagSet">MailItem.Sent after the write - informational, not required.</param>
 /// <param name="LandedInFolderName">Where the item actually ended up, so a failure says where it went.</param>
 /// <param name="Error">Why the rung failed, when it did.</param>
+/// <param name="TableCheckConclusive">
+/// Whether the table check ANSWERED. False means the walk stopped short - the row cap was
+/// reached with rows still to come, or the table could not be read - and
+/// <paramref name="TargetFolderTableContainsIt"/> is then a default rather than a finding.
+/// <para>
+/// It exists because the two were once the same value, and against a folder already holding
+/// ~22 000 corpus items that cost a working build: the probe walked its cap, gave up, and
+/// reported the item ABSENT from the folder's table. Everything downstream then behaved
+/// correctly on a false premise - the rung was rejected, the ladder ran out, and the build
+/// refused a placement that works. The refusal was right about what it saw; the seeing was
+/// wrong. The lookup is now selective enough that this should never fire, and it is reported
+/// rather than assumed precisely because "should never" is what the last version said.
+/// </para>
+/// </param>
 public sealed record CorpusPlacementProbe(
     CorpusPlacementMethod Method,
     string TargetFolderName,
@@ -68,7 +82,8 @@ public sealed record CorpusPlacementProbe(
     bool TargetFolderTableContainsIt,
     bool SentFlagSet,
     string? LandedInFolderName,
-    string? Error);
+    string? Error,
+    bool TableCheckConclusive = true);
 
 /// <summary>
 /// Decides, from probe results alone, whether corpus items can be made to live where the
@@ -167,7 +182,8 @@ public static class CorpusPlacement
     /// </para>
     /// </summary>
     public static (bool Proceed, string Message) Decide(
-        CorpusPlacementMethod chosen, bool allowDraftsPlacement, int itemCount)
+        CorpusPlacementMethod chosen, bool allowDraftsPlacement, int itemCount,
+        IReadOnlyCollection<CorpusPlacementProbe>? probes = null)
     {
         if (chosen != CorpusPlacementMethod.None)
         {
@@ -176,6 +192,20 @@ public static class CorpusPlacement
                     + "slower; the manifest records the POST-move EntryID."
                 : string.Empty;
             return (true, $"Placement: VERIFIED via {chosen}. Items will live in the folders the plan names." + extra);
+        }
+
+        // An unanswered check is not a failed rung, and saying so is the whole point: the
+        // refusal that cost a build named the store as the culprit when the culprit was the
+        // measurement. If nothing was proved absent, the message says nothing was proved.
+        if (probes != null && probes.Count > 0
+            && probes.Any(p => p.Error == null && p.ParentIsTargetFolder && !p.TableCheckConclusive)
+            && !probes.Any(p => p.Error == null && p.ParentIsTargetFolder && p.TableCheckConclusive))
+        {
+            return (false, "Placement: UNPROVEN, not refused. At least one rung parented its item in the target "
+                + "folder and the folder's TABLE could not be asked whether it carries it - the walk stopped short "
+                + "rather than reaching the end. Nothing here says the store cannot place items; it says the check "
+                + "did not answer, and building on an unanswered check is how a corpus that measures as empty gets "
+                + "made. Re-run corpus-probe and read the inFolderTable column.");
         }
 
         string what = "Placement: NOT ACHIEVABLE on this store. No method left an item in the folder it was meant "

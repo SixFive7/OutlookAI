@@ -192,6 +192,33 @@ public sealed class CorpusPlan
     /// </summary>
     public const string DaslCountFragment = "OutlookAI-Corpus";
 
+    /// <summary>
+    /// A bracket-free DASL LIKE fragment selecting ONE ordinal of one corpus:
+    /// <c>OutlookAI-Corpus:&lt;id&gt;#&lt;ordinal&gt;</c>. Bracket-free is not tidiness - a
+    /// <c>[</c> inside a LIKE pattern opens a character class, which is the exact mechanism
+    /// that once destroyed real mail, so the tag's own brackets are cut off rather than
+    /// escaped.
+    /// <para>
+    /// It exists because a fragment matching the WHOLE corpus is useless for finding one
+    /// item: a probe looking for its own item in a folder that already holds 22 000 corpus
+    /// items had to walk the lot, gave up at its row cap, and reported the item ABSENT from
+    /// the folder table. The refusal that followed was correct about what it saw and wrong
+    /// about the store.
+    /// </para>
+    /// <para>
+    /// An id containing <c>_</c> makes this a SUPERSET rather than an exact match, because
+    /// <c>_</c> is DASL's single-character wildcard. That is safe by construction: every
+    /// caller re-checks the row's EntryID, and this fragment is only ever used to read.
+    /// </para>
+    /// </summary>
+    public static string DaslSubjectFragment(string corpusId, int ordinal)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
+        // D7, because that is exactly how BuildSubject renders an ordinal. A fragment that
+        // rendered it unpadded would match nothing for every ordinal below 1 000 000.
+        return DaslCountFragment + ":" + corpusId + "#" + ordinal.ToString("D7", CultureInfo.InvariantCulture);
+    }
+
     private static readonly string[] Vocabulary =
     {
         "invoice", "renewal", "handover", "provisioning", "porting", "sip", "trunk", "outage",
@@ -449,6 +476,7 @@ public sealed class CorpusPlan
         long largeBodies = 0;
         long hugeBodies = 0;
         long bodyCapTrippers = 0;
+        int unread = 0;
         DateTime oldest = DateTime.MaxValue;
         DateTime newest = DateTime.MinValue;
 
@@ -479,6 +507,11 @@ public sealed class CorpusPlan
                 bodyCapTrippers++;
             }
 
+            if (!spec.IsRead)
+            {
+                unread++;
+            }
+
             if (spec.ReceivedUtc < oldest)
             {
                 oldest = spec.ReceivedUtc;
@@ -500,7 +533,7 @@ public sealed class CorpusPlan
 
         return new CorpusPlanReport(
             from, to, byFolder, bySizeClass, byDateBand, withinDays,
-            totalBodyBytes, largeBodies, hugeBodies, bodyCapTrippers, oldest, newest);
+            totalBodyBytes, largeBodies, hugeBodies, bodyCapTrippers, oldest, newest, unread);
     }
 
     /// <summary>Outlook default-folder id for Sent Items - its dates behave differently.</summary>
@@ -520,6 +553,23 @@ public sealed class CorpusPlan
     /// the sweep's fallback window (7), the scan windows (30/60/90) and a year.
     /// </summary>
     internal static readonly int[] WindowDayMarks = { 1, 7, 30, 60, 90, 365 };
+
+    /// <summary>
+    /// The same marks, as the read-only list <see cref="CorpusFreshness"/> defaults to. A
+    /// corpus that can no longer fill one of these windows can no longer answer the question
+    /// that window was cut for, which is why the freshness check and the plan report count
+    /// the SAME set: a check against a different set would pass while the measurement it
+    /// guards was already empty.
+    /// </summary>
+    public static IReadOnlyList<int> MeasurementWindowDays { get; } = WindowDayMarks;
+
+    /// <summary>
+    /// The ordinal every throwaway PROBE item carries. Reserved at the top of the range so a
+    /// real corpus can never collide with it, and used to build a DASL fragment selective
+    /// enough to find one item in a folder holding tens of thousands - see
+    /// <see cref="DaslSubjectFragment"/>.
+    /// </summary>
+    public const int ProbeOrdinal = int.MaxValue;
 
     // Independent hash streams. Each field draws from its own so changing one field's
     // derivation later cannot silently reshuffle the others.
@@ -629,6 +679,13 @@ public sealed class CorpusPlan
 /// </param>
 /// <param name="OldestReceivedUtc">Oldest intended received instant.</param>
 /// <param name="NewestReceivedUtc">Newest intended received instant.</param>
+/// <param name="UnreadItems">
+/// Items the plan wants left UNREAD. Reported because it is the population an unread-only
+/// filter is measured against, and because it is the population a build has to be checked
+/// against: the first real build queued 5 532 of 40 000 items for delivery, and the plan's
+/// unread count for that shape is the number a diagnosis has to match or rule out. See
+/// <see cref="CorpusCensus"/>, which is where that comparison is actually made.
+/// </param>
 public sealed record CorpusPlanReport(
     int FromOrdinal,
     int ToOrdinal,
@@ -641,7 +698,8 @@ public sealed record CorpusPlanReport(
     long BodiesAtLeast96Kb,
     long BodiesOverSweepBodyCap,
     DateTime OldestReceivedUtc,
-    DateTime NewestReceivedUtc)
+    DateTime NewestReceivedUtc,
+    int UnreadItems)
 {
     /// <summary>Number of items covered.</summary>
     public int ItemCount => ToOrdinal - FromOrdinal + 1;
