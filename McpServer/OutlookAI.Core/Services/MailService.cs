@@ -1340,6 +1340,20 @@ namespace OutlookAI.Core.Services
                             + "store plus folder/after to read that store without the index.");
                         break;
 
+                    case FreshMerge.GapCachedSweep:
+                        // Both numbers come out of the payload rather than being restated,
+                        // and the remedy is the only honest one: the entry has to expire
+                        // before another live sweep can happen, so an immediate retry is
+                        // served from the same cache and changes nothing.
+                        advice.Add("Freshness sweep was served from cache: its live check of Outlook ran "
+                            + (sweep.CacheAgeSeconds ?? 0).ToString("F1", CultureInfo.InvariantCulture)
+                            + " s ago, so mail that arrived since then is in neither the index nor this sweep. The "
+                            + "hole is at most that wide and closes by itself - the cache holds a sweep for "
+                            + SweepCache.DefaultTimeToLive.TotalSeconds.ToString("F0", CultureInfo.InvariantCulture)
+                            + " s, so a search after that sweeps live again. Only mail newer than "
+                            + "sweep.cacheAgeSeconds can be affected; everything else in this answer was checked.");
+                        break;
+
                     case FreshMerge.GapNothingSwept:
                         if (!folderScoped)
                         {

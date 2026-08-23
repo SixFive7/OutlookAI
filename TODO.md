@@ -1037,6 +1037,27 @@
   Recommendation: **(b)**. It removes the defect exactly where nobody asked for it, keeps the hint
   a caller explicitly chose, and leaves the reporting that now exists to cover the case it keeps.
 
+- [ ] **Decide what to do about the freshness-sweep cache being unreachable for UNSCOPED searches.**
+  Found 2026-08-23 while pinning E3, and verified against the history rather than inferred:
+  `MailService.ResolveSweepWindows` sets the unscoped window base to `DateTime.UtcNow -
+  EmptyIndexSweepWindow`, and that value is the sweep cache key (`SweepCache.TryGetUsable` compares
+  `BaseGapStartUtc` for exact equality), so no two unscoped searches ever share a key and none of
+  them can hit. Before `c515565` the key was `staleness.NewestIndexedReceivedUtc ?? now-7d`, i.e.
+  the stable profile frontier, so it hit. A store-SCOPED search still keys on its own frontier and
+  caches correctly. **Cost, not correctness** - every unscoped search now pays a full COM sweep,
+  which is the expensive one (`SweepBudgetMs`), and it errs toward sweeping live, so nothing is
+  reported wrongly. It also means E3's exposure today is store-scoped searches only. Directions:
+  - **(a) Key the unscoped cache on the profile frontier again** (`staleness.NewestIndexedReceivedUtc`),
+        keeping the wall-clock value for the FALLBACK window it was introduced for. Restores the
+        pre-`c515565` behaviour; the two roles that got conflated are separated rather than merged.
+  - **(b) Round the wall-clock fallback to the TTL** (e.g. to the second) so successive calls inside
+        one window share a key. Cheap, but it makes the key a function of when you called, which is
+        the shape that produced this.
+  - **(c) Leave it and delete the unscoped half of the cache**, so the code says what it does. The
+        honest version of the status quo, at the cost of the iterate-fast behaviour D34 exists for.
+  Recommendation: **(a)**. Measure the sweep cost on this profile before and after - the same
+  measurement the sweep-budget re-measure item above needs anyway.
+
 - [ ] **Decide what the test VM is FOR, because 96 of 115 live tests cannot move to it as it
       stands.** The live tier is now split by trait (`LiveTier=Portable` vs `ProfileBound`, see
       `Docs/live-tier-on-the-vm.md`), and the Portable subset is 19 tests. The limit is not

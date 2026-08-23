@@ -232,6 +232,31 @@ namespace OutlookAI.Core.Services
         public const string GapBodyCap = "body_cap";
 
         /// <summary>
+        /// Coverage hole: the freshness sweep was served from the short-lived cache, so its
+        /// live check of Outlook happened up to <see cref="SweepCache.DefaultTimeToLive"/>
+        /// ago and mail that arrived in between is in NEITHER tier (gap E3).
+        /// <para>
+        /// THE READING IT WITHDRAWS. <c>sweep.cached</c> and <c>sweep.cacheAgeSeconds</c> have
+        /// always been in the payload, and they were the only things saying so - beside
+        /// <c>freshness: "live"</c>, which is the single word an agent reads as "nothing is
+        /// missing". A caller had to know that the sweep reads up to the moment it RUNS, work
+        /// out that a nine-second-old sweep therefore ends nine seconds ago, and overrule the
+        /// verdict the payload gave them. The cache exists so that rapid iteration runs at
+        /// index speed and the trade was always understood; what was missing is that the
+        /// answer said it had made one.
+        /// </para>
+        /// <para>
+        /// The hole is BOUNDED and NAMED, which is what makes this worth a code rather than a
+        /// permanent qualifier: it is at most the TTL wide, <c>sweep.cacheAgeSeconds</c> says
+        /// exactly how wide on this call, and it clears itself - the next search after the
+        /// entry expires sweeps live. That is also why it does not cry wolf: it holds only for
+        /// a repeat search inside a ten-second window, not for every search anyone runs, which
+        /// is the test <see cref="SweepInfo.AttachmentTextCovered"/> is on the other side of.
+        /// </para>
+        /// </summary>
+        public const string GapCachedSweep = "cached_sweep";
+
+        /// <summary>
         /// Coverage hole: the live conversation walk stopped at the requested member cap,
         /// so it did not see the whole conversation. Unlike a search's <c>top</c>, which
         /// caps a date-SORTED match set, the walk reads the conversation table in Outlook's
@@ -637,6 +662,14 @@ namespace OutlookAI.Core.Services
             if (!sweep.Performed)
             {
                 return gaps.Count == 0 ? null : gaps;
+            }
+
+            // Next, and before every folder-level code: this hole is at the NEWEST end of the
+            // window rather than anywhere in the folder set, and the newest end is what this
+            // tier exists for (gap E3).
+            if (sweep.Cached == true)
+            {
+                gaps.Add(GapCachedSweep);
             }
 
             // Everything the sweep meant to walk here turned out not to exist. That is a
