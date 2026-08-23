@@ -38,6 +38,16 @@ jobs:
         shell: pwsh
         run: .github/scripts/check-measurement-privacy.ps1
 
+      # The live-tier test VM can only be rebuilt from what this repository contains, and three
+      # times in one week material a document depended on turned out to live only in a scratch
+      # directory that was then cleared. This asks the tree the one question that catches it: does
+      # the thing the document names exist here? It also pins the corpus parameters across the
+      # three files that hold them, and refuses a credential-shaped literal under Testbed/ - a
+      # guest password has been committed to this public repository once already.
+      - name: Check testbed references and parameters
+        shell: pwsh
+        run: .github/scripts/check-testbed-references.ps1
+
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3
 

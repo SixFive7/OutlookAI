@@ -35,6 +35,47 @@
   files. That gap was fixed in the same work — an in-place upgrade will not leave a stale
   COM host holding its own image open.
 
+- [ ] **What still stops a rebuilder rebuilding the test VM from this repository alone.**
+  `Testbed/` is the entry point and holds the runnable half - parameter set, host and guest
+  scripts, the settings template, the credential contract - and `.github/scripts/check-testbed-references.ps1`
+  fails the build when a document names something the repository does not contain. The corpus
+  parameters are now recorded and verified: **`vm2` / seed `7777` / anchor `2026-08-19` /
+  20,000 items, default shape**, recovered from the manifest header on the guest and confirmed by
+  re-running `corpus-plan`, which reproduced the per-folder and seven-day counts the measurement
+  docs quote. Every doc that used `vm1 / 4242 / 2026-08-01 / 40000` was quoting an EXAMPLE.
+
+  What is left, in the order it blocks a rebuild:
+
+  - [ ] **Answer the eleven questions in `Testbed/README.md` section 6.** They are the facts that
+        are genuinely not recorded anywhere - Hyper-V spec, Windows edition, Office version and
+        bitness, the second Windows account, which Outlook profile is default and how the switch
+        is automated, whether the three-store layout or the mail sink exist at all. Each needs the
+        VM or the maintainer; none can be derived from the repository.
+  - [ ] **Settle whether smtp4dev serves POP3 at all.** The runbook specifies POP3 on 110 and a
+        POP3 dummy account, and `MailSinkSettings.RetrievePort` documents itself as POP3, but
+        smtp4dev v3 is usually described as SMTP plus **IMAP**. If it is IMAP-only the sink
+        section is wrong in a way that surfaces only as mail sitting in a sink nobody can retrieve
+        from. Question 11 in `Testbed/README.md`.
+  - [ ] **Resolve how a built server exe reaches the path tier 3 expects on the guest.** The path
+        is baked in as `AssemblyMetadata("McpServerExePath")` and points into the repository's
+        `bin` tree; the guest has no SDK, so nothing puts a binary there, and
+        `Testbed/host/Publish-GuestPayload.ps1` stages `C:\OutlookAI-Q5\server\` instead. Nothing
+        has needed this yet because the guest cannot run `dotnet test` either. Question 12.
+  - [ ] **Run `Testbed/guest/Measure-SweepCost.ps1` once.** It is the reconstruction of
+        `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1`, which is gitignored and gone with its
+        scratch directory. Written from the shipped `SweepFolder` source, read-only by
+        construction, and **never executed** - the banner says so and should be replaced with what
+        it actually did.
+  - [ ] **Fold the recovered facts into `Docs/live-tier-on-the-vm.md`.** Its section 8 lists ~20
+        open items; the corpus parameters (item 15), the PST path and display name (item 11), the
+        scheduled-task recipe (item 10) and how results leave the guest (item 13) are now answered
+        elsewhere in the repository, and its worked examples still use the `vm1` corpus.
+  - [ ] **The history rewrite for the leaked guest password is still outstanding.** The value is
+        dead - rotated 2026-08-24, and the current one is provably absent from HEAD and from every
+        commit - but the old username-and-password line remains reachable in history from
+        `e1d8c6c` to `77df4e4^`. Tracked in `Docs/autonomous-session-log.md`; noted here because a
+        rebuilder reading the testbed docs will find the reference to it.
+
 - [ ] **Residual questions from the 2026-08-19/20 atomicity-claims sweep.** All 31 claims of
   non-effect were enumerated, 16 were wrong and all 16 are fixed (`Docs/completeness-gaps.md`
   section 7b, T1 `AtomicityClaimsTests`). These are the things reading could not settle, and the
@@ -857,7 +898,7 @@
   the same species as the wrapper defect above - a good message that does not survive the process
   boundary - and it is the only other instance the audit found.
 
-  **How likely is it?** Low - `Docs/com-host.md` calls 64 MB "far above any real payload" and a
+  **How likely is it?** Low - `McpServer/Docs/com-host.md` calls 64 MB "far above any real payload" and a
   `read` returns ~0.5 MB. The candidates are `SweepFoldersNewerThan(includeBodies: true)` and
   `ExhaustiveScan` over a large window. That "low" is still a derivation rather than an
   observation; the high-water mark now accumulating in `outlook_health` is what will replace it,

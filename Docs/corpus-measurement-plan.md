@@ -17,6 +17,50 @@
 > `ComOperationBudgets.ChildWorkBudgetMs` is now `ExhaustiveScanWorkBudgetMs`, and it derives
 > from `ExhaustiveScanDeadlineMs` rather than from the shared operation deadline.
 
+---
+
+## WHICH CORPUS THE NUMBERS ON THIS PAGE ARE ABOUT
+
+**Every measured figure below was taken against corpus `vm2`, and until 2026-08-24 nothing said
+so.** The worked examples on this page and in `Docs/live-tier-on-the-vm.md` used
+`vm1 / 4242 / 2026-08-01 / 40000`, which is a DIFFERENT corpus - a different id, seed, anchor and
+size - and a reader had no way to tell the example from the real thing. The real parameters were
+recovered on 2026-08-24 from the manifest header on the guest and are now committed:
+
+```
+--corpus-id vm2 --seed 7777 --anchor 2026-08-19 --count 20000
+```
+
+Default shape, store `Outlook Data File`, placement `DraftsThenMoveWithSentFlag`, dates
+`PropertyAccessorDates`. `Testbed/testbed.json` holds them, together with the whole expected
+plan output, and `.github/scripts/check-testbed-references.ps1` fails the build if that file,
+`Testbed/guest/Build-Corpus.ps1` and this page stop agreeing.
+
+**The agreement is checkable rather than asserted.** Re-running `corpus-plan` with those four
+arguments reproduces the counts this document and `Docs/magic-numbers.md` quote as measured -
+Inbox 10,912, Sent Items 4,964, Deleted Items 2,461, Junk Email 1,663, and 1,612 items inside the
+seven-day window. Those numbers were recorded from the STORE; the plan derives them from the
+seed. The two matching is independent evidence, not a tautology.
+
+Two things the store carries that the plan does not, reconciled here so a rebuilder does not read
+them as corruption:
+
+* **Deleted Items holds 2,467, six more than the plan**, all unread - the throwaway items
+  `corpus-probe` creates and deletes.
+* **The Outbox holds 2,761**, all unread, which is EXACTLY the plan's unread count. That is the
+  `MSGFLAG_SUBMIT` defect described below, and this is its second independent confirmation
+  (the first was the 40,000-item build's 5,532). The build now clears that bit, so a rebuild
+  should leave the Outbox empty - and because the number is predictable in advance, a non-empty
+  Outbox after a rebuild is a specific signal that the fix did not take.
+
+Build cost for these parameters, from the run that produced the corpus: 20,000 items,
+225,282,619 body bytes, **13m25s at 24.8 items/s**. That is the with-move figure - the verified
+placement rung writes every item twice.
+
+`Testbed/README.md` is the entry point for rebuilding the machine this corpus lives on.
+
+---
+
 **What this file is for.** Two budgets in the MCP server are set by argument rather than by
 measurement, and one of them is about to be changed. This is the plan for replacing both
 arguments with numbers, using the synthetic corpus that
