@@ -68,7 +68,9 @@ corpusId  vm2      seed  7777      anchor  2026-08-19      itemCount  20000
 Those four, plus the generator's default shape, deterministically reproduce the corpus that
 **every published sweep and frame measurement in this repository is a statement about** - the
 ~12 s-per-store sweep behind `SweepBudgetMs`, the 10,734,599-byte frame high-water behind
-`SweepBodyBytesBudget`, and the 1,612-item seven-day window those numbers were taken over.
+`SweepBodyBytesBudget`, and the seven-day window those numbers were taken over - which this
+corpus fills with 1,612 items across four folders, enough that the 200-per-folder cap engages
+and the sweep actually reads 758 of them.
 
 They were not written down anywhere until 2026-08-24. `Docs/live-tier-on-the-vm.md` and
 `Docs/corpus-measurement-plan.md` both used `vm1 / 4242 / 2026-08-01 / 40000` as a worked
@@ -122,8 +124,10 @@ it once** - it survives in git history and had to be rotated.
 | Dummy mail account password | wherever the sink is configured; the sink accepts anything | Anything. It is a loopback sink with no authentication. |
 
 `McpServer/**/live-fixtures/` is gitignored, and
-`.github/scripts/check-testbed-references.ps1` asserts that the ignore rule still covers those
-two paths - an ignore rule that is deleted is silent until the day something lands.
+`.github/scripts/check-testbed-references.ps1` asserts that the rule still covers every path
+declared absent because it is machine-local - the credential file, the settings file and the
+corpus manifest among them. An ignore rule that is deleted is silent until the day something
+lands.
 
 **If you rotate the guest password after the dummy mail account exists, do not use an admin
 reset.** An admin reset destroys that account's DPAPI master key, which takes Outlook's saved
