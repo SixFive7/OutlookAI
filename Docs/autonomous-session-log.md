@@ -18,6 +18,34 @@ The test VM is running, eight checkpoints intact, C: 370 GB free.
 process samples. The narrow filter is still used because tier 3 spawns server processes and is slow,
 not because it is unsafe.
 
+## IN FLIGHT RIGHT NOW - two agents on worktree branches (2026-08-23, late)
+
+**A compaction is imminent, so this is the part a fresh reader would otherwise not find.** Two
+agents are working in isolated git worktrees. Their branches are real refs in this repository and
+survive anything that happens to a conversation. `git branch --list` finds them.
+
+| Branch | Territory | What it was asked for |
+| --- | --- | --- |
+| `worktree-agent-ab7461aa27a49e30a` | `Core/Services`, `Core/IndexSearch`, `OutlookAI.McpServer/`, `Tests/T1/` | **Clear every remaining row of `Docs/completeness-gaps.md`** - F2's remainder, C5 (`thread`'s store is auto-derived when `conversation_id` is absent, so the "members exist in a store I did not walk" warning is structurally unable to fire), B4, E3, A5, B5, the silent `snippet_chars` clamp - plus a scan for the same one-directional-reporting asymmetry elsewhere. Told to verify each row against the code first, because rows here have four times turned out already closed |
+| `worktree-agent-ad5951c0e2020cddf` | `RemediationTools/`, `Tests/T2/`, `live-tier-on-the-vm.md`, `corpus-measurement-plan.md` | **The corpus freshness check then re-anchor on restore; the generator's two defects** (~5,500 duplicate Outbox items, deterministic; the placement probe failing against a large folder); **a local SMTP sink that delivers back**; and **the build-from-nothing runbook** rewritten for the two-Windows-account design |
+
+**Both were told to COMMIT on their own branch and not push.** Territories are disjoint by design so
+the merges stay trivial; neither may edit this file, to avoid colliding here.
+
+**To finish them:** merge each branch into `master`, then verify with the standing command (build
+Core for both frameworks, the narrow test filter, the pinned-constants check). If a result arrives
+after a compaction it comes as a task notification carrying the agent's full report, which is enough
+to judge it without the prior context.
+
+**A heartbeat monitor is armed** (`bash ~/.claude/scripts/heartbeat.sh`, persistent). Its ticks
+report `live`/`deeper`/`bg`; `state=all-finished` is the only safe signal to stop it.
+
+**Then, in order:** merge and verify these two; re-measure the sweep budget on the VM (180 s was
+derived while the sort was silently failing, so it rests on a measurement of broken behaviour);
+mutation-verify `bea7fc9`; raise the census identity budget, whose one-run trial has now happened
+(5 stores, 159 folders, 2,044 items in 16.9 s); then the tiering work (`VmCapable`, the four
+early-returning tests), the fault hooks, the measurement gate, and the VM build itself.
+
 ## Everything outstanding, in one list
 
 **Decided, not built:**
