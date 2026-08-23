@@ -145,6 +145,16 @@ release until the maintainer says so - **do not ask about release timing, it is 
 11. **Restore the installed MCP server** - deliberately moved aside, so `outlookai` fails to start
     in every Claude Code session on that machine. Deferred until the release.
 
+## Decisions given 2026-08-23, second batch
+
+| # | Question | Answer |
+| --- | --- | --- |
+| 1 | The corpus decays into a lie - a fixed anchor means every "last N days" window selects nothing after ~6 weeks, and every test still passes | **Assert freshness first** (a test that fails when the newest corpus item is older than the widest window under test), **then re-anchor on restore**. Regenerating was rejected: it throws away a snapshot we hold measurements against |
+| 2 | Four tests pass while asserting almost nothing when their precondition is unmet, each by a documented early return - including the one asserting that search always answers | **Make each fail rather than return.** They are live-tier now, run deliberately against a machine chosen to satisfy their preconditions, so an unmet precondition is a finding about the machine |
+| 3 | The unroutable dummy account leaves a permanent tagged Outbox artifact, which the mandatory zero-artifact sweep fails on forever | **A local SMTP sink that delivers back**, so self-addressed mail round-trips and the six arrival tests become runnable. Exempting the Outbox from the sweep was rejected - that guard exists because mail was once destroyed |
+| 4 | `Portable` was defined as "no mail accounts, nothing indexed" and the decided VM has both | **Add a third tier value, `VmCapable`**, and push capability reasons from class level down to method level. The class-level attribution is why 96 tests looked impossible when only 15 are |
+| 5 | Shapes fixed blind - a folder that throws on open, a store whose display name cannot be read, an item with no delivery time. No way was found to produce the unreadable store name on ANY machine, so that fix has never once executed | **Extend the existing COM-host fault-injection hook**, and use a genuinely permissions-denied folder for the folder case. Extends a proven mechanism rather than adding a second |
+
 ## Standing rules that outlive any compaction
 
 - **Completeness outranks performance, whatever the cost.** The maintainer has said this repeatedly.
