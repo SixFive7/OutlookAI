@@ -1,0 +1,188 @@
+
+### T2/LiveAttachmentKindRecallTests  (5 tests)
+  [ProfileBound] DroppedAttachmentKinds_AreRecoveredByTheNewShape_AndTheGrowthIsMeasured req=SearchIndex,Transport
+  [ProfileBound] PostFilter_KeepsMailOnly_AndAttachmentRowsOfEveryKind                  req=SearchIndex,Transport
+  [ProfileBound] PreviouslyDroppedAttachmentKinds_SurfaceThroughSearch_AndReadOpensTheParent req=SearchIndex,Transport
+  [ProfileBound] QuerySetLatency_IsUnchangedWithinNoise                                 req=SearchIndex,Transport
+  [ProfileBound] SeededMixedAttachments_AreAdmittedOnceIndexed_AndAlwaysCleanedUp       req=SearchIndex,Transport
+
+### T2/LiveCompletenessOracleTests  (1 tests)
+  [ProfileBound] CompletenessOracle_IndexMatchesGroundTruth_ForProbeTerms               req=SearchIndex
+
+### T2/LiveDecodeVerifyTests  (3 tests)
+  [ProfileBound] AttachmentHit_ParentMapping_OpensParentWithMatchingAttachment          req=MultipleStores,SearchIndex
+  [ProfileBound] HitMapping_25SampledHits_AllOpenAndMatch_AtLeast24ViaPrimaryPath       req=MultipleStores,SearchIndex
+  [ProfileBound] ShortDecodedId_IsRejectedByGetItemFromID_DiscoveryRecorded             req=MultipleStores,SearchIndex
+
+### T2/LiveDisconnectRecoveryTests  (1 tests)
+  [ProfileBound] OutlookExit_ReleasesHeldRefsInBackground_HealthProbes_GatewayReattaches req=MailAccount
+
+### T2/LiveDraftOptionsTests  (5 tests)
+  [ProfileBound] DerivedDrafts_CcBccAppend_SubjectOverrideKeepsThreading_ImportanceAndReceiptRoundTrip req=MailAccount,MultipleStores,Transport
+  [ProfileBound] ForwardDraft_CcBccAppend_AndSubjectOverrideKeepsTheForwardedContent    req=MailAccount,MultipleStores,Transport
+  [ProfileBound] NewDraft_BusinessAccounts_BodyAboveTheirOwnIntactHtmlSignature         req=MailAccount,MultipleStores,Transport
+  [ProfileBound] NewDraft_Hub_NoConfiguredSignature_BodyOnly_NoBogusInjection           req=MailAccount,MultipleStores,Transport
+  [ProfileBound] NewDraft_Hub_SignatureOverride_BodyAboveTheSignature_OutsideTheSignatureBookmark req=MailAccount,MultipleStores,Transport
+
+### T2/LiveDraftTests  (5 tests)
+  [ProfileBound] ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain                        req=InteractiveDesktop,MailAccount,MultipleStores,Transport
+  [ProfileBound] DerivedDrafts_Hub_ThreadingQuotedHistoryAndPlacement                   req=InteractiveDesktop,MailAccount,MultipleStores,Transport
+  [ProfileBound] IdentityDrafts_BusinessAccounts_RightStore_NeverDisplayed_DeletedImmediately req=InteractiveDesktop,MailAccount,MultipleStores,Transport
+  [ProfileBound] NewDraft_Hub_DisplayCase_InspectorShown_ScreenshotTaken_ThenClosed     req=InteractiveDesktop,MailAccount,MultipleStores,Transport
+  [ProfileBound] NewDraft_Hub_LandsInHubDrafts_IdentityAndSignatureRecorded             req=InteractiveDesktop,MailAccount,MultipleStores,Transport
+
+### T2/LiveExhaustiveSearchTests  (2 tests)
+  [Portable    ] Exhaustive_FolderBounded_ReturnsExactlyThatFoldersMatches              req=-
+  [ProfileBound] Exhaustive_KnownAnswer_MatchesIndexAndGroundTruth_OnHubStore           req=SearchIndex
+
+### T2/LiveFolderScopeTests  (7 tests)
+  [ProfileBound] ApostropheInAFolderName_IsSearchable_InsteadOfThrowing                 req=MailAccount
+  [ProfileBound] DelegateFirstLevelFolders_StillResolve_AndTheWholeMailboxIsUnfiltered  req=DelegateStore,SearchIndex
+  [ProfileBound] DelegateSubfolders_AreReachableAgain_AndTheOldNestedShapeStillReturnsZero req=DelegateStore,SearchIndex
+  [ProfileBound] HubSubtree_SweepAndExhaustive_HonorIncludeSubfolders_AndTheCacheKeepsThemApart req=MailAccount
+  [ProfileBound] PrimaryStore_ExcludeSubfolders_NarrowsExactly_AndCostsNothing          req=MultipleStores,SearchIndex
+  [Portable    ] TopAboveTheCap_IsReportedAsAClamp                                      req=-
+  [ProfileBound] UnresolvedFolderPath_IsReportedAsAResolutionProblem_NotAnEmptyResult   req=SearchIndex
+
+### T2/LiveFreshModeTests  (1 tests)
+  [ProfileBound] FreshSearch_FindsSelfSentMail_BeforeIndexCatchesUp_ThenCleansUp        req=Transport
+
+### T2/LiveHeadlessComposeParityTests  (2 tests)
+  [ProfileBound] APlainTextDraftIsAlsoFullyComposed_WithNoDegradationReported           req=MailAccount
+  [ProfileBound] ComposedWithNoVisibleWindow_TheDraftIsFullyCapable_AndNothingIsPutOnScreen req=MailAccount
+
+### T2/LiveHeadlessGuaranteeTests  (1 tests)
+  [ProfileBound] NonShowMeOperations_NeverCreateAnOutlookWindow                         req=MailAccount
+
+### T2/LiveHealthTests  (1 tests)
+  [ProfileBound] Health_OnThisMachine_ReportsOkWithFullDetail                           req=MultipleStores,SearchIndex
+
+### T2/LiveHtmlDraftTests  (6 tests)
+  [ProfileBound] MalformedBodyHtml_IsRepaired_AndTheAdjustmentsAreReported              req=InteractiveDesktop,MailAccount,Transport
+  [ProfileBound] NewDraft_BodyHtml_DisplayCase_ScreenshotOfTheRenderedLetter_ThenClosed req=InteractiveDesktop,MailAccount,Transport
+  [ProfileBound] NewDraft_BodyHtml_RichStructuresSurviveInTheDraftRegion_AboveAnIntactSignature req=InteractiveDesktop,MailAccount,Transport
+  [ProfileBound] PlainTextBody_IsUnchanged_ByTheHtmlOption                              req=InteractiveDesktop,MailAccount,Transport
+  [ProfileBound] Read_IncludeHtml_ReturnsTheStoredHtmlOfAFreshDraftByEntryId_WithTruncationFlags req=InteractiveDesktop,MailAccount,Transport
+  [ProfileBound] ReplyDraft_BodyHtml_LeavesTheQuotedOriginalIntactAndBelowTheBody       req=InteractiveDesktop,MailAccount,Transport
+
+### T2/LiveIndexSearchTests  (10 tests)
+  [ProfileBound] DelegateStoreSubtree_ReturnsRowsUnder2s                                req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] FilterShapes_ReadAndAttachmentFlags_WorkUnder2s                        req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] ProbeParity_AllThreeStores_ReturnRowsUnder2s                           req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] ProbeParity_DateRangeQuery_HitsUnder2s                                 req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] ProbeParity_McpShapedQuery_ScopeKindContainsOrderBy                    req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] ProbeParity_Top5Email_HitsUnder2s                                      req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] ProviderSelection_OleDbPrimaryPath_IsRecorded                          req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] SenderFilter_PerColumnContains_IndexBackedUnder2s                      req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] Staleness_SelfReportsPlausibleFrontier                                 req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] StoreDiscovery_FindsAllExpectedStores                                  req=DelegateStore,MultipleStores,SearchIndex
+
+### T2/LiveMailServiceTests  (8 tests)
+  [ProfileBound] AttachmentHit_ReadParent_SaveToScratch                                 req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] ListAccounts_ExactAccountsDelegatesAndFlags                            req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] ListFolders_TestHub_FullTree_StableOrder_And_OffsetPaging              req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] OutlookHealth_Live_ReportsProviderStalenessAndPerStoreRows             req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] Read_BodyOffsetPaging_TilesTheBody_FromTheCachedExtraction             req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] RoundTrip_SearchThenRead_TenHitsAcrossStores                           req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] Thread_IndexPath_AndComFallback                                        req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] Truncation_MailOver100KB_FlagsAndTotalsCorrect                         req=DelegateStore,MultipleStores,SearchIndex
+
+### T2/LiveManageSignatureTests  (2 tests)
+  [ProfileBound] DefaultAssignment_HubAccountOnly_SetThenCleared_OriginalsRestoredExactly req=MailAccount
+  [Portable    ] FullLifecycle_CreateUpdateDelete_WithAlwaysOnBackups_AndAuditLines     req=-
+
+### T2/LiveMoveArchiveTests  (2 tests)
+  [ProfileBound] ArchiveResolution_AllFiveStores_ReadOnly                               req=MultipleStores,Transport
+  [ProfileBound] MoveChain_TestFolderRoundTrip_Archive_Guards_Audit_Cleanup             req=MultipleStores,Transport
+
+### T2/LiveOrderKeyCollationTests  (3 tests)
+  [ProfileBound] NullCollation_UnderDateReceivedDescending_IsMeasured                   req=SearchIndex
+  [ProfileBound] OrderKeyFloorPredicate_IsAccepted_AndAdmitsOnlyDatedRows               req=SearchIndex
+  [ProfileBound] WidenedSearch_NeverReturnsFewerRowsThanTheOldMailKindShape             req=SearchIndex
+
+### T2/LiveResumableScanTests  (4 tests)
+  [Portable    ] APagedScan_ReportsWhichRungItResumedOn_SoTheSortQuestionIsAnsweredInPassing req=-
+  [Portable    ] APagedScan_ReturnsExactlyWhatOneUnpagedScanReturns_WithNoDuplicates    req=-
+  [Portable    ] AResumeWithAChangedQuestion_IsRefused_AndTheRefusalNamesWhatChanged    req=-
+  [Portable    ] ASupersededToken_IsRefusedWithThePositionNeededToCarryOnWithoutIt      req=-
+
+### T2/LiveSearchInTests  (6 tests)
+  [ProfileBound] AllTiers_SubjectOnlyAndBodyOnlyTerms_AreSeparatedConsistently          req=ProbePopulation,SearchIndex
+  [ProfileBound] IndexTier_OrPairLatency_StaysAcceptableVersusSingleColumn              req=ProbePopulation,SearchIndex
+  [ProfileBound] Sf6DiscoveryCase_ExhaustiveTier_HonorsSearchIn                         req=ProbePopulation,SearchIndex
+  [ProfileBound] Sf6DiscoveryCase_IndexTier_PrefixStemsWorkInTheSubjectColumnToo        req=ProbePopulation,SearchIndex
+  [ProfileBound] Sf6DiscoveryCase_IndexTier_SubjectOnlyPopulationIsFoundByDefaultScope  req=ProbePopulation,SearchIndex
+  [ProfileBound] Sf6DiscoveryCase_ToolTier_DefaultQueryReturnsHits_BodyScopeReturnsNone req=ProbePopulation,SearchIndex
+
+### T2/LiveSendTests  (4 tests)
+  [ProfileBound] ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain                        req=MailAccount,MultipleStores
+  [ProfileBound] Send_DeletedDraft_FailsClosed_WithoutSending                           req=MailAccount,MultipleStores
+  [ProfileBound] TokenExpiry_ShortTtlService_RefusesExpiredToken                        req=MailAccount,MultipleStores
+  [ProfileBound] TokenFlow_BindingSingleUseAndModification_AllRefuse_NothingSent        req=MailAccount,MultipleStores
+
+### T2/LiveShowMeTests  (3 tests)
+  [Portable    ] GotoFolder_HubFolder_ActiveExplorerCurrentFolderMatches                req=InteractiveDesktop
+  [ProfileBound] OpenInOutlook_HubMail_InspectorForRightEntryIdThenClosedByTest         req=InteractiveDesktop,SearchIndex
+  [Portable    ] ShowSearchResults_ScopeFeatureTest_AndHubScopedScreenshot              req=InteractiveDesktop
+
+### T2/LiveSignatureTests  (4 tests)
+  [Portable    ] ListSignatures_SeesTestSignature_WithExcerpt_AndAccountRows            req=-
+  [ProfileBound] NewDraft_WithSignatureOverride_AppliedOnAccountWithoutDefault          req=MailAccount
+  [ProfileBound] ReplyDraft_WithSignatureOverride_InsertsAboveQuote_ThenReplaceBranchReapplies req=MailAccount,Transport
+  [Portable    ] TestSignatureLifecycle_LeavesZeroLeftovers                             req=-
+
+### T2/LiveStaleIndexRowTests  (1 tests)
+  [ProfileBound] DelegateHitsInANestedFolder_AreReadable_ViaTheFlatLeafName             req=DelegateStore,ProbePopulation,SearchIndex
+
+### T2/LiveSweepCacheTests  (1 tests)
+  [Portable    ] RapidSearches_PayOneSweep_SecondServedFromCache                        req=-
+
+### T2/LiveSweepScopeTests  (4 tests)
+  [ProfileBound] ControlledCorpus_CrossColumnTermsMatch_AndTheSweepFollowsTheSearchScope req=Transport
+  [Portable    ] DefaultSweep_CoversTheArrivalPathFolders_WithinBudget                  req=-
+  [Portable    ] FolderScopedSweep_UnknownFolder_DegradesWithAdvice_NeverThrows         req=-
+  [ProfileBound] IndexTier_TwoTerms_OneInSubjectOneInBody_AreFoundTogether              req=SearchIndex
+
+### T2/LiveTableSortProbeTests  (2 tests)
+  [Portable    ] ATableDate_IsEitherUtcOrLocal_AndTheRunSaysWhich                       req=-
+  [Portable    ] TableSort_AcceptsAnExplicitPropertyName_OrRefusesBoth_AndTheRunSaysWhich req=-
+
+### T2/LiveUiSearchBackendTests  (1 tests)
+  [Portable    ] FlippingUserHiveValue_DrivesAdviceAndHealthField_BothStates            req=InteractiveDesktop
+
+### T2/LiveUpdateDiscardTests  (12 tests)
+  [ProfileBound] AttachingAFile_InvalidatesAPendingSendToken                            req=MailAccount,Transport
+  [ProfileBound] DiscardDraft_RefusesADraftThisServerDidNotMake_EvenThoughItIsAnUnsentHubDraft req=MailAccount,Transport
+  [ProfileBound] DiscardDraft_RefusesASentItem_EvenWhenTheRegistryGateIsSatisfied       req=MailAccount,Transport
+  [ProfileBound] DiscardDraft_RefusesAnUnsentItemOutsideDrafts_AndSoDoesUpdateDraft     req=MailAccount,Transport
+  [ProfileBound] DiscardDraft_SoftDeletesItsOwnDraft_GoneFromDrafts_PresentInDeletedItems req=MailAccount,Transport
+  [ProfileBound] NewDraft_WithAttachments_ReportsWhatActuallyLandedOnTheSavedDraft      req=MailAccount,Transport
+  [ProfileBound] SendContentHash_IsStableOnAnUntouchedDraft_ButSeesAMarkupOnlyEdit      req=MailAccount,Transport
+  [ProfileBound] UpdateDraft_AddsAndRemovesAttachments_AndSaysWhatMatchedNothing        req=MailAccount,Transport
+  [ProfileBound] UpdateDraft_OnAReply_ReplacesTheBody_AndKeepsTheQuotedOriginal         req=MailAccount,Transport
+  [ProfileBound] UpdateDraft_ReplacesSubjectAndRecipients_KeepingThreadingAndTheOtherFields req=MailAccount,Transport
+  [ProfileBound] UpdateDraft_ReplacesTheBodyRegion_LeavingTheSignatureIntact            req=MailAccount,Transport
+  [ProfileBound] UpdateDraft_ReportsAnInlineImageItCannotCarryOver_AndReapplyingTheSignatureRestoresIt req=MailAccount,Transport
+
+### T3/LiveManageSignatureMcpToolTests  (1 tests)
+  [Portable    ] ManageSignature_FullCycle_OverRealStdio_WithBackupPathsAndAudit        req=-
+
+### T3/LiveMcpToolShapeTests  (2 tests)
+  [ProfileBound] Search_Read_SaveAttachment_Thread_GoldenShapes_OverRealStdio           req=DelegateStore,MultipleStores,SearchIndex
+  [ProfileBound] Status_Accounts_Folders_GoldenShapes_OverRealStdio                     req=DelegateStore,MultipleStores,SearchIndex
+
+### T3/MoveArchiveLiveMcpToolTests  (1 tests)
+  [ProfileBound] MoveAndArchive_GoldenShapes_OverRealStdio                              req=Transport
+
+### T3/Phase3LiveMcpToolShapeTests  (1 tests)
+  [Portable    ] ShowMe_And_ExhaustiveSearch_GoldenShapes_OverRealStdio                 req=InteractiveDesktop
+
+### T3/Phase4LiveMcpToolShapeTests  (1 tests)
+  [ProfileBound] DraftTools_GoldenShapes_OverRealStdio_WithAuditLines                   req=MailAccount,Transport
+
+### T3/Phase5LiveMcpToolShapeTests  (1 tests)
+  [ProfileBound] SendTool_TwoStepFlow_RoundTrip_OverRealStdio_WithAuditLines            req=Transport
+
+### T3/Phase7LiveMcpToolShapeTests  (2 tests)
+  [Portable    ] Health_OverStdio_OnThisMachine_HasOutlookVersionAndTuning              req=AddInRegistry
+  [ProfileBound] Search_TopOne_OnHubStore_SetsTruncated_AndTopHundredDoesNot            req=SmallHubStore
