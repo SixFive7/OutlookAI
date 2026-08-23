@@ -2,11 +2,19 @@
 
 **Read this first after any context loss.** Everything below it is history and reasoning.
 
-## Position
+## Position - 2026-08-24, after the VM-infrastructure merge
 
-`HEAD` = `17b113b`, tree clean, nothing running. **1,936 tests in 6 seconds with no mailbox
-contact.** `OutlookAI.Core` builds clean for net48 and net10. `check-pinned-constants.ps1` 11/11.
-The test VM is running, eight checkpoints intact, C: 370 GB free.
+`HEAD` = `77df4e4`, pushed, tree clean. **1,977 tests in 7 seconds with no mailbox contact**
+(1,936 + 41 from the merge). `OutlookAI.Core` builds clean for net48 and net10 with zero
+warnings. `check-pinned-constants.ps1` 11/11. The test VM is running, checkpoints intact.
+
+**A CREDENTIAL WAS LEAKED FROM THIS FILE AND MUST BE ROTATED.** This repository is PUBLIC
+(`SixFive7/OutlookAI`). This file recorded the VM guest password in plain text; it was pushed and
+is in **32 commits of history**, first `e1d8c6c`. Redacted at `HEAD` in `77df4e4`, which stops it
+spreading and does NOT un-publish it. **Rotation is the fix and it has not been done** - it needs
+the maintainer's word, because changing a credential is a real mutation, and the scripts under
+`C:\Users\jori\Downloads\tmp-outlookai-vm\` hard-code the old value. Never write the new one into
+a tracked file; the gitignored live-test settings are the only place it belongs.
 
 **Verification command - the standing bar:**
 
@@ -18,33 +26,39 @@ The test VM is running, eight checkpoints intact, C: 370 GB free.
 process samples. The narrow filter is still used because tier 3 spawns server processes and is slow,
 not because it is unsafe.
 
-## IN FLIGHT RIGHT NOW - two agents on worktree branches (2026-08-23, late)
+## IN FLIGHT - 2026-08-24
 
-**A compaction is imminent, so this is the part a fresh reader would otherwise not find.** Two
-agents are working in isolated git worktrees. Their branches are real refs in this repository and
-survive anything that happens to a conversation. `git branch --list` finds them.
-
-| Branch | Territory | What it was asked for |
+| Agent | Branch | State |
 | --- | --- | --- |
-| `worktree-agent-ab7461aa27a49e30a` | `Core/Services`, `Core/IndexSearch`, `OutlookAI.McpServer/`, `Tests/T1/` | **Clear every remaining row of `Docs/completeness-gaps.md`** - F2's remainder, C5 (`thread`'s store is auto-derived when `conversation_id` is absent, so the "members exist in a store I did not walk" warning is structurally unable to fire), B4, E3, A5, B5, the silent `snippet_chars` clamp - plus a scan for the same one-directional-reporting asymmetry elsewhere. Told to verify each row against the code first, because rows here have four times turned out already closed |
-| `worktree-agent-ad5951c0e2020cddf` | `RemediationTools/`, `Tests/T2/`, `live-tier-on-the-vm.md`, `corpus-measurement-plan.md` | **The corpus freshness check then re-anchor on restore; the generator's two defects** (~5,500 duplicate Outbox items, deterministic; the placement probe failing against a large folder); **a local SMTP sink that delivers back**; and **the build-from-nothing runbook** rewritten for the two-Windows-account design |
+| Fix the VM test infrastructure | `worktree-agent-ad5951c0e2020cddf` | **MERGED** into master as `4d7efbc`, verified 1,977 pass |
+| Clear the product gap map | `worktree-agent-ab7461aa27a49e30a` | running - every remaining `Docs/completeness-gaps.md` row plus the asymmetry scan |
+| Mutation-verify the sort fix | (worktree) | running - `bea7fc9`, the queued verification that never happened |
+| Build the measurement gate | (worktree) | running - local-only baselines under `%LOCALAPPDATA%`, fail-biased tolerances |
 
-**Both were told to COMMIT on their own branch and not push.** Territories are disjoint by design so
-the merges stay trivial; neither may edit this file, to avoid colliding here.
+Branches are real refs and survive any conversation loss; `git branch --list` finds them. Agents
+commit on their own branch, never push, and never edit this file. **To finish one:** merge its
+branch into `master`, then run the standing verification command above.
 
-**To finish them:** merge each branch into `master`, then verify with the standing command (build
-Core for both frameworks, the narrow test filter, the pinned-constants check). If a result arrives
-after a compaction it comes as a task notification carrying the agent's full report, which is enough
-to judge it without the prior context.
+**A heartbeat monitor is armed** (`bash ~/.claude/scripts/heartbeat.sh`, persistent).
+`state=all-finished` is the only safe signal to stop it, and `bgroot=` must be read before
+stopping because root-owned background jobs are never killed for you.
 
-**A heartbeat monitor is armed** (`bash ~/.claude/scripts/heartbeat.sh`, persistent). Its ticks
-report `live`/`deeper`/`bg`; `state=all-finished` is the only safe signal to stop it.
+## NINE OPEN QUESTIONS PUT TO THE MAINTAINER - 2026-08-24, UNANSWERED
 
-**Then, in order:** merge and verify these two; re-measure the sweep budget on the VM (180 s was
-derived while the sort was silently failing, so it rests on a measurement of broken behaviour);
-mutation-verify `bea7fc9`; raise the census identity budget, whose one-run trial has now happened
-(5 stores, 159 folders, 2,044 items in 16.9 s); then the tiering work (`VmCapable`, the four
-early-returning tests), the fault hooks, the measurement gate, and the VM build itself.
+Asked in full, each with a primer, directions and a recommendation. **Nothing below is being
+implemented until they are answered.** Recorded here so a compaction cannot lose them.
+
+| # | Question | My recommendation |
+| --- | --- | --- |
+| 1 | The 16 mislabelled tier-3 files - 8 of 100 methods reach real Outlook, and the interim filter discards the other 92 locally | Move the 8 into the live tier, implemented as a file split |
+| 2 | How far to push `Requires` from class to method - all ~30 classes, or the 6 straddlers | The 6 straddlers now, the rest lazily as each is enabled |
+| 3 | Who reads the measurement table, now that release notes are ruled out | An agent reads it against the previous run; console print as the floor |
+| 4 | The four unmeasured atomicity residuals | Measure the RPC HRESULT question and the soft-delete survival; accept the other two as documented |
+| 5 | The tripwire's re-run bound | Two re-censuses ~30 s apart, then one bounded re-run of implicated tests |
+| 6 | `SweepBudgetMs` 180 s (derived while the sort was broken) and the census identity budget (16.9 s, one trial) | Ceilings now - 600 s and 120 s - narrowed later from VM data |
+| 7 | `ExhaustiveScanDeadlineMs` 615 s has never been measured on either machine | Run `corpus-measurement-plan.md` step 5 on the VM; read-only |
+| 8 | Four `Open - needs a decision` rows in `magic-numbers.md` | Fix the update-service backoff and the row constant; accept the tint; close the registry row |
+| 9 | **The leaked VM password** - public repo, 32 commits of history | **Rotate the credential.** History rewrite is optional hygiene, not the fix |
 
 ## Everything outstanding, in one list
 

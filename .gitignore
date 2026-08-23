@@ -449,3 +449,6 @@ Redist/vstor_redist.exe
 McpServer/**/live-fixtures/
 McpServer/**/audit-logs/
 McpServer/**/screenshots/
+
+# Scratch: build output, verification logs, measurement runs. Machine-local, never published.
+.work/
