@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.IndexSearch;
 using Xunit;
@@ -67,6 +68,31 @@ public sealed class LiveTestSettings
     /// </summary>
     public DelegateNestedFolderProbeSettings? DelegateNestedFolderProbe { get; set; }
 
+    /// <summary>
+    /// OPTIONAL coordinates of the synthetic measurement corpus, when this machine has one.
+    /// Present means the live tier proves the corpus can still answer the questions it exists
+    /// for BEFORE it runs anything against it - see <see cref="LiveCorpusFreshness"/>.
+    /// </summary>
+    public CorpusSettings? Corpus { get; set; }
+
+    /// <summary>
+    /// How the settings file is read.
+    /// <para>
+    /// <b><see cref="JsonStringEnumConverter"/> is load-bearing, not tidiness.</b> Without it
+    /// System.Text.Json accepts <c>machineProfile</c> only as a NUMBER, and the documented
+    /// example - and every settings file a person would write - spells it
+    /// <c>"Portable"</c>. That threw inside <see cref="Load"/>, before any test ran, so a
+    /// correctly written settings file made the entire live tier refuse to start with an
+    /// error about JSON rather than about the machine. Both spellings are accepted now, and
+    /// the numeric one still works, so no existing file breaks.
+    /// </para>
+    /// </summary>
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() },
+    };
+
     /// <summary>Loads the settings file or throws with setup instructions.</summary>
     public static LiveTestSettings Load()
     {
@@ -85,9 +111,18 @@ public sealed class LiveTestSettings
                 + "(account identifiers are never committed - v3.MD S6).");
         }
 
-        LiveTestSettings settings = JsonSerializer.Deserialize<LiveTestSettings>(
-                File.ReadAllText(path),
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+        return Parse(File.ReadAllText(path));
+    }
+
+    /// <summary>
+    /// Reads and validates settings from JSON text. Split out from <see cref="Load"/> so the
+    /// deserialization itself is pinned: every existing test builds the object in code, so
+    /// nothing exercised the JSON path, and that is how a converter the documented example
+    /// depends on went missing without a single test noticing.
+    /// </summary>
+    internal static LiveTestSettings Parse(string json)
+    {
+        LiveTestSettings settings = JsonSerializer.Deserialize<LiveTestSettings>(json, JsonOptions)
             ?? throw new InvalidOperationException("Live-test settings file deserialized to null.");
 
         Validate(settings);
@@ -127,6 +162,15 @@ public sealed class LiveTestSettings
                 "Live-test settings have a partially filled 'subjectOnlyProbe' block. All four of "
                 + "storeDisplayName, folderPath, subjectTerm and senderFragment are needed, or leave the "
                 + "block out entirely.");
+        }
+
+        if (settings.Corpus != null && !settings.Corpus.IsComplete)
+        {
+            throw new InvalidOperationException(
+                "Live-test settings have a partially filled 'corpus' block. All of storeDisplayName, "
+                + "manifestPath, corpusId, seed, anchorUtc and itemCount are needed, or leave the block out "
+                + "entirely. A half-written block reads as configured and behaves as absent, which is exactly "
+                + "the silence the freshness check exists to remove.");
         }
 
         if (settings.MachineProfile != LiveMachineProfile.Production)
@@ -185,7 +229,8 @@ public sealed class LiveTestSettings
             + ", stores=" + ExpectedStoreDisplayNames.Count
             + ", delegateStores=" + ExpectedDelegateStoreDisplayNames.Count
             + ", probeTerm=" + (string.IsNullOrWhiteSpace(ProbeTerm) ? "none" : "set")
-            + ", subjectOnlyProbe=" + (SubjectOnlyProbe == null ? "none" : "set");
+            + ", subjectOnlyProbe=" + (SubjectOnlyProbe == null ? "none" : "set")
+            + ", corpus=" + (Corpus == null ? "none" : Corpus.CorpusId);
     }
 }
 
@@ -256,6 +301,13 @@ public sealed class LivePhase1Fixture : IDisposable
         // Fail-closed per-store count tripwire: no census, no live tier. Cheap after
         // the first fixture (one process-wide baseline).
         LiveStoreCountTripwire.EnsureBaseline(Settings);
+
+        // Fail-closed corpus freshness: a corpus whose measurement windows have emptied is
+        // worse than no corpus, because every test asking about those windows still passes.
+        // Checked here rather than per test, and BEFORE anything reads the store, for the
+        // same reason as the tripwire above: it is a property of the machine, and a machine
+        // that cannot answer must not be measured.
+        LiveCorpusFreshness.EnsureFresh(Settings);
         Service = IndexSearchService.CreateDefault(out string providerReport);
         ProviderReport = providerReport;
 
