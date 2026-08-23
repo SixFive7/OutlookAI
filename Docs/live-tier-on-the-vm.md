@@ -1,142 +1,479 @@
-# Running the live tier somewhere other than the maintainer's machine
+# The live-tier test VM: building it from nothing, and running it
 
-**Who this is for.** Someone who has a Windows machine with Outlook on it and wants to run
-OutlookAI's `Category=Live` tests without touching a production mailbox. It assumes no
-knowledge of how the tier grew up.
+**Who this is for.** Someone rebuilding this machine after it has been deleted, corrupted or
+moved to another host, with nothing but this repository and a Windows ISO. It assumes no
+knowledge of how the tier grew up. It is also the reference for running the tier once the
+machine exists.
 
 **Read `CLAUDE.md`'s Mailbox Safety section first.** Nothing here overrides it. Every rule in
 it applies on a test machine too, and the guards described below are what enforce it.
 
----
-
-## 1. The two facts that shape everything else
-
-**The live tier writes to exactly one mailbox and reads several.** The one it writes to is the
-**hub**, named in a gitignored settings file. Every other store the settings mention is watched
-by the store-count tripwire, and what a test may do to it is decided in code by
-`StoreWriteAllowlist` rather than by anybody remembering: the other configured PRIMARY stores get
-draft-create and draft-delete and nothing else (one tagged, never-displayed draft each, for the
-identity tests), and delegate/shared mailboxes and any store not in the settings at all get
-nothing, ever.
-
-**Most live tests cannot honestly run without a real profile.** Of 127 live test methods, 31
-are `LiveTier=Portable` and 96 are `LiveTier=ProfileBound`. That is not a policy choice; it is
-what the tests do. Drafts need a resolvable mail Account object, searches need the Windows
-Search index to have published the store, delegate tests need a delegate mailbox, and one
-test actually sends mail. A machine without those cannot run them, and pretending otherwise
-would mean tests that pass without testing anything.
-
-So the split is: **the VM runs the Portable subset routinely, and the whole tier runs on the
-maintainer's own profile before a release.** Section 5 is the second half of that.
+**Secrets are not in this repository, which is public.** Guest account passwords, the host's
+scratch paths and anything else that identifies a real machine live in the maintainer's own
+notes. Where this document needs one it says which secret, never the value.
 
 ---
 
-## 2. What a second machine needs
+## 1. What this machine is, and why it is shaped that way
 
-### 2.1 The machine
+Four shape decisions drive everything below, and three of them are counter-intuitive enough
+that they get their reasons here rather than in passing.
 
-* Windows with Outlook installed and a **mail profile that opens without prompting**.
-  The suite connects in-process over COM and cannot answer a dialog.
-* An **interactive logon session**. Outlook never finishes starting in session 0, so anything
-  driving it must run in session 1. On a Hyper-V guest reached by PowerShell Direct that means
-  a scheduled task with `-LogonType Interactive`, not a direct remote call.
-* At least one store the suite may write to (the hub). A PST is fine. Section 2.3 says which
-  store that should be, and it is not the one most people would pick.
-* The .NET SDK, and a clone of this repository.
+### 1.1 Two WINDOWS ACCOUNTS, because a profile cannot split the index
 
-### 2.2 The settings file
+Half the live tier needs an indexed store and the other half needs an unindexed one. The
+obvious arrangement, two data files in one Outlook profile with one of them excluded from
+indexing, **does not work**, and the reason is structural rather than a setting anyone can
+find.
+
+Windows Search does not index Outlook per data file. It indexes a MAPI scope, and that scope
+is expressed as **one URL per Windows user account**, of the form `mapi16://{SID}/`, covering
+that account's whole Outlook profile. There is no per-store URL underneath it, so Indexing
+Options offers exactly one switch per account: the profile is indexed, or it is not. Two
+stores in one profile are therefore indexed together or excluded together.
+
+So the split is per **Windows account**: one account whose Outlook profile is indexed and one
+whose profile is not. That is the whole reason this machine has two logons.
+
+> This is the load-bearing assumption of the layout and it is **derived from how the scope is
+> addressed, not measured on this VM**. Verify it before building anything else: add a store,
+> let the indexer settle, and read `outlook_health`'s `index.perStore[]` on both accounts.
+> Section 8 says what to do if it turns out to be wrong.
+
+### 1.2 Two OUTLOOK PROFILES, because the corpus generator refuses an account
+
+`corpus-build` refuses any profile that has **a mail account at all**, with no override flag.
+That refusal is deliberate and it is not a nicety: the generator creates unsent items in bulk,
+and the first real run put 5,532 of them into the target store's Outbox, inert only because
+that profile could not send. On a profile with an account those would have been 5,532 real
+messages queued for delivery.
+
+So corpus work happens in a profile with **no accounts**, and the tier runs in a profile that
+has the dummy account. Switching between them is a restart of Outlook, and it recurs: every
+corpus rebuild is another switch.
+
+### 1.3 Three stores, because two do not compose
+
+| Store | Indexed | Purpose |
+| --- | --- | --- |
+| Corpus A | **yes** | the index tier, and the shape most `ProfileBound` tests want |
+| Corpus B | **no** | the degraded path: no index frontier, the seven-day fallback window, the sweep and frame measurements |
+| Bystander | either | the store the count tripwire actually watches, and the absent-arrival-folders shape |
+
+The bystander is the one people leave out, and the tripwire is useless without it. The
+tripwire **exempts the hub**, because the hub is where the suite writes; a machine whose only
+store is the hub gets a guard that censuses, reports zero failures, and is structurally
+incapable of reporting anything else. The bystander must therefore be a store **no test ever
+touches**, and it must hold a few hundred items rather than none, because an empty store
+exercises the item-by-item identity path over nothing.
+
+A corpus is the wrong shape for that job. The identity budget is 500 items per folder and
+3,000 per store; a 20,000-item corpus is over both in all four populated folders, so every one
+of them falls back to a bare count. A few hundred items in a small store is what the guard
+wants.
+
+### 1.4 A dummy account with a LOCAL SINK, because an unroutable one poisons the teardown
+
+The account exists because `NewDraft` resolves an `Account` object by SMTP address and refuses
+when none matches, which is what puts the entire draft, update/discard, HTML-draft and send
+families out of reach of an account-less machine.
+
+Pointing it at an unroutable server was the first plan and it is wrong. A send **queues** and
+never leaves, the Outbox is in the mandatory zero-artifact sweep, and so every run that sent
+anything would fail its own teardown forever on residue nothing could remove. Six live methods
+also need the mail to genuinely arrive.
+
+So the account points at a **local sink that delivers back**: submissions on loopback, and the
+same messages served back over POP3 to the same profile, so self-addressed mail round-trips
+into the Inbox. Section 2.7 says which sink and how to install it.
+
+---
+
+## 2. Building the machine from nothing
+
+Do these in order. Checkpoint where the section says to; a checkpoint is much cheaper than
+redoing the step above it.
+
+### 2.1 The hypervisor and the guest
+
+* Hyper-V guest, named `OutlookAI-TestVM` by convention. Generation, firmware, vCPU, RAM and
+  disk size are **not recorded anywhere and are yours to choose**; see section 8.
+* Windows 11, edition and build unrecorded. Whatever you choose, record it beside the VM: an
+  Outlook build difference is the first thing to suspect when a live test behaves differently
+  here than on the maintainer's machine.
+* **Networking should be Internal, Private or disconnected.** The sink binds to loopback and
+  nothing on this machine needs to reach the internet after the toolchain is installed. A test
+  VM with a mail server on it and a route to the outside is an open relay waiting to happen.
+* **Auto-logon, no lock screen, no sleep.** Outlook never finishes starting in session 0, so
+  anything driving it must run in an interactive session. Reached over PowerShell Direct that
+  means a scheduled task registered with `-LogonType Interactive`, never a direct remote call.
+  A guest that sleeps mid-build loses a twelve-minute corpus run.
+* The guest shell is **Windows PowerShell 5.1**. No `??`, no ternary, no `-p` on `mkdir`.
+* Set the guest's **time zone and locale deliberately and write them down**. Outlook parses
+  DASL date literals in the MACHINE locale, and a day-first literal on a Dutch-locale box
+  silently returns the wrong rows. The corpus tool formats its own literals year-first for
+  exactly this reason, but nothing protects a query typed by hand.
+
+**Checkpoint `CP-01-WIN-CLEAN`.**
+
+### 2.2 Office
+
+* **Classic Outlook, desktop.** The "new Outlook" has no MAPI and no `Outlook.Application`, so
+  the entire suite dies the moment the machine is migrated to it. Pin classic explicitly and
+  suppress the migration toggle.
+* Version, channel and **bitness are unrecorded**. The test host is `net10.0-windows` with
+  `PlatformTarget x64`, partly because the `Search.CollatorDSO` OLE DB provider the index tier
+  reads needs an x64 host. Whether Office itself must be x64 is untested; x64 is the safer
+  choice and is what you should record.
+* Suppress the first-run wizard and the "add an account" prompt. A profile that opens a dialog
+  cannot be driven over COM, and the suite cannot answer one.
+* Pin the update channel. An Office auto-update invalidates the Office checkpoint silently.
+
+**Checkpoint `CP-04-OFFICE-GOLD`** once Outlook opens to an empty profile without prompting.
+
+### 2.3 Toolchain, repository and add-in
+
+* .NET SDK (version unrecorded; it must build `net10.0-windows` and `net48`), git, and a clone
+  of this repository.
+* Build once so the server exe exists where the tier-3 tests look for it. That path is baked
+  into the test assembly at build time as `AssemblyMetadata("McpServerExePath")` and points at
+  `McpServer\OutlookAI.McpServer\bin\<Config>\net10.0-windows\OutlookAI.McpServer.exe`.
+* Install the add-in and let it run once. Tests carrying `Requires=AddInRegistry` read tuning
+  state the add-in writes on first run; without it they have nothing to read.
+
+**Checkpoint `CP-03-OUTLOOKAI-INSTALLED`, then `CP-05-ADDIN-TRUSTED`.**
+
+### 2.4 The two Windows accounts
+
+Create two local accounts. Section 1.1 says why. Suggested roles, since neither is recorded:
+
+* an **indexed** account, whose Outlook profile carries Corpus A and the dummy account, and
+  where the index tier and the send path run;
+* an **unindexed** account, whose Outlook profile carries Corpus B, with its `mapi16://{SID}/`
+  scope removed from Indexing Options.
+
+Both accounts need the repository, the SDK and a built server exe, or the tier can only run
+under one of them. Whether that is a clone each or one clone with both accounts granted access
+is your call; record which.
+
+**Verify the split before going further.** On each account, open Indexing Options, confirm the
+Outlook entry is present or absent as intended, let the indexer settle, then read
+`outlook_health` and check `index.perStore[]`. Establish it; do not assume it.
+
+### 2.5 The Outlook profiles
+
+Two profiles are needed on the account that does corpus work:
+
+* a **corpus profile with no mail accounts at all** (section 1.2), and
+* a **tier profile** with the dummy account.
+
+Set Outlook to "always use this profile" and switch by changing that setting, not by prompting:
+a prompting profile cannot be driven over COM. How the profiles are created and switched is
+**not recorded**; the Mail control panel works and is the obvious route.
+
+### 2.6 The stores
+
+Add every store **through Outlook itself** (File > Account Settings > Data Files > Add). Do not
+improvise a script. Creating stores is not something the tested helpers do, and mailbox
+mutation from ad-hoc shell code is the thing that once destroyed real mail.
+
+Naming matters more than it looks:
+
+* **The hub store must be named exactly the dummy account's SMTP address.** Several tests use
+  `testHubStoreDisplayName` as an address (`NewDraft(Hub, Hub, ...)`, `FindAccountBySmtp(Hub)`),
+  so the hub PST has to be called something like `test@vm.invalid` literally. Whether Outlook
+  accepts `@` in a store display name is **untested and it gates the whole draft family** - try
+  it first, it costs five minutes. `.invalid` is guaranteed unresolvable by RFC 2606, so a
+  misconfiguration cannot leak mail anywhere.
+* **The dummy account's delivery store must be a separate throwaway PST**, not a corpus store.
+  An account delivering into the corpus store can flip that store's `IsDataFileStore`, and
+  `CorpusSafety` reads that property as one of four independent facts it requires before it
+  will write anything. Get it wrong and the generator refuses that store permanently.
+* The bystander is listed in `expectedStoreDisplayNames` and is never the hub.
+
+Populate the bystander with a few hundred ordinary items. The corpus generator cannot honestly
+do this: it tags everything it creates, and the bystander's whole job is to be untouched.
+
+### 2.7 The mail sink
+
+**The sink is a third-party component and is deliberately not in this repository.** A loopback
+SMTP-plus-POP3 server is a few hundred lines of RFC 1939 whose failure modes - dot-stuffing a
+body line that begins with a period, UIDL identities that move when the store is recreated,
+`STAT` octet counts - all produce INTERMITTENT wrong answers against Outlook, which is the
+fussiest POP3 client there is. This suite exists to eliminate intermittent artifacts; writing a
+new source of them to serve it is the wrong trade, and a maintained component already does the
+job.
+
+**Use smtp4dev** (`rnwood/smtp4dev`, BSD-3-Clause, actively maintained). It is the only
+candidate that is simultaneously deliver-back, maintained, a native Windows service, and
+catch-all by default. That last point matters here specifically: the hub is named after its own
+fabricated address, and smtp4dev's auto-created mailbox accepts `Recipients="*"`, so there is
+nothing to provision per address and nothing to re-provision after a rebuild.
+
+Install and configure:
+
+```
+winget install RnwoodLtd.smtp4dev
+```
+
+Then, in `appsettings.json` beside the executable:
+
+* `AllowRemoteConnections: false` - **it ships as `true`; change it.** Loopback only.
+* SMTP on 25, POP3 on 110, **IMAP disabled** (nothing here needs it).
+* `AuthenticationRequired: false`, `SecureConnectionRequired: false`, `TlsMode: "None"`.
+* Leave `Mailboxes: []` so the catch-all is created automatically.
+* `Urls: "http://localhost:5000"` for its web UI.
+
+Register it as a service, which is what keeps it windowless and running before Outlook starts:
+
+```
+smtp4dev --install-service
+sc.exe start Smtp4dev
+```
+
+Use `Rnwood.Smtp4dev.exe`, **not** `Rnwood.Smtp4dev.Desktop.exe`: the Desktop build creates a
+window, which this machine must never do.
+
+Before committing to ports 25 and 110, check they are free and not inside a reserved block -
+Hyper-V and WinNAT genuinely do reserve ranges on a VM:
+
+```
+netsh interface ipv4 show excludedportrange protocol=tcp
+netstat -ano -p tcp | findstr ":25 "
+```
+
+Nothing about the tests needs the well-known numbers; 2525 and 1110 are fine, and the settings
+file carries whichever you pick. **Create no inbound firewall rule.** Loopback traffic is not
+filtered, so a listener that needs a rule is a listener bound to `0.0.0.0`, which on a test VM
+is an open relay.
+
+### 2.8 The dummy account
+
+Add a POP3 account in the tier profile, pointing at the sink:
+
+* incoming POP3 `127.0.0.1:110`, outgoing SMTP `127.0.0.1:25`, encryption **None**, any
+  credentials (the sink accepts anything);
+* **"Deliver new messages to" must be the hub PST.** This is the failure to bet on: a POP3
+  account delivers to the profile's DEFAULT store unless told otherwise, the arrival assertions
+  read the hub store's Inbox, and a misrouted delivery looks exactly like a sink that is not
+  working - a 180-second timeout with no diagnostic pointing anywhere useful.
+* **"Leave a copy of messages on the server" OFF.** Outlook then issues `DELE`, the sink drains
+  to zero after each test, and the whole class of stale-UIDL bugs becomes impossible.
+* Set `Send Mail Immediately` to `1` under `HKCU\Software\Microsoft\Office\16.0\Outlook\
+  Options\Mail`. A `0` there is the documented cause of mail sitting in the Outbox until
+  somebody presses F9.
+
+Do **not** try to shorten Outlook's send/receive interval by registry. The interval lives in a
+binary `.srs` file, no Microsoft-documented value for it was found, and the suite does not need
+one: `LiveInboxArrival` re-issues `NameSpace.SendAndReceive(false)` while it waits.
+
+**Prove the sink once, by hand, before wiring any test to it.** Send a self-addressed mail with
+an attachment and a body containing a line that starts with a period, confirm it arrives in the
+hub Inbox intact, restart the smtp4dev service, and confirm nothing re-downloads. If that
+passes, the one real objection to smtp4dev - that its POP3 side is much less exercised than its
+SMTP side - is retired.
+
+### 2.9 The seed corpus
+
+Corpus work runs under the **no-accounts profile** (section 1.2). The generator is
+`McpServer/OutlookAI.RemediationTools`, a plain `Exe`; it is not installed or aliased, so
+invoke it by project path or by its built exe.
+
+```
+:: 0. the expectation sheet. Pure - no Outlook, runnable anywhere, including the host.
+dotnet run --project McpServer/OutlookAI.RemediationTools/OutlookAI.RemediationTools.csproj -- \
+  corpus-plan --corpus-id vm1 --seed 4242 --anchor 2026-08-01 --count 40000
+
+:: 1. probe placement and dates. Creates and deletes a handful of throwaway items.
+dotnet run --project <as above> -- corpus-probe \
+  --store "Corpus A" --allow-store "Corpus A" \
+  --corpus-id vm1 --seed 4242 --anchor 2026-08-01 --count 40000
+
+:: 2. dry run. NB it runs NEITHER probe, because both create items.
+dotnet run --project <as above> -- corpus-build \
+  --store "Corpus A" --allow-store "Corpus A" \
+  --corpus-id vm1 --seed 4242 --anchor 2026-08-01 --count 40000 \
+  --manifest D:\corpus\vm1.jsonl
+
+:: 3. build. Resumable and idempotent: it builds the ordinals the manifest lacks.
+dotnet run --project <as above> -- corpus-build ... --progress-every 250 --execute
+
+:: 4. check what actually landed. Read-only; the build runs this on itself.
+dotnet run --project <as above> -- corpus-census \
+  --store "Corpus A" --allow-store "Corpus A" \
+  --corpus-id vm1 --seed 4242 --anchor 2026-08-01 --count 40000 \
+  --manifest D:\corpus\vm1.jsonl
+```
+
+Before letting a build proceed, confirm in its own output that the store line and the profile
+line both say accepted, that `profile accounts: 0`, and that the placement probe and the date
+probe each named a **verified** rung. A build that had to be talked past either of those guards
+is a build whose measurements mean something other than what they say.
+
+Repeat for Corpus B under the other Windows account, with **a different `--corpus-id` and a
+different manifest path**. Whether the two corpora should share a seed and anchor is not
+settled; sharing them makes the two stores directly comparable, which is probably what you
+want.
+
+**The manifest is the only thing that can tear the corpus down**, and it is also what the
+freshness check reads. Copy it somewhere outside the guest. Losing it means `corpus-reindex`
+and a human inspecting the result.
+
+Budget roughly 400 MB of body text for 40,000 items before Outlook's own overhead, and about
+12 minutes at ~50 items/s when the chosen placement rung needs no move. A rung that moves each
+item writes it twice; budget double.
+
+**Checkpoint `CP-06-PRE-CORPUS` before the build and a fresh one after it.** Snapshot after the
+corpus exists and before any measurement, so a measurement can be repeated against the same
+population.
+
+### 2.10 The settings files
 
 Create `McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json`. It is
-gitignored, and it must stay that way: it names real stores and this repository is public.
-Without it the whole live tier refuses to start.
-
-A test machine declares itself with `machineProfile: "Portable"`:
+gitignored and must stay that way: it names real stores and this repository is public. Without
+it the whole live tier refuses to start.
 
 ```json
 {
   "machineProfile": "Portable",
-  "testHubStoreDisplayName": "Outlook Data File",
-  "expectedStoreDisplayNames": [ "Outlook Data File", "OutlookAI Bystander" ],
-  "expectedDelegateStoreDisplayNames": []
+  "testHubStoreDisplayName": "test@vm.invalid",
+  "expectedStoreDisplayNames": [ "test@vm.invalid", "Corpus A", "OutlookAI Bystander" ],
+  "expectedDelegateStoreDisplayNames": [],
+  "corpus": {
+    "storeDisplayName": "Corpus A",
+    "manifestPath": "D:\\corpus\\vm1.jsonl",
+    "corpusId": "vm1",
+    "seed": 4242,
+    "anchorUtc": "2026-08-01T00:00:00Z",
+    "itemCount": 40000,
+    "windowDays": [ 7, 30, 60 ]
+  },
+  "mailSink": {
+    "submitHost": "127.0.0.1",
+    "submitPort": 25,
+    "retrieveHost": "127.0.0.1",
+    "retrievePort": 110
+  }
 }
 ```
 
 | Field | What it is | Required |
 | --- | --- | --- |
-| `machineProfile` | `Production` or `Portable`. Defaults to `Production` when absent, so an older settings file keeps the validation it was written under. | no |
-| `testHubStoreDisplayName` | Display name of the store the suite may write to. Exactly as Outlook shows it. | **yes** |
+| `machineProfile` | `Production` or `Portable`. Absent means `Production`, so an older settings file keeps the validation it was written under. Accepted as a string or a number. | no |
+| `testHubStoreDisplayName` | Display name of the store the suite may write to, exactly as Outlook shows it. Doubles as an SMTP address. | **yes** |
 | `expectedStoreDisplayNames` | Every store the count tripwire watches. Include the hub. | **yes** |
-| `expectedDelegateStoreDisplayNames` | Delegate/shared mailboxes. Watched, never written, and their folder hierarchy is allowed to appear and disappear (it syncs lazily). Empty on a test machine. | no |
+| `expectedDelegateStoreDisplayNames` | Delegate/shared mailboxes. Watched, never written, folder hierarchy allowed to come and go. Empty here. | no |
 | `probeTerm` | A word proven to hit this machine's search index. | Production only |
-| `subjectOnlyProbe` | Coordinates of a real population whose term is in the subject and not the body. | Production only |
+| `subjectOnlyProbe` | Coordinates of a population whose term is in the subject and not the body. Four fields, all or none. | Production only |
 | `delegateNestedFolderProbe` | A delegate folder Outlook nests and the index publishes flat. | never |
+| `corpus` | Where the measurement corpus is and what it was generated from, so the tier can prove it is still measurable. Six fields plus optional `windowDays`. | no, all or none |
+| `mailSink` | Loopback submission and retrieval endpoints. **Absent means this machine has real transport.** | no, all or none |
 
-The last three describe real mail. A test machine has none of it, which is exactly why
-`machineProfile` exists: before it, every machine had to supply all three, and a requirement
-that cannot be met honestly gets met dishonestly. A block that is present must be **complete**
-on any profile: three fields out of four reads as configured and behaves as absent.
+A block that is present must be **complete**: three fields out of four reads as configured and
+behaves as absent, which is the exact silence these checks exist to remove.
 
-### 2.3 The store layout, and why two PSTs
+`windowDays` is how the machine declares which measurement windows it actually asks about. Left
+empty it means all of them, including the one-day window - which forces a re-anchor every day.
+Name the windows your tests use.
 
-The tripwire **exempts the hub**: the hub is where the suite writes, its churn is tagged, and
-the zero-artifact sweep polices it. So a machine whose only store IS the hub gives the tripwire
-nothing to watch. It will census, report zero failures, and be structurally incapable of
-reporting anything else. That is a real configuration and it is not wrong, but it must not be
-mistaken for the guard having passed.
+The same file is read by the remediation console's `audit`/`refile`/`purge`/`dedupe` verbs,
+which require the hub to appear in `expectedStoreDisplayNames`. The `corpus-*` verbs do not read
+it at all; they take everything on the command line.
 
-**Recommended layout: two PSTs, with the CORPUS as the hub.**
+### 2.11 Checkpoints
 
-* `Outlook Data File` - the generated corpus, and the **hub**. This is the way round it has to
-  be: the Portable subset is mostly scans and sweeps, and every one of them targets the hub
-  store. `LiveResumableScanTests` pages through the hub, `LiveExhaustiveSearchTests` bounds a
-  scan to a hub folder, `LiveSweepScopeTests` sweeps the hub's arrival-path folders. Point the
-  hub at an empty store and they all degrade to their "corpus too small" early return: green,
-  and proving nothing. The suite's writes into the corpus store are tagged, swept and
-  recoverable from a checkpoint.
-* `OutlookAI Bystander` - a second, small store, listed in `expectedStoreDisplayNames` and never
-  the hub. It exists so the tripwire has something to watch, and because it is small it is walked
-  ITEM BY ITEM rather than counted, which is the half of the guard that was rewritten. A few
-  hundred items in it is better than none: an empty store exercises the identity path over
-  nothing.
-
-Add the second PST through Outlook itself (File > Account Settings > Data Files > Add). Do not
-improvise a script: creating stores is not something the tested helpers do, and mailbox
-mutation from ad-hoc shell code is the thing that once destroyed real mail.
-
-One consequence worth knowing: stores in `expectedStoreDisplayNames` other than the hub are
-granted **draft-create and draft-delete** rights by `StoreWriteAllowlist`, because the identity
-tests create one tagged, never-displayed draft in each business account and delete it again.
-On a Portable machine those tests are `ProfileBound` and will not run, so the grant is unused.
+Names in use: `CP-01-WIN-CLEAN`, `CP-02-INSTALLER-STAGED`, `CP-03-OUTLOOKAI-INSTALLED`,
+`CP-04-OFFICE-GOLD`, `CP-05-ADDIN-TRUSTED`, `CP-06-PRE-CORPUS`. Take another after the corpus
+and another after the sink and dummy account exist, because those two are the steps most likely
+to need redoing.
 
 ---
 
-## 3. Running the Portable subset
+## 3. Keeping the corpus usable
+
+**A corpus goes quietly out of date, and this is the failure mode to understand before
+anything else.** The corpus is generated against a FIXED anchor. Every test asking about "the
+last N days" selects against the CLOCK. Six weeks after generation a seven-day window selects
+nothing at all - and every test asking about that window still **passes**, because selecting
+nothing is a valid answer about an empty window. Nothing goes red. The suite stops measuring
+and keeps reporting that it measured.
+
+Two things now prevent that.
+
+**The check.** `corpus-verify` is pure: no Outlook, no store, runnable on the host.
+
+```
+dotnet run --project McpServer/OutlookAI.RemediationTools/OutlookAI.RemediationTools.csproj -- \
+  corpus-verify --corpus-id vm1 --seed 4242 --anchor 2026-08-01 --count 40000 \
+  --manifest D:\corpus\vm1.jsonl --window 7 --window 60
+```
+
+It derives the shift the store already carries from the manifest, counts what each window
+selects now against what it selected at the anchor, and exits non-zero when any window under
+test has emptied. The live tier runs the same check at fixture time from the `corpus` settings
+block, fail-closed, beside the count tripwire.
+
+**The repair.** `corpus-reanchor` shifts every item's received and submit instants forward.
+
+```
+dotnet run --project <as above> -- corpus-reanchor \
+  --store "Corpus A" --allow-store "Corpus A" \
+  --corpus-id vm1 --seed 4242 --anchor 2026-08-01 --count 40000 \
+  --manifest D:\corpus\vm1.jsonl --to now --execute
+```
+
+It runs under the **no-accounts profile**, like every other corpus verb. It never creates,
+moves or removes an item; it opens each one by the EntryID the manifest records and writes two
+date properties, and it touches an item only when the EntryID is in the manifest, the subject
+still carries both tags, and the ordinal in that subject is the one being addressed.
+
+The target is ABSOLUTE, not incremental, so running it twice is a no-op and an interrupted run
+is finished by running it again. The manifest's anchor is deliberately not rewritten - it is
+half the corpus's identity, and every later `--anchor` argument depends on it - so the shift is
+derived from the item lines rather than recorded in the header, and the re-anchor appends a
+replacement line per item. Expect the manifest to roughly double in size per re-anchor.
+
+**Re-anchor after every checkpoint restore.** A restored checkpoint puts the corpus back where
+it was on the day it was taken, which is by definition older than today.
+
+**Re-anchoring changes every item, so the index will re-crawl Corpus A.** Let it settle before
+taking an index measurement.
+
+---
+
+## 4. Running the tier
 
 ```
 dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj \
   --filter "Category=Live&LiveTier=Portable"
 ```
 
-19 tests. Nothing in that set needs a mail account, the search index, a delegate mailbox or
-transport. Some of them do need the interactive desktop (`Requires=InteractiveDesktop`): they
-open Outlook windows and take screenshots.
-
-To run one class - the two probes the session is blocked on, for example:
+To run one class:
 
 ```
-dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj \
-  --filter "Category=Live&FullyQualifiedName~LiveTableSortProbeTests"
-
-dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj \
-  --filter "Category=Live&FullyQualifiedName~LiveResumableScanTests"
+dotnet test <csproj> --filter "Category=Live&FullyQualifiedName~LiveTableSortProbeTests"
 ```
 
-**A filtered run is fully guarded.** It takes the census, runs the health preflight, and
-verifies at the end of whichever collection the filter left last. That was not true before
-2026-08-19: verification lived in one collection's teardown, so any run that did not include
-that collection paid for a baseline and threw it away. See section 6.
+**A filtered run is fully guarded.** It takes the census, runs the health preflight, checks
+corpus freshness and sink reachability, and verifies at the end of whichever collection the
+filter left last. That was not true before 2026-08-19: verification lived in one collection's
+teardown, so any run that did not include that collection paid for a baseline and threw it
+away.
 
-### 3.1 Which tests are in which bucket, and how to find out
+To see the sets without running anything - `--list-tests` discovers and does not execute, so it
+is safe against any mailbox:
+
+```
+dotnet test <csproj> --list-tests --filter "Category=Live"                     # 127
+dotnet test <csproj> --list-tests --filter "Category=Live&LiveTier=Portable"   # 31
+```
+
+Treat those two numbers as "what they were when this was written". The traits are the
+authority; the counts in a document drift.
+
+---
+
+## 5. Which tests are in which bucket, and how to find out
 
 The classification is two traits on the test itself, not a list in a document that can drift:
 
@@ -148,39 +485,38 @@ The classification is two traits on the test itself, not a list in a document th
   `OutlookInstance` - describe things a test machine CAN have and constrain only how the run is
   launched.
 
+`.github/scripts/check-pinned-constants.ps1` fails the build if any of those seven
+production-only names stops appearing in this file, so the list above is load-bearing text and
+not decoration.
+
+**The vocabulary is drifting away from this machine, and that is worth saying plainly.**
+`Portable` was coined to mean "no accounts, no index, no delegate stores". The machine described
+here has a dummy account and an indexed store, so several tests currently marked `ProfileBound`
+for `MailAccount` or `SearchIndex` can in fact run on it. Reclassifying them is queued work, not
+done; until it is, the `LiveTier=Portable` filter understates what this VM can prove.
+
 `OutlookInstance` arrived on 2026-08-23 with the tier-3 correction, and it is why the Portable
 subset grew by eleven. The T3 stdio classes spawn the real server, which spawns a COM host,
 which attaches to whatever Outlook is on the machine - so eleven tests that called
 `outlook_health`, `list_accounts` or `search` were reaching a real mailbox from a run filtered
 `Category!=Live`. They are now `ComHostSupervisionLiveTests`, `OutlookAvailabilityLiveTests` and
 `OutlookHealthLiveToolShapeTests`, all `Portable`: what they need is an Outlook, not this
-Outlook, so the VM runs them unchanged and they are among the easiest things it can prove.
+Outlook.
 
 Two mechanisms keep that from drifting back, both described in `McpServer/README.md`:
 `McpStdioClient` refuses to send a `tools/call` for `outlook_health`, `list_accounts` or
 `list_folders` unless the test declares mailbox contact, and
-`LiveTierInventoryTests.EveryStdioTestReachingOutlook_DeclaresIt` reads that declaration back out
-of the compiled IL, so a new method in an old class is caught as well as a new class.
+`LiveTierInventoryTests.EveryStdioTestReachingOutlook_DeclaresIt` reads that declaration back
+out of the compiled IL, so a new method in an old class is caught as well as a new class.
 
 `T1/LiveTierInventoryTests` enforces all of that in CI, together with the rule that every live
-class sits in a registered collection. So a live test added later cannot be left unclassified,
-and a test cannot be quietly reclassified to make the VM subset look bigger: the reason has to
-be named, and the reason is checked.
-
-To see the sets without running anything:
-
-```
-dotnet test <csproj> --list-tests --filter "Category=Live"                     # 127
-dotnet test <csproj> --list-tests --filter "Category=Live&LiveTier=Portable"   # 31
-```
-
-`--list-tests` discovers and does not execute, so it is safe against any mailbox.
+class sits in a registered collection.
 
 ---
 
-## 4. What the guards do, and what to check afterwards
+## 6. What the guards do, and what to check afterwards
 
-Four guards arm themselves; none needs remembering.
+Six guards arm themselves; none needs remembering.
 
 1. **Health preflight** (`LiveOutlookPreflight`). Asks Windows whether Outlook's UI thread is
    servicing its message queue before any COM call. Refuses the tier in milliseconds when it is
@@ -188,132 +524,153 @@ Four guards arm themselves; none needs remembering.
    aborted run skips its cleanup - which is how tagged items were left in a real mailbox.
 2. **Store-count tripwire** (`LiveStoreCountTripwire`). Censuses every watched store before the
    first live collection and after the last. Fail-closed: no census, no live tier.
-3. **Write allowlist** (`StoreWriteAllowlist`). A write aimed outside the hub throws instead of
+3. **Corpus freshness** (`LiveCorpusFreshness`). Refuses the tier when a measurement window the
+   corpus is meant to fill now selects nothing. Reads the manifest, never the mailbox, so it can
+   run before Outlook is started. Silent when the settings declare no corpus.
+4. **Mail sink reachability** (`LiveMailSink`). TCP-probes both sink endpoints before anything
+   is sent, and refuses when the profile's Outbox is not already empty - mail left queued by an
+   earlier run is indistinguishable at teardown from mail this run failed to clean up. Silent
+   when the settings declare no sink.
+5. **Write allowlist** (`StoreWriteAllowlist`). A write aimed outside the hub throws instead of
    running.
-4. **Signature snapshot** (`SignatureDirectorySnapshot`). SHA-256 before and after; the user's
+6. **Signature snapshot** (`SignatureDirectorySnapshot`). SHA-256 before and after; the user's
    real signatures must be bit-identical.
 
 **What to read in the output.**
 
-* `[tripwire] live-test settings: machineProfile=..., stores=N, ...` - the first line. If it
-  names the wrong machine's settings, stop there.
-* `[tripwire] baseline: 2 stores, 14 mail folders, identified 8 folder(s)/312 item(s), 431 ms.`
+* `[tripwire] live-test settings: machineProfile=..., stores=N, ..., corpus=..., mailSink=...` -
+  the first line. If it names the wrong machine's settings, stop there.
+* `[corpus] Freshness: OK - anchor ... Windows now/at-anchor: 7d=3,180/3,180, ...` The `now`
+  side is what the tests will actually see. A window at zero is a refusal, not a warning.
+* `[sink] submission 127.0.0.1:25 and retrieval 127.0.0.1:110 both answering.`
+* `[tripwire] baseline: 3 stores, 21 mail folders, identified 8 folder(s)/312 item(s), 431 ms.`
   The identified count is what was walked ITEM BY ITEM, and it is the number that says how much
-  of the guard is live. **Zero identified items means the guard can only see counts**, which on
-  a two-store machine means the bystander store is empty or the hub is the only store. Section 6
-  says what to expect.
+  of the guard is live. **Zero identified items means the guard can only see counts**, which
+  means the bystander store is empty or the hub is the only store.
 * `[tripwire] post-run census in T ms (identified ...); 0 failure(s), K note(s).` Notes are
-  benign - mail arriving, filing, hub churn. Failures throw.
+  benign; failures throw.
 * `PROVED NOTHING:` - a test that ran but found no population to test. On a Portable machine
   that is expected for the handful of tests that discover their own population; on a Production
-  machine it now throws instead.
+  machine it throws instead.
 
 **And check that a verification happened at all.** A run that prints a `baseline` line and no
 `post-run census` line did not compare anything.
 
----
-
-## 5. Running the whole tier against the maintainer's own profile before a release
-
-This is unchanged, and it is deliberately still available: the Portable subset is 31 tests of
-115, and the other 96 are the ones that exercise the index, the accounts, the delegate stores
-and the send path.
-
-```
-dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj \
-  --filter "Category=Live"
-```
-
-Before starting:
-
-* the settings file on that machine says `machineProfile: "Production"` (or omits the field,
-  which means the same), and carries `probeTerm` and a complete `subjectOnlyProbe`;
-* Outlook is running and responsive, with **no unsent compose windows open and an empty
-  Outbox** - the lifecycle collection quits and restarts Outlook gracefully, and it refuses to
-  do so otherwise;
-* nobody is going to work in those mailboxes for the duration. A person filing mail during the
-  run reads to a before/after census exactly like a runaway test, so the tripwire fails and
-  hands over the EntryIDs rather than guessing.
-
-Afterwards:
-
-* zero tagged artifacts, proven by the teardown sweep across Drafts, Inbox, Sent Items,
-  **Outbox**, Deleted Items and the Sync Issues subtree;
-* `0 failure(s)` from the post-run census;
-* the signature directory verified bit-identical;
-* no `PROVED NOTHING:` lines. On a Production profile a missing population now throws, so if
-  one appears it means the machine or the settings have drifted.
+**Afterwards, every time:** zero tagged artifacts across Drafts, Inbox, Sent Items, **Outbox**,
+Deleted Items and the Sync Issues subtree; `0 failure(s)` from the post-run census; the
+signature directory bit-identical; the Outbox empty.
 
 ---
 
-## 6. The count tripwire's first run: what to expect
+## 7. The count tripwire's first run: what to expect
 
-The tripwire was rewritten on 2026-08-19 and, as of this document, **has never executed**. Its
-first run will be on a test machine, which is the right place for one. What follows is
-predicted by reading the code, so treat it as something to check rather than something known.
+The tripwire was rewritten on 2026-08-19 and **has never completed a baseline-and-verify pair**.
+It has run: on 2026-08-20 it refused the live tier outright when a per-store census on the
+maintainer's real profile exceeded its STA budget, which is the guard behaving correctly and is
+also why its census now reads a table instead of opening every message. What follows is
+predicted from the code, so treat it as something to check.
 
 **With one PST that is also the hub.** `PlanFor` gives the hub a count-only plan and `Evaluate`
-exempts it, so: every mail folder is counted, `0 folder(s), 0 item(s) identified`, and no
-failure is reachable. The guard runs and proves nothing. This is the configuration to avoid.
+exempts it: every mail folder is counted, `0 folder(s), 0 item(s) identified`, and no failure is
+reachable. The guard runs and proves nothing. This is the configuration to avoid, and it is why
+section 1.3 insists on a bystander.
 
-**With the recommended two PSTs.** The corpus store is the hub, so it is counted and exempt -
-which is fine, because it is the store the suite writes to. Everything the guard actually
-decides happens on the bystander store.
+**With the three-store layout.** Everything the guard decides happens on the bystander. Its
+folders are inside both budgets, so each is walked item by item - the rewritten half of the
+guard, exercised for real. Cost: a table row count per folder plus four late-bound property
+reads per identified item, so well under a second against local PSTs. On the maintainer's
+five-store profile it is a different number entirely and has never been measured.
 
-* The identity budget is 500 items per folder and 3,000 per store, and a small bystander store
-  is entirely inside both, so every one of its folders is walked item by item. That is the
-  rewritten half of the guard, exercised for real.
-* Cost: the census reads `Folder.Items.Count` per folder, which is a table row count and not a
-  walk, plus four late-bound property reads per identified item. Against two local PSTs expect
-  the whole baseline in well under a second. On the maintainer's five-store profile it is a
-  different number entirely - up to 3,000 items walked per non-hub store, twice per run - and it
-  has never been measured.
-* Nothing about the corpus should make it fire falsely: no mail arrives on a machine with no
-  accounts, and the suite writes only to the hub.
-
-**Were the corpus made a NON-hub store instead**, the numbers are worth knowing because they say
-what a 20,000-item store buys the guard: nothing. All four populated folders (Inbox 10,912 /
-Sent 4,964 / Deleted 2,467 / Junk 1,663) are above the 500-item per-folder limit, so all four
-fall back to counts; Deleted Items and Junk are self-pruning and excluded from identity anyway.
-The identity path would walk only the store's small and empty folders and the 3,000-item store
-budget would go almost entirely unspent. **A corpus is the wrong shape for this guard**; a few
-hundred items in a small store is the right one.
-
-**Two things to watch on the first run.**
+**Two things to watch.**
 
 * **The Junk folder may not be marked self-pruning.** The census marks volatile folders by
   asking the store for its default Deleted Items, Junk and sync-issue folders. A PST may refuse
   `GetDefaultFolder` for Junk, in which case a generator-made "Junk Email" folder is treated as
-  an ordinary folder and a decrease in it would FAIL rather than be noted. Nothing prunes it on
-  a VM, so this should stay theoretical - but if the tripwire ever fires on Junk, this is why.
+  ordinary and a decrease in it would FAIL rather than be noted. Nothing prunes it here, so this
+  should stay theoretical - but if the tripwire ever fires on Junk, this is why.
 * **A move whose destination was only counted cannot be exonerated.** The census can prove an
   item was filed rather than deleted only when BOTH folders were walked item by item. An item
-  moved from a small folder into one above the budget will be reported as removed. On a test
-  machine nobody is moving mail, so this matters on the production run, not here.
+  moved from a small folder into one above the budget is reported as removed.
 
 ---
 
-## 7. Known limits, honestly
+## 8. What a rebuilder still has to establish
 
-* **The Portable subset is 31 tests.** It contains the two acceptances the project is currently
-  blocked on (`LiveTableSortProbeTests`, `LiveResumableScanTests`), the sweep-scope and
-  sweep-cache behaviour, the exhaustive folder-bounded scan, the signature lifecycle and the
-  show-me UI paths. It does not contain anything that proves the index, the accounts, the
-  delegate stores or the send path.
-* **A machine with no mail accounts cannot create a draft at all.** `NewDraft` resolves an
-  Account object by SMTP address and refuses when none matches, which is what puts the whole of
-  the draft, update/discard, HTML-draft and send families in `ProfileBound` regardless of
-  anything else. Adding one dummy account would move a large part of the tier onto a test
-  machine - and it is a decision with a catch, because the corpus generator refuses to run at
-  all unless the profile has **no accounts whatsoever**. Generate the corpus first, checkpoint,
-  then add the account.
-* **`testHubStoreDisplayName` doubles as an SMTP address** in several tests (`to: Hub`,
-  `FindAccountBySmtp(Hub)`). A PST display name is not an address, so those tests could not pass
-  on a PST hub even with an account present.
+Everything in this list is genuinely unrecorded or unverified. It is a deliverable in its own
+right: the point of naming it is that a rebuilder should not have to discover it is missing.
+
+**Verify before building anything else**
+
+1. **That one Windows account's Outlook profile can be excluded from the index while another's
+   is not** (section 1.1). The whole layout rests on it and it is derived rather than measured.
+   If it turns out to be false, the fallback is two VMs, and the store layout collapses to one
+   corpus per machine.
+2. **That Outlook accepts `@` in a store display name** (section 2.6). It gates the draft
+   family and costs five minutes.
+3. **Whether smtp4dev's POP3 side maps an arbitrary `USER` to the catch-all mailbox**, or
+   whether the username must match a configured mailbox name. If the latter, add an explicit
+   `Mailboxes` entry with `Recipients: "*"` and use its name as the POP3 username.
+4. **That the corpus store's `IsDataFileStore` stays true once the profile has an account**
+   (section 2.6). If it flips, the generator is locked out of that store permanently.
+
+**Not recorded anywhere**
+
+5. Hyper-V generation, Secure Boot, TPM, vCPU, RAM, disk size, checkpoint type (production
+   checkpoints use VSS and behave differently with Outlook mid-run).
+6. Windows edition, build, ISO, licensing, computer name, Defender exclusions (an indexer, a
+   400 MB PST and real-time AV interact), power and sleep policy.
+7. Office version, channel, bitness, install method, and how the first-run wizard is suppressed.
+8. The two Windows account names and their roles; whether both need a clone and an SDK; whether
+   checkpoints must be taken with both logged on.
+9. Outlook profile names, how they are created, which is default, and how the switch between the
+   no-accounts profile and the tier profile is automated.
+10. The scheduled-task recipe for session 1: task name, principal, working directory, argument
+    line, output redirection and exit-code capture. Only "`-LogonType Interactive`" is recorded,
+    and an elevated process's stdout cannot reach the caller, so output must go to a file.
+11. The exact PST file paths and names for all four stores, and the mapping from file name to
+    display name.
+12. .NET SDK version, clone path, build configuration, and how the built server exe reaches the
+    path the tier-3 tests expect.
+13. How results, screenshots and logs get out of the guest, and where `ScreenCapture` writes.
+14. `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1` is gitignored and is required by step 2 of
+    the measurement plan. It has to be copied in by hand.
+15. **The parameters of the corpus that is currently on the VM.** Only an example
+    (`vm1 / 4242 / 2026-08-01 / 40000`) is written down, while the corpus every published
+    measurement rests on is a 20,000-item one. Record the real parameters beside the manifest.
+16. Whether Corpus A and Corpus B should share a seed and anchor, and how their manifests are
+    named apart.
+
+**Known gaps in what the corpus contains**
+
+17. The generator writes `IPM.Note` with a subject, a body, a read state, message flags and two
+    date properties. **No senders, no recipients, no attachments, no HTML, no categories, no
+    flags, no subfolders, no other message classes.** Every test needing any of those is
+    `ProfileBound` because of the corpus, not because of the machine. Widening it is queued work.
+
+**Open behaviour**
+
+18. The tripwire's re-census-then-re-run policy on a suspected loss is decided and not built.
+19. `machineProfile: "Portable"` turns "found nothing to test" from a failure into a pass. There
+    is no check on how many assertions actually fired, so a run that proved nothing looks like a
+    run that passed.
+20. Non-hub stores in `expectedStoreDisplayNames` are granted draft-create and draft-delete by
+    `StoreWriteAllowlist`. That was harmless while the identity tests were all `ProfileBound`;
+    once tests are reclassified onto this machine, the bystander - the one store the tripwire
+    needs untouched - is inside that grant.
+
+---
+
+## 9. Known limits, honestly
+
+* **`testHubStoreDisplayName` doubles as an SMTP address**, which is why the hub PST has to be
+  named after the dummy account. It is a constraint the tests impose on the machine, not a
+  design anybody chose.
 * **Several `ProfileBound` tests assume a tiny hub** and would break their paging assertions
-  against a 20,000-item one (`Phase7LiveMcpToolShapeTests` asserts the hub holds between 2 and 99
-  items; `LiveMailServiceTests.ListFolders...` asserts the hub tree fits one page). They carry
-  `Requires=SmallHubStore` and are excluded from the Portable subset, so this is a conflict only
-  if the whole tier is ever pointed at a corpus hub. **It is the reason the two machines cannot
-  share one settings shape**, not a reason to move the corpus off the hub on a test machine: the
-  Portable scans and sweeps all target the hub and prove nothing against an empty one.
+  against a 20,000-item one (`Phase7LiveMcpToolShapeTests` asserts the hub holds between 2 and
+  99 items; `LiveMailServiceTests.ListFolders...` asserts the hub tree fits one page). They
+  carry `Requires=SmallHubStore`. This is the reason the two machines cannot share one settings
+  shape.
+* **The Portable subset does not prove the delegate-store paths at all**, and no test machine
+  can: `Requires=DelegateStore` needs a mailbox somebody else owns.
+* **Nobody has yet run the `LiveTier=Portable` subset end to end anywhere.** "Portable" means
+  "reads as runnable there", and not yet "ran there".
