@@ -25,11 +25,13 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// list rather than the index rows; this is the half where it is indexed and simply scoped out.
 /// </para>
 /// <para>
-/// AND NOBODY ASKED FOR IT. <c>thread</c> DERIVES the store from the referenced hit whenever
-/// <c>id</c> is passed without <c>conversation_id</c> - the shape an agent reaches for straight
-/// out of a search - so the narrowing, and the silence, both arrive unrequested. That is why
-/// the remedy the sentence names depends on how the store arrived: a scope the caller chose is
-/// dropped, a derived one is cleared by passing <c>conversation_id</c> beside <c>id</c>.
+/// AND NOBODY ASKED FOR IT - which is why, since 2026-08-24, a DERIVED store no longer scopes
+/// anything. <c>thread</c> still derives one from the referenced hit whenever <c>id</c> is
+/// passed without <c>conversation_id</c>, because it needs that hit to recover the conversation
+/// id, but only a store the CALLER named narrows the lookup. So everything below is now about
+/// a scope somebody chose; the derived half is pinned in
+/// <c>T1/ThreadDerivedStoreScopeTests</c>. The derived/chosen split survives in the advice
+/// because it is the distinction the behaviour turns on.
 /// </para>
 /// <para>
 /// The fix asks OUTLOOK which stores the profile has, exactly as C4's does and for exactly the
@@ -307,11 +309,15 @@ public sealed class ThreadScopedStoreTests
     }
 
     [Fact]
-    public void ADerivedStore_NarrowsTheLookup_AndSaysSo()
+    public void ADerivedStore_NoLongerNarrowsTheLookup()
     {
         // The shape an agent actually reaches for: search, then thread on a hit id. No store
-        // was passed, a store was applied anyway, and until now nothing in the payload said
-        // either thing had happened.
+        // was passed, a store used to be applied anyway, and the second account's members went
+        // missing from a payload whose tool description promises the whole conversation.
+        // Since 2026-08-24 only a store the CALLER named narrows the lookup, so there is no
+        // scope, nothing to report as derived, and no store the index went unasked about.
+        // Pinned end to end in T1/ThreadDerivedStoreScopeTests; asserted here because this
+        // file is where the old behaviour was pinned.
         using MailService service = Service(BothIndexed());
 
         SearchOutcome search = service.Search(
@@ -320,14 +326,12 @@ public sealed class ThreadScopedStoreTests
 
         ThreadOutcome outcome = service.Thread(conversationId: null, id: hitId, store: null);
 
-        Assert.Equal(AliceStore, outcome.ScopeStore);
-        Assert.True(outcome.ScopeStoreDerived);
-        Assert.Equal(new[] { BobStore }, outcome.Live!.StoresNotQueried);
-        Assert.Equal(FreshMerge.FreshnessPartial, outcome.Freshness);
-        Assert.Contains(
-            outcome.Advice!,
-            a => a.Contains("conversation_id", StringComparison.Ordinal)
-                && a.Contains(BobStore, StringComparison.Ordinal));
+        Assert.Null(outcome.ScopeStore);
+        Assert.Null(outcome.ScopeStoreDerived);
+        Assert.Null(outcome.Live!.StoresNotQueried);
+        Assert.DoesNotContain(
+            outcome.Advice ?? Array.Empty<string>(),
+            a => a.Contains("narrowed to one store", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -1617,9 +1617,13 @@ namespace OutlookAI.Core.Services
         /// The store display name the index half of this lookup was narrowed to, when it was
         /// narrowed at all. Null means the conversation query ran over the whole profile.
         /// <para>
-        /// Reported because the caller cannot otherwise tell: <c>thread</c> DERIVES a store
-        /// from the referenced hit whenever <c>id</c> is passed without <c>conversation_id</c>
-        /// (see <see cref="ScopeStoreDerived"/>), so a lookup nobody scoped comes back scoped.
+        /// Only a store the CALLER named narrows this lookup. <c>thread</c> still derives a
+        /// store from the referenced hit when <c>id</c> is passed without
+        /// <c>conversation_id</c> - it needs the hit anyway, to recover the conversation id -
+        /// but since 2026-08-24 it no longer applies it: a narrowing nobody asked for made the
+        /// default call shape return a partial conversation on every multi-store profile.
+        /// </para>
+        /// <para>
         /// It is stated even when nothing was lost by it - a single-store profile raises no
         /// coverage code - because "which stores did this answer come from" is a question the
         /// payload should answer without the caller reconstructing it from the hits.
@@ -1632,10 +1636,18 @@ namespace OutlookAI.Core.Services
         /// asked for. Null when the caller passed <c>store</c> themselves, and null when
         /// there was no scope.
         /// <para>
-        /// It changes the REMEDY, which is why it is a field rather than a footnote: a scope
-        /// the caller chose is cleared by dropping <c>store</c>, and a derived one is cleared
-        /// by passing <c>conversation_id</c> beside <c>id</c>, since the derivation only
-        /// happens when the conversation id has to be recovered from the hit.
+        /// UNREACHABLE SINCE 2026-08-24, and kept deliberately: a derived store no longer
+        /// scopes anything, so there is no scope for it to describe. It stays because it names
+        /// the distinction the behaviour now turns on - chosen scopes are applied, derived ones
+        /// are not - and because the advice it selects
+        /// (<c>MailService.DescribeThreadCoverage</c>) is the remedy that would be needed again
+        /// the moment a derived scope came back. An agent should read its absence as "nothing
+        /// was derived and applied", which is now always true.
+        /// </para>
+        /// <para>
+        /// While it could fire it changed the REMEDY, which is why it is a field rather than a
+        /// footnote: a scope the caller chose is cleared by dropping <c>store</c>, and a
+        /// derived one was cleared by passing <c>conversation_id</c> beside <c>id</c>.
         /// </para>
         /// </summary>
         public bool? ScopeStoreDerived { get; set; }
