@@ -155,6 +155,37 @@ release until the maintainer says so - **do not ask about release timing, it is 
 | 4 | `Portable` was defined as "no mail accounts, nothing indexed" and the decided VM has both | **Add a third tier value, `VmCapable`**, and push capability reasons from class level down to method level. The class-level attribution is why 96 tests looked impossible when only 15 are |
 | 5 | Shapes fixed blind - a folder that throws on open, a store whose display name cannot be read, an item with no delivery time. No way was found to produce the unreadable store name on ANY machine, so that fix has never once executed | **Extend the existing COM-host fault-injection hook**, and use a genuinely permissions-denied folder for the folder case. Extends a proven mechanism rather than adding a second |
 
+## The pre-release measurement gate - decided 2026-08-23
+
+**Shape.** Not a test re-run. Roughly ninety live tests already pass on the VM, so repeating them
+against the real profile costs thirty to forty minutes of exclusive mailbox access and proves
+nothing new. The gate instead runs a small fixed set of operations and records what only a real
+profile can show: sweep and scan elapsed times across five stores, frame high-water from real
+bodies, index frontier age, folders reached, `sweep.sortRefusedFolders`. Ten to fifteen minutes.
+
+**How it decides.** An agent reads **all** the numbers and judges whether there is cause for alarm
+or a course correction - not a threshold check. Thresholds alone are known to be insufficient here,
+and the proof is in this session: the frame high-water read 432 KB against a 64 MB ceiling, which
+is 0.66% and looks perfect. It was 432 KB **because the sweep was timing out at thirty seconds
+before it could gather more**. A measurement bounded by another defect reads exactly like a healthy
+one, and every threshold anyone would write passes it. It only became visible when the VM produced
+10.7 MB for a single store and the two sat side by side.
+
+So the comparison is against **this machine's own previous values**, and movement in **either
+direction** beyond a tolerance is a finding - a number falling unexpectedly is as interesting as one
+rising, because that is precisely what 432 KB was.
+
+**Bias: fail aggressively.** The maintainer's instruction. A slow leak of performance degradation
+across releases is the thing this exists to catch, and it is exactly what a permissive gate misses,
+because no single release moves the number much.
+
+**Where the numbers live: LOCAL ONLY, and never in the repo or the release notes.** The maintainer's
+words: these are measurements of their machine, useful only relative to older values from the same
+system, not representative of anyone else's, and publishing them leaks statistics about their
+mailbox - volumes, folder shapes, mail rates. The baseline history therefore cannot be committed
+either, or it is pushed. It belongs under `%LOCALAPPDATA%`, as machine-local data, alongside the
+audit log the product already keeps there.
+
 ## Standing rules that outlive any compaction
 
 - **Completeness outranks performance, whatever the cost.** The maintainer has said this repeatedly.
