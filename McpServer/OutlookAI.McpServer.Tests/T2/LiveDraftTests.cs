@@ -19,11 +19,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "MailAccount")]
-[Trait("Requires", "MultipleStores")]
-[Trait("Requires", "Transport")]
-[Trait("Requires", "InteractiveDesktop")]
 public sealed class LiveDraftTests
 {
     private const int OlFolderDrafts = 16;
@@ -44,6 +39,9 @@ public sealed class LiveDraftTests
     private string Marker => _fixture.RunMarker;
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "Transport")]
     public void NewDraft_Hub_LandsInHubDrafts_IdentityAndSignatureRecorded()
     {
         ComDefaultFolderInfo hubDrafts = RequireDefaultFolder(Hub, OlFolderDrafts);
@@ -97,6 +95,9 @@ public sealed class LiveDraftTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "Transport")]
     public void DerivedDrafts_Hub_ThreadingQuotedHistoryAndPlacement()
     {
         ComDefaultFolderInfo hubDrafts = RequireDefaultFolder(Hub, OlFolderDrafts);
@@ -171,6 +172,10 @@ public sealed class LiveDraftTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "Transport")]
+    [Trait("Requires", "InteractiveDesktop")]
     public void NewDraft_Hub_DisplayCase_InspectorShown_ScreenshotTaken_ThenClosed()
     {
         string hubStoreId = _fixture.GetStoreId(Hub);
@@ -229,6 +234,9 @@ public sealed class LiveDraftTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "Transport")]
     public void IdentityDrafts_BusinessAccounts_RightStore_NeverDisplayed_DeletedImmediately()
     {
         // Q-it2-3a: ONE tagged identity-verification draft per business account -
@@ -295,6 +303,9 @@ public sealed class LiveDraftTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "Transport")]
     public void ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain()
     {
         // S3 post-suite proof (also run explicitly after the full suite): NO item

@@ -26,8 +26,6 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// </summary>
 [Collection(LiveCollections.McpToolShape)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "Portable")]
-[Trait("Requires", "OutlookInstance")]
 public sealed class OutlookHealthLiveToolShapeTests
 {
     private static Task<McpStdioClient> StartAsync()
@@ -40,6 +38,7 @@ public sealed class OutlookHealthLiveToolShapeTests
     /// The merged index_status content (D37), formerly Phase2CiToolShapeTests.
     /// </summary>
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public async Task OutlookHealth_CarriesTheFreshnessBlock_WithOrWithoutAnIndex()
     {
         await using McpStdioClient client = await StartAsync();
@@ -67,6 +66,7 @@ public sealed class OutlookHealthLiveToolShapeTests
     /// is well formed on any machine - that part of the old claim was always true.
     /// </summary>
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public async Task OutlookHealth_OnAnyMachine_ReturnsWellFormedReport()
     {
         await using McpStdioClient client = await StartAsync();
@@ -169,6 +169,7 @@ public sealed class OutlookHealthLiveToolShapeTests
     /// </para>
     /// </summary>
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public async Task OutlookHealth_IsCallableOverRawStdio_AndAnswersWithAStatus()
     {
         await using McpStdioClient client = await StartAsync();

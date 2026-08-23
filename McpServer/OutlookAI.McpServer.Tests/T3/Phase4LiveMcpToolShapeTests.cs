@@ -16,9 +16,6 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// </summary>
 [Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "MailAccount")]
-[Trait("Requires", "Transport")]
 public sealed class Phase4LiveMcpToolShapeTests
 {
     /// <summary>
@@ -41,6 +38,8 @@ public sealed class Phase4LiveMcpToolShapeTests
     private string Marker => _fixture.RunMarker;
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "Transport")]
     public async Task DraftTools_GoldenShapes_OverRealStdio_WithAuditLines()
     {
         int auditLinesBefore = CountAuditLines();

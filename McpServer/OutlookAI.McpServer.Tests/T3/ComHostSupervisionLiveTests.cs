@@ -22,14 +22,13 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// </para>
 /// <para>
 /// So they are <c>Category=Live</c>: excluded from a default run, included in a deliberate
-/// one. <c>LiveTier=Portable</c> because any Outlook profile satisfies them - they read
-/// nothing of the maintainer's own mail, and the dedicated test VM will run them unchanged.
+/// one. <c>Requires=OutlookInstance</c> and nothing more, because any Outlook profile satisfies
+/// them - they read nothing of the maintainer's own mail, and the dedicated test VM will run
+/// them unchanged.
 /// </para>
 /// </summary>
 [Collection(LiveCollections.McpToolShape)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "Portable")]
-[Trait("Requires", "OutlookInstance")]
 public sealed class ComHostSupervisionLiveTests
 {
     /// <summary>Short enough to keep the suite quick, long enough not to be flaky on a loaded box.</summary>
@@ -66,6 +65,7 @@ public sealed class ComHostSupervisionLiveTests
     }
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public async Task AfterAWedge_TheHostIsReplacedAndHealthSaysSo()
     {
         await using McpStdioClient client = await StartAsync(TimeSpan.FromSeconds(120), "hang:GetAccounts");
@@ -123,6 +123,7 @@ public sealed class ComHostSupervisionLiveTests
     }
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public async Task TheWedgedHostProcessIsEnded_NotReused()
     {
         await using McpStdioClient client = await StartAsync(TimeSpan.FromSeconds(120), "hang:GetAccounts");
@@ -146,6 +147,7 @@ public sealed class ComHostSupervisionLiveTests
     }
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public async Task NoComHostSurvivesTheServer()
     {
         // The 2026-08-15 machine had 18 orphaned server processes, one wedged holding
@@ -184,6 +186,7 @@ public sealed class ComHostSupervisionLiveTests
     }
 
     [Fact]
+    [Trait("Requires", "OutlookInstance")]
     public async Task WithTheBreakerOpen_HealthStillReportsAndSaysWhy()
     {
         await using McpStdioClient client = await StartAsync(TimeSpan.FromSeconds(180), "hang:GetAccounts");

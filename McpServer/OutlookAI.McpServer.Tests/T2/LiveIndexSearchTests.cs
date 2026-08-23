@@ -12,10 +12,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase1)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "SearchIndex")]
-[Trait("Requires", "MultipleStores")]
-[Trait("Requires", "DelegateStore")]
 public sealed class LiveIndexSearchTests
 {
     private const int MaxQueryMs = 2000;
@@ -30,6 +26,8 @@ public sealed class LiveIndexSearchTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void ProviderSelection_OleDbPrimaryPath_IsRecorded()
     {
         _output.WriteLine(_fixture.ProviderReport);
@@ -41,6 +39,8 @@ public sealed class LiveIndexSearchTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void ProbeParity_Top5Email_HitsUnder2s()
     {
         IndexSearchResult result = _fixture.Service.Search(new IndexQuery
@@ -55,6 +55,8 @@ public sealed class LiveIndexSearchTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void ProbeParity_AllThreeStores_ReturnRowsUnder2s()
     {
         foreach (string storeName in _fixture.Settings.ExpectedStoreDisplayNames)
@@ -74,6 +76,8 @@ public sealed class LiveIndexSearchTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void ProbeParity_McpShapedQuery_ScopeKindContainsOrderBy()
     {
         // Section-5 R3 shape: store scope + kind + CONTAINS + ORDER BY DESC, TOP 25.
@@ -107,6 +111,8 @@ public sealed class LiveIndexSearchTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void ProbeParity_DateRangeQuery_HitsUnder2s()
     {
         IndexSearchResult result = _fixture.Service.Search(new IndexQuery
@@ -122,6 +128,8 @@ public sealed class LiveIndexSearchTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void FilterShapes_ReadAndAttachmentFlags_WorkUnder2s()
     {
         StoreScopeInfo scope = _fixture.GetScope(_fixture.Settings.ExpectedStoreDisplayNames[0]);
@@ -149,6 +157,8 @@ public sealed class LiveIndexSearchTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void SenderFilter_PerColumnContains_IndexBackedUnder2s()
     {
         // Any sender address seen in recent mail of the first store; asserted content-free.
@@ -195,6 +205,9 @@ public sealed class LiveIndexSearchTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "DelegateStore")]
     public void DelegateStoreSubtree_ReturnsRowsUnder2s()
     {
         List<StoreScopeInfo> withDelegates = _fixture.StoreScopes.Where(s => s.HasDelegateSubtree).ToList();
@@ -214,6 +227,8 @@ public sealed class LiveIndexSearchTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void Staleness_SelfReportsPlausibleFrontier()
     {
         IndexStalenessReport report = _fixture.Service.GetStaleness();
@@ -228,6 +243,8 @@ public sealed class LiveIndexSearchTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void StoreDiscovery_FindsAllExpectedStores()
     {
         _output.WriteLine("discovered scopes: "

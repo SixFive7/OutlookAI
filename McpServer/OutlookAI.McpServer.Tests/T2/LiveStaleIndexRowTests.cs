@@ -22,10 +22,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase2)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "SearchIndex")]
-[Trait("Requires", "DelegateStore")]
-[Trait("Requires", "ProbePopulation")]
 public sealed class LiveStaleIndexRowTests
 {
     private readonly LivePhase2Fixture _fixture;
@@ -38,6 +34,9 @@ public sealed class LiveStaleIndexRowTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "DelegateStore")]
+    [Trait("Requires", "ProbePopulation")]
     public void DelegateHitsInANestedFolder_AreReadable_ViaTheFlatLeafName()
     {
         DelegateNestedFolderProbeSettings? probe = _fixture.Settings.DelegateNestedFolderProbe;
@@ -48,8 +47,8 @@ public sealed class LiveStaleIndexRowTests
             // have drifted, and returning green would hide it: the whole point here is a
             // delegate folder Outlook nests and the index publishes flat, and without one
             // the test proves nothing at all. On a machine that has no delegate mailbox the
-            // absence is simply true - and this test is LiveTier=ProfileBound, so it should
-            // not have been selected there in the first place.
+            // absence is simply true - and this test declares Requires=DelegateStore, so it
+            // should not have been selected there in the first place.
             _fixture.Settings.RequireProductionPopulation("a delegateNestedFolderProbe population");
             _output.WriteLine(
                 "PROVED NOTHING: no delegateNestedFolderProbe configured on this machine, so the "

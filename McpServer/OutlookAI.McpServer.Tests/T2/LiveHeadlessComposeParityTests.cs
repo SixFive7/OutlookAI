@@ -28,8 +28,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "MailAccount")]
 public sealed class LiveHeadlessComposeParityTests
 {
     private readonly LivePhase4Fixture _fixture;
@@ -59,6 +57,7 @@ public sealed class LiveHeadlessComposeParityTests
             ?? throw new InvalidOperationException("draft HTML unavailable: " + (error ?? "empty"));
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
     public void ComposedWithNoVisibleWindow_TheDraftIsFullyCapable_AndNothingIsPutOnScreen()
     {
         bool? headlessAtStart = HealthReporting.TryGetOutlookHeadless();
@@ -181,6 +180,7 @@ public sealed class LiveHeadlessComposeParityTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
     public void APlainTextDraftIsAlsoFullyComposed_WithNoDegradationReported()
     {
         int visibleBefore = ComposeSurface.CountUserVisibleWindows();

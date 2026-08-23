@@ -56,7 +56,7 @@ corpus rebuild is another switch.
 
 | Store | Indexed | Purpose |
 | --- | --- | --- |
-| Corpus A | **yes** | the index tier, and the shape most `ProfileBound` tests want |
+| Corpus A | **yes** | the index tier, and the shape most `Requires=SearchIndex` tests want |
 | Corpus B | **no** | the degraded path: no index frontier, the seven-day fallback window, the sweep and frame measurements |
 | Bystander | either | the store the count tripwire actually watches, and the absent-arrival-folders shape |
 
@@ -445,8 +445,12 @@ taking an index measurement.
 
 ```
 dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj \
-  --filter "Category=Live&LiveTier=Portable"
+  --filter "Category=Live&Requires!=DelegateStore"
 ```
+
+That filter IS the VM bucket, spelled out: everything live except the tests naming a capability
+this machine cannot be given. There is no separate "which bucket" trait to keep in step with it -
+see section 5.
 
 To run one class:
 
@@ -464,52 +468,87 @@ To see the sets without running anything - `--list-tests` discovers and does not
 is safe against any mailbox:
 
 ```
-dotnet test <csproj> --list-tests --filter "Category=Live"                     # 127
-dotnet test <csproj> --list-tests --filter "Category=Live&LiveTier=Portable"   # 31
+dotnet test <csproj> --list-tests --filter "Category=Live"                          # 127
+dotnet test <csproj> --list-tests --filter "Category=Live&Requires!=DelegateStore"  # 121
+dotnet test <csproj> --list-tests --filter "Category=Live&Requires=DelegateStore"   # 6
 ```
 
-Treat those two numbers as "what they were when this was written". The traits are the
-authority; the counts in a document drift.
+Treat those numbers as "what they were when this was written" - measured 2026-08-24. The traits
+are the authority; the counts in a document drift. `Requires!=X` means "no value of `Requires` on
+this test equals X", which is what makes a multi-valued trait usable as an exclusion.
 
 ---
 
 ## 5. Which tests are in which bucket, and how to find out
 
-The classification is two traits on the test itself, not a list in a document that can drift:
+The classification is **two traits on the test itself**, not a list in a document that can drift -
+and not three traits either. It used to be three, and the third one was the problem.
 
-* `LiveTier` is the selector. Exactly one value per live test: `Portable` or `ProfileBound`.
-* `Requires` is the reason, and it carries weight. A `ProfileBound` test must name at least one
-  capability a test machine cannot have - `SearchIndex`, `MailAccount`, `Transport`,
-  `MultipleStores`, `DelegateStore`, `SmallHubStore`, `ProbePopulation` - and a `Portable` test
-  must name none of them. Three further values - `InteractiveDesktop`, `AddInRegistry` and
-  `OutlookInstance` - describe things a test machine CAN have and constrain only how the run is
-  launched.
+* **`Category=Live`** means "this test needs a mailbox". It is the CI gate, and it survives the
+  existence of this VM because CI runs on a GitHub Windows runner with no Outlook at all.
+* **`Requires`** says *what of a machine* the test needs, from one closed vocabulary, declared
+  **per method**. Nothing else is declared: which bucket a test is in is a question asked of
+  `Requires` at filter time.
 
-`.github/scripts/check-pinned-constants.ps1` fails the build if any of those seven
-production-only names stops appearing in this file, so the list above is load-bearing text and
-not decoration.
+**The three buckets, all computed:**
 
-**The vocabulary is drifting away from this machine, and that is worth saying plainly.**
-`Portable` was coined to mean "no accounts, no index, no delegate stores". The machine described
-here has a dummy account and an indexed store, so several tests currently marked `ProfileBound`
-for `MailAccount` or `SearchIndex` can in fact run on it. Reclassifying them is queued work, not
-done; until it is, the `LiveTier=Portable` filter understates what this VM can prove.
+| Bucket | How it is selected | Size |
+| --- | --- | --- |
+| CI | `--filter "Category!=Live"` | 2,226 cases |
+| VM | `--filter "Category=Live&Requires!=DelegateStore"` | 121 |
+| production-only | `--filter "Category=Live&Requires=DelegateStore"` | 6 |
 
-`OutlookInstance` arrived on 2026-08-23 with the tier-3 correction, and it is why the Portable
-subset grew by eleven. The T3 stdio classes spawn the real server, which spawns a COM host,
-which attaches to whatever Outlook is on the machine - so eleven tests that called
-`outlook_health`, `list_accounts` or `search` were reaching a real mailbox from a run filtered
-`Category!=Live`. They are now `ComHostSupervisionLiveTests`, `OutlookAvailabilityLiveTests` and
-`OutlookHealthLiveToolShapeTests`, all `Portable`: what they need is an Outlook, not this
-Outlook.
+**The vocabulary, all ten values.** Nine of them this VM can be given; one it cannot.
 
-Two mechanisms keep that from drifting back, both described in `McpServer/README.md`:
-`McpStdioClient` refuses to send a `tools/call` for `outlook_health`, `list_accounts` or
-`list_folders` unless the test declares mailbox contact, and
-`LiveTierInventoryTests.EveryStdioTestReachingOutlook_DeclaresIt` reads that declaration back
-out of the compiled IL, so a new method in an old class is caught as well as a new class.
+| Capability | What the machine must have |
+| --- | --- |
+| `OutlookInstance` | an Outlook to attach to, and nothing more specific. The floor: a live test that needs nothing else says this rather than saying nothing |
+| `InteractiveDesktop` | a real desktop session - Outlook windows and screenshots cannot be driven from session 0. Declared only by tests that PUT SOMETHING ON SCREEN |
+| `AddInRegistry` | the add-in installed and run once, so its tuning values exist |
+| `SearchIndex` | a populated Windows Search index - Corpus A |
+| `MailAccount` | a mail account rather than a bare PST - the dummy account |
+| `Transport` | mail that actually goes out and comes back - the local sink |
+| `MultipleStores` | more than one store mounted - all three |
+| `SmallHubStore` | a hub small enough that a paging assertion means something |
+| `ProbePopulation` | the hand-curated population named in the settings file |
+| **`DelegateStore`** | **a delegate/shared mailbox. The one capability no test machine can be given** |
 
-`T1/LiveTierInventoryTests` enforces all of that in CI, together with the rule that every live
+`.github/scripts/check-pinned-constants.ps1` fails the build if any of those ten names stops
+appearing in this file, so the table above is load-bearing text and not decoration.
+
+**Why `DelegateStore` is the only production-only capability.** A delegate/shared mailbox is
+indexed with its folder hierarchy FLATTENED - an item in the delegate's `Archive/SomeFolder` is
+published as `<host>/1/<delegate>/SomeFolder`, every intermediate folder dropped. A local PST
+cannot be made to have that property, and faking it would manufacture confidence in the one area
+this product has most often been surprised by. The six capabilities that used to sit beside it
+(`SearchIndex`, `MailAccount`, `Transport`, `MultipleStores`, `SmallHubStore`, `ProbePopulation`)
+stopped being production-only the moment this machine's shape was settled: sections 1 and 2 build
+every one of them.
+
+**The third axis is gone, and this is what it was.** A `LiveTier` trait held `Portable` or
+`ProfileBound` and had to be kept in agreement with `Requires` by hand - a computed value
+maintained manually, which is the exact drift `T1/LiveTierInventoryTests` exists to prevent. It
+was paired with CLASS-level `Requires`, so a class read as the union of everything any one of its
+methods needed. Between them they reported **96 tests that could not leave the maintainer's
+machine**. Re-read method by method, the real floor is **six** - the six the production-only
+filter selects. `LiveTierInventoryTests` now refuses the retired trait outright and refuses a
+class-level `Requires`, so neither can come back quietly.
+
+**The tier-3 correction, and the two mechanisms that hold it.** The T3 stdio classes spawn the
+real server, which spawns a COM host, which attaches to whatever Outlook is on the machine - so
+tests calling `outlook_health`, `list_accounts` or `search` were reaching a real mailbox from a
+run filtered `Category!=Live`. They are now `ComHostSupervisionLiveTests`,
+`OutlookAvailabilityLiveTests` and `OutlookHealthLiveToolShapeTests`, needing only
+`OutlookInstance`: what they need is an Outlook, not *this* Outlook. Two mechanisms hold that,
+both described in `McpServer/README.md`. `McpStdioClient` refuses to send a `tools/call` for
+`outlook_health`, `list_accounts` or `list_folders` unless the test hands it a contact token, and
+`LiveTierInventoryTests.EveryStdioTestReachingOutlook_DeclaresIt` reads that token back out of
+the compiled IL, so a new method in an old class is caught as well as a new class. That pin now
+also catches the opposite error - a live class that names one of those tools and *forgets* the
+token, which throws on its first call, in a tier no CI run ever executes. Three classes were in
+exactly that state.
+
+`T1/LiveTierInventoryTests` enforces all of it in CI, together with the rule that every live
 class sits in a registered collection.
 
 ---
@@ -549,7 +588,8 @@ Six guards arm themselves; none needs remembering.
   means the bystander store is empty or the hub is the only store.
 * `[tripwire] post-run census in T ms (identified ...); 0 failure(s), K note(s).` Notes are
   benign; failures throw.
-* `PROVED NOTHING:` - a test that ran but found no population to test. On a Portable machine
+* `PROVED NOTHING:` - a test that ran but found no population to test. On a machine declaring
+  `machineProfile: "Portable"`
   that is expected for the handful of tests that discover their own population; on a Production
   machine it throws instead.
 
@@ -644,8 +684,9 @@ right: the point of naming it is that a rebuilder should not have to discover it
 
 17. The generator writes `IPM.Note` with a subject, a body, a read state, message flags and two
     date properties. **No senders, no recipients, no attachments, no HTML, no categories, no
-    flags, no subfolders, no other message classes.** Every test needing any of those is
-    `ProfileBound` because of the corpus, not because of the machine. Widening it is queued work.
+    flags, no subfolders, no other message classes.** A test needing any of those is in the VM
+    bucket and will still fail here - because of the corpus, not because of the machine, and
+    nothing in the traits says so. Widening the generator is queued work.
 
 **Open behaviour**
 
@@ -654,8 +695,8 @@ right: the point of naming it is that a rebuilder should not have to discover it
     is no check on how many assertions actually fired, so a run that proved nothing looks like a
     run that passed.
 20. Non-hub stores in `expectedStoreDisplayNames` are granted draft-create and draft-delete by
-    `StoreWriteAllowlist`. That was harmless while the identity tests were all `ProfileBound`;
-    once tests are reclassified onto this machine, the bystander - the one store the tripwire
+    `StoreWriteAllowlist`. That was harmless while the identity tests were all pinned to the dev
+    machine; now that 121 of 127 select onto this one, the bystander - the one store the tripwire
     needs untouched - is inside that grant.
 
 ---
@@ -665,12 +706,14 @@ right: the point of naming it is that a rebuilder should not have to discover it
 * **`testHubStoreDisplayName` doubles as an SMTP address**, which is why the hub PST has to be
   named after the dummy account. It is a constraint the tests impose on the machine, not a
   design anybody chose.
-* **Several `ProfileBound` tests assume a tiny hub** and would break their paging assertions
+* **Several tests assume a tiny hub** and would break their paging assertions
   against a 20,000-item one (`Phase7LiveMcpToolShapeTests` asserts the hub holds between 2 and
   99 items; `LiveMailServiceTests.ListFolders...` asserts the hub tree fits one page). They
   carry `Requires=SmallHubStore`. This is the reason the two machines cannot share one settings
   shape.
-* **The Portable subset does not prove the delegate-store paths at all**, and no test machine
-  can: `Requires=DelegateStore` needs a mailbox somebody else owns.
-* **Nobody has yet run the `LiveTier=Portable` subset end to end anywhere.** "Portable" means
-  "reads as runnable there", and not yet "ran there".
+* **The VM bucket does not prove the delegate-store paths at all**, and no test machine can:
+  `Requires=DelegateStore` needs a mailbox somebody else owns. Six tests, named by the
+  production-only filter in section 5.
+* **Nobody has yet run the VM bucket end to end anywhere.** The 121 read as runnable there; that
+  is not the same as having run there. The count moved from 31 to 121 by re-reading what each
+  test needs method by method - no test was changed to make it fit.

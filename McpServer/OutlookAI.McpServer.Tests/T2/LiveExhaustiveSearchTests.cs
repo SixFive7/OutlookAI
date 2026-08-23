@@ -35,7 +35,6 @@ public sealed class LiveExhaustiveSearchTests
     private string Hub => _fixture.Settings.TestHubStoreDisplayName;
 
     [Fact]
-    [Trait("LiveTier", "ProfileBound")]
     [Trait("Requires", "SearchIndex")]
     public void Exhaustive_KnownAnswer_MatchesIndexAndGroundTruth_OnHubStore()
     {
@@ -140,7 +139,7 @@ public sealed class LiveExhaustiveSearchTests
     }
 
     [Fact]
-    [Trait("LiveTier", "Portable")]
+    [Trait("Requires", "OutlookInstance")]
     public void Exhaustive_FolderBounded_ReturnsExactlyThatFoldersMatches()
     {
         IReadOnlyList<OutlookAI.Core.Com.ComWalkedItem> corpus = _fixture.TestHubCorpus;

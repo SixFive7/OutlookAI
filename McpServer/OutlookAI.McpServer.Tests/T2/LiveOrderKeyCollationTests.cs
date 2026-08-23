@@ -28,8 +28,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase1)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "SearchIndex")]
 public sealed class LiveOrderKeyCollationTests
 {
     private const int ProbeTop = 500;
@@ -50,6 +48,7 @@ public sealed class LiveOrderKeyCollationTests
     /// Docs/magic-numbers.md beside the guard.
     /// </summary>
     [Fact]
+    [Trait("Requires", "SearchIndex")]
     public void NullCollation_UnderDateReceivedDescending_IsMeasured()
     {
         IIndexClient client = IndexClientFactory.CreateAuto(out string report);
@@ -108,6 +107,7 @@ public sealed class LiveOrderKeyCollationTests
     /// is called measured rather than constructed.
     /// </summary>
     [Fact]
+    [Trait("Requires", "SearchIndex")]
     public void OrderKeyFloorPredicate_IsAccepted_AndAdmitsOnlyDatedRows()
     {
         IIndexClient client = IndexClientFactory.CreateAuto(out _);
@@ -146,6 +146,7 @@ public sealed class LiveOrderKeyCollationTests
     /// that would have failed on a NULLS-FIRST provider before the guard existed.
     /// </summary>
     [Fact]
+    [Trait("Requires", "SearchIndex")]
     public void WidenedSearch_NeverReturnsFewerRowsThanTheOldMailKindShape()
     {
         foreach (string storeName in _fixture.Settings.ExpectedStoreDisplayNames)

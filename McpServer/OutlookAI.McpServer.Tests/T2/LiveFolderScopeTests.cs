@@ -46,7 +46,6 @@ public sealed class LiveFolderScopeTests
     // ==================================================== 1. the delegate defect (read-only)
 
     [Fact]
-    [Trait("LiveTier", "ProfileBound")]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "DelegateStore")]
     public void DelegateSubfolders_AreReachableAgain_AndTheOldNestedShapeStillReturnsZero()
@@ -154,7 +153,6 @@ public sealed class LiveFolderScopeTests
     }
 
     [Fact]
-    [Trait("LiveTier", "ProfileBound")]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "DelegateStore")]
     public void DelegateFirstLevelFolders_StillResolve_AndTheWholeMailboxIsUnfiltered()
@@ -200,7 +198,6 @@ public sealed class LiveFolderScopeTests
     // ============================================ 2. primary-store narrowing (read-only)
 
     [Fact]
-    [Trait("LiveTier", "ProfileBound")]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     public void PrimaryStore_ExcludeSubfolders_NarrowsExactly_AndCostsNothing()
@@ -292,7 +289,6 @@ public sealed class LiveFolderScopeTests
     // ================================== 3. include_subfolders end to end (hub writes only)
 
     [Fact]
-    [Trait("LiveTier", "ProfileBound")]
     [Trait("Requires", "MailAccount")]
     public void HubSubtree_SweepAndExhaustive_HonorIncludeSubfolders_AndTheCacheKeepsThemApart()
     {
@@ -395,7 +391,6 @@ public sealed class LiveFolderScopeTests
     // ==================================== 4. escaping + the non-silent zero-row guard
 
     [Fact]
-    [Trait("LiveTier", "ProfileBound")]
     [Trait("Requires", "MailAccount")]
     public void ApostropheInAFolderName_IsSearchable_InsteadOfThrowing()
     {
@@ -455,7 +450,6 @@ public sealed class LiveFolderScopeTests
     }
 
     [Fact]
-    [Trait("LiveTier", "ProfileBound")]
     [Trait("Requires", "SearchIndex")]
     public void UnresolvedFolderPath_IsReportedAsAResolutionProblem_NotAnEmptyResult()
     {
@@ -494,7 +488,7 @@ public sealed class LiveFolderScopeTests
     }
 
     [Fact]
-    [Trait("LiveTier", "Portable")]
+    [Trait("Requires", "OutlookInstance")]
     public void TopAboveTheCap_IsReportedAsAClamp()
     {
         SearchOutcome outcome = Service.Search(new SearchRequest

@@ -29,9 +29,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "MailAccount")]
-[Trait("Requires", "Transport")]
 public sealed class LiveUpdateDiscardTests
 {
     private readonly LivePhase4Fixture _fixture;
@@ -52,6 +49,7 @@ public sealed class LiveUpdateDiscardTests
     // ================================================================== C1: update_draft
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
     public void UpdateDraft_ReplacesTheBodyRegion_LeavingTheSignatureIntact()
     {
         using TestSignature sig = TestSignature.Create(Marker);
@@ -142,6 +140,8 @@ public sealed class LiveUpdateDiscardTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "Transport")]
     public void UpdateDraft_ReportsAnInlineImageItCannotCarryOver_AndReapplyingTheSignatureRestoresIt()
     {
         // THE RESIDUAL LIMITATION (D47), proven rather than described. A draft composed
@@ -216,6 +216,8 @@ public sealed class LiveUpdateDiscardTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "Transport")]
     public void UpdateDraft_OnAReply_ReplacesTheBody_AndKeepsTheQuotedOriginal()
     {
         string quoteToken = "C1QUOTESEED" + Marker;
@@ -259,6 +261,7 @@ public sealed class LiveUpdateDiscardTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
     public void UpdateDraft_ReplacesSubjectAndRecipients_KeepingThreadingAndTheOtherFields()
     {
         LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft");
@@ -307,6 +310,8 @@ public sealed class LiveUpdateDiscardTests
     // ================================================================== C2: discard_draft
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "Transport")]
     public void DiscardDraft_SoftDeletesItsOwnDraft_GoneFromDrafts_PresentInDeletedItems()
     {
         LiveStoreWriteGuard.Writable(Hub, StoreWriteKind.Draft, "new_draft");
@@ -348,6 +353,8 @@ public sealed class LiveUpdateDiscardTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "Transport")]
     public void DiscardDraft_RefusesADraftThisServerDidNotMake_EvenThoughItIsAnUnsentHubDraft()
     {
         // GATE 1 in isolation: the item satisfies BOTH other gates (unsent, in Drafts) -
@@ -378,6 +385,8 @@ public sealed class LiveUpdateDiscardTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "Transport")]
     public void DiscardDraft_RefusesASentItem_EvenWhenTheRegistryGateIsSatisfied()
     {
         // GATE 2 in isolation: the registry gate is deliberately satisfied for the sent
@@ -413,6 +422,8 @@ public sealed class LiveUpdateDiscardTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "Transport")]
     public void DiscardDraft_RefusesAnUnsentItemOutsideDrafts_AndSoDoesUpdateDraft()
     {
         // GATE 3 in isolation: an UNSENT draft moved out of Drafts, with the registry
@@ -459,6 +470,7 @@ public sealed class LiveUpdateDiscardTests
     // ================================================================== C3: attachments
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
     public void NewDraft_WithAttachments_ReportsWhatActuallyLandedOnTheSavedDraft()
     {
         string directory = Path.Combine(Path.GetTempPath(), "OutlookAI-McpTest-" + Marker + "-c3");
@@ -509,6 +521,7 @@ public sealed class LiveUpdateDiscardTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
     public void UpdateDraft_AddsAndRemovesAttachments_AndSaysWhatMatchedNothing()
     {
         string directory = Path.Combine(Path.GetTempPath(), "OutlookAI-McpTest-" + Marker + "-c3b");
@@ -556,6 +569,8 @@ public sealed class LiveUpdateDiscardTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "Transport")]
     public void AttachingAFile_InvalidatesAPendingSendToken()
     {
         // THE MANDATORY INTERLOCK (D46/C3): a token the user already confirmed must not
@@ -601,6 +616,8 @@ public sealed class LiveUpdateDiscardTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "Transport")]
     public void SendContentHash_IsStableOnAnUntouchedDraft_ButSeesAMarkupOnlyEdit()
     {
         // THE HTML-COVERAGE FINDING, measured rather than assumed (D46/C3):

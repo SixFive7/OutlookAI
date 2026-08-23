@@ -30,10 +30,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "MailAccount")]
-[Trait("Requires", "MultipleStores")]
-[Trait("Requires", "Transport")]
 public sealed class LiveDraftOptionsTests
 {
     private readonly LivePhase4Fixture _fixture;
@@ -52,6 +48,8 @@ public sealed class LiveDraftOptionsTests
     private string Marker => _fixture.RunMarker;
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
     public void NewDraft_Hub_NoConfiguredSignature_BodyOnly_NoBogusInjection()
     {
         string bodyMarker = "A1HUB" + Marker;
@@ -80,6 +78,8 @@ public sealed class LiveDraftOptionsTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
     public void NewDraft_Hub_SignatureOverride_BodyAboveTheSignature_OutsideTheSignatureBookmark()
     {
         using TestSignature sig = TestSignature.Create(Marker);
@@ -105,6 +105,8 @@ public sealed class LiveDraftOptionsTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
     public void NewDraft_BusinessAccounts_BodyAboveTheirOwnIntactHtmlSignature()
     {
         // Q-it2-3a identity grant: ONE tagged, never-displayed draft per business
@@ -162,6 +164,9 @@ public sealed class LiveDraftOptionsTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "Transport")]
     public void DerivedDrafts_CcBccAppend_SubjectOverrideKeepsThreading_ImportanceAndReceiptRoundTrip()
     {
         string hubStoreId = _fixture.GetStoreId(Hub);
@@ -255,6 +260,9 @@ public sealed class LiveDraftOptionsTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "Transport")]
     public void ForwardDraft_CcBccAppend_AndSubjectOverrideKeepsTheForwardedContent()
     {
         string hubStoreId = _fixture.GetStoreId(Hub);

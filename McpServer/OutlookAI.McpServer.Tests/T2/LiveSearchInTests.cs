@@ -30,9 +30,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase3)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "SearchIndex")]
-[Trait("Requires", "ProbePopulation")]
 public sealed class LiveSearchInTests
 {
     private const int MaxQueryMs = 2000;
@@ -55,6 +52,8 @@ public sealed class LiveSearchInTests
     // ------------------------------------------------ the SF-6 discovery case (index tier)
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "ProbePopulation")]
     public void Sf6DiscoveryCase_IndexTier_SubjectOnlyPopulationIsFoundByDefaultScope()
     {
         IndexSearchService index = IndexSearchService.CreateDefault(out _);
@@ -81,6 +80,8 @@ public sealed class LiveSearchInTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "ProbePopulation")]
     public void Sf6DiscoveryCase_IndexTier_PrefixStemsWorkInTheSubjectColumnToo()
     {
         Assert.True(Probe.SubjectTerm.Length >= 5, "probe term too short to stem");
@@ -101,6 +102,8 @@ public sealed class LiveSearchInTests
     // ------------------------------------------------ the SF-6 discovery case (tool tier)
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "ProbePopulation")]
     public void Sf6DiscoveryCase_ToolTier_DefaultQueryReturnsHits_BodyScopeReturnsNone()
     {
         SearchOutcome byDefault = Service.Search(NewProbeRequest(SearchInValues.Default));
@@ -117,6 +120,8 @@ public sealed class LiveSearchInTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "ProbePopulation")]
     public void Sf6DiscoveryCase_ExhaustiveTier_HonorsSearchIn()
     {
         SearchRequest subjectScoped = NewProbeRequest(SearchIn.SubjectOnly);
@@ -140,6 +145,8 @@ public sealed class LiveSearchInTests
     // ------------------------------------------------ latency delta of the OR-pair (measured)
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "ProbePopulation")]
     public void IndexTier_OrPairLatency_StaysAcceptableVersusSingleColumn()
     {
         IndexSearchService index = IndexSearchService.CreateDefault(out _);
@@ -172,6 +179,8 @@ public sealed class LiveSearchInTests
     // ------------------------------------------------ scope semantics across all three tiers
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "ProbePopulation")]
     public void AllTiers_SubjectOnlyAndBodyOnlyTerms_AreSeparatedConsistently()
     {
         IReadOnlyList<ComWalkedItem> corpus = _fixture.TestHubCorpus;

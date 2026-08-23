@@ -25,9 +25,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase1)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "SearchIndex")]
-[Trait("Requires", "MultipleStores")]
 public sealed class LiveDecodeVerifyTests
 {
     private const int SampleTarget = 25;
@@ -43,6 +40,8 @@ public sealed class LiveDecodeVerifyTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void HitMapping_25SampledHits_AllOpenAndMatch_AtLeast24ViaPrimaryPath()
     {
         List<IndexHit> samples = SampleHitsAcrossStores();
@@ -149,6 +148,8 @@ public sealed class LiveDecodeVerifyTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void ShortDecodedId_IsRejectedByGetItemFromID_DiscoveryRecorded()
     {
         // Pins the Phase-1 platform finding so a future behavior change is noticed:
@@ -171,6 +172,8 @@ public sealed class LiveDecodeVerifyTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "MultipleStores")]
     public void AttachmentHit_ParentMapping_OpensParentWithMatchingAttachment()
     {
         // Real attachment-content entries (kind=document under a mapi store scope).

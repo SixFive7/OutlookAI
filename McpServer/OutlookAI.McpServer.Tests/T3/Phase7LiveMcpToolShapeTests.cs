@@ -16,7 +16,6 @@ namespace OutlookAI.McpServer.Tests.T3;
 public sealed class Phase7LiveMcpToolShapeTests
 {
     [Fact]
-    [Trait("LiveTier", "ProfileBound")]
     [Trait("Requires", "SmallHubStore")]
     public async Task Search_TopOne_OnHubStore_SetsTruncated_AndTopHundredDoesNot()
     {
@@ -53,11 +52,11 @@ public sealed class Phase7LiveMcpToolShapeTests
     }
 
     [Fact]
-    [Trait("LiveTier", "Portable")]
     [Trait("Requires", "AddInRegistry")]
     public async Task Health_OverStdio_OnThisMachine_HasOutlookVersionAndTuning()
     {
-        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
+            timeout: null, environment: null, McpStdioClient.OutlookReachingToolsAllowed);
 
         JsonElement report = await client.CallToolAsync("outlook_health", new { });
 

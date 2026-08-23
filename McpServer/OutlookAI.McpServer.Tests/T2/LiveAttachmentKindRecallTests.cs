@@ -21,9 +21,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase1)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "SearchIndex")]
-[Trait("Requires", "Transport")]
 public sealed class LiveAttachmentKindRecallTests
 {
     /// <summary>TOP for the attachment-hit probe search, shared so a re-run is the SAME search.</summary>
@@ -41,6 +38,7 @@ public sealed class LiveAttachmentKindRecallTests
     private static IIndexClient Client => IndexClientFactory.CreateAuto(out _);
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
     public void DroppedAttachmentKinds_AreRecoveredByTheNewShape_AndTheGrowthIsMeasured()
     {
         IIndexClient client = Client;
@@ -109,6 +107,7 @@ public sealed class LiveAttachmentKindRecallTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
     public void PostFilter_KeepsMailOnly_AndAttachmentRowsOfEveryKind()
     {
         // Admission moved from SQL to code; prove the code decides the same thing the old
@@ -157,6 +156,7 @@ public sealed class LiveAttachmentKindRecallTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
     public void QuerySetLatency_IsUnchangedWithinNoise()
     {
         // The block-(q) claim is "no extra query, ~+6% rows". Measure the agent-sized
@@ -197,6 +197,7 @@ public sealed class LiveAttachmentKindRecallTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
     public void PreviouslyDroppedAttachmentKinds_SurfaceThroughSearch_AndReadOpensTheParent()
     {
         // Deterministic end-to-end proof through the PRODUCT, read-only on the real
@@ -315,6 +316,8 @@ public sealed class LiveAttachmentKindRecallTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Requires", "Transport")]
     public void SeededMixedAttachments_AreAdmittedOnceIndexed_AndAlwaysCleanedUp()
     {
         // Hub-only seed (S2): the distinctive token exists ONLY inside the attachments -

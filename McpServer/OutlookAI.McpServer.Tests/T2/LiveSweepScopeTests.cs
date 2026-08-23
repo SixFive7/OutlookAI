@@ -49,7 +49,6 @@ public sealed class LiveSweepScopeTests
     // ------------------------------------------------ fix 1: cross-column AND (index tier)
 
     [Fact]
-    [Trait("LiveTier", "ProfileBound")]
     [Trait("Requires", "SearchIndex")]
     public void IndexTier_TwoTerms_OneInSubjectOneInBody_AreFoundTogether()
     {
@@ -87,7 +86,6 @@ public sealed class LiveSweepScopeTests
     // -------------------------- fix 1 (tool tier) + fix 2, on ONE controlled corpus
 
     [Fact]
-    [Trait("LiveTier", "ProfileBound")]
     [Trait("Requires", "Transport")]
     public void ControlledCorpus_CrossColumnTermsMatch_AndTheSweepFollowsTheSearchScope()
     {
@@ -261,7 +259,7 @@ public sealed class LiveSweepScopeTests
     }
 
     [Fact]
-    [Trait("LiveTier", "Portable")]
+    [Trait("Requires", "OutlookInstance")]
     public void FolderScopedSweep_UnknownFolder_DegradesWithAdvice_NeverThrows()
     {
         Service.ClearSweepCache();
@@ -284,7 +282,7 @@ public sealed class LiveSweepScopeTests
     }
 
     [Fact]
-    [Trait("LiveTier", "Portable")]
+    [Trait("Requires", "OutlookInstance")]
     public void DefaultSweep_CoversTheArrivalPathFolders_WithinBudget()
     {
         // The default set is the freshness contract for every non-folder-scoped search:

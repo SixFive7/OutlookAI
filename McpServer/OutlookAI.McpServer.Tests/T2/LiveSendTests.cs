@@ -15,9 +15,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase5)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "MailAccount")]
-[Trait("Requires", "MultipleStores")]
 public sealed class LiveSendTests
 {
     private readonly LivePhase5Fixture _fixture;
@@ -36,6 +33,8 @@ public sealed class LiveSendTests
     private string Marker => _fixture.RunMarker;
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
     public void TokenFlow_BindingSingleUseAndModification_AllRefuse_NothingSent()
     {
         int auditBefore = CountAuditLines();
@@ -113,6 +112,8 @@ public sealed class LiveSendTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
     public void TokenExpiry_ShortTtlService_RefusesExpiredToken()
     {
         int auditBefore = CountAuditLines();
@@ -155,6 +156,8 @@ public sealed class LiveSendTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
     public void Send_DeletedDraft_FailsClosed_WithoutSending()
     {
         int auditBefore = CountAuditLines();
@@ -174,6 +177,8 @@ public sealed class LiveSendTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "MultipleStores")]
     public void ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain()
     {
         // S3 post-suite proof: NO item tagged [OutlookAI-McpTest] - from this or any

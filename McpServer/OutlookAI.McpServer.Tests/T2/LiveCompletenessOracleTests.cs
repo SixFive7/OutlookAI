@@ -39,8 +39,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase1)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "SearchIndex")]
 public sealed class LiveCompletenessOracleTests
 {
     private const int MinTerms = 3;
@@ -56,6 +54,7 @@ public sealed class LiveCompletenessOracleTests
     }
 
     [Fact]
+    [Trait("Requires", "SearchIndex")]
     public void CompletenessOracle_IndexMatchesGroundTruth_ForProbeTerms()
     {
         string hubStore = _fixture.Settings.TestHubStoreDisplayName;

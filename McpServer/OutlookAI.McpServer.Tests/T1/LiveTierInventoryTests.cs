@@ -20,14 +20,31 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// check again.
 /// </para>
 /// <para>
-/// <b>The mechanism.</b> Two traits. <c>LiveTier</c> is the SELECTOR - exactly one value per
-/// live test, either <see cref="Portable"/> (honest on a machine with PST stores, no mail
-/// accounts, no delegate mailboxes and nothing in the search index) or
-/// <see cref="ProfileBound"/> (needs the maintainer's real profile). <c>Requires</c> is the
-/// REASON, and it is not decoration: a ProfileBound test must name at least one capability a
-/// test machine cannot have, and a Portable test must name none of them. That way "this test
-/// cannot move to the VM" is a claim with evidence attached rather than an assertion, and a
-/// test quietly reclassified to shrink the VM subset fails here.
+/// <b>The mechanism: TWO axes, and the second one carries everything.</b> <c>Category=Live</c>
+/// says "this test needs a mailbox" - it is the CI gate, and it survives not because of the
+/// VM but because CI runs on a GitHub Windows runner with no Outlook at all. <c>Requires</c>
+/// says WHAT of a machine the test needs, from a closed vocabulary
+/// (<see cref="AllCapabilities"/>), and it is declared <b>per method</b>. Everything else -
+/// which bucket a test is in, whether it can leave the maintainer's box - is COMPUTED from
+/// that list and never written down twice.
+/// </para>
+/// <para>
+/// <b>Three buckets, computed, not declared.</b> <b>CI</b> = no <c>Category=Live</c>, needs no
+/// mailbox. <b>VM</b> = live, and every capability it names is one the dedicated test VM can be
+/// given. <b>Production-only</b> = live, and it names something the VM cannot be given - which
+/// today is <c>DelegateStore</c> and nothing else: delegate mailboxes are indexed WITHOUT folder
+/// nesting, a local PST cannot fake that, and faking it would manufacture confidence in the
+/// one area this product has most often been surprised by.
+/// </para>
+/// <para>
+/// <b>There used to be a third axis, <c>LiveTier</c>, and deleting it is the point.</b> It held
+/// <c>Portable</c> or <c>ProfileBound</c> and had to agree with <c>Requires</c> by hand - a
+/// computed value maintained manually, which is the exact drift this file exists to prevent.
+/// Worse, it was paired with CLASS-level <c>Requires</c>, so a class read as the union of
+/// everything any one of its methods needed: that is what turned a real floor of six impossible
+/// tests into a reported 96. Both are now structurally impossible -
+/// <see cref="NoTestDeclaresARetiredTrait"/> refuses the trait and
+/// <see cref="EveryLiveTestMethod_NamesItsOwnCapabilities"/> refuses class-level attribution.
 /// </para>
 /// <para>
 /// <b>The stdio tier joined later, with the inverse problem.</b> The live tier's tests
@@ -45,60 +62,88 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// </summary>
 public sealed class LiveTierInventoryTests
 {
-    /// <summary>Runs on any configured machine, the dedicated test VM included.</summary>
-    private const string Portable = "Portable";
+    /// <summary>
+    /// The whole capability vocabulary, in one list, because there is only one axis now.
+    /// <para>
+    /// A free-text vocabulary drifts into synonyms, and two spellings of one capability make
+    /// the filter that excludes it silently incomplete. Every value here is documented in
+    /// <c>Docs/live-tier-on-the-vm.md</c>, and <c>.github/scripts/check-pinned-constants.ps1</c>
+    /// fails the build if one of them stops appearing there - the runbook is what a human reads
+    /// to decide whether a live test can move to a test machine.
+    /// </para>
+    /// <para>
+    /// Six of these were "production-only" until the test VM's shape was settled: an indexed
+    /// corpus store, a dummy mail account, a local SMTP sink that delivers back, three stores,
+    /// a configurable small hub and a known population between them cover <c>SearchIndex</c>,
+    /// <c>MailAccount</c>, <c>Transport</c>, <c>MultipleStores</c>, <c>SmallHubStore</c> and
+    /// <c>ProbePopulation</c>. They are ordinary capabilities now.
+    /// </para>
+    /// </summary>
+    private static readonly string[] AllCapabilities =
+    {
+        // An Outlook to attach to, and nothing more specific than that. The FLOOR: a live test
+        // that needs nothing else still needs this, and says so rather than saying nothing.
+        OutlookInstance,
 
-    /// <summary>Needs the maintainer's own profile, and says which part of it under <c>Requires</c>.</summary>
-    private const string ProfileBound = "ProfileBound";
+        // An interactive desktop session - Outlook windows and screenshots cannot be driven
+        // from session 0. Declared only by tests that PUT SOMETHING ON SCREEN; a test that
+        // merely asserts no window appeared does not need one.
+        "InteractiveDesktop",
+
+        // The add-in's registry tuning state (the D24 groups), read or flipped.
+        "AddInRegistry",
+
+        // A populated Windows Search index.
+        "SearchIndex",
+
+        // A mail account, as opposed to a bare PST store.
+        "MailAccount",
+
+        // Mail that actually goes out and comes back.
+        "Transport",
+
+        // More than one store mounted at once.
+        "MultipleStores",
+
+        // A hub store small enough for a paging assertion to mean something.
+        "SmallHubStore",
+
+        // A hand-curated population named in the gitignored live-test settings.
+        "ProbePopulation",
+
+        // The one capability a dedicated test machine cannot be given.
+        DelegateStore,
+    };
 
     /// <summary>
-    /// Capabilities a dedicated test machine cannot be given by configuration: they need real
-    /// accounts, real delegate access, a populated search index, real transport, more than one
-    /// account store, a hub small enough for a paging assertion, or a hand-curated population
-    /// of real mail named in the gitignored settings.
+    /// The capabilities no dedicated test machine can be given by configuration - the whole
+    /// definition of the production-only bucket.
+    /// <para>
+    /// One entry, and it is not an oversight. A delegate/shared mailbox is indexed with its
+    /// folder hierarchy FLATTENED, which is not a property a local PST can be made to have;
+    /// simulating it would produce a green test about a shape the real thing does not have.
+    /// Every other capability the VM can be built to provide, so a test naming one of those is
+    /// a VM test even if it has only ever run on the maintainer's machine.
+    /// </para>
     /// </summary>
     private static readonly string[] ProductionOnlyCapabilities =
     {
-        "SearchIndex",
-        "MailAccount",
-        "Transport",
-        "MultipleStores",
-        "DelegateStore",
-        "SmallHubStore",
-        "ProbePopulation",
+        DelegateStore,
     };
 
-    /// <summary>
-    /// Capabilities a test machine CAN have, recorded because they still constrain how a run
-    /// is launched: an interactive desktop session (Outlook windows and screenshots cannot be
-    /// driven from session 0), the add-in's registry tuning state, and an Outlook instance to
-    /// attach to at all.
-    /// </summary>
-    private static readonly string[] PortableCapabilities =
-    {
-        "InteractiveDesktop",
-        "AddInRegistry",
-        OutlookInstance,
-    };
-
-    /// <summary>
-    /// An Outlook to attach to, and nothing more specific than that.
-    /// <para>
-    /// Added for the T3 stdio tier, whose problem was the opposite of the live tier's. The
-    /// live tier's tests announce themselves; T3's did not - sixteen files sat under
-    /// <c>Category!=Live</c> with names like <c>...CiToolShapeTests</c>, and eleven of their
-    /// tests called <c>outlook_health</c>, <c>list_accounts</c> or <c>search</c>, which attach
-    /// to whatever Outlook is on the machine. On the maintainer's box that is a production
-    /// mailbox, read on every verification run for months, neither intended nor declared.
-    /// </para>
-    /// <para>
-    /// It is a PORTABLE capability on purpose: any Outlook profile satisfies it, so a test
-    /// declaring it stays runnable on the dedicated test VM. A test needing something OF that
-    /// profile - real accounts, a populated index, a delegate store - names that as well, and
-    /// is ProfileBound because of it.
-    /// </para>
-    /// </summary>
+    /// <summary>An Outlook to attach to, and nothing more specific than that.</summary>
+    /// <remarks>
+    /// It is a VM capability on purpose: any Outlook profile satisfies it, so a test declaring
+    /// it stays runnable on the dedicated test VM. A test needing something OF that profile -
+    /// a delegate store - names that as well, and is production-only because of it.
+    /// </remarks>
     private const string OutlookInstance = "OutlookInstance";
+
+    /// <summary>A delegate/shared mailbox, whose index namespace drops every intermediate folder.</summary>
+    private const string DelegateStore = "DelegateStore";
+
+    /// <summary>The trait names this suite used to carry and must never carry again.</summary>
+    private static readonly string[] RetiredTraits = { "LiveTier" };
 
     /// <summary>The namespace whose classes speak real MCP over stdio to a real server process.</summary>
     private const string StdioTierNamespace = "OutlookAI.McpServer.Tests.T3";
@@ -117,84 +162,75 @@ public sealed class LiveTierInventoryTests
     }
 
     [Fact]
-    public void EveryLiveTest_DeclaresExactlyOneTier_FromTheKnownVocabulary()
+    public void EveryLiveTestMethod_NamesItsOwnCapabilities()
     {
+        // The say-why rule, and the whole reason the axis is worth having. Two halves:
+        //
+        //  (a) On the METHOD. A class-level Requires reads as the union of everything any one
+        //      of its methods needs, so the impossible set inflates with every test added to a
+        //      big class - measured: 6 methods genuinely need a delegate mailbox, class-level
+        //      attribution reported 23, and the old LiveTier axis built on it reported 96
+        //      tests that could not leave this machine.
+        //
+        //  (b) At least one. "Category=Live with no Requires" is a test that says it needs a
+        //      mailbox and refuses to say what for; the floor is OutlookInstance, which costs
+        //      one line and makes the claim checkable.
         List<string> problems = new();
-        int portable = 0;
-        int profileBound = 0;
+        int methods = 0;
 
-        foreach (MethodInfo method in LiveTestMethods())
+        foreach (Type type in LiveTestClasses())
         {
-            List<string> tiers = TraitValues(method, "LiveTier");
-            if (tiers.Count != 1)
+            foreach (string classLevel in TraitValues(type, "Requires"))
             {
-                problems.Add(Name(method) + ": " + tiers.Count + " LiveTier trait(s), expected exactly 1");
-                continue;
+                problems.Add(type.Name + ": class-level Requires='" + classLevel
+                    + "'. Requires is declared per METHOD - on a class it reads as the union of "
+                    + "everything any one test in it needs, which is how the impossible set inflates.");
             }
 
-            switch (tiers[0])
+            foreach (MethodInfo method in TestMethodsOf(type))
             {
-                case Portable:
-                    portable++;
-                    break;
-                case ProfileBound:
-                    profileBound++;
-                    break;
-                default:
-                    problems.Add(Name(method) + ": unknown LiveTier '" + tiers[0] + "'");
-                    break;
+                methods++;
+                if (MethodTraitValues(method, "Requires").Count == 0)
+                {
+                    problems.Add(Name(method) + ": Category=Live with no Requires on the method, so "
+                        + "nothing says WHAT of a machine it needs. The floor is Requires="
+                        + OutlookInstance + ".");
+                }
             }
         }
 
-        _output.WriteLine("live tests: " + (portable + profileBound) + " (Portable " + portable
-            + ", ProfileBound " + profileBound + ")");
+        _output.WriteLine("live test methods: " + methods);
         Assert.Empty(problems);
 
-        // A tier that has become all-or-nothing is a tier nobody can run anywhere but here,
-        // or a classification that has stopped meaning anything. Both are worth a red test.
-        Assert.True(portable > 0, "no live test is marked Portable - the VM subset would be empty");
-        Assert.True(profileBound > 0, "no live test is marked ProfileBound - that would be surprising");
+        // A scan that found nothing reports no problems, which reads exactly like a clean tier.
+        Assert.True(methods > 0, "no Category=Live test methods found - this pin is scanning nothing");
     }
 
     [Fact]
-    public void ProfileBoundTests_NameACapabilityATestMachineCannotHave()
+    public void NoTestDeclaresARetiredTrait()
     {
+        // LiveTier held Portable/ProfileBound and had to agree with Requires by hand. It was a
+        // COMPUTED value maintained manually, so it could disagree, and a test quietly moved
+        // from ProfileBound to Portable shrank the impossible set with nothing to notice. The
+        // bucket is derived from Requires now (see TheBuckets_AreDerivedFromRequiresAlone), and
+        // this refuses the axis rather than trusting a comment to keep it out.
         List<string> problems = new();
-        foreach (MethodInfo method in LiveTestMethods())
+        foreach (Type type in TestClasses())
         {
-            List<string> tiers = TraitValues(method, "LiveTier");
-            if (tiers.Count != 1 || tiers[0] != ProfileBound)
+            foreach (string retired in RetiredTraits)
             {
-                continue;
-            }
+                if (TraitValues(type, retired).Count > 0)
+                {
+                    problems.Add(type.Name + ": carries the retired trait '" + retired + "'");
+                }
 
-            List<string> requires = TraitValues(method, "Requires");
-            if (!requires.Any(ProductionOnlyCapabilities.Contains))
-            {
-                problems.Add(Name(method)
-                    + ": ProfileBound with no production-only Requires trait, so nothing says WHY it "
-                    + "cannot run on a test machine");
-            }
-        }
-
-        Assert.Empty(problems);
-    }
-
-    [Fact]
-    public void PortableTests_ClaimNoCapabilityATestMachineLacks()
-    {
-        List<string> problems = new();
-        foreach (MethodInfo method in LiveTestMethods())
-        {
-            List<string> tiers = TraitValues(method, "LiveTier");
-            if (tiers.Count != 1 || tiers[0] != Portable)
-            {
-                continue;
-            }
-
-            foreach (string requirement in TraitValues(method, "Requires").Where(ProductionOnlyCapabilities.Contains))
-            {
-                problems.Add(Name(method) + ": Portable but requires '" + requirement + "' - contradiction");
+                foreach (MethodInfo method in TestMethodsOf(type))
+                {
+                    if (MethodTraitValues(method, retired).Count > 0)
+                    {
+                        problems.Add(Name(method) + ": carries the retired trait '" + retired + "'");
+                    }
+                }
             }
         }
 
@@ -204,18 +240,97 @@ public sealed class LiveTierInventoryTests
     [Fact]
     public void EveryRequiresValue_IsInTheVocabulary()
     {
-        string[] known = ProductionOnlyCapabilities.Concat(PortableCapabilities).ToArray();
         List<string> problems = new();
         foreach (MethodInfo method in LiveTestMethods())
         {
-            foreach (string requirement in TraitValues(method, "Requires").Where(r => !known.Contains(r)))
+            foreach (string requirement in TraitValues(method, "Requires").Where(r => !AllCapabilities.Contains(r)))
             {
                 problems.Add(Name(method) + ": unknown Requires value '" + requirement + "'");
             }
         }
 
-        // A free-text vocabulary drifts into synonyms, and two spellings of one capability
-        // make the filter that excludes it silently incomplete.
+        Assert.Empty(problems);
+    }
+
+    [Fact]
+    public void TheProductionOnlyList_IsAProperSubsetOfTheVocabulary()
+    {
+        // Both ends matter. An entry outside the vocabulary can never match a real trait, so the
+        // production-only bucket would silently empty; a list that swallowed the whole vocabulary
+        // would put every live test back on one machine. The runbook and
+        // check-pinned-constants.ps1 read the vocabulary array, so a value missing from it is
+        // also a value no human is told about.
+        Assert.NotEmpty(ProductionOnlyCapabilities);
+        Assert.All(ProductionOnlyCapabilities, c => Assert.Contains(c, AllCapabilities));
+        Assert.True(
+            ProductionOnlyCapabilities.Length < AllCapabilities.Length,
+            "every capability is production-only, which would mean the VM can run nothing");
+    }
+
+    [Fact]
+    public void TheBuckets_AreDerivedFromRequiresAlone()
+    {
+        // The bucket is a QUESTION asked of Requires, never a value stored beside it. This is
+        // the whole replacement for the deleted LiveTier axis: the same classification, computed
+        // where it cannot disagree with its own evidence.
+        List<string> productionOnly = new();
+        int vm = 0;
+
+        foreach (MethodInfo method in LiveTestMethods())
+        {
+            List<string> requires = MethodTraitValues(method, "Requires");
+            string[] blocking = requires.Where(ProductionOnlyCapabilities.Contains).ToArray();
+            if (blocking.Length > 0)
+            {
+                productionOnly.Add(Name(method) + " (" + string.Join(", ", blocking) + ")");
+            }
+            else
+            {
+                vm++;
+            }
+        }
+
+        _output.WriteLine("VM: " + vm + ", production-only: " + productionOnly.Count);
+        foreach (string entry in productionOnly.OrderBy(e => e, StringComparer.Ordinal))
+        {
+            _output.WriteLine("  production-only: " + entry);
+        }
+
+        // A tier that has become all-or-nothing is a tier nobody can run anywhere but here, or a
+        // classification that has stopped meaning anything. Both are worth a red test.
+        Assert.True(vm > 0, "no live test can run on the VM - the VM subset would be empty");
+        Assert.True(
+            productionOnly.Count > 0,
+            "no live test names a production-only capability. Either the delegate-store coverage "
+            + "was deleted, or a capability was quietly reclassified as reproducible on the VM.");
+    }
+
+    [Fact]
+    public void EveryTestClaimingACapability_IsAlsoInTheLiveTier()
+    {
+        // The reason without the gate is the worst of both: the test says it needs something of
+        // the machine's Outlook and a default `Category!=Live` run schedules it anyway.
+        List<string> problems = new();
+        foreach (Type type in TestClasses())
+        {
+            bool live = TraitValues(type, "Category").Contains("Live");
+            foreach (MethodInfo method in TestMethodsOf(type))
+            {
+                if (live || TraitValues(method, "Category").Contains("Live"))
+                {
+                    continue;
+                }
+
+                List<string> requires = TraitValues(method, "Requires");
+                if (requires.Count > 0)
+                {
+                    problems.Add(Name(method) + ": Requires=" + string.Join("/", requires)
+                        + " without Category=Live, so a default run would still schedule it against "
+                        + "whatever Outlook is on the machine");
+                }
+            }
+        }
+
         Assert.Empty(problems);
     }
 
@@ -261,37 +376,14 @@ public sealed class LiveTierInventoryTests
     }
 
     [Fact]
-    public void EveryTestClaimingAnOutlookInstance_IsAlsoInTheLiveTier()
-    {
-        // The reason without the selector is the worst of both: the test says it needs an
-        // Outlook and a default run schedules it anyway.
-        List<string> problems = new();
-        foreach (Type type in TestClasses())
-        {
-            if (!TraitValues(type, "Requires").Contains(OutlookInstance))
-            {
-                continue;
-            }
-
-            if (!TraitValues(type, "Category").Contains("Live"))
-            {
-                problems.Add(type.Name + ": Requires=" + OutlookInstance + " without Category=Live, so a default "
-                    + "run would still schedule it against whatever Outlook is on the machine");
-            }
-        }
-
-        Assert.Empty(problems);
-    }
-
-    [Fact]
     public void EveryStdioTestReachingOutlook_DeclaresIt()
     {
         // The T3 tier talks to a real server process, so what it touches is decided by which
         // TOOL it calls, and no attribute can be derived from that by reflection over
-        // signatures. It can be derived from the IL: a test that may call an Outlook-reaching
-        // tool has to hand McpStdioClient a specific literal, so the literal's presence in a
-        // class IS the declaration, and this reads it back out of the compiled method bodies
-        // (async test methods included, whose real body is the state machine's MoveNext).
+        // signatures. It can be derived from the IL: both the tool name and the client's
+        // contact token are string literals, so their presence in a class IS the declaration,
+        // and this reads them back out of the compiled method bodies (async test methods
+        // included, whose real body is the state machine's MoveNext).
         //
         // Chosen over a hard-coded roster of class names because a roster only catches a new
         // CLASS. This catches a new METHOD in an existing class, which is how the tier drifted
@@ -299,6 +391,7 @@ public sealed class LiveTierInventoryTests
         List<string> problems = new();
         int declaringClasses = 0;
         int healthCallers = 0;
+        int guardedToolNamers = 0;
         int scanned = 0;
         foreach (Type type in TestClasses().Where(t => t.Namespace == StdioTierNamespace))
         {
@@ -307,15 +400,17 @@ public sealed class LiveTierInventoryTests
             bool live = TraitValues(type, "Category").Contains("Live");
             bool declares = literals.Contains(McpStdioClient.OutlookReachingToolsAllowed);
             bool faultsTheHost = literals.Contains(ComHostFaultInjection.Variable);
+            bool namesGuardedTool = McpStdioClient.ToolsThatAlwaysReachOutlook.Any(literals.Contains);
             declaringClasses += declares ? 1 : 0;
             healthCallers += literals.Contains(OutlookHealthTool) ? 1 : 0;
+            guardedToolNamers += namesGuardedTool ? 1 : 0;
 
             StdioDeclarationVerdict verdict = ClassifyStdioClass(
                 declares,
                 live,
                 faultsTheHost,
                 literals.Contains(OutlookHealthTool),
-                TraitValues(type, "Requires").Contains(OutlookInstance));
+                namesGuardedTool);
             if (verdict != StdioDeclarationVerdict.Ok)
             {
                 problems.Add(type.Name + ": " + DescribeStdioVerdict(verdict));
@@ -323,18 +418,24 @@ public sealed class LiveTierInventoryTests
         }
 
         _output.WriteLine("stdio classes scanned: " + scanned + ", declaring mailbox contact: " + declaringClasses
+            + ", naming a guarded tool: " + guardedToolNamers
             + ", naming " + OutlookHealthTool + ": " + healthCallers);
         Assert.Empty(problems);
 
         // The detector must not be able to switch itself off. A scan that finds nothing reports
-        // no problems, which reads exactly like a clean tier - so the two ways of finding nothing
-        // are asserted against directly: no classes at all (the namespace moved) and no
-        // declaration at all (the ldstr walk stopped resolving, or the live half was deleted).
+        // no problems, which reads exactly like a clean tier - so the ways of finding nothing
+        // are asserted against directly: no classes at all (the namespace moved), no declaration
+        // at all (the ldstr walk stopped resolving, or the live half was deleted), and no guarded
+        // tool named anywhere (the roster in McpStdioClient emptied or was renamed).
         Assert.True(scanned > 0, "no classes found in " + StdioTierNamespace + " - this pin is scanning nothing");
         Assert.True(
             declaringClasses > 0,
             "no stdio class declares mailbox contact. Either the tier lost its live half, or the IL "
             + "walk has stopped resolving string literals and this pin is now green by accident.");
+        Assert.True(
+            guardedToolNamers > 0,
+            "no stdio class names any tool from McpStdioClient.ToolsThatAlwaysReachOutlook, which "
+            + "cannot be right for a tier whose live half exists to call them.");
 
         // And the SPELLING of the one tool the fault exemption stops at. The exemption's logic is
         // pinned by TheStdioDeclarationMatrix_HoldsForEveryCombination, which passes booleans; a
@@ -351,18 +452,19 @@ public sealed class LiveTierInventoryTests
     [Theory]
     // Nothing to declare: a class that never names an Outlook-reaching tool is fine either way.
     [InlineData(false, false, false, false, false, StdioDeclarationVerdict.Ok)]
-    [InlineData(false, true, false, false, true, StdioDeclarationVerdict.Ok)]
-    // The failure this whole pin exists for.
-    [InlineData(true, false, false, false, false, StdioDeclarationVerdict.UndeclaredMailboxContact)]
+    [InlineData(false, true, false, false, false, StdioDeclarationVerdict.Ok)]
+    // The failure this whole pin exists for: contact declared from outside the live tier.
+    [InlineData(true, false, false, false, true, StdioDeclarationVerdict.UndeclaredMailboxContact)]
     // The fault exemption, and its edge. A faulted list_accounts never reaches a session; a
     // faulted outlook_health still queries the Windows Search index.
-    [InlineData(true, false, true, false, false, StdioDeclarationVerdict.Ok)]
-    [InlineData(true, false, true, true, false, StdioDeclarationVerdict.HealthSurvivesTheFault)]
-    // Declared and live, but with no capability naming what it needs.
-    [InlineData(true, true, false, false, false, StdioDeclarationVerdict.LiveWithoutItsReason)]
+    [InlineData(true, false, true, false, true, StdioDeclarationVerdict.Ok)]
+    [InlineData(true, false, true, true, true, StdioDeclarationVerdict.HealthSurvivesTheFault)]
+    // Live and reaching Outlook, but never handing the client the token - the call throws at the
+    // first tools/call, so the test cannot have been run since the guard was added.
+    [InlineData(false, true, false, false, true, StdioDeclarationVerdict.ReachesOutlookWithoutTheClientToken)]
     [InlineData(true, true, false, true, true, StdioDeclarationVerdict.Ok)]
     public void TheStdioDeclarationMatrix_HoldsForEveryCombination(
-        bool declares, bool live, bool faultsTheComHost, bool namesOutlookHealth, bool requiresOutlookInstance,
+        bool declares, bool live, bool faultsTheComHost, bool namesOutlookHealth, bool namesAGuardedTool,
         StdioDeclarationVerdict expected)
     {
         // The matrix is pinned here rather than only by the classes that happen to exist. Two of
@@ -371,7 +473,7 @@ public sealed class LiveTierInventoryTests
         // decision line no test can reach is a decision line anybody may delete.
         Assert.Equal(
             expected,
-            ClassifyStdioClass(declares, live, faultsTheComHost, namesOutlookHealth, requiresOutlookInstance));
+            ClassifyStdioClass(declares, live, faultsTheComHost, namesOutlookHealth, namesAGuardedTool));
     }
 
     /// <summary>What is wrong with one stdio class's declaration, if anything.</summary>
@@ -386,8 +488,8 @@ public sealed class LiveTierInventoryTests
         /// <summary>Neutralises COM with an injected fault, but calls the one tool a fault cannot neutralise.</summary>
         HealthSurvivesTheFault = 2,
 
-        /// <summary>In the live tier and reaching Outlook, but naming no capability as the reason.</summary>
-        LiveWithoutItsReason = 3,
+        /// <summary>In the live tier and naming a tool the client refuses without the contact token.</summary>
+        ReachesOutlookWithoutTheClientToken = 3,
     }
 
     /// <summary>
@@ -405,24 +507,35 @@ public sealed class LiveTierInventoryTests
     /// The class names <c>outlook_health</c>, whose Windows Search index probe does not go through
     /// the COM host at all and therefore survives any fault.
     /// </param>
-    /// <param name="requiresOutlookInstance">The class carries <c>Requires=OutlookInstance</c>.</param>
+    /// <param name="namesAGuardedTool">
+    /// The class names one of <c>McpStdioClient.ToolsThatAlwaysReachOutlook</c>, which the client
+    /// refuses to send unless the test hands it the contact token.
+    /// </param>
     internal static StdioDeclarationVerdict ClassifyStdioClass(
         bool declaresContact,
         bool live,
         bool faultsTheComHost,
         bool namesOutlookHealth,
-        bool requiresOutlookInstance)
+        bool namesAGuardedTool)
     {
-        if (!declaresContact)
-        {
-            return StdioDeclarationVerdict.Ok;
-        }
-
         if (live)
         {
-            return requiresOutlookInstance
-                ? StdioDeclarationVerdict.Ok
-                : StdioDeclarationVerdict.LiveWithoutItsReason;
+            // Inside the live tier the classification is settled; what is NOT settled is whether
+            // the test can run at all. McpStdioClient throws on a tools/call for a guarded tool
+            // unless the token was passed, so a live class naming one without it is broken, and
+            // broken in the way nothing notices: the live tier is excluded from every CI run.
+            // Three classes were in exactly this state when the token guard landed.
+            return namesAGuardedTool && !declaresContact
+                ? StdioDeclarationVerdict.ReachesOutlookWithoutTheClientToken
+                : StdioDeclarationVerdict.Ok;
+        }
+
+        if (!declaresContact)
+        {
+            // Outside the live tier, naming a guarded tool is not by itself a fault: every
+            // tools/list roster assertion mentions all 21 tool names. The client's runtime
+            // refusal is what stops a call, and it needs no declaration to fire.
+            return StdioDeclarationVerdict.Ok;
         }
 
         if (!faultsTheComHost)
@@ -440,14 +553,15 @@ public sealed class LiveTierInventoryTests
         switch (verdict)
         {
             case StdioDeclarationVerdict.UndeclaredMailboxContact:
-                return "calls an Outlook-reaching tool but is not Category=Live - a default run would "
+                return "declares mailbox contact but is not Category=Live - a default run would "
                     + "attach to the machine's own mailbox";
             case StdioDeclarationVerdict.HealthSurvivesTheFault:
                 return "neutralises COM with an injected fault but still calls " + OutlookHealthTool
                     + ", whose index probe the fault cannot reach";
-            case StdioDeclarationVerdict.LiveWithoutItsReason:
-                return "calls an Outlook-reaching tool without Requires=" + OutlookInstance
-                    + ", so nothing says WHAT it needs of the machine";
+            case StdioDeclarationVerdict.ReachesOutlookWithoutTheClientToken:
+                return "is Category=Live and names a tool from McpStdioClient.ToolsThatAlwaysReachOutlook, "
+                    + "but never passes outlookReachingTools: McpStdioClient.OutlookReachingToolsAllowed - "
+                    + "the client refuses the call, so this test throws instead of testing";
             default:
                 return "ok";
         }
@@ -524,17 +638,14 @@ public sealed class LiveTierInventoryTests
     {
         return typeof(LiveCollections).Assembly.GetTypes()
             .Where(t => t.IsClass && !t.IsAbstract)
-            .Where(t => t.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-                .Any(m => m.GetCustomAttributes(typeof(FactAttribute), inherit: true).Length > 0))
+            .Where(t => TestMethodsOf(t).Any())
             .OrderBy(t => t.FullName, StringComparer.Ordinal);
     }
 
     /// <summary>Every test method carrying <c>Category=Live</c>, whether from its class or itself.</summary>
     private static IEnumerable<MethodInfo> LiveTestMethods()
     {
-        return LiveTestClasses()
-            .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-            .Where(m => m.GetCustomAttributes(typeof(FactAttribute), inherit: true).Length > 0);
+        return LiveTestClasses().SelectMany(TestMethodsOf);
     }
 
     private static IEnumerable<Type> LiveTestClasses()
@@ -543,6 +654,12 @@ public sealed class LiveTierInventoryTests
             .Where(t => t.IsClass && !t.IsAbstract)
             .Where(t => TraitValues(t, "Category").Contains("Live"))
             .OrderBy(t => t.FullName, StringComparer.Ordinal);
+    }
+
+    private static IEnumerable<MethodInfo> TestMethodsOf(Type type)
+    {
+        return type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Where(m => m.GetCustomAttributes(typeof(FactAttribute), inherit: true).Length > 0);
     }
 
     /// <summary>
@@ -556,8 +673,14 @@ public sealed class LiveTierInventoryTests
     private static List<string> TraitValues(MethodInfo method, string traitName)
     {
         List<string> values = TraitValues(method.DeclaringType!, traitName);
-        values.AddRange(TraitValues(method.GetCustomAttributesData(), traitName));
+        values.AddRange(MethodTraitValues(method, traitName));
         return values;
+    }
+
+    /// <summary>Values declared on the METHOD itself, with nothing inherited from its class.</summary>
+    private static List<string> MethodTraitValues(MethodInfo method, string traitName)
+    {
+        return TraitValues(method.GetCustomAttributesData(), traitName);
     }
 
     private static List<string> TraitValues(Type type, string traitName)

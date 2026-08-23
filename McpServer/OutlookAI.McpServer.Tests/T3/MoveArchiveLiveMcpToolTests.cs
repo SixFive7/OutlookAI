@@ -15,8 +15,6 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// </summary>
 [Collection(LiveCollections.MoveArchive)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "Transport")]
 public sealed class MoveArchiveLiveMcpToolTests
 {
     /// <summary>
@@ -39,6 +37,7 @@ public sealed class MoveArchiveLiveMcpToolTests
     private string Marker => _fixture.RunMarker;
 
     [Fact]
+    [Trait("Requires", "Transport")]
     public async Task MoveAndArchive_GoldenShapes_OverRealStdio()
     {
         // Pre-clean: the createdFolders assert needs a clean slate (allowlist helper).

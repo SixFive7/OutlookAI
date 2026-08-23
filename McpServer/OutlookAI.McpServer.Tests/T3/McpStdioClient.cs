@@ -46,7 +46,13 @@ public sealed class McpStdioClient : IAsyncDisposable
     /// class-level classification and with review.
     /// </para>
     /// </summary>
-    private static readonly string[] ToolsThatAlwaysReachOutlook =
+    /// <remarks>
+    /// <c>internal</c> so <c>T1.LiveTierInventoryTests</c> can read the same roster this guard
+    /// enforces at run time, and check the compiled IL of every live T3 class for a class that
+    /// names one of these without handing this client the token - which throws on the first
+    /// <c>tools/call</c>, in a tier no CI run ever executes.
+    /// </remarks>
+    internal static readonly string[] ToolsThatAlwaysReachOutlook =
     {
         "outlook_health",
         "list_accounts",
@@ -389,7 +395,7 @@ public sealed class McpStdioClient : IAsyncDisposable
             $"'{tool}' reaches the machine's own Outlook and the Windows Search index for every argument shape, "
             + "so it may not be called from a test that has not declared mailbox contact. Either call a tool whose "
             + "arguments are refused before any COM work, or move this test into a class carrying "
-            + "Category=Live / LiveTier / Requires=OutlookInstance and start the client with "
+            + "Category=Live with Requires=OutlookInstance on the method, and start the client with "
             + $"outlookReachingTools: {nameof(McpStdioClient)}.{nameof(OutlookReachingToolsAllowed)}. "
             + "T1 LiveTierInventoryTests pins that pairing.");
     }

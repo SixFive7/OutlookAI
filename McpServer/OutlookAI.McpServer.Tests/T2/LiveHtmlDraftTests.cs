@@ -25,10 +25,6 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// </summary>
 [Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
-[Trait("LiveTier", "ProfileBound")]
-[Trait("Requires", "MailAccount")]
-[Trait("Requires", "Transport")]
-[Trait("Requires", "InteractiveDesktop")]
 public sealed class LiveHtmlDraftTests
 {
     private readonly LivePhase4Fixture _fixture;
@@ -88,6 +84,7 @@ public sealed class LiveHtmlDraftTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
     public void NewDraft_BodyHtml_RichStructuresSurviveInTheDraftRegion_AboveAnIntactSignature()
     {
         using TestSignature sig = TestSignature.Create(Marker);
@@ -143,6 +140,8 @@ public sealed class LiveHtmlDraftTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "Transport")]
     public void ReplyDraft_BodyHtml_LeavesTheQuotedOriginalIntactAndBelowTheBody()
     {
         string quoteToken = "B1Q" + Marker;
@@ -189,6 +188,7 @@ public sealed class LiveHtmlDraftTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
     public void PlainTextBody_IsUnchanged_ByTheHtmlOption()
     {
         using TestSignature sig = TestSignature.Create(Marker);
@@ -221,6 +221,7 @@ public sealed class LiveHtmlDraftTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
     public void MalformedBodyHtml_IsRepaired_AndTheAdjustmentsAreReported()
     {
         using TestSignature sig = TestSignature.Create(Marker);
@@ -256,6 +257,7 @@ public sealed class LiveHtmlDraftTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
     public void Read_IncludeHtml_ReturnsTheStoredHtmlOfAFreshDraftByEntryId_WithTruncationFlags()
     {
         string token = "B2READ" + Marker;
@@ -321,6 +323,9 @@ public sealed class LiveHtmlDraftTests
     }
 
     [Fact]
+    [Trait("Requires", "MailAccount")]
+    [Trait("Requires", "Transport")]
+    [Trait("Requires", "InteractiveDesktop")]
     public void NewDraft_BodyHtml_DisplayCase_ScreenshotOfTheRenderedLetter_ThenClosed()
     {
         string token = "B1SHOT" + Marker;

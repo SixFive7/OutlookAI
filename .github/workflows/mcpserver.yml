@@ -4,8 +4,14 @@ name: McpServer
 # (T1 unit + T3 stdio conformance). Complements build.yml/codeql.yml, which cover
 # the VSTO add-in: this workflow deliberately does NOT build OutlookAI.csproj -
 # the add-in needs MSBuild + VSTO tooling and is validated by those workflows.
-# Live (T2) tests are excluded: they need the real Windows Search index and
-# Outlook on the dev machine.
+#
+# `Category=Live` tests are excluded, and that gate is the only one there is: a live
+# test says WHAT it needs of a machine under `Requires` (see
+# Docs/live-tier-on-the-vm.md section 5), and Category=Live means "needs a mailbox".
+# It survives the existence of the test VM because this runner has no Outlook at all.
+# The filter below is the whole non-live suite, T3 included: measured 2026-08-24 on a
+# machine WITH Outlook running, it moved Outlook's own CPU by 0.19 s in 107 s and
+# reached no mailbox.
 on:
   push:
     branches: [master, v3]
