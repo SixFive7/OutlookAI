@@ -43,6 +43,13 @@ internal static class LiveInboxArrival
     private const int PerFolderCap = 100;
 
     /// <summary>
+    /// How often, while waiting, Outlook is asked again to deliver. Five polls apart: often
+    /// enough that a missed window costs seconds rather than Outlook's own thirty-minute
+    /// schedule, rare enough that the wait is still mostly a read.
+    /// </summary>
+    private const int NudgeEveryPolls = 5;
+
+    /// <summary>
     /// Waits for <paramref name="subject"/> to land in <paramref name="hubStore"/>'s Inbox,
     /// sweeping through <paramref name="session"/>. READ-ONLY: it sweeps, it never mutates.
     /// </summary>
@@ -50,8 +57,19 @@ internal static class LiveInboxArrival
     internal static ComMailBrief WaitFor(OutlookComSession session, string hubStore, string subject, DateTime sentUtc)
     {
         LiveWaitBudget wait = LiveWaitBudget.OfSeconds(DeadlineSeconds);
+        int polls = 0;
         while (wait.HasTimeLeft)
         {
+            // On a machine whose transport is a local sink, one SendAndReceive after Send()
+            // can complete its fetch before the submission reaches the sink - and then
+            // nothing asks again inside this deadline. A no-op on a profile with real
+            // transport, which needs no prompting.
+            if (polls % NudgeEveryPolls == 0)
+            {
+                LiveMailSink.NudgeDelivery();
+            }
+
+            polls++;
             ComSweepResult sweep = session.SweepFoldersNewerThan(
                 sentUtc.AddMinutes(-WindowLeadMinutes),
                 perFolderCap: PerFolderCap,

@@ -613,6 +613,129 @@ public class CorpusFreshnessTests
         Assert.Equal(LiveMachineProfile.Portable, LiveTestSettings.Parse(json).MachineProfile);
     }
 
+    // ------------------------------------------------------------------ mail sink
+
+    [Fact]
+    public void Sink_IsCompleteOnlyWithBothHalves()
+    {
+        Assert.True(new MailSinkSettings().IsComplete);
+        Assert.False(new MailSinkSettings { SubmitPort = 0 }.IsComplete);
+        Assert.False(new MailSinkSettings { RetrievePort = 0 }.IsComplete);
+        Assert.False(new MailSinkSettings { SubmitHost = "  " }.IsComplete);
+        Assert.False(new MailSinkSettings { RetrieveHost = string.Empty }.IsComplete);
+    }
+
+    [Fact]
+    public void Sink_ProbePassesWhenBothListenersAnswer()
+    {
+        using var submit = new LoopbackListener();
+        using var retrieve = new LoopbackListener();
+        (bool reachable, string message) = LiveMailSink.Probe(new MailSinkSettings
+        {
+            SubmitPort = submit.Port,
+            RetrievePort = retrieve.Port,
+        });
+
+        Assert.True(reachable, message);
+        Assert.Contains("both answering", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Sink_ProbeNamesTheHalfThatIsMissingRatherThanTheFirstFailure()
+    {
+        // A sink that accepts mail and cannot hand it back is the exact failure this design
+        // exists to avoid, so the message has to name the retrieval half even when it is the
+        // second thing checked.
+        using var submit = new LoopbackListener();
+        int deadPort = LoopbackListener.ReserveAndRelease();
+        (bool reachable, string message) = LiveMailSink.Probe(new MailSinkSettings
+        {
+            SubmitPort = submit.Port,
+            RetrievePort = deadPort,
+            ConnectTimeoutMs = 750,
+        });
+
+        Assert.False(reachable);
+        Assert.Contains(deadPort.ToString(System.Globalization.CultureInfo.InvariantCulture), message, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            submit.Port.ToString(System.Globalization.CultureInfo.InvariantCulture), message, StringComparison.Ordinal);
+        Assert.Contains("Outbox", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Sink_ProbeReportsBothHalvesWhenNeitherAnswers()
+    {
+        int a = LoopbackListener.ReserveAndRelease();
+        int b = LoopbackListener.ReserveAndRelease();
+        (bool reachable, string message) = LiveMailSink.Probe(new MailSinkSettings
+        {
+            SubmitPort = a,
+            RetrievePort = b,
+            ConnectTimeoutMs = 750,
+        });
+
+        Assert.False(reachable);
+        Assert.Contains(a.ToString(System.Globalization.CultureInfo.InvariantCulture), message, StringComparison.Ordinal);
+        Assert.Contains(b.ToString(System.Globalization.CultureInfo.InvariantCulture), message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LiveSettings_RejectAHalfWrittenMailSinkBlock()
+    {
+        const string json = """
+        {
+          "machineProfile": "Portable",
+          "testHubStoreDisplayName": "test@vm.invalid",
+          "expectedStoreDisplayNames": [ "test@vm.invalid" ],
+          "mailSink": { "submitHost": "127.0.0.1", "submitPort": 25, "retrievePort": 0 }
+        }
+        """;
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => LiveTestSettings.Parse(json));
+        Assert.Contains("partially filled 'mailSink' block", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LiveSettings_AbsentMailSinkMeansRealTransport()
+    {
+        const string json = """
+        {
+          "machineProfile": "Portable",
+          "testHubStoreDisplayName": "test@vm.invalid",
+          "expectedStoreDisplayNames": [ "test@vm.invalid" ]
+        }
+        """;
+        LiveTestSettings settings = LiveTestSettings.Parse(json);
+        Assert.Null(settings.MailSink);
+        Assert.Contains("mailSink=none (real transport)", settings.Describe(), StringComparison.Ordinal);
+    }
+
+    /// <summary>A loopback listener on an ephemeral port, so the probe has something real to connect to.</summary>
+    private sealed class LoopbackListener : IDisposable
+    {
+        private readonly System.Net.Sockets.TcpListener _listener;
+
+        internal LoopbackListener()
+        {
+            _listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            _listener.Start();
+            Port = ((System.Net.IPEndPoint)_listener.LocalEndpoint).Port;
+        }
+
+        internal int Port { get; }
+
+        /// <summary>An ephemeral port that was bound and released - so nothing is listening on it now.</summary>
+        internal static int ReserveAndRelease()
+        {
+            var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            probe.Start();
+            int port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+            probe.Stop();
+            return port;
+        }
+
+        public void Dispose() => _listener.Stop();
+    }
+
     [Fact]
     public void LiveSettings_RejectAHalfWrittenCorpusBlock()
     {

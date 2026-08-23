@@ -76,6 +76,12 @@ public sealed class LiveTestSettings
     public CorpusSettings? Corpus { get; set; }
 
     /// <summary>
+    /// OPTIONAL coordinates of the local mail sink, when this machine has no real transport.
+    /// Absent means the profile really can send and receive - see <see cref="LiveMailSink"/>.
+    /// </summary>
+    public MailSinkSettings? MailSink { get; set; }
+
+    /// <summary>
     /// How the settings file is read.
     /// <para>
     /// <b><see cref="JsonStringEnumConverter"/> is load-bearing, not tidiness.</b> Without it
@@ -164,6 +170,14 @@ public sealed class LiveTestSettings
                 + "block out entirely.");
         }
 
+        if (settings.MailSink != null && !settings.MailSink.IsComplete)
+        {
+            throw new InvalidOperationException(
+                "Live-test settings have a partially filled 'mailSink' block. Both a submission host/port and a "
+                + "retrieval host/port are needed - a sink that accepts mail and cannot hand it back leaves every "
+                + "send in the Outbox, which is exactly what the block exists to prevent.");
+        }
+
         if (settings.Corpus != null && !settings.Corpus.IsComplete)
         {
             throw new InvalidOperationException(
@@ -230,7 +244,10 @@ public sealed class LiveTestSettings
             + ", delegateStores=" + ExpectedDelegateStoreDisplayNames.Count
             + ", probeTerm=" + (string.IsNullOrWhiteSpace(ProbeTerm) ? "none" : "set")
             + ", subjectOnlyProbe=" + (SubjectOnlyProbe == null ? "none" : "set")
-            + ", corpus=" + (Corpus == null ? "none" : Corpus.CorpusId);
+            + ", corpus=" + (Corpus == null ? "none" : Corpus.CorpusId)
+            + ", mailSink=" + (MailSink == null
+                ? "none (real transport)"
+                : MailSink.SubmitHost + ":" + MailSink.SubmitPort);
     }
 }
 
@@ -308,6 +325,12 @@ public sealed class LivePhase1Fixture : IDisposable
         // same reason as the tripwire above: it is a property of the machine, and a machine
         // that cannot answer must not be measured.
         LiveCorpusFreshness.EnsureFresh(Settings);
+
+        // And, on a machine whose transport is a local sink, that the sink is answering
+        // before anything is sent into it. TCP only - it must be answerable before Outlook
+        // has been started, because a sink that is down looks exactly like a code fault once
+        // the mail is sitting in the Outbox.
+        LiveMailSink.EnsureReachable(Settings);
         Service = IndexSearchService.CreateDefault(out string providerReport);
         ProviderReport = providerReport;
 
@@ -332,7 +355,18 @@ public sealed class LivePhase1Fixture : IDisposable
         StoreScopes = scopes;
 
         _session = new Lazy<OutlookComSession>(
-            () => OutlookComSession.Connect(allowStartingOutlook: true),
+            () =>
+            {
+                OutlookComSession connected = OutlookComSession.Connect(allowStartingOutlook: true);
+
+                // The first moment COM is available is the first moment this can be asked,
+                // and it has to be asked BEFORE anything sends: mail left queued by an
+                // earlier run is indistinguishable, at teardown, from mail this run failed
+                // to clean up. Checked here rather than in the constructor so it does not
+                // force Outlook to start before a test that needs no Outlook at all.
+                LiveMailSink.EnsureOutboxDrained(connected, Settings);
+                return connected;
+            },
             LazyThreadSafetyMode.ExecutionAndPublication);
         _comStores = new Lazy<IReadOnlyList<ComStoreInfo>>(
             () => Session.GetStores(),

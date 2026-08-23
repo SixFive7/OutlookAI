@@ -1775,6 +1775,49 @@ public static class LiveOutlookTestMailer
             ?? throw new InvalidOperationException("Failed to create Outlook.Application.");
     }
 
+    /// <summary>
+    /// Asks Outlook to flush the Outbox and fetch waiting mail, and swallows every refusal.
+    /// <para>
+    /// Exists so an arrival wait can keep asking. <c>Send()</c> only QUEUES; the single
+    /// best-effort call this file already makes right after it is not enough, because
+    /// <c>SendAndReceive</c> is documented asynchronous and reports nothing, so it can
+    /// complete its fetch before the submission it triggered has been handed over. On a
+    /// machine whose transport is a local sink, missing that window means waiting for
+    /// Outlook's own send/receive schedule, which is half an hour by default.
+    /// </para>
+    /// <para>
+    /// It creates and releases its own short-lived session, which is what every other
+    /// operation in this file does, rather than holding one open across a wait.
+    /// </para>
+    /// </summary>
+    internal static void RequestDelivery()
+    {
+        RunSta<object?>(() =>
+        {
+            dynamic? app = null;
+            dynamic? session = null;
+            try
+            {
+                app = CreateOutlookApplication();
+                session = app.Session;
+                session.SendAndReceive(false);
+            }
+            catch (COMException)
+            {
+            }
+            catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+            {
+            }
+            finally
+            {
+                Release(session);
+                Release(app);
+            }
+
+            return null;
+        });
+    }
+
     private static T RunSta<T>(Func<T> work)
     {
         T result = default!;
