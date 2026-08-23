@@ -958,6 +958,13 @@ namespace OutlookAI.Core.Services
                     CandidatesExhausted = indexResult.CandidatesExhausted ? true : (bool?)null,
                     StoreNotIndexed = indexAddressable ? (bool?)null : true,
                     FolderNotIndexed = folderNotIndexed,
+
+                    // Gaps B4/B5: what this tier read, and how it matched. The widest body
+                    // scope of the three and the only whole-word one, stated so the other two
+                    // blocks' answers mean something to compare against.
+                    BodyTextScope = FreshMerge.BodyTextScope(
+                        FreshMerge.BodyScopeBodyAndAttachments, request.SearchIn, terms.Count > 0),
+                    TermMatch = terms.Count > 0 ? FreshMerge.TermMatchWholeWord : null,
                 },
                 Scope = DescribeSearchScope(folderScope, request),
                 Staleness = new StalenessInfo
@@ -1542,6 +1549,48 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
+        /// The one sentence for <see cref="ExhaustiveInfo.BodyTextScope"/>, or null when this
+        /// query matched nothing against a body and the question does not arise (gap B4).
+        /// <para>
+        /// Generated FROM the fields, the same pairing <see cref="DescribeAttachmentTextGap"/>
+        /// has with its own, so the prose cannot claim a hole the payload does not carry.
+        /// </para>
+        /// <para>
+        /// WHY THIS TIER GETS A SENTENCE AND THE OTHERS DO NOT. It is the mode a caller
+        /// reaches for BECAUSE it is the complete one - the search description says so - and
+        /// it is the tier with the NARROWEST body scope of the three. An agent that switches
+        /// to <c>exhaustive:true</c> to find the term the sweep could not see inside an
+        /// attachment is switching to the tier least able to find it, and nothing said so.
+        /// It raises no coverage code and does not degrade the scan, for the arithmetic reason
+        /// <see cref="SweepInfo.AttachmentTextCovered"/> gives: it holds for every body search
+        /// this mode runs, and a flag that fires always devalues the ones that fire rarely.
+        /// </para>
+        /// <para>
+        /// Public and pure so T1 can pin both states without a mailbox.
+        /// </para>
+        /// </summary>
+        public static string? DescribeExhaustiveBodyTextGap(ExhaustiveInfo exhaustive)
+        {
+            if (exhaustive == null)
+            {
+                throw new ArgumentNullException(nameof(exhaustive));
+            }
+
+            if (exhaustive.BodyTextScope != FreshMerge.BodyScopePlainTextBody)
+            {
+                return null;
+            }
+
+            return "This scan matched the PLAIN-TEXT body property only - it bypasses the index, so it reads neither "
+                + "attachment content nor an HTML body Outlook would have rendered for you. Two consequences: a term "
+                + "sitting only inside an attachment is not matched here at all (the index tier is the only one that "
+                + "reads attachment text, and this mode does not use it), and a mail carrying an HTML body with no "
+                + "plain-text part beside it may not be matched on its body either. Subject matching is unaffected, "
+                + "and so is everything the index tier returns on an ordinary search - so for attachment text, search "
+                + "again WITHOUT exhaustive:true.";
+        }
+
+        /// <summary>
         /// One advice sentence per EXHAUSTIVE coverage code, from the code list alone - the
         /// third tier's <see cref="DescribeSweepCoverage"/>, pure and public for the same
         /// reason (T1 pins that every code declared has prose, over a payload block that
@@ -2065,6 +2114,13 @@ namespace OutlookAI.Core.Services
             // it from going missing on the paths that report the least.
             info.AttachmentTextCovered =
                 FreshMerge.AttachmentTextMatchable(request.SearchIn, terms.Count > 0) ? false : (bool?)null;
+
+            // Gap B4/B5, set here for the same reason and on the same principle: both state
+            // what this TIER reads and how it matches, which is as true of a sweep that was
+            // refused as of one that ran.
+            info.BodyTextScope = FreshMerge.BodyTextScope(
+                FreshMerge.BodyScopeItemBody, request.SearchIn, terms.Count > 0);
+            info.TermMatch = terms.Count > 0 ? FreshMerge.TermMatchSubstring : null;
 
             SweepWindowPlan windows = ResolveSweepWindows(request, staleness);
             widestFrontierUtc = windows.PerStoreBaseUtc == null || windows.PerStoreBaseUtc.Count == 0
@@ -2982,7 +3038,22 @@ namespace OutlookAI.Core.Services
                 ResumedUnsorted = scan.ResumedUnsorted ? true : (bool?)null,
                 ResumePositionLost = scan.ResumePositionLost ? true : (bool?)null,
                 DedupCapacityReached = scan.DedupCapacityReached ? true : (bool?)null,
+
+                // Gaps B2/B4/B5. The narrowest body scope of the three tiers, in the mode a
+                // caller picks BECAUSE it is the complete one - so the three facts an agent
+                // needs to read this answer correctly are stated rather than implied.
+                BodyTextScope = FreshMerge.BodyTextScope(
+                    FreshMerge.BodyScopePlainTextBody, request.SearchIn, terms.Count > 0),
+                TermMatch = FreshMerge.ExhaustiveTermMatch(scan.Engine, terms.Count > 0),
+                AttachmentTextCovered =
+                    FreshMerge.AttachmentTextMatchable(request.SearchIn, terms.Count > 0) ? false : (bool?)null,
             };
+
+            string? bodyTextGap = DescribeExhaustiveBodyTextGap(exhaustive);
+            if (bodyTextGap != null)
+            {
+                advice.Add(bodyTextGap);
+            }
 
             // The token, and the three states it has. A walk that COVERED its scope closes
             // its chain (the state exists to make a next page possible, and there is no next

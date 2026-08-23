@@ -1321,6 +1321,84 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
+        /// Index tier: <c>System.Search.Contents</c>, the body stream PLUS the extracted text
+        /// of every attachment an IFilter could read.
+        /// </summary>
+        public const string BodyScopeBodyAndAttachments = "body_and_attachments";
+
+        /// <summary>
+        /// Freshness sweep: <c>MailItem.Body</c> read through Outlook, which is the item's
+        /// body as Outlook renders it to plain text (so an HTML mail HAS one) and nothing
+        /// else - no attachment is ever opened.
+        /// </summary>
+        public const string BodyScopeItemBody = "item_body";
+
+        /// <summary>
+        /// Exhaustive scan: the MAPI plain-text body property
+        /// (<c>urn:schemas:httpmail:textdescription</c>), matched provider-side. It is neither
+        /// of the other two: no attachment text, and no rendering step - a message carrying
+        /// only an HTML body may have nothing in this property at all, and MAPI documents a
+        /// restriction over a property the message does not have as UNDEFINED rather than
+        /// false, so such a mail is admitted or dropped at the provider's discretion.
+        /// </summary>
+        public const string BodyScopePlainTextBody = "plain_text_body";
+
+        /// <summary>
+        /// Which text a tier matched this query's terms against, or null when the question
+        /// does not arise - a subject-only search, or one with no terms at all (gap B4).
+        /// <para>
+        /// <c>search_in: "body"</c> named three different bodies and said so only in the
+        /// README: the index matched body plus attachment content, the sweep matched
+        /// <c>MailItem.Body</c>, and the exhaustive scan matched the plain-text body property.
+        /// A caller comparing two tiers' results, or choosing <c>exhaustive:true</c> BECAUSE
+        /// it is the complete one, had no field to read it off - and the third of those is the
+        /// narrowest of the three while belonging to the mode chosen for completeness.
+        /// </para>
+        /// <para>
+        /// The GATE is shared with <see cref="AttachmentTextMatchable"/> deliberately: "did
+        /// this query match anything against a body" is one rule, and two copies of it would
+        /// be two things to keep true. What each tier's answer IS stays a constant on the tier,
+        /// because that is a property of the code that reads the mail, not of the request.
+        /// </para>
+        /// </summary>
+        public static string? BodyTextScope(string tierBodyScope, SearchIn searchIn, bool hasTerms)
+        {
+            return AttachmentTextMatchable(searchIn, hasTerms) ? tierBodyScope : null;
+        }
+
+        /// <summary>Whole-word matching: a term matches a word, not a fragment of one.</summary>
+        public const string TermMatchWholeWord = "whole_word";
+
+        /// <summary>
+        /// Substring matching: a term matches anywhere inside the text, so it returns
+        /// everything the whole-word reading would and more.
+        /// </summary>
+        public const string TermMatchSubstring = "substring";
+
+        /// <summary>
+        /// How the EXHAUSTIVE scan matched terms, read off the engine it actually used, or
+        /// null when it had no terms to match (gap B5).
+        /// <para>
+        /// The engine string already carried this and only a human could read it:
+        /// <c>ci_phrasematch</c> is whole-word, <c>like</c> is a substring scan, and
+        /// <c>ci_phrasematch+like</c> means some folders downgraded part-way through. The
+        /// mixed case answers <see cref="TermMatchSubstring"/>, which is the honest reading of
+        /// a set of results that is broader than whole-word somewhere and cannot say where.
+        /// </para>
+        /// </summary>
+        public static string? ExhaustiveTermMatch(string? engine, bool hasTerms)
+        {
+            if (!hasTerms)
+            {
+                return null;
+            }
+
+            return engine != null && engine.IndexOf("like", StringComparison.Ordinal) >= 0
+                ? TermMatchSubstring
+                : TermMatchWholeWord;
+        }
+
+        /// <summary>
         /// Applies the search terms (ANDed; a trailing '*' marks a prefix stem and is
         /// matched as a case-insensitive substring, slightly over-matching the index's
         /// word-prefix semantics - the acceptable direction for a freshness sweep) within
