@@ -3402,12 +3402,17 @@ namespace OutlookAI.Core.Services
 
             // Derive the conversation id from the referenced hit when only id was given.
             string? effectiveStore = store;
+
+            // C5: WHERE the store came from decides which remedy clears the narrowing it
+            // causes, so the two cases are told apart here rather than guessed at later.
+            bool storeDerived = false;
             if (conversationId == null && id != null && _hits.TryGetValue(id, out CachedHit? referenced))
             {
                 conversationId = referenced.IndexHit?.ConversationId;
                 effectiveStore ??= referenced.IndexHit != null
                     ? FreshMerge.ResolveHitStore(referenced.IndexHit)
                     : referenced.Live?.StoreDisplayName;
+                storeDerived = effectiveStore != null && store == null;
             }
 
             string? scope = null;
@@ -3488,7 +3493,13 @@ namespace OutlookAI.Core.Services
             // indexed mailbox plus a data file Windows Search has never opened - a
             // conversation reaching into that data file produced no rows to compare and
             // nothing said the walk had covered one store of two.
-            NoteThreadStoresWithoutIndex(live);
+            IReadOnlyList<string> unindexed = NoteThreadStoresWithoutIndex(live);
+
+            // C5's half, and it has to read the same source for the same reason: the index
+            // query above was narrowed to one store on every call that named or derived one,
+            // so the rows it returned cannot name a store the scope excluded. Asking Outlook
+            // which stores exist is the one question the scope cannot suppress.
+            NoteThreadStoresNotQueried(live, scope == null ? null : effectiveStore, unindexed);
 
             live.CoverageGaps = FreshMerge.DescribeThreadCoverageGaps(live, indexStores);
             string freshness = FreshMerge.ClassifyThreadFreshness(live, indexStores);
@@ -3521,9 +3532,11 @@ namespace OutlookAI.Core.Services
                 Hits = hits,
                 Truncated = truncated,
                 ScopeWidened = scopeWidened ? true : (bool?)null,
+                ScopeStore = scope == null ? null : effectiveStore,
+                ScopeStoreDerived = scope != null && storeDerived ? true : (bool?)null,
                 Live = live,
                 Staleness = staleness,
-                Advice = DescribeThreadCoverage(live, freshness, effectiveStore, scopeWidened, top),
+                Advice = DescribeThreadCoverage(live, freshness, effectiveStore, scopeWidened, top, storeDerived),
                 ElapsedMs = stopwatch.ElapsedMilliseconds,
             };
         }
@@ -3666,11 +3679,16 @@ namespace OutlookAI.Core.Services
         /// "not established" and never "indexed".
         /// </para>
         /// </summary>
-        private void NoteThreadStoresWithoutIndex(ThreadLiveInfo live)
+        /// <returns>
+        /// The UNCAPPED list it reported, so <see cref="NoteThreadStoresNotQueried"/> can
+        /// subtract it. The capped one on the block would leave a store past the cap to be
+        /// claimed by the other code, whose remedy does not fit it.
+        /// </returns>
+        private IReadOnlyList<string> NoteThreadStoresWithoutIndex(ThreadLiveInfo live)
         {
             if (!live.Performed || live.MembersWalked <= 0 || string.IsNullOrEmpty(live.AnchorStore))
             {
-                return;
+                return Array.Empty<string>();
             }
 
             Stopwatch clock = Stopwatch.StartNew();
@@ -3687,12 +3705,66 @@ namespace OutlookAI.Core.Services
             IReadOnlyList<string> unwalked = FreshMerge.UnwalkedUnindexedStores(live, missing);
             if (unwalked.Count == 0)
             {
-                return;
+                return Array.Empty<string>();
             }
 
             live.StoresWithoutIndex = CapUnindexedStoreList(unwalked, out int total, out bool truncated);
             live.StoresWithoutIndexTruncated = truncated ? true : (bool?)null;
             live.StoresWithoutIndexTotal = truncated ? total : (int?)null;
+            return unwalked;
+        }
+
+        /// <summary>
+        /// Names the stores this conversation lookup asked NEITHER tier about because a
+        /// <c>store</c> scope narrowed the index query to one of them (gap C5), from the same
+        /// source and by the same discipline as the pass above: Outlook's store list, and a
+        /// pure rule (<see cref="FreshMerge.StoresScopedOutOfThreadLookup"/>) that decides
+        /// what the list means.
+        /// <para>
+        /// THE HOLE IT CLOSES, and why the evidence had to change. <c>unwalked_store</c> is
+        /// computed from the stores the conversation's index rows name. A scope narrows that
+        /// query, so it narrows the evidence - the parameter silences the code that would
+        /// have reported what the parameter cost. Two INDEXED accounts and a scope over one
+        /// of them therefore produced <c>freshness: "live"</c> with a member in the other
+        /// both absent and unmentioned. Asking Outlook which stores the profile has is the
+        /// one question a scope cannot narrow, which is exactly why C4's fix asks it too.
+        /// </para>
+        /// <para>
+        /// COST: nothing at all on an unscoped lookup, which returns before any COM at all,
+        /// and on a scoped one the store list and the probe verdicts are already in the
+        /// <see cref="StoreDetailsCacheTtl"/> caches the pass above just filled.
+        /// </para>
+        /// </summary>
+        private void NoteThreadStoresNotQueried(
+            ThreadLiveInfo live,
+            string? indexScopeStore,
+            IReadOnlyList<string> storesWithoutIndex)
+        {
+            if (string.IsNullOrEmpty(indexScopeStore)
+                || !live.Performed
+                || live.MembersWalked <= 0
+                || string.IsNullOrEmpty(live.AnchorStore))
+            {
+                // Nothing was narrowed, or nothing the exclusions could be applied to. This is
+                // a COST guard rather than the rule: StoresScopedOutOfThreadLookup answers
+                // "nothing" for every one of these states anyway, and it is where the rule
+                // lives and where T1 pins it. What the guard saves is one COM store-list read
+                // per unscoped lookup. Removing it is therefore invisible in the payload - a
+                // mutation pass will report it as surviving, and that is correct rather than a
+                // hole (measured 2026-08-23).
+                return;
+            }
+
+            IReadOnlyList<string> unqueried = FreshMerge.StoresScopedOutOfThreadLookup(
+                live, indexScopeStore, TryGetProfileStoreNames(), storesWithoutIndex);
+            if (unqueried.Count == 0)
+            {
+                return;
+            }
+
+            live.StoresNotQueried = CapUnindexedStoreList(unqueried, out int total, out bool truncated);
+            live.StoresNotQueriedTruncated = truncated ? true : (bool?)null;
+            live.StoresNotQueriedTotal = truncated ? total : (int?)null;
         }
 
         /// <summary>
@@ -3755,12 +3827,19 @@ namespace OutlookAI.Core.Services
         /// without a sentence is a partial answer an agent can see but cannot explain.
         /// </para>
         /// </summary>
+        /// <param name="scopeStoreDerived">
+        /// Whether the store scope was derived from the referenced hit rather than asked for.
+        /// It selects the REMEDY the <c>unqueried_store</c> sentence names, and there is no
+        /// safe default: telling a caller who passed no <c>store</c> to drop one would read
+        /// as advice they had already followed.
+        /// </param>
         public static IReadOnlyList<string>? DescribeThreadCoverage(
             ThreadLiveInfo live,
             string freshness,
             string? store,
             bool scopeWidened,
-            int top)
+            int top,
+            bool scopeStoreDerived = false)
         {
             List<string> advice = new List<string>();
             if (scopeWidened)
@@ -3815,6 +3894,28 @@ namespace OutlookAI.Core.Services
                             + "reaches into it cannot be established from here - it is not that the members were "
                             + "checked and found absent. Call thread again with an id from that account to walk it "
                             + "live, or search it with exhaustive:true.");
+                        break;
+
+                    case FreshMerge.ThreadGapUnqueriedStore:
+                        advice.Add("INCOMPLETE CONVERSATION - TELL THE USER: this lookup was narrowed to one store"
+                            + (store == null ? string.Empty : " ('" + store + "')")
+                            + ", so the index was never asked about "
+                            + (DescribeUnindexedStoreList(
+                                live.StoresNotQueried,
+                                live.StoresNotQueriedTruncated == true,
+                                live.StoresNotQueriedTotal,
+                                "live.storesNotQueriedTotal") ?? "the rest of this profile")
+                            + ", and Outlook walks a conversation inside ONE store (here '"
+                            + (live.AnchorStore ?? "?")
+                            + "'), so a member sitting there is covered by NEITHER tier. Whether this conversation "
+                            + "reaches into it cannot be established from here - it is not that the members were "
+                            + "checked and found absent. "
+                            + (scopeStoreDerived
+                                ? "The store scope was DERIVED from the hit you passed, not asked for: pass "
+                                    + "conversation_id as well as id and no store is derived, so the conversation "
+                                    + "is looked up across the whole profile."
+                                : "Call thread again without store to look this conversation up across the whole "
+                                    + "profile."));
                         break;
 
                     case FreshMerge.ThreadGapMemberCap:

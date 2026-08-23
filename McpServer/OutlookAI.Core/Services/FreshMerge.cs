@@ -282,6 +282,38 @@ namespace OutlookAI.Core.Services
         public const string ThreadGapUnindexedStore = "unindexed_store";
 
         /// <summary>
+        /// Coverage hole: the conversation's index query was NARROWED to one store, so the
+        /// index could not be asked about the rest of the profile, and the live walk covered
+        /// only the store it was anchored in - leaving whether this conversation reaches into
+        /// any other store unestablished by either tier (gap C5).
+        /// <para>
+        /// THE OTHER SILENT HALF OF C4, and the one that is silent BECAUSE of a parameter
+        /// rather than in spite of one. <see cref="ThreadGapUnwalkedStore"/> is computed from
+        /// the stores the conversation's index rows name; a <c>store</c> scope narrows that
+        /// query, so it narrows the evidence its own coverage code is read off. Point it at
+        /// two INDEXED accounts and it says nothing at all: the query saw one of them by
+        /// construction, the walk covered that same one, and a member in the second is both
+        /// absent from the answer and unreported by it.
+        /// </para>
+        /// <para>
+        /// It bites hardest where nobody asked for it. <c>thread</c> DERIVES the store from
+        /// the referenced hit when the caller passes <c>id</c> without <c>conversation_id</c>,
+        /// which is the shape every agent reaches for after a search - so the narrowing, and
+        /// the silence it causes, arrive without the caller having chosen either.
+        /// </para>
+        /// <para>
+        /// Its evidence is Outlook's own store list rather than the index rows, exactly as
+        /// <see cref="ThreadGapUnindexedStore"/>'s is, and for the same reason: the thing the
+        /// scope suppressed cannot be used to detect what the scope suppressed. Like that
+        /// code it makes the WEAKER claim - the question could not be asked, not that members
+        /// were found elsewhere - and it carries the remedy that clears it, which differs by
+        /// how the store arrived: drop <c>store</c>, or pass <c>conversation_id</c> beside
+        /// <c>id</c> so no store is derived.
+        /// </para>
+        /// </summary>
+        public const string ThreadGapUnqueriedStore = "unqueried_store";
+
+        /// <summary>
         /// Exhaustive-scan coverage hole: the scan's wall-clock budget stopped it, so the
         /// folders it had not reached yet were never opened. Deliberately the SAME token the
         /// freshness sweep uses (<see cref="GapTimeBudget"/>) - the hole is the same hole,
@@ -941,6 +973,14 @@ namespace OutlookAI.Core.Services
                 gaps.Add(ThreadGapUnindexedStore);
             }
 
+            // Read off the block for the same reason, and from the same kind of evidence:
+            // Outlook's store list, which is the one source a store scope cannot suppress.
+            // The rule is StoresScopedOutOfThreadLookup (gap C5).
+            if (live.StoresNotQueried != null && live.StoresNotQueried.Count > 0)
+            {
+                gaps.Add(ThreadGapUnqueriedStore);
+            }
+
             if (live.MemberCapReached)
             {
                 gaps.Add(ThreadGapMemberCap);
@@ -1002,6 +1042,91 @@ namespace OutlookAI.Core.Services
             }
 
             return unwalked;
+        }
+
+        /// <summary>
+        /// Which of the profile's stores this conversation lookup ASKED NEITHER TIER about -
+        /// the rule behind <see cref="ThreadGapUnqueriedStore"/> (gap C5), pure so T1 pins it
+        /// without a profile, an index or a mailbox.
+        /// <para>
+        /// Two exclusions, and they are the whole substance. The store the index query was
+        /// SCOPED to was asked. The store the walk was anchored in was walked member by
+        /// member, so its coverage is complete whatever the index did. What is left is every
+        /// other store the profile HAS, and about those this lookup holds no evidence in
+        /// either direction - which is precisely what the scope took away.
+        /// </para>
+        /// <para>
+        /// <paramref name="indexScopeStore"/> null or blank means the index query ran
+        /// profile-wide, so nothing was suppressed and this claims nothing:
+        /// <see cref="ThreadGapUnwalkedStore"/> is then computed from evidence that can
+        /// actually name another store, and it makes the STRONGER claim. That is the reading
+        /// to prefer wherever it is available, and the reason this rule is silent whenever it
+        /// is.
+        /// </para>
+        /// <para>
+        /// <paramref name="storesWithoutIndex"/> is subtracted rather than merged, and it must
+        /// be the UNCAPPED list. A store the index holds nothing for is already named by
+        /// <see cref="ThreadGapUnindexedStore"/>, whose remedy works; this code's remedy is to
+        /// drop the scope, which cannot help where there is no index tier to widen to. Naming
+        /// it under both would hand a caller a remedy that does nothing.
+        /// </para>
+        /// <para>
+        /// A null or empty <paramref name="profileStores"/> claims nothing, for the reason
+        /// every store rule in this server is built on: absence of a list is not evidence of
+        /// a store. The walk guards are the same three
+        /// <see cref="UnwalkedUnindexedStores"/> applies, and they are forced rather than
+        /// chosen - <see cref="DescribeThreadCoverageGaps"/> returns before any code when the
+        /// walk did not run, because "did not run" is <see cref="FreshnessIndexOnly"/> with
+        /// its own remedy.
+        /// </para>
+        /// </summary>
+        public static IReadOnlyList<string> StoresScopedOutOfThreadLookup(
+            ThreadLiveInfo live,
+            string? indexScopeStore,
+            IReadOnlyList<string>? profileStores,
+            IReadOnlyList<string>? storesWithoutIndex)
+        {
+            if (live == null)
+            {
+                throw new ArgumentNullException(nameof(live));
+            }
+
+            if (string.IsNullOrEmpty(indexScopeStore)
+                || !live.Performed
+                || live.MembersWalked <= 0
+                || string.IsNullOrEmpty(live.AnchorStore)
+                || profileStores == null
+                || profileStores.Count == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            HashSet<string> excluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                indexScopeStore!,
+                live.AnchorStore!,
+            };
+
+            foreach (string store in storesWithoutIndex ?? Array.Empty<string>())
+            {
+                if (!string.IsNullOrEmpty(store))
+                {
+                    excluded.Add(store);
+                }
+            }
+
+            List<string> unqueried = new List<string>(profileStores.Count);
+            foreach (string store in profileStores)
+            {
+                if (string.IsNullOrEmpty(store) || !excluded.Add(store))
+                {
+                    continue; // Blank, already excluded, or a duplicate of one already listed.
+                }
+
+                unqueried.Add(store);
+            }
+
+            return unqueried;
         }
 
         /// <summary>

@@ -1431,6 +1431,43 @@ namespace OutlookAI.Core.Services
         public int? StoresWithoutIndexTotal { get; set; }
 
         /// <summary>
+        /// Stores the profile HAS that this lookup asked NEITHER tier about: the index query
+        /// was narrowed to one store and the walk covered one store, so about these two
+        /// there is no evidence in either direction (<see cref="FreshMerge.ThreadGapUnqueriedStore"/>,
+        /// gap C5). Null when there are none, and null whenever the index query ran
+        /// profile-wide - there the stronger <see cref="FreshMerge.ThreadGapUnwalkedStore"/>
+        /// can speak for itself.
+        /// <para>
+        /// It exists because a <c>store</c> scope narrows the very index rows
+        /// <c>unwalked_store</c> is computed from, so the parameter silences the code that
+        /// would have reported its own cost - and <c>thread</c> DERIVES that store from the
+        /// referenced hit whenever <c>id</c> is passed without <c>conversation_id</c>, which
+        /// is the shape an agent reaches for straight out of a search. So the narrowing, and
+        /// the silence, both arrive unrequested. Stores already named in
+        /// <see cref="StoresWithoutIndex"/> are left out: that code's remedy works and this
+        /// one's would not.
+        /// </para>
+        /// <para>
+        /// CAPPED at <see cref="MailService.UnindexedStoreListCap"/> - the same cap, from the
+        /// same constant, that both other store lists in this server carry. See
+        /// <see cref="StoresNotQueriedTruncated"/> and <see cref="StoresNotQueriedTotal"/>.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<string>? StoresNotQueried { get; set; }
+
+        /// <summary>
+        /// True when <see cref="StoresNotQueried"/> lists fewer stores than were found; null
+        /// when it is complete.
+        /// </summary>
+        public bool? StoresNotQueriedTruncated { get; set; }
+
+        /// <summary>
+        /// How many such stores were found, when that is more than the list shows. Null
+        /// otherwise - the list is then its own total.
+        /// </summary>
+        public int? StoresNotQueriedTotal { get; set; }
+
+        /// <summary>
         /// Coverage holes of this lookup, in the same vocabulary as
         /// <see cref="SweepInfo.CoverageGaps"/> (<see cref="FreshMerge.DescribeThreadCoverageGaps"/>).
         /// Null when the answer is whole.
@@ -1493,6 +1530,33 @@ namespace OutlookAI.Core.Services
         /// is not, so it is reported. Null when the scope was honoured or none was asked for.
         /// </summary>
         public bool? ScopeWidened { get; set; }
+
+        /// <summary>
+        /// The store display name the index half of this lookup was narrowed to, when it was
+        /// narrowed at all. Null means the conversation query ran over the whole profile.
+        /// <para>
+        /// Reported because the caller cannot otherwise tell: <c>thread</c> DERIVES a store
+        /// from the referenced hit whenever <c>id</c> is passed without <c>conversation_id</c>
+        /// (see <see cref="ScopeStoreDerived"/>), so a lookup nobody scoped comes back scoped.
+        /// It is stated even when nothing was lost by it - a single-store profile raises no
+        /// coverage code - because "which stores did this answer come from" is a question the
+        /// payload should answer without the caller reconstructing it from the hits.
+        /// </para>
+        /// </summary>
+        public string? ScopeStore { get; set; }
+
+        /// <summary>
+        /// True when <see cref="ScopeStore"/> was derived from the referenced hit rather than
+        /// asked for. Null when the caller passed <c>store</c> themselves, and null when
+        /// there was no scope.
+        /// <para>
+        /// It changes the REMEDY, which is why it is a field rather than a footnote: a scope
+        /// the caller chose is cleared by dropping <c>store</c>, and a derived one is cleared
+        /// by passing <c>conversation_id</c> beside <c>id</c>, since the derivation only
+        /// happens when the conversation id has to be recovered from the hit.
+        /// </para>
+        /// </summary>
+        public bool? ScopeStoreDerived { get; set; }
 
         /// <summary>The live conversation walk's own report. Always present.</summary>
         public ThreadLiveInfo? Live { get; set; }

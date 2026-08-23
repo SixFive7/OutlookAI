@@ -999,7 +999,7 @@
   naming the guard's value. Worth pairing with the lowered-cap build the G3/G4 item above already
   asks for; both are read-only and neither needs a mailbox write.
 
-- [ ] **Settle C5 (`Docs/completeness-gaps.md`) - `thread`'s `store` narrows the evidence its own coverage code is computed from.**
+- [x] **Settle C5 (`Docs/completeness-gaps.md`) - `thread`'s `store` narrows the evidence its own coverage code is computed from.**
   Found while closing C4 and recorded rather than fixed, because the fix changes which rows come
   back. A `store` on `thread` scopes the index query, and the store is auto-derived from the
   referenced hit when the caller passes `id` without `conversation_id` - so on those call shapes the
@@ -1009,6 +1009,33 @@
   trade-offs are on the C5 row; the coherent one is to stop scoping the conversation query at all,
   since `thread`'s `store` is documented as a speed hint rather than a filter - which is exactly
   C3's own reasoning for allowing it to widen.
+  **DONE 2026-08-23 on the maintainer's decision, which was none of the three listed: derive the
+  warning from Outlook's store list on the scoped shapes too, exactly as C4's fix does.** So the
+  scope is still applied and the same rows still come back - it is a reporting fix, which is why it
+  could be taken without the acceptance the "changes which rows come back" note was waiting for.
+  `live.storesNotQueried` + `unqueried_store` + `scopeStore` + `scopeStoreDerived`; T1
+  `ThreadScopedStoreTests`. See the C5 row for what each field says and why the remedy differs by
+  how the store arrived.
+
+- [ ] **Decide whether `thread` should apply a store scope it DERIVED (C5's remaining half).**
+  C5 is closed on reporting, and the underlying behaviour is untouched: a caller who passes `id`
+  alone still gets a lookup narrowed to that hit's store, so a member in a second indexed account is
+  still ABSENT - now named as unqueried rather than unmentioned. Three directions:
+  - **(a) Leave it.** Defensible: the narrowing is a real speed win on a large profile, the payload
+        now says it happened, and the remedy (pass `conversation_id` beside `id`) is one argument.
+        The cost is that the default call shape returns a partial conversation on every multi-store
+        profile, and `unqueried_store` therefore fires often enough to blunt it.
+  - **(b) Stop scoping when the store was DERIVED; keep scoping when the caller named one.** The
+        distinction the code already draws for the advice (`scopeStoreDerived`), applied to the
+        behaviour: nobody asked for the narrowing, so do not apply it. `unwalked_store` then works
+        as designed on that shape - it makes the STRONGER claim off index rows that can finally name
+        the other store - and `unqueried_store` goes quiet unless a caller chose a scope. Costs one
+        unscoped `ConversationID` query per `thread` call.
+  - **(c) Stop scoping the conversation query entirely**, using `store` only to order results. The
+        original TODO's preference and C3's own reasoning (`thread`'s `store` is a speed hint, not a
+        filter). Widest and simplest to explain; pays the unscoped query on every call.
+  Recommendation: **(b)**. It removes the defect exactly where nobody asked for it, keeps the hint
+  a caller explicitly chose, and leaves the reporting that now exists to cover the case it keeps.
 
 - [ ] **Decide what the test VM is FOR, because 96 of 115 live tests cannot move to it as it
       stands.** The live tier is now split by trait (`LiveTier=Portable` vs `ProfileBound`, see
