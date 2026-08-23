@@ -4,9 +4,9 @@
 
 ## Position - 2026-08-24, after the VM-infrastructure merge
 
-`HEAD` = `77df4e4`, pushed, tree clean. **1,977 tests in 7 seconds with no mailbox contact**
-(1,936 + 41 from the merge). `OutlookAI.Core` builds clean for net48 and net10 with zero
-warnings. `check-pinned-constants.ps1` 11/11. The test VM is running, checkpoints intact.
+`HEAD` = `e7384dc`, pushed, tree clean. **2,024 tests in 8 seconds with no mailbox contact**
+(1,936 + 41 + 47 from the two merges). `OutlookAI.Core` builds clean for net48 and net10 with
+zero warnings. `check-pinned-constants.ps1` 11/11. The test VM is running, checkpoints intact.
 
 **A CREDENTIAL WAS LEAKED FROM THIS FILE AND MUST BE ROTATED.** This repository is PUBLIC
 (`SixFive7/OutlookAI`). This file recorded the VM guest password in plain text; it was pushed and
@@ -30,10 +30,13 @@ not because it is unsafe.
 
 | Agent | Branch | State |
 | --- | --- | --- |
-| Fix the VM test infrastructure | `worktree-agent-ad5951c0e2020cddf` | **MERGED** into master as `4d7efbc`, verified 1,977 pass |
-| Clear the product gap map | `worktree-agent-ab7461aa27a49e30a` | running - every remaining `Docs/completeness-gaps.md` row plus the asymmetry scan |
+| Fix the VM test infrastructure | `worktree-agent-ad5951c0e2020cddf` | **MERGED** `4d7efbc` - corpus freshness + re-anchor, census, placement probe, mail sink, runbook |
+| Clear the product gap map | `worktree-agent-ab7461aa27a49e30a` | **MERGED** `e7384dc` - C5, E3, B4, B5, the two `snippet_chars` clamps; A5 and F2 verified already closed |
 | Mutation-verify the sort fix | (worktree) | running - `bea7fc9`, the queued verification that never happened |
 | Build the measurement gate | (worktree) | running - local-only baselines under `%LOCALAPPDATA%`, fail-biased tolerances |
+
+**The completeness gap map now has one row left: H3**, which needs a live corpus re-run rather
+than a fix.
 
 Branches are real refs and survive any conversation loss; `git branch --list` finds them. Agents
 commit on their own branch, never push, and never edit this file. **To finish one:** merge its
@@ -59,6 +62,8 @@ implemented until they are answered.** Recorded here so a compaction cannot lose
 | 7 | `ExhaustiveScanDeadlineMs` 615 s has never been measured on either machine | Run `corpus-measurement-plan.md` step 5 on the VM; read-only |
 | 8 | Four `Open - needs a decision` rows in `magic-numbers.md` | Fix the update-service backoff and the row constant; accept the tint; close the registry row |
 | 9 | **The leaked VM password** - public repo, 32 commits of history | **Rotate the credential.** History rewrite is optional hygiene, not the fix |
+| 10 | The freshness-sweep cache is unreachable for every UNSCOPED search - a cost regression since `c515565`, verified against history. Directions in `TODO.md` | Re-key the unscoped cache on the profile frontier |
+| 11 | Should `thread` apply a store scope it DERIVED? C5 is closed on reporting; the behaviour is untouched, so a member in a second account is still absent - now named rather than unmentioned. Directions in `TODO.md` | Stop scoping when the store was derived; keep it when the caller named one |
 
 ## Everything outstanding, in one list
 
