@@ -908,6 +908,7 @@ namespace OutlookAI.Core.Services
             }
 
             AddTopClampAdvice(advice, request.Top, top);
+            AddSnippetClampAdvice(advice, request.SnippetChars, snippetChars);
 
             // After the list is sorted and trimmed: it describes what the caller GETS, not
             // what the tiers passed through.
@@ -1183,6 +1184,34 @@ namespace OutlookAI.Core.Services
                 + effectiveTop.ToString(CultureInfo.InvariantCulture) + " (the hard cap): search returns at most "
                 + SearchTopCap.ToString(CultureInfo.InvariantCulture)
                 + " hits per call. Narrow with store/folder/from/after, or page by moving the 'before' bound.");
+        }
+
+        /// <summary>
+        /// The same discipline for <c>snippet_chars</c>, which was the last silent clamp on
+        /// this surface. It is cosmetic - no hit is added or lost by it - and that is exactly
+        /// why it was left: but a caller who asked for 5000 characters of context and got 1000
+        /// has a TRUNCATED snippet that reads like a whole one, and deciding from it that a
+        /// mail is irrelevant is a decision made on text that was cut. Every other cap here is
+        /// reported; this one is now too.
+        /// <para>
+        /// Both directions, because both are silent: a negative value becomes 0, which turns
+        /// snippets off entirely rather than shortening them.
+        /// </para>
+        /// </summary>
+        private static void AddSnippetClampAdvice(List<string> advice, int requestedChars, int effectiveChars)
+        {
+            if (requestedChars == effectiveChars)
+            {
+                return;
+            }
+
+            advice.Add("snippet_chars=" + requestedChars.ToString(CultureInfo.InvariantCulture) + " was "
+                + (requestedChars > effectiveChars ? "reduced" : "raised") + " to "
+                + effectiveChars.ToString(CultureInfo.InvariantCulture) + " (the accepted range is 0-"
+                + SnippetCharsCap.ToString(CultureInfo.InvariantCulture)
+                + "). Each snippet is the first " + effectiveChars.ToString(CultureInfo.InvariantCulture)
+                + " characters and may end mid-sentence, so judge relevance from the hit itself rather than from a "
+                + "snippet that looks whole; 'read' returns the full body.");
         }
 
         /// <summary>
@@ -3109,6 +3138,19 @@ namespace OutlookAI.Core.Services
             }
 
             AddTopClampAdvice(advice, request.Top, top);
+
+            // Found by the C5 asymmetry scan, and it is the same species: this mode registers
+            // every hit with snippetChars 0, so a snippet_chars the caller passed is not
+            // clamped here - it is dropped whole, and the ordinary search beside it honours
+            // and reports the same argument. An agent that asked for context and got hits
+            // with no snippet has no way to tell that from mail whose body is empty.
+            if (request.SnippetChars > 0)
+            {
+                advice.Add("snippet_chars=" + request.SnippetChars.ToString(CultureInfo.InvariantCulture)
+                    + " was ignored: an exhaustive scan returns hits without snippets, because it reads folders "
+                    + "directly and does not carry a body back for every item it matched. The hits are complete in "
+                    + "every other respect - use 'read' on the ones worth looking at.");
+            }
 
             // Staleness is best-effort context here: exhaustive works even when the
             // SystemIndex is unreachable (that is one of its jobs).
