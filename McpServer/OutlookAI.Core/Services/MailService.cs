@@ -3724,15 +3724,18 @@ namespace OutlookAI.Core.Services
                 ScopeWidened = scopeWidened ? true : (bool?)null,
                 ScopeStore = scope == null ? null : effectiveStore,
 
-                // Unreachable since a derived store stopped scoping: a scope exists only when
-                // the caller named one, and a named one is not derived. Kept as the expression
-                // rather than as a hard null because it states the rule the behaviour above
-                // turns on, and because the two would have to change together if a derived
-                // scope were ever re-introduced.
-                ScopeStoreDerived = scope != null && storeDerived ? true : (bool?)null,
+                // Re-purposed 2026-08-24, when a derived store stopped scoping: it reports
+                // that a store WAS derived from the hit and deliberately NOT applied. The old
+                // expression tested `scope != null` as well, which is what made it structurally
+                // unreachable - a store is derived only when the caller named none, and only a
+                // store the caller named produces a scope, so the two can never both hold. The
+                // fact is still real and still worth a caller's while (it explains members from
+                // accounts other than the referenced hit's), so the field moved with the
+                // behaviour rather than being deleted.
+                ScopeStoreDerived = storeDerived ? true : (bool?)null,
                 Live = live,
                 Staleness = staleness,
-                Advice = DescribeThreadCoverage(live, freshness, effectiveStore, scopeWidened, top, storeDerived),
+                Advice = DescribeThreadCoverage(live, freshness, effectiveStore, scopeWidened, top),
                 ElapsedMs = stopwatch.ElapsedMilliseconds,
             };
         }
@@ -4023,19 +4026,20 @@ namespace OutlookAI.Core.Services
         /// without a sentence is a partial answer an agent can see but cannot explain.
         /// </para>
         /// </summary>
-        /// <param name="scopeStoreDerived">
-        /// Whether the store scope was derived from the referenced hit rather than asked for.
-        /// It selects the REMEDY the <c>unqueried_store</c> sentence names, and there is no
-        /// safe default: telling a caller who passed no <c>store</c> to drop one would read
-        /// as advice they had already followed.
-        /// </param>
+        /// <para>
+        /// It took a <c>scopeStoreDerived</c> flag until 2026-08-24, to choose between two
+        /// remedies for <c>unqueried_store</c>: drop the <c>store</c> you passed, or pass
+        /// <c>conversation_id</c> beside <c>id</c> so no store is derived. The second remedy
+        /// went with the behaviour it undid - a derived store no longer narrows anything, so
+        /// this code can only ever be raised by a scope the caller chose, and one remedy is
+        /// the whole truth again.
+        /// </para>
         public static IReadOnlyList<string>? DescribeThreadCoverage(
             ThreadLiveInfo live,
             string freshness,
             string? store,
             bool scopeWidened,
-            int top,
-            bool scopeStoreDerived = false)
+            int top)
         {
             List<string> advice = new List<string>();
             if (scopeWidened)
@@ -4105,13 +4109,8 @@ namespace OutlookAI.Core.Services
                             + (live.AnchorStore ?? "?")
                             + "'), so a member sitting there is covered by NEITHER tier. Whether this conversation "
                             + "reaches into it cannot be established from here - it is not that the members were "
-                            + "checked and found absent. "
-                            + (scopeStoreDerived
-                                ? "The store scope was DERIVED from the hit you passed, not asked for: pass "
-                                    + "conversation_id as well as id and no store is derived, so the conversation "
-                                    + "is looked up across the whole profile."
-                                : "Call thread again without store to look this conversation up across the whole "
-                                    + "profile."));
+                            + "checked and found absent. Call thread again without store to look this conversation "
+                            + "up across the whole profile.");
                         break;
 
                     case FreshMerge.ThreadGapMemberCap:

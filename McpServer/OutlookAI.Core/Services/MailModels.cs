@@ -1632,22 +1632,33 @@ namespace OutlookAI.Core.Services
         public string? ScopeStore { get; set; }
 
         /// <summary>
-        /// True when <see cref="ScopeStore"/> was derived from the referenced hit rather than
-        /// asked for. Null when the caller passed <c>store</c> themselves, and null when
-        /// there was no scope.
+        /// True when <c>thread</c> DERIVED a store from the referenced hit and deliberately did
+        /// NOT narrow this lookup to it. Null when nothing was derived: a call carrying
+        /// <c>conversation_id</c>, a call whose <c>id</c> matches no hit this session handed
+        /// out, and any call that named a <c>store</c> itself.
         /// <para>
-        /// UNREACHABLE SINCE 2026-08-24, and kept deliberately: a derived store no longer
-        /// scopes anything, so there is no scope for it to describe. It stays because it names
-        /// the distinction the behaviour now turns on - chosen scopes are applied, derived ones
-        /// are not - and because the advice it selects
-        /// (<c>MailService.DescribeThreadCoverage</c>) is the remedy that would be needed again
-        /// the moment a derived scope came back. An agent should read its absence as "nothing
-        /// was derived and applied", which is now always true.
+        /// It never appears beside <see cref="ScopeStore"/>, and the two answer different
+        /// questions. A store is derived only when the caller named none, and only a store the
+        /// caller NAMED narrows anything - so <c>scopeStore</c> says which store this answer
+        /// was narrowed to, while this says a store was there to narrow to and was passed over.
         /// </para>
         /// <para>
-        /// While it could fire it changed the REMEDY, which is why it is a field rather than a
-        /// footnote: a scope the caller chose is cleared by dropping <c>store</c>, and a
-        /// derived one was cleared by passing <c>conversation_id</c> beside <c>id</c>.
+        /// PURELY INFORMATIONAL: it reports a narrowing that did not happen, so no members are
+        /// missing on account of it and there is nothing to remedy - which is why no advice
+        /// sentence accompanies it. It earns its place by explaining an answer a caller may not
+        /// expect (members from accounts other than the referenced hit's, and the cost of the
+        /// profile-wide query that found them), and by telling a caller who WANTS the narrowing
+        /// that asking for it is what passing <c>store</c> does - at the coverage cost
+        /// <c>unqueried_store</c> then reports.
+        /// </para>
+        /// <para>
+        /// It meant the opposite until 2026-08-24: "the scope applied here was derived rather
+        /// than asked for", which chose the remedy printed in the <c>unqueried_store</c>
+        /// sentence. A derived store stopped scoping that day, which left that reading
+        /// structurally unreachable - a scope exists only when the caller named a store, and a
+        /// named store is not derived - so the field could never be set and its advice branch
+        /// could never print. The FACT underneath it survived the behaviour change intact, so
+        /// the field was re-pointed at it rather than deleted.
         /// </para>
         /// </summary>
         public bool? ScopeStoreDerived { get; set; }

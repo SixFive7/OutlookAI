@@ -1172,12 +1172,19 @@
   rows that can finally name the other store. `staleness` widens with the lookup for the same
   reason. T1 `ThreadDerivedStoreScopeTests` (8 tests, four of which fail on the old behaviour);
   `ThreadScopedStoreTests.ADerivedStore_NoLongerNarrowsTheLookup` replaces the test that pinned it.
-  **One thing it leaves behind, undecided:** `ScopeStoreDerived` is now structurally unreachable -
-  a scope exists only when the caller named one, and a named store is not derived - so the field
-  can never appear in a payload and the "pass conversation_id instead" advice branch can never be
-  printed. Both were kept (they state the distinction the behaviour turns on, and the field is
-  published in `McpServer/README.md`). Decide whether to remove them, keep them as documentation,
-  or give the field the new meaning "a store was derived and deliberately NOT applied".
+  **What it left behind was settled on 2026-08-24, on the maintainer's decision: (c), give the
+  field its true new meaning.** `ScopeStoreDerived` was structurally unreachable as written - a
+  scope exists only when the caller named one, and a named store is not derived - so it could
+  never appear in a payload and the "pass conversation_id instead" advice branch could never
+  print. It now means **a store WAS derived and deliberately NOT applied**, which is the same
+  fact from the other side and is still worth a caller's while: it explains members from accounts
+  other than the referenced hit's, and it says where the narrowing went for a caller who wanted
+  it. It is purely informational and carries no advice sentence - nothing was narrowed, so
+  nothing is missing - and `DescribeThreadCoverage` lost the flag parameter along with the second
+  `unqueried_store` remedy, which escaped a narrowing that no longer happens. The field's meaning
+  moved in `McpServer/README.md` and on the C5 row with it. T1 `ThreadDerivedStoreReportingTests`
+  (2 tests, including a signature pin so the dead branch cannot return) plus the payload half in
+  `ThreadDerivedStoreScopeTests`.
 
 - [x] **Decide what to do about the freshness-sweep cache being unreachable for UNSCOPED searches.**
   Found 2026-08-23 while pinning E3, and verified against the history rather than inferred:
