@@ -1,3 +1,94 @@
+# RESUME HERE - state of play at 2026-08-23
+
+**Read this section first after any context loss. Everything below it is history and reasoning.**
+
+## Where things stand
+
+`HEAD` = `8db54fb`, tree clean. **1,927 tests pass in 9 seconds** under the interim filter;
+`OutlookAI.Core` builds clean for net48 and net10; `check-pinned-constants.ps1` reports 11/11.
+
+**Verification command, until the VM can run the rest** - this is the standing bar and it exists
+because the ordinary suite reads the maintainer's real mailbox:
+
+    dotnet build McpServer/OutlookAI.Core/OutlookAI.Core.csproj
+    dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj \
+      --filter "Category!=Live&FullyQualifiedName!~Tests.T3."
+    pwsh -File .github/scripts/check-pinned-constants.ps1
+
+## What I am doing right now
+
+One read-only agent is running: a per-test analysis of what the VM can and cannot prove, writing
+`vm-coverage-analysis.md` into the session trace folder. It answers three things - which tests
+cannot run on the VM at all, which run but prove less, and what insight is lost that is not a test.
+When it lands, the VM build follows.
+
+## The goal, in one paragraph
+
+Get the entire test cycle off the maintainer's production Outlook and onto the test VM, seeded well
+enough to exercise everything that can be exercised there, with a pre-release gate against the real
+profile covering only what the VM genuinely cannot show. Then finish the outstanding bug queue. No
+release until the maintainer says so - **do not ask about release timing, it is settled**.
+
+## Outstanding work, in order
+
+1. **Build the VM properly.** Three stores (indexed corpus, unindexed corpus, a bystander the tests
+   never touch), two Outlook profiles (one with no accounts because the corpus generator refuses any
+   profile that has one, one with a dummy account on an unroutable server so drafts work and a send
+   can never leave), and a **build-from-nothing runbook including seed-data instructions** - the
+   machine must be rebuildable when it is deleted or moved.
+2. **Grow the corpus** to shapes it does not have: message-class diversity (NDRs, read receipts,
+   meeting requests, sharing invitations, posts), items with no delivery time, very large bodies,
+   deep folder trees, a folder that fails to open, a store whose display name cannot be read.
+   Several of those are cases this project has FIXED BLIND, with no test able to produce them.
+3. **Make the tier-3 label honest** - sixteen files named `...CiToolShapeTests` reach a real
+   mailbox. Either trait them out of a default run or make them fail fast without a designated test
+   Outlook.
+4. **Mutation-verify `bea7fc9`.** The sort fix is committed and green but its mutation pass never
+   ran - the agent was killed partway. **It left one mutation applied** (the sort-property array
+   with its two spellings swapped) which I found and restored; that is why the pass matters.
+5. **Re-measure the sweep budget.** 180 s was measured while the sort was silently failing. A
+   working sort changes what the sweep does per folder.
+6. **The corpus generator's two defects**: ~5,500 duplicate items land in the Outbox on a large
+   build, deterministically; and the placement probe's folder-table check fails against a folder
+   with many items, so it refuses a placement that works.
+7. **Live move-batch exercise** before release - making that batch a real aggregate changed
+   behaviour on a mutating path.
+8. **Tripwire re-census-then-re-run** logic, bounded by a maximum.
+9. **Remaining gap-map rows** - the maintainer said clear ALL of them before a release.
+10. **`thread`'s store asymmetry** plus a scan for the same shape elsewhere.
+11. **Restore the installed MCP server** - deliberately moved aside, so `outlookai` fails to start
+    in every Claude Code session on that machine. Deferred until the release.
+
+## Standing rules that outlive any compaction
+
+- **Completeness outranks performance, whatever the cost.** The maintainer has said this repeatedly.
+- **Never ask about release timing.** They will say when.
+- **Never run the live tier or touch the mailbox from a subagent.** I run live tests; agents write
+  them. Agents must also not touch Hyper-V or the VM scratch folder.
+- **Verify both target frameworks.** A net48 break reached master this session because only the
+  net10 test project was checked.
+- **Only a build proves a tree clean after a mutation pass.** Restore by index, never by matching
+  replacement text; a killed process skips its cleanup; passes must be serial.
+- **Commit research into the repo.** The scratch folder was deleted once and took the long-form
+  analyses with it. The findings survived only because they had been folded into this log,
+  `TODO.md`, `Docs/magic-numbers.md`, `Docs/completeness-gaps.md` and `QUESTIONS.md`.
+
+## The largest findings of this session, for context
+
+- **The freshness sweep has never sorted.** It passed a namespace-qualified property name to
+  `Table.Sort`, which refuses it; the failure was swallowed. Measured on five real stores: the
+  explicit name applied 5/5, the namespace form was refused 5/5. So the 200-item cap has always cut
+  an arbitrary slice, in the tier whose entire purpose is recent mail. Fixed in `bea7fc9`.
+- **Budgets were roughly half the measured work.** The sweep needed ~60 s across five stores against
+  a 30 s budget, which is why the COM host was being killed and replaced during ordinary searches.
+- **Sixteen atomicity claims were false** - the product told callers nothing had changed when nobody
+  could know. Fixed in `7b4cfd9`.
+- **The tripwire could not take a baseline at all** on the real profile, and its census is now a
+  table read rather than opening every message: 5 stores, 159 folders, 2,044 items in 16.9 seconds,
+  where one store previously exceeded a three-minute limit.
+
+---
+
 # Autonomous session log - 2026-08-18/19
 
 **What this file is.** The maintainer went to sleep mid-session and asked two questions to be
