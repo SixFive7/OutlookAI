@@ -4,16 +4,92 @@
 
 ## Where things stand
 
-`HEAD` = `8db54fb`, tree clean. **1,927 tests pass in 9 seconds** under the interim filter;
+`HEAD` = `ff6bdde` plus UNCOMMITTED tier-3 classification work (below). **1,936 tests pass in
+5 seconds** under the narrow filter and **2,085 in 98 seconds** under `Category!=Live`;
 `OutlookAI.Core` builds clean for net48 and net10; `check-pinned-constants.ps1` reports 11/11.
 
-**Verification command, until the VM can run the rest** - this is the standing bar and it exists
-because the ordinary suite reads the maintainer's real mailbox:
+**`Category!=Live` no longer touches a mailbox.** That is the change of 2026-08-23: it used to,
+through sixteen tier-3 files whose names claimed otherwise. The interim `Tests.T3.` exclusion is
+therefore no longer needed for SAFETY - it is now only a speed choice, 5 s against 98 s, and both
+commands are honest:
 
     dotnet build McpServer/OutlookAI.Core/OutlookAI.Core.csproj
     dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj \
-      --filter "Category!=Live&FullyQualifiedName!~Tests.T3."
+      --filter "Category!=Live&FullyQualifiedName!~Tests.T3."   # 1,936 in 5 s
+    dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj \
+      --filter "Category!=Live"                                 # 2,085 in 98 s, adds the stdio tier
     pwsh -File .github/scripts/check-pinned-constants.ps1
+
+**The evidence for that, measured 2026-08-23**, because "it no longer touches the mailbox" is
+exactly the kind of claim this project has been burned by:
+
+* The whole non-live stdio tier except the supervision class - 140 tests, 65 s - was run while a
+  sampler polled the process list every 120 ms. **Zero `OutlookAI.ComHost` processes across 481
+  samples.** Every COM call the server makes goes through that child, so none was made, and
+  `outlook_health` (the only tool that also queries the Windows Search index in-process) is no
+  longer called by any of them.
+* `ComHostSupervisionCiTests` DOES spawn a host, deliberately, so it needed a different
+  measurement: 7 tests, 35 s, OUTLOOK.EXE processor time +0.188 s against an idle rate of
+  0.0038 s/s measured over 277 s on the same machine, which predicts +0.133 s. No attach. The
+  reason it cannot attach is structural: `ComHostServer.Invoke` applies the injected fault BEFORE
+  `method.Invoke` on the routing proxy, and that proxy is the only caller of `ComGateway.Run`.
+
+Counts, before and after (the test project is net10 only; `OutlookAI.Core` is what gates net48):
+narrow **1,927 -> 1,936** (+2 classification pins, +7 decision-matrix cases); `Category!=Live`
+**2,082 -> 2,085** (-10 moved to the live tier, +13 new); live tier **116 -> 127 methods**,
+`LiveTier=Portable` **20 -> 31**.
+
+## The tier-3 classification (2026-08-23, uncommitted)
+
+**What was wrong.** Tier 3 spawns the real server, which spawns a COM host, which attaches to
+whatever Outlook is on the machine - so what a tier-3 test touches is decided by the TOOL it calls,
+and nothing about its name or its signature says which. Sixteen files sat outside `Category=Live`,
+several named `...CiToolShapeTests`, and eleven of their tests called `outlook_health`,
+`list_accounts` or `search`. Every verification run this session read the real mailbox as a result.
+
+**Why most of it was innocent.** Nearly every tier-3 call is answered by argument validation before
+any COM work: an unknown hit id (`h424242`) fails in `ResolveToEntryId`, a blank account fails in
+`NewDraft`, an exhaustive `search` without `store` fails in `RunExhaustive` before even the index
+is queried, `save_attachment` with index 0 fails on the 1-based check, `discard_draft` for an
+EntryID this process never created fails on the draft registry, and `list_signatures` /
+`manage_signature` never touch `_gateway` at all. `ComHostSupervisionCiTests` is innocent for a
+different reason worth knowing: its `list_accounts` calls are faulted in `ComHostServer` ABOVE the
+routing proxy, so no Outlook session is ever asked for.
+
+**Which marker, and why not a third scheme.** The live tier already had the vocabulary: a selector
+trait (`Category=Live`, then `LiveTier=Portable|ProfileBound`) and a reason trait
+(`Requires=<capability>`), enforced by `T1/LiveTierInventoryTests`. The tier-3 tests take exactly
+that, with one new PORTABLE capability, `OutlookInstance` - an Outlook to attach to and nothing of
+the maintainer's own profile, so the VM runs them unchanged. A category RENAME was considered and
+rejected: `Category!=Live` appears in the workflow, in `CLAUDE.md`, in the README and in every
+runbook, and renaming it would have bought nothing that reusing `Live` did not.
+
+**Enforcement, in two layers.** `McpStdioClient` refuses to SEND a `tools/call` for
+`outlook_health`, `list_accounts` or `list_folders` unless the test passes
+`McpStdioClient.OutlookReachingToolsAllowed`; those three reach Outlook for every argument shape.
+`T1/LiveTierInventoryTests.EveryStdioTestReachingOutlook_DeclaresIt` then reads that literal back
+out of the compiled IL of every tier-3 class (async state machines and lambda display classes
+included), and fails unless the class carrying it is `Category=Live` with
+`Requires=OutlookInstance`. A literal rather than a bool precisely so the pin can see it - a bool
+compiles to `ldc.i4.1`, indistinguishable from every other true. An IL read rather than a roster of
+class names because a roster only catches a new CLASS, and the drift that started this was a new
+method in an old one. `T3/StdioClientMailboxGuardTests` proves the refusal itself, because a guard
+that only runs when it is being violated is a guard nobody notices losing.
+
+The one exemption is a class that injects a COM-host fault, and it deliberately does not extend to
+`outlook_health`, whose Windows Search index probe no fault specification can reach.
+
+**What it still cannot judge:** whether a `search`, `read`, `thread`, draft or move call reaches
+Outlook depends on its ARGUMENTS, and the pin reads names. A bounded exhaustive `search` is the
+realistic case that would slip through.
+
+**One deliberate test change, not just a re-label.** `McpStdioConformanceTests` closed with a smoke
+`tools/call` to `outlook_health` - the only step of that run that touched a mailbox. Marking the
+whole class live would have cost CI the initialize contract, the `instructions` equality pin, the
+21-tool roster and the stdin-close proof, none of which is duplicated elsewhere. The smoke call is
+now `list_signatures`, which is also assembled in OutlookAI.Core and reads only the signature
+directory, so CI still proves all four verbs end to end; the `outlook_health` smoke moved into the
+live class intact.
 
 ## What I am doing right now
 
@@ -40,9 +116,19 @@ release until the maintainer says so - **do not ask about release timing, it is 
    meeting requests, sharing invitations, posts), items with no delivery time, very large bodies,
    deep folder trees, a folder that fails to open, a store whose display name cannot be read.
    Several of those are cases this project has FIXED BLIND, with no test able to produce them.
-3. **Make the tier-3 label honest** - sixteen files named `...CiToolShapeTests` reach a real
-   mailbox. Either trait them out of a default run or make them fail fast without a designated test
-   Outlook.
+3. **DONE 2026-08-23 (uncommitted) - the tier-3 label is honest.** Truth established per TEST,
+   not per file: of the 100 tier-3 methods outside the live tier, **89 never leave argument
+   validation** and eleven reached Outlook. Eleven of the sixteen files were entirely innocent -
+   `DescriptionBudgetCiTests`, `DraftOptionsCiToolShapeTests`, `HtmlBodyCiToolShapeTests`,
+   `MoveArchiveCiToolShapeTests`, `Phase3CiToolShapeTests`, `Phase4CiToolShapeTests`,
+   `Phase5CiToolShapeTests`, `SearchSchemaCiTests`, `SoakBatchCCiToolShapeTests`,
+   `SoakToolSurfaceCiTests`, `WritingRulesGateCiTests`. The guilty tests moved to
+   `ComHostSupervisionLiveTests` (4 of 11), `OutlookAvailabilityLiveTests` (4 of 4, renamed from
+   `...CiTests`) and `OutlookHealthLiveToolShapeTests` (1 from Phase2, 1 from Phase7, 1 lifted out
+   of `McpStdioConformanceTests`), all carrying `Category=Live` + `LiveTier=Portable` +
+   `Requires=OutlookInstance` in the guarded `LiveMcpToolShape` collection. See the section below
+   for the marker and its enforcement. Residual gaps are four TODO.md sub-items, the largest being
+   that `list_accounts` STARTS Outlook on a machine where it is installed but closed.
 4. **Mutation-verify `bea7fc9`.** The sort fix is committed and green but its mutation pass never
    ran - the agent was killed partway. **It left one mutation applied** (the sort-property array
    with its two spellings swapped) which I found and restored; that is why the pass matters.

@@ -14,17 +14,62 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// </summary>
 public sealed class McpStdioClient : IAsyncDisposable
 {
+    /// <summary>
+    /// The token a test passes to <see cref="StartAndInitializeAsync"/> before this client
+    /// will send a <c>tools/call</c> for a tool that reaches the machine's own Outlook.
+    /// <para>
+    /// It exists because "CI-safe" was a claim in a class name rather than a fact: sixteen
+    /// T3 files ran under <c>Category!=Live</c> and eleven of their tests attached to
+    /// whatever Outlook was on the machine, which on the maintainer's box is a production
+    /// mailbox. A comment cannot stop the twelfth from being written; a refusal can.
+    /// </para>
+    /// <para>
+    /// A deliberate literal rather than a bool because it has to be VISIBLE to the pin that
+    /// enforces the classification: <c>T1.LiveTierInventoryTests</c> reads the IL of every
+    /// T3 class looking for exactly this string, and a unique string cannot be confused with
+    /// a tool name that some other test merely asserts the schema of. A bool argument
+    /// compiles to <c>ldc.i4.1</c>, which is indistinguishable from every other true.
+    /// </para>
+    /// </summary>
+    public const string OutlookReachingToolsAllowed = "outlook-reaching-tools-allowed";
+
+    /// <summary>
+    /// The tools that reach Outlook - and the Windows Search index - for EVERY argument
+    /// shape, so no test can call one and stay off the mailbox by validating badly.
+    /// <para>
+    /// The rest of the surface is judged by its arguments instead, and is therefore NOT
+    /// listed here: <c>search</c>, <c>read</c>, <c>thread</c>, the draft tools,
+    /// <c>move_mail</c> and the show-me tools all have a refusal that fires before any COM
+    /// work, which is what the CI-safe half of this tier is built on. This guard reads the
+    /// tool NAME only; it cannot tell a bounded exhaustive <c>search</c> (which does reach
+    /// Outlook) from an unbounded one (which is refused), so that judgement stays with the
+    /// class-level classification and with review.
+    /// </para>
+    /// </summary>
+    private static readonly string[] ToolsThatAlwaysReachOutlook =
+    {
+        "outlook_health",
+        "list_accounts",
+        "list_folders",
+    };
+
     private readonly Process _server;
     private readonly CancellationTokenSource _cts;
     private readonly Task<string> _stderrTask;
+    private readonly bool _outlookReachingToolsAllowed;
     private int _nextId;
     private JsonElement _initializeResult;
 
-    private McpStdioClient(Process server, CancellationTokenSource cts, Task<string> stderrTask)
+    private McpStdioClient(
+        Process server,
+        CancellationTokenSource cts,
+        Task<string> stderrTask,
+        bool outlookReachingToolsAllowed)
     {
         _server = server;
         _cts = cts;
         _stderrTask = stderrTask;
+        _outlookReachingToolsAllowed = outlookReachingToolsAllowed;
     }
 
     /// <summary>Path of the built server exe (baked into the test assembly at build time).</summary>
@@ -42,6 +87,12 @@ public sealed class McpStdioClient : IAsyncDisposable
     /// is only observable by actually exceeding a budget, and waiting out the real
     /// two-minute one in every such test would make the suite unusable.
     /// </param>
+    /// <param name="outlookReachingTools">
+    /// Pass <see cref="OutlookReachingToolsAllowed"/> to permit the tools listed in
+    /// <c>ToolsThatAlwaysReachOutlook</c>. Anything else - null included - makes this client
+    /// refuse them, so a test that has not thought about mailbox contact cannot make it by
+    /// accident.
+    /// </param>
     /// <summary>
     /// The MCP revision this client speaks, and the one every T3 assertion is written
     /// against. Sent in <c>initialize</c> and compared against what the server answers.
@@ -50,7 +101,8 @@ public sealed class McpStdioClient : IAsyncDisposable
 
     public static async Task<McpStdioClient> StartAndInitializeAsync(
         TimeSpan? timeout = null,
-        IReadOnlyDictionary<string, string>? environment = null)
+        IReadOnlyDictionary<string, string>? environment = null,
+        string? outlookReachingTools = null)
     {
         string exePath = ServerExePath;
         if (!File.Exists(exePath))
@@ -84,7 +136,11 @@ public sealed class McpStdioClient : IAsyncDisposable
         Process server = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start the server process.");
         Task<string> stderrTask = server.StandardError.ReadToEndAsync(cts.Token);
-        var client = new McpStdioClient(server, cts, stderrTask);
+        var client = new McpStdioClient(
+            server,
+            cts,
+            stderrTask,
+            string.Equals(outlookReachingTools, OutlookReachingToolsAllowed, StringComparison.Ordinal));
 
         JsonElement init = await client.RoundTripAsync("initialize", new
         {
@@ -132,6 +188,15 @@ public sealed class McpStdioClient : IAsyncDisposable
     /// <summary>Sends a request and returns the matching response envelope (throws on JSON-RPC error).</summary>
     public async Task<JsonElement> RoundTripAsync(string method, object parameters)
     {
+        // Guarded HERE rather than in CallToolAsync because this is the only choke point:
+        // the supervision and availability tests build their own tools/call envelopes and
+        // send them straight through, so a check on the convenience helpers would leave the
+        // two files that reach Outlook hardest unguarded.
+        if (string.Equals(method, "tools/call", StringComparison.Ordinal))
+        {
+            RefuseUndeclaredOutlookContact(parameters);
+        }
+
         int id = Interlocked.Increment(ref _nextId);
         await SendAsync(new { jsonrpc = "2.0", id, method, @params = parameters });
 
@@ -288,6 +353,45 @@ public sealed class McpStdioClient : IAsyncDisposable
         {
             return $"<stderr unavailable: {drainEx.GetType().Name}>";
         }
+    }
+
+    /// <summary>
+    /// Fails the test rather than the mailbox: a <c>tools/call</c> naming a tool that always
+    /// reaches Outlook is refused unless the test declared it.
+    /// </summary>
+    /// <remarks>
+    /// The parameters are serialised to read the tool name because the callers pass
+    /// anonymous types, and reflecting over those would break the moment one of them named
+    /// the property differently. Serialising is what goes on the wire anyway, so this reads
+    /// exactly what the server would have been asked for.
+    /// </remarks>
+    private void RefuseUndeclaredOutlookContact(object parameters)
+    {
+        if (_outlookReachingToolsAllowed)
+        {
+            return;
+        }
+
+        JsonElement envelope = JsonSerializer.SerializeToElement(parameters);
+        if (envelope.ValueKind != JsonValueKind.Object
+            || !envelope.TryGetProperty("name", out JsonElement nameProperty))
+        {
+            return;
+        }
+
+        string? tool = nameProperty.GetString();
+        if (tool == null || Array.IndexOf(ToolsThatAlwaysReachOutlook, tool) < 0)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"'{tool}' reaches the machine's own Outlook and the Windows Search index for every argument shape, "
+            + "so it may not be called from a test that has not declared mailbox contact. Either call a tool whose "
+            + "arguments are refused before any COM work, or move this test into a class carrying "
+            + "Category=Live / LiveTier / Requires=OutlookInstance and start the client with "
+            + $"outlookReachingTools: {nameof(McpStdioClient)}.{nameof(OutlookReachingToolsAllowed)}. "
+            + "T1 LiveTierInventoryTests pins that pairing.");
     }
 
     private async Task SendAsync(object message)

@@ -4,10 +4,12 @@ using Xunit;
 namespace OutlookAI.McpServer.Tests.T3;
 
 /// <summary>
-/// T3 CI-safe slice of the Phase-2 tool surface: everything here runs WITHOUT Outlook
-/// and without index content (structured error paths + environment-tolerant shapes), so
-/// CI exercises real tools/call round-trips for the new tools. The full golden-shape
-/// pass over live data is in <see cref="LiveMcpToolShapeTests"/> (Category=Live).
+/// T3 CI-safe slice of the Phase-2 tool surface: every call here is refused by argument
+/// validation BEFORE any COM work, so CI exercises real tools/call round-trips without
+/// Outlook and without index content. The outlook_health shape moved to
+/// <see cref="OutlookHealthLiveToolShapeTests"/> when it turned out that "environment
+/// tolerant" and "touches no mailbox" are different claims. The full golden-shape pass
+/// over live data is in <see cref="LiveMcpToolShapeTests"/> (Category=Live).
 /// </summary>
 public sealed class Phase2CiToolShapeTests
 {
@@ -45,28 +47,6 @@ public sealed class Phase2CiToolShapeTests
         JsonElement error = result.GetProperty("error");
         Assert.Equal("InvalidArgument", error.GetProperty("type").GetString());
         Assert.Contains("store", error.GetProperty("message").GetString(), StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task OutlookHealth_CarriesTheFreshnessBlock_WithOrWithoutAnIndex()
-    {
-        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync();
-
-        JsonElement result = await client.CallToolAsync("outlook_health", new { });
-
-        // The merged index_status content (D37): environment-tolerant - on CI the
-        // SystemIndex is unreachable and provider reports 'unavailable: ...' (advice is
-        // then optional); on a dev machine it reports OleDb/AdodbCom plus advice.
-        JsonElement index = result.GetProperty("index");
-        string provider = index.GetProperty("provider").GetString()!;
-        Assert.False(string.IsNullOrWhiteSpace(provider));
-        JsonElement outlook = result.GetProperty("outlook");
-        Assert.True(outlook.GetProperty("running").ValueKind is JsonValueKind.True or JsonValueKind.False);
-        Assert.True(outlook.TryGetProperty("installerMutexHeld", out _));
-        if (!provider.StartsWith("unavailable", StringComparison.Ordinal))
-        {
-            Assert.True(result.GetProperty("advice").GetArrayLength() >= 1);
-        }
     }
 
     [Fact]

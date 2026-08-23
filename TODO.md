@@ -1075,6 +1075,47 @@
       two of the four (`LiveStaleIndexRowTests`, `LiveManageSignatureTests.DefaultAssignment`) now
       refuse on a Production profile.
 
+- [ ] **Residual gaps left by the 2026-08-23 tier-3 classification pass.** `Category!=Live`
+      no longer reaches a mailbox: eleven T3 tests that called `outlook_health`,
+      `list_accounts` or `search` moved into `ComHostSupervisionLiveTests`,
+      `OutlookAvailabilityLiveTests` and `OutlookHealthLiveToolShapeTests`
+      (`Category=Live` + `LiveTier=Portable` + `Requires=OutlookInstance`), `McpStdioClient`
+      now refuses those three tools unless a test declares them, and
+      `T1/LiveTierInventoryTests.EveryStdioTestReachingOutlook_DeclaresIt` reads the
+      declaration back out of the IL. What that pass found and did NOT fix:
+
+  - [ ] **`list_accounts` starts Outlook, and nothing in the tool layer stops it.** The
+        supervisor's liveness verdict for `NotRunning` is `MayStart`, which calls
+        `BeginWarmUp` and connects to `Outlook.Application` - so on a machine with Outlook
+        installed but closed, a bare `list_accounts` launches it. `outlook_health` guards its
+        own probe with `if (outlookRunning)`; `list_accounts`, `list_folders`, `read`,
+        `search`'s sweep and every draft path do not. Correct for a shipped tool
+        (S7/D17 permits the cold start); a hazard for a test tier, and it was reachable from
+        the default run until this change. Decide whether the live tier should force
+        `allowStartingOutlook: false` for the T3 stdio tests, which would need a server-side
+        switch it does not have.
+  - [ ] **Four T3 tests pass while asserting almost nothing on a machine with no Outlook**,
+        each by an early `return` that is documented where it sits. They are not new and none
+        is wrong, but together they are why "the CI tier is green" said less than it looked:
+        `OutlookAvailabilityLiveTests.SearchAlwaysAnswers_AndSaysWhetherItIsComplete` (returns
+        the moment `search` reports an error, which on an indexless machine is every run),
+        `...ATransientOutlookState_AnswersFastAndCarriesRetryGuidance` (returns when Outlook
+        is healthy, keeping only the timing assertion),
+        `ComHostSupervisionLiveTests.NoComHostSurvivesTheServer` (returns when no COM host was
+        spawned, keeping only the stdin-close assertion) and
+        `OutlookHealthLiveToolShapeTests.OutlookHealth_CarriesTheFreshnessBlock_WithOrWithoutAnIndex`
+        (skips the advice assertion when the index provider is unavailable). All four are now
+        `Category=Live`, so the question is what the VM run should assert INSTEAD of returning.
+  - [ ] **The pin reads tool NAMES, not arguments.** `search`, `read`, `thread`, the draft
+        tools, `move_mail` and the show-me tools all have a refusal that fires before any COM
+        work, which is what the protocol-only half of T3 is built on - so they cannot be
+        blanket-guarded, and a future test that calls one with arguments that DO reach Outlook
+        would not be caught. A bounded exhaustive `search` is the realistic case.
+  - [ ] **`McpServer/README.md` said `LiveTier=Portable` was "19 of 115 methods".** The
+        measured figure after adding 11 methods is 31 of 127, so the documented number had
+        already drifted by one before this pass. Updated to the measured value; worth a
+        thought about whether that line should be generated rather than typed.
+
 - [ ] **Retire v3 planning ignores** — once the local v3 planning files (`v3.MD`, `Docs/v3-probes/`) are no longer needed:
   - [ ] remove the "v3 planning documents" section at the bottom of `.gitignore`
   - [ ] delete the local plan-doc backup folder (location documented in v3.MD §0.8 D16 on the machine that holds it)

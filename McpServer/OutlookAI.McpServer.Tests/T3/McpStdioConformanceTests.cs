@@ -12,7 +12,9 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// MCP JSON-RPC over stdio - initialize, notifications/initialized, tools/list, tools/call.
 /// The client is deliberately hand-rolled (not the SDK client) so the wire protocol itself
 /// is proven, independent of the ModelContextProtocol package on both ends. This test needs
-/// no Outlook and no index, so it runs in CI as well.
+/// no Outlook and no index, so it runs in CI as well - and since 2026-08-23 that is true
+/// rather than merely stated: its smoke tools/call was outlook_health, which attaches to a
+/// running Outlook and queries the Windows Search index.
 /// </summary>
 public sealed class McpStdioConformanceTests
 {
@@ -23,7 +25,7 @@ public sealed class McpStdioConformanceTests
         ?? throw new InvalidOperationException("AssemblyMetadata 'McpServerExePath' is missing.");
 
     [Fact]
-    public async Task Handshake_ListsTools_And_CallsOutlookHealth()
+    public async Task Handshake_ListsTools_And_CallsATool()
     {
         string exePath = ServerExePath;
         Assert.True(File.Exists(exePath), $"Server exe not found at '{exePath}' - build OutlookAI.McpServer first.");
@@ -92,28 +94,37 @@ public sealed class McpStdioConformanceTests
                 Assert.DoesNotContain(deleted, names);
             }
 
-            // 4. tools/call outlook_health - the smoke call (echo's old role; callable
-            // on any machine because health degrades instead of throwing, and it proves
-            // the server -> OutlookAI.Core chain since the report is built in Core).
+            // 4. tools/call list_signatures - the smoke call (echo's old role). It proves
+            // the server -> OutlookAI.Core chain over the wire, because the catalogue it
+            // returns is assembled in Core, and it is the cheapest tool that does so while
+            // touching NO mailbox: it reads the signature directory and the profile
+            // registry, and never starts or attaches to Outlook.
+            //
+            // It used to be outlook_health, which was the only step of this run that
+            // reached a real mailbox - health attaches to a running Outlook for its store
+            // probe and queries the Windows Search index per store. That call now lives in
+            // OutlookHealthLiveToolShapeTests (Category=Live). The four verbs are still
+            // proven end to end here; only the tool changed.
             JsonElement call = await RoundTripAsync(server, id: 3, method: "tools/call", parameters: new
             {
-                name = "outlook_health",
+                name = "list_signatures",
                 arguments = new { },
             }, cts.Token);
             JsonElement callResult = call.GetProperty("result");
             if (callResult.TryGetProperty("isError", out JsonElement isError))
             {
-                Assert.False(isError.ValueKind == JsonValueKind.True, "outlook_health tool call reported isError=true.");
+                Assert.False(isError.ValueKind == JsonValueKind.True, "list_signatures tool call reported isError=true.");
             }
 
             string? text = callResult.GetProperty("content").EnumerateArray()
                 .First(c => c.GetProperty("type").GetString() == "text")
                 .GetProperty("text").GetString();
             Assert.NotNull(text);
-            using (JsonDocument healthDoc = JsonDocument.Parse(text!))
+            using (JsonDocument signaturesDoc = JsonDocument.Parse(text!))
             {
-                string? status = healthDoc.RootElement.GetProperty("status").GetString();
-                Assert.True(status is "ok" or "degraded", $"unexpected outlook_health status '{status}'");
+                Assert.Equal(
+                    JsonValueKind.Array,
+                    signaturesDoc.RootElement.GetProperty("signatures").ValueKind);
             }
 
             // 5. Closing stdin must terminate the server - agent sessions must not leak processes.

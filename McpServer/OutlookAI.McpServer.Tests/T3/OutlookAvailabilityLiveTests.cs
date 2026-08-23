@@ -3,6 +3,7 @@ using System.Text.Json;
 
 using OutlookAI.Core.Com;
 using OutlookAI.Core.Services;
+using OutlookAI.McpServer.Tests.T2;
 
 using Xunit;
 
@@ -12,13 +13,33 @@ namespace OutlookAI.McpServer.Tests.T3;
 /// End-to-end guarantees about what happens when Outlook is not simply available.
 /// <para>
 /// Written as invariants rather than as assertions about one machine state, on purpose.
-/// These run in CI (no Outlook at all), on a developer box (Outlook healthy), and were
-/// developed against a genuinely wedged Outlook. A test that only holds in one of those
-/// would be worse than no test: it would go red for reasons that are not defects, which
-/// is how a suite stops being believed.
+/// These hold on a machine with no Outlook at all, on a developer box (Outlook healthy),
+/// and were developed against a genuinely wedged Outlook. A test that only holds in one of
+/// those would be worse than no test: it would go red for reasons that are not defects,
+/// which is how a suite stops being believed.
+/// </para>
+/// <para>
+/// <b>Why this is Category=Live, despite the file having been called ...CiTests.</b> Every
+/// test here calls a tool that reaches Outlook for every argument shape - <c>list_accounts</c>,
+/// <c>search</c>, <c>outlook_health</c> - and there is no way to write the invariant without
+/// one. On a machine that HAS Outlook, that is an attach to a real profile: the store list is
+/// enumerated over COM, the freshness sweep walks folders, and health queries the Windows
+/// Search index per store. Worse, <c>list_accounts</c> has no liveness escape: a machine with
+/// Outlook installed but closed gets it STARTED, because the supervisor's verdict for
+/// NotRunning is MayStart. None of that was declared while the tier ran under
+/// <c>Category!=Live</c>.
+/// </para>
+/// <para>
+/// <c>LiveTier=Portable</c>: any Outlook profile satisfies these, the dedicated test VM
+/// included. They read no mail and write nothing - what they need is an Outlook, which is
+/// what <c>Requires=OutlookInstance</c> says.
 /// </para>
 /// </summary>
-public sealed class OutlookAvailabilityCiTests
+[Collection(LiveCollections.McpToolShape)]
+[Trait("Category", "Live")]
+[Trait("LiveTier", "Portable")]
+[Trait("Requires", "OutlookInstance")]
+public sealed class OutlookAvailabilityLiveTests
 {
     /// <summary>Error types that mean "not now, try again" rather than "this went wrong".</summary>
     private static readonly string[] TransientTypes =
@@ -47,7 +68,8 @@ public sealed class OutlookAvailabilityCiTests
     [Fact]
     public async Task ATransientOutlookState_AnswersFastAndCarriesRetryGuidance()
     {
-        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(TimeSpan.FromSeconds(180));
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
+            TimeSpan.FromSeconds(180), environment: null, McpStdioClient.OutlookReachingToolsAllowed);
 
         (JsonElement result, TimeSpan elapsed) = await CallAsync(client, "list_accounts", new { });
 
@@ -107,7 +129,8 @@ public sealed class OutlookAvailabilityCiTests
         TimeSpan clientBudget = TimeSpan.FromMilliseconds(
             MailService.SearchBudgetMs + ComOperationBudgets.HandshakeBudgetMs);
 
-        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(clientBudget);
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
+            clientBudget, environment: null, McpStdioClient.OutlookReachingToolsAllowed);
 
         (JsonElement result, TimeSpan _) = await CallAsync(
             client, "search", new { query = "invoice", top = 3 });
@@ -197,7 +220,8 @@ public sealed class OutlookAvailabilityCiTests
         // request independently rediscovered an unavailable Outlook - measured at 120 s
         // EACH against a wedged one. Whatever the machine state, the fifth call must not
         // cost what the first did.
-        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(TimeSpan.FromSeconds(240));
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
+            TimeSpan.FromSeconds(240), environment: null, McpStdioClient.OutlookReachingToolsAllowed);
 
         TimeSpan worstAfterFirst = TimeSpan.Zero;
         for (int i = 0; i < 5; i++)
@@ -219,7 +243,8 @@ public sealed class OutlookAvailabilityCiTests
     {
         // outlook_health is asked precisely when things are wrong, so it is the one tool
         // that must never join the failure it is reporting on.
-        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(TimeSpan.FromSeconds(180));
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
+            TimeSpan.FromSeconds(180), environment: null, McpStdioClient.OutlookReachingToolsAllowed);
 
         (JsonElement result, TimeSpan elapsed) = await CallAsync(client, "outlook_health", new { });
 

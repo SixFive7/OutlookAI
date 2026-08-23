@@ -19,7 +19,7 @@ draft-create and draft-delete and nothing else (one tagged, never-displayed draf
 identity tests), and delegate/shared mailboxes and any store not in the settings at all get
 nothing, ever.
 
-**Most live tests cannot honestly run without a real profile.** Of 115 live test methods, 19
+**Most live tests cannot honestly run without a real profile.** Of 127 live test methods, 31
 are `LiveTier=Portable` and 96 are `LiveTier=ProfileBound`. That is not a policy choice; it is
 what the tests do. Drafts need a resolvable mail Account object, searches need the Windows
 Search index to have published the store, delegate tests need a delegate mailbox, and one
@@ -144,8 +144,23 @@ The classification is two traits on the test itself, not a list in a document th
 * `Requires` is the reason, and it carries weight. A `ProfileBound` test must name at least one
   capability a test machine cannot have - `SearchIndex`, `MailAccount`, `Transport`,
   `MultipleStores`, `DelegateStore`, `SmallHubStore`, `ProbePopulation` - and a `Portable` test
-  must name none of them. Two further values, `InteractiveDesktop` and `AddInRegistry`, describe
-  things a test machine CAN have and constrain only how the run is launched.
+  must name none of them. Three further values - `InteractiveDesktop`, `AddInRegistry` and
+  `OutlookInstance` - describe things a test machine CAN have and constrain only how the run is
+  launched.
+
+`OutlookInstance` arrived on 2026-08-23 with the tier-3 correction, and it is why the Portable
+subset grew by eleven. The T3 stdio classes spawn the real server, which spawns a COM host,
+which attaches to whatever Outlook is on the machine - so eleven tests that called
+`outlook_health`, `list_accounts` or `search` were reaching a real mailbox from a run filtered
+`Category!=Live`. They are now `ComHostSupervisionLiveTests`, `OutlookAvailabilityLiveTests` and
+`OutlookHealthLiveToolShapeTests`, all `Portable`: what they need is an Outlook, not this
+Outlook, so the VM runs them unchanged and they are among the easiest things it can prove.
+
+Two mechanisms keep that from drifting back, both described in `McpServer/README.md`:
+`McpStdioClient` refuses to send a `tools/call` for `outlook_health`, `list_accounts` or
+`list_folders` unless the test declares mailbox contact, and
+`LiveTierInventoryTests.EveryStdioTestReachingOutlook_DeclaresIt` reads that declaration back out
+of the compiled IL, so a new method in an old class is caught as well as a new class.
 
 `T1/LiveTierInventoryTests` enforces all of that in CI, together with the rule that every live
 class sits in a registered collection. So a live test added later cannot be left unclassified,
@@ -155,8 +170,8 @@ be named, and the reason is checked.
 To see the sets without running anything:
 
 ```
-dotnet test <csproj> --list-tests --filter "Category=Live"                     # 115
-dotnet test <csproj> --list-tests --filter "Category=Live&LiveTier=Portable"   # 19
+dotnet test <csproj> --list-tests --filter "Category=Live"                     # 127
+dotnet test <csproj> --list-tests --filter "Category=Live&LiveTier=Portable"   # 31
 ```
 
 `--list-tests` discovers and does not execute, so it is safe against any mailbox.
@@ -200,7 +215,7 @@ Four guards arm themselves; none needs remembering.
 
 ## 5. Running the whole tier against the maintainer's own profile before a release
 
-This is unchanged, and it is deliberately still available: the Portable subset is 19 tests of
+This is unchanged, and it is deliberately still available: the Portable subset is 31 tests of
 115, and the other 96 are the ones that exercise the index, the accounts, the delegate stores
 and the send path.
 
@@ -280,7 +295,7 @@ hundred items in a small store is the right one.
 
 ## 7. Known limits, honestly
 
-* **The Portable subset is 19 tests.** It contains the two acceptances the project is currently
+* **The Portable subset is 31 tests.** It contains the two acceptances the project is currently
   blocked on (`LiveTableSortProbeTests`, `LiveResumableScanTests`), the sweep-scope and
   sweep-cache behaviour, the exhaustive folder-bounded scan, the signature lifecycle and the
   show-me UI paths. It does not contain anything that proves the index, the accounts, the
