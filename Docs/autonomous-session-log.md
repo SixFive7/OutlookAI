@@ -46,24 +46,77 @@ branch into `master`, then run the standing verification command above.
 `state=all-finished` is the only safe signal to stop it, and `bgroot=` must be read before
 stopping because root-owned background jobs are never killed for you.
 
-## NINE OPEN QUESTIONS PUT TO THE MAINTAINER - 2026-08-24, UNANSWERED
+## THE ELEVEN QUESTIONS - ANSWERED 2026-08-24, except two
 
-Asked in full, each with a primer, directions and a recommendation. **Nothing below is being
-implemented until they are answered.** Recorded here so a compaction cannot lose them.
+Each was put with a primer, directions and a recommendation. **Answers below are the
+maintainer's and are binding.** Two remain open at the bottom.
 
-| # | Question | My recommendation |
+| # | Question | Answer |
 | --- | --- | --- |
-| 1 | The 16 mislabelled tier-3 files - 8 of 100 methods reach real Outlook, and the interim filter discards the other 92 locally | Move the 8 into the live tier, implemented as a file split |
-| 2 | How far to push `Requires` from class to method - all ~30 classes, or the 6 straddlers | The 6 straddlers now, the rest lazily as each is enabled |
-| 3 | Who reads the measurement table, now that release notes are ruled out | An agent reads it against the previous run; console print as the floor |
-| 4 | The four unmeasured atomicity residuals | Measure the RPC HRESULT question and the soft-delete survival; accept the other two as documented |
-| 5 | The tripwire's re-run bound | Two re-censuses ~30 s apart, then one bounded re-run of implicated tests |
-| 6 | `SweepBudgetMs` 180 s (derived while the sort was broken) and the census identity budget (16.9 s, one trial) | Ceilings now - 600 s and 120 s - narrowed later from VM data |
-| 7 | `ExhaustiveScanDeadlineMs` 615 s has never been measured on either machine | Run `corpus-measurement-plan.md` step 5 on the VM; read-only |
-| 8 | Four `Open - needs a decision` rows in `magic-numbers.md` | Fix the update-service backoff and the row constant; accept the tint; close the registry row |
-| 9 | **The leaked VM password** - public repo, 32 commits of history | **Rotate the credential.** History rewrite is optional hygiene, not the fix |
-| 10 | The freshness-sweep cache is unreachable for every UNSCOPED search - a cost regression since `c515565`, verified against history. Directions in `TODO.md` | Re-key the unscoped cache on the profile frontier |
-| 11 | Should `thread` apply a store scope it DERIVED? C5 is closed on reporting; the behaviour is untouched, so a member in a second account is still absent - now named rather than unmentioned. Directions in `TODO.md` | Stop scoping when the store was derived; keep it when the caller named one |
+| 3 | Who reads the measurement table, now release notes are ruled out | **Recommendation taken:** an agent reads this run against the last; the full table also prints to the console on every release run. Numbers stay local - `%LOCALAPPDATA%`, never the repo, never release notes |
+| 4 | The four unmeasured atomicity residuals | **(a) Measure all four on the VM** |
+| 5 | The tripwire's re-run bound | **Recommendation taken:** at most 2 re-censuses ~30 s apart, then at most 1 re-run of implicated tests, then fail loudly. Every retry must report itself |
+| 6 | `SweepBudgetMs` 180 s (derived while the sort was broken); census identity budget (16.9 s, one trial) | **Recommendation taken:** ceilings now - sweep **600 s**, census **120 s** - narrowed later from VM data. The whole budget ladder must move with them |
+| 7 | `ExhaustiveScanDeadlineMs` 615 s never measured | **(a) Run `corpus-measurement-plan.md` step 5 on the VM.** Read-only |
+| 9 | The leaked VM password | **(c) Rotate AND rewrite history**, and keep the new password on disk in this repo but gitignored |
+| 10 | The unscoped freshness-sweep cache can never hit | **Recommendation taken:** re-key on the profile frontier, keeping wall-clock for the fallback window |
+| 11 | Should `thread` apply a scope it DERIVED | **(b) Stop scoping when derived; keep it when the caller named one** |
+
+### Q9 - DONE except the history rewrite
+
+**Rotated and verified 2026-08-24.** New credential authenticates, old one rejected, written to
+`McpServer/OutlookAI.McpServer.Tests/live-fixtures/vm-credentials.json` (gitignored by
+`McpServer/**/live-fixtures/`, confirmed untracked). Password set to **never expire** - it had a
+42-day maximum age that would have silently broken the tier and recreated this problem.
+
+**How it had to be done, and the cost.** The polite route - changing the password AS the user,
+which preserves the DPAPI master key - was denied twice by the guest despite
+`UserMayChangePassword: True` and a zero minimum password age. The fallback was an admin reset,
+which **destroys that account's DPAPI master key**. Casualty check came back clean: no scheduled
+task stored that account's credentials, and the profile has PST stores with no mail accounts, so
+there was nothing to lose. **If a future rotation happens after the dummy mail account exists,
+this fallback is no longer free** - the account's saved password would be destroyed with it.
+
+**Also learned:** the VM already has TWO Outlook profiles, `Outlook` and `OutlookAITest`. The
+earlier record said one PST; the profile count was never written down.
+
+**HISTORY REWRITE STILL OUTSTANDING - deliberately deferred.** Four agents hold worktree branches
+based on current history; rewriting now would strand all four. Do it once they land. **Known
+cost when it happens:** every commit from `e1d8c6c` onward gets a new SHA, so SHAs cited in
+`CHANGELOG.md` and throughout `Docs/` stop resolving and must be fixed as part of the same pass.
+
+### Elevation: NEVER use `Start-Process -Verb RunAs`
+
+Measured 2026-08-24 by the maintainer noticing: **`-Verb RunAs` steals focus even with
+`-WindowStyle Hidden`**, because the UAC elevation itself takes the foreground. The earlier note
+in this file claiming nothing is drawn (on `ConsentPromptBehaviorAdmin=0`) was WRONG.
+
+**Use the windowless channel instead.** A scheduled task `\ClaudeElev` runs as SYSTEM in session 0
+- no desktop, so it can draw nothing. Contract: write `cmd.ps1` into
+`C:\ProgramData\ClaudeElev\jobs\<32-hex>\`, then `Start-ScheduledTask -TaskName ClaudeElev` (no
+argument - the runner sweeps pending job dirs), then poll for `exit.txt` and read `out.txt`.
+Verified working for Hyper-V and PowerShell Direct.
+
+## STILL OPEN - awaiting the maintainer
+
+**Q1+Q2, merged into one: collapse the test-tier vocabulary.** The maintainer's challenge was
+"what am I missing?" and the answer is: very little. `LiveTier` is DERIVABLE (a test is
+`ProfileBound` iff its `Requires` intersects the production-only set), so it is a computed value
+maintained by hand - the exact drift `LiveTierInventoryTests` exists to catch. And **6 of the 7
+production-only capabilities stop being production-only once the VM is built as decided**;
+only `DelegateStore` genuinely cannot be reproduced (delegate mailboxes are indexed WITHOUT folder
+nesting, which a local PST cannot fake). The three things the "everything on the VM except speed"
+model misses: **CI has no Outlook at all** (which is why `Category=Live` survives, independent of
+the VM); **`DelegateStore`**; and **real-data shape** (old items, odd encodings, unparseable
+attachments) which is a pre-release shakedown, not a category. Proposal: two axes
+(`Category=Live`, `Requires` per method), three buckets (CI / VM / production-only).
+**NOT DISPATCHED - needs a go.**
+
+**Q8, four `Open - needs a decision` rows in `magic-numbers.md`**, each put with a full primer:
+update-service due time and backoff (recommend: delay 30 s AND back off); the `0.22` hover tint
+(recommend: accept as a taste value and label it); the SettingsDialog row-3 triple (recommend: a
+named `PromptEditorRow` constant); the five registry mirrors (recommend: close as superseded).
+**NOT DISPATCHED - needs a go.**
 
 ## Everything outstanding, in one list
 
