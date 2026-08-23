@@ -1,0 +1,92 @@
+{
+  "_readme": "The test-VM parameter set, in one machine-readable place. Testbed/README.md is the prose entry point; this file is what scripts and .github/scripts/check-testbed-references.ps1 read. NEVER put a credential here - this repository is public. See Testbed/README.md section 'Credentials'.",
+
+  "schemaVersion": 1,
+
+  "corpus": {
+    "_note": "These four values deterministically reproduce the corpus every published sweep and frame measurement rests on. They are NOT an example: they were read out of the manifest header of the corpus that is on the VM, and re-derived on the host with 'corpus-plan', which reproduced the recorded per-folder and per-window counts exactly.",
+    "corpusId": "vm2",
+    "seed": 7777,
+    "anchor": "2026-08-19",
+    "anchorUtc": "2026-08-19T00:00:00Z",
+    "itemCount": 20000,
+    "shape": "default",
+    "shapeKey": "v1|vm2|7777|2026-08-19T00:00:00Z|s:short:45:200:1200|s:normal:33:1200:6000|s:long:15:6000:24000|s:quoted-thread:6:24000:96000|s:huge-thread:1:96000:640000|d:last-24h:2:0:1|d:1d-7d:6:1:7|d:7d-60d:17:7:60|d:60d-1y:30:60:365|d:1y-4y:45:365:1460|f:6:55|f:5:25|f:3:12|f:23:8",
+    "storeDisplayName": "Outlook Data File",
+    "storeFilePath": "C:\\Users\\vmadmin\\Documents\\Outlook Files\\Outlook Data File - OutlookAITest.pst",
+    "placementMethod": "DraftsThenMoveWithSentFlag",
+    "dateWriteMethod": "PropertyAccessorDates",
+    "manifestFileName": "corpus-vm2.jsonl",
+    "provenance": "VERIFIED 2026-08-24. Header line of corpus-vm2.jsonl recovered from the guest; 'corpus-plan --corpus-id vm2 --seed 7777 --anchor 2026-08-19 --count 20000' on the host reproduced Inbox=10,912 / Sent Items=4,964 / Deleted Items=2,461 / Junk Email=1,663 and 7d=1,612, which are the counts Docs/magic-numbers.md and Docs/autonomous-session-log.md quote."
+  },
+
+  "expectedPlan": {
+    "_note": "What 'corpus-plan' prints for the parameters above. Committed so a rebuilder can tell a correct rebuild from a subtly different one without having the old store to compare against. check-testbed-references.ps1 does not recompute these - running the tool needs a toolchain - but Testbed/guest/Build-Corpus.ps1 prints them beside the live plan.",
+    "bodyBytesTotal": 225282619,
+    "bodyBytesMean": 11264,
+    "bodiesOver24KB": 1428,
+    "bodiesOver96KB": 201,
+    "bodiesOverSweepCap": 61,
+    "receivedRangeUtc": [ "2022-08-20T08:14:56Z", "2026-08-18T23:48:36Z" ],
+    "perFolder": { "Inbox": 10912, "Sent Items": 4964, "Deleted Items": 2461, "Junk Email": 1663 },
+    "perSizeClass": { "short": 9007, "normal": 6515, "long": 3050, "quoted-thread": 1227, "huge-thread": 201 },
+    "perDateBand": { "last-24h": 423, "1d-7d": 1189, "7d-60d": 3417, "60d-1y": 6012, "1y-4y": 8959 },
+    "unread": 2761,
+    "selectedByWindowDays": { "1": 423, "7": 1612, "30": 3093, "60": 5029, "90": 5647, "365": 11041 }
+  },
+
+  "buildCost": {
+    "_note": "What building this corpus actually cost on the VM, from the build log recovered with the manifest. The plan is deterministic, so a rebuild should land here again.",
+    "itemsPerSecond": 24.8,
+    "elapsed": "00:13:25",
+    "bodyBytes": 225282619,
+    "created": 20000,
+    "failed": 0,
+    "measuredUtc": "2026-08-19",
+    "note": "24.8 items/s is the WITH-MOVE figure: DraftsThenMoveWithSentFlag writes every item twice. The 50.9 items/s quoted elsewhere is the no-move rung."
+  },
+
+  "guest": {
+    "_note": "Layout of the working directory on the guest. None of this was written down anywhere before 2026-08-24; it was read off the guest itself.",
+    "workRoot": "C:\\OutlookAI-Q5",
+    "serverExe": "C:\\OutlookAI-Q5\\server\\OutlookAI.McpServer.exe",
+    "toolsExe": "C:\\OutlookAI-Q5\\tools\\OutlookAI.RemediationTools.exe",
+    "manifestPath": "C:\\OutlookAI-Q5\\corpus-vm2.jsonl",
+    "measureOutput": "C:\\OutlookAI-Q5\\measure.jsonl",
+    "stagedPayloads": [ "C:\\OutlookAI-Q5\\McpServer.zip", "C:\\OutlookAI-Q5\\Tools.zip" ],
+    "scheduledTasks": { "measure": "OutlookAI-Measure" },
+    "autoLogonUser": "vmadmin",
+    "hasDotnetSdk": false,
+    "dotnetRuntimeVersion": "10.0.10",
+    "shell": "Windows PowerShell 5.1",
+    "provenance": "Reported by the coordinator on 2026-08-24 from a direct read of the guest. The .NET runtime version, the absence of an SDK and AutoAdminLogon=1 for 'vmadmin' were verified there; this agent could not inspect the VM and did not."
+  },
+
+  "vmName": "OutlookAI-TestVM",
+
+  "checkpoints": [
+    "CP-01-WIN-CLEAN",
+    "CP-02-INSTALLER-STAGED",
+    "CP-03-OUTLOOKAI-INSTALLED",
+    "CP-04-OFFICE-GOLD",
+    "CP-05-ADDIN-TRUSTED",
+    "CP-06-PRE-CORPUS"
+  ],
+
+  "outlookProfiles": {
+    "_note": "Names only. Which is default, how they were created and how the switch is automated are all still unrecorded - see Testbed/README.md, 'What is still unknown'.",
+    "known": [ "Outlook", "OutlookAITest" ],
+    "provenance": "Docs/autonomous-session-log.md, 2026-08-24: 'the VM already has TWO Outlook profiles, Outlook and OutlookAITest'. The corpus PST's file name ends '- OutlookAITest.pst', which is Outlook's own naming for the profile that created it."
+  },
+
+  "unrecorded": [
+    "Hyper-V generation, Secure Boot, TPM, vCPU, RAM, disk size, checkpoint type",
+    "Windows edition, build, ISO, licensing, computer name, Defender exclusions, power policy",
+    "Office version, channel, bitness, install method, first-run-wizard suppression",
+    "The second Windows account (the unindexed one) - whether it exists yet, and its name",
+    "Which Outlook profile is default, and how the switch between them is automated",
+    "Whether the three-store layout has been built at all, or whether the VM still has one PST",
+    "The mail sink: whether it is installed, which build, and which ports",
+    "How results leave the guest today (the recovery on 2026-08-24 was done by hand)"
+  ]
+}

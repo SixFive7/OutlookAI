@@ -1,0 +1,39 @@
+{
+  "_what": "Example of McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json, which is gitignored and must stay that way - it names real stores and this repository is public. Copy this file there and replace every value. Keys are matched case-insensitively and unknown keys are ignored, so the _-prefixed notes below are safe to keep or delete.",
+
+  "_shape": "This is the PORTABLE (test-VM) shape. A Production profile additionally REQUIRES 'probeTerm' (a word proven to hit that machine's search index) and a complete 'subjectOnlyProbe' block { storeDisplayName, folderPath, subjectTerm, senderFragment }, and may carry an optional 'delegateNestedFolderProbe' block { storeDisplayName, folderName, comParentPath }. They are left out here on purpose: a test machine has no such populations, and inventing plausible values is worse than omitting them because the failures then land far from the mistake.",
+
+  "_partialBlocksAreRejected": "corpus, mailSink and subjectOnlyProbe are all-or-nothing. A block with three fields out of four reads as configured and behaves as absent, which is exactly the silence these checks exist to remove - so the loader throws instead.",
+
+  "machineProfile": "Portable",
+
+  "testHubStoreDisplayName": "test@vm.invalid",
+
+  "expectedStoreDisplayNames": [
+    "test@vm.invalid",
+    "Corpus A",
+    "OutlookAI Bystander"
+  ],
+
+  "expectedDelegateStoreDisplayNames": [],
+
+  "corpus": {
+    "_note": "The four identity values must match Testbed/testbed.json. manifestPath is machine-local and is the ONLY thing that can tear the corpus down - keep a copy outside the guest.",
+    "storeDisplayName": "Corpus A",
+    "manifestPath": "C:\\OutlookAI-Q5\\corpus-vm2.jsonl",
+    "corpusId": "vm2",
+    "seed": 7777,
+    "anchorUtc": "2026-08-19T00:00:00Z",
+    "itemCount": 20000,
+    "windowDays": [ 7, 30, 60 ]
+  },
+
+  "mailSink": {
+    "_note": "Loopback submission and retrieval. Absent means this machine has real transport. Ports are whatever the sink was configured with; nothing needs the well-known numbers. See Testbed/README.md question 11 before assuming the retrieval side is POP3.",
+    "submitHost": "127.0.0.1",
+    "submitPort": 25,
+    "retrieveHost": "127.0.0.1",
+    "retrievePort": 110,
+    "connectTimeoutMs": 2000
+  }
+}
