@@ -286,7 +286,7 @@ namespace OutlookAI.TaskPane
                 return;
 
             Color resting = RestingFill(face);
-            Color fill = index == _hot ? Blend(resting, ThemeService.Accent, 0.22) : resting;
+            Color fill = index == _hot ? Blend(resting, ThemeService.Accent, HoverAccentBlend) : resting;
             using (var brush = new SolidBrush(fill))
                 g.FillRectangle(brush, tab);
             using (var pen = new Pen(edge))
@@ -347,6 +347,30 @@ namespace OutlookAI.TaskPane
                 | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis
                 | TextFormatFlags.NoPrefix);
         }
+
+        /// <summary>
+        /// HOW MUCH ACCENT A HOVERED UNSELECTED TAB PICKS UP - AND IT IS A TASTE VALUE, CHOSEN
+        /// BY EYE. That is the whole justification, and saying so is the point of this comment.
+        ///
+        /// <para>
+        /// Its sibling <see cref="RestingFill"/> carries measured colour distances because it
+        /// had to: that one answers a question with a right answer - "is this tab visibly
+        /// behind the page in BOTH themes?" - and the light palette's ten-unit gap is what
+        /// forced the number. Hover has no such question. It has to read as a response to the
+        /// pointer and it must not read as selection, and everything between those two bounds
+        /// is preference. 0.22 was picked inside that range and then looked at.
+        /// </para>
+        ///
+        /// <para>
+        /// So do not go looking for the derivation, and do not manufacture one. A measurement
+        /// taken after the fact would produce a number that LOOKS derived while still being the
+        /// number somebody chose, which is worse than this comment: the next reader would
+        /// believe it, and would then be afraid to change a value that is theirs to change.
+        /// Changing it changes what the product looks like; that is a decision for whoever
+        /// owns the look, not an audit finding.
+        /// </para>
+        /// </summary>
+        private const double HoverAccentBlend = 0.22;
 
         /// <summary>
         /// What an unselected tab is filled with: the button face pushed towards the border
