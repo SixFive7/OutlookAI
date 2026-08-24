@@ -134,11 +134,15 @@ public class CorpusGeneratorTests
     }
 
     [Fact]
-    public void SubjectTag_IsTheProjectWideMailboxSafetyTag()
+    public void SubjectTag_IsNotTheLiveTiersArtifactTag()
     {
-        // Corpus items must be findable by the project's existing tested purge, so the tag
-        // is the same constant rather than a copy of its text.
-        Assert.Equal(RemediationRules.SubjectTag, CorpusPlan.SubjectTag);
+        // The inverse of what this file used to assert. They WERE the same constant, so that
+        // the project's tested artifact purge could find corpus items - and that put ~21 000
+        // corpus items one artifact sweep away from deletion. T1's CorpusTagSeparationTests
+        // owns the full invariant, in both directions and on the bracket-free fragments the
+        // sweep actually matches; this is the one-line version, here because this is the file
+        // anyone editing the generator's tags is already reading.
+        Assert.NotEqual(RemediationRules.SubjectTag, CorpusPlan.SubjectTag);
     }
 
     // ----------------------------------------------------------- size distribution

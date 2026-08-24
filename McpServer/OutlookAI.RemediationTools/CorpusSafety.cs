@@ -287,8 +287,15 @@ public static class CorpusSafety
     /// <summary>
     /// The ONLY sanctioned delete predicate. True when both independent conditions hold:
     /// the EntryID is one this run's manifest recorded creating, AND the subject just
-    /// re-read from the item carries the mailbox-safety tag and this corpus's tag,
-    /// matched ordinally.
+    /// re-read from the item carries <see cref="CorpusPlan.SubjectTag"/> and this corpus's
+    /// per-item tag, matched ordinally.
+    /// <para>
+    /// The tag half is the CORPUS tag, which since 2026-08-25 is deliberately not the live
+    /// tier's artifact tag: an artifact sweep must not be able to select a corpus item, and a
+    /// corpus teardown must not be able to select an artifact. Rule 2's requirement - two
+    /// independent keys, one of them an ordinal tag match - is unchanged; only which tag is
+    /// matched. A subject carrying the OLD corpus tag returns false here, deliberately.
+    /// </para>
     /// <para>
     /// Both are required because each covers the other's failure. An EntryID alone would
     /// delete whatever now lives at a recycled or mistyped id; a tag alone is a content

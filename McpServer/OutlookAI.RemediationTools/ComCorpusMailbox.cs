@@ -97,8 +97,20 @@ public static class ComCorpusMailbox
     /// <param name="Failed">Deletes that threw.</param>
     /// <param name="FoldersRemoved">Builder-created folders removed.</param>
     /// <param name="RemainingInStore">Corpus items a final read-only scan still found.</param>
+    /// <param name="LegacyTagged">
+    /// Items found carrying the OLD corpus tag. Non-zero means NOTHING was attempted: the
+    /// teardown refuses up front rather than walking 20 000 ids to refuse each one separately
+    /// and report it as a rule failure.
+    /// </param>
     public sealed record TeardownOutcome(
-        int Considered, int Deleted, int RefusedByRule, int AlreadyGone, int Failed, int FoldersRemoved, int RemainingInStore);
+        int Considered,
+        int Deleted,
+        int RefusedByRule,
+        int AlreadyGone,
+        int Failed,
+        int FoldersRemoved,
+        int RemainingInStore,
+        int LegacyTagged);
 
     /// <summary>One corpus item found by a read-only scan.</summary>
     /// <param name="Ordinal">Ordinal parsed out of the subject.</param>
@@ -110,6 +122,19 @@ public static class ComCorpusMailbox
     /// folder ids.
     /// </param>
     public sealed record ScanRow(int Ordinal, string EntryId, int FolderId);
+
+    /// <summary>
+    /// What one read-only scan of a store found: the items this build owns, and how many it
+    /// found carrying the OLD corpus tag.
+    /// </summary>
+    /// <param name="Items">Items whose subject parses as the current corpus's.</param>
+    /// <param name="LegacyTagged">
+    /// Items carrying <see cref="CorpusPlan.LegacySubjectTag"/> and this corpus's per-item
+    /// tag - a corpus built before 2026-08-25. They are COUNTED and never returned as items,
+    /// because nothing in this build may delete or rewrite them; the count is what turns
+    /// "this tool cannot address that corpus" from silence into a sentence.
+    /// </param>
+    public sealed record ScanResult(IReadOnlyList<ScanRow> Items, int LegacyTagged);
 
     /// <summary>
     /// Reads the four facts <see cref="CorpusSafety.EvaluateStore"/> judges a store on.
@@ -917,6 +942,18 @@ public static class ComCorpusMailbox
                         ?? throw new InvalidOperationException("Store not found for the corpus teardown.");
                     string storeId = (string)store.StoreID;
 
+                    // Phase 0: refuse a corpus this build cannot address. An old-tagged corpus
+                    // fails the subject half of the two-key rule on every single item, so
+                    // proceeding would walk the whole manifest, refuse 20 000 times, and
+                    // report it as "refused by rule" - a number that also means "the ids were
+                    // wrong". One count and one sentence instead.
+                    ScanResult preflight = ScanStore(store!, manifest, corpusId);
+                    if (preflight.LegacyTagged > 0)
+                    {
+                        return new TeardownOutcome(
+                            0, 0, 0, 0, 0, 0, preflight.Items.Count, preflight.LegacyTagged);
+                    }
+
                     // Phase 1: the manifest's own ids.
                     foreach (string entryId in manifestIds)
                     {
@@ -935,7 +972,7 @@ public static class ComCorpusMailbox
                     // manifest line left behind.
                     for (int pass = 0; pass < TeardownMaxPasses; pass++)
                     {
-                        List<ScanRow> found = ScanStore(store!, manifest, corpusId);
+                        IReadOnlyList<ScanRow> found = ScanStore(store!, manifest, corpusId).Items;
                         if (found.Count == 0)
                         {
                             break;
@@ -957,7 +994,7 @@ public static class ComCorpusMailbox
                     }
 
                     foldersRemoved = RemoveCreatedFolders(ns!, storeId, manifest);
-                    remaining = ScanStore(store!, manifest, corpusId).Count;
+                    remaining = ScanStore(store!, manifest, corpusId).Items.Count;
                 }
                 finally
                 {
@@ -967,17 +1004,19 @@ public static class ComCorpusMailbox
                     Release(app);
                 }
 
-                return new TeardownOutcome(considered, deleted, refused, gone, failed, foldersRemoved, remaining);
+                return new TeardownOutcome(
+                    considered, deleted, refused, gone, failed, foldersRemoved, remaining, 0);
             },
             timeout: null);
     }
 
     /// <summary>
     /// READ-ONLY: every item in the store whose subject parses as belonging to
-    /// <paramref name="corpusId"/>. This is what <c>corpus-reindex</c> reports and what the
-    /// teardown's second phase consumes; it never deletes anything itself.
+    /// <paramref name="corpusId"/>, plus a count of the ones carrying the OLD corpus tag.
+    /// This is what <c>corpus-reindex</c> reports and what the teardown's second phase
+    /// consumes; it never deletes anything itself.
     /// </summary>
-    public static IReadOnlyList<ScanRow> Scan(string storeDisplayName, string corpusId, CorpusManifest? manifest)
+    public static ScanResult Scan(string storeDisplayName, string corpusId, CorpusManifest? manifest)
     {
         return RunSta(
             () =>
@@ -992,7 +1031,7 @@ public static class ComCorpusMailbox
                     stores = ns.Stores;
                     store = FindStore(stores, storeDisplayName)
                         ?? throw new InvalidOperationException("Store not found for the corpus scan.");
-                    return (IReadOnlyList<ScanRow>)ScanStore(store!, manifest, corpusId);
+                    return ScanStore(store!, manifest, corpusId);
                 }
                 finally
                 {
@@ -1049,9 +1088,10 @@ public static class ComCorpusMailbox
         }
     }
 
-    private static List<ScanRow> ScanStore(dynamic store, CorpusManifest? manifest, string corpusId)
+    private static ScanResult ScanStore(dynamic store, CorpusManifest? manifest, string corpusId)
     {
         var rows = new List<ScanRow>();
+        int legacyTagged = 0;
         foreach (int folderId in ScanFolderIds)
         {
             dynamic? folder = null;
@@ -1066,7 +1106,7 @@ public static class ComCorpusMailbox
                     continue;
                 }
 
-                CollectCorpusItems(folder!, folderId, corpusId, rows);
+                CollectCorpusItems(folder!, folderId, corpusId, rows, ref legacyTagged);
             }
             finally
             {
@@ -1083,7 +1123,7 @@ public static class ComCorpusMailbox
                 // The folder id the substitute STANDS IN FOR, not 0. A census compares where
                 // an item is against where the plan puts it, and a Junk item found in the
                 // folder created because the PST has no Junk Email is where it belongs.
-                CollectCorpusItems(folder!, created.FolderId, corpusId, rows);
+                CollectCorpusItems(folder!, created.FolderId, corpusId, rows, ref legacyTagged);
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
@@ -1095,18 +1135,22 @@ public static class ComCorpusMailbox
             }
         }
 
-        return rows;
+        return new ScanResult(rows, legacyTagged);
     }
 
     /// <summary>
-    /// Adds every item of one folder whose subject parses as this corpus's. A
-    /// <c>GetTable</c> LIKE prefilter narrows the walk - the bracket-free fragment is a
-    /// SUPERSET of real matches by construction - and the authoritative decision is always
-    /// the ordinal parse on the row's own subject.
+    /// Adds every item of one folder whose subject parses as this corpus's, and counts the
+    /// ones carrying the OLD corpus tag. A <c>GetTable</c> LIKE prefilter narrows the walk -
+    /// the bracket-free fragment is a SUPERSET of real matches by construction, and it is a
+    /// superset of the legacy generation too, because the per-item tag it matches never
+    /// changed - and the authoritative decision is always the ordinal parse on the row's own
+    /// subject.
     /// </summary>
-    private static void CollectCorpusItems(dynamic folder, int folderId, string corpusId, List<ScanRow> rows)
+    private static void CollectCorpusItems(
+        dynamic folder, int folderId, string corpusId, List<ScanRow> rows, ref int legacyTagged)
     {
         dynamic? table = null;
+        int legacyHere = 0;
         try
         {
             table = folder.GetTable(
@@ -1120,9 +1164,14 @@ public static class ComCorpusMailbox
                     object[] values = (object[])row.GetValues();
                     string? entryId = values.Length > 0 ? values[0] as string : null;
                     string? subject = values.Length > 1 ? values[1] as string : null;
-                    if (entryId != null && CorpusPlan.TryParseOrdinal(subject, corpusId, out int ordinal))
+                    CorpusSubjectKind kind = CorpusPlan.ClassifySubject(subject, corpusId, out int ordinal);
+                    if (entryId != null && kind == CorpusSubjectKind.Current)
                     {
                         rows.Add(new ScanRow(ordinal, entryId, folderId));
+                    }
+                    else if (kind == CorpusSubjectKind.Legacy)
+                    {
+                        legacyHere++;
                     }
                 }
                 finally
@@ -1138,6 +1187,9 @@ public static class ComCorpusMailbox
         }
         finally
         {
+            // Added even on the COM-failure path: a partial walk that saw legacy items still
+            // knows something the caller must be told, and dropping it would report zero.
+            legacyTagged += legacyHere;
             Release(table);
         }
     }

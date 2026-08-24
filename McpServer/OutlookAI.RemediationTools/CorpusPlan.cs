@@ -158,6 +158,27 @@ public sealed record CorpusItemSpec(
     string DateBand);
 
 /// <summary>
+/// Which corpus generation a subject belongs to. Three values, not two: "an item of an older
+/// corpus" is a different fact from "not a corpus item", and collapsing them is what would let
+/// an old-tagged corpus be quietly unmatched instead of reported.
+/// </summary>
+public enum CorpusSubjectKind
+{
+    /// <summary>Not an item of the corpus being asked about.</summary>
+    NotCorpus = 0,
+
+    /// <summary>An item carrying <see cref="CorpusPlan.SubjectTag"/> - one this build owns.</summary>
+    Current = 1,
+
+    /// <summary>
+    /// An item carrying <see cref="CorpusPlan.LegacySubjectTag"/>: built before 2026-08-25,
+    /// when the corpus shared the live tier's artifact tag. Recognised so it can be REPORTED;
+    /// never deletable or rewritable by this build.
+    /// </summary>
+    Legacy = 2,
+}
+
+/// <summary>
 /// The pure half of the corpus generator: given a seed and a shape it says exactly what
 /// item number N is, with no clock, no COM and no I/O. Everything the T1 tier can pin
 /// about the corpus lives here; <see cref="ComCorpusMailbox"/> only carries these
@@ -174,12 +195,50 @@ public sealed record CorpusItemSpec(
 public sealed class CorpusPlan
 {
     /// <summary>
-    /// The mailbox-safety tag every test-created item carries (CLAUDE.md mailbox rule 2).
-    /// Corpus items carry it as well as their own tag, so the project's existing tested
-    /// purge can still find them if a corpus is ever built somewhere it should not have
-    /// been. It is the same constant the remediation console matches, deliberately.
+    /// The tag every corpus item carries, and it is deliberately NOT
+    /// <see cref="RemediationRules.SubjectTag"/>.
+    /// <para>
+    /// <b>Why they differ.</b> They used to be the same string, which put the whole
+    /// measurement corpus one sweep away from deletion. The live tier's post-run artifact
+    /// sweep walks every store in <c>expectedStoreDisplayNames</c>, counts subjects carrying
+    /// the artifact tag and deletes what it finds; its folder set covers four of the corpus's
+    /// five populated folders, so on the documented layout that is ~21 000 items removed
+    /// through the tested helpers, inside the safety rules, with nothing to stop it.
+    /// Declaring the corpus store a bystander turned that into a write-guard refusal - safe,
+    /// but wrong, because a run whose normal outcome is a refusal gets muted. A separate tag
+    /// makes a corpus item unable to match an artifact sweep BY CONSTRUCTION rather than by
+    /// configuration.
+    /// </para>
+    /// <para>
+    /// The property that has to hold is on the bracket-free FRAGMENT, not on the bracketed
+    /// tag: the sweep counts with a DASL <c>LIKE '%OutlookAI-McpTest%'</c> prefilter and then
+    /// a <c>Contains</c> on that same bracket-free text. So no corpus subject may contain
+    /// <see cref="RemediationRules.DaslCountFragment"/> anywhere, and no artifact subject may
+    /// contain <see cref="DaslCountFragment"/>. T1's <c>CorpusTagSeparationTests</c> holds
+    /// both directions; a comment could not.
+    /// </para>
+    /// <para>
+    /// A corpus item is still deleted by the two independent keys CLAUDE.md mailbox-safety
+    /// rule 2 requires - an EntryID this run's manifest recorded AND an ordinal tag match on
+    /// the re-read subject. Only WHICH tag is matched changed.
+    /// </para>
     /// </summary>
-    public const string SubjectTag = RemediationRules.SubjectTag;
+    public const string SubjectTag = "[OutlookAI-Corpus]";
+
+    /// <summary>
+    /// The tag corpora built before 2026-08-25 carry in place of <see cref="SubjectTag"/>. A
+    /// frozen historical literal rather than a reference to
+    /// <see cref="RemediationRules.SubjectTag"/>: it records what is sitting in an old PST and
+    /// must not move if the artifact tag ever does.
+    /// <para>
+    /// It exists so an old corpus is RECOGNISED rather than silently unmatched. Without it
+    /// every tag-matching path just fails to find those items - a census reports every ordinal
+    /// missing, a teardown refuses each id one at a time - and neither says the real reason.
+    /// <see cref="ClassifySubject"/> names the case; <see cref="TryParseOrdinal"/>, and
+    /// therefore every delete and rewrite predicate, still says NO to it.
+    /// </para>
+    /// </summary>
+    public const string LegacySubjectTag = "[OutlookAI-McpTest]";
 
     /// <summary>Opening delimiter of the corpus tag: <c>[OutlookAI-Corpus:&lt;id&gt;#&lt;ordinal&gt;]</c>.</summary>
     public const string CorpusTagOpen = "[OutlookAI-Corpus:";
@@ -338,10 +397,13 @@ public sealed class CorpusPlan
     }
 
     /// <summary>
-    /// The subject of item <paramref name="ordinal"/>: the mailbox-safety tag, then the
-    /// corpus tag carrying the id and the zero-padded ordinal, then readable words. Both
-    /// tags come first so an ordinal Contains still finds them if a mail client later
-    /// prepends its own "RE:".
+    /// The subject of item <paramref name="ordinal"/>: the corpus tag, then the per-item tag
+    /// carrying the id and the zero-padded ordinal, then readable words. Both tags come first
+    /// so an ordinal Contains still finds them if a mail client later prepends its own "RE:".
+    /// <para>
+    /// Neither tag contains <see cref="RemediationRules.DaslCountFragment"/>, which is what
+    /// keeps a corpus item invisible to the live tier's artifact sweep.
+    /// </para>
     /// </summary>
     public string BuildSubject(int ordinal)
     {
@@ -369,37 +431,68 @@ public sealed class CorpusPlan
     /// any kind - this is the parse a teardown leans on, and the incident this codebase
     /// carries scars from was caused by treating a subject as a wildcard pattern where
     /// the tag's own brackets became a character class. Returns false unless the subject
-    /// carries the mailbox-safety tag AND a corpus tag whose id matches exactly.
+    /// carries the CURRENT corpus tag AND a per-item tag whose id matches exactly.
+    /// <para>
+    /// A subject carrying <see cref="LegacySubjectTag"/> instead returns FALSE here, which is
+    /// what keeps every delete and rewrite predicate closed against a corpus this build cannot
+    /// prove it understands. Use <see cref="ClassifySubject"/> when the caller needs to tell
+    /// "not a corpus item" from "an item of an older corpus".
+    /// </para>
     /// </summary>
     public static bool TryParseOrdinal(string? subject, string? corpusId, out int ordinal)
+        => ClassifySubject(subject, corpusId, out ordinal) == CorpusSubjectKind.Current;
+
+    /// <summary>
+    /// Says which corpus generation a subject belongs to, and reads its ordinal out either
+    /// way. Ordinal string operations only - no pattern matching of any kind.
+    /// <para>
+    /// The per-item tag is unchanged across the generations, so the fixed tag in front of it
+    /// is what tells them apart: <see cref="SubjectTag"/> for a corpus this build owns,
+    /// <see cref="LegacySubjectTag"/> for one built before 2026-08-25. A subject somehow
+    /// carrying both is CURRENT - the current tag is the one this build wrote, and a later
+    /// arrival cannot take that away.
+    /// </para>
+    /// </summary>
+    /// <param name="subject">The subject as just re-read from the item.</param>
+    /// <param name="corpusId">The corpus whose items are being looked for.</param>
+    /// <param name="ordinal">The parsed ordinal for both <see cref="CorpusSubjectKind.Current"/> and <see cref="CorpusSubjectKind.Legacy"/>; 0 otherwise.</param>
+    public static CorpusSubjectKind ClassifySubject(string? subject, string? corpusId, out int ordinal)
     {
         ordinal = 0;
         if (subject == null || string.IsNullOrEmpty(corpusId))
         {
-            return false;
+            return CorpusSubjectKind.NotCorpus;
         }
 
-        if (!subject.Contains(SubjectTag, StringComparison.Ordinal))
+        bool current = subject.Contains(SubjectTag, StringComparison.Ordinal);
+        bool legacy = !current && subject.Contains(LegacySubjectTag, StringComparison.Ordinal);
+        if (!current && !legacy)
         {
-            return false;
+            return CorpusSubjectKind.NotCorpus;
         }
 
         string open = CorpusTagOpen + corpusId + "#";
         int start = subject.IndexOf(open, StringComparison.Ordinal);
         if (start < 0)
         {
-            return false;
+            return CorpusSubjectKind.NotCorpus;
         }
 
         int digitsStart = start + open.Length;
         int close = subject.IndexOf(']', digitsStart);
         if (close <= digitsStart)
         {
-            return false;
+            return CorpusSubjectKind.NotCorpus;
         }
 
         string digits = subject.Substring(digitsStart, close - digitsStart);
-        return int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out ordinal) && ordinal >= 1;
+        if (!int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out ordinal) || ordinal < 1)
+        {
+            ordinal = 0;
+            return CorpusSubjectKind.NotCorpus;
+        }
+
+        return current ? CorpusSubjectKind.Current : CorpusSubjectKind.Legacy;
     }
 
     /// <summary>

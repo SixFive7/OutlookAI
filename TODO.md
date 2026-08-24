@@ -708,38 +708,129 @@
   (1) then (2) is the recommendation - (1) is the one that cannot be forgotten, since it is in
   the test.
 
-- [ ] **The post-run artifact sweep would delete a corpus store's entire contents, and only the
-  write allowlist stops it.** Found 2026-08-24 by reading, not by running.
+- [x] **DONE (2026-08-25) - the measurement corpus has its OWN subject tag, so an artifact sweep
+  cannot match it by construction.** The maintainer chose option (3) below. Found 2026-08-24 by
+  reading, not by running.
 
-  `LiveDraftTests.ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain` and
+  **The defect.** `LiveDraftTests.ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain` and
   `LiveSendTests.ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain` iterate EVERY
   `expectedStoreDisplayNames` entry, count subjects containing `OutlookAI-McpTest`, and call
-  `DeleteTaggedArtifactsUntilStableZero` on anything above zero. `CorpusPlan.BuildSubject` puts
+  `DeleteTaggedArtifactsUntilStableZero` on anything above zero. `CorpusPlan.BuildSubject` put
   `[OutlookAI-McpTest]` at the front of every corpus subject, and the sweep's folder set (Drafts,
   Inbox, Sent, Outbox, Deleted, sync issues) covers four of the corpus's five populated folders.
   On the documented layout that is ~21,000 items in `Corpus A`, and before the bystander
-  declaration the allowlist granted `Delete` on it.
+  declaration the allowlist granted `Delete` on it. Declaring the corpus store fixed the deletion
+  and left the sweep FAILING on that store instead, which is safe but wrong: a store deliberately
+  full of tagged items can never satisfy "zero tagged artifacts", and a run whose normal outcome
+  is a refusal gets muted.
 
-  Declaring the corpus store fixes the deletion, and leaves the sweep FAILING on that store
-  instead - `DeleteTaggedArtifacts` throws at the write guard. A red test is the right outcome
-  versus a destroyed corpus, but it is not a correct one: a store deliberately full of tagged
-  items can never satisfy "zero tagged artifacts".
+  **What shipped.** `CorpusPlan.SubjectTag` is now `[OutlookAI-Corpus]`, a literal of its own
+  rather than `RemediationRules.SubjectTag`. Corpus subjects read
+  `[OutlookAI-Corpus][OutlookAI-Corpus:<id>#<ordinal>] ...` and contain the text
+  `OutlookAI-McpTest` nowhere, so the sweep's DASL prefilter and its `Contains` cannot match one
+  whatever any settings file says.
 
-  1. **Sweep only stores the allowlist permits `Delete` on** (hub plus identity accounts). One
-     expression, and it matches what the sweep is FOR - proving the suite cleaned up after
-     itself. Narrows a mandatory safety sweep, which is CLAUDE.md rule 4, so it needs the
-     maintainer's word.
-  2. **Sweep every store but require the corpus's own tag to be absent from the match** - i.e.
-     count `[OutlookAI-McpTest]` items that carry no `[OutlookAI-Corpus:` tag. Keeps the coverage
-     and distinguishes the two populations, at the cost of teaching the test tier about the
-     corpus format.
-  3. **Stop tagging corpus subjects with `[OutlookAI-McpTest]`.** Removes the collision at
-     source and is the cleanest, but the tag is what makes corpus items legal to delete under
-     the mailbox-safety rules, and it would invalidate every existing manifest.
-  4. **Leave it**, on the grounds that the write guard now refuses and the failure is loud. Costs
-     a red suite on the VM forever.
+  The separation is held by `T1/CorpusTagSeparationTests` (17 tests), and it is held on the
+  bracket-free FRAGMENTS as well as the bracketed tags - the sweep matches
+  `%OutlookAI-McpTest%`, so a comparison of the bracketed tags alone would have passed for a
+  corpus tag of `[X-OutlookAI-McpTest-Corpus]`. It also pins every place the tag is load-bearing:
+  `MayDelete`, `MayRewrite`, the census/`corpus-reindex` scan, and the placement/date probe
+  subjects, all of which route through `CorpusPlan.TryParseOrdinal`.
 
-  (1) is the recommendation, with (2) as the answer if the sweep must keep covering bystanders.
+  **The objections to (3) were both answerable.** *Legality:* a corpus item is still deleted by
+  the two independent keys mailbox-safety rule 2 requires - EntryID allowlist AND ordinal tag
+  match; only which tag is matched changed. *Existing manifests:* an old corpus is now
+  RECOGNISED rather than silently unmatched. `CorpusPlan.LegacySubjectTag` is a frozen historical
+  literal, `ClassifySubject` returns `Legacy` for it, `TryParseOrdinal` still says no, and the
+  scan counts them. `corpus-census` names the population and fails; `corpus-teardown` refuses
+  BEFORE deleting anything, in one sentence rather than 20,000 per-item rule refusals;
+  `corpus-reindex` refuses to write a manifest that teardown would not accept. Refusing rather
+  than handling is deliberate: a corpus lives in its own local `.pst`, so deleting that file
+  removes it completely - cheaper and more certain than a second delete predicate keyed on the
+  artifact tag, which is the coupling this change exists to remove.
+
+  Options as they stood, for the record: (1) sweep only stores the allowlist permits `Delete` on;
+  (2) sweep every store but require the corpus tag to be absent from the match; (3) give the
+  corpus its own tag; (4) leave it. **(3) chosen.**
+
+- [ ] **Two follow-ups the tag split leaves for the maintainer.** Neither is a defect; both are
+  wording the maintainer owns.
+
+  1. **`CLAUDE.md` mailbox-safety rule 2 says "every test-created item carries the
+     `[OutlookAI-McpTest]` subject tag".** That is now false for corpus items, and the falsehood
+     is the dangerous direction: an agent reading it would conclude a corpus item is either
+     sweepable or not test-created. The *rule* needs no change - deletion selection is still
+     "EntryID allowlist AND ordinal tag match, both required", which corpus teardown obeys
+     exactly - only the sentence naming the tag. Suggested: "...every test-created item carries a
+     subject tag matched ORDINALLY: `[OutlookAI-McpTest]` for live-tier artifacts,
+     `[OutlookAI-Corpus]` for measurement-corpus items. The two are deliberately different
+     strings so an artifact sweep can never select a corpus item; `T1/CorpusTagSeparationTests`
+     enforces it." Not edited here - `CLAUDE.md` is the maintainer's.
+  2. **Should the artifact sweep ALSO skip declared bystanders?** Recommended: yes, as a second
+     line of defence, but it is a change to `Tests/T2/LiveDraftTests.cs` and `LiveSendTests.cs`,
+     which another agent holds. Rationale and cost are in the next item.
+
+- [ ] **The artifact sweep still walks declared bystander stores, and it no longer needs to.**
+  Left deliberately on 2026-08-25; the two files are outside this change's territory.
+
+  The sweep iterates `expectedStoreDisplayNames` and calls `DeleteTaggedArtifactsUntilStableZero`
+  on any store with a non-zero tagged count. After the tag split it will find zero in a corpus
+  store, so nothing is destroyed and nothing is red - the defect is closed. What remains is
+  defence in depth: the sweep is a DELETE aimed at every store in a list, and the only thing
+  keeping it off a bystander is that the bystander happens to contain nothing it matches.
+
+  **The change, if the maintainer wants it:** in `LiveDraftTests.ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain`
+  and its `LiveSendTests` twin, skip stores named in `bystanderStoreDisplayNames` - which the
+  fixture already knows - and print one line per skipped store so the run says what it did not
+  check. Roughly three lines each.
+
+  **Against:** CLAUDE.md rule 4 makes the zero-artifact sweep mandatory, and narrowing it is the
+  maintainer's call, not an agent's. A skip also means a genuine artifact that somehow landed in
+  a bystander would never be found - though the count tripwire watches exactly those stores and
+  would report the arrival. **For:** every other write path already refuses a bystander at the
+  guard; the sweep is the one that would still try, and "it finds nothing" is a property of the
+  data, not of the code.
+
+  Recommendation: make the skip, and keep the tag separation as the primary defence. Two
+  independent mechanisms, neither relying on the other, is what the store-count tripwire's own
+  design argues for.
+
+- [x] **DECIDED 2026-08-25 - re-anchoring is no longer the maintenance path. Rebuild instead.**
+
+  **Rebuilding is the supported way to deal with a stale corpus:** `corpus-teardown --execute`
+  (or delete the `.pst`), then `corpus-build`. It is deterministic, and the recorded build was
+  20,000 items in 13m25s.
+
+  **`corpus-reanchor` is not to be used until its write path is diagnosed.** Its date writes do
+  not land on already-delivered items: the write method is chosen by a probe that creates
+  THROWAWAY items - the dry run says so outright, "the date probe was not run (it creates
+  items)" - and is then reused, unverified, on existing ones. A run over 20,000 items on
+  2026-08-24 reported `rewritten 20,000, refused 0, failed 0` while dating every item inside the
+  six minutes the tool had been running: the whole age-band structure the corpus exists for
+  replaced by "everything arrived while the tool ran", and the manifest overwritten with the
+  read-back values as though they had been the intention.
+
+  **The command is KEPT, not deleted.** The per-item `CorpusReanchor.WriteLanded` check added
+  afterwards now refuses on the FIRST item, and that refusal is the evidence: it is what stopped
+  a re-anchor destroying a corpus a second time, and deleting the command would delete the
+  record of it.
+
+  It now refuses when invoked and prints all of the above - in the TOOL, not only in the docs
+  (`CorpusCommands.ReanchorRetiredNotice`, printed before every argument check so it is reachable
+  from CI and so an operator with a typo is still told the command is retired). Pinned by
+  `T1/CorpusTagSeparationTests.Reanchor*`. `--diagnose-write-path` is the one way past it,
+  deliberately named after the only remaining purpose rather than `--force`, and it prints the
+  notice too. Also recorded in `Program.cs`'s usage, `Testbed/README.md` §3, and the console's
+  `--help` output.
+
+  **Still the maintainer's:** `Docs/corpus-measurement-plan.md` line 116 still calls
+  `corpus-reanchor --to now --execute` "the repair", and the paragraph under it rejects
+  regenerating on the grounds that "the numbers above are held against THIS snapshot, and a
+  regenerated corpus is a different population wearing the same figures". That objection is real
+  and this decision overrides it - a rebuild from the same seed, anchor and count IS the same
+  population, since the plan is a pure function of (seed, ordinal, field) with no clock in it;
+  only the anchor moves. `Docs/live-tier-on-the-vm.md` needs the matching edit. Neither file was
+  touched here.
 
 - [ ] **Fix the census's identity-to-count degradation, which is why the tripwire needs a
   re-census at all on a stable mailbox.** Found by reading during the 2026-08-24 investigation.
@@ -1444,11 +1535,11 @@
     `corpus-verify` is pure - no Outlook, no store - derives the shift already applied from the
     manifest and refuses when any window under test has emptied; the live tier runs it
     fail-closed at fixture time from a new `corpus` settings block. `corpus-reanchor --to now`
-    is the repair: an ABSOLUTE target, so it is idempotent and resumable, never creating, moving
+    was the repair: an ABSOLUTE target, so it is idempotent and resumable, never creating, moving
     or removing an item, guarded by EntryID allowlist AND subject tags AND the expected ordinal.
     The manifest header's anchor is deliberately not rewritten - it is half the corpus's
     identity - so the shift is derived from the item lines and the re-anchor appends a
-    replacement line per item.
+    replacement line per item. **Superseded 2026-08-25: the repair is a REBUILD - see below.**
 
   - [ ] **Move `T2/CorpusFreshnessTests.cs` to T1.** It is pure - no Outlook, no COM, no settings
     file, no `Category=Live` - and belongs beside `CorpusGeneratorTests`. It sits in T2 only

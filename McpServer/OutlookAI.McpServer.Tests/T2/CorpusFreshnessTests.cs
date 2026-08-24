@@ -553,6 +553,15 @@ public class CorpusFreshnessTests
         Assert.False(CorpusSafety.MayRewrite("ID-1", subject, allowlist, "other", 42));
         Assert.False(CorpusSafety.MayRewrite("ID-1", "an ordinary mail about invoices", allowlist, "vm1", 42));
         Assert.False(CorpusSafety.MayRewrite("ID-1", null, allowlist, "vm1", 42));
+
+        // The tag half is the CURRENT corpus tag, not the live tier's artifact tag and not the
+        // one corpora carried before 2026-08-25. A rewrite writes a delivery time onto an item;
+        // getting the tag wrong here would write it onto somebody's mail, which no manifest can
+        // undo and which would not even look like damage.
+        string legacy = CorpusPlan.LegacySubjectTag + CorpusPlan.CorpusTagOpen + "vm1#0000042] renewal invoice";
+        Assert.False(CorpusSafety.MayRewrite("ID-1", legacy, allowlist, "vm1", 42));
+        Assert.False(CorpusSafety.MayRewrite(
+            "ID-1", RemediationRules.SubjectTag + " r7-draft-seed", allowlist, "vm1", 42));
     }
 
     // ------------------------------------------------------------------ live settings block

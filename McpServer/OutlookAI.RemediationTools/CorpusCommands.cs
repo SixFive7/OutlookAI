@@ -53,6 +53,18 @@ public sealed class CorpusOptions
     public bool AllowBackwards { get; private set; }
 
     /// <summary>
+    /// Runs the RETIRED <c>corpus-reanchor</c> anyway, for the one purpose it is still kept
+    /// for: diagnosing why its date writes do not land on already-delivered items.
+    /// <para>
+    /// It is deliberately not called <c>--force</c> or <c>--yes</c>. A flag whose name is a
+    /// reason means any use of it is self-declaring in a console log, and there is no reading
+    /// of "diagnose write path" under which somebody is doing routine maintenance. The
+    /// retirement notice is printed either way.
+    /// </para>
+    /// </summary>
+    public bool DiagnoseWritePath { get; private set; }
+
+    /// <summary>
     /// The windows a freshness check judges the corpus against, in days. Repeatable, and
     /// empty means <see cref="CorpusPlan.MeasurementWindowDays"/> - a caller that names its
     /// own set is saying which questions it actually asks.
@@ -144,6 +156,9 @@ public sealed class CorpusOptions
                 break;
             case "allow-backwards":
                 AllowBackwards = true;
+                break;
+            case "diagnose-write-path":
+                DiagnoseWritePath = true;
                 break;
             case "execute":
                 Execute = true;
@@ -480,10 +495,13 @@ public static class CorpusCommands
     /// <summary>The census itself, shared by <c>corpus-census</c> and the build's own check.</summary>
     private static bool RunCensusPass(CorpusOptions options, CorpusPlan plan, TextWriter output)
     {
-        IReadOnlyList<ComCorpusMailbox.ScanRow> rows =
+        ComCorpusMailbox.ScanResult scan =
             ComCorpusMailbox.Scan(options.Store!, plan.Options.CorpusId, LoadManifest(options.ManifestPath, output));
         CorpusCensusReport census = CorpusCensus.Compare(
-            plan, options.Count, rows.Select(r => new CorpusSighting(r.Ordinal, r.FolderId)));
+            plan,
+            options.Count,
+            scan.Items.Select(r => new CorpusSighting(r.Ordinal, r.FolderId)),
+            scan.LegacyTagged);
         (bool clean, string message) = CorpusCensus.Decide(census);
         output.WriteLine(message);
         return clean;
@@ -539,15 +557,56 @@ public static class CorpusCommands
     }
 
     /// <summary>
-    /// <c>corpus-reanchor</c>: moves every item's received and submit instants forward so the
-    /// corpus's newest edge lands where <c>--to</c> says, without regenerating anything.
-    /// Idempotent and resumable - it writes the items whose recorded instant is not already
-    /// the target one - and it never creates, moves or removes an item.
+    /// The notice <c>corpus-reanchor</c> prints instead of running. Retired on the
+    /// maintainer's decision, 2026-08-25: <b>rebuilding is the supported way to deal with a
+    /// stale corpus</b>, and a re-anchor is not to be used until its write path is diagnosed.
+    /// <para>
+    /// The evidence: a run over 20 000 items reported "rewritten 20,000, refused 0, failed 0"
+    /// and left every item dated inside the six minutes the tool had been running - the whole
+    /// age-band structure replaced, and the manifest overwritten with the read-back values as
+    /// though they had been the intention. The per-item <see cref="CorpusReanchor.WriteLanded"/>
+    /// check added afterwards now refuses on the FIRST item instead, because the date-write
+    /// method is chosen by a probe that creates THROWAWAY items and is then reused, unverified,
+    /// on already-delivered ones. That refusal is why the command is kept rather than deleted.
+    /// </para>
+    /// <para>
+    /// A rebuild is deterministic and the recorded one was 20 000 items in 13m25s, which is
+    /// less time than diagnosing a write path that has already destroyed a corpus once.
+    /// </para>
+    /// </summary>
+    public static string ReanchorRetiredNotice =>
+        "REFUSING: corpus-reanchor is RETIRED (2026-08-25). Rebuilding is the supported way to deal with a stale "
+        + "corpus - it is deterministic, and the recorded build was 20,000 items in 13m25s. Do not re-anchor until "
+        + "the write path is diagnosed: the date-write method is chosen by a probe that CREATES THROWAWAY ITEMS "
+        + "and is then reused, unverified, on already-delivered ones, and a run over 20,000 items once reported "
+        + "'rewritten 20,000, refused 0, failed 0' while dating every item inside the six minutes the tool had "
+        + "been running. The command is kept, not deleted, because its per-item write-landed guard is what stops "
+        + "that repeating. To rebuild: corpus-teardown --execute (or delete the .pst), then corpus-build. To "
+        + "diagnose the write path, and for nothing else, pass --diagnose-write-path.";
+
+    /// <summary>
+    /// <c>corpus-reanchor</c>: RETIRED. It moved every item's received and submit instants
+    /// forward so the corpus's newest edge landed where <c>--to</c> said, without regenerating
+    /// anything. It now prints <see cref="ReanchorRetiredNotice"/> and refuses unless
+    /// <c>--diagnose-write-path</c> is given; see that notice for why, and TODO.md for the
+    /// decision.
     /// </summary>
     public static int RunReanchor(CorpusOptions options, TextWriter output)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(output);
+
+        // FIRST, before every argument check and long before COM: the notice is the whole
+        // point of keeping the command, and an operator who mistyped an argument must still
+        // be told that re-anchoring is not the maintenance path.
+        if (!options.DiagnoseWritePath)
+        {
+            output.WriteLine(ReanchorRetiredNotice);
+            return 1;
+        }
+
+        output.WriteLine("--diagnose-write-path given: proceeding for DIAGNOSIS ONLY. This is not a maintenance "
+            + "path. Rebuilding is. " + ReanchorRetiredNotice);
         if (options.Count < 1)
         {
             throw new ArgumentException("--count <n> is required.");
@@ -699,21 +758,52 @@ public static class CorpusCommands
         output.WriteLine($"Manifest records {manifest.Items.Count:N0} item(s) and {manifest.Folders.Count} created folder(s).");
         if (!options.Execute)
         {
-            IReadOnlyList<ComCorpusMailbox.ScanRow> present =
+            ComCorpusMailbox.ScanResult present =
                 ComCorpusMailbox.Scan(options.Store!, planOptions.CorpusId, manifest);
-            output.WriteLine($"Dry-run: a read-only scan finds {present.Count:N0} corpus item(s) in the store. "
+            output.WriteLine($"Dry-run: a read-only scan finds {present.Items.Count:N0} corpus item(s) in the store. "
                 + "Nothing deleted. Re-run with --execute.");
+            if (present.LegacyTagged > 0)
+            {
+                output.WriteLine(LegacyCorpusRefusal(present.LegacyTagged));
+                return 1;
+            }
+
             return 0;
         }
 
         ComCorpusMailbox.TeardownOutcome outcome =
             ComCorpusMailbox.Teardown(options.Store!, planOptions.CorpusId, manifest);
+        if (outcome.LegacyTagged > 0)
+        {
+            // Reported instead of the counts, not beside them: nothing was attempted, so a
+            // "considered 0, deleted 0" line would read as a corpus that was already gone.
+            output.WriteLine(LegacyCorpusRefusal(outcome.LegacyTagged));
+            return 1;
+        }
+
         output.WriteLine($"Teardown: considered {outcome.Considered:N0}, deleted {outcome.Deleted:N0}, "
             + $"refused by rule {outcome.RefusedByRule:N0}, already gone {outcome.AlreadyGone:N0}, "
             + $"failed {outcome.Failed:N0}, folders removed {outcome.FoldersRemoved}.");
         output.WriteLine($"Post-teardown scan finds {outcome.RemainingInStore:N0} corpus item(s) remaining (expected 0).");
         return outcome.RemainingInStore == 0 && outcome.Failed == 0 ? 0 : 1;
     }
+
+    /// <summary>
+    /// What a command says when the store holds a corpus built before the tag split. Shared,
+    /// because a refusal an operator meets in three different commands must not be three
+    /// different sentences.
+    /// </summary>
+    public static string LegacyCorpusRefusal(int legacyTagged)
+        // Invariant explicitly, not by inheriting Program.Main's thread culture: this string is
+        // pinned by a test, and a test host runs under the machine's own culture - where a
+        // Dutch-locale VM writes 20.000 for the same number an English one writes 20,000.
+        => $"REFUSING: {legacyTagged.ToString("N0", CultureInfo.InvariantCulture)} item(s) in this store carry the OLD corpus tag "
+            + $"'{CorpusPlan.LegacySubjectTag}' rather than '{CorpusPlan.SubjectTag}'. That is a corpus built "
+            + "before 2026-08-25, when the corpus shared the live tier's artifact tag. This build's delete and "
+            + "rewrite predicates require the current tag, so it cannot address a single one of those items - and "
+            + "refusing is deliberate rather than a gap: a corpus lives in its own local .pst, so deleting that "
+            + "file removes it completely, which is both cheaper and more certain than a second delete predicate "
+            + "keyed on the artifact tag. Delete the .pst and build a fresh corpus.";
 
     /// <summary>
     /// <c>corpus-reindex</c>: READ-ONLY. Walks the store, finds every item whose subject
@@ -736,10 +826,18 @@ public static class CorpusCommands
             return 1;
         }
 
-        IReadOnlyList<ComCorpusMailbox.ScanRow> rows =
-            ComCorpusMailbox.Scan(options.Store!, planOptions.CorpusId, null);
+        ComCorpusMailbox.ScanResult scan = ComCorpusMailbox.Scan(options.Store!, planOptions.CorpusId, null);
+        IReadOnlyList<ComCorpusMailbox.ScanRow> rows = scan.Items;
         output.WriteLine($"Read-only scan found {rows.Count:N0} corpus item(s) "
             + $"across {rows.Select(r => r.FolderId).Distinct().Count()} folder(s).");
+        if (scan.LegacyTagged > 0)
+        {
+            // A reindex is read-only, so it says what it saw rather than refusing to look -
+            // but it does not write a manifest for a corpus teardown will not accept.
+            output.WriteLine(LegacyCorpusRefusal(scan.LegacyTagged));
+            return 1;
+        }
+
         if (!options.Execute)
         {
             output.WriteLine("Dry-run: no manifest written. Re-run with --execute.");

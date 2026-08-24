@@ -121,6 +121,25 @@ first confirmation was the 40,000-item build's 5,532. The build now clears `MSGF
 every item, so a rebuild today should leave the Outbox empty - **and if it does not, that is the
 signal that the fix did not take**, because the count is predictable in advance.
 
+### A stale corpus is REBUILT, not re-anchored
+
+A corpus is anchored on a fixed date and every test asks its question against the clock, so
+roughly six weeks after a build the narrow measurement windows select nothing - while every test
+asking about them still passes, because selecting nothing is a valid answer about an empty
+window. `corpus-verify` is pure, runs on the host, and refuses when that has happened.
+
+**The repair is a rebuild: `corpus-teardown --execute` (or delete the `.pst`), then
+`corpus-build`.** It is deterministic, and the recorded build was 20,000 items in 13m25s.
+
+**`corpus-reanchor` is retired as of 2026-08-25 and refuses when invoked.** Its date writes do
+not land on already-delivered items: the write method is chosen by a probe that creates
+*throwaway* items - the dry run says so outright - and is then reused, unverified, on existing
+ones. A run over 20,000 items reported `rewritten 20,000, refused 0, failed 0` while dating every
+item inside the six minutes the tool had been running, destroying the age-band structure the
+corpus exists for and overwriting the manifest with the read-back values. The command is kept
+rather than deleted because the per-item write-landed guard added afterwards is what now stops it
+on the first item, and that evidence is worth keeping. Run it and it tells you all of this.
+
 ---
 
 ## 3b. The settings file must declare a BYSTANDER, and the corpus store is one
@@ -145,10 +164,23 @@ paths write into the measurement corpus:
 * **the identity tests** create one draft per granted store - so they would draft into the corpus
   the moment this machine gains the dummy mail account it is getting;
 * **the post-run artifact sweep** counts subjects carrying `[OutlookAI-McpTest]` and deletes what
-  it finds - and the corpus generator puts that exact tag at the front of *every* corpus subject,
-  so the sweep would find the whole corpus and try to remove it.
+  it finds - and the corpus generator *used to* put that exact tag at the front of every corpus
+  subject, so the sweep would have found the whole corpus and tried to remove it.
 
 Declaring the store turns both into a refusal at the write guard instead.
+
+**Since 2026-08-25 the sweep half is closed at source as well: corpus items carry their own tag,
+`[OutlookAI-Corpus]`.** The bystander declaration was a configuration fix for something that
+should never have been possible by construction, and it left the sweep *failing* on the corpus
+store rather than skipping it - a store deliberately full of tagged items can never satisfy "zero
+tagged artifacts", and a run whose normal outcome is a refusal gets muted. A corpus subject now
+contains the text `OutlookAI-McpTest` nowhere at all, so it cannot match the sweep's DASL
+prefilter or its `Contains`, whatever any settings file says. `T1/CorpusTagSeparationTests` fails
+the build if the two tags are ever made equal again, or if either starts containing the other's
+bracket-free fragment.
+
+**Keep declaring the corpus store a bystander anyway.** It is what stops the identity tests
+drafting into the corpus, which is a separate path and still open.
 
 **Declare only corpus stores this Outlook profile actually mounts.** A declared bystander is
 watched whether or not any other list names it, so a name the profile does not have gets
