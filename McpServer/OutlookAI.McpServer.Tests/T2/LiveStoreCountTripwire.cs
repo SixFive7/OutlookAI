@@ -17,8 +17,13 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// item by item at all.
 /// </para>
 /// <para>
-/// Fail-closed, like <c>SignatureDirectorySnapshot</c>: if the baseline cannot be taken
-/// the live tier REFUSES to run, because an unmeasured mailbox cannot be proven
+/// Fail-closed twice over. Before any of it runs, <see cref="TripwireWatchSoundness"/>
+/// checks that the stores being watched and the stores the suite may write to still agree
+/// with the bystander declaration; a store that is watched AND writable makes "nothing but
+/// the suite changes a mailbox here" false in the one place the guard depends on it, so a
+/// contradiction there refuses the tier rather than quietly weakening it. Then, like
+/// <c>SignatureDirectorySnapshot</c>: if the baseline cannot be taken the live tier REFUSES
+/// to run, because an unmeasured mailbox cannot be proven
 /// untouched. Every live collection fixture calls <see cref="EnsureBaseline"/> in its
 /// constructor (a throw there fails the whole collection) and
 /// <see cref="CollectionFinished"/> in its Dispose; the comparison happens when the last
@@ -69,16 +74,28 @@ public static class LiveStoreCountTripwire
         }
     }
 
-    /// <summary>Stores the tripwire watches: every configured primary AND delegate store.</summary>
+    /// <summary>
+    /// Stores the tripwire watches: every configured primary, every delegate store, and every
+    /// declared BYSTANDER.
+    /// <para>
+    /// The bystanders are unioned in rather than assumed to be among the primaries, so the
+    /// declaration is sufficient on its own: a store named there is watched whether or not
+    /// whoever wrote the settings also remembered to list it above. The runbook does list it,
+    /// which is why this normally adds nothing - but "normally" is not what the guard rests on,
+    /// and <see cref="TripwireWatchSoundness"/> refuses the run if a declared bystander ever
+    /// falls out of this list.
+    /// </para>
+    /// </summary>
     public static IReadOnlyList<string> WatchedStores(LiveTestSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
         List<string> stores = new(settings.ExpectedStoreDisplayNames);
-        foreach (string delegateStore in settings.ExpectedDelegateStoreDisplayNames)
+        foreach (string other in
+            settings.ExpectedDelegateStoreDisplayNames.Concat(settings.BystanderStoreDisplayNames))
         {
-            if (!stores.Any(s => string.Equals(s, delegateStore, StringComparison.OrdinalIgnoreCase)))
+            if (!stores.Any(s => string.Equals(s, other, StringComparison.OrdinalIgnoreCase)))
             {
-                stores.Add(delegateStore);
+                stores.Add(other);
             }
         }
 
@@ -94,7 +111,24 @@ public static class LiveStoreCountTripwire
         ArgumentNullException.ThrowIfNull(settings);
         lock (Gate)
         {
-            // Health gate first, ahead of the early return and ahead of every COM call.
+            // Whether this census is entitled to conclude anything at all, before the machine
+            // is asked about and before every COM call. A store the tripwire watches that the
+            // suite may nevertheless write to makes "nothing but the suite changes a mailbox
+            // here" false exactly where the guard depends on it being true, so a contradiction
+            // between the watched set, the write allowlist and the bystander declaration
+            // refuses the tier instead of silently weakening it.
+            //
+            // FIRST, ahead of the health gate, for two reasons. A settings file that
+            // contradicts itself is wrong whatever Outlook is doing, and it is the one of the
+            // two the maintainer can fix. And with nothing touching COM ahead of it, this line
+            // is reachable from CI: a T1 test hands EnsureBaseline a contradictory settings
+            // object and sees the refusal on a runner that has no Outlook and no settings file
+            // - which is why the allowlist here is BUILT from the settings passed in rather
+            // than read off the machine.
+            TripwireWatchReport watch = TripwireWatchSoundness.Require(
+                WatchedStores(settings), LiveStoreWriteGuard.Build(settings), settings.BystanderStoreDisplayNames);
+
+            // Health gate next, ahead of the early return and ahead of every COM call.
             // This method is the single funnel all eight live collection fixtures pass
             // through, and the OutlookComSession.Connect below is the exact line that sat
             // for 10 and then 15 minutes against a wedged Outlook on 2026-08-18. Asked per
@@ -121,6 +155,7 @@ public static class LiveStoreCountTripwire
             // at the wrong machine's settings should say so at the top of the log, not be
             // inferred afterwards from which tests behaved oddly.
             Console.WriteLine("[tripwire] live-test settings: " + settings.Describe() + ".");
+            Console.WriteLine("[tripwire] " + watch.Describe() + ".");
             Console.WriteLine("[tripwire] retry " + _policy.Describe() + ".");
             try
             {

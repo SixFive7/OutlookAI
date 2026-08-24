@@ -148,6 +148,199 @@ public sealed class TripwireVerdict
 }
 
 /// <summary>
+/// What the census is entitled to conclude from the stores it watches, worked out before it
+/// reads a single folder.
+/// <para>
+/// Three populations, because the tripwire treats them differently and only one of them can
+/// actually make it fire:
+/// <list type="bullet">
+/// <item><b>bystanders</b> - declared watched-and-never-written. Every change in one is
+/// evidence of a fault, because no test may produce one.</item>
+/// <item><b>writable</b> - watched, not the hub, and the write allowlist lets something
+/// through. The census still polices these, but "nothing but the suite changes a mailbox
+/// here" is not true of them, so a firing there could be the suite's own doing.</item>
+/// <item><b>policed</b> - watched, not the hub, and denied every kind of write. The stores
+/// the guard can speak about, whether or not anybody declared them.</item>
+/// </list>
+/// </para>
+/// </summary>
+public sealed class TripwireWatchReport
+{
+    internal TripwireWatchReport(
+        IReadOnlyList<string> bystanders,
+        IReadOnlyList<string> policed,
+        IReadOnlyList<string> writable,
+        IReadOnlyList<string> violations)
+    {
+        Bystanders = bystanders;
+        Policed = policed;
+        Writable = writable;
+        Violations = violations;
+    }
+
+    /// <summary>The declared bystanders, in the order declared.</summary>
+    public IReadOnlyList<string> Bystanders { get; }
+
+    /// <summary>Watched non-hub stores the allowlist denies outright - what a firing can be about.</summary>
+    public IReadOnlyList<string> Policed { get; }
+
+    /// <summary>Watched non-hub stores the allowlist still lets something through on.</summary>
+    public IReadOnlyList<string> Writable { get; }
+
+    /// <summary>Declarations the rest of the configuration contradicts. Empty is the only acceptable value.</summary>
+    public IReadOnlyList<string> Violations { get; }
+
+    /// <summary>True when nothing declared a bystander is writable, and every one of them is watched.</summary>
+    public bool Sound => Violations.Count == 0;
+
+    /// <summary>
+    /// True when the census could not fail on any store whatever happened: nothing it watches
+    /// is both non-hub and unwritable. Not a refusal - a run over one PST that is also the hub
+    /// is a legitimate smoke test - but it must be said out loud, because a guard in that state
+    /// reports zero failures for a reason that has nothing to do with the mailboxes.
+    /// </summary>
+    public bool ProvesNothing => Policed.Count == 0;
+
+    /// <summary>The one-line summary printed at the top of a live run.</summary>
+    public string Describe()
+    {
+        string line = "watch soundness: " + Bystanders.Count + " declared bystander(s), "
+            + Policed.Count + " store(s) this census can fail on, "
+            + Writable.Count + " watched store(s) the suite may still write to";
+        return ProvesNothing
+            ? line + " - NO STORE THIS CENSUS WATCHES CAN PRODUCE A FAILURE (see the bystander "
+                + "section of Docs/live-tier-on-the-vm.md); it will report zero either way"
+            : line;
+    }
+
+    /// <summary>The refusal text, or null when the configuration holds together.</summary>
+    public string? Refusal()
+    {
+        return Sound
+            ? null
+            : "REFUSING to run the live tier: the count tripwire watches "
+                + Violations.Count + " store(s) whose declaration the rest of the live-test "
+                + "settings contradicts." + Environment.NewLine
+                + string.Join(Environment.NewLine, Violations) + Environment.NewLine
+                + "  A bystander is the store the tripwire exists to watch; a bystander the suite "
+                + "may write to, or one the census never visits, makes every 'nothing changed' it "
+                + "reports about that store meaningless. Fix the settings - never the guard.";
+    }
+}
+
+/// <summary>
+/// Proves, before any COM call, that the stores the census watches and the stores the write
+/// allowlist permits still agree with the bystander declaration.
+/// <para>
+/// The three answers are derived independently - <see cref="LiveStoreCountTripwire.WatchedStores"/>
+/// from the settings' store lists, <see cref="StoreWriteAllowlist"/> from the same file's grant
+/// and deny lists, and the declaration from <c>bystanderStoreDisplayNames</c> - so this is a
+/// comparison rather than a restatement. It catches, among others, the hub named as its own
+/// bystander (<see cref="StoreWriteAllowlist.IsAllowed"/> answers for the hub first and cannot
+/// be told otherwise), a bystander the census stopped visiting, and any future reordering that
+/// lets the identity-draft grant outrank the declaration.
+/// </para>
+/// <para>
+/// Pure, so CI drives every branch: the caller is behind a COM census no test on a runner can
+/// execute, which is why the decision lives here and <see cref="Require"/> throws for it rather
+/// than handing back a condition for the call site to get wrong.
+/// </para>
+/// </summary>
+public static class TripwireWatchSoundness
+{
+    /// <summary>Classifies the watched set against the allowlist and the declaration.</summary>
+    public static TripwireWatchReport Assess(
+        IEnumerable<string>? watchedStores,
+        StoreWriteAllowlist allowlist,
+        IEnumerable<string>? declaredBystanders)
+    {
+        ArgumentNullException.ThrowIfNull(allowlist);
+
+        List<string> watched = Distinct(watchedStores);
+        List<string> bystanders = Distinct(declaredBystanders);
+        HashSet<string> watchedSet = new(watched, StringComparer.OrdinalIgnoreCase);
+
+        List<string> policed = new();
+        List<string> writable = new();
+        foreach (string store in watched)
+        {
+            if (allowlist.IsHub(store))
+            {
+                continue;
+            }
+
+            if (PermittedKinds(allowlist, store).Count > 0)
+            {
+                writable.Add(store);
+            }
+            else
+            {
+                policed.Add(store);
+            }
+        }
+
+        List<string> violations = new();
+        foreach (string store in bystanders)
+        {
+            IReadOnlyList<StoreWriteKind> permitted = PermittedKinds(allowlist, store);
+            if (permitted.Count > 0)
+            {
+                violations.Add(
+                    "  store '" + store + "' is declared a BYSTANDER and the write allowlist still permits "
+                    + string.Join(", ", permitted.Select(k => k.ToString().ToLowerInvariant())) + " on it"
+                    + (allowlist.IsHub(store)
+                        ? " - it is also the designated test hub, and the hub is where the suite writes"
+                        : string.Empty)
+                    + ".");
+            }
+
+            if (!watchedSet.Contains(store))
+            {
+                violations.Add(
+                    "  store '" + store + "' is declared a BYSTANDER and the census does not watch it, so "
+                    + "nothing would ever check that it went untouched.");
+            }
+        }
+
+        return new TripwireWatchReport(bystanders, policed, writable, violations);
+    }
+
+    /// <summary>
+    /// Assesses and refuses the live tier when the configuration contradicts itself, returning
+    /// the report so the caller has nothing left to decide.
+    /// </summary>
+    public static TripwireWatchReport Require(
+        IEnumerable<string>? watchedStores,
+        StoreWriteAllowlist allowlist,
+        IEnumerable<string>? declaredBystanders)
+    {
+        TripwireWatchReport report = Assess(watchedStores, allowlist, declaredBystanders);
+        string? refusal = report.Refusal();
+        return refusal == null ? report : throw new InvalidOperationException(refusal);
+    }
+
+    private static IReadOnlyList<StoreWriteKind> PermittedKinds(StoreWriteAllowlist allowlist, string store)
+    {
+        return Enum.GetValues<StoreWriteKind>().Where(k => allowlist.IsAllowed(store, k)).ToList();
+    }
+
+    private static List<string> Distinct(IEnumerable<string>? stores)
+    {
+        List<string> ordered = new();
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string store in stores ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(store) && seen.Add(store))
+            {
+                ordered.Add(store);
+            }
+        }
+
+        return ordered;
+    }
+}
+
+/// <summary>
 /// Pure comparison behind the per-store tripwire: a live run may add nothing and remove
 /// nothing outside the designated test mailbox.
 /// <para>

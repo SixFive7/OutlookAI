@@ -51,11 +51,20 @@ public sealed class LivePhase4Fixture : IDisposable
     /// <summary>Independent COM session for persisted-state verification and window cleanup.</summary>
     public OutlookComSession VerifySession => _verifySession.Value;
 
-    /// <summary>The two business accounts for the identity-only checks (Q-it2-3a).</summary>
+    /// <summary>
+    /// The business accounts for the identity-only checks (Q-it2-3a): the configured primaries
+    /// the WRITE ALLOWLIST grants a draft in, minus the hub.
+    /// <para>
+    /// Asked of the guard rather than filtered out of the settings, so the stores these tests
+    /// write to and the stores they are permitted to write to are one answer. Derived
+    /// separately - which is how it used to be - a store denied by the allowlist still ends up
+    /// in this list, and the test throws at the guard halfway through instead of skipping a
+    /// mailbox it was never entitled to touch. That is now the case for every declared
+    /// BYSTANDER, which is exactly a configured primary that nothing may write to.
+    /// </para>
+    /// </summary>
     public IReadOnlyList<string> IdentityAccounts =>
-        Settings.ExpectedStoreDisplayNames
-            .Where(s => !string.Equals(s, Settings.TestHubStoreDisplayName, StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        LiveStoreWriteGuard.Allowlist.IdentityAccountsAmong(Settings.ExpectedStoreDisplayNames);
 
     /// <summary>Builds a tagged subject: [OutlookAI-McpTest] + run marker + label.</summary>
     public string TaggedSubject(string label)
