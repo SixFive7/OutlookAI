@@ -68,16 +68,23 @@ work for Office as configured, and the arithmetic says why.** The guest was inst
 grace begun at install — not a 90-day one. So a rebuild resets Office to 30 days, while Windows
 resets to 90. **Office, not Windows, is the binding constraint, and it binds roughly monthly.**
 
-A rebuild every 30 days is not a plan. The options are to make a KMS host reachable from the
-guest so `AUTOACTIVATE=1` succeeds, to license the guest some other way, or to accept a monthly
-rebuild as the cost of the disposable-testbed stance. **This is an open question for the
-maintainer**, and it is recorded here rather than in a runbook step because it changes what the
-runbook should say.
+**DECIDED 2026-08-24: accept the monthly rebuild.** The testbed is disposable by design and a
+30-day cadence is the price of that stance. Not chosen, and worth knowing why they were on the
+table: making a KMS host reachable so `AUTOACTIVATE=1` succeeds would remove the clock entirely
+but depends on guest networking nobody has verified; licensing the guest another way spends a
+licence on a machine meant to be thrown away.
 
-**Whichever way it goes, put the clocks somewhere that checks them.** Nothing watches either
-today, so the failure arrives as "the tier stopped working" with no visible cause — a KMS client
-past grace drops Office into reduced functionality, on the machine whose only purpose is driving
-Outlook.
+Since Windows resets to 90 days and Office to 30, **the rebuild cadence is Office's**. Windows
+never becomes the reason to rebuild.
+
+**A cadence that depends on remembering gets skipped exactly once, and then the tier stops with
+no visible cause** - a KMS client past grace drops Office into reduced functionality, on the
+machine whose only purpose is driving Outlook. So the deadline is checked where it bites: the
+**live tier's own preflight** refuses to run when the guest's Office licence is nearly out of
+grace, instead of letting the run produce failures that look like anything except a licence.
+That is the right home because it fires exactly when it matters and nobody has to remember
+anything; a release-time check would not, since releases can be further apart than 30 days.
+Tracked in `TODO.md`.
 
 ## The rule
 

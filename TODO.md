@@ -1,5 +1,17 @@
 # TODO
 
+- [ ] **Refuse the live tier when the guest's Office licence is nearly out of grace.**
+  Decided 2026-08-24 alongside "accept a monthly rebuild". The testbed's Office install is a KMS
+  client on a **30-day** out-of-box grace - measured: installed 2026-08-09, 15.7 days left on
+  2026-08-24 - so Office, not Windows' 90-day evaluation, sets the rebuild cadence. Past grace it
+  drops into reduced functionality on the machine whose only purpose is driving Outlook, and the
+  resulting failures look like anything except a licence.
+  The check belongs in the live tier's preflight, beside the other fail-closed gates: it fires
+  exactly when it matters and nobody has to remember it. A release-time check does not work,
+  because releases can be more than 30 days apart. Read the guest's `SoftwareLicensingProduct`
+  grace remaining, refuse under a threshold, and say plainly that the VM needs rebuilding rather
+  than that a test failed. Do NOT record the number in the repo - it is a fact about one machine.
+
 - [ ] **Restore the installed MCP server — it is deliberately disabled right now.**
   On 2026-08-16, while developing the COM-host work, the installed executable was moved
   aside so that no Claude Code session could start a stale build and re-activate Outlook
