@@ -7,7 +7,11 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// <para>
 /// The allowlist is derived, never hand-written: hub = the designated test mailbox,
 /// identity-draft grant = the other configured primary accounts, read-only = the
-/// configured delegate/shared mailboxes.
+/// configured delegate/shared mailboxes, and denied outright = the declared BYSTANDER
+/// stores, which the count tripwire watches on the premise that nothing writes to them.
+/// The bystander declaration is passed LAST and wins over the grant above it, because the
+/// runbook has the bystander listed among the primary accounts and would otherwise be
+/// declaring something the allowlist ignores.
 /// </para>
 /// </summary>
 public static class LiveStoreWriteGuard
@@ -34,7 +38,8 @@ public static class LiveStoreWriteGuard
         return new StoreWriteAllowlist(
             settings.TestHubStoreDisplayName,
             settings.ExpectedStoreDisplayNames,
-            settings.ExpectedDelegateStoreDisplayNames);
+            settings.ExpectedDelegateStoreDisplayNames,
+            settings.BystanderStoreDisplayNames);
     }
 
     /// <summary>Throws unless the write is permitted; returns the store name.</summary>

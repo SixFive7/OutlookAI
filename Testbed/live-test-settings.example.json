@@ -17,6 +17,11 @@
 
   "expectedDelegateStoreDisplayNames": [],
 
+  "_bystanders": "The stores the count tripwire exists to watch: watched, and written to by NOTHING. Naming a store here denies it every kind of write, keeps it in the census, and takes it out of the identity tests' account list - so it must ALSO stay in expectedStoreDisplayNames above, which is what gets it censused and counted by list_accounts. Without this list the bystander was inside the identity-draft grant purely by being a non-hub primary, and a store the suite may write to cannot be evidence of anything. Naming the hub here is refused at the top of the run, not resolved. On a Production profile the delegate mailboxes are already denied and already watched, so they need no declaration.",
+  "bystanderStoreDisplayNames": [
+    "OutlookAI Bystander"
+  ],
+
   "corpus": {
     "_note": "The four identity values must match Testbed/testbed.json. manifestPath is machine-local and is the ONLY thing that can tear the corpus down - keep a copy outside the guest.",
     "storeDisplayName": "Corpus A",

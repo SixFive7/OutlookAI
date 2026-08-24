@@ -534,12 +534,118 @@
     changes a mailbox here, so any decrease is a fault" is false in the one place it matters.
     **`StoreWriteAllowlist`/`LiveStoreWriteGuard` were left alone deliberately: narrowing the
     grant without a live run to check it is not a trade worth making unsupervised.**
+    **CLOSED 2026-08-24 by the bystander declaration below - and closed without narrowing the
+    grant**, which two live tests really do use. A store DECLARED a bystander is denied every
+    kind of write and the tripwire refuses to run if it is not.
 
   **Why zero retries on the VM is nevertheless right, today.** Every VM-specific ambiguity above
   is either arrival-shaped (noted, never failed) or already exempted, and the one real hole
   makes the tier fail MORE rather than pass more. Zero retries costs nothing there and removes
   the only mechanism that could turn a real loss into a pass. It is configured that way now, by
   `machineProfile`, with no new settings field to get wrong.
+
+- [x] **DONE (2026-08-24) - The store the count tripwire watches is DECLARED untouchable, and
+  the tripwire refuses to run if anything can still write to it.** The guard's premise put back
+  without narrowing a grant that two live tests really do use. Closes the bullet above and the
+  runbook's open behaviour item 20.
+
+  **The defect.** `LiveStoreWriteGuard.Build` passed `settings.ExpectedStoreDisplayNames` as
+  `StoreWriteAllowlist`'s `identityDraftStores`, documented as "stores granted draft+delete for
+  the identity tests". The runbook requires the bystander to be listed in
+  `expectedStoreDisplayNames` - it has to be, or the census never visits it and the
+  `list_accounts` exactness test never counts it - so the one store the guard exists to watch
+  was inside that grant. Nothing was writing to it; nothing was stopping anything either, and a
+  store the suite MAY write to cannot be evidence of anything.
+
+  **Which tests genuinely need draft+delete outside the hub, read off the tests rather than
+  assumed.** Exactly two, and both iterate `LivePhase4Fixture.IdentityAccounts`:
+  `LiveDraftTests.IdentityDrafts_BusinessAccounts_RightStore_NeverDisplayed_DeletedImmediately`
+  (Q-it2-3a: one tagged, never-displayed draft per business account, deleted immediately, then
+  a purge of that store's Deleted Items) and
+  `LiveDraftOptionsTests.NewDraft_BusinessAccounts_BodyAboveTheirOwnIntactHtmlSignature` (the A1
+  contract against each account's REAL configured signature, which is the whole point of not
+  doing it in the hub). Both carry `Requires=MailAccount` + `Requires=MultipleStores`, so
+  neither selects onto a PST-only machine. Every other non-hub store reference in T2 is
+  read-only - including `LiveMoveArchiveTests`, which names another store only to prove the
+  cross-store move is REFUSED. **So the grant is used, and narrowing it is not the fix.**
+
+  **1. A bystander tier in the allowlist (`T2\StoreWriteAllowlist`).** A fourth constructor
+  list, denied every `StoreWriteKind`, checked AHEAD of the identity grant - a declaration
+  checked after it would never apply to the one store it is written for, since that store is
+  normally in both lists. The hub still wins over everything, deliberately: denying the hub
+  because somebody mis-declared it would fail a hundred tests far from the mistake, whereas the
+  gate below turns it into one refusal that names it. `IdentityAccountsAmong` is on the
+  allowlist too, and `LivePhase4Fixture.IdentityAccounts` is now that call rather than "the
+  configured primaries that are not the hub" - so the stores those two tests write to and the
+  stores they are permitted to write to are one answer from one place.
+
+  **2. The declaration (`bystanderStoreDisplayNames` in the live-test settings).** Naming a
+  store there denies it every write, keeps it in `LiveStoreCountTripwire.WatchedStores`
+  (unioned in, so the declaration is sufficient on its own) and takes it out of the identity
+  accounts. A Production profile needs none: its delegate/shared mailboxes are already denied
+  and already watched, so they are bystanders in fact. It is the PST machines, where every
+  store is a primary, that have to say so. `Testbed/live-test-settings.example.json` declares
+  the VM's `OutlookAI Bystander`.
+
+  **3. The refusal (`T2\StoreCountTripwire` - `TripwireWatchSoundness`).**
+  `EnsureBaseline` refuses the live tier when a declared bystander is writable under the
+  allowlist, or is not in the watched set. Three answers derived independently from one
+  settings object - the watched list, the allowlist, the declaration - so it is a comparison
+  rather than a restatement, and it fires on the pre-fix shape, on the hub named as its own
+  bystander, and on any future reordering that lets the grant outrank the declaration. It runs
+  **ahead of `LiveOutlookPreflight`**, which is what puts it inside CI's reach: with nothing
+  touching COM before it, a T1 test hands `EnsureBaseline` a contradictory settings object and
+  sees the refusal on a runner with no Outlook and no settings file. That ordering is itself
+  pinned, with the liveness override forced to `Hung` so a reversal fails the test instead of
+  reaching a real profile.
+
+  Every run now also prints `[tripwire] watch soundness: N declared bystander(s), M store(s)
+  this census can fail on, K watched store(s) the suite may still write to`, and says outright
+  when M is zero - the one-PST-that-is-also-the-hub configuration section 1.3 of the runbook
+  warns about, where the census reports zero failures for a reason that has nothing to do with
+  the mailboxes.
+
+  **What is deliberately NOT changed.** The identity-draft grant itself: the two tests above
+  need it, and it is a live run that would confirm anything further. The zero-bystander case is
+  reported, not refused - see the open item below. And only `OutlookAI Bystander` is declared in
+  the example settings: **`Corpus A` and `Corpus B` are bystanders in fact too** - no live test
+  writes to them, `LiveCorpusFreshness` only reads, and re-anchoring is an operator action in a
+  different profile - so declaring them would take them out of the identity grant as well and
+  give the census two more stores it can speak about. Not done here because it is the
+  maintainer's machine and his corpus; it costs one line of settings if he wants it.
+
+  Pinned by 21 new T1 tests (`T1\TripwireBystanderStoreTests`), including the JSON round trip
+  of the new key. 2349 -> 2370 `Category!=Live` tests, 0 failures. **No live run:** the
+  maintainer runs those; nothing here touched Outlook or a mailbox.
+
+  **Mutation-verified, serial, 14 mutants: 12 killed, 2 EQUIVALENT.** The four the brief named -
+  assertion removed, assertion made vacuous, a writable bystander accepted, the declaration
+  ignored by the allowlist - are all killed, as are the guard dropping the declaration, the
+  census dropping the bystanders, `IdentityAccountsAmong` ignoring the allowlist, `Require` not
+  throwing, and the ordering that would put the gate out of CI's reach. The two equivalents were
+  reasoned out rather than pinned harder: reordering the bystander deny BELOW the identity-grant
+  check changes no answer (both branches return false), and classifying a writable bystander as
+  policed is unreachable while the allowlist denies every bystander and the loop skips the hub.
+  Replacements that DO change behaviour were run for both and killed.
+
+- [ ] **Should the tripwire REFUSE a configuration it can prove nothing from?** Raised by the
+  bystander work above (2026-08-24); needs the maintainer's word, and a live run to check.
+
+  Today a run whose only watched non-hub store is writable - or that watches nothing but the
+  hub - prints `NO STORE THIS CENSUS WATCHES CAN PRODUCE A FAILURE` and proceeds. The guard is
+  then structurally incapable of firing, which is the exact state
+  `Docs/live-tier-on-the-vm.md` section 1.3 tells a rebuilder to avoid. Three ways out:
+
+  1. **Leave it a warning** (what is implemented). A one-store smoke run stays possible, which
+     matters while the VM is being rebuilt, and the line is loud enough to read.
+  2. **Refuse unless at least one watched store is denied every write.** Fail-closed, matches
+     every other guard in the tier, and would have blocked the configuration this whole defect
+     was invisible in. Costs the smoke run.
+  3. **Refuse only when `machineProfile: Portable`,** where a bystander is cheap to add and
+     there is no reason not to have one, and warn on `Production`.
+
+  (2) is the honest one and (3) is the cautious one; the reason it is not simply done is that a
+  refusal here lands on a machine that is being rebuilt right now.
 
 - [ ] **Fix the census's identity-to-count degradation, which is why the tripwire needs a
   re-census at all on a stable mailbox.** Found by reading during the 2026-08-24 investigation.
@@ -592,6 +698,24 @@
     on the first reading with `NO RE-CENSUS IS CONFIGURED` rather than after two re-censuses and
     a re-run. Open item 18 ("the re-census-then-re-run policy is decided and not built") is now
     closed in both halves.
+
+  **Four more, from the bystander work (2026-08-24).** Same reason - not edited here.
+  - **Section 1.3 and section 2.6 must say the bystander is DECLARED, not merely listed.**
+    "The bystander is listed in `expectedStoreDisplayNames` and is never the hub" is now half
+    the instruction: it also has to be named in the new `bystanderStoreDisplayNames`, and it
+    must stay in `expectedStoreDisplayNames` (that is what censuses it and what
+    `list_accounts` exactness counts). Listing it in only one of the two is a refusal, not a
+    warning.
+  - **The section 2.10 settings example needs the new key**, matching
+    `Testbed/live-test-settings.example.json`: `"bystanderStoreDisplayNames": [ "OutlookAI
+    Bystander" ]`. Without it a rebuilder follows the runbook and gets a bystander the suite
+    may still write to, which is the defect this closed.
+  - **Section 6's "what to read in the output" gains a line**, printed straight after the
+    settings line: `[tripwire] watch soundness: N declared bystander(s), M store(s) this census
+    can fail on, K watched store(s) the suite may still write to`. `M=0` is the machine-readable
+    form of section 7's "the guard runs and proves nothing", and it says so in the same words.
+  - **Open behaviour item 20 is closed** and should say how: not by narrowing the grant - two
+    live tests use it - but by a declaration the allowlist honours and the tripwire verifies.
 
 - [x] **DONE (2026-08-24) - The tripwire's response to a suspected loss is bounded, and the
   census identity walk has a clock of its own.** Two maintainer decisions, both about the

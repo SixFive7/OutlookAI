@@ -55,6 +55,29 @@ public sealed class LiveTestSettings
     /// <summary>Display names of the delegate/shared-mailbox cache stores (Phase-2 list_accounts exactness).</summary>
     public List<string> ExpectedDelegateStoreDisplayNames { get; set; } = new();
 
+    /// <summary>
+    /// Display names of the BYSTANDER stores: watched by the count tripwire and written to by
+    /// nothing, ever.
+    /// <para>
+    /// The tripwire's whole value rests on there being at least one store whose every change is
+    /// evidence of a fault rather than of ordinary test activity, and until this list existed
+    /// that property was an accident of which OTHER list a store did not appear in - which the
+    /// runbook's own three-store layout then broke, because a bystander has to be listed in
+    /// <see cref="ExpectedStoreDisplayNames"/> to be censused at all and everything in that list
+    /// was granted draft+delete. Naming a store here denies it every kind of write
+    /// (<see cref="StoreWriteAllowlist"/>), keeps it in the watched set
+    /// (<see cref="LiveStoreCountTripwire.WatchedStores"/>) and takes it out of the identity
+    /// tests' account list; the tripwire refuses to run if any of the three has stopped
+    /// agreeing.
+    /// </para>
+    /// <para>
+    /// Optional: a Production profile's delegate/shared mailboxes are already denied and already
+    /// watched, so they are bystanders in fact without being declared. It is the PST machines,
+    /// where every store is a primary, that need to say so.
+    /// </para>
+    /// </summary>
+    public List<string> BystanderStoreDisplayNames { get; set; } = new();
+
     /// <summary>The section-5 probe term (generic word; proven to hit on this machine).</summary>
     public string ProbeTerm { get; set; } = string.Empty;
 
@@ -243,6 +266,7 @@ public sealed class LiveTestSettings
         return "machineProfile=" + MachineProfile
             + ", stores=" + ExpectedStoreDisplayNames.Count
             + ", delegateStores=" + ExpectedDelegateStoreDisplayNames.Count
+            + ", bystanders=" + BystanderStoreDisplayNames.Count
             + ", probeTerm=" + (string.IsNullOrWhiteSpace(ProbeTerm) ? "none" : "set")
             + ", subjectOnlyProbe=" + (SubjectOnlyProbe == null ? "none" : "set")
             + ", corpus=" + (Corpus == null ? "none" : Corpus.CorpusId)
