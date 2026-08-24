@@ -275,25 +275,35 @@ public sealed class TripwireBystanderStoreTests
     }
 
     [Fact]
-    public void OnePstThatIsAlsoTheHubSaysOutLoudThatItCanProveNothing()
+    public void OnePstThatIsAlsoTheHubIsRefusedRatherThanWarnedAbout()
     {
         // The configuration Docs/live-tier-on-the-vm.md section 1.3 tells a rebuilder to avoid.
-        // Not a refusal - a one-store smoke run is legitimate - but the run must not read as a
-        // clean census when no store it watches could have produced a failure.
+        // This USED to warn and proceed, on the argument that a one-store smoke run is
+        // legitimate. It refuses as of 2026-08-24: the run it would allow prints '0 failure(s)'
+        // by construction, and that line then reads as coverage. TripwireVacuousCensusTests
+        // owns the detail; this asserts the reversal where the old expectation lived, so nobody
+        // re-derives the warning from a stale sibling test.
         LiveTestSettings settings = new()
         {
             TestHubStoreDisplayName = Hub,
             ExpectedStoreDisplayNames = new List<string> { Hub },
         };
-
-        TripwireWatchReport report = TripwireWatchSoundness.Require(
+        TripwireWatchReport report = TripwireWatchSoundness.Assess(
             LiveStoreCountTripwire.WatchedStores(settings),
             LiveStoreWriteGuard.Build(settings),
             settings.BystanderStoreDisplayNames);
 
         Assert.True(report.Sound);
         Assert.True(report.ProvesNothing);
+        Assert.False(report.Usable);
         Assert.Contains("NO STORE THIS CENSUS WATCHES CAN PRODUCE A FAILURE", report.Describe(), StringComparison.Ordinal);
+
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
+            () => TripwireWatchSoundness.Require(
+                LiveStoreCountTripwire.WatchedStores(settings),
+                LiveStoreWriteGuard.Build(settings),
+                settings.BystanderStoreDisplayNames));
+        Assert.Contains("REFUSING to run the live tier", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

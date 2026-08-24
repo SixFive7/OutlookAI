@@ -118,6 +118,12 @@ public static class LiveStoreCountTripwire
             // between the watched set, the write allowlist and the bystander declaration
             // refuses the tier instead of silently weakening it.
             //
+            // It refuses the OTHER unusable shape here too: a configuration with no watched
+            // store the census could fail on - one PST that is also the hub, or a hub plus
+            // stores the identity grant still opens up. That used to warn and proceed. It
+            // refuses now, because such a run prints "0 failure(s)" by construction and that
+            // line then goes in a report as though it had been earned.
+            //
             // FIRST, ahead of the health gate, for two reasons. A settings file that
             // contradicts itself is wrong whatever Outlook is doing, and it is the one of the
             // two the maintainer can fix. And with nothing touching COM ahead of it, this line

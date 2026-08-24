@@ -163,20 +163,33 @@ public sealed class TripwireVerdict
 /// the guard can speak about, whether or not anybody declared them.</item>
 /// </list>
 /// </para>
+/// <para>
+/// <b>An empty <see cref="Policed"/> set refuses the tier.</b> It used to warn and proceed, on
+/// the argument that a run over one PST that is also the hub is a legitimate smoke test. The
+/// argument fails on what such a run then REPORTS: the census visits every folder, identifies
+/// nothing, and prints <c>0 failure(s)</c> - a sentence that reads as coverage and is produced
+/// by arithmetic that could not have reached any other answer. A guard that cannot fail is
+/// worse than no guard, because no guard at least leaves a hole somebody can see.
+/// </para>
 /// </summary>
 public sealed class TripwireWatchReport
 {
     internal TripwireWatchReport(
+        string hub,
         IReadOnlyList<string> bystanders,
         IReadOnlyList<string> policed,
         IReadOnlyList<string> writable,
         IReadOnlyList<string> violations)
     {
+        Hub = hub;
         Bystanders = bystanders;
         Policed = policed;
         Writable = writable;
         Violations = violations;
     }
+
+    /// <summary>The designated test hub, which the census exempts. Named by the refusals.</summary>
+    public string Hub { get; }
 
     /// <summary>The declared bystanders, in the order declared.</summary>
     public IReadOnlyList<string> Bystanders { get; }
@@ -195,11 +208,18 @@ public sealed class TripwireWatchReport
 
     /// <summary>
     /// True when the census could not fail on any store whatever happened: nothing it watches
-    /// is both non-hub and unwritable. Not a refusal - a run over one PST that is also the hub
-    /// is a legitimate smoke test - but it must be said out loud, because a guard in that state
-    /// reports zero failures for a reason that has nothing to do with the mailboxes.
+    /// is both non-hub and unwritable. <b>A refusal</b> - see the class remarks for why it stopped
+    /// being a warning.
     /// </summary>
     public bool ProvesNothing => Policed.Count == 0;
+
+    /// <summary>
+    /// True when the live tier may run: every declaration holds, AND the census has at least one
+    /// store it could fail on. Exactly the condition <see cref="Refusal"/> returns null for, and
+    /// the reason both halves are asked in one place - a caller that checked only one of them
+    /// would let the other configuration through.
+    /// </summary>
+    public bool Usable => Sound && !ProvesNothing;
 
     /// <summary>The one-line summary printed at the top of a live run.</summary>
     public string Describe()
@@ -208,23 +228,85 @@ public sealed class TripwireWatchReport
             + Policed.Count + " store(s) this census can fail on, "
             + Writable.Count + " watched store(s) the suite may still write to";
         return ProvesNothing
-            ? line + " - NO STORE THIS CENSUS WATCHES CAN PRODUCE A FAILURE (see the bystander "
-                + "section of Docs/live-tier-on-the-vm.md); it will report zero either way"
+            ? line + " - REFUSED: " + NoFailableStore
             : line;
     }
 
-    /// <summary>The refusal text, or null when the configuration holds together.</summary>
+    /// <summary>
+    /// The refusal text, or null when the configuration holds together. Every reason is reported
+    /// in one message rather than one per run: a machine being configured has both faults at once
+    /// often enough, and finding the second one only after fixing the first costs another live run.
+    /// </summary>
     public string? Refusal()
     {
-        return Sound
-            ? null
-            : "REFUSING to run the live tier: the count tripwire watches "
-                + Violations.Count + " store(s) whose declaration the rest of the live-test "
-                + "settings contradicts." + Environment.NewLine
-                + string.Join(Environment.NewLine, Violations) + Environment.NewLine
-                + "  A bystander is the store the tripwire exists to watch; a bystander the suite "
-                + "may write to, or one the census never visits, makes every 'nothing changed' it "
-                + "reports about that store meaningless. Fix the settings - never the guard.";
+        List<string> reasons = new();
+        if (!Sound)
+        {
+            reasons.Add(ContradictedDeclaration());
+        }
+
+        if (ProvesNothing)
+        {
+            reasons.Add(NothingToFailOn());
+        }
+
+        return reasons.Count == 0 ? null : string.Join(Environment.NewLine, reasons);
+    }
+
+    /// <summary>The phrase to grep a run log for. Kept in one place because the docs quote it.</summary>
+    internal const string NoFailableStore = "NO STORE THIS CENSUS WATCHES CAN PRODUCE A FAILURE";
+
+    private string ContradictedDeclaration()
+    {
+        return "REFUSING to run the live tier: the count tripwire watches "
+            + Violations.Count + " store(s) whose declaration the rest of the live-test "
+            + "settings contradicts." + Environment.NewLine
+            + string.Join(Environment.NewLine, Violations) + Environment.NewLine
+            + "  A bystander is the store the tripwire exists to watch; a bystander the suite "
+            + "may write to, or one the census never visits, makes every 'nothing changed' it "
+            + "reports about that store meaningless. Fix the settings - never the guard.";
+    }
+
+    /// <summary>
+    /// The refusal for a census that cannot fail. Written for whoever hits it, who is configuring
+    /// a machine and has not read this file: it says which stores were considered, why none of them
+    /// counts, and the exact settings keys that fix it.
+    /// </summary>
+    private string NothingToFailOn()
+    {
+        string head = "REFUSING to run the live tier: " + NoFailableStore + ". This census would "
+            + "visit every folder, identify nothing and report '0 failure(s)' whatever had "
+            + "happened to the mail, so it cannot tell an untouched mailbox from a ransacked one."
+            + Environment.NewLine
+            + "  The hub '" + Hub + "' is exempt - it is the one store the suite is allowed to "
+            + "write in, so nothing it does there is evidence of anything." + Environment.NewLine;
+
+        string body = Writable.Count > 0
+            ? "  The other " + Writable.Count + " watched store(s) are ones the suite may still "
+                + "write to: " + string.Join(", ", Writable.Select(s => "'" + s + "'")) + "."
+                + Environment.NewLine
+                + "  TO FIX - one line of settings: add one of those names to "
+                + "'bystanderStoreDisplayNames' in the live-test settings file. That denies every "
+                + "test a write to it and leaves it censused, which is the whole of what the "
+                + "tripwire needs. Pick a store no test needs to write in."
+            : "  Nothing else is watched at all: the hub is the only store in "
+                + "'expectedStoreDisplayNames' and 'expectedDelegateStoreDisplayNames', and "
+                + "'bystanderStoreDisplayNames' adds none." + Environment.NewLine
+                + "  TO FIX - give this machine one store no test may touch:" + Environment.NewLine
+                + "    1. add a store to the Outlook profile. An empty PST is enough to lift this "
+                + "refusal, but a few hundred ordinary items is better, because then the census "
+                + "compares that store item by item instead of only counting it;" + Environment.NewLine
+                + "    2. add its display name to 'expectedStoreDisplayNames', which is what gets "
+                + "it censused;" + Environment.NewLine
+                + "    3. add the same name to 'bystanderStoreDisplayNames', which is what denies "
+                + "every test a write to it.";
+
+        return head + body + Environment.NewLine
+            + "  Docs/live-tier-on-the-vm.md section 1.3 is the same thing in prose and "
+            + "Testbed/live-test-settings.example.json is a filled-in example. There is "
+            + "deliberately no setting that turns this refusal off: the state it refuses is one "
+            + "that reads as coverage in every report it appears in, which is the failure it "
+            + "exists to prevent.";
     }
 }
 
@@ -239,6 +321,11 @@ public sealed class TripwireWatchReport
 /// bystander (<see cref="StoreWriteAllowlist.IsAllowed"/> answers for the hub first and cannot
 /// be told otherwise), a bystander the census stopped visiting, and any future reordering that
 /// lets the identity-draft grant outrank the declaration.
+/// </para>
+/// <para>
+/// It also refuses the configuration the census can conclude NOTHING from - no watched store that
+/// is both non-hub and unwritable - which since 2026-08-24 is a refusal rather than the warning it
+/// used to be. See <see cref="TripwireWatchReport"/>.
 /// </para>
 /// <para>
 /// Pure, so CI drives every branch: the caller is behind a COM census no test on a runner can
@@ -302,12 +389,14 @@ public static class TripwireWatchSoundness
             }
         }
 
-        return new TripwireWatchReport(bystanders, policed, writable, violations);
+        return new TripwireWatchReport(
+            allowlist.HubStoreDisplayName, bystanders, policed, writable, violations);
     }
 
     /// <summary>
-    /// Assesses and refuses the live tier when the configuration contradicts itself, returning
-    /// the report so the caller has nothing left to decide.
+    /// Assesses and refuses the live tier when the configuration contradicts itself, or when it
+    /// leaves the census no store it could fail on, returning the report so the caller has
+    /// nothing left to decide.
     /// </summary>
     public static TripwireWatchReport Require(
         IEnumerable<string>? watchedStores,
