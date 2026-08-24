@@ -76,6 +76,31 @@ namespace OutlookAI.Services
         /// <summary>String: ISO 8601 ("o") timestamp of the last reconcile.</summary>
         internal const string TuningLastReconcileUtcValueName = "LastReconcileUtc";
 
+        // ===== HKCU\Software\Microsoft\Office\<major>\Outlook\Search =====
+        // OUTLOOK'S OWN key, not one of ours, and the only entry here that is not: the add-in's
+        // tuning Search group (D22) WRITES the value below, and HealthReporting READS it back as
+        // outlook_health's tuning.uiSearchBackend - which show_search_results then uses to decide
+        // whether to tell an agent that the user's Outlook search box is looking somewhere other
+        // than the corpus the agent searched. The KEY PATH is version-dependent and is therefore
+        // built by Services\OfficeVersions.cs (OutlookSearchKeyPath), which both trees also
+        // compile; only the VALUE NAME is a constant, and it lives here with the rest of them.
+
+        /// <summary>
+        /// DWORD under the Outlook Search key: nonzero points Outlook's own search box at the
+        /// local Windows Search index (the corpus the agent's <c>search</c> queries), absent or 0
+        /// leaves it on Outlook's server-assisted default.
+        /// <para>
+        /// It is Outlook's name, not ours - we cannot rename it, only mistype it - and mistyping
+        /// it is silent on both sides: the add-in writes a value Outlook ignores, or the server
+        /// reads a value nobody wrote and reports <c>server-assisted</c> on a tuned machine for
+        /// ever. It was spelled out six times before this constant existed (once in the add-in's
+        /// tuning catalog, twice in <c>HealthReporting</c>, three times in the T2 live test).
+        /// <c>.github/scripts/check-pinned-constants.ps1</c> (#12) keeps it at one, and pins that
+        /// one against the name <c>McpServer/README.md</c> publishes to users.
+        /// </para>
+        /// </summary>
+        internal const string DisableServerAssistedSearchValueName = "DisableServerAssistedSearch";
+
         // ===== HKCU\Software\OutlookAI\Mcp =====
         // Written by McpRegistrationService on every reconcile; read by
         // HealthReporting.ReadMcpRegistration so outlook_health can report what the add-in did

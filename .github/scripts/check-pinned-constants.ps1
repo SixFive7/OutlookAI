@@ -10,6 +10,11 @@
     mechanism - the audit that produced Docs/magic-numbers.md found one such comment that had
     already become false. This script is the mechanism.
 
+    Two checks (#12, #13) are the opposite shape and belong here for the same reason: they hold a
+    value that USED to exist twice down to one copy. A mirror closed by sharing a file stays
+    closed only while nobody types the literal again, and re-typing it compiles - so "this exists
+    exactly once, here" is as much a cross-file invariant as "these two agree".
+
     It is deliberately text-based. It cannot compile the add-in (net48/VSTO) and it cannot run
     Inno Setup, so it reads the sources and compares what it finds. Every check therefore also
     asserts that it FOUND both sides: a regex that silently stops matching would otherwise turn
@@ -421,6 +426,104 @@ if ($inventorySource -and $runbook) {
             }
         }
     }
+}
+
+# ---------------------------------------------------------------------------------------------
+# 12. The Outlook Search value name, and the fact that it is spelled ONCE.
+#     AddInServerContract.DisableServerAssistedSearchValueName is the single definition of a
+#     value name that used to be typed out six times (the add-in's tuning catalog, twice in
+#     HealthReporting, three times in the T2 live test). Both trees compile that file, so a
+#     RENAME of the constant cannot drift - it breaks both compilations. Two things still can,
+#     and neither is visible to any compiler:
+#
+#     (a) SOMEBODY TYPES THE LITERAL AGAIN. Re-introducing "DisableServerAssistedSearch" as a
+#         string somewhere is a second copy of a closed mirror, and the drift it re-opens is
+#         silent in the worst direction: the add-in goes on writing the value, the server reads a
+#         name nobody wrote and reports uiSearchBackend as "server-assisted" on a tuned machine
+#         for ever, which is what show_search_results uses to warn an agent that the user's
+#         Outlook search box is looking somewhere else.
+#     (b) THE ONE COPY IS MISTYPED. It is OUTLOOK'S name, not ours - it cannot be renamed, only
+#         got wrong - and a wrong name is agreed on by both sides, so nothing in the product
+#         disagrees with anything. The only other place it is written down is McpServer/README.md,
+#         which publishes it to users as the value they may toggle; Markdown cannot read a C#
+#         constant, so this is the mechanism.
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+$searchValueName = Get-Pinned 'Services/AddInServerContract.cs' `
+    'DisableServerAssistedSearchValueName\s*=\s*"([^"]+)"' 'Outlook Search value name (AddInServerContract.cs)'
+if ($searchValueName) {
+    # Every .cs file in the tree, minus build output and dot-directories (which is also what
+    # keeps a local git worktree under .claude/ from being scanned as if it were source).
+    $literal = '"' + $searchValueName + '"'
+    $copies = @(
+        Get-ChildItem -LiteralPath $RepoRoot -Filter '*.cs' -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object {
+                $rel = $_.FullName.Substring($RepoRoot.Length).TrimStart('\', '/')
+                -not ($rel -split '[\\/]' | Where-Object { $_ -like '.*' -or $_ -eq 'bin' -or $_ -eq 'obj' })
+            } |
+            Where-Object { (Get-Content -LiteralPath $_.FullName -Raw) -cmatch [regex]::Escape($literal) } |
+            ForEach-Object { $_.FullName.Substring($RepoRoot.Length).TrimStart('\', '/').Replace('\', '/') })
+
+    if ($copies.Count -eq 0) {
+        Fail "Outlook Search value name is defined once" "no .cs file contains the literal $literal, not even Services/AddInServerContract.cs where it is declared - this check has stopped finding what it counts and proves nothing."
+    } elseif ($copies.Count -gt 1 -or $copies[0] -ne 'Services/AddInServerContract.cs') {
+        Fail "Outlook Search value name is defined once" "$literal is written out in $($copies.Count) file$(if ($copies.Count -ne 1) { 's' }) - $($copies -join ', ') - but it may exist only in Services/AddInServerContract.cs. Everything else reads AddInServerContract.DisableServerAssistedSearchValueName (the server re-exports it as HealthReporting.DisableServerAssistedSearchValueName). A second copy re-opens a mirror that fails silently: the add-in keeps writing the value, the server reads a name nobody wrote and reports uiSearchBackend as 'server-assisted' on a tuned machine for ever."
+    } else {
+        Pass "Outlook Search value name is defined once" "$searchValueName (Services/AddInServerContract.cs)"
+    }
+
+    $serverReadme = Read-Source 'McpServer/README.md'
+    if ($serverReadme) {
+        $script:Checks++
+        if ($serverReadme -cnotmatch [regex]::Escape($searchValueName)) {
+            Fail "Outlook Search value name is documented" "AddInServerContract spells the Outlook Search value '$searchValueName' but McpServer/README.md never mentions it. That README is where the value the user may toggle is published, and it is the only copy outside the C# - a typo in the constant is agreed on by both halves of the product and disagrees with nothing except the documentation."
+        } else {
+            Pass "Outlook Search value name is documented" "$searchValueName (McpServer/README.md)"
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------------------------
+# 13. The Outlook Search KEY PATH is built by the shared helper on BOTH sides.
+#     The add-in writes ...\Office\<major>\Outlook\Search and the server reads it. Sharing
+#     Services/OfficeVersions.cs settled the <major> (check #4's neighbour); it did NOT settle
+#     the construction, and until 2026-08-24 the add-in concatenated the whole path by hand while
+#     the server went through OfficeVersions.OutlookKeyPath. One address, two spellings, across a
+#     boundary no compiler crosses - and the add-in half is unreachable from every test in this
+#     repository, because it is net48/VSTO and builds only under MSBuild.
+#
+#     So the invariant is textual and it is the only thing that can hold it: neither file may
+#     concatenate an Office hive root of its own, and both must call the shared builder. A prose
+#     mention of the path is not a build (the diagnostic sentence in HealthReporting contains
+#     one) - the pattern matches a hive-root literal being CONCATENATED, which is what a
+#     hand-built path looks like and what a sentence never does.
+#
+#     A deliberate rename of the shared member means updating the member name below; that is the
+#     check demanding to be told, not a false alarm.
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+$sharedSearchBuilder = 'OfficeVersions.OutlookSearchKeyPath'
+$handBuiltHiveRoot = '@"Software\\(?:Policies\\Microsoft|Microsoft)\\Office\\"\s*\+'
+$searchPathSides = @{
+    'Services/OutlookTuningService.cs'                       = 'the add-in, which WRITES the value'
+    'McpServer/OutlookAI.Core/Services/HealthReporting.cs'   = 'the server, which READS it back as uiSearchBackend'
+}
+$searchPathProblems = @()
+foreach ($side in @($searchPathSides.Keys | Sort-Object)) {
+    $text = Read-Source $side
+    if ($null -eq $text) { continue }
+    if ($text -cnotmatch [regex]::Escape($sharedSearchBuilder + '(')) {
+        $searchPathProblems += "$side ($($searchPathSides[$side])) no longer calls $sharedSearchBuilder"
+    }
+    $handBuilt = [regex]::Matches($text, $handBuiltHiveRoot)
+    if ($handBuilt.Count -gt 0) {
+        $searchPathProblems += "$side ($($searchPathSides[$side])) concatenates an Office hive root of its own, $($handBuilt.Count) time$(if ($handBuilt.Count -ne 1) { 's' })"
+    }
+}
+if ($searchPathProblems.Count -gt 0) {
+    Fail "Outlook Search key path is built by one expression" "$($searchPathProblems -join '; '). Both sides must build that key through $sharedSearchBuilder (and any Policies-hive path through OfficeVersions.PolicyOutlookKeyPath), because the add-in's half is net48/VSTO and no test in this repository can reach it - a mistyped path there writes into a key Outlook never reads while everything still compiles and outlook_health still answers."
+} else {
+    Pass "Outlook Search key path is built by one expression" "$sharedSearchBuilder, both sides"
 }
 
 Write-Host ""

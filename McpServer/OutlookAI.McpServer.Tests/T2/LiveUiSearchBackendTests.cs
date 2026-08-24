@@ -98,14 +98,14 @@ public sealed class LiveUiSearchBackendTests
     private static int? ReadDword(string keyPath)
     {
         using RegistryKey? key = Registry.CurrentUser.OpenSubKey(keyPath, writable: false);
-        return key?.GetValue("DisableServerAssistedSearch") as int?;
+        return key?.GetValue(HealthReporting.DisableServerAssistedSearchValueName) as int?;
     }
 
     private static void WriteDword(string keyPath, int value)
     {
         using RegistryKey key = Registry.CurrentUser.CreateSubKey(keyPath)
             ?? throw new InvalidOperationException("cannot open " + keyPath);
-        key.SetValue("DisableServerAssistedSearch", value, RegistryValueKind.DWord);
+        key.SetValue(HealthReporting.DisableServerAssistedSearchValueName, value, RegistryValueKind.DWord);
     }
 
     private static void RestoreDword(string keyPath, int? original)
@@ -117,6 +117,6 @@ public sealed class LiveUiSearchBackendTests
         }
 
         using RegistryKey? key = Registry.CurrentUser.OpenSubKey(keyPath, writable: true);
-        key?.DeleteValue("DisableServerAssistedSearch", throwOnMissingValue: false);
+        key?.DeleteValue(HealthReporting.DisableServerAssistedSearchValueName, throwOnMissingValue: false);
     }
 }
