@@ -73,7 +73,7 @@
   - [ ] **The history rewrite for the leaked guest password is still outstanding.** The value is
         dead - rotated 2026-08-24, and the current one is provably absent from HEAD and from every
         commit - but the old username-and-password line remains reachable in history from
-        `e1d8c6c` to `77df4e4^`. Tracked in `Docs/autonomous-session-log.md`; noted here because a
+        `d499bf1` to `54ecd26^`. Tracked in `Docs/autonomous-session-log.md`; noted here because a
         rebuilder reading the testbed docs will find the reference to it.
 
 - [ ] **Residual questions from the 2026-08-19/20 atomicity-claims sweep.** All 31 claims of
@@ -1333,7 +1333,7 @@
   `T2/LiveTableSortProbeTests` ran on the real profile: the namespace-qualified property was
   refused on 5 of 5 stores, so the freshness sweep had never sorted on any store for any
   user and its 200-item cap had always cut an arbitrary slice rather than the newest one.
-  Fixed in `bea7fc9` with explicit-name fallback arrays. **What this entry says below is the
+  Fixed in `03a0857` with explicit-name fallback arrays. **What this entry says below is the
   pre-answer reasoning, kept because it records how the question was framed - read it as
   history, not as an open item.** Two consequences are still open and tracked separately:
   the 180 s sweep budget was measured while the sort was failing, so it describes broken
@@ -1500,7 +1500,7 @@
       COM-host operation class, and `SweepBudgetMs` is 600 s.** The maintainer's decision on 2026-08-23 was to set
   `MailService.SweepBudgetMs` to a 600 s CEILING now and narrow it later from VM measurements,
   because the current 180 s was derived from a measurement taken while the sweep's sort was
-  silently failing (`bea7fc9`) and therefore describes broken behaviour doing different work.
+  silently failing (`03a0857`) and therefore describes broken behaviour doing different work.
   **The number was not applied on 2026-08-23**, because the ladder above it could not hold it and
   the resolution was not that session's to pick; the record of why is kept below because it is what
   the class exists to answer. It IS applied now - see the DONE note at the end of this row.

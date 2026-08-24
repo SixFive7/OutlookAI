@@ -4,13 +4,13 @@
 
 ## Position - 2026-08-24, after the VM-infrastructure merge
 
-`HEAD` = `e7384dc`, pushed, tree clean. **2,024 tests in 8 seconds with no mailbox contact**
+`HEAD` = `8cf8ded`, pushed, tree clean. **2,024 tests in 8 seconds with no mailbox contact**
 (1,936 + 41 + 47 from the two merges). `OutlookAI.Core` builds clean for net48 and net10 with
 zero warnings. `check-pinned-constants.ps1` 11/11. The test VM is running, checkpoints intact.
 
 **A CREDENTIAL WAS LEAKED FROM THIS FILE AND MUST BE ROTATED.** This repository is PUBLIC
 (`SixFive7/OutlookAI`). This file recorded the VM guest password in plain text; it was pushed and
-is in **32 commits of history**, first `e1d8c6c`. Redacted at `HEAD` in `77df4e4`, which stops it
+is in **32 commits of history**, first `d499bf1`. Redacted at `HEAD` in `54ecd26`, which stops it
 spreading and does NOT un-publish it. **Rotation is the fix and it has not been done** - it needs
 the maintainer's word, because changing a credential is a real mutation, and the scripts under
 `C:\Users\jori\Downloads\tmp-outlookai-vm\` hard-code the old value. Never write the new one into
@@ -22,7 +22,7 @@ a tracked file; the gitignored live-test settings are the only place it belongs.
     dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj --filter "Category!=Live&FullyQualifiedName!~Tests.T3."
     pwsh -File .github/scripts/check-pinned-constants.ps1
 
-`Category!=Live` is now honest (commit `7a38458`) - measured, no COM host spawned across 481
+`Category!=Live` is now honest (commit `1098e90`) - measured, no COM host spawned across 481
 process samples. The narrow filter is still used because tier 3 spawns server processes and is slow,
 not because it is unsafe.
 
@@ -30,9 +30,9 @@ not because it is unsafe.
 
 | Agent | Branch | State |
 | --- | --- | --- |
-| Fix the VM test infrastructure | `worktree-agent-ad5951c0e2020cddf` | **MERGED** `4d7efbc` - corpus freshness + re-anchor, census, placement probe, mail sink, runbook |
-| Clear the product gap map | `worktree-agent-ab7461aa27a49e30a` | **MERGED** `e7384dc` - C5, E3, B4, B5, the two `snippet_chars` clamps; A5 and F2 verified already closed |
-| Mutation-verify the sort fix | (worktree) | running - `bea7fc9`, the queued verification that never happened |
+| Fix the VM test infrastructure | `worktree-agent-ad5951c0e2020cddf` | **MERGED** `24dedd1` - corpus freshness + re-anchor, census, placement probe, mail sink, runbook |
+| Clear the product gap map | `worktree-agent-ab7461aa27a49e30a` | **MERGED** `8cf8ded` - C5, E3, B4, B5, the two `snippet_chars` clamps; A5 and F2 verified already closed |
+| Mutation-verify the sort fix | (worktree) | running - `03a0857`, the queued verification that never happened |
 | Build the measurement gate | (worktree) | running - local-only baselines under `%LOCALAPPDATA%`, fail-biased tolerances |
 
 **The completeness gap map now has one row left: H3**, which needs a live corpus re-run rather
@@ -82,7 +82,7 @@ earlier record said one PST; the profile count was never written down.
 
 **HISTORY REWRITE STILL OUTSTANDING - deliberately deferred.** Four agents hold worktree branches
 based on current history; rewriting now would strand all four. Do it once they land. **Known
-cost when it happens:** every commit from `e1d8c6c` onward gets a new SHA, so SHAs cited in
+cost when it happens:** every commit from `d499bf1` onward gets a new SHA, so SHAs cited in
 `CHANGELOG.md` and throughout `Docs/` stop resolving and must be fixed as part of the same pass.
 
 ### Elevation: NEVER use `Start-Process -Verb RunAs`
@@ -191,7 +191,7 @@ named `PromptEditorRow` constant); the five registry mirrors (recommend: close a
    runbook with seed instructions.
 
 **Bug queue:**
-8. **Mutation-verify `bea7fc9`** (the sort fix). Committed and green but its pass never ran; the
+8. **Mutation-verify `03a0857`** (the sort fix). Committed and green but its pass never ran; the
    killed agent left one mutation applied which had to be found from the failures alone.
 9. **Re-measure the sweep budget.** 180 s was derived while the sort was silently failing, so it
    rests on a measurement of broken behaviour.
@@ -259,11 +259,11 @@ was first found.
 
 - **The freshness sweep never sorted**, for the life of the feature, on any store - it passed a
   namespace-qualified property name that `Table.Sort` refuses, and the failure was swallowed. So its
-  200-item cap always cut an arbitrary slice. Measured 5/5 stores. Fixed in `bea7fc9`.
+  200-item cap always cut an arbitrary slice. Measured 5/5 stores. Fixed in `03a0857`.
 - **Budgets were about half the measured work**, which is why the COM host was being killed during
   ordinary searches.
 - **Sixteen atomicity claims were false** - the product said nothing had changed when nobody could
-  know. Fixed in `7b4cfd9`.
+  know. Fixed in `08ccc18`.
 - **The tripwire could not take a baseline at all** on the real profile; its census now reads a
   table instead of opening every message - 5 stores, 159 folders, 2,044 items in 16.9 s.
 - **`Category!=Live` read the real mailbox on every verification run** for the whole session.
@@ -297,13 +297,13 @@ reasoning, and flagged for review rather than buried.
 | Exhaustive scan | Resumable walk with a continuation token | **shipped** (uncommitted, 2026-08-19) - gap F2 closed; design in `tmp-aitrace/resumable-scan-design.md`, record in `Docs/completeness-gaps.md` F2 |
 | `Table.Sort` namespace reference | Settle whether the sweep's sort has ever worked; write it as a read-only T2 test and do NOT run it | **probe written, NOT run** (`T2/LiveTableSortProbeTests`); the split `catch` and `sweep.sortRefusedFolders` shipped alongside |
 | `thread` store asymmetry | Derive the warning from Outlook's store list; also scan for the same asymmetry elsewhere | **queued** |
-| Timeout defects | Fold all three into the timeout-raising pass | **shipped** `4502c92` |
-| COM host kill | Keep the hard kill, document it, add a brief wait before killing, make the kill outcome-aware | **shipped** `4502c92` |
+| Timeout defects | Fold all three into the timeout-raising pass | **shipped** `a2725fd` |
+| COM host kill | Keep the hard kill, document it, add a brief wait before killing, make the kill outcome-aware | **shipped** `a2725fd` |
 | `top` ceiling | Leave at 100; rely on resumption | **decided, no work** |
 | Remaining gap-map rows | Clear **all** of them before the release | **queued** |
 | Work order | Infrastructure first: corpus, second PST, live tier on the VM | **in progress** |
-| `update_draft` | **(d)** make it re-entrant: record intent first, so a retry completes rather than repeats | **shipped** `db34923` |
-| Sweep timeout | **(d)** make expiry graceful **and** distinguish budget expiry from unresponsiveness at the supervisor | **shipped** `4502c92` |
+| `update_draft` | **(d)** make it re-entrant: record intent first, so a retry completes rather than repeats | **shipped** `1e4f5d6` |
+| Sweep timeout | **(d)** make expiry graceful **and** distinguish budget expiry from unresponsiveness at the supervisor | **shipped** `a2725fd` |
 | H3 (undated mail invisible to the sweep) | Check whether DASL can express "or the property is absent" first; failing that, report it; full fallback enumeration only if it proves common | **answered by measurement - NOT fixed, see section 3** |
 
 ## 1b. Decisions given 2026-08-19, after the overnight run
@@ -335,7 +335,7 @@ enumerated, 16 were wrong, 16 are fixed. The `outcome` field is on the error obj
 the call is judged, a refused move reports the folders it created); the shared opening sentence is
 `Core/Com/MutationOutcome`, keyed on `ComSessionOperations.IsRetryable`, with every site keeping its
 own remedy clause. Pinned by T1 `AtomicityClaimsTests` (33 tests), including the assertion that was
-missing when `db34923` shipped - the tool layer's `advice`, not only the `message`. The rows and
+missing when `1e4f5d6` shipped - the tool layer's `advice`, not only the `message`. The rows and
 what each now says are in `Docs/completeness-gaps.md` section 7b; what reading could not settle is
 in `TODO.md`.
 | `HealthProbeDeadlineMs` at 5 s | **Keep** |
@@ -417,7 +417,7 @@ sharing invitations, posts), items with no delivery time, very large bodies, dee
 folder that fails to open, a store whose display name cannot be read. Several of those are shapes
 this project has FIXED BLIND in the last few days, with no test able to produce them.
 
-## 2. Timeout values - SHIPPED in `4502c92`
+## 2. Timeout values - SHIPPED in `a2725fd`
 
 | Constant | Was | Now | Derivation |
 | --- | --- | --- | --- |
@@ -460,11 +460,11 @@ in context"): it is the diagnostic run precisely when Outlook is wedged. A healt
 takes minutes turns every generous budget elsewhere into an unbounded wait with no way to find out
 why.
 
-**A verification gap of mine, found and closed.** `4502c92` shipped a type that does not exist on
+**A verification gap of mine, found and closed.** `a2725fd` shipped a type that does not exist on
 net48, leaving CI red on master, and my verification did not catch it because I only built the test
 project - which targets net10 alone, while CI builds `OutlookAI.Core` explicitly for both. Fixed in
-`db34923`, and my own check now builds Core for both frameworks before any commit. Worth knowing
-because it means every commit before `db34923` this session was verified against a weaker bar than
+`1e4f5d6`, and my own check now builds Core for both frameworks before any commit. Worth knowing
+because it means every commit before `1e4f5d6` this session was verified against a weaker bar than
 I stated at the time.
 
 **Did NOT run the sort probe against the production mailbox, though it is written and ready.**
@@ -694,7 +694,7 @@ converted as each row is next touched.
 
 22. **Fixed a build break that was already on master, because CI builds the file it is in.**
     `dotnet build McpServer/OutlookAI.Core/OutlookAI.Core.csproj` fails for the **net48** target at
-    HEAD `23dca4f`: `BudgetedSessionProxy` (added the previous day) uses `DispatchProxy`, which is not
+    HEAD `ef18a82`: `BudgetedSessionProxy` (added the previous day) uses `DispatchProxy`, which is not
     in net48's default reference set, and `Stopwatch.GetElapsedTime`, which is net7+. The
     `mcpserver.yml` workflow builds that csproj explicitly, so the branch is red regardless of this
     work; the test project only builds net10, which is why the suite stayed green and nothing noticed.

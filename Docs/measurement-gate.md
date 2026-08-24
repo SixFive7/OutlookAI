@@ -436,7 +436,7 @@ adding a metric means editing this section.
 | `sweep.itemsBodyCapped` | items | both | default | items whose body was cut at SweepBodyCharsCap. Moves with the correspondents, not with the code, which is why it is reported rather than pinned. |
 | `sweep.perStore.elapsedMs.max` | ms | both | default | slowest single store in the per-store breakdown. The number that decides whether one bad store can spend the whole budget. |
 | `sweep.perStore.elapsedMs.total` | ms | both | default | sum over stores. Compared against sweep.wholeStore7Day.elapsedMs it says how much of the sweep is not per-store work. |
-| `sweep.sortRefusedFolders` | folders | mustBeZero | n/a | sweep.sortRefusedFolders. bea7fc9 made the claim "the received-date sort applies" checkable and nothing has checked it on a real profile since. Non-zero means capped folders kept an ARBITRARY slice of the window, which is the exact shape that produced a wrong 180 s budget. |
+| `sweep.sortRefusedFolders` | folders | mustBeZero | n/a | sweep.sortRefusedFolders. 03a0857 made the claim "the received-date sort applies" checkable and nothing has checked it on a real profile since. Non-zero means capped folders kept an ARBITRARY slice of the window, which is the exact shape that produced a wrong 180 s budget. |
 | `sweep.wholeStore7Day.elapsedMs` | ms | both | default | search payload sweep.elapsedMs for a whole-profile 7-day sweep, COM host already warm (a cold host adds the 90 s connect floor and is not comparable). |
 | `sweep.wholeStore7Day.itemsSeen` | items | both | default | sweep.itemsSeen for the same sweep. The denominator every elapsed figure above is a rate over; a drop here with elapsed flat means the sweep got slower per item. |
 

@@ -1,6 +1,6 @@
 # What the test VM can and cannot prove
 
-**Date:** 2026-08-23. **Tree:** `ff6bdde`, clean. **Method:** read-only. Nothing was built, no
+**Date:** 2026-08-23. **Tree:** `1f6a491`, clean. **Method:** read-only. Nothing was built, no
 test was run, no mailbox, Outlook, Hyper-V guest or registry hive was touched. Every count below
 comes from parsing the test assembly's attributes and from reading the code and the repo's own
 measurement records.
@@ -25,7 +25,7 @@ non-live **cases**, which matches the session log's own count).
 | T3 (stdio against the built server exe) | 24 | 109 | 9 | 100 |
 
 `Category=Live`: **116** methods (not 115). **20** `LiveTier=Portable`, **96** `ProfileBound`.
-`[V]` The 115/19 in `Docs/live-tier-on-the-vm.md` is one behind: `bea7fc9` (today) added
+`[V]` The 115/19 in `Docs/live-tier-on-the-vm.md` is one behind: `03a0857` (today) added
 `LiveTableSortProbeTests.ATableDate_IsEitherUtcOrLocal_AndTheRunSaysWhich` as a Portable test.
 
 **Supporting data beside this file:** `live-inventory.txt` is the full 116-method live table, one
@@ -460,7 +460,7 @@ VM-runnable **and needs the corpus to be the hub** - all four early-return green
 one page" otherwise.
 
 `[V]` `LiveTableSortProbeTests` (2 methods) is fully VM-runnable. Note that its subject, the sort
-defect, was settled today by `bea7fc9` on the real profile, and see 4.3 for why that matters.
+defect, was settled today by `03a0857` on the real profile, and see 4.3 for why that matters.
 
 ### 3.7 The store-count tripwire proves less, and knows it
 
@@ -534,7 +534,7 @@ Honest, one line each.
 | H3 population = 0 across 43,048 items | **No, and never.** |
 | Exhaustive scan reaching 3 folders of 32 in 105 s | **No.** The VM's three stores of four folders finish easily. |
 | `OutlookAvailabilityCiTests` search at 139.1 s against a 40-hour-old Outlook | **No.** It needs a long-running, busy, real Outlook. |
-| **The `Table.Sort` namespace defect** (`bea7fc9`, today) | **Partly, and this is the important row.** The probe is `LiveTier=Portable`, so the VM could have run it and would have shown that the explicit name applies and the namespace form is refused. What the VM could **not** have produced is the evidence that made it a shipped fix on the same day: five real stores, five of five refusing the namespace form, and the top row coming back as **2022, 2024 and 2025 depending on the store** with the namespace spelling versus today's mail with the explicit one. A single synthetic store of known dates would have shown "the sort was refused"; five real stores of years-deep history showed *what the user was actually getting instead*. |
+| **The `Table.Sort` namespace defect** (`03a0857`, today) | **Partly, and this is the important row.** The probe is `LiveTier=Portable`, so the VM could have run it and would have shown that the explicit name applies and the namespace form is refused. What the VM could **not** have produced is the evidence that made it a shipped fix on the same day: five real stores, five of five refusing the namespace form, and the top row coming back as **2022, 2024 and 2025 depending on the store** with the namespace spelling versus today's mail with the explicit one. A single synthetic store of known dates would have shown "the sort was refused"; five real stores of years-deep history showed *what the user was actually getting instead*. |
 
 **Six of seven would have been missed or halved.** That is the number the arrangement has to answer
 to, and it is why "VM by default plus a gate" is the right frame and "VM only" is not.
@@ -718,7 +718,7 @@ Concretely, the gate is:
    Inbox-with-subfolders exhaustive scan elapsed; a 60-day whole-store scan's `foldersScanned` and
    `elapsedMs`; the census elapsed per store and `folders fell back to counting`; index frontier age
    sampled N times; `largestFrameBytes`; `sweep.sortRefusedFolders` (which should now read **zero** -
-   `bea7fc9` made that claim checkable and nothing has checked it yet).
+   `03a0857` made that claim checkable and nothing has checked it yet).
 3. **One write exercise**: the move/archive batch the maintainer already asked for, hub-only, under
    the existing guards.
 4. **A drift check on the four Exchange-behaviour findings**: does `GetItemFromID` still reject the
@@ -936,7 +936,7 @@ constants.
    both the dummy-account and three-store decisions. Its section 2.3 recommends a **two**-PST layout
    with the corpus as hub, which the 2026-08-20 three-store decision supersedes. Its section 7
    "Known limits" is still accurate and still useful.
-2. **`C:\Users\jori\Downloads\tmp-aitrace\failing-now.txt`** holds stale output from before `bea7fc9`:
+2. **`C:\Users\jori\Downloads\tmp-aitrace\failing-now.txt`** holds stale output from before `03a0857`:
    `T1/SweepSortPropertyTests` failing on the namespace-reference sort. That defect is fixed; the file
    is misleading if read now and should be deleted with the rest of the scratch folder.
 3. **`corpus-measurement-plan.md` step 5 (exhaustive scan throughput) has never been run**, on either
