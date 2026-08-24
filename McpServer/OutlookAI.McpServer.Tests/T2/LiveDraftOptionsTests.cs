@@ -111,7 +111,12 @@ public sealed class LiveDraftOptionsTests
     {
         // Q-it2-3a identity grant: ONE tagged, never-displayed draft per business
         // account, deleted immediately; output stays content-free (S4).
-        foreach (string account in _fixture.IdentityAccounts)
+        //
+        // The account list announces itself: a machine whose configured primaries are all
+        // declared BYSTANDERS has none, and this loop would otherwise run zero times and
+        // report the A1 contract as verified (see IdentityDraftCoverage).
+        foreach (string account in _fixture.IdentityAccounts(
+            _output.WriteLine, "the A1 signature-placement matrix on the business accounts"))
         {
             string bodyMarker = "A1BIZ" + Marker;
             DraftOutcome outcome = CreateNewDraft(account, "a1-biz-default", bodyMarker, signature: null);
