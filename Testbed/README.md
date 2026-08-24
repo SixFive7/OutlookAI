@@ -154,6 +154,66 @@ accounts yet.
 
 ---
 
+## 5b. Idle VMs are SAVED, so the host gets its resources back
+
+The testbed VMs are not left running. A scheduled task saves any testbed VM nobody is using,
+and this section is the contract for it.
+
+**Saved, not paused, and the difference is the whole point.** `Suspend-VM` freezes a VM but
+keeps its memory resident: the host gets its CPU back and none of its RAM. `Save-VM` writes the
+guest's memory to disk and releases the RAM entirely, and resuming is still far faster than a
+boot because the guest never shut down - Outlook is still running, the profile is still open,
+the search service is still warm. Resources back plus a fast restart is the requirement, and
+saving is the only thing that gives both. The cost is disk: a saved VM's memory file is roughly
+its assigned RAM.
+
+**"In use" is DECLARED, never inferred, and this is the part worth understanding before
+changing anything.** The obvious signal - watch the guest's CPU - is wrong here in a way that
+would be found as a mystery rather than as a bug. A live tier run is ~27 minutes of driving
+Outlook through COM, and Outlook spends much of that waiting: on a store to open, a folder to
+enumerate, a save to commit. A guest that looks idle for two minutes mid-run is entirely
+ordinary. Saving it there suspends a COM call, and what the operator sees afterwards is a test
+that timed out for no reason on a machine that looks fine.
+
+So anything that intends to use a VM takes a lease and renews it while it works:
+
+    Testbed/host/Set-TestbedLease.ps1 -VMName OutlookAI-Indexed -Minutes 45 -Reason 'live tier'
+    # ... work, renewing before it expires ...
+    Testbed/host/Set-TestbedLease.ps1 -VMName OutlookAI-Indexed -Release
+
+A VM is saved only when it is one of the named testbed VMs, is Running, holds no live lease,
+and has been up past a grace period - so a VM someone has just started for work that has not
+taken its lease yet is not immediately put back to sleep.
+
+| Script | What it does |
+| --- | --- |
+| `host/Set-TestbedLease.ps1` | Take, renew or release a lease. |
+| `host/TestbedLeasePath.ps1` | Where leases live, and how one is read. Dot-sourced by both sides so they cannot disagree. |
+| `host/Invoke-TestbedIdleSave.ps1` | The saver. `-WhatIf` reports without changing anything. |
+| `host/Register-IdleSaveTask.ps1` | Registers it as SYSTEM in session 0, every 15 minutes. Needs elevation. |
+
+**Deliberate failure directions**, each chosen so the wrong answer is visible rather than silent:
+
+- **An unreadable or expired lease does not protect the VM.** Treating a corrupt lease as live
+  would let one truncated write pin a VM awake for ever. Getting it wrong this way saves a VM
+  someone was using, which is immediately visible and fixed by resuming.
+- **A lease whose holder died stops protecting when it expires.** That is why leases are short
+  and renewed rather than long. Do not take an eight-hour lease to avoid renewing.
+- **The saver refuses loudly when it cannot see Hyper-V.** It checks before the loop, because
+  the per-VM "not on this host" skip swallows a permissions failure exactly as it swallows an
+  absent VM - and an unelevated run would then skip every VM, print nothing, exit 0, and look
+  like a machine where nothing was ever idle. That is not hypothetical; it is what the first
+  version of this did.
+- **The task only ever saves.** It never starts, stops, checkpoints or deletes a VM.
+
+**One trap this cost, recorded so nobody repeats it.** The lease expiry is compared as a Unix
+second count, not as `expiresUtc`. PowerShell's `ConvertFrom-Json` silently coerces an ISO-8601
+string into a `DateTime` of Kind `Unspecified`; re-parsing that object's rendering drops the UTC
+marker, and `ToUniversalTime()` then treats a UTC instant as local and shifts it by the offset.
+Measured here: every lease read as having expired two hours before it was written, so the saver
+would have suspended VMs that were in active use. A number cannot be coerced into anything but
+a number.
+
 ## 6. What is still unknown
 
 A runbook that implies completeness it does not have is worse than one that names its holes.
