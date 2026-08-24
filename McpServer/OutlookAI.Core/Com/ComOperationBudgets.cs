@@ -50,14 +50,22 @@ namespace OutlookAI.Core.Com
         /// is this value and carries the full rationale.
         /// <para>
         /// Raised from 120 000 to 300 000 on 2026-08-19. It is the HANG DETECTOR for every
-        /// tool other than the exhaustive scan, so its job is to be unreachable by slow but
-        /// working work and reachable by a wedge. Measured on the maintainer's real profile
+        /// tool other than the exhaustive scan and the freshness class, so its job is to be
+        /// unreachable by slow but working work and reachable by a wedge. Measured on the
+        /// maintainer's real profile
         /// (5 stores, one of them 108 144 items): a whole-store 7-day sweep is 36.6 s and an
         /// Inbox-with-subfolders exhaustive scan is 66.5 s - so 120 s was under 2x the
         /// slowest healthy operation observed, which is not a hang detector, it is a second
-        /// work limit wearing one's clothes. 300 s is roughly 4.5x that, and it also has to
-        /// cover the composed search shape (<c>MailService.SearchBudgetMs</c>) with room to
-        /// spare.
+        /// work limit wearing one's clothes. 300 s is roughly 4.5x that.
+        /// </para>
+        /// <para>
+        /// DELIBERATELY UNCHANGED by the 2026-08-24 sweep widening, and that is the point of
+        /// that change. It used to have to cover the composed search shape
+        /// (<c>MailService.SearchBudgetMs</c>) as well, which is what tied every quick tool's
+        /// hang detection to how long a sweep of a 50 GB profile is allowed to take. The
+        /// sweep now answers to <see cref="FreshnessSweepDeadlineMs"/> instead, so
+        /// <c>read</c>, <c>move_mail</c>, <c>new_draft</c> and <c>list_folders</c> still
+        /// reclaim a wedged Outlook in five minutes.
         /// </para>
         /// <para>
         /// The cost of raising it is real and is the reason it is not higher: a genuinely
@@ -163,5 +171,79 @@ namespace OutlookAI.Core.Com
         /// long degrades to "results are partial" instead of to a timeout and a host kill.
         /// </summary>
         public const int ExhaustiveScanWorkBudgetMs = ExhaustiveScanDeadlineMs - ResultReturnHeadroomMs;
+
+        /// <summary>
+        /// The gateway budget the freshness sweep declares - the number the supervisor
+        /// actually stops it at, because <c>ComHostPolicy.DeadlineFor</c> honours a
+        /// caller-declared budget verbatim and unclamped.
+        /// <para>
+        /// TEN MINUTES, ON THE MAINTAINER'S DECISION OF 2026-08-23, and it is a CEILING to
+        /// be narrowed from measurement later rather than a measured value now. The premise
+        /// is the standing rule of this project - completeness outranks performance, whatever
+        /// the cost - applied to a ~50 GB profile on an Outlook that can be very slow, by a
+        /// caller who has delegated the work and can wait. The previous 180 000 is not a
+        /// smaller version of this number, it is an untrustworthy one: the ~12 s-per-store
+        /// figure it was 3x of was taken while the sweep's sort was silently failing (fixed
+        /// in <c>bea7fc9</c>), so it describes broken behaviour doing different work.
+        /// </para>
+        /// <para>
+        /// WHAT MAKES IT AFFORDABLE IS THE CLASS, NOT THE NUMBER. At 600 s the sweep no
+        /// longer fits under the ordinary hang detector
+        /// (<see cref="OperationDeadlineMs"/>, 300 s), and a caller budget at or above its
+        /// class deadline is what <c>ComHostPolicy.TimeoutIndicatesUnresponsiveness</c>
+        /// reads as evidence of a wedged Outlook - so on the ordinary class an ordinary slow
+        /// sweep would have started counting toward the circuit breaker, which is the
+        /// self-inflicted outage that rule was written to end. The sweep therefore has a
+        /// class of its own (<see cref="FreshnessSweepDeadlineMs"/>) and every quick tool
+        /// keeps the 300 s detector unchanged.
+        /// </para>
+        /// <para>
+        /// WHAT WOULD CHANGE IT: a sweep cost measured on the test VM's corpus with the sort
+        /// working, per store and whole-profile. That is what narrows a ceiling into a
+        /// budget. Until then this is deliberately far larger than any observation.
+        /// </para>
+        /// </summary>
+        public const int FreshnessSweepBudgetMs = 600_000;
+
+        /// <summary>
+        /// The most wall clock the freshness sweep INSIDE the child may spend before it must
+        /// stop at a store or folder boundary and hand back what it covered. Derived, never
+        /// written as a literal, exactly as <see cref="ExhaustiveScanWorkBudgetMs"/> is and
+        /// for the same reason: an inner budget equal to its outer one can never degrade,
+        /// because the outer watchdog fires while the walk is still serializing its answer.
+        /// </summary>
+        public const int FreshnessSweepWorkBudgetMs = FreshnessSweepBudgetMs - ResultReturnHeadroomMs;
+
+        /// <summary>
+        /// Hard deadline for the freshness class (<c>ComHostOperationClass.FreshnessSweep</c>):
+        /// the search path's folder sweep and <c>thread</c>'s conversation walk.
+        /// <para>
+        /// WHAT THIS IS FOR, PRECISELY. It is not a ceiling on the sweep - the sweep declares
+        /// <see cref="FreshnessSweepBudgetMs"/> and that is honoured verbatim. It is the
+        /// threshold a caller-declared budget is compared against to decide whether an expiry
+        /// is evidence of a WEDGE or merely of big work, and the value it must therefore be
+        /// is "comfortably above the largest legitimate wall clock on this path".
+        /// </para>
+        /// <para>
+        /// DERIVED, NOT PICKED: it is one whole composed search - the index statement plus
+        /// the sweep, which is <c>MailService.SearchBudgetMs</c> at 660 s - plus
+        /// <see cref="ResultReturnHeadroomMs"/> for the return trip, the same "+ the return
+        /// trip" shape <see cref="ExhaustiveScanDeadlineMs"/> stands in to its own work
+        /// budget. The two halves of that sum live in the service layer, which this type may
+        /// not reference (the dependency runs Services -> Com, never back), so the
+        /// relationship is pinned from outside by T1 <c>FreshnessSweepClassTests</c> - the
+        /// same idiom <c>SweepBodyCapTests</c> uses for <c>SweepBodyBytesBudget</c>.
+        /// </para>
+        /// <para>
+        /// The cost is real and is why it is not larger: a genuinely wedged Outlook takes
+        /// this long to be recognised ON A SEARCH OR A THREAD, and
+        /// <c>ComHostPolicy.UnresponsiveTimeoutThreshold</c> consecutive timeouts to open
+        /// the breaker. That cost is paid by those two paths alone - <c>read</c>,
+        /// <c>move_mail</c>, <c>new_draft</c> and every other tool still reclaim a wedged
+        /// host in 300 s, which is the entire reason this is a class rather than a bigger
+        /// shared number.
+        /// </para>
+        /// </summary>
+        public const int FreshnessSweepDeadlineMs = 675_000;
     }
 }

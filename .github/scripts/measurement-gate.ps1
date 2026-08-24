@@ -343,8 +343,10 @@ $script:Catalogue = @(
         -Description 'reserved for handing the result back rather than for doing work.'),
     (New-SourceConstant -Id 'source.ExhaustiveScanDeadlineMs' -File $Budgets -Pattern 'ExhaustiveScanDeadlineMs\s*=\s*([0-9_]+)' `
         -Description 'exhaustive scan hard deadline, its own class.'),
-    (New-SourceConstant -Id 'source.SweepBudgetMs' -File $MailService -Pattern 'SweepBudgetMs\s*=\s*([0-9_]+)' `
-        -Description 'freshness sweep budget. The one that was derived from a measurement taken while the sort was failing.'),
+    (New-SourceConstant -Id 'source.SweepBudgetMs' -File $Budgets -Pattern 'FreshnessSweepBudgetMs\s*=\s*([0-9_]+)' `
+        -Description 'freshness sweep budget. The one that was derived from a measurement taken while the sort was failing; 600 s since 2026-08-24 is a CEILING awaiting that re-measurement, and it moved to ComOperationBudgets with the sweep''s own deadline class.'),
+    (New-SourceConstant -Id 'source.FreshnessSweepDeadlineMs' -File $Budgets -Pattern 'FreshnessSweepDeadlineMs\s*=\s*([0-9_]+)' `
+        -Description 'freshness class hard deadline - the threshold the sweep budget is judged against. Derived as SearchBudgetMs + ResultReturnHeadroomMs; narrowing the sweep budget must move it too.'),
     (New-SourceConstant -Id 'source.SweepPerFolderCap' -File $MailService -Pattern 'SweepPerFolderCap\s*=\s*([0-9_]+)' -Unit 'items' `
         -Description 'items per folder the sweep will open.'),
     (New-SourceConstant -Id 'source.ScopedSweepTimeBudgetMs' -File $Session -Pattern 'ScopedSweepTimeBudgetMs\s*=\s*([0-9_]+)' `

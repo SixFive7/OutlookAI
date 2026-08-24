@@ -1,4 +1,4 @@
-using OutlookAI.Core.Com;
+﻿using OutlookAI.Core.Com;
 
 namespace OutlookAI.ComHost.Supervision
 {
@@ -167,6 +167,23 @@ namespace OutlookAI.ComHost.Supervision
         /// </para>
         /// </summary>
         internal const long ExhaustiveScanDeadlineMilliseconds = ComOperationBudgets.ExhaustiveScanDeadlineMs;
+
+        /// <summary>
+        /// Budget for one freshness check - the search path's folder sweep and
+        /// <c>thread</c>'s conversation walk - which get a class of their own rather than
+        /// sharing <see cref="DefaultOperationDeadlineMilliseconds"/>.
+        /// <para>
+        /// It is not a limit on how long the sweep may run: the sweep declares its own
+        /// budget and <see cref="DeadlineFor"/> honours a caller-declared budget VERBATIM
+        /// and unclamped, so the supervisor already stops it at the sweep's own number. What
+        /// this is, is the THRESHOLD <see cref="TimeoutIndicatesUnresponsiveness"/> compares
+        /// that budget against. While the sweep shared the ordinary class, pushing its
+        /// budget to 600 s against a 300 s threshold would have made every ordinary slow
+        /// sweep read as evidence of a wedged Outlook and count toward the breaker - the
+        /// self-inflicted outage that rule exists to prevent.
+        /// </para>
+        /// </summary>
+        internal const long FreshnessSweepDeadlineMilliseconds = ComOperationBudgets.FreshnessSweepDeadlineMs;
 
         /// <summary>
         /// Ceiling on the COM host pipe handshake - the parent's wait for the child to
@@ -476,6 +493,18 @@ namespace OutlookAI.ComHost.Supervision
         /// itself the instrument.
         /// </para>
         /// <para>
+        /// THE COMPARISON IS PER CLASS, AND THAT IS THE WHOLE POINT OF THE CLASSES. It asks
+        /// whether the caller's budget reaches the hang detector standing over THIS
+        /// operation, not over some other one. A 600 s sweep judged against the ordinary
+        /// 300 s deadline is "at or above" it and would count; judged against
+        /// <see cref="FreshnessSweepDeadlineMilliseconds"/> it does not. Collapsing the
+        /// classes here - comparing everything against
+        /// <see cref="DefaultOperationDeadlineMilliseconds"/>, or against a single largest
+        /// deadline - reintroduces exactly one of the two failures the split exists to
+        /// prevent: either the sweep opens the breaker on an ordinary large mailbox, or
+        /// every quick tool's own hang detection is silently disabled.
+        /// </para>
+        /// <para>
         /// A caller-declared budget still kills the child on expiry. Nothing else can
         /// reclaim a blocked COM call, and the child serves requests serially, so leaving a
         /// wedged one in place would block every later request. What changes is only what
@@ -543,6 +572,7 @@ namespace OutlookAI.ComHost.Supervision
                 ComHostOperationClass.Connect => ConnectDeadlineMilliseconds,
                 ComHostOperationClass.HealthProbe => HealthProbeDeadlineMilliseconds,
                 ComHostOperationClass.ExhaustiveScan => ExhaustiveScanDeadlineMilliseconds,
+                ComHostOperationClass.FreshnessSweep => FreshnessSweepDeadlineMilliseconds,
                 _ => DefaultOperationDeadlineMilliseconds,
             };
         }
@@ -576,26 +606,5 @@ namespace OutlookAI.ComHost.Supervision
 
             return null;
         }
-    }
-
-    /// <summary>Deadline class of an operation.</summary>
-    internal enum ComHostOperationClass
-    {
-        /// <summary>An ordinary mailbox operation.</summary>
-        Operation = 0,
-
-        /// <summary>Establishing the session, possibly cold-starting Outlook.</summary>
-        Connect = 1,
-
-        /// <summary>A health probe, which must degrade rather than block.</summary>
-        HealthProbe = 2,
-
-        /// <summary>
-        /// An exhaustive folder scan: the one operation a caller picks BECAUSE
-        /// completeness matters more than speed, and the one whose budget expiry is a
-        /// documented answer rather than an incident. It has its own deadline so that
-        /// giving it ten minutes does not give every other tool ten minutes.
-        /// </summary>
-        ExhaustiveScan = 3,
     }
 }

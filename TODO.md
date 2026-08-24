@@ -1030,7 +1030,8 @@
   - **The blocker for the 180 s proposal, found while writing the plan and not yet acted on:**
     `SearchBudgetMs` is `SearchIndexTimeoutSeconds * 1000 + SweepBudgetMs`, and T1
     `BudgetCompositionTests.SearchBudget_IsComposedFromItsPartsAndFitsTheOperationDeadline` asserts
-    that sum fits inside `ComOperationBudgets.OperationDeadlineMs` (120 s). At 180 s the sum is
+    that sum fits inside `ComOperationBudgets.OperationDeadlineMs` (120 s). (That test is now
+    `...FitsTheFreshnessDeadline` and names the sweep's own class - see the RESOLVED row below.) At 180 s the sum is
     195 s and that test fails before anything reaches a mailbox. Anything above roughly 105 s moves
     the operation deadline too, and with it the child work budget and `ExhaustiveTimeBudgetMs`. Decide
     the shape of that change before measuring, so the measurement is aimed at the right question.
@@ -1281,13 +1282,14 @@
   guards that keep this a cost fix). **Still unmeasured, and the reason the row asked for it:** the
   before/after sweep cost on the real profile. Nothing here changes what is swept, only how often.
 
-- [ ] **BLOCKED: the freshness sweep cannot go to 600 s while `ExhaustiveScanDeadlineMs` stays at
-      615 s. Decide which rung moves.** The maintainer's decision on 2026-08-23 was to set
+- [x] **RESOLVED 2026-08-24 on the maintainer's decision: (c). The freshness sweep has its own
+      COM-host operation class, and `SweepBudgetMs` is 600 s.** The maintainer's decision on 2026-08-23 was to set
   `MailService.SweepBudgetMs` to a 600 s CEILING now and narrow it later from VM measurements,
   because the current 180 s was derived from a measurement taken while the sweep's sort was
   silently failing (`bea7fc9`) and therefore describes broken behaviour doing different work.
-  **The number was NOT applied**, because the ladder above it cannot hold it and the resolution is
-  not this session's to pick. The constant is still `180_000`.
+  **The number was not applied on 2026-08-23**, because the ladder above it could not hold it and
+  the resolution was not that session's to pick; the record of why is kept below because it is what
+  the class exists to answer. It IS applied now - see the DONE note at the end of this row.
 
   The arithmetic, verified by running the suite at each value rather than by reading:
   - `SearchBudgetMs = SearchIndexTimeoutSeconds * 1000 + SweepBudgetMs`, so a 600 s sweep makes it
@@ -1332,6 +1334,24 @@
   Recommendation: **(c)**, with **(b)** as the thing to ship first if the sweep budget is wanted
   before the class work. **(d)** should not be taken; **(a)** should not be taken until the
   exhaustive-scan measurement has been run.
+
+  **DONE 2026-08-24: (c).** `ComHostOperationClass.FreshnessSweep` is the fourth deadline class,
+  built to the exhaustive scan's precedent. The ladder is now `FreshnessSweepWorkBudgetMs` 585 s <
+  `FreshnessSweepBudgetMs` 600 s < `FreshnessSweepDeadlineMs` 675 s, with the class deadline derived
+  as `SearchBudgetMs (660 s) + ResultReturnHeadroomMs` rather than picked. `SweepBudgetMs` and
+  `ThreadWalkBudgetMs` are that one constant; `SearchBudgetMs` is 660 s and its pin now names the
+  sweep's class instead of the ordinary one. **`OperationDeadlineMs` (300 s) and
+  `ExhaustiveScanDeadlineMs` (615 s) did not move at all** - which was the point, and is now
+  asserted rather than assumed: T1 `FreshnessSweepClassTests` walks `IOutlookSession` by reflection
+  and requires every operation outside the three long classes to resolve to exactly 300 s, by
+  value. `thread`'s conversation walk joined the sweep's class because it already shared the
+  sweep's budget, and a budget judged against the wrong class is the breaker outage moved to
+  another tool. The classification itself moved out of `RemoteSessionProxy`'s private
+  `ClassifyOperation` - a `DispatchProxy` line no CI test can execute - into
+  `ComOperationClasses.ClassOf` in `Core/Com`, which is what makes the guard above possible at all.
+  **Still open, and unchanged by this:** the sweep cost has never been measured with the sort
+  working, so 600 s is a ceiling rather than a budget. The row below on re-measuring it is the one
+  that narrows it.
 
 - [ ] **Decide what the test VM is FOR, because 96 of 115 live tests cannot move to it as it
       stands.** The live tier is now split by trait (`LiveTier=Portable` vs `ProfileBound`, see

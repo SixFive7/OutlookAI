@@ -478,34 +478,39 @@ namespace OutlookAI.Core.Services
         /// blamed the sweep.
         /// </para>
         /// <para>
-        /// RAISED FROM 30 000 TO 180 000 on 2026-08-19, and this is a measurement, not a
-        /// preference. Measured on a purpose-built corpus - one PST outside the local index,
-        /// 20 000 items across the four arrival-path folders with real received dates, 1 612
-        /// of them inside the seven-day fallback window so the per-folder cap engages: four
-        /// sweeps of that ONE store took 13.6 s, 11.8 s, 10.7 s and 11.9 s, i.e. about 12 s
-        /// per store with the cap engaged. The maintainer's profile mounts FIVE stores and
-        /// the sweep covers four folders in each, so the extrapolation is ~60 s - against a
-        /// 30 s budget. That is the direct explanation for the sweep timeout observed on
-        /// their real profile, where the supervisor then killed and replaced the COM host,
-        /// and it agrees with the earlier whole-store 7-day figure of 36.6 s there.
+        /// RAISED FROM 30 000 TO 180 000 on 2026-08-19 against a measurement - one store's
+        /// sweep at ~12 s with the per-folder cap engaged, extrapolated to ~60 s over the
+        /// maintainer's five stores, times three for headroom. THAT MEASUREMENT NO LONGER
+        /// STANDS: it was taken while the sweep's sort was silently failing (fixed in
+        /// <c>bea7fc9</c>), so it describes broken behaviour doing different work, and a
+        /// budget derived from it describes nothing.
         /// </para>
         /// <para>
-        /// 180 000 is 3x that measured extrapolation, and the margin is headroom rather than
-        /// luxury: the corpus is a fast LOCAL PST, and the same per-item work against
-        /// Exchange is slower. The other half of the fix is that expiry is no longer fatal -
-        /// the sweep stops at a folder boundary and returns what it covered
-        /// (<see cref="SweepWorkBudgetMs"/>), and an expiring caller budget no longer counts
-        /// as evidence that Outlook is unresponsive.
+        /// RAISED AGAIN TO 600 000 on 2026-08-24, and this one is a DECISION rather than a
+        /// measurement - a ceiling, to be narrowed once the sweep has been re-measured with
+        /// the sort working. The number and its rationale live in
+        /// <see cref="ComOperationBudgets.FreshnessSweepBudgetMs"/>, which is also where the
+        /// class it is judged against is declared; this is the same constant, not a second
+        /// copy of 600 000. What made the raise possible at all is that the sweep no longer
+        /// shares the ordinary hang detector: at 600 s under
+        /// <c>ComHostOperationClass.Operation</c> an ordinary slow sweep would have read as
+        /// a wedged Outlook and counted toward the circuit breaker.
+        /// </para>
+        /// <para>
+        /// Expiry is not fatal either way - the sweep stops at a folder boundary and returns
+        /// what it covered (<see cref="SweepWorkBudgetMs"/>), and an expiring caller budget
+        /// does not count as evidence that Outlook is unresponsive.
         /// </para>
         /// <para>
         /// It is COUPLED to <c>OutlookComSession.SweepBodyBytesBudget</c>. The 432 KB frame
         /// high-water previously measured on the real profile was bounded by the old 30 s
         /// timeout, not by any item cap; the same corpus measured 10.2 MB from one store's
         /// sweep once the sweep was allowed to finish. Giving the sweep time is what lets it
-        /// build frames large enough for the body budget to matter.
+        /// build frames large enough for the body budget to matter - and this raise gives it
+        /// more time again, so that budget is the thing to watch next.
         /// </para>
         /// </summary>
-        public const int SweepBudgetMs = 180_000;
+        public const int SweepBudgetMs = ComOperationBudgets.FreshnessSweepBudgetMs;
 
         /// <summary>
         /// The sweep's INNER budget - the one the COM child measures against its own clock
@@ -529,7 +534,7 @@ namespace OutlookAI.Core.Services
         /// start is paid out of the outer budget's headroom rather than out of this one.
         /// </para>
         /// </summary>
-        public const int SweepWorkBudgetMs = SweepBudgetMs - ComOperationBudgets.ResultReturnHeadroomMs;
+        public const int SweepWorkBudgetMs = ComOperationBudgets.FreshnessSweepWorkBudgetMs;
 
         /// <summary>
         /// Time budget for health's COM probe. Short by design: outlook_health exists to
@@ -583,8 +588,20 @@ namespace OutlookAI.Core.Services
         /// <summary>
         /// The tool-level wall-clock shape of one indexed search, stated as a relationship
         /// rather than as an unrelated literal: index statement plus freshness sweep. Pinned
-        /// against the COM host's operation deadline so the two cannot drift into a search
-        /// that outlives the budget its own sweep runs under.
+        /// against the hard deadline of the class its COM half is dispatched under, so the
+        /// two cannot drift into a search that outlives the hang detector standing over its
+        /// own sweep.
+        /// <para>
+        /// THAT CLASS CHANGED ON 2026-08-24, and the pin moved with it. It used to be
+        /// <c>ComOperationBudgets.OperationDeadlineMs</c>, which is what tied the ordinary
+        /// hang detector - <c>read</c>'s, <c>move_mail</c>'s - to how long a sweep of a
+        /// 50 GB profile may take: raising the sweep raised the composed shape, and the
+        /// composed shape had to fit inside a deadline every other tool shared. It is now
+        /// <c>ComOperationBudgets.FreshnessSweepDeadlineMs</c>. This is a coherence claim
+        /// rather than a mechanism - nothing dispatches <see cref="SearchBudgetMs"/> itself,
+        /// the sweep dispatches <see cref="SweepBudgetMs"/> - and it is kept because it is
+        /// the check that caught the incoherence in the first place.
+        /// </para>
         /// </summary>
         public const int SearchBudgetMs = (SearchIndexTimeoutSeconds * 1000) + SweepBudgetMs;
 
@@ -3517,6 +3534,15 @@ namespace OutlookAI.Core.Services
         /// literal, because it is the same kind of work: a bounded live COM check layered
         /// over an answer the index already produced. It carries the sweep's connect floor
         /// too - the walk may be the call that starts Outlook.
+        /// <para>
+        /// Sharing the budget means sharing the CLASS, which is why
+        /// <c>IOutlookSession.TryGetConversationItems</c> sits beside
+        /// <c>SweepFoldersNewerThan</c> in <c>ComOperationClasses</c>. The class is what a
+        /// caller-declared budget is judged against, so a walk that borrowed this budget
+        /// while keeping the ordinary class would expire at 600 s against a 300 s threshold
+        /// and count toward the circuit breaker - the sweep's own outage, moved to
+        /// <c>thread</c>.
+        /// </para>
         /// </summary>
         public const int ThreadWalkBudgetMs = SweepBudgetMs;
 
