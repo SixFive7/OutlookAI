@@ -1453,10 +1453,14 @@ namespace OutlookAI.TaskPane
             _toolTip.SetToolTip(btnEditSelection, "Edit only the selected text based on your instruction.\nLeaves the rest of the draft unchanged.");
             _toolTip.SetToolTip(btnSelectSignature, "Let the AI pick the best of your installed signatures for this email\n(matching the language of the draft, thread, and recipients) and apply it.\nYour draft text and the quoted thread stay untouched.");
             // The interval is asked for, never restated: it used to be spelled out here in
-            // English, on screen, where changing PollInterval would have left it lying.
+            // English, on screen, where changing PollInterval would have left it lying. The
+            // trailing clause is there for the same reason - the automatic check now slows down
+            // while it keeps failing (UpdatePollSchedule), so a flat "every 10 minutes" would be
+            // untrue on exactly the machine whose user is reading this tooltip.
             _toolTip.SetToolTip(lnkCheckUpdates,
                 "Look for a newer version now, instead of waiting for the next\nautomatic check. "
-                + "OutlookAI checks every " + UpdateService.PollIntervalDescription + " on its own.");
+                + "OutlookAI checks every " + UpdateService.PollIntervalDescription + " on its own,\n"
+                + "and less often while checks keep failing.");
         }
 
         private void InvokeOnUI(Action action)

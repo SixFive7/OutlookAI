@@ -7,6 +7,7 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net.NetworkInformation;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
@@ -21,7 +22,13 @@ namespace OutlookAI.Services
     {
         private const string GitHubOwner = "SixFive7";
         private const string GitHubRepo = "OutlookAI";
-        private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(10);
+
+        /// <summary>
+        /// How often a healthy machine polls. The number, the first-check delay and the
+        /// failure backoff all live in <see cref="UpdatePollSchedule"/>, which is the only
+        /// testable part of this class and is linked into the T1 suite for that reason.
+        /// </summary>
+        private static readonly TimeSpan PollInterval = UpdatePollSchedule.BaseInterval;
 
         /// <summary>
         /// How long the GitHub API call may take. Generous for a JSON GET, and deliberately
@@ -103,6 +110,32 @@ namespace OutlookAI.Services
         private static Timer _timer;
         private static Process _updateProcess;
         private static int _checking;
+
+        /// <summary>
+        /// How many checks in a row have failed to REACH GitHub, which is the only thing the
+        /// backoff in <see cref="UpdatePollSchedule"/> reacts to. Reset by the first check that
+        /// gets an answer - a 304 or a 2xx - and by the network coming back.
+        ///
+        /// <para>
+        /// Deliberately NOT incremented by everything that sets <see cref="LastError"/>. A
+        /// release with no installer asset, a download that failed its signature check or one
+        /// that exceeded the size cap are all failures, and all of them prove the server was
+        /// reachable; slowing the poll down for those would delay the recovery rather than the
+        /// waste, because the recovery is a new release landing. What this counts is the shape
+        /// the poll cannot fix by trying harder: DNS failure, refused connection, TLS failure,
+        /// timeout, and any status GitHub answers with that is neither 304 nor success
+        /// (a 5xx, or the rate-limit 403 that hammering it is what earns).
+        /// </para>
+        /// </summary>
+        private static int _consecutiveFailures;
+
+        /// <summary>
+        /// Whether <see cref="Start"/> has hooked <see cref="NetworkChange"/>, so
+        /// <see cref="Stop"/> detaches exactly what it attached and a second Start cannot
+        /// subscribe twice. Guarded because subscribing is best-effort: the NLA service can be
+        /// disabled or unreachable, and this feature is not worth failing add-in load over.
+        /// </summary>
+        private static bool _networkHooked;
 
         private static volatile string _lastChecked;
         private static volatile string _lastError;
@@ -337,16 +370,127 @@ namespace OutlookAI.Services
             return client;
         }
 
+        /// <summary>
+        /// Starts polling. The timer is ONE-SHOT and re-arms itself after every check, because
+        /// the interval is no longer a constant: it is <see cref="UpdatePollSchedule.DelayAfter"/>
+        /// of the current failure count. A periodic timer cannot express that without being
+        /// re-armed anyway, and a periodic timer that is also re-armed has two schedules.
+        ///
+        /// <para>
+        /// THE INVARIANT THAT KEEPS POLLING ALIVE: every path out of <see cref="RunCheckAsync"/>
+        /// re-arms exactly once - the ones that answer without checking do it themselves, and
+        /// the one that hands off to <see cref="CheckForUpdateAsync"/> does it in that method's
+        /// finally. Miss it on one path and the updater stops for the session, silently, which
+        /// is the one failure mode a one-shot timer has that a periodic one does not.
+        /// </para>
+        ///
+        /// <para>
+        /// The first check waits <see cref="UpdatePollSchedule.SettleDelay"/> rather than firing
+        /// on a <c>TimeSpan.Zero</c> due time inside add-in load - see that constant for why.
+        /// </para>
+        /// </summary>
         public static void Start()
         {
-            // Fire immediately, then once per PollInterval.
-            _timer = new Timer(_ => _ = RunCheckAsync(), null, TimeSpan.Zero, PollInterval);
+            _timer = new Timer(_ => _ = RunCheckAsync(), null,
+                UpdatePollSchedule.SettleDelay, Timeout.InfiniteTimeSpan);
+            HookNetworkAvailability();
         }
 
         public static void Stop()
         {
+            UnhookNetworkAvailability();
             _timer?.Dispose();
             _timer = null;
+        }
+
+        /// <summary>
+        /// Arms the one-shot timer for the next check, at whatever interval the current failure
+        /// count earns. Called exactly once per <see cref="RunCheckAsync"/>.
+        ///
+        /// <para>
+        /// Tolerates both shapes of "there is no timer": never started (the settings dialog can
+        /// run a check in a host that never called <see cref="Start"/>), and stopped underneath
+        /// us, where <see cref="Stop"/> may have disposed the instance between the read and the
+        /// Change. Neither is an error, and neither may resurrect polling after a Stop.
+        /// </para>
+        /// </summary>
+        private static void Reschedule()
+        {
+            var timer = _timer;
+            if (timer == null)
+                return;
+            var delay = UpdatePollSchedule.DelayAfter(Volatile.Read(ref _consecutiveFailures));
+            try { timer.Change(delay, Timeout.InfiniteTimeSpan); }
+            catch (ObjectDisposedException) { }
+        }
+
+        /// <summary>
+        /// Records what a completed check managed to do, then re-arms. <paramref name="reachedServer"/>
+        /// is the ONLY input to the backoff: see <see cref="_consecutiveFailures"/> for why it is
+        /// that and not "did anything go wrong".
+        /// </summary>
+        private static void RecordCheckOutcome(bool reachedServer)
+        {
+            if (reachedServer)
+                Interlocked.Exchange(ref _consecutiveFailures, 0);
+            else
+                Interlocked.Increment(ref _consecutiveFailures);
+            Reschedule();
+        }
+
+        /// <summary>
+        /// THE FAST RECOVERY PATH. Without it, a machine that was offline overnight sits at the
+        /// <see cref="UpdatePollSchedule.MaxInterval"/> ceiling and can take up to two hours to
+        /// notice it is back; with it, a laptop that reconnects to Wi-Fi checks
+        /// <see cref="UpdatePollSchedule.SettleDelay"/> later with the backoff already cleared.
+        ///
+        /// <para>
+        /// Best-effort in both directions, and it has to be. <c>NetworkChange</c> is backed by
+        /// the NLA service, which can be disabled or refuse to start, and subscribing throws a
+        /// <c>NetworkInformationException</c> when it does - a failure that must cost nothing,
+        /// because the ceiling above is a complete answer on its own and this is only the
+        /// quicker one. The event also fires more than once for a single reconnect; that costs
+        /// nothing either, because the check it schedules is behind the one-at-a-time guard and
+        /// re-arming an already-armed timer just moves its due time.
+        /// </para>
+        /// </summary>
+        private static void HookNetworkAvailability()
+        {
+            if (_networkHooked)
+                return;
+            try
+            {
+                NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
+                _networkHooked = true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("UpdateService: network availability hook unavailable: " + ex.Message);
+            }
+        }
+
+        private static void UnhookNetworkAvailability()
+        {
+            if (!_networkHooked)
+                return;
+            try { NetworkChange.NetworkAvailabilityChanged -= OnNetworkAvailabilityChanged; }
+            catch (Exception ex) { Debug.WriteLine("UpdateService: network unhook failed: " + ex.Message); }
+            _networkHooked = false;
+        }
+
+        private static void OnNetworkAvailabilityChanged(object sender, NetworkAvailabilityEventArgs e)
+        {
+            // Losing the network is not news: the next check will fail and the backoff is what
+            // that is for. Only the rising edge means anything here.
+            if (!e.IsAvailable)
+                return;
+
+            Interlocked.Exchange(ref _consecutiveFailures, 0);
+            var timer = _timer;
+            if (timer == null)
+                return;
+            try { timer.Change(UpdatePollSchedule.SettleDelay, Timeout.InfiniteTimeSpan); }
+            catch (ObjectDisposedException) { }
         }
 
         /// <summary>
@@ -380,11 +524,21 @@ namespace OutlookAI.Services
             if (Assembly.GetExecutingAssembly().GetName().Version.Major == 99)
             {
                 Status = StatusDeveloperBuild;
+                // Re-armed anyway, even though the answer can never change inside one process:
+                // "every path re-arms" is an invariant a reader can check by looking, and
+                // "every path except this one, because…" is one they have to reason about.
+                Reschedule();
                 return Task.CompletedTask;
             }
 
             if (!TryClaimCheck())
+            {
+                // A check is already in flight and will re-arm in its own finally. Doing it here
+                // as well is harmless - both compute the same delay from the same count - and it
+                // is what keeps the invariant above true without a special case.
+                Reschedule();
                 return Task.CompletedTask;
+            }
 
             try
             {
@@ -395,8 +549,11 @@ namespace OutlookAI.Services
                 // Only reachable if the work could not even be queued, but releasing the guard
                 // here is what stops that being permanent: claimed and never released, it wedges
                 // the updater for the session and leaves both indicators stuck on "checking…".
+                // The queue failing says nothing about the network, so the failure count is left
+                // alone and the poll simply comes back at its current interval.
                 ReleaseCheck();
                 LastError = ex.Message;
+                Reschedule();
                 return Task.CompletedTask;
             }
         }
@@ -407,6 +564,9 @@ namespace OutlookAI.Services
         {
             string tempPath = null;
             bool installerHandedOff = false;
+            // Set at the two points GitHub has answered - 304, or a success whose body parsed.
+            // It is what the backoff reads; nothing below it counts as unreachable.
+            bool reachedServer = false;
             try
             {
                 var apiUrl = $"https://api.github.com/repos/{GitHubOwner}/{GitHubRepo}/releases/latest";
@@ -425,6 +585,7 @@ namespace OutlookAI.Services
                     {
                         if (response.StatusCode == HttpStatusCode.NotModified)
                         {
+                            reachedServer = true;
                             MarkChecked();
                             LastError = null;
                             return;
@@ -436,6 +597,7 @@ namespace OutlookAI.Services
                             return;
                         }
 
+                        reachedServer = true;
                         MarkChecked();
                         LastError = null;
 
@@ -614,6 +776,10 @@ namespace OutlookAI.Services
                     try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
                 }
                 ReleaseCheck();
+                // The one re-arm on this path, and the reason it is in the finally rather than
+                // at the end of the try: every return above - and there are nine - has to reach
+                // it, and a missed one stops the updater for the whole session.
+                RecordCheckOutcome(reachedServer);
             }
         }
 
