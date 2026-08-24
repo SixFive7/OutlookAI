@@ -10,6 +10,10 @@ using Microsoft.Win32;
 // Services\AddInServerContract.cs is LINKED into this project (see OutlookAI.Core.csproj), so
 // these are not copies of the add-in's constants - they are the add-in's constants.
 using Contract = global::OutlookAI.Services.AddInServerContract;
+// And the Office majors, plus the hive paths built from whichever one this machine has.
+// Services\OfficeVersions.cs is LINKED here too, so the Outlook Search key this file reads is
+// built by the same expression the add-in writes it with - see OutlookSearchUserKeyPath below.
+using OfficeVersions = global::OutlookAI.Services.OfficeVersions;
 
 namespace OutlookAI.Core.Services
 {
@@ -32,6 +36,16 @@ namespace OutlookAI.Core.Services
         public const string TuningKeyPath = Contract.TuningKeyPath;
 
         /// <summary>
+        /// The value name this file reads out of both Search keys below - NOT a copy of the
+        /// add-in's: <c>Services\AddInServerContract.cs</c> is compiled into this assembly as
+        /// well as into the add-in, so the name the tuning service writes and the name read back
+        /// here are one constant. Public only because the contract type is internal (CS0436 - see
+        /// that file's header) and the T2 live test that flips the value names this one.
+        /// </summary>
+        public const string DisableServerAssistedSearchValueName =
+            Contract.DisableServerAssistedSearchValueName;
+
+        /// <summary>
         /// User-hive Outlook search key carrying DisableServerAssistedSearch (D22; the tuning
         /// Search group writes here). Aimed at the Office major this machine actually has - it
         /// was a hardcoded 16.0, which read a non-existent hive on Outlook 2013 or a future 17.0
@@ -47,16 +61,36 @@ namespace OutlookAI.Core.Services
         /// <summary>
         /// The user-hive search key for an arbitrary Office major (pure, so the 15.0 and 17.0
         /// shapes are assertable on a machine that has neither).
+        /// <para>
+        /// Built by the SHARED <c>OfficeVersions.OutlookSearchKeyPath</c>, which the add-in's
+        /// <c>OutlookTuningService</c> also builds its Search key from. Sharing that file used to
+        /// settle only the VERSION in this path: the add-in concatenated the rest of it by hand,
+        /// so one address had two spellings across a boundary no compiler crosses, and a typo in
+        /// either aimed at a key Outlook never touches with both halves still compiling.
+        /// </para>
         /// </summary>
         public static string BuildOutlookSearchUserKeyPath(string officeVersion)
         {
-            return OutlookProfileRegistry.BuildOutlookRootKeyPath(officeVersion) + @"\Search";
+            if (officeVersion == null)
+            {
+                throw new ArgumentNullException(nameof(officeVersion));
+            }
+
+            return OfficeVersions.OutlookSearchKeyPath(officeVersion);
         }
 
         /// <summary>
-        /// The policy-hive mirror of the key above. Built here rather than from
-        /// <c>OutlookProfileRegistry</c> because it lives under a different root: the add-in
-        /// never writes or reads the Policies hive, so this asymmetry is the server's alone.
+        /// The policy-hive mirror of the key above, from the same shared file: a policy value
+        /// outranks the user hive, so a report that ignored it would call a policy-disabled
+        /// machine tuned.
+        /// <para>
+        /// READ HERE AND NOWHERE ELSE, and that asymmetry is deliberate rather than an omission:
+        /// the add-in sets a user preference, not search policy, so it has no reason to write
+        /// this key. It is NOT true that the add-in leaves the Policies hive alone in general -
+        /// its tuning service writes five values under
+        /// <c>...\Policies\...\Outlook\Cached Mode</c> (D25's sync-slider settings), which is why
+        /// the policy ROOT is built by <c>OfficeVersions.PolicyOutlookKeyPath</c> on both sides.
+        /// </para>
         /// </summary>
         public static string BuildOutlookSearchPolicyKeyPath(string officeVersion)
         {
@@ -65,7 +99,7 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentNullException(nameof(officeVersion));
             }
 
-            return @"Software\Policies\Microsoft\Office\" + officeVersion + @"\Outlook\Search";
+            return OfficeVersions.PolicyOutlookSearchKeyPath(officeVersion);
         }
 
         /// <summary>uiSearchBackend value: Outlook UI search queries the local SystemIndex - the same corpus agent search uses.</summary>
@@ -178,8 +212,8 @@ namespace OutlookAI.Core.Services
         public static string ReadUiSearchBackendFromRegistry()
         {
             return DescribeUiSearchBackend(
-                TryReadCurrentUserDword(OutlookSearchPolicyKeyPath, "DisableServerAssistedSearch"),
-                TryReadCurrentUserDword(OutlookSearchUserKeyPath, "DisableServerAssistedSearch"));
+                TryReadCurrentUserDword(OutlookSearchPolicyKeyPath, Contract.DisableServerAssistedSearchValueName),
+                TryReadCurrentUserDword(OutlookSearchUserKeyPath, Contract.DisableServerAssistedSearchValueName));
         }
 
         /// <summary>HKCU DWORD read that treats absent keys/values/non-DWORD data and failures as null.</summary>

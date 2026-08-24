@@ -45,14 +45,28 @@ namespace OutlookAI.Services
         /// </summary>
         private static readonly string OfficeVersion = OfficeVersions.DetectOutlookVersion();
 
-        private static readonly string SearchKeyPath =
-            @"Software\Microsoft\Office\" + OfficeVersion + @"\Outlook\Search";
+        /// <summary>
+        /// Outlook's Search key, built by <see cref="OfficeVersions.OutlookSearchKeyPath"/>
+        /// rather than concatenated here. THE SERVER READS THIS KEY: <c>HealthReporting</c> takes
+        /// <c>DisableServerAssistedSearch</c> out of it and reports it as
+        /// <c>uiSearchBackend</c>, which is what tells an agent whether the user's Outlook search
+        /// box is looking at the same corpus the agent searched. Both sides therefore build one
+        /// address from one expression - hand-building it here was the last surviving copy of a
+        /// path spelled twice across a boundary no compiler crosses, and a typo in either copy
+        /// aims at a key Outlook never touches while both halves go on working.
+        /// </summary>
+        private static readonly string SearchKeyPath = OfficeVersions.OutlookSearchKeyPath(OfficeVersion);
+
+        // The other three are the add-in's alone - the server neither reads nor reports them -
+        // but the HIVE ROOTS are not: the Policies prefix in particular is built on both sides
+        // (here for D25's sync-slider values, in HealthReporting for the Search policy). So the
+        // roots come from OfficeVersions too, and this file now spells no Office hive path.
         private static readonly string CachedModePolicyKeyPath =
-            @"Software\Policies\Microsoft\Office\" + OfficeVersion + @"\Outlook\Cached Mode";
+            OfficeVersions.PolicyOutlookKeyPath(OfficeVersion) + @"\Cached Mode";
         private static readonly string CachedModeUserKeyPath =
-            @"Software\Microsoft\Office\" + OfficeVersion + @"\Outlook\Cached Mode";
+            OfficeVersions.OutlookKeyPath(OfficeVersion) + @"\Cached Mode";
         private static readonly string PstKeyPath =
-            @"Software\Microsoft\Office\" + OfficeVersion + @"\Outlook\PST";
+            OfficeVersions.OutlookKeyPath(OfficeVersion) + @"\PST";
 
         internal const string GroupSearch = "search";
         internal const string GroupCaching = "caching";
@@ -126,7 +140,7 @@ namespace OutlookAI.Services
         private static readonly TuningEntry[] Catalog = new[]
         {
             // Search (D22) — the user's proven local-search setup.
-            new TuningEntry("search.DisableServerAssistedSearch", GroupSearch, SearchKeyPath, "DisableServerAssistedSearch", 1, false),
+            new TuningEntry("search.DisableServerAssistedSearch", GroupSearch, SearchKeyPath, AddInServerContract.DisableServerAssistedSearchValueName, 1, false),
             new TuningEntry("search.SearchResultsCap",            GroupSearch, SearchKeyPath, "SearchResultsCap",            0, false),
             new TuningEntry("search.IncludeDeletedItems",         GroupSearch, SearchKeyPath, "IncludeDeletedItems",         1, false),
             new TuningEntry("search.DefaultSearchScope",          GroupSearch, SearchKeyPath, "DefaultSearchScope",          2, false),

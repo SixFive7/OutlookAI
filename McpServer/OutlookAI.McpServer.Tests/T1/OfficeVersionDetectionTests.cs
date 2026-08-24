@@ -174,9 +174,12 @@ public sealed class OfficeVersionDetectionTests
             @"Software\Microsoft\Office\" + officeVersion + @"\Outlook\Search",
             HealthReporting.BuildOutlookSearchUserKeyPath(officeVersion));
 
-        // The policy mirror lives under a DIFFERENT root (Software\Policies\...), which is the
-        // server's own asymmetry - the add-in never touches the Policies hive - so it is built
-        // separately and has to be pinned separately.
+        // The policy mirror lives under a DIFFERENT root (Software\Policies\...), so it is built
+        // separately and has to be pinned separately. Reading it is the server's own asymmetry -
+        // the add-in sets a user search preference, not search policy - but NOT because the
+        // add-in leaves that hive alone: its tuning service writes D25's five sync-slider values
+        // under ...\Policies\...\Outlook\Cached Mode, which is why both sides now build the
+        // policy root from OfficeVersions.PolicyOutlookKeyPath.
         Assert.Equal(
             @"Software\Policies\Microsoft\Office\" + officeVersion + @"\Outlook\Search",
             HealthReporting.BuildOutlookSearchPolicyKeyPath(officeVersion));

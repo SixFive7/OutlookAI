@@ -108,6 +108,56 @@ namespace OutlookAI.Services
         }
 
         /// <summary>
+        /// HKCU path of the POLICIES-hive mirror of <see cref="OutlookKeyPath"/> for one Office
+        /// major. A different root, the same shape, and both trees build paths under it: the
+        /// add-in writes D25's five sync-slider values under <c>...\Outlook\Cached Mode</c> here,
+        /// and the server reads <c>...\Outlook\Search</c> here because a policy value outranks
+        /// the user hive and a health report that ignored it would call a policy-disabled machine
+        /// tuned. Two hand-built copies of this prefix is the same drift
+        /// <see cref="OutlookKeyPath"/> exists to prevent, one hive over.
+        /// </summary>
+        internal static string PolicyOutlookKeyPath(string version)
+        {
+            return @"Software\Policies\Microsoft\Office\" + version + @"\Outlook";
+        }
+
+        /// <summary>
+        /// Outlook's own Search subkey, under either hive. Spelled once because the user-hive and
+        /// policy-hive paths below MUST name the same subkey: the policy read is what makes the
+        /// user-hive value non-authoritative, so a typo in one of them does not fail, it silently
+        /// reports the other hive's answer.
+        /// </summary>
+        internal const string SearchSubKeyName = "Search";
+
+        /// <summary>
+        /// HKCU path of Outlook's Search key for one Office major - the key carrying
+        /// <c>DisableServerAssistedSearch</c> (<c>AddInServerContract</c> holds that value name).
+        /// <para>
+        /// Built here because BOTH trees build it: the add-in's <c>OutlookTuningService</c>
+        /// writes the value and the server's <c>HealthReporting</c> reads it back as
+        /// <c>uiSearchBackend</c>. The add-in used to concatenate the whole path by hand while
+        /// the server went through <see cref="OutlookKeyPath"/>, so sharing this file fixed the
+        /// VERSION in that path and left its CONSTRUCTION duplicated - two spellings of one
+        /// address, either of which could be mistyped into a key Outlook never touches, with
+        /// both halves still compiling and the health report still answering.
+        /// </para>
+        /// </summary>
+        internal static string OutlookSearchKeyPath(string version)
+        {
+            return OutlookKeyPath(version) + @"\" + SearchSubKeyName;
+        }
+
+        /// <summary>
+        /// The POLICIES-hive mirror of <see cref="OutlookSearchKeyPath"/> - authoritative over the
+        /// user hive when its value exists (ADMX-managed). Read by the server only: the add-in
+        /// sets a user preference, not search policy, and that asymmetry is deliberate.
+        /// </summary>
+        internal static string PolicyOutlookSearchKeyPath(string version)
+        {
+            return PolicyOutlookKeyPath(version) + @"\" + SearchSubKeyName;
+        }
+
+        /// <summary>
         /// The Office major version this Outlook is running as, or <see cref="Fallback"/> when
         /// none is detected. Convenience over <see cref="TryDetectOutlookVersion(out string)"/>
         /// for the callers that only need a hive to write into.
