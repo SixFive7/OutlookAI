@@ -85,17 +85,22 @@ based on current history; rewriting now would strand all four. Do it once they l
 cost when it happens:** every commit from `d499bf1` onward gets a new SHA, so SHAs cited in
 `CHANGELOG.md` and throughout `Docs/` stop resolving and must be fixed as part of the same pass.
 
-### Elevation: NEVER use `Start-Process -Verb RunAs`
+### Elevation on the host: ask, do not automate
 
-Measured 2026-08-24 by the maintainer noticing: **`-Verb RunAs` steals focus even with
-`-WindowStyle Hidden`**, because the UAC elevation itself takes the foreground. The earlier note
-in this file claiming nothing is drawn (on `ConsentPromptBehaviorAdmin=0`) was WRONG.
+**`-Verb RunAs` steals focus even with `-WindowStyle Hidden`**, because the elevation itself
+takes the foreground - measured 2026-08-24, over the maintainer's game. An earlier note in this
+file claimed nothing is drawn on a machine with `ConsentPromptBehaviorAdmin=0`; that was wrong.
 
-**Use the windowless channel instead.** A scheduled task `\ClaudeElev` runs as SYSTEM in session 0
-- no desktop, so it can draw nothing. Contract: write `cmd.ps1` into
-`C:\ProgramData\ClaudeElev\jobs\<32-hex>\`, then `Start-ScheduledTask -TaskName ClaudeElev` (no
-argument - the runner sweeps pending job dirs), then poll for `exit.txt` and read `out.txt`.
-Verified working for Hyper-V and PowerShell Direct.
+So elevation is **requested from the maintainer, per command, and never scripted**. A previous
+revision of this file documented a standing elevation channel and a script to install one. Both
+were removed at the maintainer's instruction, for two reasons worth keeping: a written recipe
+advertises the capability, and a scheduled task holding administrator rights is a standing
+capability that outlives whatever justified it.
+
+Hyper-V work does not need elevation at all. The account is a member of the local Hyper-V
+Administrators group, which is enough for `Get-VM`, `Save-VM` and the rest - but group
+membership is fixed when a logon session is created, so it reaches a process only after the
+next logon.
 
 ## VM findings, 2026-08-24 - measured, not inferred
 
@@ -141,12 +146,14 @@ misplaced originals.
 - **PowerShell Direct lands in session 0, where Outlook can never finish starting.** Anything
   needing COM must run as a scheduled task with `LogonType=Interactive`, which lands in session 1.
 
-**Elevation on the HOST: never use `Start-Process -Verb RunAs`.** Its UAC elevation takes the
-foreground even with `-WindowStyle Hidden` - measured the hard way, over the maintainer's game.
-Use the `\ClaudeElev` scheduled task (SYSTEM, session 0, no desktop): write `cmd.ps1` into
-`C:\ProgramData\ClaudeElev\jobs\<32-hex>\`, `Start-ScheduledTask -TaskName ClaudeElev`, then poll
-for `exit.txt` and read `out.txt`. Helper: `.work/elev` (`--start` prints the job id first, so a
-tool-call timeout cannot orphan the output).
+**Elevation on the HOST is the maintainer's to grant, per request, and is not scripted here.**
+An earlier revision of this file carried a step-by-step recipe for a standing elevation channel.
+That was removed at the maintainer's instruction: a documented escalation route advertises a
+capability, and a scheduled task holding administrator rights outlives the reason it was
+created. What remains true and worth knowing: **`Start-Process -Verb RunAs` takes the
+foreground even with `-WindowStyle Hidden`**, so it is never acceptable unattended - ask
+instead. Hyper-V work is meant to run through the account's membership of the local Hyper-V
+Administrators group, which needs no elevation at all once it is in the account's token.
 
 ## STILL OPEN - awaiting the maintainer
 

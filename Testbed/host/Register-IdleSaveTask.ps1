@@ -1,12 +1,18 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Register the scheduled task that saves idle testbed VMs. Must be run elevated.
+    Register the scheduled task that saves idle testbed VMs. Needs Hyper-V group membership, not elevation.
 
 .DESCRIPTION
-    Hyper-V cmdlets need administrator rights, so the task runs as SYSTEM. That is also why it
-    runs in session 0 with no desktop: it can never draw a window or take focus, which matters
-    on a machine somebody games on.
+    The task runs as the invoking user at ordinary privilege - NOT as SYSTEM and NOT elevated.
+    It relies on the account being a member of the local Hyper-V Administrators group, which is
+    what lets Save-VM work without administrator rights. Register it once that membership is in
+    the account's token (group membership is fixed when a logon session is created, so it takes
+    effect at the next logon).
+
+    Deliberately not elevated: a saver that only ever calls Save-VM does not need administrator
+    rights, and a scheduled task holding them is a standing capability that outlives the reason
+    it was created.
 
     Every fifteen minutes is deliberate. More often buys nothing - a VM that has been idle for
     an hour is not more idle at 5-minute granularity - and it costs a wake on a machine that
@@ -35,9 +41,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $taskName = 'OutlookAI-TestbedIdleSave'
 
-$id = [Security.Principal.WindowsIdentity]::GetCurrent()
-if (-not (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw "This must run elevated: registering a SYSTEM task and driving Hyper-V both need administrator rights."
+# Fail early and clearly if Hyper-V is not reachable as this account - otherwise the task
+# registers happily and then does nothing every fifteen minutes for ever.
+try {
+    Get-VM -ErrorAction Stop | Out-Null
+} catch {
+    throw "Cannot query Hyper-V as $env:USERNAME. Add the account to the local 'Hyper-V Administrators' group and log on again, then re-run this. (Group membership is fixed when a logon session is created.)"
 }
 
 if ($Unregister) {
@@ -54,8 +63,9 @@ if (-not (Test-Path -LiteralPath $script)) {
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}"' -f $script)
 
-# SYSTEM, session 0: no desktop, so nothing can be drawn and nothing can steal focus.
-$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+# The invoking user, ordinary privilege. Hyper-V group membership is what makes Save-VM work;
+# no elevation is involved, and the task has no rights beyond what the account already has.
+$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 
 $trigger = New-ScheduledTaskTrigger -Once -At ([DateTime]::Now.AddMinutes(1)) `
     -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes)
@@ -70,5 +80,5 @@ Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Silent
 Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal `
     -Trigger $trigger -Settings $settings -Description 'Saves idle OutlookAI testbed VMs so the host reclaims RAM and CPU. Never starts or deletes a VM.' | Out-Null
 
-Write-Output "Registered ${taskName}: every $IntervalMinutes minutes, as SYSTEM, session 0."
+Write-Output "Registered ${taskName}: every $IntervalMinutes minutes, as $env:USERNAME at ordinary privilege."
 Write-Output "It saves a testbed VM only when it is Running, unleased, and up past the grace period."

@@ -18,7 +18,7 @@
     a sentinel file.
 
     WHY A FILE AND NOT A RETURN VALUE. A scheduled task's stdout does not come back to whatever
-    started it. There is no pipe. This is the same shape as the `\ClaudeElev` channel and for the
+    started it. There is no pipe. This is the same file-based shape a host-side runner would use, and for the
     same reason; a script that expects to read the output of a task it started will read nothing
     and report success.
 
