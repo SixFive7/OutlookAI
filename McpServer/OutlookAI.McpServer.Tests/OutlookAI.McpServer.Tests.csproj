@@ -79,6 +79,13 @@
          and the registry sits behind IPromptRegistry so the T1 suite exercises the rules
          against a fabricated store instead of the developer's own HKCU. -->
     <Compile Include="..\..\Services\PromptLint.cs" Link="Linked\PromptLint.cs" />
+    <!-- The add-in updater's poll schedule: the first-check delay and the failure backoff, as
+         pure arithmetic. UpdateService itself cannot be linked (HttpClient, a Timer, Outlook's
+         process lifetime, JavaScriptSerializer), which is precisely why the schedule was split
+         out of it - the curve that decides how hard an offline machine hammers GitHub is worth
+         pinning, and this is the only compilation that can pin it. Internal, so Core's and this
+         assembly's copies of the other linked files cannot collide as CS0436. -->
+    <Compile Include="..\..\Services\UpdatePollSchedule.cs" Link="Linked\UpdatePollSchedule.cs" />
   </ItemGroup>
 
   <ItemGroup>

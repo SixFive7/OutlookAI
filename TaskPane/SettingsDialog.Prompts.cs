@@ -51,6 +51,32 @@ namespace OutlookAI.TaskPane
         /// </summary>
         private static readonly int SectionCount = Sections.Length;
 
+        // ===== The button-detail grid: one fact, three statements =====
+
+        /// <summary>
+        /// Rows in the button-detail grid: label, name box, label, prompt editor, state line,
+        /// reset button. Stated once so the grid's <c>RowCount</c> and the loop that gives every
+        /// row a style cannot disagree about how many there are.
+        /// </summary>
+        private const int ButtonDetailRowCount = 6;
+
+        /// <summary>
+        /// WHICH ROW OF THAT GRID IS THE PROMPT EDITOR - and it is one constant because three
+        /// statements have to agree about it: the row that gets <c>Percent(100F)</c> (the one
+        /// row that grows with the window), the cell <c>_txtPrompt</c> is added to, and the
+        /// assertion below that the two ended up being the same row.
+        ///
+        /// <para>
+        /// They used to be three hand-written 3s, and the failure that costs was SILENT.
+        /// Insert a row above the editor, update the count and the add, forget the row style,
+        /// and the dialog still opens, still lays out and still works - the editor simply stops
+        /// filling and becomes a small box that scrolls, while some label above it takes all the
+        /// height instead. Nothing throws, nothing logs, and no test sees it, because this is
+        /// layout and layout is not tested here.
+        /// </para>
+        /// </summary>
+        private const int PromptEditorRow = 3;
+
         /// <summary>Prompt for a button created by Add. Non-empty, because an empty one is rejected.</summary>
         private const string NewButtonPrompt =
             "Rewrite the draft. Keep the meaning and the tone unchanged.";
@@ -240,20 +266,36 @@ namespace OutlookAI.TaskPane
                 Name = "buttonDetail",
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 6,
+                RowCount = ButtonDetailRowCount,
                 Margin = Padding.Empty,
             };
             detail.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            for (int i = 0; i < 6; i++)
+            for (int i = 0; i < ButtonDetailRowCount; i++)
                 detail.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            detail.RowStyles[3] = new RowStyle(SizeType.Percent, 100F);
+            // The one row that grows with the window. Everything else is AutoSize.
+            detail.RowStyles[PromptEditorRow] = new RowStyle(SizeType.Percent, 100F);
 
             detail.Controls.Add(NewLabel("Button name", LabelRole.Body, wrap: false), 0, 0);
             detail.Controls.Add(_txtName, 0, 1);
             detail.Controls.Add(NewLabel("Prompt sent to the model", LabelRole.Body, wrap: false), 0, 2);
-            detail.Controls.Add(_txtPrompt, 0, 3);
+            detail.Controls.Add(_txtPrompt, 0, PromptEditorRow);
             detail.Controls.Add(_lblButtonState, 0, 4);
             detail.Controls.Add(_btnResetButton, 0, 5);
+
+            // ASKS THE GRID WHERE THE EDITOR ACTUALLY LANDED, which is not the same question as
+            // where it was put. TableLayoutPanel silently relocates a control whose cell is
+            // already taken, so inserting a row above the editor without moving PromptEditorRow
+            // bumps it to the next free cell - and the 100% style stays on the row it was told
+            // about, not the row the editor is in. That is the exact silent break the constant
+            // above cannot catch on its own.
+            //
+            // Debug.Assert, so it is compiled out of the shipped Release build: a throw here
+            // would trade a cosmetic layout fault for a settings dialog that will not open, and
+            // the reader who needs telling is the one who just inserted the row and is running
+            // the dialog to see what it looks like.
+            Debug.Assert(detail.GetRow(_txtPrompt) == PromptEditorRow,
+                "The prompt editor is not in PromptEditorRow, so the row set to fill the window "
+                + "is not the editor's row. The editor will stop expanding.");
 
             body.Controls.Add(listSide, 0, 0);
             body.Controls.Add(detail, 1, 0);
