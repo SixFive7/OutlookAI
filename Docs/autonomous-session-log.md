@@ -2,19 +2,23 @@
 
 **Read this first after any context loss.** Everything below it is history and reasoning.
 
-## Position - 2026-08-24, after the VM-infrastructure merge
+## Position - 2026-08-24, end of the overnight run
 
-`HEAD` = `8cf8ded`, pushed, tree clean. **2,024 tests in 8 seconds with no mailbox contact**
-(1,936 + 41 + 47 from the two merges). `OutlookAI.Core` builds clean for net48 and net10 with
-zero warnings. `check-pinned-constants.ps1` 11/11. The test VM is running, checkpoints intact.
+`HEAD` = `0a58732`, pushed, tree clean, no agents running. **2,370 tests in under two minutes
+with no mailbox contact.** `OutlookAI.Core` clean for net48 AND net10, zero warnings. The VSTO
+add-in builds (MSBuild only - `dotnet build` cannot build it, and a net48 break has reached
+master by exactly that gap). **14** cross-file invariants, **3** measurement-privacy checks,
+**6** testbed-reference checks.
 
-**A CREDENTIAL WAS LEAKED FROM THIS FILE AND MUST BE ROTATED.** This repository is PUBLIC
-(`SixFive7/OutlookAI`). This file recorded the VM guest password in plain text; it was pushed and
-is in **32 commits of history**, first `d499bf1`. Redacted at `HEAD` in `54ecd26`, which stops it
-spreading and does NOT un-publish it. **Rotation is the fix and it has not been done** - it needs
-the maintainer's word, because changing a credential is a real mutation, and the scripts under
-`C:\Users\jori\Downloads\tmp-outlookai-vm\` hard-code the old value. Never write the new one into
-a tracked file; the gitignored live-test settings are the only place it belongs.
+**The credential leak is CLOSED.** Rotated twice (the second time because a checkpoint revert
+silently restored the burned value), autologon repaired so a reboot still reaches session 1, and
+the string erased from **all** history by a filter-repo rewrite - `git log --all -S` finds zero
+occurrences where it previously spanned 32 commits. The 12 doc references the rewrite moved were
+remapped from filter-repo's own commit map. Neither current credential is in any tracked file or
+any commit; both live only in the gitignored `live-fixtures/`.
+
+**The `Tests.T3.` half of the old test filter is no longer needed** - tier 3 was made honest, and
+the full `Category!=Live` filter was measured not to touch a mailbox. Use it.
 
 **Verification command - the standing bar:**
 
@@ -26,81 +30,30 @@ a tracked file; the gitignored live-test settings are the only place it belongs.
 process samples. The narrow filter is still used because tier 3 spawns server processes and is slow,
 not because it is unsafe.
 
-## IN FLIGHT - 2026-08-24
+## What landed overnight, and what is still open
 
-| Agent | Branch | State |
+**Every decision the maintainer gave has shipped**, except where noted. Tier vocabulary collapsed
+to two axes (`LiveTier` deleted; capabilities per method; the genuinely-impossible count is **6**,
+not the 96 the old labelling reported). Measurement gate with its privacy check in CI. Tripwire
+retry ladder plus an out-of-process re-run driver where a survived delta cannot exit zero.
+Freshness-sweep cache re-keyed. `thread` no longer scopes a store it derived. Sort telemetry made
+CI-reachable. `scopeStoreDerived` re-purposed. All four magic-number rows. The sweep given its own
+operation class - ten minutes, with `OperationDeadlineMs` and `ExhaustiveScanDeadlineMs` provably
+unmoved. The last registry mirror shared. Bystander stores declared. Idle VMs saved on a lease.
+
+**STILL OPEN - the maintainer's call:**
+
+| # | Question | Recommendation |
 | --- | --- | --- |
-| Fix the VM test infrastructure | `worktree-agent-ad5951c0e2020cddf` | **MERGED** `24dedd1` - corpus freshness + re-anchor, census, placement probe, mail sink, runbook |
-| Clear the product gap map | `worktree-agent-ab7461aa27a49e30a` | **MERGED** `8cf8ded` - C5, E3, B4, B5, the two `snippet_chars` clamps; A5 and F2 verified already closed |
-| Mutation-verify the sort fix | (worktree) | running - `03a0857`, the queued verification that never happened |
-| Build the measurement gate | (worktree) | running - local-only baselines under `%LOCALAPPDATA%`, fail-biased tolerances |
+| 18 | Office licence has ~16 days (KMS client in out-of-box grace); Windows LTSC Eval ~82 days | Activate Office now; rebuild-on-expiry as the standing plan (chosen) |
+| 20 | Why the re-anchor's date writes do not land on EXISTING items | Point the existing probe at an existing item; rebuild rather than repair if ugly |
+| 22 | **No Windows installation media on this machine** - blocks the rebuild | Stage media and record how to obtain it; build the new VM before destroying the old |
+| 24 | Should the tripwire REFUSE a configuration it can prove nothing from? | Refuse always, once the rebuild settles - a guard that cannot fail reads as coverage |
+| 25 | Declare Corpus A and B as bystanders too? | Yes - one line, and it stops the identity tests drafting into the corpus |
 
-**The completeness gap map now has one row left: H3**, which needs a live corpus re-run rather
-than a fix.
-
-Branches are real refs and survive any conversation loss; `git branch --list` finds them. Agents
-commit on their own branch, never push, and never edit this file. **To finish one:** merge its
-branch into `master`, then run the standing verification command above.
-
-**A heartbeat monitor is armed** (`bash ~/.claude/scripts/heartbeat.sh`, persistent).
-`state=all-finished` is the only safe signal to stop it, and `bgroot=` must be read before
-stopping because root-owned background jobs are never killed for you.
-
-## THE ELEVEN QUESTIONS - ANSWERED 2026-08-24, except two
-
-Each was put with a primer, directions and a recommendation. **Answers below are the
-maintainer's and are binding.** Two remain open at the bottom.
-
-| # | Question | Answer |
-| --- | --- | --- |
-| 3 | Who reads the measurement table, now release notes are ruled out | **Recommendation taken:** an agent reads this run against the last; the full table also prints to the console on every release run. Numbers stay local - `%LOCALAPPDATA%`, never the repo, never release notes |
-| 4 | The four unmeasured atomicity residuals | **(a) Measure all four on the VM** |
-| 5 | The tripwire's re-run bound | **Recommendation taken:** at most 2 re-censuses ~30 s apart, then at most 1 re-run of implicated tests, then fail loudly. Every retry must report itself |
-| 6 | `SweepBudgetMs` 180 s (derived while the sort was broken); census identity budget (16.9 s, one trial) | **Recommendation taken:** ceilings now - sweep **600 s**, census **120 s** - narrowed later from VM data. The whole budget ladder must move with them |
-| 7 | `ExhaustiveScanDeadlineMs` 615 s never measured | **(a) Run `corpus-measurement-plan.md` step 5 on the VM.** Read-only |
-| 9 | The leaked VM password | **(c) Rotate AND rewrite history**, and keep the new password on disk in this repo but gitignored |
-| 10 | The unscoped freshness-sweep cache can never hit | **Recommendation taken:** re-key on the profile frontier, keeping wall-clock for the fallback window |
-| 11 | Should `thread` apply a scope it DERIVED | **(b) Stop scoping when derived; keep it when the caller named one** |
-
-### Q9 - DONE except the history rewrite
-
-**Rotated and verified 2026-08-24.** New credential authenticates, old one rejected, written to
-`McpServer/OutlookAI.McpServer.Tests/live-fixtures/vm-credentials.json` (gitignored by
-`McpServer/**/live-fixtures/`, confirmed untracked). Password set to **never expire** - it had a
-42-day maximum age that would have silently broken the tier and recreated this problem.
-
-**How it had to be done, and the cost.** The polite route - changing the password AS the user,
-which preserves the DPAPI master key - was denied twice by the guest despite
-`UserMayChangePassword: True` and a zero minimum password age. The fallback was an admin reset,
-which **destroys that account's DPAPI master key**. Casualty check came back clean: no scheduled
-task stored that account's credentials, and the profile has PST stores with no mail accounts, so
-there was nothing to lose. **If a future rotation happens after the dummy mail account exists,
-this fallback is no longer free** - the account's saved password would be destroyed with it.
-
-**Also learned:** the VM already has TWO Outlook profiles, `Outlook` and `OutlookAITest`. The
-earlier record said one PST; the profile count was never written down.
-
-**HISTORY REWRITE STILL OUTSTANDING - deliberately deferred.** Four agents hold worktree branches
-based on current history; rewriting now would strand all four. Do it once they land. **Known
-cost when it happens:** every commit from `d499bf1` onward gets a new SHA, so SHAs cited in
-`CHANGELOG.md` and throughout `Docs/` stop resolving and must be fixed as part of the same pass.
-
-### Elevation on the host: ask, do not automate
-
-**`-Verb RunAs` steals focus even with `-WindowStyle Hidden`**, because the elevation itself
-takes the foreground - measured 2026-08-24, over the maintainer's game. An earlier note in this
-file claimed nothing is drawn on a machine with `ConsentPromptBehaviorAdmin=0`; that was wrong.
-
-So elevation is **requested from the maintainer, per command, and never scripted**. A previous
-revision of this file documented a standing elevation channel and a script to install one. Both
-were removed at the maintainer's instruction, for two reasons worth keeping: a written recipe
-advertises the capability, and a scheduled task holding administrator rights is a standing
-capability that outlives whatever justified it.
-
-Hyper-V work does not need elevation at all. The account is a member of the local Hyper-V
-Administrators group, which is enough for `Get-VM`, `Save-VM` and the rest - but group
-membership is fixed when a logon session is created, so it reaches a process only after the
-next logon.
+**BLOCKED, not forgotten:** VM work needs the Hyper-V Administrators membership to reach the
+account's token, which happens at the **next logon**. Do not work around this. Elevation is asked
+for per command and never scripted - see the elevation note below.
 
 ## VM findings, 2026-08-24 - measured, not inferred
 
