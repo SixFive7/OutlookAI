@@ -82,6 +82,16 @@ public sealed class SweepBudgetExpiryTests
     /// </summary>
     private const int MeasuredSweepHeadroomFactor = 3;
 
+    /// <summary>
+    /// A FLOOR, and since 2026-08-24 only a floor - read the three constants above with that
+    /// in mind. The ~12 s-per-store figure they encode was measured while the sweep's sort
+    /// was silently failing (fixed in <c>bea7fc9</c>), so it describes broken behaviour doing
+    /// different work and no longer SIZES anything: the budget is now a maintainer-set
+    /// ceiling of 600 s awaiting a re-measurement with the sort working. What this still
+    /// buys is the direction that has actually gone wrong twice - a budget quietly narrowed
+    /// back under the only whole-profile number anybody has ever taken fails here, and says
+    /// which number it fell under.
+    /// </summary>
     [Fact]
     public void TheSweepBudget_HoldsTheMeasuredWholeProfileSweep_WithHeadroom()
     {

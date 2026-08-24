@@ -1,4 +1,5 @@
 using OutlookAI.ComHost.Supervision;
+using OutlookAI.Core.Com;
 using Xunit;
 
 namespace OutlookAI.McpServer.Tests.T1;

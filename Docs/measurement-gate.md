@@ -470,6 +470,7 @@ adding a metric means editing this section.
 | `source.CleanExitGraceMs` | ms | pinned | n/a | grace given to a COM host asked to exit. |
 | `source.ConnectDeadlineMs` | ms | pinned | n/a | COM session establishment, cold Outlook start included. |
 | `source.ExhaustiveScanDeadlineMs` | ms | pinned | n/a | exhaustive scan hard deadline, its own class. |
+| `source.FreshnessSweepDeadlineMs` | ms | pinned | n/a | freshness class hard deadline - the threshold the sweep budget is judged against. Derived as SearchBudgetMs + ResultReturnHeadroomMs; narrowing the sweep budget must move it too. |
 | `source.ExplorerFolderSettleDelayMs` | ms | pinned | n/a | wait for an Explorer to settle on a folder change. |
 | `source.HandshakeBudgetMs` | ms | pinned | n/a | COM host pipe handshake, both ends. |
 | `source.HealthIndexTimeoutSeconds` | s | pinned | n/a | index query timeout inside outlook_health. |
@@ -494,7 +495,7 @@ adding a metric means editing this section.
 | `source.StoreIndexProbeBudgetMs` | ms | pinned | n/a | per-store index probe budget on the search path. |
 | `source.SweepBodyBytesBudgetMiB` | MiB | pinned | n/a | accumulated body bytes one sweep may return. Load-bearing since the 10,734,599-byte corpus high-water. |
 | `source.SweepBodyCharsCap` | chars | pinned | n/a | per-body character cut in the sweep. |
-| `source.SweepBudgetMs` | ms | pinned | n/a | freshness sweep budget. The one that was derived from a measurement taken while the sort was failing. |
+| `source.SweepBudgetMs` | ms | pinned | n/a | freshness sweep budget. The one that was derived from a measurement taken while the sort was failing; 600 s since 2026-08-24 is a CEILING awaiting that re-measurement, and it moved to ComOperationBudgets with the sweep's own deadline class. |
 | `source.SweepPerFolderCap` | items | pinned | n/a | items per folder the sweep will open. |
 | `source.UnresponsiveCooldownMs` | ms | pinned | n/a | how long the breaker stays open. |
 | `source.UnresponsiveTimeoutThreshold` | timeouts | pinned | n/a | consecutive timeouts before the breaker opens. |

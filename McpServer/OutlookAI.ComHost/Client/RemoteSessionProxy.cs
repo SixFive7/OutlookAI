@@ -48,7 +48,11 @@ namespace OutlookAI.ComHost.Client
             ParameterInfo[] parameters = targetMethod.GetParameters();
             Dictionary<string, object?> arguments = BuildArguments(parameters, args);
 
-            ComHostOperationClass operationClass = ClassifyOperation(targetMethod.Name);
+            // Which hang detector stands over this call. The table is in Core
+            // (ComOperationClasses) rather than here, because "the sweep may take ten
+            // minutes, read may not" is the load-bearing decision of the whole budget
+            // ladder and a private method on a DispatchProxy is a line no test can execute.
+            ComHostOperationClass operationClass = ComOperationClasses.ClassOf(targetMethod.Name);
 
             // Shrink this call to what is left of the enclosing operation's AGGREGATE
             // budget. Without it, a lambda that makes many contract calls got a full
@@ -146,25 +150,6 @@ namespace OutlookAI.ComHost.Client
                     ? null
                     : value.Deserialize(valueType, ComHostProtocol.Json);
             }
-        }
-
-        /// <summary>
-        /// Assigns a deadline class. Two calls on the contract are special, at opposite
-        /// ends: the liveness ping is the cheapest, so a slow one is itself the signal; and
-        /// the exhaustive scan is the one operation a caller picks BECAUSE completeness
-        /// matters more than speed, so it gets minutes where everything else gets the
-        /// ordinary hang detector.
-        /// </summary>
-        private static ComHostOperationClass ClassifyOperation(string operation)
-        {
-            if (string.Equals(operation, nameof(IOutlookSession.GetProfileName), StringComparison.Ordinal))
-            {
-                return ComHostOperationClass.HealthProbe;
-            }
-
-            return string.Equals(operation, nameof(IOutlookSession.ExhaustiveScan), StringComparison.Ordinal)
-                ? ComHostOperationClass.ExhaustiveScan
-                : ComHostOperationClass.Operation;
         }
     }
 }

@@ -246,18 +246,40 @@ public sealed class BudgetCompositionTests
 
     /// <summary>
     /// One indexed search is one index statement plus one freshness sweep, and the pair fits
-    /// inside the budget the sweep itself runs under. Search's own description calls it
-    /// "sub-second and cheap"; on the index client's 30 s default with no tool-level bound
-    /// above it, the composed worst case bore no relation to that.
+    /// inside the hang detector standing over the sweep it dispatches. Search's own
+    /// description calls it "sub-second and cheap"; on the index client's 30 s default with
+    /// no tool-level bound above it, the composed worst case bore no relation to that.
+    /// <para>
+    /// THE CLASS THIS IS PINNED AGAINST MOVED ON 2026-08-24, and which class it is remains
+    /// the load-bearing half. It was <see cref="ComOperationBudgets.OperationDeadlineMs"/>,
+    /// which coupled every quick tool's hang detection to how long a sweep of a 50 GB
+    /// profile is allowed to take - raising the sweep to 600 s made the composed shape
+    /// 660 s and the only way to hold it was to give <c>read</c> and <c>move_mail</c> an
+    /// eleven-minute detector too. It is now the freshness class's own deadline. Re-aiming
+    /// it at whichever number happens to be largest, or deleting the bound entirely, is the
+    /// "cheapest and least honest" direction this change deliberately did not take: it
+    /// removes the check that caught the incoherence.
+    /// </para>
     /// </summary>
     [Fact]
-    public void SearchBudget_IsComposedFromItsPartsAndFitsTheOperationDeadline()
+    public void SearchBudget_IsComposedFromItsPartsAndFitsTheFreshnessDeadline()
     {
         Assert.Equal((MailService.SearchIndexTimeoutSeconds * 1000) + MailService.SweepBudgetMs, MailService.SearchBudgetMs);
         Assert.True(
-            MailService.SearchBudgetMs <= ComOperationBudgets.OperationDeadlineMs,
-            $"one search ({MailService.SearchBudgetMs} ms of index + sweep) must fit inside the COM host operation "
-            + $"deadline ({ComOperationBudgets.OperationDeadlineMs} ms)");
+            MailService.SearchBudgetMs <= ComOperationBudgets.FreshnessSweepDeadlineMs,
+            $"one search ({MailService.SearchBudgetMs} ms of index + sweep) must fit inside the COM host deadline for "
+            + $"the class its sweep is dispatched under ({ComOperationBudgets.FreshnessSweepDeadlineMs} ms)");
+
+        // And that class is the one the sweep really goes out on - not merely a number that
+        // happens to be big enough. Without this the pin above could be satisfied by a
+        // deadline nothing dispatches against.
+        Assert.Equal(
+            ComHostOperationClass.FreshnessSweep,
+            ComOperationClasses.ClassOf(nameof(IOutlookSession.SweepFoldersNewerThan)));
+        Assert.Equal(
+            ComOperationBudgets.FreshnessSweepDeadlineMs,
+            (int)ComHostPolicy.DeadlineFor(ComHostOperationClass.FreshnessSweep, null));
+
         Assert.True(
             MailService.SearchIndexTimeoutSeconds <= OleDbIndexClient.DefaultCommandTimeoutSeconds,
             "the search path must not ask for MORE index time than the client's own default");
@@ -364,13 +386,25 @@ public sealed class BudgetCompositionTests
     [Fact]
     public void OnlyAHangDetectorExpiring_CountsTowardTheBreaker()
     {
-        // The sweep and the thread walk: explicit budgets, below the class deadline.
+        // The sweep and the thread walk: explicit budgets, below the deadline of the class
+        // they are actually dispatched under - which since 2026-08-24 is the freshness
+        // class, not the ordinary one. The class is part of the claim, not decoration: the
+        // same budget judged against the ordinary 300 s deadline is "at or above" it and
+        // WOULD count, which is the assertion two lines down.
         Assert.False(ComHostPolicy.TimeoutIndicatesUnresponsiveness(
-            ComHostOperationClass.Operation, MailService.SweepBudgetMs));
+            ComHostOperationClass.FreshnessSweep, MailService.SweepBudgetMs));
         Assert.False(ComHostPolicy.TimeoutIndicatesUnresponsiveness(
-            ComHostOperationClass.Operation, MailService.ThreadWalkBudgetMs));
+            ComHostOperationClass.FreshnessSweep, MailService.ThreadWalkBudgetMs));
         Assert.False(ComHostPolicy.TimeoutIndicatesUnresponsiveness(
             ComHostOperationClass.Operation, MailService.MoveBatchBudgetMs));
+
+        // What the class buys, stated as the failure it prevents: on the ordinary class the
+        // sweep's own budget reaches the hang detector, so every ordinary slow sweep on a
+        // large mailbox would be read as a wedged Outlook and two of them would open the
+        // breaker. This is the outage, spelled out, and it is why the sweep may not fall
+        // back to ComHostOperationClass.Operation.
+        Assert.True(ComHostPolicy.TimeoutIndicatesUnresponsiveness(
+            ComHostOperationClass.Operation, MailService.SweepBudgetMs));
 
         // No explicit budget at all: this IS the hang detector.
         Assert.True(ComHostPolicy.TimeoutIndicatesUnresponsiveness(ComHostOperationClass.Operation, null));
