@@ -72,6 +72,25 @@ A corpus is the wrong shape for that job. The identity budget is 500 items per f
 of them falls back to a bare count. A few hundred items in a small store is what the guard
 wants.
 
+**A bystander is DECLARED, not merely listed - and listing it in only one place is a REFUSAL,
+not a warning (2026-08-24).** It must appear in **both**:
+
+* `expectedStoreDisplayNames` - which is what censuses it, and what `list_accounts` exactness
+  counts. Removing it from here does not make it a bystander; it makes it invisible.
+* `bystanderStoreDisplayNames` - which is what the write allowlist refuses on.
+
+Name it in one and not the other and the tier stops, deliberately. The half-declared state used
+to be a warning, which meant a machine could run for months believing a store was protected
+when the guard had never been told.
+
+**Both corpus stores are declared bystanders too.** They are stores no test may write to, which
+is exactly what the declaration means. Before that was true, the identity tests resolved to
+`Corpus A` and drafted **into the measurement corpus**.
+
+**`Corpus B` is deliberately NOT declared in this machine's settings file.** It lives in the
+other Windows account's profile, and a declared bystander the running profile does not mount is
+censused, not found, and refuses the tier. It belongs in *that* account's settings file.
+
 ### 1.4 A dummy account with a LOCAL SINK, because an unroutable one poisons the teardown
 
 The account exists because `NewDraft` resolves an `Account` object by SMTP address and refuses
@@ -171,6 +190,12 @@ Set Outlook to "always use this profile" and switch by changing that setting, no
 a prompting profile cannot be driven over COM. How the profiles are created and switched is
 **not recorded**; the Mail control panel works and is the obvious route.
 
+**Turn AutoArchive OFF, on every store, in both profiles.** It is a client-side actor that
+moves items out of a PST on a schedule, and to a before/after census that is **indistinguishable
+from mail loss** - the count tripwire would fail a run over Outlook tidying up on its own. It is
+the one such actor a test machine can realistically have, so it is worth turning off explicitly
+rather than assuming the default.
+
 ### 2.6 The stores
 
 Add every store **through Outlook itself** (File > Account Settings > Data Files > Add). Do not
@@ -189,7 +214,10 @@ Naming matters more than it looks:
   An account delivering into the corpus store can flip that store's `IsDataFileStore`, and
   `CorpusSafety` reads that property as one of four independent facts it requires before it
   will write anything. Get it wrong and the generator refuses that store permanently.
-* The bystander is listed in `expectedStoreDisplayNames` and is never the hub.
+* **The bystander is DECLARED in two places and is never the hub.** It goes in
+  `expectedStoreDisplayNames` (which censuses it) **and** in `bystanderStoreDisplayNames`
+  (which makes the write allowlist refuse it). Naming it in only one of the two **refuses the
+  tier** - see section 1.3. The same double declaration applies to `Corpus A`.
 
 Populate the bystander with a few hundred ordinary items. The corpus generator cannot honestly
 do this: it tags everything it creates, and the bystander's whole job is to be untouched.
@@ -338,6 +366,7 @@ it the whole live tier refuses to start.
   "machineProfile": "Portable",
   "testHubStoreDisplayName": "test@vm.invalid",
   "expectedStoreDisplayNames": [ "test@vm.invalid", "Corpus A", "OutlookAI Bystander" ],
+  "bystanderStoreDisplayNames": [ "OutlookAI Bystander", "Corpus A" ],
   "expectedDelegateStoreDisplayNames": [],
   "corpus": {
     "storeDisplayName": "Corpus A",
@@ -362,6 +391,7 @@ it the whole live tier refuses to start.
 | `machineProfile` | `Production` or `Portable`. Absent means `Production`, so an older settings file keeps the validation it was written under. Accepted as a string or a number. | no |
 | `testHubStoreDisplayName` | Display name of the store the suite may write to, exactly as Outlook shows it. Doubles as an SMTP address. | **yes** |
 | `expectedStoreDisplayNames` | Every store the count tripwire watches. Include the hub. | **yes** |
+| `bystanderStoreDisplayNames` | Stores the write allowlist must **refuse**. Every name here must also be in `expectedStoreDisplayNames`; naming a store in only one of the two refuses the tier. Both corpus stores belong here. | no |
 | `expectedDelegateStoreDisplayNames` | Delegate/shared mailboxes. Watched, never written, folder hierarchy allowed to come and go. Empty here. | no |
 | `probeTerm` | A word proven to hit this machine's search index. | Production only |
 | `subjectOnlyProbe` | Coordinates of a population whose term is in the subject and not the body. Four fields, all or none. | Production only |
@@ -373,7 +403,7 @@ A block that is present must be **complete**: three fields out of four reads as 
 behaves as absent, which is the exact silence these checks exist to remove.
 
 `windowDays` is how the machine declares which measurement windows it actually asks about. Left
-empty it means all of them, including the one-day window - which forces a re-anchor every day.
+empty it means all of them, including the one-day window - which forces a rebuild every day.
 Name the windows your tests use.
 
 The same file is read by the remediation console's `audit`/`refile`/`purge`/`dedupe` verbs,
@@ -413,31 +443,55 @@ selects now against what it selected at the anchor, and exits non-zero when any 
 test has emptied. The live tier runs the same check at fixture time from the `corpus` settings
 block, fail-closed, beside the count tripwire.
 
-**The repair.** `corpus-reanchor` shifts every item's received and submit instants forward.
+**The repair is to REBUILD, not to re-anchor. `corpus-reanchor` is retired and refuses to
+run.** It prints a notice and exits non-zero before it even checks its arguments, so a typo
+still gets told the command is gone rather than being quietly interpreted.
+
+**Why it is retired, since a shift-the-dates verb sounds obviously cheaper than regenerating
+40,000 items.** It destroyed a corpus. Pointed at an existing 20,000-item population it wrote
+**wall-clock** dates onto every item and reported `failed 0` while doing it - so the corpus was
+silently flattened to a single instant and the tool said the run was clean. It was recovered
+only because a checkpoint existed. The defect was fixed and pinned by tests, but the shape of
+the thing does not change: it is a write path across the whole corpus whose failure mode is
+invisible, in service of an outcome a rebuild reaches with no write path at all.
+
+**And the objection that a rebuild gives you a different population is simply false.** The plan
+is a pure function of `(seed, ordinal, field)` - there is no clock anywhere in it. Same seed,
+same corpus id, same count, same body text, same subjects, same recipients, same distribution.
+**Only the anchor moves**, which is exactly and solely what a re-anchor was for.
+
+So the maintenance path is:
 
 ```
-dotnet run --project <as above> -- corpus-reanchor \
+:: 1. remove the old population - refuses anything without BOTH the EntryID and the ordinal tag
+dotnet run --project <as above> -- corpus-teardown ... --execute
+
+:: 2. rebuild it against today. Resumable and idempotent, as in section 2.9.
+dotnet run --project <as above> -- corpus-build \
   --store "Corpus A" --allow-store "Corpus A" \
-  --corpus-id vm1 --seed 4242 --anchor 2026-08-01 --count 40000 \
-  --manifest D:\corpus\vm1.jsonl --to now --execute
+  --corpus-id vm1 --seed 4242 --anchor <today> --count 40000 \
+  --manifest D:\corpus\vm1-<today>.jsonl --progress-every 250 --execute
 ```
 
-It runs under the **no-accounts profile**, like every other corpus verb. It never creates,
-moves or removes an item; it opens each one by the EntryID the manifest records and writes two
-date properties, and it touches an item only when the EntryID is in the manifest, the subject
-still carries both tags, and the ordinal in that subject is the one being addressed.
+**Write a NEW manifest rather than reusing the old one.** The manifest's anchor is half the
+corpus's identity and every later `--anchor` argument depends on it; a fresh anchor is a fresh
+corpus and deserves its own file, so that a stale manifest can never be paired with a rebuilt
+store.
 
-The target is ABSOLUTE, not incremental, so running it twice is a no-op and an interrupted run
-is finished by running it again. The manifest's anchor is deliberately not rewritten - it is
-half the corpus's identity, and every later `--anchor` argument depends on it - so the shift is
-derived from the item lines rather than recorded in the header, and the re-anchor appends a
-replacement line per item. Expect the manifest to roughly double in size per re-anchor.
+**Faster still, and the reason the checkpoints exist:** a corpus lives in its own local `.pst`,
+which the store guard already proves. Deleting that file removes the population completely and
+with certainty - no predicate, no allowlist, no partial run - and step 2 rebuilds it.
 
-**Re-anchor after every checkpoint restore.** A restored checkpoint puts the corpus back where
-it was on the day it was taken, which is by definition older than today.
+**Rebuild after every checkpoint restore.** A restored checkpoint puts the corpus back where it
+was on the day it was taken, which is by definition older than today.
 
-**Re-anchoring changes every item, so the index will re-crawl Corpus A.** Let it settle before
-taking an index measurement.
+**A rebuild replaces every item, so the index will re-crawl Corpus A.** Let it settle before
+taking an index measurement. This is the one real cost of rebuilding over shifting dates, and
+it applied to re-anchoring too, which also touched every item.
+
+**The one remaining use of the old verb** is `--diagnose-write-path`, named after the only
+thing it is still good for: establishing whether date writes land on an existing item on a
+given machine. It prints the retirement notice as well.
 
 ---
 
@@ -579,6 +633,10 @@ Six guards arm themselves; none needs remembering.
 
 * `[tripwire] live-test settings: machineProfile=..., stores=N, ..., corpus=..., mailSink=...` -
   the first line. If it names the wrong machine's settings, stop there.
+* `[tripwire] watch soundness: N declared bystander(s), M store(s) this census can fail on,
+  K watched store(s) the suite may still write to` - printed straight after the settings line.
+  **`M=0` is the machine-readable form of "the guard runs and proves nothing"** (section 7), and
+  it says so in the same words rather than leaving you to infer it from a zero elsewhere.
 * `[corpus] Freshness: OK - anchor ... Windows now/at-anchor: 7d=3,180/3,180, ...` The `now`
   side is what the tests will actually see. A window at zero is a refusal, not a warning.
 * `[sink] submission 127.0.0.1:25 and retrieval 127.0.0.1:110 both answering.`
@@ -631,6 +689,13 @@ five-store profile it is a different number entirely and has never been measured
 * **A move whose destination was only counted cannot be exonerated.** The census can prove an
   item was filed rather than deleted only when BOTH folders were walked item by item. An item
   moved from a small folder into one above the budget is reported as removed.
+
+**Correction: there is no retry ladder on this machine (2026-08-24).** An earlier version of
+this section predicted that a suspected loss would be re-censused twice and the run repeated
+before anything failed. That is not what a `Portable` profile does. `TripwireRetryPolicy.None`
+applies here, so **a suspected loss fails on the FIRST reading**, with `NO RE-CENSUS IS
+CONFIGURED` rather than a ladder. The re-census-then-re-run policy exists, but it is a
+`Production` behaviour; on the VM the first reading is the verdict.
 
 ---
 

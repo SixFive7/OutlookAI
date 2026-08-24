@@ -113,13 +113,26 @@ Two commands close that, and the live tier runs the first of them fail-closed at
 * `corpus-verify` is PURE - no Outlook, no store, runnable on the host - and refuses when any
   window under test has emptied. It derives the shift the store already carries from the
   manifest, and prints each window as `now/at-anchor`.
-* `corpus-reanchor --to now --execute` is the repair. It shifts every item's received and
-  submit instants to an ABSOLUTE target, so it is idempotent and resumable; it never creates,
-  moves or removes an item; and it leaves the seed, the shape and the manifest header
-  untouched, so the corpus is still the corpus every earlier measurement was taken against.
+* **REBUILDING is the repair. `corpus-reanchor` is retired and refuses to run (2026-08-25).**
+  Tear the population down and run `corpus-build` again against today's anchor, writing a NEW
+  manifest.
 
-Regenerating instead was considered and rejected: the numbers above are held against THIS
-snapshot, and a regenerated corpus is a different population wearing the same figures.
+**The earlier text on this page said the opposite, and the reasoning it gave was wrong.** It
+rejected regenerating on the grounds that "a regenerated corpus is a different population
+wearing the same figures". It is not. **The plan is a pure function of `(seed, ordinal, field)`
+and contains no clock at all** - same seed, same corpus id, same count, same subjects, bodies,
+recipients and size distribution. **Only the anchor moves**, which is precisely and solely what
+a re-anchor was for. So every number on this page survives a rebuild at the same seed; what it
+does not survive is a rebuild at a different seed or count, and that was always true.
+
+**What settled it was not the argument but an incident.** Pointed at an existing 20,000-item
+population, the re-anchor wrote **wall-clock** dates onto every item and reported `failed 0`
+while doing it - flattening the corpus to a single instant and calling the run clean. It was
+recovered only because a checkpoint existed. The defect is fixed and pinned by tests, but the
+shape does not change: it was a write path across the entire corpus whose failure mode was
+invisible, in service of an outcome a rebuild reaches with no write path at all. A corpus also
+lives in its own local `.pst`, so deleting that file removes the population completely and with
+certainty - no predicate, no allowlist, no partial run.
 
 **Run `corpus-verify` before quoting any number on this page.** A measurement taken against a
 stale corpus is a measurement of an empty window.

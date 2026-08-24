@@ -108,6 +108,75 @@ foreground even with `-WindowStyle Hidden`**, so it is never acceptable unattend
 instead. Hyper-V work is meant to run through the account's membership of the local Hyper-V
 Administrators group, which needs no elevation at all once it is in the account's token.
 
+## Guest configuration - DECIDED and MEASURED 2026-08-25
+
+**Q30: the installs are unattended (option a).** An answer file is written into the repository so
+the two guests can be built with no one at the console. This is also what makes the runbook
+honest: "install Windows" is not a step anyone can repeat identically.
+
+**Q31: the guests match THIS machine, because that is where the userbase sits.** Not a neutral
+en-US testbed - deliberately the maintainer's own configuration. Surveyed on host `PC657`,
+2026-08-25; every row below is read, not assumed:
+
+| Setting | Value | Read from |
+| --- | --- | --- |
+| OS | Windows 11 Pro 10.0.26200 (25H2) | `Win32_OperatingSystem` |
+| Base install language | en-US (`OSLanguage` 1033, `Locale` 0409) | `Win32_OperatingSystem` |
+| MUI languages installed | en-US, en-GB, nl-NL | `MUILanguages` |
+| **Effective display language** | **en-GB** | `Get-UICulture` |
+| **Preferred language list** | **en-NL**, then **nl-NL** | `Get-WinUserLanguageList` |
+| **System locale** (non-Unicode) | **en-US** | `Get-WinSystemLocale` |
+| **User locale / formats** | **nl-NL** | `Get-Culture` |
+| Date | `d-M-yyyy` - today renders `25-8-2026` | `Get-Culture` |
+| Numbers | decimal `,` group `.` - `4000.5` renders `4.000,50` | `Get-Culture` |
+| Currency / first day | `EUR` / Monday | `Get-Culture` |
+| Home location | Netherlands, GeoId **176** | `Get-WinHomeLocation` |
+| **Keyboard, BOTH languages** | KLID **`00020409`** = United States-International | input tips `2000:00020409`, `0413:00020409` |
+| Time zone | **`W. Europe Standard Time`** (UTC+01:00), DST on | `Get-TimeZone` |
+
+**This closes the open worry about the staged ISO, in the ISO's favour.** `Testbed/MEDIA.md`
+flagged the English International image as a risk because it is `EN-GB` rather than `EN-US`.
+It is not a risk: **`en-NL` has no MUI of its own, so Windows falls back to `en-GB`** - which is
+exactly why this host displays en-GB while its language list says en-NL. The staged image is the
+correct base for matching this machine.
+
+**What that means for every measurement and assertion.** The guests will render `4.000,50` for
+four thousand and `25-8-2026` for a date. That is the point, not an accident: the remediation
+console printed `4.000` for four thousand on a Dutch-locale machine and had to be pinned to the
+invariant culture. Anything culture-sensitive that survives on an en-US box and breaks here is a
+real bug in the userbase's configuration, and the testbed is now positioned to find it.
+
+Two things the answer file cannot express and a first-logon script must fix: **`en-NL` is a
+transient LCID (`0x2000`) and cannot be hardcoded**, so the final language list is set with
+`Set-WinUserLanguageList`; and the home location goes on with `Set-WinHomeLocation -GeoId 176`.
+
+## Q32: the last Hyper-V remnants on C: - answered 2026-08-25
+
+**Nothing further on C: is movable by a Hyper-V setting; that work is already complete.** Verified
+from `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Virtualization`:
+`DefaultExternalDataRoot = E:\Hyper-V\VirtualMachines` and
+`DefaultVirtualHardDiskPath = E:\Hyper-V\VirtualHardDisks`. **Hyper-V exposes exactly these two
+host-level path settings** - `Set-VMHost` has no others, and checkpoint and smart-paging paths are
+per-VM and already inside each VM's own folder on E:. So restarting VMMS would move nothing,
+because there is no third setting for it to re-read.
+
+What is left on C: is two directories under the Windows ProgramData tree, and they are not the
+same kind of thing:
+
+- `...\Windows\Virtual Hard Disks` - **empty**, stock-created, safe to remove.
+- `...\Windows\Hyper-V` - ~36 files / ~1 MB. This is **VMMS's own host-level store**: the
+  authorization store, resource types and pools, and the VM/snapshot caches. **No setting
+  relocates it and removing it breaks Hyper-V.** It is not leftover from the move.
+
+Removing the empty one needs administrator rights, which this account does not have and must not
+script itself. It is also currently unreadable from this session: a host guard blocks every read
+under the Windows ProgramData tree because a sibling directory (the container layer store) leaks
+kernel pool on open.
+
+**Hyper-V access has NOT yet reached the token.** `Get-VMHost` fails with the authorization-policy
+error and `IsInRole('BUILTIN\Hyper-V Administrators')` is `False`. The group membership exists but
+needs a fresh logon. Until then no VM work is possible from this session.
+
 ## STILL OPEN - awaiting the maintainer
 
 **Q1+Q2, merged into one: collapse the test-tier vocabulary.** The maintainer's challenge was
