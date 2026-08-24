@@ -81,7 +81,12 @@ public class CorpusFreshnessTests
         (bool proceed, string message) = CorpusFreshness.Decide(report);
         Assert.False(proceed);
         Assert.Contains("STALE", message, StringComparison.Ordinal);
-        Assert.Contains("corpus-reanchor", message, StringComparison.Ordinal);
+        // The remedy is a REBUILD, not a re-anchor (decided 2026-08-25). This is the message an
+        // operator meets at the moment a corpus goes stale, so it is the one place where naming
+        // the wrong remedy costs a corpus rather than a paragraph.
+        Assert.Contains("REBUILD", message, StringComparison.Ordinal);
+        Assert.Contains("corpus-build", message, StringComparison.Ordinal);
+        Assert.Contains("Do NOT use 'corpus-reanchor'", message, StringComparison.Ordinal);
         // The refusal must state the consequence as a count, never as prose: the date guard's
         // prose refusal is what once invited an operator to override it and lose a build.
         Assert.Contains("select 0 items", message, StringComparison.Ordinal);

@@ -235,9 +235,14 @@ public static class CorpusFreshness
 
         return (false, what + $" Counts are now/at-anchor: {counts}. {anchors}. "
             + "A test asserting on an emptied window still PASSES - selecting nothing is a valid answer about an "
-            + "empty window - which is why this is a refusal and not a warning. Repair it with "
-            + "'corpus-reanchor --to now --execute', which shifts every item forward by the elapsed offset; the "
-            + "corpus keeps its seed, its shape and its manifest.");
+            + "empty window - which is why this is a refusal and not a warning. REBUILD the corpus: "
+            + "'corpus-teardown --execute' (or delete the .pst), then 'corpus-build' with the same seed and count "
+            + "and an --anchor at or near today. That is deterministic, and the recorded build was 20,000 items in "
+            + "13m25s. A rebuild from the same seed is the same population - the plan is a pure function of the "
+            + "seed and the ordinal, with no clock in it, so only the anchor moves. Do NOT use 'corpus-reanchor': "
+            + "it is retired, its date writes do not land on already-delivered items, and it once reported "
+            + "rewriting 20,000 items successfully while dating every one of them inside the six minutes it had "
+            + "been running.");
     }
 
     /// <summary>Renders a span as days and hours, which is the resolution this decision is made at.</summary>
