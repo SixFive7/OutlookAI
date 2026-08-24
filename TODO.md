@@ -612,19 +612,11 @@
   reaching a real profile.
 
   Every run now also prints `[tripwire] watch soundness: N declared bystander(s), M store(s)
-  this census can fail on, K watched store(s) the suite may still write to`, and says outright
-  when M is zero - the one-PST-that-is-also-the-hub configuration section 1.3 of the runbook
-  warns about, where the census reports zero failures for a reason that has nothing to do with
-  the mailboxes.
+  this census can fail on, K watched store(s) the suite may still write to`. M being zero is a
+  REFUSAL as of the follow-up below; it warned and proceeded when this landed.
 
   **What is deliberately NOT changed.** The identity-draft grant itself: the two tests above
-  need it, and it is a live run that would confirm anything further. The zero-bystander case is
-  reported, not refused - see the open item below. And only `OutlookAI Bystander` is declared in
-  the example settings: **`Corpus A` and `Corpus B` are bystanders in fact too** - no live test
-  writes to them, `LiveCorpusFreshness` only reads, and re-anchoring is an operator action in a
-  different profile - so declaring them would take them out of the identity grant as well and
-  give the census two more stores it can speak about. Not done here because it is the
-  maintainer's machine and his corpus; it costs one line of settings if he wants it.
+  need it, and it is a live run that would confirm anything further.
 
   Pinned by 21 new T1 tests (`T1\TripwireBystanderStoreTests`), including the JSON round trip
   of the new key. 2349 -> 2370 `Category!=Live` tests, 0 failures. **No live run:** the
@@ -640,24 +632,114 @@
   policed is unreachable while the allowlist denies every bystander and the loop skips the hub.
   Replacements that DO change behaviour were run for both and killed.
 
-- [ ] **Should the tripwire REFUSE a configuration it can prove nothing from?** Raised by the
-  bystander work above (2026-08-24); needs the maintainer's word, and a live run to check.
+- [x] **DONE (2026-08-24) - the tripwire REFUSES a configuration it can prove nothing from, and
+  the corpus stores are declared bystanders.** The maintainer's answer to the open question
+  above was **refuse always**, on the reasoning that a guard which cannot fail is worse than no
+  guard because it reads as coverage in every report it appears in.
 
-  Today a run whose only watched non-hub store is writable - or that watches nothing but the
-  hub - prints `NO STORE THIS CENSUS WATCHES CAN PRODUCE A FAILURE` and proceeds. The guard is
-  then structurally incapable of firing, which is the exact state
-  `Docs/live-tier-on-the-vm.md` section 1.3 tells a rebuilder to avoid. Three ways out:
+  **Before.** `Refusal()` fired only on a self-contradicting declaration. A configuration with no
+  watched non-hub store denied every write - one PST that is also the hub, or a hub plus stores
+  the identity-draft grant still opens up - printed `NO STORE THIS CENSUS WATCHES CAN PRODUCE A
+  FAILURE` and proceeded. **Now** `TripwireWatchReport.Refusal()` covers both, `Usable`
+  (`Sound && !ProvesNothing`) is exactly its negation, and both reasons come back in ONE message
+  so a machine with both faults does not need two live runs to find out. `EnsureBaseline` was
+  unchanged: it already refuses on whatever `Require` throws, ahead of the health gate and every
+  COM call, which is what keeps the gate reachable from CI.
 
-  1. **Leave it a warning** (what is implemented). A one-store smoke run stays possible, which
-     matters while the VM is being rebuilt, and the line is loud enough to read.
-  2. **Refuse unless at least one watched store is denied every write.** Fail-closed, matches
-     every other guard in the tier, and would have blocked the configuration this whole defect
-     was invisible in. Costs the smoke run.
-  3. **Refuse only when `machineProfile: Portable`,** where a bystander is cheap to add and
-     there is no reason not to have one, and warn on `Production`.
+  The refusal is written for whoever hits it, who is configuring a machine and has not read the
+  source: it names the hub and says why it is exempt, lists the watched stores the suite may
+  still write to, and gives the fix in the two settings keys - one line when the machine already
+  has a second store, three steps when it needs one. It also says outright that nothing turns it
+  off.
 
-  (2) is the honest one and (3) is the cautious one; the reason it is not simply done is that a
-  refusal here lands on a machine that is being rebuilt right now.
+  **No opt-out, deliberately.** A flag by which a single-store machine declared "I accept a
+  census that cannot fail" would be exactly as much typing, in exactly the same file, as the
+  declaration that actually fixes the configuration - and it would leave the tripwire off. An
+  empty PST plus two settings keys lifts the refusal and gives a real guard; there is no machine
+  for which the flag is the better answer. If one is ever wanted, `TripwireVacuousCensusTests`
+  pins the "nothing turns this off" sentence, so it cannot be added by accident.
+
+  **`Corpus A` is now declared a bystander in `Testbed/live-test-settings.example.json`.** No live
+  test writes to a corpus - `LiveCorpusFreshness` reads the manifest and never the store, and
+  re-anchoring is an operator action from the accountless profile - but the store must be in
+  `expectedStoreDisplayNames` to be censused, and that put it inside the identity-draft grant.
+  Two code paths wrote into it as a result: the identity tests (one draft per granted store) and
+  the post-run artifact sweep, which counts `[OutlookAI-McpTest]` subjects and deletes what it
+  finds - a tag `CorpusPlan.BuildSubject` puts at the front of **every** corpus subject. Both are
+  refusals at the write guard now. `Corpus B` is deliberately NOT declared there: it lives in the
+  other Windows account's profile, and a declared bystander the profile does not mount is
+  censused, not found, and refuses the tier. It belongs in that machine's settings file.
+
+  Pinned by 25 new T1 tests (`T1\TripwireVacuousCensusTests`, `T1\BystanderCorpusDeclarationTests`
+  - the second parses the committed example through the real loader, which nothing did before).
+  2370 -> 2395 `Category!=Live`, 0 failures. One pre-existing test changed:
+  `TripwireBystanderStoreTests.OnePstThatIsAlsoTheHub...` asserted the warning and now asserts the
+  refusal. **No live run.** `Docs/live-tier-on-the-vm.md` needs the matching edits (§1.3, §6, §7);
+  they are the maintainer's.
+
+- [ ] **The identity tests pass while proving nothing on the VM's three-store layout.** Found
+  2026-08-24 while declaring the corpus store a bystander, and caused by it.
+
+  `LivePhase4Fixture.IdentityAccounts` is `IdentityAccountsAmong(expectedStoreDisplayNames)`. On
+  the documented layout - hub, `Corpus A`, `OutlookAI Bystander`, the last two declared
+  bystanders - that list is now EMPTY, so
+  `LiveDraftTests.IdentityDrafts_BusinessAccounts_RightStore_NeverDisplayed_DeletedImmediately`
+  and `LiveDraftOptionsTests.NewDraft_BusinessAccounts_BodyAboveTheirOwnIntactHtmlSignature`
+  iterate nothing and report green. Before the declaration they would have resolved to `Corpus A`
+  and drafted into the measurement corpus, so this is the better of the two failures - but it is
+  still a green test that proved nothing, which is what this project keeps getting wrong.
+
+  It is not only a VM problem: on the maintainer's Production profile an empty list would mean
+  the settings had drifted, and that must be loud.
+
+  1. **`Settings.RequireProductionPopulation("a business account to verify identity in")` plus a
+     `PROVED NOTHING:` line and return**, the idiom `LiveManageSignatureTests` and
+     `LiveStaleIndexRowTests` already use. Throws on Production, says so on Portable. Two lines
+     per test, no new concepts.
+  2. **A `Requires` trait these two tests do not have** - the real requirement is "two mail
+     accounts", not `MailAccount` + `MultipleStores`. Correct, and it means the VM never selects
+     them rather than selecting and skipping them.
+  3. **Assert the list is non-empty** and let them fail on a machine that cannot run them. Most
+     honest, worst behaved: it fails the VM's suite for a machine property, not a defect.
+  4. **Leave it, and rely on the runbook** saying a green identity test on this machine means
+     nothing. Cheapest, and exactly the kind of documentation-only fix that has failed here
+     before.
+
+  (1) then (2) is the recommendation - (1) is the one that cannot be forgotten, since it is in
+  the test.
+
+- [ ] **The post-run artifact sweep would delete a corpus store's entire contents, and only the
+  write allowlist stops it.** Found 2026-08-24 by reading, not by running.
+
+  `LiveDraftTests.ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain` and
+  `LiveSendTests.ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain` iterate EVERY
+  `expectedStoreDisplayNames` entry, count subjects containing `OutlookAI-McpTest`, and call
+  `DeleteTaggedArtifactsUntilStableZero` on anything above zero. `CorpusPlan.BuildSubject` puts
+  `[OutlookAI-McpTest]` at the front of every corpus subject, and the sweep's folder set (Drafts,
+  Inbox, Sent, Outbox, Deleted, sync issues) covers four of the corpus's five populated folders.
+  On the documented layout that is ~21,000 items in `Corpus A`, and before the bystander
+  declaration the allowlist granted `Delete` on it.
+
+  Declaring the corpus store fixes the deletion, and leaves the sweep FAILING on that store
+  instead - `DeleteTaggedArtifacts` throws at the write guard. A red test is the right outcome
+  versus a destroyed corpus, but it is not a correct one: a store deliberately full of tagged
+  items can never satisfy "zero tagged artifacts".
+
+  1. **Sweep only stores the allowlist permits `Delete` on** (hub plus identity accounts). One
+     expression, and it matches what the sweep is FOR - proving the suite cleaned up after
+     itself. Narrows a mandatory safety sweep, which is CLAUDE.md rule 4, so it needs the
+     maintainer's word.
+  2. **Sweep every store but require the corpus's own tag to be absent from the match** - i.e.
+     count `[OutlookAI-McpTest]` items that carry no `[OutlookAI-Corpus:` tag. Keeps the coverage
+     and distinguishes the two populations, at the cost of teaching the test tier about the
+     corpus format.
+  3. **Stop tagging corpus subjects with `[OutlookAI-McpTest]`.** Removes the collision at
+     source and is the cleanest, but the tag is what makes corpus items legal to delete under
+     the mailbox-safety rules, and it would invalidate every existing manifest.
+  4. **Leave it**, on the grounds that the write guard now refuses and the failure is loud. Costs
+     a red suite on the VM forever.
+
+  (1) is the recommendation, with (2) as the answer if the sweep must keep covering bystanders.
 
 - [ ] **Fix the census's identity-to-count degradation, which is why the tripwire needs a
   re-census at all on a stable mailbox.** Found by reading during the 2026-08-24 investigation.
@@ -728,6 +810,25 @@
     form of section 7's "the guard runs and proves nothing", and it says so in the same words.
   - **Open behaviour item 20 is closed** and should say how: not by narrowing the grant - two
     live tests use it - but by a declaration the allowlist honours and the tripwire verifies.
+
+  **Four more, from the refuse-a-vacuous-census work (2026-08-24).** Same reason.
+  - **Section 1.3 must say the bystander is MANDATORY, not advisable.** "The bystander is the one
+    people leave out, and the tripwire is useless without it" now understates it: without one the
+    tier refuses to start, and no setting turns that off. Same for the sentence in section 2.6.
+  - **Section 7's "with one PST that is also the hub" prediction no longer describes a run.**
+    That configuration never reaches a census - `EnsureBaseline` throws `NO STORE THIS CENSUS
+    WATCHES CAN PRODUCE A FAILURE` before the health gate and before any COM call. The paragraph
+    should say so, because as written it tells a rebuilder what to expect from a run that cannot
+    happen.
+  - **Section 6's `[tripwire] watch soundness:` line can no longer report `M=0`** on a run that
+    got as far as printing anything, so the "M=0 means the guard proves nothing" reading belongs
+    with the refusal instead.
+  - **The section 2.10 settings example and field table need the corpus store in
+    `bystanderStoreDisplayNames`**, matching `Testbed/live-test-settings.example.json` and
+    `Testbed/README.md` §3b: `[ "OutlookAI Bystander", "Corpus A" ]`. The table's
+    `expectedStoreDisplayNames` row should also say that a declared bystander the profile does
+    not mount refuses the tier - which is why `Corpus B`, in the other Windows account's profile,
+    goes in that machine's settings file and not this one.
 
 - [x] **DONE (2026-08-24) - The tripwire's response to a suspected loss is bounded, and the
   census identity walk has a clock of its own.** Two maintainer decisions, both about the

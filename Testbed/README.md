@@ -38,7 +38,7 @@ testbed before its replacement runs.**
 | 4 | Build the server and the tools, and copy them in | `host/Publish-GuestPayload.ps1` | host |
 | 5 | Install the mail sink and the dummy account | by hand - `Docs/live-tier-on-the-vm.md` §2.7-2.8 | guest |
 | 6 | Build the corpus | `guest/Build-Corpus.ps1` | guest, session 1 |
-| 7 | Write the live-test settings file | copy `live-test-settings.example.json` | host or guest |
+| 7 | Write the live-test settings file | copy `live-test-settings.example.json` - and read §3b, or the tier refuses to start | host or guest |
 | 8 | Take the measurements | `guest/Invoke-GuestMeasure.ps1`, `guest/Measure-SweepCost.ps1` | guest, session 1 |
 | 9 | Get the results out | `host/Copy-FromGuest.ps1` | host |
 
@@ -120,6 +120,47 @@ confirmation of its identity: 2,761 is *exactly* the plan's unread count, not ap
 first confirmation was the 40,000-item build's 5,532. The build now clears `MSGFLAG_SUBMIT` on
 every item, so a rebuild today should leave the Outbox empty - **and if it does not, that is the
 signal that the fix did not take**, because the count is predictable in advance.
+
+---
+
+## 3b. The settings file must declare a BYSTANDER, and the corpus store is one
+
+**The live tier refuses to start without one.** `bystanderStoreDisplayNames` in
+`live-test-settings.json` names the stores the count tripwire watches and **nothing** writes to.
+If that leaves no watched store which is both non-hub and denied every write, the tier refuses at
+the top of the run and names the two keys to edit. There is no flag that turns the refusal off.
+
+That is not bureaucracy. The tripwire exempts the hub, because the hub is where the suite writes.
+A configuration with nothing else to look at still censuses every folder, still identifies
+nothing, and still prints `0 failure(s)` - a line produced by arithmetic that could not have
+reached any other answer, and which then sits in a run report looking exactly like an earned one.
+
+**The corpus store is declared a bystander too, and this one is load-bearing.** No live test
+writes to a corpus: the freshness check reads the manifest and never the store, and re-anchoring
+is an operator action run from the accountless profile. But a corpus store has to appear in
+`expectedStoreDisplayNames` to be censused at all, and every non-hub entry of that list is inside
+the identity-draft grant unless something says otherwise. Left undeclared, two different code
+paths write into the measurement corpus:
+
+* **the identity tests** create one draft per granted store - so they would draft into the corpus
+  the moment this machine gains the dummy mail account it is getting;
+* **the post-run artifact sweep** counts subjects carrying `[OutlookAI-McpTest]` and deletes what
+  it finds - and the corpus generator puts that exact tag at the front of *every* corpus subject,
+  so the sweep would find the whole corpus and try to remove it.
+
+Declaring the store turns both into a refusal at the write guard instead.
+
+**Declare only corpus stores this Outlook profile actually mounts.** A declared bystander is
+watched whether or not any other list names it, so a name the profile does not have gets
+censused, is not found, and refuses the tier. `Corpus B` lives in the *other* Windows account's
+profile (`Docs/live-tier-on-the-vm.md` §1.1), so it belongs in that machine's settings file,
+declared the same way - not in the indexed account's.
+
+**One consequence to know about before the first run.** With the hub, the corpus store and the
+plain bystander all accounted for, the three-store layout leaves the identity tests no store they
+may draft in, so they iterate an empty list and pass without proving anything. They are marked
+`Requires=MailAccount`; the VM's single mail account is the hub's. `TODO.md` carries this as an
+open item - do not read a green identity test on this machine as evidence.
 
 ---
 
