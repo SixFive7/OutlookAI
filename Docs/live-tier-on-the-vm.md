@@ -701,8 +701,13 @@ CONFIGURED` rather than a ladder. The re-census-then-re-run policy exists, but i
 
 ## 8. What a rebuilder still has to establish
 
-Everything in this list is genuinely unrecorded or unverified. It is a deliverable in its own
-right: the point of naming it is that a rebuilder should not have to discover it is missing.
+This list is a deliverable in its own right: the point of naming a gap is that a rebuilder
+should not have to discover it is missing.
+
+**Closed items are kept, with the answer, rather than deleted.** A numbered gap that vanishes
+reads as one that was never there, and the answer is usually the more useful half. Items 6, 7,
+14, 15, 18 and 20 are now closed and say where the answer lives; the rest are genuinely
+unrecorded or unverified.
 
 **Verify before building anything else**
 
@@ -722,9 +727,22 @@ right: the point of naming it is that a rebuilder should not have to discover it
 
 5. Hyper-V generation, Secure Boot, TPM, vCPU, RAM, disk size, checkpoint type (production
    checkpoints use VSS and behave differently with Outlook mid-run).
-6. Windows edition, build, ISO, licensing, computer name, Defender exclusions (an indexer, a
-   400 MB PST and real-time AV interact), power and sleep policy.
-7. Office version, channel, bitness, install method, and how the first-run wizard is suppressed.
+6. ~~Windows edition, build, ISO, licensing~~ - **RECORDED 2026-08-25 in `Testbed/MEDIA.md`**:
+   Windows 11 Pro from the consumer multi-edition English International image, unactivated
+   (which watermarks and nags but, unlike the Enterprise evaluation it replaces, **never
+   expires**). The locale the guests are built to is recorded there as a measured table, and it
+   deliberately matches the maintainer's own machine rather than a neutral en-US default,
+   because that configuration is where the userbase sits: display en-GB, formats **nl-NL**,
+   system locale en-US, keyboard **US-International**, `W. Europe Standard Time`. **Expect
+   `4.000,50` for four thousand and `25-8-2026` for a date, on purpose.**
+   Still unrecorded: computer name, and Defender exclusions - an indexer, a 400 MB PST and
+   real-time AV interact, and nobody has measured how much.
+7. ~~Office version, channel, bitness, install method~~ - **RECORDED in `Testbed/MEDIA.md`**:
+   Office Deployment Tool with `ProPlus2024Volume` on `PerpetualVL2024`, 64-bit, and
+   **`ExcludeApp OutlookForWindows`, which is load-bearing** - it suppresses the new Outlook,
+   which offers no COM object model. **Office's out-of-box grace is 30 days, not 90**, so Office
+   and not Windows is what sets the rebuild cadence. Still unrecorded: how the first-run wizard
+   is suppressed.
 8. The two Windows account names and their roles; whether both need a clone and an SDK; whether
    checkpoints must be taken with both logged on.
 9. Outlook profile names, how they are created, which is default, and how the switch between the
@@ -737,11 +755,21 @@ right: the point of naming it is that a rebuilder should not have to discover it
 12. .NET SDK version, clone path, build configuration, and how the built server exe reaches the
     path the tier-3 tests expect.
 13. How results, screenshots and logs get out of the guest, and where `ScreenCapture` writes.
-14. `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1` is gitignored and is required by step 2 of
-    the measurement plan. It has to be copied in by hand.
-15. **The parameters of the corpus that is currently on the VM.** Only an example
-    (`vm1 / 4242 / 2026-08-01 / 40000`) is written down, while the corpus every published
-    measurement rests on is a 20,000-item one. Record the real parameters beside the manifest.
+14. **CLOSED, with a caveat that matters.** `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1` was
+    gitignored, so it lived on one machine and is gone. It has been **reconstructed in the
+    repository** as `Testbed/guest/Measure-SweepCost.ps1`, written from the shipped sweep's own
+    source rather than from memory, and read-only by construction. **It has never been
+    executed.** Read it before trusting a number out of it, and replace its banner with what it
+    actually did once it has run.
+15. **CLOSED 2026-08-24.** The real parameters are `vm2 / 7777 / 2026-08-19 / 20000`, recorded
+    machine-readably in `Testbed/testbed.json` together with the expected plan, the per-folder
+    and per-window counts, the store path and the build cost. They are not an example: they were
+    read out of the recovered manifest header and re-derived on the host with `corpus-plan`,
+    which reproduced Inbox=10,912 / Sent=4,964 / Deleted=2,461 / Junk=1,663 and 7d=1,612 exactly
+    - the figures `Docs/magic-numbers.md` quotes. `check-testbed-references.ps1` pins the four
+    values across `testbed.json`, `Build-Corpus.ps1` and `corpus-measurement-plan.md`.
+    **The `vm1 / 4242 / 2026-08-01 / 40000` set that appears in this document's command
+    examples is an EXAMPLE and always was.** Do not build from it.
 16. Whether Corpus A and Corpus B should share a seed and anchor, and how their manifests are
     named apart.
 
@@ -755,14 +783,28 @@ right: the point of naming it is that a rebuilder should not have to discover it
 
 **Open behaviour**
 
-18. The tripwire's re-census-then-re-run policy on a suspected loss is decided and not built.
-19. `machineProfile: "Portable"` turns "found nothing to test" from a failure into a pass. There
-    is no check on how many assertions actually fired, so a run that proved nothing looks like a
-    run that passed.
-20. Non-hub stores in `expectedStoreDisplayNames` are granted draft-create and draft-delete by
-    `StoreWriteAllowlist`. That was harmless while the identity tests were all pinned to the dev
-    machine; now that 121 of 127 select onto this one, the bystander - the one store the tripwire
-    needs untouched - is inside that grant.
+18. **CLOSED 2026-08-24, in both halves.** The policy is decided *and* built - and the answer for
+    this machine is that there is no ladder at all. `TripwireRetryPolicy.None` applies to a
+    `Portable` profile, so a suspected loss fails on the first reading with `NO RE-CENSUS IS
+    CONFIGURED`. Section 7 says so; the re-census-then-re-run behaviour is `Production` only.
+19. **STILL OPEN, and narrower than it was.** `machineProfile: "Portable"` still turns "found
+    nothing to test" into a pass, and there is still **no assertion-counting hook anywhere in the
+    suite** - confirmed by reading, not assumed: xunit 2.9.3, no `BeforeAfterTestAttribute`, no
+    analyzer that fails an assertion-free `[Fact]`. What changed is that the tests known to be
+    exposed now announce it: the `RequireProductionPopulation` + `PROVED NOTHING:` idiom throws
+    on a `Production` profile and prints on a `Portable` one, and the two identity tests were
+    converted to it on 2026-08-25 after being found green-while-iterating-nothing.
+    **Three more silently-empty iterations are known and unfixed**, listed in `TODO.md`; the
+    strongest is `LiveFolderScopeTests.DelegateFirstLevelFolders_StillResolve_...`, which
+    iterates `expectedDelegateStoreDisplayNames` with no guard while a sibling two methods above
+    it asserts non-emptiness first - so the omission reads as an oversight, and that list is
+    empty on every Portable machine including this one.
+20. **CLOSED 2026-08-24 - and worth reading how, because the obvious fix was the wrong one.** The
+    grant was NOT narrowed: two live tests legitimately need draft-create in a non-hub store.
+    Instead a store is now **declared** a bystander in `bystanderStoreDisplayNames`, the write
+    allowlist checks that list *ahead of* the identity grant, and the tripwire verifies the
+    declaration. Sections 1.3 and 2.6 carry the rule. The corpus stores are declared too, which
+    is what stopped the identity tests drafting into the measurement corpus.
 
 ---
 
