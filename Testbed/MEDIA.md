@@ -13,20 +13,34 @@ been unrebuildable. Hence the rule at the bottom of this file.
 
 | | Needed | On this machine (checked 2026-08-24) |
 | --- | --- | --- |
-| Windows | Windows 11 Enterprise LTSC **Evaluation**, build 26100 | **ABSENT.** Searched C:, D:, E: — the only ISO images are a WinPE build and a game disc. |
+| Windows | A Windows 11 x64 image | **STAGED 2026-08-24**: `.work/media/Win11_25H2_EnglishInternational_x64_v2.iso` (7.9 GB, gitignored). Consumer multi-edition, volume label `CCCOMA_X64FRE_EN-GB_DV9`, so it carries Pro. |
 | Office | Office Deployment Tool + a configuration | **PRESENT**, in an archive under the maintainer's Downloads. |
 
-### Windows
+### Windows — staged, and it is NOT the edition the old guest ran
 
-The existing guest is Windows 11 Enterprise LTSC Evaluation, build 26100 — a `TIMEBASED_EVAL`
-channel install with a 90-day clock. Evaluation media is a free download from Microsoft's
-evaluation centre, but that normally requires filling in a registration form, so it does not
-fetch unattended. **Someone has to obtain the ISO and stage it.** Record where it lands in the
-local settings, not here.
+`.work/media/Win11_25H2_EnglishInternational_x64_v2.iso`, verified: ISO 9660 signature present,
+volume label `CCCOMA_X64FRE_EN-GB_DV9` — Microsoft's consumer multi-edition x64 image, which
+includes **Pro**. It sits in gitignored scratch; it is 7.9 GB and must never be committed.
 
-Why evaluation media rather than a licensed edition: the testbed is disposable by decision — see
-the licence section below — and an evaluation image makes that stance explicit instead of
-quietly consuming a licence.
+**Two deliberate differences from the machine it replaces, both of which change something.**
+
+**1. Consumer Pro, not Enterprise LTSC Evaluation.** The old guest was `TIMEBASED_EVAL` with a
+hard 90-day expiry. An unactivated consumer Pro install has **no expiry at all** — it watermarks,
+blocks personalisation and nags, but it does not stop. Since the decided rebuild cadence is
+driven by Office's 30-day grace, the Windows clock was doing no useful work, and removing it
+means one fewer way for the testbed to die silently. The evaluation route also needed a
+registration form; this image did not.
+
+**2. `EN-GB`, not `EN-US` — VERIFY THIS BEFORE TRUSTING ANY MEASUREMENT.** English
+International sets a UK locale: `dd/MM/yyyy` dates, different number grouping, different first
+day of week. This project has already been bitten by locale once — the remediation console
+printed `4.000` for four thousand on a Dutch-locale machine, and was pinned to the invariant
+culture precisely because its output is compared across machines. Outlook's default folder names
+(`Inbox`, `Sent Items`, `Deleted Items`, `Junk Email`) are identical between en-GB and en-US, so
+folder resolution is unaffected; what is not established is whether any assertion, corpus date
+parse or rendered payload is culture-sensitive. Set the guest's locale deliberately during setup
+and record what was chosen, rather than accepting the installer default and finding out later.
+
 
 ### Office — the method, which was the actual unknown
 
