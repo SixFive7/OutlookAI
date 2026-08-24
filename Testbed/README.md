@@ -17,6 +17,17 @@ guest itself, by luck rather than by design. **Nothing in here should exist only
 
 ---
 
+## 0. Media is a precondition — read `MEDIA.md` first
+
+You cannot start without Windows installation media, and this machine did not have any when the
+question was first asked. `Testbed/MEDIA.md` records what is needed, what exists, the Office
+deployment settings the current guest was built with, and the licence clocks — including the one
+correction that matters: **Office's grace is 30 days, not 90**, so it expires before Windows and
+a "rebuild when it expires" policy means rebuilding monthly unless the guest can reach a KMS host.
+
+It also carries the rule that came out of nearly getting this wrong: **never destroy a working
+testbed before its replacement runs.**
+
 ## 1. The order to do things in
 
 | # | Step | What runs it | Where |
