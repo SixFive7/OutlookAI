@@ -297,9 +297,16 @@
 
   Still open from the original list, and NOT covered by the clock sweep: the installer
   hand-off script's `Get-Process outlook | Wait-Process; Start-Sleep -Seconds 2` still waits
-  a fixed grace period rather than for a condition, and nobody has revisited the 10-minute
-  update poll or the 5-minute API timeout against what they actually wait for. Those are
-  interval-choice questions, not clock-correctness ones.
+  a fixed grace period rather than for a condition, and nobody has revisited the 5-minute API
+  timeout against what it actually waits for. Those are interval-choice questions, not
+  clock-correctness ones.
+
+  The update poll's SCHEDULE was decided on 2026-08-24 and is no longer open: the first check
+  waits 30 s instead of firing inside add-in load, and three consecutive unreachable-server
+  failures start a doubling backoff capped at two hours, with a `NetworkChange` rising edge and
+  the manual check as the two fast recovery paths (`Services/UpdatePollSchedule.cs`, pinned by
+  T1 `UpdatePollScheduleTests`). **The 10-minute base interval itself did not change and was not
+  the question** - what was open was firing at zero and never backing off.
 
 - [ ] **Live tier: a test hangs, and an aborted run leaves artifacts behind. Read this before
       the next live run.** (2026-08-18, ~03:00-03:45)
