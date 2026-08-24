@@ -7,7 +7,26 @@ namespace OutlookAI.RemediationTools;
 /// <param name="EntryId">Its EntryID as the manifest records it.</param>
 /// <param name="ReceivedUtc">The received instant to write.</param>
 /// <param name="SentUtc">The submit instant to write; it keeps its original distance from the received one.</param>
-public sealed record CorpusReanchorItem(int Ordinal, string EntryId, DateTime ReceivedUtc, DateTime SentUtc);
+/// <param name="FolderId">The folder id the manifest already records, carried so a replacement line can restate it.</param>
+/// <param name="BodyBytes">The body size the manifest already records, carried for the same reason.</param>
+/// <remarks>
+/// <para>
+/// <b>Why the folder and body size travel with an item that is only having its dates
+/// rewritten.</b> A re-anchor appends a replacement manifest line per item, and the manifest
+/// reader is last-writer-wins <i>per ordinal, wholesale</i> - it does
+/// <c>_items[ordinal] = item</c>, not a per-field merge. So a replacement line that leaves
+/// these at zero does not "decline to restate what it does not know"; it DELETES what the
+/// build recorded. Measured on the test VM 2026-08-24: after a re-anchor of 20,000 items,
+/// every entry read back with <c>FolderId 0, BodyBytes 0</c>.
+/// </para>
+/// </remarks>
+public sealed record CorpusReanchorItem(
+    int Ordinal,
+    string EntryId,
+    DateTime ReceivedUtc,
+    DateTime SentUtc,
+    int FolderId,
+    int BodyBytes);
 
 /// <summary>What a re-anchor is going to do, decided before a single item is opened.</summary>
 /// <param name="TargetShiftSeconds">The shift from the PLAN's instants that the store must end up carrying.</param>
@@ -61,6 +80,76 @@ public static class CorpusReanchor
     /// corpus on every run.
     /// </summary>
     public static readonly TimeSpan MatchTolerance = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Whether an item's dates actually landed: does what the store reports after the write
+    /// match what the write intended, to <see cref="MatchTolerance"/>?
+    /// <para>
+    /// <b>This exists because a re-anchor once destroyed a corpus while reporting success.</b>
+    /// Measured on the test VM 2026-08-24: a run over 20,000 items finished
+    /// "rewritten 20,000, refused 0, failed 0" and left every item dated inside the six
+    /// minutes the tool had been running - the whole age-band structure the corpus exists for
+    /// replaced by "everything arrived while the tool ran". The write path already READ the
+    /// value back afterwards; it simply never compared it, and then recorded the read-back
+    /// into the manifest as though it were the intention, destroying the manifest too.
+    /// </para>
+    /// <para>
+    /// The date-write method is chosen by a probe that creates throwaway items, and the
+    /// re-anchor's own dry run says plainly that "the date probe was not run (it creates
+    /// items)" - so the method is proven for NEW items and reused unverified on EXISTING
+    /// ones. That gap is why a per-item check, rather than a per-run one, is the right shape:
+    /// the very first item answers it.
+    /// </para>
+    /// </summary>
+    /// <param name="intendedUtc">The instant the write asked for.</param>
+    /// <param name="readBackUtc">What the item reports afterwards; null when it could not be read.</param>
+    /// <returns>True only when the store demonstrably carries the intended instant.</returns>
+    public static bool WriteLanded(DateTime intendedUtc, DateTime? readBackUtc) =>
+        readBackUtc.HasValue
+        && Math.Abs((readBackUtc.Value - intendedUtc).TotalSeconds) <= MatchTolerance.TotalSeconds;
+
+    /// <summary>
+    /// The replacement manifest line for an item whose dates have just been rewritten.
+    /// <para>
+    /// Pure, and separate from the write, because the write lives on a COM path no CI test can
+    /// enter - and the bug this closes was exactly there. Zeroing <c>FolderId</c> and
+    /// <c>BodyBytes</c> here does not decline to restate what a re-anchor does not know: the
+    /// manifest reader is last-writer-wins per ordinal WHOLESALE, so a zeroed replacement
+    /// DELETES what the build recorded. Both are carried on <see cref="CorpusReanchorItem"/>
+    /// for this one reason.
+    /// </para>
+    /// </summary>
+    /// <param name="item">The item as planned, carrying the fields the manifest already holds.</param>
+    /// <param name="intendedUtc">The instant the write asked for.</param>
+    /// <param name="readBackUtc">What the store reports; the recorded value when it is readable.</param>
+    public static CorpusManifestItem ReplacementLine(
+        CorpusReanchorItem item, DateTime intendedUtc, DateTime? readBackUtc)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        return new CorpusManifestItem(
+            item.Ordinal,
+            item.EntryId,
+            item.FolderId,
+            item.BodyBytes,
+            CorpusManifest.FormatUtc(readBackUtc ?? intendedUtc));
+    }
+
+    /// <summary>
+    /// What to say when a write did not land. It names both instants, because the difference
+    /// between them is the diagnosis: a value near "now" means the store re-stamped the item,
+    /// and an unreadable one means the write threw somewhere that swallowed it.
+    /// </summary>
+    public static string DescribeWriteRefusal(int ordinal, DateTime intendedUtc, DateTime? readBackUtc)
+    {
+        string got = readBackUtc.HasValue
+            ? readBackUtc.Value.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture)
+            : "unreadable";
+        return $"Item {ordinal}: the date write did not land. Asked for "
+            + intendedUtc.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture)
+            + $", the store reports {got}. Stopping before the rest of the corpus is touched - "
+            + "a re-anchor that cannot move one item's dates cannot move twenty thousand, and "
+            + "continuing would rewrite every remaining item with a value nothing has checked.";
+    }
 
     /// <summary>
     /// The share of dated manifest entries that must agree on one shift before the answer is
@@ -172,7 +261,8 @@ public static class CorpusReanchor
                 // Nothing recorded means nothing known, and an item whose current instant is
                 // unknown is written rather than assumed correct.
                 undated++;
-                todo.Add(new CorpusReanchorItem(ordinal, recorded.EntryId, wantReceived, wantSent));
+                todo.Add(new CorpusReanchorItem(
+                    ordinal, recorded.EntryId, wantReceived, wantSent, recorded.FolderId, recorded.BodyBytes));
                 continue;
             }
 
@@ -182,7 +272,8 @@ public static class CorpusReanchor
                 continue;
             }
 
-            todo.Add(new CorpusReanchorItem(ordinal, recorded.EntryId, wantReceived, wantSent));
+            todo.Add(new CorpusReanchorItem(
+                ordinal, recorded.EntryId, wantReceived, wantSent, recorded.FolderId, recorded.BodyBytes));
         }
 
         return new CorpusReanchorPlan(

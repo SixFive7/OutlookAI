@@ -817,20 +817,27 @@ public static class ComCorpusMailbox
                                 continue;
                             }
 
+                            DateTime intended = item.ReceivedUtc + writeShift;
                             DateTime? readBack = ApplyDates(
-                                mail!, dateMethod, item.ReceivedUtc + writeShift, item.SentUtc + writeShift);
+                                mail!, dateMethod, intended, item.SentUtc + writeShift);
 
-                            // FolderId and BodyBytes are recorded as 0: a re-anchor knows
-                            // neither and must not claim to. The manifest's own reader takes
-                            // the LAST line for an ordinal, and the only field a re-anchor is
-                            // entitled to restate is the instant it just wrote.
-                            var line = new CorpusManifestItem(
-                                item.Ordinal,
-                                item.EntryId,
-                                0,
-                                0,
-                                CorpusManifest.FormatUtc(readBack ?? item.ReceivedUtc));
-                            record(line);
+                            // CHECK THE WRITE LANDED, and stop the whole run if it did not.
+                            // This read-back was already being taken and thrown away: the old
+                            // code recorded it into the manifest as though it were the
+                            // intention. On 2026-08-24 that turned a re-anchor of 20,000 items
+                            // into "rewritten 20,000, failed 0" while every item ended up dated
+                            // inside the six minutes the tool ran. One comparison, on the first
+                            // item, is the difference between a refusal and a destroyed corpus.
+                            if (!CorpusReanchor.WriteLanded(intended, readBack))
+                            {
+                                throw new InvalidOperationException(
+                                    CorpusReanchor.DescribeWriteRefusal(item.Ordinal, intended, readBack));
+                            }
+
+                            // Built by a pure method so CI can pin it: this line used to zero
+                            // FolderId and BodyBytes, and the wholesale last-writer-wins reader
+                            // turned that into deletion of what the build recorded.
+                            record(CorpusReanchor.ReplacementLine(item, intended, readBack));
                             rewritten++;
                         }
                         catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
