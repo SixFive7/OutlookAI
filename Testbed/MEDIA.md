@@ -31,16 +31,63 @@ driven by Office's 30-day grace, the Windows clock was doing no useful work, and
 means one fewer way for the testbed to die silently. The evaluation route also needed a
 registration form; this image did not.
 
-**2. `EN-GB`, not `EN-US` — VERIFY THIS BEFORE TRUSTING ANY MEASUREMENT.** English
-International sets a UK locale: `dd/MM/yyyy` dates, different number grouping, different first
-day of week. This project has already been bitten by locale once — the remediation console
-printed `4.000` for four thousand on a Dutch-locale machine, and was pinned to the invariant
-culture precisely because its output is compared across machines. Outlook's default folder names
-(`Inbox`, `Sent Items`, `Deleted Items`, `Junk Email`) are identical between en-GB and en-US, so
-folder resolution is unaffected; what is not established is whether any assertion, corpus date
-parse or rendered payload is culture-sensitive. Set the guest's locale deliberately during setup
-and record what was chosen, rather than accepting the installer default and finding out later.
+**2. `EN-GB`, not `EN-US` — VERIFIED 2026-08-25, AND IT IS THE RIGHT IMAGE.** This entry used to
+say "verify this before trusting any measurement", because English International was assumed to
+be a mismatch that had crept in. It is not. The host was surveyed on 2026-08-25 and its effective
+display language **is en-GB** — see the next section for the whole table and the command behind
+each row. The mechanism is worth understanding rather than memorising: the host's first preferred
+language is **en-NL**, English (Netherlands), and **Windows ships no MUI for en-NL**, so the
+display language falls back to **en-GB**. That is why `Get-UICulture` reports en-GB on a machine
+whose language list never mentions it, and it makes `CCCOMA_X64FRE_EN-GB_DV9` the *correct* base
+image for a guest that is supposed to look like this host. Nothing to correct.
 
+
+## The host configuration the guests match
+
+**The guests are built to match the maintainer's own machine, deliberately.** Not a clean
+en-US default, not a "sensible" configuration: that machine's configuration is where most of the
+userbase sits, so it is what the live tier should be testing against. A testbed set up the tidy
+way would be a testbed that cannot reproduce the bugs the userbase hits.
+
+**Measured on the host (PC657) on 2026-08-25.** These are readings, not intentions — the command
+behind each is in the last column so any of them can be checked rather than believed.
+
+| Setting | Value | Read with |
+| --- | --- | --- |
+| OS | Windows 11 Pro, 10.0.26200 (25H2) | `Win32_OperatingSystem` |
+| Base install language | en-US (`OSLanguage` 1033, `Locale` 0409) | `Win32_OperatingSystem` |
+| MUI languages present | en-US, en-GB, nl-NL | `Win32_OperatingSystem.MUILanguages` |
+| **Effective display language** | **en-GB** | `Get-UICulture` |
+| **Preferred language list** | **en-NL** (English, Netherlands), then **nl-NL** | `Get-WinUserLanguageList` |
+| **System locale** (non-Unicode / ANSI) | **en-US** | `Get-WinSystemLocale` |
+| **User locale / formats** | **nl-NL** | `Get-Culture` |
+| Date format | `d-M-yyyy` — 2026-08-25 renders `25-8-2026` | `Get-Culture` |
+| Number format | decimal `,`, group `.` — `4000.5` renders `4.000,50` | `Get-Culture` |
+| Currency / first day of week | `€` / Monday | `Get-Culture` |
+| Home location | Netherlands, **GeoId 176** | `Get-WinHomeLocation` |
+| **Keyboard, both languages** | KLID **`00020409`**, United States-International | input tips `2000:00020409` and `0413:00020409` |
+| Time zone | **`W. Europe Standard Time`** (UTC+01:00 Amsterdam), DST on | `Get-TimeZone` |
+
+**The en-NL line is the load-bearing one.** en-NL has no MUI, so the display language falls back
+to en-GB — which is why the row above it says en-GB, and why English International is the right
+image. It is also why the language list cannot live in the answer file: **en-NL is a transient
+language**, handed an LCID out of the `0x2000` block at runtime (currently `2000`, but that is an
+allocation, not an identity). `Testbed/guest/Complete-FirstLogon.ps1` sets it after the account
+exists, and `Testbed/guest/autounattend.template.xml` says so where a reader will hit it.
+
+**THE GUESTS WILL RENDER `4.000,50`, AND THAT IS THE POINT.** This project has been bitten by
+locale once already: the remediation console printed `4.000` for four thousand on a Dutch-locale
+machine, and was pinned to the invariant culture precisely because its output is compared across
+machines. A nl-NL user locale reproduces exactly the conditions that found that, so the caution is
+not "check whether the guest is safe" but **"the corpus, the assertions and every rendered payload
+have to survive it"**. Anything that only passes on an en-US box is a defect on the maintainer's
+machine too, and the testbed exists to say so before a user does.
+
+Outlook's default folder names (`Inbox`, `Sent Items`, `Deleted Items`, `Junk Email`) are
+identical between en-GB and en-US, so folder resolution is unaffected either way. What is still
+not established, and is a question for whoever next runs the tier on a fresh guest, is whether any
+assertion, corpus date parse or rendered payload is culture-sensitive in a way nobody has hit yet.
+The guest is now the place that would show it.
 
 ### Office — the method, which was the actual unknown
 

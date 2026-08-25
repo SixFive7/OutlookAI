@@ -1,0 +1,332 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ============================================================================================
+  OutlookAI testbed - unattended Windows 11 install answer file TEMPLATE.
+
+  THIS IS A TEMPLATE. IT CONTAINS NO CREDENTIAL AND MUST NEVER CONTAIN ONE.
+  This repository is public and a guest password has already been published from it once; it
+  survives in git history and had to be rotated. Every credential appears here only as a
+  placeholder token written in double braces. Testbed/host/New-AnswerFile.ps1 substitutes the
+  real values, reading them from the gitignored vm-credentials.json that
+  Testbed/host/Get-GuestCredential.ps1 documents, and writes the filled autounattend.xml into
+  gitignored scratch (.work/) only. Nothing filled ever comes back into Testbed/.
+  .github/scripts/check-testbed-references.ps1 check 7 fails the build if the placeholders in
+  this file are ever replaced by anything that looks like a value.
+
+  Placeholders, all substituted by New-AnswerFile.ps1. They are named here without their braces
+  on purpose, so that this comment block is not itself rewritten when the file is filled in:
+      GUEST_USERNAME   the local administrator account the testbed runs as
+      GUEST_PASSWORD   that account's password
+      COMPUTER_NAME    the guest's machine name
+      IMAGE_NAME       the edition to install out of the multi-edition ISO
+
+  ============================================================================================
+  WHAT THIS FILE ENCODES, AND WHY THESE VALUES
+
+  The guest must match the MAINTAINER'S OWN MACHINE, not some notional clean default. That
+  configuration is where most of the userbase sits, so it is what the live tier has to be
+  testing against. The table below was MEASURED on the host (PC657) on 2026-08-25; see
+  Testbed/MEDIA.md, section "The host configuration the guests match", for the full survey and
+  the command each value was read with.
+
+      OS                       Windows 11 Pro 10.0.26200 (25H2)
+      Base install language    en-US (OSLanguage 1033)
+      MUI languages present    en-US, en-GB, nl-NL
+      Effective display lang   en-GB          from Get-UICulture
+      Preferred language list  en-NL, nl-NL   from Get-WinUserLanguageList
+      System locale (ANSI)     en-US          from Get-WinSystemLocale
+      User locale / formats    nl-NL          from Get-Culture (d-M-yyyy, 4.000,50, EUR, Monday)
+      Home location            Netherlands, GeoId 176
+      Keyboard, both languages KLID 00020409, United States-International
+      Time zone                W. Europe Standard Time (UTC+01:00 Amsterdam), DST on
+
+  THE en-GB LINE IS THE ONE THAT SURPRISES PEOPLE. The host's first preferred language is
+  en-NL, English (Netherlands). Windows ships no MUI for en-NL, so the display language falls
+  back to en-GB, which is why Get-UICulture says en-GB on a machine whose language list never
+  mentions it. That makes the staged English International image (volume label
+  CCCOMA_X64FRE_EN-GB_DV9) the CORRECT base image for matching this host, not a mismatch to be
+  corrected.
+
+  A CONSEQUENCE THE TEST CORPUS MUST SURVIVE, STATED ON PURPOSE: with UserLocale nl-NL the
+  guest renders four thousand and a half as 4.000,50 and today as 25-8-2026. That is
+  deliberate. The remediation console once printed 4.000 for four thousand on a Dutch-locale
+  machine and had to be pinned to the invariant culture; the guests reproduce exactly the
+  conditions that found it.
+
+  ============================================================================================
+  WHAT THIS FILE CANNOT EXPRESS, AND WHERE THAT IS FIXED
+
+  en-NL is a TRANSIENT language. Windows assigns it a transient LCID out of the 0x2000 block at
+  runtime, so no answer file can name it and no answer file can put it at the head of the
+  language list. The InputLocale values below therefore use en-GB (0809), the MUI that en-NL
+  actually resolves to, paired with the United States-International layout; the final list is
+  set at first logon by Testbed/guest/Complete-FirstLogon.ps1, which calls
+  Set-WinUserLanguageList with en-NL then nl-NL and forces 00020409 on both. That script also
+  sets the home location (GeoId 176), re-asserts the system locale and the user culture,
+  disables fast startup and stops the machine ever sleeping. A testbed that sleeps mid-run is a
+  mystery failure, not a test result.
+
+  ============================================================================================
+  NO BYPASS HACKS. There is deliberately no LabConfig, BypassTPMCheck, BypassSecureBootCheck or
+  BypassRAMCheck registry work anywhere in this file. A Generation 2 Hyper-V VM with a virtual
+  TPM and Secure Boot enabled satisfies Windows 11's requirements natively, so there is nothing
+  to bypass. Testbed/host/New-TestbedVm.ps1 enables both (Set-VMKeyProtector, Enable-VMTPM,
+  Set-VMFirmware -EnableSecureBoot On). A guest built by switching the checks off is a
+  different machine from the one the userbase runs, which defeats the point of matching the
+  host.
+
+  LOCAL ACCOUNT, NOT A MICROSOFT ACCOUNT. Two mechanisms, and it is worth knowing which one
+  does the work. The one relied on is the SUPPORTED one: UserAccounts/LocalAccounts in
+  oobeSystem creates a local administrator outright, and OOBE/HideOnlineAccountScreens stops
+  OOBE asking for a Microsoft account at all. The BypassNRO registry value set from
+  Microsoft-Windows-Deployment in the specialize pass is belt and braces for the "let's connect
+  you to a network" page on a guest whose network adapter is deliberately disconnected. Note
+  that Windows 11 25H2 no longer ships oobe\bypassnro.cmd, so the Shift+F10 recipe found in
+  older notes does not exist on this image. Nothing here depends on it.
+
+  DISK LAYOUT is GPT for Generation 2: EFI system partition, Microsoft Reserved, then Windows
+  filling the rest. Disk 0 is wiped. The answer-file volume is attached as a second DVD drive
+  and NOT as a second disk, precisely so that "disk 0" stays unambiguous; see
+  Testbed/host/New-AnswerFile.ps1 for the rest of that reasoning.
+  ============================================================================================
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <settings pass="windowsPE">
+
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <!-- Setup's own UI. en-GB because that is the MUI on this image and the one the host
+           effectively runs. -->
+      <SetupUILanguage>
+        <UILanguage>en-GB</UILanguage>
+      </SetupUILanguage>
+      <!-- language:keyboard-layout pairs. 0809 is en-GB, 0413 is nl-NL, both on KLID
+           00020409, United States-International, which is what the host has for both of its
+           languages. en-NL cannot appear here: its LCID is transient.
+           Complete-FirstLogon.ps1 replaces this list with en-NL then nl-NL at first logon. -->
+      <InputLocale>0809:00020409;0413:00020409</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-GB</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>nl-NL</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <!-- GPT layout for a Generation 2 (UEFI) VM. Sizes are in MB. A 260 MB EFI system
+           partition is Microsoft's own recommendation for advanced-format disks. -->
+      <DiskConfiguration>
+        <WillShowUI>OnError</WillShowUI>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>260</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Label>System</Label>
+              <Format>FAT32</Format>
+            </ModifyPartition>
+            <!-- The MSR partition is created and then left entirely alone: never formatted,
+                 never lettered. -->
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>3</PartitionID>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+              <Format>NTFS</Format>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <ImageInstall>
+        <OSImage>
+          <!-- The staged ISO is consumer multi-edition. Naming the image is what stops Setup
+               showing the edition picker. -->
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>{{IMAGE_NAME}}</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+          <InstallToAvailablePartition>false</InstallToAvailablePartition>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <!-- EMPTY ON PURPOSE. An empty Key skips the product-key page; the edition comes from
+             /IMAGE/NAME above. An unactivated consumer Pro install has no expiry at all, which
+             is exactly what Testbed/MEDIA.md decided to rely on: it watermarks and nags but it
+             never stops, so Windows is never the reason to rebuild. Office's 30-day grace is
+             the binding clock. -->
+        <ProductKey>
+          <Key></Key>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+        <FullName>OutlookAI Testbed</FullName>
+        <Organization>OutlookAI Testbed</Organization>
+      </UserData>
+
+      <EnableFirewall>true</EnableFirewall>
+    </component>
+  </settings>
+
+  <settings pass="specialize">
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <ComputerName>{{COMPUTER_NAME}}</ComputerName>
+      <TimeZone>W. Europe Standard Time</TimeZone>
+    </component>
+
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <RunSynchronous>
+        <!-- BypassNRO, set in SPECIALIZE rather than in windowsPE deliberately: in windowsPE
+             the HKLM hive belongs to WinPE and the value would be thrown away with it, whereas
+             in specialize HKLM is the installed system that OOBE will actually read. This is
+             belt and braces behind HideOnlineAccountScreens; it is what gives OOBE an "I do
+             not have internet" route on a guest whose network adapter is disconnected by
+             design. -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>Allow OOBE to finish without a network or a Microsoft account.</Description>
+          <Path>reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+
+  <settings pass="oobeSystem">
+
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>0809:00020409;0413:00020409</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-GB</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>nl-NL</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <TimeZone>W. Europe Standard Time</TimeZone>
+
+      <UserAccounts>
+        <!-- A LOCAL administrator. This is the supported route to a local account, and it is
+             what the testbed depends on: PowerShell Direct lands in session 0, Outlook can
+             never finish starting there, and the only way to reach session 1 is a scheduled
+             task registered with LogonType=Interactive landing in a session that already
+             exists. See Testbed/guest/Register-InteractiveTask.ps1. No console session, no
+             live tier. -->
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>{{GUEST_USERNAME}}</Name>
+            <DisplayName>{{GUEST_USERNAME}}</DisplayName>
+            <Group>Administrators</Group>
+            <Description>OutlookAI testbed guest account, created by Testbed/host/New-AnswerFile.ps1.</Description>
+            <Password>
+              <Value>{{GUEST_PASSWORD}}</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+
+      <!-- Autologon is what keeps session 1 alive for the interactive task to land in.
+           LogonCount is 999 rather than 1: Windows decrements it on every logon and switches
+           autologon off when it reaches zero, and a guest that silently stops auto-logging-on
+           after one reboot presents as a live tier that hangs. State the consequence rather
+           than discover it later: while the count is above zero, Windows keeps the password in
+           the registry under Winlogon\DefaultPassword in clear text. That is a property of
+           autologon, it is already true of the existing guest, and it is one more reason the
+           testbed VM is disposable and holds nothing that matters. -->
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <Username>{{GUEST_USERNAME}}</Username>
+        <LogonCount>999</LogonCount>
+        <Password>
+          <Value>{{GUEST_PASSWORD}}</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+      </OOBE>
+
+      <FirstLogonCommands>
+        <!-- The fix-ups the answer file cannot express live in a real script rather than in
+             XML, so they can be read, reviewed and changed in git:
+             Testbed/guest/Complete-FirstLogon.ps1, which New-AnswerFile.ps1 puts on the
+             answer-file volume beside this file. That volume's drive letter is not knowable in
+             advance, so the command looks for the script on every filesystem drive instead of
+             assuming one, and writes a log either way. The ampersand is XML-escaped; it is the
+             PowerShell call operator. -->
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>Set the language list, home location, locales, power policy and fast startup.</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+          <CommandLine>powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$f = Get-PSDrive -PSProvider FileSystem | ForEach-Object { Join-Path $_.Root 'Complete-FirstLogon.ps1' } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1; if ($f) { &amp; $f } else { New-Item -ItemType Directory -Force -Path 'C:\Windows\Setup' | Out-Null; 'Complete-FirstLogon.ps1 was not found on any drive. The guest locale and power settings are NOT the ones the testbed expects.' | Set-Content -LiteralPath 'C:\Windows\Setup\first-logon.log' }"</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+</unattend>

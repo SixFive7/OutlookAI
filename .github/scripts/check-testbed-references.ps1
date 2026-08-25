@@ -14,7 +14,7 @@
 
     So this script asks one question of the tree: DOES THE THING THE DOCUMENT NAMES EXIST HERE?
 
-    SIX CHECKS.
+    SEVEN CHECKS.
 
     1. NO DANGLING REPOSITORY REFERENCE. Every repository-relative path named in a tracked
        document or testbed script must exist, or be on the declared list below with a reason.
@@ -45,6 +45,17 @@
     6. NOTHING CREDENTIAL-SHAPED UNDER Testbed/. Not paranoia: the test VM's guest password was
        committed to this public repository, survives in 32 commits of history, and had to be
        rotated. Testbed/ is where a rebuilder is most tempted to write one down.
+
+    7. THE ANSWER-FILE TEMPLATE STILL HOLDS PLACEHOLDERS, NOT VALUES. The unattended install needs
+       a password in the answer file Windows Setup reads, and the fastest way to make an
+       unattended install work is to type one into the template and commit it. Check 6 would not
+       catch that: an unattend password is <Password><Value>...</Value></Password>, which is not
+       an assignment and does not read as one. So this check parses the template and requires
+       EVERY password value in it to be exactly the placeholder token - not merely
+       placeholder-shaped, not empty, not base64. It also fails on a committed autounattend.xml
+       anywhere in the tree, because the filled file is the one that carries the credential and it
+       belongs in gitignored scratch. Testbed/host/New-AnswerFile.ps1 is what fills the template,
+       and it refuses to write its output anywhere but there.
 
     Run it from anywhere:
         pwsh -File .github/scripts/check-testbed-references.ps1
@@ -420,6 +431,72 @@ if ($secretHits.Count -gt 0) {
 }
 else {
     Pass 'no credential-shaped literal under Testbed/' "$($testbedFiles.Count) file(s) scanned"
+}
+
+# ---------------------------------------------------------------------------------------------
+# 7. The answer-file template still holds placeholders, not values.
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+
+$answerToken = '{{GUEST_PASSWORD}}'
+$templateRelative = 'Testbed/guest/autounattend.template.xml'
+$templateFull = Join-Path $RepoRoot $templateRelative
+$answerProblems = @()
+
+if (-not (Test-Path -LiteralPath $templateFull)) {
+    $answerProblems += "$templateRelative does not exist. Either the unattended install was removed - in which case delete this check and say so - or the template moved and this check now proves nothing."
+}
+else {
+    $templateText = Get-Content -LiteralPath $templateFull -Raw
+
+    if (-not $templateText.Contains($answerToken)) {
+        $answerProblems += "$templateRelative no longer contains the $answerToken placeholder at all. A password had to come from somewhere for the install to work, so assume it is now in the file."
+    }
+
+    $doc = New-Object System.Xml.XmlDocument
+    $parsed = $true
+    try { $doc.LoadXml($templateText) }
+    catch {
+        $parsed = $false
+        $answerProblems += "$templateRelative is not well-formed XML ($($_.Exception.Message)). Windows Setup would ignore it, and this check cannot inspect it."
+    }
+
+    if ($parsed) {
+        # Namespace-agnostic on purpose: the unattend schema puts everything in a default
+        # namespace, and matching on LocalName keeps this working if that ever changes.
+        $secretNodes = @($doc.SelectNodes('//*') | Where-Object {
+                $_.LocalName -eq 'Value' -and $_.ParentNode -and
+                ($_.ParentNode.LocalName -eq 'Password' -or $_.ParentNode.LocalName -eq 'AdministratorPassword')
+            })
+
+        if ($secretNodes.Count -lt 2) {
+            $answerProblems += "$templateRelative declares $($secretNodes.Count) password value(s). The template needs the local account's and the autologon's, so this check is no longer looking at what it thinks it is."
+        }
+
+        foreach ($node in $secretNodes) {
+            if ($node.InnerText -ne $answerToken) {
+                # The VALUE IS NEVER PRINTED: this output goes into a public build log. The XPath
+                # is enough to find it.
+                $answerProblems += ("A password value under <{0}> in {1} is not the {2} placeholder. Its content is deliberately not printed here. Put the placeholder back; Testbed/host/New-AnswerFile.ps1 fills it from the gitignored credential at build time." -f
+                    $node.ParentNode.ParentNode.LocalName, $templateRelative, $answerToken)
+            }
+        }
+    }
+}
+
+# A FILLED answer file must never be tracked. This looks at git's view rather than the disk, so a
+# generated one sitting in gitignored scratch is fine and a committed one is not.
+$committedAnswerFiles = @($tracked | Where-Object { [IO.Path]::GetFileName($_).ToLowerInvariant() -eq 'autounattend.xml' })
+if ($committedAnswerFiles.Count -gt 0) {
+    $answerProblems += ("A filled answer file is tracked: " + ($committedAnswerFiles -join ', ') +
+        '. That file carries the guest password. It belongs in .work/ only - see Testbed/host/New-AnswerFile.ps1.')
+}
+
+if ($answerProblems.Count -gt 0) {
+    Fail 'answer-file template holds placeholders, not values' (($answerProblems | Sort-Object -Unique) -join "`n        ")
+}
+else {
+    Pass 'answer-file template holds placeholders, not values' "$templateRelative checked, no filled answer file tracked"
 }
 
 # ---------------------------------------------------------------------------------------------

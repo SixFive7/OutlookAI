@@ -32,18 +32,100 @@ testbed before its replacement runs.**
 
 | # | Step | What runs it | Where |
 | --- | --- | --- | --- |
-| 1 | Create the guest | `host/New-TestbedVm.ps1` | host |
-| 2 | Install Windows, Office, the accounts and the profiles | by hand - `Docs/live-tier-on-the-vm.md` §2.1-2.6 | guest |
-| 3 | Give yourself a way to reach session 1 | `guest/Register-InteractiveTask.ps1` | guest, once |
-| 4 | Build the server and the tools, and copy them in | `host/Publish-GuestPayload.ps1` | host |
-| 5 | Install the mail sink and the dummy account | by hand - `Docs/live-tier-on-the-vm.md` §2.7-2.8 | guest |
-| 6 | Build the corpus | `guest/Build-Corpus.ps1` | guest, session 1 |
-| 7 | Write the live-test settings file | copy `live-test-settings.example.json` - and read §3b, or the tier refuses to start | host or guest |
-| 8 | Take the measurements | `guest/Invoke-GuestMeasure.ps1`, `guest/Measure-SweepCost.ps1` | guest, session 1 |
-| 9 | Get the results out | `host/Copy-FromGuest.ps1` | host |
+| 1 | Build the answer volume | `host/New-AnswerFile.ps1` | host |
+| 2 | Create the guest, attach both ISOs, boot it | `host/New-TestbedVm.ps1` | host |
+| 3 | Windows installs itself - edition, disk, account, autologon, locale, power | nobody: the answer file | guest, unattended |
+| 4 | Install Office, the accounts and the profiles | by hand - `Docs/live-tier-on-the-vm.md` §2.2-2.6 | guest |
+| 5 | Give yourself a way to reach session 1 | `guest/Register-InteractiveTask.ps1` | guest, once |
+| 6 | Build the server and the tools, and copy them in | `host/Publish-GuestPayload.ps1` | host |
+| 7 | Install the mail sink and the dummy account | by hand - `Docs/live-tier-on-the-vm.md` §2.7-2.8 | guest |
+| 8 | Build the corpus | `guest/Build-Corpus.ps1` | guest, session 1 |
+| 9 | Write the live-test settings file | copy `live-test-settings.example.json` - and read §3b, or the tier refuses to start | host or guest |
+| 10 | Take the measurements | `guest/Invoke-GuestMeasure.ps1`, `guest/Measure-SweepCost.ps1` | guest, session 1 |
+| 11 | Get the results out | `host/Copy-FromGuest.ps1` | host |
 
 Every script takes `-WhatIf`-style caution seriously: the ones that write take an explicit
 `-Execute`, and print what they would do without it.
+
+---
+
+## 1b. Steps 1 to 3 need nobody: the Windows install is unattended
+
+**Two commands and a wait.** Per guest:
+
+    pwsh -File Testbed/host/New-AnswerFile.ps1 -VMName OutlookAI-Indexed
+    pwsh -File Testbed/host/New-TestbedVm.ps1  -Name OutlookAI-Indexed `
+        -IsoPath      .work\media\Win11_25H2_EnglishInternational_x64_v2.iso `
+        -AnswerIsoPath .work\testbed-answer\OutlookAI-Indexed\OutlookAI-Indexed-unattend.iso `
+        -Execute -Start
+
+The first builds a small ISO carrying `autounattend.xml` and the first-logon script. The second
+creates a Generation 2 VM with Secure Boot and a vTPM, attaches the Windows ISO and the answer
+volume as two DVD drives, and boots it. Nothing else is typed. Do it twice, with the two names,
+and both guests come up identically - which is the point: a difference between the indexed and
+unindexed guests should come from the store layout, never from someone having answered an
+installer differently on a Tuesday.
+
+**What the answer file sets, and why those values.** The guests must match the maintainer's own
+machine, because that configuration is where most of the userbase sits and is therefore what the
+live tier should be testing against. The measured host survey is in `MEDIA.md`; the short version:
+
+| Setting | Value | Set by |
+| --- | --- | --- |
+| Edition | Windows 11 Pro, from the multi-edition ISO, no product key | answer file, `/IMAGE/NAME` |
+| Disk | GPT: 260 MB EFI, 16 MB MSR, Windows fills the rest, disk 0 wiped | answer file |
+| Setup UI and display language | en-GB | answer file |
+| System locale (non-Unicode) | en-US | answer file, re-asserted at first logon |
+| User locale / formats | nl-NL - so `25-8-2026` and `4.000,50` | answer file, re-asserted at first logon |
+| Time zone | `W. Europe Standard Time` | answer file |
+| Keyboard | `00020409`, United States-International, on every language | answer file, forced at first logon |
+| Preferred languages | **en-NL then nl-NL** | first-logon script only - see below |
+| Home location | Netherlands, GeoId 176 | first-logon script |
+| Account | one local administrator, from the gitignored credential | answer file |
+| Autologon | on, 999 logons | answer file |
+| Sleep, hibernate, fast startup, screen saver | all off | first-logon script |
+
+**The one thing an answer file cannot say.** `en-NL` (English, Netherlands) is a *transient*
+language: Windows allocates its LCID out of the `0x2000` block at runtime, so there is no
+constant to write down and no way to name it in XML. `guest/Complete-FirstLogon.ps1` therefore
+sets the final language list with `Set-WinUserLanguageList` after the account exists, and rewrites
+each entry's keyboard to `00020409` while keeping whatever LCID Windows assigned. It logs
+everything it did, and then reads every setting back, to `C:\Windows\Setup\first-logon.log` on the
+guest. **Read that file before trusting a guest** - diff it against the table in `MEDIA.md`.
+
+**No Windows 11 requirement is bypassed.** There is deliberately no `LabConfig`,
+`BypassTPMCheck`, `BypassSecureBootCheck` or `BypassRAMCheck` anywhere. A Generation 2 Hyper-V VM
+with a vTPM and Secure Boot on satisfies Windows 11 natively, and a guest built by switching those
+checks off is not the machine the userbase runs.
+
+**What the generator needs.** A gitignored `vm-credentials.json` (§4 - the same file everything
+else uses, loaded through the same `host/Get-GuestCredential.ps1`), and something to build an ISO
+with. **One thing to know before building the second guest:** that loader refuses a credential
+whose `vmName` names a different VM, so a single credential file serving both guests must leave
+`vmName` empty. The check only fires when the field has a value, and with one shared account
+there is no wrong machine for it to protect against. It prefers `oscdimg.exe` from the Windows ADK's Deployment Tools and falls back to the
+IMAPI2FS COM object that ships with Windows, so a machine with no ADK can still build the volume.
+If neither works it says which is missing and writes nothing; it never leaves half an ISO, because
+a broken answer volume looks exactly like an ordinary interactive Setup and tells you nothing.
+
+**Rebuilding after a change.** Edit `guest/autounattend.template.xml` or
+`guest/Complete-FirstLogon.ps1`, re-run `host/New-AnswerFile.ps1`, and create the VM again. The
+generated ISO is disposable; the template is the record.
+
+**The credential never lands in this repository.** The committed template carries placeholder
+tokens where the password goes. The generator substitutes them and writes only into gitignored
+`.work/`; it refuses an output path under `Testbed/`, and refuses any path inside the repository
+that is not under `.work/`. `.github/scripts/check-testbed-references.ps1` check 7 fails the build
+if the template ever stops holding placeholders, or if a filled `autounattend.xml` is ever
+tracked. **The generated ISO holds the password in clear text** - it is in scratch, keep it there,
+and delete it once the guest is built.
+
+**One keystroke this cannot avoid, and what is done about it.** Microsoft's retail ISO boots
+through a loader that prints "Press any key to boot from CD or DVD" and gives up after a few
+seconds; that prompt is inside the ISO, so no VM setting removes it. `-Start` types at the guest's
+synthetic keyboard over WMI (`Msvm_Keyboard`) for the first few seconds - no window, no focus
+change. If that route is blocked on a host, press a key in the console once; everything after it
+is unattended either way.
 
 ---
 
@@ -60,7 +142,8 @@ interactive console session. The route is a scheduled task registered with
 `LogonType=Interactive`, which lands in session 1; `guest/Register-InteractiveTask.ps1` is that
 recipe, and it is the single piece of knowledge that was hardest to reconstruct. Autologon is
 enabled on the guest (`AutoAdminLogon=1`, user `vmadmin`), which is what keeps a console session
-alive for the task to land in.
+alive for the task to land in - and on a guest built from `guest/autounattend.template.xml` that
+comes out of the answer file rather than from someone remembering to switch it on.
 
 A corollary worth stating because it costs an afternoon otherwise: **an elevated or
 scheduled-task process's stdout cannot reach the caller.** Output goes to a file, and the caller
@@ -194,7 +277,10 @@ accounts yet.
 | --- | --- |
 | `testbed.json` | The parameter set. Corpus quad, expected plan output, build cost, guest layout, and an explicit list of what is still unrecorded. |
 | `live-test-settings.example.json` | Complete example of the gitignored settings file, every field present, placeholders only. |
-| `host/New-TestbedVm.ps1` | Creates the Hyper-V guest and records the spec it chose. |
+| `guest/autounattend.template.xml` | The unattended-install answer file. Locale, disk layout, local account, autologon - and placeholder tokens where the password goes. Contains no credential and must never contain one. |
+| `host/New-AnswerFile.ps1` | Fills that template from the gitignored credential and packages it as a small ISO. Writes into gitignored scratch only, and refuses anywhere else. |
+| `guest/Complete-FirstLogon.ps1` | The first-logon fix-ups the answer file cannot express: the en-NL language list, the home location, the locales, no sleep, no fast startup. Logs and reads back everything it set. |
+| `host/New-TestbedVm.ps1` | Creates the Hyper-V guest, attaches the Windows ISO and the answer volume, boots it, and records the spec it chose. |
 | `host/Publish-GuestPayload.ps1` | Publishes the MCP server and the remediation tools on the host and zips them for copy-in. |
 | `host/Get-GuestCredential.ps1` | Loads the guest credential from the gitignored fixtures directory. Documents the one place a credential may live; contains none. |
 | `host/Copy-ToGuest.ps1` | Copies a file or a zip into the guest over PowerShell Direct. |
@@ -277,9 +363,13 @@ that was left out.
 1. **Hyper-V generation, Secure Boot, TPM, vCPU, RAM, disk size, checkpoint type.**
    `host/New-TestbedVm.ps1` picks defaults and says loudly that it is picking them; it is not a
    record of the original.
-2. **Windows edition, build, ISO and licensing; the computer name; Defender exclusions.** An
-   indexer, a 400 MB PST and real-time AV interact, and nobody has recorded whether an exclusion
-   is in place.
+2. **Defender exclusions, and everything about the ORIGINAL guest's Windows.** An indexer, a
+   400 MB PST and real-time AV interact, and nobody has recorded whether an exclusion is in
+   place. Note what changed here and what did not: for guests built from
+   `guest/autounattend.template.xml` the edition, the ISO, the licensing stance, the computer
+   name, the locale and the time zone are all decided in that file and are therefore a record.
+   For the guest the published measurements were actually taken on, they remain unknown, and no
+   answer file written afterwards can turn that into knowledge.
 3. **Office version, channel, bitness and install method**, and how the first-run wizard is
    suppressed. Bitness in particular: the test host is x64 because the `Search.CollatorDSO`
    provider needs an x64 host, but whether Office itself must be x64 is untested.
@@ -345,7 +435,10 @@ when:
 * a script in this directory is not named by the table in §5, or the table names one that does
   not exist;
 * a script in this directory fails to parse;
-* something credential-shaped appears in a tracked file under `Testbed/`.
+* something credential-shaped appears in a tracked file under `Testbed/`;
+* the answer-file template stops holding placeholders where the password belongs, or a filled
+  `autounattend.xml` becomes tracked.
 
-That last one is not paranoia. The value it looks for has been committed to this repository
-before.
+The last two are not paranoia. The value they look for has been committed to this repository
+before, and an unattend password is `<Password><Value>...</Value></Password>` - which does not
+read as an assignment, so the credential-shaped check would walk straight past it.
