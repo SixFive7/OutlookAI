@@ -677,20 +677,46 @@
   refusal. **No live run.** `Docs/live-tier-on-the-vm.md` needs the matching edits (§1.3, §6, §7);
   they are the maintainer's.
 
-- [ ] **The identity tests pass while proving nothing on the VM's three-store layout.** Found
-  2026-08-24 while declaring the corpus store a bystander, and caused by it.
+- [x] **DONE (2026-08-25) - the identity tests say PROVED NOTHING instead of passing on a machine
+  with no account to verify.** Option (1) of the four below, which was the recommendation.
 
-  `LivePhase4Fixture.IdentityAccounts` is `IdentityAccountsAmong(expectedStoreDisplayNames)`. On
-  the documented layout - hub, `Corpus A`, `OutlookAI Bystander`, the last two declared
-  bystanders - that list is now EMPTY, so
+  **The defect.** `LivePhase4Fixture.IdentityAccounts` was
+  `IdentityAccountsAmong(expectedStoreDisplayNames)`. On the documented layout - hub, `Corpus A`,
+  `OutlookAI Bystander`, the last two declared bystanders - that list is EMPTY, and its two
+  consumers are `foreach` loops whose whole body is the test, so
   `LiveDraftTests.IdentityDrafts_BusinessAccounts_RightStore_NeverDisplayed_DeletedImmediately`
   and `LiveDraftOptionsTests.NewDraft_BusinessAccounts_BodyAboveTheirOwnIntactHtmlSignature`
-  iterate nothing and report green. Before the declaration they would have resolved to `Corpus A`
-  and drafted into the measurement corpus, so this is the better of the two failures - but it is
-  still a green test that proved nothing, which is what this project keeps getting wrong.
+  iterated nothing, asserted nothing and reported green. Confirmed rather than assumed: xunit
+  2.9.3 with no assertion-counting hook passes a `[Fact]` that asserts nothing, so the empty case
+  really was a green pass and not a skip.
 
-  It is not only a VM problem: on the maintainer's Production profile an empty list would mean
-  the settings had drifted, and that must be loud.
+  **Now.** `T2/LivePhase4Fixture.cs` carries a pure `IdentityDraftCoverage` /
+  `IdentityDraftCoverageReport` pair, and `IdentityAccounts` is a METHOD taking a sink and a name
+  for what would not run. Every run prints a coverage line - `identity coverage: N of M non-hub
+  store(s) the write allowlist grants an identity draft in` - so a passing identity test says how
+  many accounts it visited rather than leaving it inferred from the test's name. When N is 0 it
+  calls `Settings.RequireProductionPopulation`, which **throws on Production** (an empty list
+  there means the settings have drifted) and no-ops on Portable, and then prints the
+  `PROVED NOTHING:` line naming each withheld store and its reason. Same idiom as
+  `LiveManageSignatureTests` and `LiveStaleIndexRowTests`; no new concept.
+
+  **Partial coverage is announced, not refused** (judgement call, decided here): a machine
+  granting two of three IS exercising the identity path, so calling that "proved nothing" would
+  be false, and on a Production profile it would refuse a run over a declaration somebody made on
+  purpose. It gets ` - PARTIAL: this test exercises the granted ones only` on the coverage line.
+
+  Pinned by 11 new T1 tests (`T1/IdentityDraftCoverageTests`), which read the COMMITTED example
+  settings through the real loader for the VM-layout claim, exercise both profiles, both
+  withholding reasons, the partial case and the hub-only case - and read the two live call sites
+  out of their sources, because that is the one thing a pure function cannot pin. 2395 -> 2406
+  `Category!=Live`, 0 failures. **No live run.**
+
+  Option (2) below - **a `Requires` trait naming "two mail accounts"** - is still open and is the
+  maintainer's: the capability vocabulary in `LiveTierInventoryTests.AllCapabilities` is pinned
+  against `Docs/live-tier-on-the-vm.md` by `check-pinned-constants.ps1`, so adding a value means
+  editing that runbook in the same commit. It would stop the VM SELECTING these two tests at all,
+  which is better than selecting them and printing PROVED NOTHING - but it is a documentation
+  edit this task was not allowed to make.
 
   1. **`Settings.RequireProductionPopulation("a business account to verify identity in")` plus a
      `PROVED NOTHING:` line and return**, the idiom `LiveManageSignatureTests` and
@@ -705,8 +731,31 @@
      nothing. Cheapest, and exactly the kind of documentation-only fix that has failed here
      before.
 
-  (1) then (2) is the recommendation - (1) is the one that cannot be forgotten, since it is in
-  the test.
+- [ ] **Three more live tests iterate a possibly-empty set and would pass having proved nothing.**
+  Found 2026-08-25 while fixing the identity pair above, by reading every `foreach` in the live
+  tier. Listed, not fixed - the scope is the maintainer's, and two of the three are one line each.
+
+  1. **`T2/LiveFolderScopeTests.DelegateFirstLevelFolders_StillResolve_AndTheWholeMailboxIsUnfiltered`**
+     iterates `expectedDelegateStoreDisplayNames` with no non-empty guard. Its SIBLING two methods
+     up (`DelegateSubfolders_AreReachableAgain_...`) opens with
+     `Assert.True(delegates.Count > 0, ...)`, so the omission is visibly an oversight rather than a
+     decision. That list is `[]` on every Portable machine, including the VM. `Requires=DelegateStore`
+     should keep it unselected there, but selection is a filter string somebody types, not a
+     guarantee - which is the same reasoning that made the identity pair worth fixing.
+  2. **`T2/LiveSignatureTests` line 60** - `Assert.All(outcome.Accounts, ...)` inside an
+     `if (outcome.Accounts != null)`. An empty account list satisfies `Assert.All` vacuously, and
+     the comment already says the test "stays tolerant". Weakest of the three: the surrounding
+     test asserts plenty else, so it is a weak assertion rather than a vacuous test.
+  3. **`T2/LiveAttachmentKindRecallTests` line 291/301** - two `SKIP (the parent-open assertion
+     ONLY, ...)` early returns that print `SKIP:` rather than `PROVED NOTHING:`. These predate the
+     idiom and are honest about what they skip; worth converting only if the distinction between
+     "this assertion did not run" and "this test proved nothing" is to be greppable.
+
+  Checked and NOT a problem, for the record: `LiveSendTests` and `LiveDraftTests`'
+  `ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain`, `LiveMailServiceTests.ListAccounts_*`,
+  `LiveMoveArchiveTests.ArchiveResolution_*`, `LiveTableSortProbeTests` and
+  `LiveDecodeVerifyTests` all either iterate `expectedStoreDisplayNames` (which the loader
+  refuses to leave empty) or assert a count before the loop.
 
 - [x] **DONE (2026-08-25) - the measurement corpus has its OWN subject tag, so an artifact sweep
   cannot match it by construction.** The maintainer chose option (3) below. Found 2026-08-24 by

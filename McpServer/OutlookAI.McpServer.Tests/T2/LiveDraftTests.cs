@@ -242,7 +242,13 @@ public sealed class LiveDraftTests
         // Q-it2-3a: ONE tagged identity-verification draft per business account -
         // created, property-asserted CONTENT-FREE (S4: only booleans/ids in output),
         // deleted immediately, never displayed.
-        foreach (string account in _fixture.IdentityAccounts)
+        //
+        // The account list announces itself: on a machine whose configured primaries are all
+        // declared BYSTANDERS - the documented three-store VM layout - it is EMPTY, and this
+        // loop would otherwise run zero times and report green. It refuses on a Production
+        // profile and prints PROVED NOTHING on a Portable one (see IdentityDraftCoverage).
+        foreach (string account in _fixture.IdentityAccounts(
+            _output.WriteLine, "the per-account identity draft"))
         {
             ComDefaultFolderInfo drafts = RequireDefaultFolder(account, OlFolderDrafts);
             string storeId = _fixture.GetStoreId(account);
