@@ -62,10 +62,14 @@ using OutlookAI.RemediationTools;
 ///       measurement windows within weeks, and every test asking about them keeps passing,
 ///       because selecting nothing is a valid answer about an empty window.
 ///
-///   corpus-reanchor ... --manifest ... --to now [--allow-backwards] [--execute]
-///       The repair for that: shifts every item's received and submit instants forward so the
-///       corpus's newest edge lands on --to. Idempotent, resumable, and it never creates,
-///       moves or removes an item. The seed, the shape and the manifest are unchanged.
+///   corpus-reanchor RETIRED (2026-08-25) - prints why and refuses.
+///       REBUILDING is the supported way to deal with a stale corpus: it is deterministic, and
+///       the recorded build was 20 000 items in 13m25s. Re-anchoring is not to be used until
+///       its write path is diagnosed - the date-write method is chosen by a probe that CREATES
+///       THROWAWAY items and is then reused, unverified, on already-delivered ones, and a run
+///       over 20 000 items once reported total success while dating every one of them inside
+///       the six minutes it had been running. The command is kept, not deleted, because its
+///       per-item write-landed guard is the thing that stops that repeating.
 ///
 ///   corpus-teardown --store ... --allow-store ... --corpus-id ... --manifest ... [--execute]
 ///       Removes exactly what the manifest records, by EntryID allowlist AND subject tag.
@@ -496,13 +500,15 @@ internal static class Program
         Console.WriteLine("dedupe:   --store <primary store display name>");
         Console.WriteLine();
         Console.WriteLine("Measurement corpus: corpus-plan | corpus-probe | corpus-build | corpus-census");
-        Console.WriteLine("                    corpus-verify | corpus-reanchor | corpus-teardown | corpus-reindex");
+        Console.WriteLine("                    corpus-verify | corpus-teardown | corpus-reindex");
+        Console.WriteLine("                    corpus-reanchor is RETIRED - rebuild instead; run it to see why");
         Console.WriteLine("Common:   --corpus-id <id> --seed <n> --anchor <yyyy-MM-dd>   [--execute]");
         Console.WriteLine("Target:   --store <display name> --allow-store <display name> (repeatable; a local .pst only)");
         Console.WriteLine("Target:   the profile must have NO mail accounts (no override - see Program.cs)");
         Console.WriteLine("Build:    --count <n> --manifest <path> [--progress-every <n>]");
         Console.WriteLine("Verify:   --count <n> --manifest <path> [--window <days> (repeatable)]   (pure - no Outlook)");
-        Console.WriteLine("Reanchor: --count <n> --manifest <path> --to <now|yyyy-MM-dd> [--allow-backwards]");
+        Console.WriteLine("Stale:    rebuild - corpus-teardown --execute (or delete the .pst), then corpus-build");
         Console.WriteLine("Override: [--allow-undated] [--allow-drafts-placement]  (each says what it costs)");
+        Console.WriteLine($"Tags:     corpus items carry {CorpusPlan.SubjectTag}, NOT the live tier's artifact tag");
     }
 }

@@ -10,19 +10,27 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// between the suite and the measurement corpus.
 /// <para>
 /// <b>Why the corpus store is declared a bystander.</b> No live test writes to a corpus:
-/// <see cref="LiveCorpusFreshness"/> reads the manifest and never the store, and re-anchoring is
-/// an operator action from the accountless profile. But a corpus store has to be listed in
-/// <c>expectedStoreDisplayNames</c> to be censused at all, and every non-hub entry of that list
-/// is inside the identity-draft grant. Two consequences follow, both of them writes INTO the
-/// corpus:
+/// <see cref="LiveCorpusFreshness"/> reads the manifest and never the store, and rebuilding a
+/// stale corpus is an operator action from the accountless profile. But a corpus store has to be
+/// listed in <c>expectedStoreDisplayNames</c> to be censused at all, and every non-hub entry of
+/// that list is inside the identity-draft grant. Two consequences followed, both of them writes
+/// INTO the corpus:
 /// <list type="bullet">
 /// <item>the identity tests create one draft per granted store, so they would draft into the
 /// measurement corpus the moment that machine gains the mail account it is already getting;</item>
 /// <item>the post-run artifact sweep counts subjects carrying <c>[OutlookAI-McpTest]</c> and
-/// deletes what it finds - and <c>CorpusPlan.BuildSubject</c> puts that exact tag at the front of
-/// every corpus subject, so the sweep would find the whole corpus and try to remove it.</item>
+/// deletes what it finds - and <c>CorpusPlan.BuildSubject</c> used to put that exact tag at the
+/// front of every corpus subject, so the sweep would have found the whole corpus and tried to
+/// remove it.</item>
 /// </list>
 /// The declaration turns both into a refusal at the write guard.
+/// </para>
+/// <para>
+/// <b>The sweep half is closed at source since 2026-08-25</b> - corpus items carry
+/// <c>CorpusPlan.SubjectTag</c>, which is no longer the artifact tag, and
+/// <c>T1/CorpusTagSeparationTests</c> holds them apart. That makes the declaration a
+/// second line of defence for the sweep rather than the only one; it is still the ONLY thing
+/// standing between the identity tests and the corpus, so it stays mandatory.
 /// </para>
 /// <para>
 /// This file reads a COMMITTED example that names placeholder stores only. No machine-local

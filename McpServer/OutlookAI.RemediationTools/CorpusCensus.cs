@@ -28,6 +28,12 @@ public sealed record CorpusCensusFolder(int FolderId, string Name, int Planned, 
 /// <param name="Folders">Per-folder planned/observed, including the two folders nothing is ever planned into.</param>
 /// <param name="StrayOutboxPlannedUnread">Outbox sightings whose ordinal the plan wants UNREAD.</param>
 /// <param name="StrayOutboxPlannedRead">Outbox sightings whose ordinal the plan wants read.</param>
+/// <param name="LegacyTagged">
+/// Items found carrying the OLD corpus tag (<see cref="CorpusPlan.LegacySubjectTag"/>). They
+/// are NOT sightings - nothing in this build may address them - so without this count they
+/// would show up only as an equal number of missing ordinals, which reads as "the build never
+/// happened" rather than "this corpus predates the tag split".
+/// </param>
 public sealed record CorpusCensusReport(
     int PlannedItems,
     int PlannedUnread,
@@ -38,7 +44,8 @@ public sealed record CorpusCensusReport(
     int Misplaced,
     IReadOnlyList<CorpusCensusFolder> Folders,
     int StrayOutboxPlannedUnread,
-    int StrayOutboxPlannedRead)
+    int StrayOutboxPlannedRead,
+    int LegacyTagged)
 {
     /// <summary>Items sitting in the Outbox, where the plan never puts anything.</summary>
     public int StrayOutbox => StrayOutboxPlannedUnread + StrayOutboxPlannedRead;
@@ -82,7 +89,13 @@ public static class CorpusCensus
     /// <param name="plan">The corpus shape - the authority on where each ordinal belongs.</param>
     /// <param name="itemCount">How many ordinals the corpus is supposed to hold.</param>
     /// <param name="sightings">Every item a scan found, one entry per copy.</param>
-    public static CorpusCensusReport Compare(CorpusPlan plan, int itemCount, IEnumerable<CorpusSighting> sightings)
+    /// <param name="legacyTagged">
+    /// How many items the same scan found carrying the OLD corpus tag. Defaulted so the pure
+    /// tests that only exercise the plan-vs-sightings arithmetic stay unchanged; the COM scan
+    /// always passes the real number.
+    /// </param>
+    public static CorpusCensusReport Compare(
+        CorpusPlan plan, int itemCount, IEnumerable<CorpusSighting> sightings, int legacyTagged = 0)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(sightings);
@@ -165,7 +178,8 @@ public static class CorpusCensus
             misplaced,
             folders,
             outboxUnread,
-            outboxRead);
+            outboxRead,
+            legacyTagged);
     }
 
     /// <summary>
@@ -178,6 +192,17 @@ public static class CorpusCensus
         ArgumentNullException.ThrowIfNull(report);
         CultureInfo invariant = CultureInfo.InvariantCulture;
         var faults = new List<string>();
+
+        // First, because it EXPLAINS the faults underneath it. An old-tagged corpus otherwise
+        // reports as "every ordinal missing", which reads as a build that never ran.
+        if (report.LegacyTagged > 0)
+        {
+            faults.Add($"{report.LegacyTagged.ToString("N0", invariant)} item(s) carry the OLD corpus tag "
+                + $"'{CorpusPlan.LegacySubjectTag}' instead of '{CorpusPlan.SubjectTag}', so this store holds a "
+                + "corpus built before 2026-08-25. Nothing in this build may delete or rewrite them - the delete "
+                + "and rewrite predicates require the current tag - and corpus-teardown will refuse. REBUILD: "
+                + "remove the .pst and build a fresh corpus, which is the supported way to deal with a stale one");
+        }
 
         if (report.StrayDrafts > 0)
         {
