@@ -1,8 +1,55 @@
-# RESUME HERE - state of play at 2026-08-23, late
+# RESUME HERE - state of play at 2026-09-15
 
 **Read this first after any context loss.** Everything below it is history and reasoning.
 
-## Position - 2026-08-24, end of the overnight run
+## Position - 2026-09-15, after a three-week absence
+
+`HEAD` = `b56bc67`, **pushed**, tree clean, no branches outstanding. **2,441 tests** under
+`--filter "Category!=Live"` in ~95 s with no mailbox contact. `OutlookAI.Core` clean for net48
+AND net10. **14** cross-file invariants, **3** measurement-privacy checks, **7** testbed checks.
+
+**Hyper-V is reachable again.** The reboot on 2026-09-14 finally landed `Hyper-V Administrators`
+in the token; `Get-VMHost` works unelevated. That was the blocker on the whole VM column and it
+is gone.
+
+**BOTH testbed clocks expired during the absence, and this is the thing to understand first.**
+
+| | State on 2026-09-15 | Consequence |
+| --- | --- | --- |
+| Office grace on the guest | **expired 2026-09-08, 7 days past** | `LicenseStatus=5` Notification |
+| Corpus freshness | **27 days old** | the 1-day and 7-day windows select **nothing** |
+
+Both guards behaved exactly as designed - this was loud, not silent. But the standing rule
+"never destroy a working testbed before the replacement runs" has **already lapsed on its own**:
+the old guest is no longer a working testbed, so there is nothing left for that rule to protect.
+
+**Measured on the guest, not inferred** (full detail in the gitignored `.work/rfm-measurement.md`):
+Outlook ran continuously **through** the grace expiry and still responds, and **every COM read
+this project uses still works** - `GetTable`, `Restrict`, `Sort`, `PropertyAccessor`, folder
+resolution. The repo's own premise was wrong: `MEDIA.md` and the `TODO.md` preflight item both
+say a KMS client past grace "drops Office into reduced functionality", and that phrase is not in
+Microsoft's Office LTSC 2024 documentation at all. **Those two files still say the wrong thing.**
+
+**Still unmeasured, and it is the dangerous half:** whether a modal activation prompt appears at
+Outlook **startup**, which would make `CoCreateInstance` hang forever. The probe that passed had
+attached to an already-running Outlook, so it proves nothing about a cold start.
+
+**Found while measuring, neither looked for:**
+- The corpus store's **Outbox holds 2,761 items the plan does not account for** (`testbed.json`
+  places all 20,000 across four folders, Outbox not among them). The profile has **zero mail
+  accounts**, confirmed, so they are inert - the known generator defect, live.
+- A **read-only** folder enumeration wedged for 9+ minutes on `GetDefaultFolder(DeletedItems)`
+  with Outlook responsive and 928 s of CPU burned. Cause NOT established; the plausible
+  explanation is that it queued behind an `Items.Sort` over 10,912 items, which would itself
+  matter to the open sweep-budget and sort-failure items.
+
+**The host and the guest run different Office versions** - host `ProPlusSPLA2021Volume`
+16.0.14334 under a MAK with no grace clock at all; guest `ProPlus2024Volume` 16.0.17932 as a KMS
+client. A 3,598-build gap between where the tier is validated and what the maintainer runs, and
+the staged ODT config would widen it. **The whole 30-day cadence problem is an artefact of the
+guest being a KMS client and is not something the userbase experiences.**
+
+## Superseded position - 2026-08-24, end of the overnight run
 
 `HEAD` = `0a58732`, pushed, tree clean, no agents running. **2,370 tests in under two minutes
 with no mailbox contact.** `OutlookAI.Core` clean for net48 AND net10, zero warnings. The VSTO
