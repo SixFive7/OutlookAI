@@ -330,6 +330,53 @@ kernel pool on open.
 error and `IsInRole('BUILTIN\Hyper-V Administrators')` is `False`. The group membership exists but
 needs a fresh logon. Until then no VM work is possible from this session.
 
+## The PRF route, measured end to end on guest one (2026-09-15, Office LTSC 2024 16.0.17932)
+
+**What works, and it is most of it.** A plain text `.prf` plus one registry value, no GUI, no paid
+component, produced a profile Outlook accepted:
+
+- profile `OutlookAI-Tier` created by Outlook at startup from `ImportPRF`
+- a genuine POP3 account: `clsid={ED475411-...}` = `CLSID_OlkPOP3Account`,
+  `POP3 Server=127.0.0.1`, `SMTP Server=127.0.0.1`, `POP3 User=tier`, `Email=tier@vm.invalid`
+- the PST the file named, `C:\OutlookAI-Tier\tier.pst` - and **Outlook minted no PST of its own**
+- **`Store.DisplayName` reads `tier@vm.invalid` OVER COM.** That closes section 8 item 2 with no
+  caveat left: the `@` survives the PRF, the profile, and the object model, and it is the property
+  the live tier keys on.
+- no first-run dialog, after `Set-OfficeFirstRunSuppressed.ps1`
+
+**What does NOT work, and it is the part that matters for the tests.** Measured with each COM call
+in its own child process under a deadline:
+
+| call | result |
+| --- | --- |
+| `Namespace.Accounts.Count` | **1** - the account is visible |
+| `Account[1].SmtpAddress` | **BLOCKED**, nothing back in 45 s |
+| `Account[1].DeliveryStore` | **NULL** |
+| `DeliveryStore.GetDefaultFolder(Drafts)` | n/a - no delivery store |
+| `Store[1].DisplayName` | `'tier@vm.invalid'` |
+
+`NewDraft` resolves an account by `SmtpAddress` and then requires `DeliveryStore` and its Drafts
+folder. One of those blocks and the other is null, so **`NewDraft` would fail with
+`AccountHasNoDeliveryStore`**. The account exists in the registry and is incomplete in exactly the
+way the verifier predicted: no `00180102` (`PROP_ACCT_DELIVERY_STORE`) value, which is the binary
+EntryID a `.prf` structurally cannot carry.
+
+**So the honest verdict: the PRF creates an account, not a usable one.** `[General]
+DefaultStore=Service1` bound the profile's default store - which is why no stray PST appeared -
+but did not bind the account's own delivery store.
+
+**The documented next thing to try**, from `Docs/research/pop3-account-routes.md` section A.5: drop
+`DefaultStore`, set `ForcePSTPath` to a known directory, and let Outlook mint the account's PST
+itself - because an Outlook-minted delivery store is bound by Outlook, which is the step the file
+cannot perform. The harness would then find the store by account rather than by path. Untried.
+
+**A third COM call blocked today**, and the pattern is worth recording even though it is not yet a
+diagnosis: `GetDefaultFolder(DeletedItems)`, `AddStoreEx` (that one *spinning*, not blocked), and
+now `Account.SmtpAddress`. Every probe that ran its COM calls in a `Start-Job` child process
+completed; the ones that called COM directly from a scheduled task's own runspace are the ones
+that hung. Correlation, not cause - but it is why the account probe is built the way it is, and it
+is the shape the project's own timeout work already cares about.
+
 ## STILL OPEN - awaiting the maintainer
 
 **Q1+Q2, merged into one: collapse the test-tier vocabulary.** The maintainer's challenge was
