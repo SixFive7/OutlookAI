@@ -283,7 +283,7 @@ three separate places:
 * **It works unelevated** — verified on a token where `IsInRole(Administrator)` is `False`. A
   preflight that needed elevation would not be a preflight.
 * **Filter in the query, not afterwards.** **241 ms** filtered, against **10,679 ms** enumerating
-  the class and filtering in PowerShell — a 45× difference. The naive form is unusable in a
+  the class and filtering in PowerShell — a 44× difference. The naive form is unusable in a
   preflight; the filtered form is cheap enough that there is no argument against running it.
 * **`PartialProductKey IS NOT NULL` is load-bearing.** Without it, a perfectly healthy machine
   returns keyless SKU-catalogue rows carrying `LicenseStatus = 0`, so a check phrased as "any row
