@@ -181,6 +181,15 @@ if (-not (Test-Path -LiteralPath $IsoPath)) { throw "ISO not found: $IsoPath" }
 if ($AnswerIsoPath -and -not (Test-Path -LiteralPath $AnswerIsoPath)) {
     throw "Answer volume not found: $AnswerIsoPath. Build it with Testbed/host/New-AnswerFile.ps1."
 }
+
+# RESOLVE BOTH TO ABSOLUTE PATHS, and do it here rather than at each use.
+# Hyper-V accepts a relative path on Add-VMDvdDrive but STORES the resolved absolute one, so the
+# verification below - which reads the drive back and matches on Path - compared an absolute
+# against a relative and found zero drives. It threw after the VM, its disk, Secure Boot and the
+# vTPM had all been created, leaving a half-built guest with no answer volume and no boot device.
+# Measured the first time this script was ever run, 2026-09-15.
+$IsoPath = (Resolve-Path -LiteralPath $IsoPath).ProviderPath
+if ($AnswerIsoPath) { $AnswerIsoPath = (Resolve-Path -LiteralPath $AnswerIsoPath).ProviderPath }
 if (Get-VM -Name $Name -ErrorAction SilentlyContinue) { throw "A VM named '$Name' already exists. Refusing to touch it." }
 if (Test-Path -LiteralPath $VhdPath) { throw "A VHD already exists at '$VhdPath'. Refusing to overwrite it." }
 
