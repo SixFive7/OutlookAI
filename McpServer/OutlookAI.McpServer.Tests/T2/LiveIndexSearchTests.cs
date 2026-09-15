@@ -153,7 +153,22 @@ public sealed class LiveIndexSearchTests
             + $"withAttachments rows={withAttachments.Hits.Count} ms={withAttachments.ElapsedMilliseconds}");
         Assert.InRange(unread.ElapsedMilliseconds, 0, MaxQueryMs);
         Assert.InRange(withAttachments.ElapsedMilliseconds, 0, MaxQueryMs);
-        Assert.All(withAttachments.Hits, h => Assert.NotEqual(false, h.HasAttachments));
+
+        // The only assertion in this test that says anything about the FILTER rather than about how
+        // long it took - and an empty hit list satisfies Assert.All without examining a single row,
+        // so on a store with no attachment-bearing indexed mail the has-attachments shape was never
+        // checked at all and the test still reported green. Found by the 2026-08-23 VM coverage
+        // analysis (section 8 item 4) and fixed with the same idiom as the other three.
+        Assert.All(
+            LivePopulationCoverage.Require(
+                _fixture.Settings,
+                withAttachments.Hits,
+                "an indexed mail item carrying an attachment in the first configured store",
+                "the has-attachments index filter shape check",
+                "To exercise it, point the first entry of 'expectedStoreDisplayNames' at a store "
+                    + "whose indexed mail includes at least one message with an attachment.",
+                _output.WriteLine),
+            h => Assert.NotEqual(false, h.HasAttachments));
     }
 
     [Fact]

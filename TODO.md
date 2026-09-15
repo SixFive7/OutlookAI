@@ -102,16 +102,39 @@
 
   What is left, in the order it blocks a rebuild:
 
-  - [ ] **Answer the eleven questions in `Testbed/README.md` section 6.** They are the facts that
-        are genuinely not recorded anywhere - Hyper-V spec, Windows edition, Office version and
-        bitness, the second Windows account, which Outlook profile is default and how the switch
-        is automated, whether the three-store layout or the mail sink exist at all. Each needs the
-        VM or the maintainer; none can be derived from the repository.
+  - [ ] **Answer the open questions in `Testbed/README.md` section 6.** They are the facts that are
+        genuinely not recorded anywhere - Hyper-V spec, Windows edition, Office version and bitness,
+        which Outlook profile is default and how the switch is automated, whether the three-store
+        layout or the mail sink exist at all. Each needs the VM or the maintainer; none can be
+        derived from the repository.
+
+        **Two corrections, 2026-09-15, because this line had drifted from the section it points at.**
+        (a) It said **eleven** questions; section 6 now numbers **16** items - 13 questions plus 3
+        things nobody can put in a repository - and several carry their own "half-answered" notes.
+        Quote the section, not this count. (b) **"The second Windows account" is no longer one of
+        them.** Section 1.1 of the runbook used to need two Windows logons per machine, because
+        Windows Search indexes a `mapi16://{SID}/` scope per ACCOUNT; the build is now two GUESTS
+        (`OutlookAI-Indexed` / `OutlookAI-Unindexed`), so index state is a property of the machine
+        and Indexing Options controls it unambiguously (`49e563e`). Stated carefully, because these
+        are different facts and only the second happened: the per-account index assumption was NOT
+        disproved - the design stopped depending on it, which also retired the riskiest unverified
+        assumption in the whole layout.
   - [ ] **Settle whether smtp4dev serves POP3 at all.** The runbook specifies POP3 on 110 and a
         POP3 dummy account, and `MailSinkSettings.RetrievePort` documents itself as POP3, but
         smtp4dev v3 is usually described as SMTP plus **IMAP**. If it is IMAP-only the sink
         section is wrong in a way that surfaces only as mail sitting in a sink nobody can retrieve
         from. Question 11 in `Testbed/README.md`.
+
+        **STILL OPEN, and today's POP3 work does NOT answer it - noted 2026-09-15 because the two
+        are easy to confuse.** What was settled is the CLIENT half: the tier profile's account is
+        created by script as `AccountType=2` (POP3) with its delivery store bound and its Drafts
+        folder resolving. That is Outlook's side of the wire and it says nothing about what is
+        listening on port 110. This question is about the SERVER half, and it is unchanged. It is
+        also now the smaller half of a smaller problem: only **one** live method genuinely needs
+        mail to travel and arrive (see the transport correction in
+        `Docs/vm-coverage-analysis.md`), so if smtp4dev turns out to be IMAP-only the choice is
+        between an IMAP dummy account, a different sink, and leaving that one test to the real
+        profile.
   - [ ] **Resolve how a built server exe reaches the path tier 3 expects on the guest.** The path
         is baked in as `AssemblyMetadata("McpServerExePath")` and points into the repository's
         `bin` tree; the guest has no SDK, so nothing puts a binary there, and
@@ -246,10 +269,25 @@
         the general split (session budget plus a per-`RoundTripAsync` budget, both named)
         is still open. Raising the DEFAULT is deliberately not the fix - it is CI's only
         safety net against a hung stdio test, and CI's job timeout is 20 minutes.
-  - [ ] **`T2/LiveAttachmentKindRecallTests` (~line 364) keeps two bare literals** (90 s wait,
-        5 s poll) and is the last product-shaped index call in the suite relying on the client's
-        default command timeout. Name them and pass a `commandTimeoutSeconds`; one slow
-        statement currently eats a third of the wait.
+  - [ ] **HALF DONE 2026-09-15. `T2/LiveAttachmentKindRecallTests` ~~keeps two bare literals~~**
+        (90 s wait, 5 s poll) - **named** as `SeededCrawlWaitSeconds` / `SeededCrawlPollSeconds`,
+        which cost nothing and changed no behaviour. It is still the last product-shaped index call
+        in the suite relying on the client's default command timeout, and **the figure here was
+        understated**: the default is `OleDbIndexClient.DefaultCommandTimeoutSeconds` = **60 s**, so
+        one slow statement eats TWO THIRDS of the wait, not a third.
+
+        **The remaining half is a decision, not a fix, and it is why it was not made.** Passing a
+        `commandTimeoutSeconds` bounds the statement - and a bounded statement that expires THROWS,
+        so a slow index would turn this from "the probe reports the gatherer did not catch up" into
+        a failed live test. Three ways out: (a) pass the bound and let it throw - honest, and it
+        fails a live run for a slow indexer; (b) pass the bound and treat an expired statement as
+        one lost poll - keeps the current shape, but needs a catch whose exception type depends on
+        which client was selected at runtime (`OleDbException` or a late-bound `COMException`);
+        (c) leave the default and accept that the wait is really "90 s, of which one statement may
+        take 60". **Recommendation: (b)**, because the loop's own design already treats "no rows
+        yet" as an ordinary outcome and a timed-out statement is indistinguishable from it - but it
+        changes a live test's failure behaviour and no run available to an agent here could check
+        it, which is the same trade the bystander and sweep items below refuse.
   - [ ] **Claude Code's 30-minute stdio idle abort is now the nearest client-side limit, and
         nobody owns it.** A 600 s exhaustive scan is 600 s of complete silence on the pipe -
         this server sends no progress notifications. It fits (600 s < 1800 s idle < the
@@ -375,8 +413,22 @@
   T1 `UpdatePollScheduleTests`). **The 10-minute base interval itself did not change and was not
   the question** - what was open was firing at zero and never backing off.
 
-- [ ] **Live tier: a test hangs, and an aborted run leaves artifacts behind. Read this before
-      the next live run.** (2026-08-18, ~03:00-03:45)
+- [ ] **Live tier: an aborted run leaves artifacts behind. Read this before the next live run.**
+      (2026-08-18, ~03:00-03:45)
+
+      **THE HANG HALF OF THIS ENTRY IS SUPERSEDED - see the `RESOLVED 2026-08-18 11:45` entry
+      immediately below it.** The live tier was never hanging: the full tier takes 26.8 minutes and
+      passed 107/107 under `--blame-hang`, and both "hangs" were healthy runs killed early. Read
+      everything below about a reproducible fixture-setup hang as the mistaken diagnosis it was;
+      the lesson that survives is the one that entry states - never diagnose a live-tier hang
+      without `--logger "console;verbosity=normal"`, because a passing run and a wedged one produce
+      byte-identical output at default verbosity.
+
+      **What keeps this entry OPEN is the artifact residue and the rule around it**, neither of
+      which the resolution touched: 7 tagged items were left in a real mailbox because an aborted
+      run has no teardown sweep, and whether the next successful live run has since swept them is
+      not knowable from this repository. **Verify the mailbox is clean as part of the next live
+      run** rather than assuming the sweep already happened. Noted 2026-09-15.
 
   **State left on the machine:** 7 items tagged `[OutlookAI-McpTest]` remain in the
   `telefonie@xxlnet.nl` hub - **6 in Drafts, 1 in Outbox** - found by a read-only `search` after
@@ -786,7 +838,47 @@
      nothing. Cheapest, and exactly the kind of documentation-only fix that has failed here
      before.
 
-- [ ] **Three more live tests iterate a possibly-empty set and would pass having proved nothing.**
+- [x] **DONE 2026-09-15 - the two that could pass proving nothing now say so; the third is left
+  alone with its reason. A FOURTH was found and fixed with them.**
+
+  **What shipped.** `T2/LivePopulationCoverage` - pure, generic, no COM and no settings file - is
+  the one place that decides what a run says about an empty population. It prints a `coverage:`
+  line on EVERY run (not only the empty ones, so a passing test says how much it visited rather
+  than leaving it inferred from the test's name), calls `Settings.RequireProductionPopulation`
+  when the population is empty - which **throws on Production**, where an empty population means
+  drift, and no-ops on Portable - and then prints a `PROVED NOTHING:` line naming the population,
+  what did not run, what a green result there does and does not mean, and the remedy. Same idiom
+  as `IdentityDraftCoverage`, `LiveManageSignatureTests` and `LiveStaleIndexRowTests`; no new
+  concept. The remedy sentence is REQUIRED rather than optional: a PROVED NOTHING line that does
+  not say what to do about it is a line people learn to skip.
+
+  Fixed at three call sites, pinned by 16 new T1 tests (`T1/LivePopulationCoverageTests`), which
+  also read the call sites out of the sources - the one thing a pure function cannot pin. 2443 ->
+  2491 `Category!=Live` with the census and sweep work below, 0 failures. **No live run.**
+
+  1. **`T2/LiveFolderScopeTests.DelegateFirstLevelFolders_StillResolve_AndTheWholeMailboxIsUnfiltered`**
+     - fixed. Both delegate tests now obtain the list through one private `DelegateStores(...)`, so
+     the two can no longer answer the same question differently. **Its sibling keeps its
+     `Assert.True(delegates.Count > 0)` deliberately**: the defect being fixed is a test that
+     passes proving nothing, and that one never did - weakening it to an announcement was not part
+     of the job and would be a decision, not a fix.
+  2. **`T2/LiveSignatureTests` line 60** - fixed. The `Assert.All` now runs over the guarded list,
+     so an empty account list refuses on Production and announces on Portable instead of
+     satisfying the assertion with no element examined.
+  3. **`T2/LiveAttachmentKindRecallTests` line 291/301 - deliberately NOT converted.** Those two
+     early returns print `SKIP (the parent-open assertion ONLY, ...)` and that is ACCURATE: the
+     test asserts recall above them and only one assertion is skipped. Calling that "proved
+     nothing" would be false, and a `PROVED NOTHING:` line that overstates is worth less than a
+     `SKIP:` line that does not. If the distinction is ever wanted greppable, the answer is a
+     third marker, not a reuse of this one - that is a decision and it is recorded as one.
+  4. **`T2/LiveIndexSearchTests.FilterShapes_ReadAndAttachmentFlags_WorkUnder2s`** - a FOURTH,
+     found in `Docs/vm-coverage-analysis.md` section 8 item 4 while correcting that file and not
+     in the 2026-08-25 `foreach` sweep, because it is an `Assert.All` rather than a loop. Its only
+     assertion about the has-attachments FILTER (as opposed to how long it took) went unexecuted on
+     any store with no attachment-bearing indexed mail. Fixed the same way.
+
+  <details><summary>Original entry</summary>
+
   Found 2026-08-25 while fixing the identity pair above, by reading every `foreach` in the live
   tier. Listed, not fixed - the scope is the maintainer's, and two of the three are one line each.
 
@@ -811,6 +903,8 @@
   `LiveMoveArchiveTests.ArchiveResolution_*`, `LiveTableSortProbeTests` and
   `LiveDecodeVerifyTests` all either iterate `expectedStoreDisplayNames` (which the loader
   refuses to leave empty) or assert a count before the loop.
+
+  </details>
 
 - [x] **DONE (2026-08-25) - the measurement corpus has its OWN subject tag, so an artifact sweep
   cannot match it by construction.** The maintainer chose option (3) below. Found 2026-08-24 by
@@ -860,16 +954,20 @@
 - [ ] **Two follow-ups the tag split leaves for the maintainer.** Neither is a defect; both are
   wording the maintainer owns.
 
-  1. **`CLAUDE.md` mailbox-safety rule 2 says "every test-created item carries the
-     `[OutlookAI-McpTest]` subject tag".** That is now false for corpus items, and the falsehood
-     is the dangerous direction: an agent reading it would conclude a corpus item is either
-     sweepable or not test-created. The *rule* needs no change - deletion selection is still
-     "EntryID allowlist AND ordinal tag match, both required", which corpus teardown obeys
-     exactly - only the sentence naming the tag. Suggested: "...every test-created item carries a
-     subject tag matched ORDINALLY: `[OutlookAI-McpTest]` for live-tier artifacts,
-     `[OutlookAI-Corpus]` for measurement-corpus items. The two are deliberately different
-     strings so an artifact sweep can never select a corpus item; `T1/CorpusTagSeparationTests`
-     enforces it." Not edited here - `CLAUDE.md` is the maintainer's.
+  1. **DONE - `CLAUDE.md` mailbox-safety rule 2 now names both tags.** ~~It said "every
+     test-created item carries the `[OutlookAI-McpTest]` subject tag", which is false for corpus
+     items.~~ **Verified 2026-09-15:** the project `CLAUDE.md` carries the suggested wording almost
+     verbatim - "every test-created item carries a subject tag matched **ordinally** —
+     `[OutlookAI-McpTest]` for live-tier artifacts, `[OutlookAI-Corpus]` for measurement-corpus
+     items. **The two are deliberately different strings so that an artifact sweep can never select
+     a corpus item**, and `T1/CorpusTagSeparationTests` enforces that they stay different (not
+     merely unequal — neither may contain the other)." The parenthesis is stronger than what was
+     suggested here and matches what the tests actually assert. Nothing is left to do.
+
+     *(Original text, for the record: the falsehood was the dangerous direction - an agent reading
+     it would conclude a corpus item is either sweepable or not test-created. The rule itself
+     needed no change; deletion selection is still "EntryID allowlist AND ordinal tag match, both
+     required", which corpus teardown obeys exactly.)*
   2. **Should the artifact sweep ALSO skip declared bystanders?** Recommended: yes, as a second
      line of defence, but it is a change to `Tests/T2/LiveDraftTests.cs` and `LiveSendTests.cs`,
      which another agent holds. Rationale and cost are in the next item.
@@ -936,8 +1034,42 @@
   only the anchor moves. `Docs/live-tier-on-the-vm.md` needs the matching edit. Neither file was
   touched here.
 
-- [ ] **Fix the census's identity-to-count degradation, which is why the tripwire needs a
-  re-census at all on a stable mailbox.** Found by reading during the 2026-08-24 investigation.
+- [ ] **PARTLY FIXED 2026-09-15 - option (2) shipped; option (1) is the COM half and still needs a
+  live run.** Fix the census's identity-to-count degradation, which is why the tripwire needs a
+  re-census at all on a stable mailbox. Found by reading during the 2026-08-24 investigation.
+
+  **What shipped (option 2, "carry the reason").** `FolderCensus.CountOnly` now REQUIRES a
+  `CensusCountReason`, and refuses `Walked` - so a count-only reading whose reason says it was
+  walked cannot be constructed, and "reason not recorded" cannot quietly become the commonest
+  answer. `CensusIdentityPlan.TryIdentify` reports which of the six refusals applied, the walk
+  failure path reports `TableUnusable`, and `T2/CensusReadingStrength` - pure - turns a PAIR of
+  readings into the clause the verdict carries. Three things follow:
+  - **The wrong sentence is gone.** `EvaluateByCount` said `(folder above the identity budget)`
+    whatever the cause. That was right in one case of six and pointed the reader at the wrong
+    number in the other five - in an emergency, in a message read once, by somebody who believes
+    mail has just been deleted.
+  - **A degraded pair says it is degraded.** An `ITEMS LOST` over a folder the baseline identified
+    and this pass could only count now says the POST-RUN reading was WEAKER, names why, and says
+    the same mailbox state can read as a loss on one pass and as filed on another for that reason
+    alone - so "this folder lost items" and "this reading was weaker than the one it is compared
+    against" stop printing identically.
+  - **The silent case is noted.** A degraded pair whose count did NOT move is where the guard
+    quietly loses its teeth: the baseline could tell a filing from a deletion there and this pass
+    cannot, so an item removed while another arrived is invisible. Noted, never failed - nothing
+    was observed to leave.
+
+  Pinned by 22 new T1 tests (`T1/CensusReadingStrengthTests`), including a source read of the live
+  census's call site, which is the half no CI test can execute. **Nothing about which runs FAIL
+  changed**: the same deltas fail, with a verdict that now says what it is made of.
+
+  **Still open: option (1), re-walk the degraded folder before concluding anything.** That is the
+  only one that removes the false failure at its SOURCE rather than explaining it, and it is one
+  COM table read inside `CaptureFolder` - so it cannot land without a live run to check it.
+  Option (3), refusing to compare a degraded pair at all, stays rejected: noisier by a lot, and it
+  would fail runs for a property of the census rather than of the mailbox.
+
+  <details><summary>Original entry</summary>
+
 
   **The defect.** Whether a folder is compared BY IDENTITY or BY COUNT is decided independently
   on each pass, and the post-run decision is timing-dependent. `CensusIdentityPlan.Repeating`
@@ -975,6 +1107,8 @@
 
   (1) and (2) compose and are the recommendation. Nothing here was implemented: it changes what
   the guard proves, which is the maintainer's call.
+
+  </details>
 
 - [ ] **Two things `Docs/live-tier-on-the-vm.md` should say, found while answering "can the
   tripwire be always correct?" (2026-08-24).** Not edited here - another agent owns that file.
@@ -1022,8 +1156,12 @@
     `bystanderStoreDisplayNames`**, matching `Testbed/live-test-settings.example.json` and
     `Testbed/README.md` §3b: `[ "OutlookAI Bystander", "Corpus A" ]`. The table's
     `expectedStoreDisplayNames` row should also say that a declared bystander the profile does
-    not mount refuses the tier - which is why `Corpus B`, in the other Windows account's profile,
-    goes in that machine's settings file and not this one.
+    not mount refuses the tier - which is why `Corpus B`, ~~in the other Windows account's
+    profile~~ **on the other GUEST** (corrected 2026-09-15: the two-Windows-accounts layout was
+    replaced by two guests, `OutlookAI-Indexed` with `Corpus A` and `OutlookAI-Unindexed` with
+    `Corpus B` - `49e563e`), goes in that machine's settings file and not this one. The reasoning
+    is unchanged and now easier to state: it is a different MACHINE, so it is a different settings
+    file.
 
 - [x] **DONE (2026-08-24) - The tripwire's response to a suspected loss is bounded, and the
   census identity walk has a clock of its own.** Two maintainer decisions, both about the
@@ -1258,7 +1396,11 @@
      item are five server round trips. See the 2026-08-20 entry above; the walk is a bulk
      table read now, and the budget stayed where it was.
 
-- [ ] **PENDING TASK - process `C:\Source\SixFive7\BrowserAI\.work	runcation-prompt-for-sibling-project.md`.**
+- [ ] **PENDING TASK - process `C:/Source/SixFive7/BrowserAI/.work/truncation-prompt-for-sibling-project.md`.**
+  *(Path corrected 2026-09-15: it was written with a Windows backslash before `truncation`, which this
+  file stored as a literal TAB - so the path as printed named a file that cannot exist and the `t` was
+  missing from the name. Forward slashes here so it cannot happen again. The file DOES still exist at
+  the corrected path, checked 2026-09-15, so this item is genuinely outstanding rather than moot.)*
   The maintainer asked for this at 09:00 on 2026-08-18. It is expected to be the portable
   description-budget prompt written for another project; read it and act on what it asks for. Recorded
   here because auto-compaction was imminent when it was requested.
@@ -1774,7 +1916,13 @@
 
   <details><summary>Original entry, superseded</summary>
 
-- [ ] ~~**Settle whether `Table.Sort` has EVER applied - run `T2/LiveTableSortProbeTests` and act on the answer.**~~
+- [x] ~~**Settle whether `Table.Sort` has EVER applied - run `T2/LiveTableSortProbeTests` and act on the answer.**~~
+  **TICKED 2026-09-15. Superseded by the entry immediately above it**, which settled this on
+  2026-08-23 and shipped the fix in `03a0857`. It had been struck through and left unticked, so it
+  still counted as one of the file's open items and read, to anyone scanning for `- [ ]`, as a live
+  question about the largest defect on the list. The two consequences that ARE still open - the
+  180 s sweep budget measured while the sort was failing, and the scan's date rung - are tracked in
+  that entry, not here.
   Potentially the largest single defect found on 2026-08-19, and it is unresolved rather than fixed.
   Microsoft's `Table.Sort` reference says a sort property may be referenced "by their explicit string
   names only; cannot reference properties by their namespaces". `SweepFolder` passes
@@ -1804,7 +1952,36 @@
 
   </details>
 
-- [ ] **The sweep's sort-refusal WIRING is still unguarded - measured on 2026-08-24, not assumed.**
+- [x] **DONE 2026-09-15 - both survivors are killed, one by moving the decision and one by reading
+  the join out of the compiled IL.**
+
+  **M27, the scan's cursor fallback - fixed by MOVING it.** `received ?? ComDateValue.FromItemValue(brief.ReceivedTime)`
+  is now `OutlookComSession.ScanCursorDate(received, brief.ReceivedTime)` - pure, public, and driven
+  directly by CI. Dropping the conversion, which was the defect the line was added to fix, now fails
+  a test whichever end it is dropped at: inside the function (the value is wrong) or at the call
+  site (the call is gone).
+
+  **The two counter call sites - killed by an IL read, because moving them was not available.** A
+  stand-in harness for the whole of `SweepFolder` was considered and REFUSED on 2026-08-24, and that
+  refusal stands: the more faithful the fake, the more you test your model of Outlook rather than
+  Outlook. So `T1/SweepSortWiringTests` asks the compiled assembly two questions instead - does each
+  of the two walks still call `AddSortRefusal` exactly once, and is the flag negated on its way in.
+  Three things make it honest rather than decorative:
+  - **It self-tests.** The class compiles BOTH shapes into itself - the shipped one and the exact
+    mutation measured to survive - and asserts the reader fires on one and not the other. A detector
+    that silently stops detecting is worse than no detector; same discipline as
+    `T1/LiveTierClockDriftTests`.
+  - **It asserts it found something.** Checking only for the ABSENCE of a negation would pass
+    vacuously on an empty set, which is the shape this repository refuses elsewhere. That assertion
+    earned its keep immediately: the walks run inside `_runner.Run(() => ...)`, so the statements
+    live in a compiler-generated display class and the declared method contains no such call at all.
+  - **It says what it does NOT prove.** It proves the flag is not inverted on the way to the
+    counter. It does not prove the walk computes the flag correctly - `SweepRefusalTelemetryTests`
+    owns that - and a caller that computed the inversion further away would pass it.
+
+  <details><summary>Original entry</summary>
+
+  **The sweep's sort-refusal WIRING is still unguarded - measured on 2026-08-24, not assumed.**
   The decisions either side of it are pinned in T1 `SweepRefusalTelemetryTests` (20 tests) as of
   that day: `OutlookComSession.SweepSortWasRefused` (the refusal test), `AddSortRefusal` (the
   counter) and the single `BuildSweepResult` both sweep shapes now return through, which replaced
@@ -1827,6 +2004,8 @@
   Outlook. The substitutes this file already names elsewhere apply: a temporary build that forces
   the branch, or a live run. In the field the check is unchanged - `sweep.sortRefusedFolders`
   reads zero on a healthy profile - which is what the extraction protects.
+
+  </details>
 
 - [ ] **Verify the exhaustive scan's depth guard against a live profile - the half of F4 that T1 cannot reach.**
   F4 was closed on 2026-08-18 and is pinned by T1 `ScanDepthAndSweepScopeTests` end to end from
@@ -2010,15 +2189,31 @@
       everything any method in the class needed. See `Docs/live-tier-on-the-vm.md` section 5. The
       dummy account and the SMTP-shaped hub name below are DECIDED and part of the VM build, not
       open questions; the last two directions are recorded as rejected.
-  - [ ] **Add one dummy mail account to the VM** (POP/IMAP pointing nowhere, send disabled).
-        DECIDED and part of the build - it is what makes `Requires=MailAccount` a VM capability.
-        **The catch stands:** the corpus generator refuses to run at all unless the profile has no
-        accounts whatsoever, so the order is corpus first, checkpoint, then account - and
-        re-generating later means removing the account again.
-  - [ ] **Give the hub store an SMTP-shaped display name.** DECIDED. Several tests use
-        `testHubStoreDisplayName` as an address (`to: Hub`, `FindAccountBySmtp(Hub)`), so a PST
-        called `Outlook Data File` fails them before anything else does. Cheap to try; unknown
-        whether Outlook tolerates it - the one piece of the VM shape that is still unproven.
+  - [x] **DONE 2026-09-15 - the dummy mail account is BUILT, by script, with no GUI and no paid
+        component.** ~~DECIDED and part of the build~~ - and now made: on a guest built entirely by
+        script, `Accounts.Count=1`, `Account[1].SmtpAddress='tier@vm.invalid'` (`AccountType=2`,
+        POP3), `DeliveryStore` bound, and `DeliveryStore.GetDefaultFolder(Drafts)` resolving. Every
+        property `NewDraft` resolves an account by now resolves, so `Requires=MailAccount` is a real
+        VM capability rather than a planned one. The route is a PRF that does NOT name a PST
+        service: removing it lets Outlook mint the account's own delivery store, and a store Outlook
+        mints is a store Outlook BINDS - the one step a text file cannot perform. See `25f0b7d`.
+
+        **The catch is narrower than it was recorded.** The corpus generator still refuses to run
+        unless the profile has no accounts whatsoever (`CorpusSafety.EvaluateProfile`, no override),
+        but that no longer dictates an irreversible order: `/PIM` creates an account-less profile on
+        Office 2024 (`accounts=0`), so an account-less profile is something a build can ask for
+        rather than something it must preserve.
+  - [x] **DONE 2026-09-15 - the hub store CAN be named as an SMTP address, and the way to do it is
+        scripted.** ~~Cheap to try; unknown whether Outlook tolerates it - the one piece of the VM
+        shape that is still unproven.~~ Four research passes had flagged this as the highest-risk
+        unknown in the whole profile plan, because `Store.DisplayName` is read-only and the
+        documented `PropertyAccessor` workaround on `PR_DISPLAY_NAME_W` is widely reported blocked.
+        **Measured (`70a722d`): renaming the store's ROOT FOLDER does carry through**, `@` included -
+        root `'Outlook Data File'` → `'tier@vm.invalid'`, `Store.DisplayName='tier@vm.invalid'`, and
+        the account afterwards still reports `SmtpAddress='tier@vm.invalid'`
+        `DeliveryStore='tier@vm.invalid'`, so the rename does not break the binding that made the
+        account usable. `Testbed/guest/Rename-OutlookStore.ps1` does it and re-fetches the store from
+        the collection to verify rather than trusting the object it wrote through.
   - REJECTED: **accept a 19-test subset and stop.** The subset was never 19 tests' worth of
         coverage; it was a mislabelling. 121 of 127 select onto the machine as built.
   - REJECTED: **relax the tests instead of the machine** - making the account-count and

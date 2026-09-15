@@ -26,6 +26,17 @@ public sealed class LiveAttachmentKindRecallTests
     /// <summary>TOP for the attachment-hit probe search, shared so a re-run is the SAME search.</summary>
     private const int AttachmentProbeTop = 50;
 
+    /// <summary>
+    /// How long the seeded probe waits for the Windows Search gatherer to crawl the item it just
+    /// created. A CEILING, not an expectation: crawl latency is the gatherer's business and this
+    /// test reports it rather than asserting it - past this the probe records what it saw and says
+    /// the assertion did not run.
+    /// </summary>
+    private const int SeededCrawlWaitSeconds = 90;
+
+    /// <summary>Gap between polls of the index while waiting for that crawl.</summary>
+    private const int SeededCrawlPollSeconds = 5;
+
     private readonly LivePhase1Fixture _fixture;
     private readonly ITestOutputHelper _output;
 
@@ -365,9 +376,19 @@ public sealed class LiveAttachmentKindRecallTests
             string sql = "SELECT TOP 200 System.ItemUrl, System.Kind FROM SystemIndex WHERE SCOPE='" + scope
                 + "' AND CONTAINS(System.Search.Contents, '\"" + token + "\"')";
 
+            // NOTE, measured 2026-09-15: this is the last product-shaped index call in the suite
+            // still running on the client's DEFAULT command timeout, which is
+            // OleDbIndexClient.DefaultCommandTimeoutSeconds = 60 - two thirds of the whole wait
+            // below. So one slow statement can spend most of the budget and leave the probe
+            // reporting "the gatherer had not crawled it in time" when what ran out was the
+            // statement, not the gatherer. Passing a bound here would fix that and would also turn
+            // a slow statement into a THROWN failure rather than one lost poll, which is a change
+            // to a live test's failure behaviour that no run available here could check - so it is
+            // recorded in TODO.md as a decision rather than made unsupervised. The literals
+            // themselves are named now, which is the half that costs nothing.
             List<IReadOnlyDictionary<string, object?>> rows = new();
             Stopwatch waited = Stopwatch.StartNew();
-            while (waited.Elapsed < TimeSpan.FromSeconds(90))
+            while (waited.Elapsed < TimeSpan.FromSeconds(SeededCrawlWaitSeconds))
             {
                 rows = client.ExecuteRows(sql, 200).ToList();
                 if (rows.Any(r => IndexRowFilter.IsAttachmentRow(Url(r))))
@@ -375,7 +396,7 @@ public sealed class LiveAttachmentKindRecallTests
                     break;
                 }
 
-                Thread.Sleep(5000);
+                Thread.Sleep(TimeSpan.FromSeconds(SeededCrawlPollSeconds));
             }
 
             List<IReadOnlyDictionary<string, object?>> attachmentRows =

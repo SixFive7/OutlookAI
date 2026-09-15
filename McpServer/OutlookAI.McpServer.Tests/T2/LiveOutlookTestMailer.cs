@@ -974,16 +974,20 @@ public static class LiveOutlookTestMailer
             plan.NoteFolderMeasured();
             items = folder.Items;
             int count = (int)items.Count;
-            if (!plan.ShouldIdentify(key, isVolatile, count))
+
+            // The REASON travels with the count. Without it the verdict over this folder invents
+            // one - "folder above the identity budget" - which is the wrong sentence in five of
+            // the six cases and points the reader at the wrong number.
+            if (!plan.TryIdentify(key, isVolatile, count, out CensusCountReason refused))
             {
-                return FolderCensus.CountOnly(count);
+                return FolderCensus.CountOnly(count, refused);
             }
 
             List<CensusItem>? walked = WalkFolderItems(folder, items, count);
             if (walked == null)
             {
                 plan.NoteDegradedToCount();
-                return FolderCensus.CountOnly(count);
+                return FolderCensus.CountOnly(count, CensusCountReason.TableUnusable);
             }
 
             plan.Spend(walked.Count);

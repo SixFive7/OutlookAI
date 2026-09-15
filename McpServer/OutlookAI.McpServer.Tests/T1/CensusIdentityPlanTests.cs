@@ -65,7 +65,7 @@ public sealed class CensusIdentityPlanTests
         Dictionary<string, FolderCensus> baseline = new(StringComparer.OrdinalIgnoreCase)
         {
             ["Inbox"] = Walked(3),
-            ["Archive"] = FolderCensus.CountOnly(6153),
+            ["Archive"] = FolderCensus.CountOnly(6153, CensusCountReason.AbovePerFolderLimit),
         };
 
         CensusIdentityPlan plan = CensusIdentityPlan.Repeating(baseline);

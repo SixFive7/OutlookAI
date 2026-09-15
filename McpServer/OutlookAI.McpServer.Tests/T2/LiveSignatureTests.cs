@@ -55,9 +55,27 @@ public sealed class LiveSignatureTests
         // On this machine the registry carried assignments at implementation time
         // (2026-07-24; superseding the Phase-4 "not present" finding), but the test
         // stays tolerant: assignments may be absent (note explains) without failing.
+        //
+        // TOLERANT IS NOT THE SAME AS VACUOUS, and until 2026-09-15 this was both. An EMPTY
+        // account list satisfies Assert.All with no element ever examined, so a run that read the
+        // registry and found no account row asserted nothing here and still reported green - the
+        // same shape as the identity pair fixed on 2026-08-25. A non-null-but-empty list is not
+        // tolerable on a Production profile (this machine HAS mail accounts, so an empty list means
+        // the read stopped working), and on a Portable one it is true of the machine and now says
+        // so. The surrounding assertions are unaffected either way.
         if (outcome.Accounts != null)
         {
-            Assert.All(outcome.Accounts, a => Assert.Contains("@", a.Account, StringComparison.Ordinal));
+            IReadOnlyList<SignatureAccountView> rows = LivePopulationCoverage.Require(
+                _fixture.Settings,
+                outcome.Accounts,
+                "a mail account row in the profile signature registry",
+                "the per-account signature-assignment shape check",
+                "To exercise it, run on a profile with at least one mail account whose signature "
+                    + "assignments list_signatures can read; a machine with none should leave this "
+                    + "test out of the filter, which is what Requires=OutlookInstance is for.",
+                _output.WriteLine);
+
+            Assert.All(rows, a => Assert.Contains("@", a.Account, StringComparison.Ordinal));
             _output.WriteLine($"accounts={outcome.Accounts.Count} withNewAssignment={outcome.Accounts.Count(a => a.NewMessage != null)} "
                 + $"noteSet={outcome.Note != null}");
         }

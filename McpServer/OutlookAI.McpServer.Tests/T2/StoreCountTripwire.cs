@@ -45,10 +45,11 @@ public readonly struct CensusItem
 /// </summary>
 public sealed class FolderCensus
 {
-    private FolderCensus(int count, IReadOnlyList<CensusItem>? items)
+    private FolderCensus(int count, IReadOnlyList<CensusItem>? items, CensusCountReason countReason)
     {
         Count = count;
         Items = items;
+        CountReason = countReason;
     }
 
     /// <summary>Items the folder held. Equals <c>Items.Count</c> whenever identities were captured.</summary>
@@ -57,20 +58,44 @@ public sealed class FolderCensus
     /// <summary>The items, or null when only the count was affordable.</summary>
     public IReadOnlyList<CensusItem>? Items { get; }
 
+    /// <summary>
+    /// Why this folder was counted rather than walked, or <see cref="CensusCountReason.Walked"/>
+    /// when it was walked. Recorded rather than inferred: the verdict text used to name ONE of the
+    /// six possible causes unconditionally, and named the wrong one whenever the cause was the
+    /// clock, an unusable table or a repeat pass with no baseline reading to match. See
+    /// <see cref="CensusReadingStrength"/>.
+    /// </summary>
+    public CensusCountReason CountReason { get; }
+
     /// <summary>True when this folder can be compared item by item rather than by count.</summary>
     public bool HasIdentities => Items != null;
 
-    /// <summary>A folder measured by <c>Folder.Items.Count</c> alone.</summary>
-    public static FolderCensus CountOnly(int count)
+    /// <summary>
+    /// A folder measured by <c>Folder.Items.Count</c> alone, with the reason it was not walked.
+    /// </summary>
+    /// <param name="count">What the folder held.</param>
+    /// <param name="reason">
+    /// Why the walk did not happen. <see cref="CensusCountReason.Walked"/> is refused: a count-only
+    /// reading whose reason says it was walked is a contradiction, and leaving it constructible is
+    /// how "reason not recorded" would quietly become the commonest answer.
+    /// </param>
+    public static FolderCensus CountOnly(int count, CensusCountReason reason)
     {
-        return new FolderCensus(count, null);
+        if (reason == CensusCountReason.Walked)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(reason), reason,
+                "a folder recorded as counted must say why it was not walked.");
+        }
+
+        return new FolderCensus(count, null, reason);
     }
 
     /// <summary>A folder walked item by item. The count IS the walk, so the two cannot disagree.</summary>
     public static FolderCensus WithItems(IReadOnlyList<CensusItem> items)
     {
         ArgumentNullException.ThrowIfNull(items);
-        return new FolderCensus(items.Count, items);
+        return new FolderCensus(items.Count, items, CensusCountReason.Walked);
     }
 }
 
@@ -562,8 +587,7 @@ public static class StoreCountTripwire
                 }
                 else
                 {
-                    EvaluateByCount(
-                        store.Key, folder.Key, folder.Value.Count, current.Count, exempt, isHub, failures, notes);
+                    EvaluateByCount(store.Key, folder.Key, folder.Value, current, exempt, isHub, failures, notes);
                 }
             }
 
@@ -606,14 +630,35 @@ public static class StoreCountTripwire
     /// The count rule, for folders the identity budget did not reach: a DECREASE outside the
     /// hub fails, an increase is noted. It cannot see a departure masked by an arrival, which
     /// is exactly why the identity path exists and why this one says so when it fires.
+    /// <para>
+    /// <b>It no longer guesses why the folder was counted.</b> The text said
+    /// <c>(folder above the identity budget)</c> whatever the cause, which is wrong whenever the
+    /// cause was the identity clock, an unusable table, or a repeat pass with no baseline reading
+    /// to match - and it said nothing at all about the case that matters most, where the baseline
+    /// DID identify the folder and this pass could not. <see cref="CensusReadingStrength"/> holds
+    /// that decision; this method only asks it.
+    /// </para>
     /// </summary>
     private static void EvaluateByCount(
-        string store, string folderKey, int wasCount, int nowCount, bool exempt, bool isHub,
+        string store, string folderKey, FolderCensus was, FolderCensus now, bool exempt, bool isHub,
         List<TripwireFailure> failures, List<string> notes)
     {
-        int delta = nowCount - wasCount;
+        int delta = now.Count - was.Count;
+        bool degraded = CensusReadingStrength.Degraded(was, now);
         if (delta == 0)
         {
+            // A degraded pair whose count did not move is the quietest way this guard gets weaker:
+            // the baseline could have told a filing from a deletion here and this pass cannot, so
+            // a departure masked by an arrival is now invisible in this folder. Noted, never
+            // failed - nothing was observed to leave.
+            if (degraded && !exempt)
+            {
+                notes.Add("  weaker reading: store '" + store + "' folder '" + Display(folderKey)
+                    + "' was identified at the baseline and only counted after the run ("
+                    + CensusReadingStrength.Describe(now.CountReason)
+                    + "), so an item removed while another arrived would not be seen here.");
+            }
+
             return;
         }
 
@@ -622,14 +667,16 @@ public static class StoreCountTripwire
             failures.Add(new TripwireFailure(
                 "items-lost|" + store + "|" + folderKey,
                 "  ITEMS LOST: store '" + store + "' folder '" + Display(folderKey) + "' "
-                + Count(wasCount) + " -> " + Count(nowCount) + " (" + Count(delta)
-                + "); counted only, so WHICH items left is not known (folder above the identity budget)."));
+                + Count(was.Count) + " -> " + Count(now.Count) + " (" + Count(delta)
+                + "); counted only, so WHICH items left is not known."
+                + CensusReadingStrength.Explain(was, now)));
         }
         else if (!isHub)
         {
             notes.Add("  churn: store '" + store + "' folder '" + Display(folderKey) + "' "
-                + Count(wasCount) + " -> " + Count(nowCount)
-                + " (" + (delta > 0 ? "+" : string.Empty) + Count(delta) + ").");
+                + Count(was.Count) + " -> " + Count(now.Count)
+                + " (" + (delta > 0 ? "+" : string.Empty) + Count(delta) + ")."
+                + (degraded ? CensusReadingStrength.Explain(was, now) : string.Empty));
         }
     }
 
