@@ -40,6 +40,24 @@ committed scripts, not just achieved once on a machine that had been hand-patche
 * **Two Windows accounts per guest are unnecessary** - two guests take the fallback the runbook
   named for itself, and the layout's riskiest unverified assumption stops being load-bearing.
 
+### The corpus's "19,996 of 20,000 agree on the shift" - ANSWERED, and it is by design
+
+`corpus-verify` on Corpus A reported 20,000 items dated and **19,996 agreeing on the shift now
+applied**. I flagged the four as unexplained and said I would not assume they were benign.
+
+They are anticipated. `CorpusReanchor.DeriveAppliedShift` derives the shift as the **MODE** of
+(recorded - planned) in whole seconds, and its own doc comment says why: *"the MODE of those
+differences is the answer, because a handful of items whose date write failed must not drag it."*
+Agreement is then exact-to-the-second, so an item off by one second counts as disagreeing.
+
+The threshold that decides whether the corpus is trustworthy is `ShiftAgreementFloor = 0.90`,
+documented as the point below which *"the corpus is not one corpus with one shift - it is a store
+whose dates nobody can account for."* This corpus is at **0.9998**.
+
+So four items out of twenty thousand is the expected shape of a bulk date write, the metric was
+built to tolerate exactly this, and the number to watch is the ratio against 0.90 rather than the
+raw count. Worth writing down because "19,996 of 20,000" reads like a defect and is not one.
+
 ### What is NOT done
 
 1. **Guest two is not actually unindexed yet.** Both guests are identical in that respect and
