@@ -19,8 +19,9 @@
 
     ONE CORPUS ID PER GUEST, AND THE MANIFEST IS NAMED AFTER IT. The ids for the two guests being
     built are vm-indexed and vm-unindexed, and a manifest is corpus-<corpusId>.jsonl. That is not
-    tidiness: Testbed/host/Copy-FromGuest.ps1 pulls every guest into one shared directory, so two
-    guests sharing an id means the second pull replaces the first's manifest - and a manifest is
+    tidiness: Testbed/host/Copy-FromGuest.ps1 pulls every guest's MANIFEST into one shared
+    directory - deliberately, so that a reused id still collides where a human can see it - so two
+    guests sharing an id means the second pull replaces the first's manifest, and a manifest is
     the only thing corpus-teardown can remove a corpus with. Change -CorpusId and -Manifest
     together, always. Testbed/README.md section 3 carries the convention and why these names.
 

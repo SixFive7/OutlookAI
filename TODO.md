@@ -2043,6 +2043,62 @@
       too small" early return against an empty one - so the second store is the only one the
       tripwire can watch anyway.
 
+- [ ] **UNTESTED: what an ADVISED EVENT SINK leaves inside Outlook when its COM host is killed.
+      Two of the three nominated mechanisms were measured on 2026-09-15 and both came back
+      negative; the third cannot be created from PowerShell, so it is the one gap left.**
+
+      **Measured on the test guest, 2026-09-15.** A holder process was killed with
+      `TerminateProcess` - the same call `ComHostSupervisor` makes - and then a fresh client was
+      timed against the same Outlook instance:
+
+      | Holder held before being killed | Fresh client afterwards |
+      | --- | --- |
+      | `Application` + `NameSpace` + `Folder` | `CreateObject` 0.37 s, `GetDefaultFolder` 0.05 s |
+      | the same **plus a pin `Explorer`** (never displayed, never `Close()`d) | `CreateObject` 0.37 s, `GetDefaultFolder` 0.05 s, `explorers=1` |
+
+      **Neither reproduced anything.** A killed holder's references do not block, delay or
+      otherwise inconvenience the next client, with or without a pin.
+
+      **THE NINE-MINUTE COM BLOCK THAT STARTED THIS WAS NOT REPRODUCED AND REMAINS UNEXPLAINED.**
+      It was produced by throwaway probes, not by the product, and it **must not be cited as
+      evidence about the kill path** in any direction - not as a reason to change the kill, and
+      not as a reason to trust it. `Docs/autonomous-session-log.md` records "COM references
+      orphaned by two earlier probes" as the only surviving explanation; the trials above are the
+      direct test of exactly that, and it failed, so that paragraph is superseded and the cause is
+      open. Nothing about `ComHostSupervisor`'s kill was ever implicated.
+
+      **The pin leak is real, and it is a nuisance rather than a hang.** The orphaned `Explorer`
+      **persists and is visible to the next client** (`explorers=1`), and `OUTLOOK.EXE` stayed up
+      throughout. So a host killed while holding a pin leaves an invisible window behind: a slow
+      accumulation over many kills, and an irritation to a human who then tries to exit Outlook
+      and finds it will not go. It is not a wedge and it is not why anything blocked. Note also
+      that **in the first trial `OUTLOOK.EXE` survived the holder's death with NO pin at all** -
+      which weakens the pin's own justification, since the pin exists to keep Outlook alive.
+
+      **DECIDED 2026-09-15: do not chase the sink now.** It is the only one of the three where a
+      pointer is handed **into** Outlook rather than held by us, which is why it is worth testing
+      at all - but it cannot be created from PowerShell, so testing it means deploying something
+      that can, and the new guests are about to have exactly that deployed anyway. **Fold it into
+      commissioning**: the real COM host lands on each guest as a build step, and
+      `McpServer/OutlookAI.McpServer.Tests/T3/ComHostSupervisionLiveTests.cs` already drives the
+      timeout / kill / respawn path there.
+
+      **The experiment, concretely, so nobody has to redesign it:**
+
+      1. **Start from a freshly restarted guest.** Not a convenience: the two trials above only
+         mean anything because no earlier probe's orphaned state was left on the machine, and the
+         nine-minute block itself is now believed to be orphaned-state contamination of some kind.
+         Assert `OUTLOOK.EXE` is not running before anything binds COM.
+      2. **Connect the real COM host**, so a genuine advised event sink is registered - the thing
+         PowerShell cannot produce.
+      3. **Kill it with `TerminateProcess`** - `Process.Kill`, the supervisor's own path, not a
+         graceful shutdown. A graceful exit unadvises and proves nothing.
+      4. **Time a fresh client's `GetDefaultFolder` under a watchdog.** The watchdog is the point:
+         the failure mode being looked for is a call that never returns, so a bare stopwatch
+         cannot record it. Bound it, and record the bound as the result when it expires.
+      5. Record `explorers=` and whether `OUTLOOK.EXE` survived, the same two observations the
+         trials above took, so the three mechanisms stay comparable.
+
 - [ ] **Live-only, and unguarded by any non-live test: three decisions inside the count tripwire's
       verification.** Established by construction rather than by mutation, because they sit behind
       a COM census that no CI test can execute: `CollectionFinished`'s early return on `NotLast`;
