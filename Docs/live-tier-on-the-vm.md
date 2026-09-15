@@ -921,14 +921,18 @@ unrecorded or unverified.
    **Nobody has to verify it, and nobody has to build around it.** See 1.1a. Note the distinction:
    the assumption was not disproved, we simply stopped depending on it, and the two-guest build
    was adopted for an unrelated reason.
-2. **That Outlook accepts `@` in a store display name** (section 2.6). It gates the draft
-   family and costs five minutes. **Still open, now one command (2026-09-15):**
-   `Testbed/guest/Add-OutlookPstStore.ps1 -NameProbe -Execute -VerifyWithOutlook` settles it in a
-   throwaway profile and reports **accepted**, **rejected** or **transformed**. No documentation
-   and no community source states a restriction either way - which is why this is a probe and not
-   an answer. **Transformed** is the outcome to watch for: a silently-renamed store is one no test
-   can find by name, on a machine that otherwise looks correctly built. Section 2.8b gates the
-   identity store on the same question.
+2. ~~That Outlook accepts `@` in a store display name~~ - **ANSWERED 2026-09-15: YES, MEASURED.**
+   This was called out as gating the whole draft family, and no documentation or community source
+   stated a restriction either way. It came out as a side effect of the PRF spike rather than from
+   the probe written for it: the profile Outlook built from `Testbed/guest/tier-profile.prf` on
+   Office LTSC 2024 build 16.0.17932 carries a `MSUPST MS` service whose `Account Name` reads
+   literally **`tier@vm.invalid`**. The `@` is accepted, stored and read back unchanged.
+
+   Two caveats, so nobody over-reads it. The name was set **at profile-creation time through the
+   PRF**, not typed into Data File Properties, so a validation rule in that dialog is still
+   untested - irrelevant if stores are always created by script, which is now the plan. And this
+   is the name on the profile's PST *service*; whether `Store.DisplayName` reports the same string
+   over COM has not been read back yet, and that is the property the live tier keys on.
 3. **Whether smtp4dev's POP3 side maps an arbitrary `USER` to the catch-all mailbox**, or
    whether the username must match a configured mailbox name. If the latter, add an explicit
    `Mailboxes` entry with `Recipients: "*"` and use its name as the POP3 username.

@@ -127,7 +127,22 @@ $ErrorActionPreference = 'Stop'
 
 $setupKey    = "HKCU:\Software\Microsoft\Office\$OfficeVersion\Outlook\Setup"
 $outlookKey  = "HKCU:\Software\Microsoft\Office\$OfficeVersion\Outlook"
-$profilesKey = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Windows Messaging Subsystem\Profiles'
+# PROFILES MOVED AT OUTLOOK 2013. This read the legacy Windows Messaging Subsystem path and
+# therefore found nothing on a 16.x guest - reporting "no profile named X" and "the account
+# manager holds no accounts" while the profile and a fully populated POP3 account sat in the
+# Office hive a few keys away. Measured 2026-09-15: five checks failed and the script's own raw
+# dump, printed directly underneath them, contradicted every one.
+#
+# This is the exact trap Docs/research/pop3-account-routes.md warns about - "older tooling that
+# hardcodes the WMS path will silently look in the wrong place on 16.x" - and it is worth more
+# than a one-line fix, because a verifier that reads the wrong hive does not fail loudly: it
+# reports a working route as dead, which is the most expensive wrong answer available here.
+#
+# Both paths are checked, newest first, so this keeps working on an older Outlook.
+$profilesKeyModern = "HKCU:\Software\Microsoft\Office\$OfficeVersion\Outlook\Profiles"
+$profilesKeyLegacy = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Windows Messaging Subsystem\Profiles'
+$profilesKey = $profilesKeyLegacy
+if (Test-Path $profilesKeyModern) { $profilesKey = $profilesKeyModern }
 
 # The account-manager subkey under a profile. Stable since Outlook 2002.
 $acctMgrSubkey = '9375CFF0413111d3B88A00104B2A6676'
