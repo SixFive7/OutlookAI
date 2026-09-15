@@ -42,8 +42,20 @@ public sealed class MailSinkSettings
 /// <b>Why a sink at all, and why it must deliver BACK.</b> The test VM's dummy account
 /// pointed at an unroutable server. A send therefore QUEUES and never leaves - and the
 /// Outbox is in the mandatory zero-artifact sweep, so every run that sent anything would
-/// fail its own teardown, forever, on an artifact nothing could remove. Six live methods
-/// additionally need the mail to actually arrive. Weakening the sweep was rejected outright:
+/// fail its own teardown, forever, on an artifact nothing could remove.
+/// </para>
+/// <para>
+/// <b>"Six live methods additionally need the mail to actually arrive" was wrong - it is 13,
+/// corrected 2026-09-15.</b> Six FILES hold an arrival wait (see <c>LiveInboxArrival</c>'s own
+/// header, which counts the copies it consolidated); that file count was read as a method count,
+/// and three more waits were never in the consolidation at all. Of 127 live methods, however,
+/// exactly ONE needs the wire in a way nothing can substitute:
+/// <c>T3/Phase5LiveMcpToolShapeTests.SendTool_TwoStepFlow_RoundTrip_OverRealStdio_WithAuditLines</c>,
+/// the only test that calls the product's own <c>send</c> tool and lets Outlook submit. The other
+/// twelve need an item to appear in the Inbox with a known subject, which direct PST creation
+/// produces - as <see cref="LiveOutlookTestMailer"/>'s own attachment helper already does,
+/// deliberately, because drafts are indexed exactly like received mail.
+/// Weakening the sweep was rejected outright:
 /// that guard exists because real mail was once destroyed, and the Outbox is the folder that
 /// most reliably catches a genuine send-path leak.
 /// </para>

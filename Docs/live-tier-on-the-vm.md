@@ -127,8 +127,24 @@ families out of reach of an account-less machine.
 
 Pointing it at an unroutable server was the first plan and it is wrong. A send **queues** and
 never leaves, the Outbox is in the mandatory zero-artifact sweep, and so every run that sent
-anything would fail its own teardown forever on residue nothing could remove. Six live methods
-also need the mail to genuinely arrive.
+anything would fail its own teardown forever on residue nothing could remove.
+
+**"Six live methods also need the mail to genuinely arrive" - CORRECTED 2026-09-15, it is 13, and
+the error was mechanical.** Six *files* hold an arrival wait; `T2/LiveInboxArrival.cs` says so in
+its own header, describing the five verbatim copies it replaced "and a SIXTH copy [that] was
+missed". A file count was read as a method count, and three further arrival waits were never in
+that consolidation at all - `LiveFreshModeTests`' own loop, `LiveSweepScopeTests`' 240 s loop, and
+the T3 stdio pollers. **13 methods put mail on the wire and all 13 depend on it arriving.**
+
+**And the number that actually matters is 1.** Of 127 live methods, exactly one needs the wire in
+a way nothing else can substitute: `T3/Phase5LiveMcpToolShapeTests.SendTool_TwoStepFlow_RoundTrip_-
+OverRealStdio_WithAuditLines`, which is the only test that calls the product's own `send` tool with
+a valid token and lets Outlook submit. The other 12 need an item to *appear in the Inbox with a
+known subject*, which direct PST creation already produces - the corpus generator builds 20,000
+such items, and `LiveOutlookTestMailer.SaveTaggedDraftWithAttachments` already made exactly this
+trade for exactly this reason, noting that **drafts are indexed exactly like received mail**.
+
+**`Requires=Transport` over-declares by 12**: 25 methods carry it, 13 use it.
 
 So the account points at a **local sink that delivers back**: submissions on loopback, and the
 same messages served back over POP3 to the same profile, so self-addressed mail round-trips
