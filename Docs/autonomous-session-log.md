@@ -370,12 +370,53 @@ but did not bind the account's own delivery store.
 itself - because an Outlook-minted delivery store is bound by Outlook, which is the step the file
 cannot perform. The harness would then find the store by account rather than by path. Untried.
 
-**A third COM call blocked today**, and the pattern is worth recording even though it is not yet a
-diagnosis: `GetDefaultFolder(DeletedItems)`, `AddStoreEx` (that one *spinning*, not blocked), and
-now `Account.SmtpAddress`. Every probe that ran its COM calls in a `Start-Job` child process
+**CORRECTION, an hour later.** I wrote that `Account.SmtpAddress` blocking was "a third COM call
+blocked today" and filed it with the other two as a pattern. **That was wrong.** On the working
+profile below, the same call returns `'tier@vm.invalid'` in under two seconds. It was not a COM
+pathology at all - it was reading a property on an account Outlook had never finished configuring,
+because the account had no delivery store. The symptom disappeared when the cause did. Two
+unexplained COM blocks remain (`GetDefaultFolder(DeletedItems)` and `AddStoreEx`, the latter
+*spinning* rather than blocked), and grouping a third with them on a surface resemblance is exactly
+the move that produced the earlier "last hypothesis standing" error.
+
+The original observation, kept because the probe design it justified is still right: Every probe that ran its COM calls in a `Start-Job` child process
 completed; the ones that called COM directly from a scheduled task's own runspace are the ones
 that hung. Correlation, not cause - but it is why the account probe is built the way it is, and it
 is the shape the project's own timeout work already cares about.
+
+## THE POP3 ACCOUNT WORKS - measured 2026-09-15, and the fix was to stop naming the store
+
+**`ForcePSTPath` + a PRF with NO PST service and NO `DefaultStore`.** Every property `NewDraft`
+resolves an account by is present:
+
+    Accounts.Count                          1
+    Account[1].SmtpAddress                  'tier@vm.invalid'   AccountType=2 (POP3)
+    Account[1].DeliveryStore                'Outlook Data File'  C:\OutlookAI-Tier\Outlook.pst
+    DeliveryStore.GetDefaultFolder(Drafts)  'Drafts' items=0
+
+**Why the first attempt failed and this one did not.** The shipped `.prf` named a PST service and
+pointed `[General] DefaultStore` at it. That bound the PROFILE's default store but left the
+ACCOUNT's `PROP_ACCT_DELIVERY_STORE` (`00180102`) unset - a binary EntryID a text file structurally
+cannot carry - so `Account.DeliveryStore` came back NULL and `NewDraft` would have failed with
+`AccountHasNoDeliveryStore`.
+
+The variant does the opposite: it removes the PST service entirely and lets Outlook mint the
+account's own delivery store, which is the Outlook-2010-and-later behaviour that had been read all
+along as the obstacle. **A store Outlook mints is a store Outlook binds**, and binding is the one
+step a file cannot perform. `ForcePSTPath` decides where it lands so the harness can still find it.
+
+**So the whole tier profile is now scriptable with no GUI, no paid component and no manual step**,
+which is what the free-only constraint required and what three separate research passes had
+concluded was impossible.
+
+**One thing was traded away, and it is not free.** Outlook names the store it mints: this one is
+`Outlook Data File`, not `tier@vm.invalid`. The runbook's section 2.6 requires the hub store to be
+named as an SMTP address, and the live tier keys on `Store.DisplayName`. So the store still has to
+be renamed after the fact - and the `@` is known to work, measured on the previous attempt where
+`Store.DisplayName` read `tier@vm.invalid` over COM. Named routes, none yet tried: rename the root
+folder and see whether `Store.DisplayName` follows (the question nobody could answer from
+documentation), or set `PR_DISPLAY_NAME` through `ConfigureMsgService` with the MAPI scripts that
+are already written.
 
 ## STILL OPEN - awaiting the maintainer
 
