@@ -17,6 +17,13 @@
     fails the build when the three stop agreeing. Change them only if you mean to build a
     DIFFERENT corpus, and give it a different id when you do.
 
+    ONE CORPUS ID PER GUEST, AND THE MANIFEST IS NAMED AFTER IT. The ids for the two guests being
+    built are vm-indexed and vm-unindexed, and a manifest is corpus-<corpusId>.jsonl. That is not
+    tidiness: Testbed/host/Copy-FromGuest.ps1 pulls every guest into one shared directory, so two
+    guests sharing an id means the second pull replaces the first's manifest - and a manifest is
+    the only thing corpus-teardown can remove a corpus with. Change -CorpusId and -Manifest
+    together, always. Testbed/README.md section 3 carries the convention and why these names.
+
     THE PROFILE MUST HAVE NO MAIL ACCOUNTS. There is no override. A build creates unsent items in
     bulk; the first real run put 5,532 of them into the target store's Outbox, inert only because
     that profile could not send. On a profile with an account those are 5,532 real messages queued
@@ -61,7 +68,7 @@
 .EXAMPLE
     .\Build-Corpus.ps1
     .\Build-Corpus.ps1 -Execute
-    .\Build-Corpus.ps1 -Store "Corpus B" -CorpusId vm3 -Execute
+    .\Build-Corpus.ps1 -Store "Corpus B" -CorpusId vm-unindexed -Manifest C:\OutlookAI-Q5\corpus-vm-unindexed.jsonl -Execute
 #>
 [CmdletBinding()]
 param(

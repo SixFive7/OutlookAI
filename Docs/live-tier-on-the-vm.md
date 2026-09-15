@@ -306,6 +306,69 @@ hub Inbox intact, restart the smtp4dev service, and confirm nothing re-downloads
 passes, the one real objection to smtp4dev - that its POP3 side is much less exercised than its
 SMTP side - is retired.
 
+### 2.8b The identity account - a BUILD step, not a TODO
+
+**Add a SECOND mail account, give it its own delivery PST, and leave that PST out of
+`bystanderStoreDisplayNames`.** That is the whole of the `IdentityAccount` capability: a non-hub
+primary the write allowlist grants an identity draft in. Section 1.3's three-store layout is the
+floor and deliberately has none - both of its non-hub stores are declared bystanders - so a
+machine built only to the floor runs the two identity tests, iterates nothing, and announces that
+it proved nothing. Build this and they assert instead.
+
+**Why it is here rather than on a list for later.** The guests are being created from scratch,
+where this costs minutes: one more account in the same wizard, one more PST, one more name in a
+settings file. Retrofitting it into a machine that is already built is a profile edit, an Outlook
+restart, a settings change and a checkpoint that no longer describes the machine. The suite
+already tells the reader to do exactly this - `IdentityDraftCoverageReport` ends its announcement
+with "give this machine a second mail account and leave it out of `bystanderStoreDisplayNames`" -
+and this section is that instruction put where a rebuilder will act on it, instead of only where a
+run mentions it afterwards.
+
+**What it has to be, read off the two tests rather than invented.** They are
+`LiveDraftTests.IdentityDrafts_BusinessAccounts_...` and
+`LiveDraftOptionsTests.NewDraft_BusinessAccounts_...`, and both iterate the granted stores by
+DISPLAY NAME and then hand that same string to `NewDraft` as an address:
+
+* **A real Outlook account, not a bare PST.** The first test asserts `AccountResolved` and reads
+  `SendUsingAccountSmtp` back off the saved draft, so Outlook must have an `Account` object to pin.
+  Add it exactly as section 2.8 adds the dummy account - POP3 against the same sink, which is
+  catch-all, so a new address needs no provisioning anywhere.
+* **The store display name IS the address**, as it is for the hub. `identity@vm.invalid` is the
+  obvious choice, and `.invalid` keeps it unroutable by RFC 2606. Section 8 item 2 gates this one
+  as well: if Outlook refuses `@` in a store display name, this store and the hub need the same
+  different answer.
+* **Its own delivery store.** "Deliver new messages to" must be this account's own PST: the draft
+  is asserted to land in *that account's own Drafts folder*. Not the hub's, and never a corpus -
+  section 2.6 says why an account delivering into a corpus store locks the generator out of it.
+* **A signature configured on the account.** The second test asserts `SignatureInjected` and then
+  reads the injected HTML back, so the account needs a signature assigned for New mail in
+  Outlook's own settings. It is ordinary user data on this machine and is **not** one of the
+  `OutlookAI-McpTest-` signatures the suite creates and deletes; the SHA-256 signature snapshot
+  requires it to come back bit-identical, which it will, because nothing in the suite writes to it.
+* **Declared in `expectedStoreDisplayNames`, and named NOWHERE in `bystanderStoreDisplayNames`.**
+  The first is what censuses it; the second is the entire point. A declared bystander is refused
+  every write, and that refusal is what empties the identity list. This is the one store on the
+  machine whose absence from the bystander list is deliberate rather than an oversight, so record
+  that fact beside the settings file - the half-declared state elsewhere is a refusal precisely
+  because nobody can tell those two apart by looking.
+
+That makes the machine **four stores**: hub, corpus, bystander, identity. The tripwire's bystander
+is still a separate store and still the only one the guard can decide on - the identity store is
+written to, so it can never do that job.
+
+In section 2.10's settings file the delta is one name, in one list:
+
+```
+"expectedStoreDisplayNames":  [ "test@vm.invalid", "Corpus A", "OutlookAI Bystander", "identity@vm.invalid" ],
+"bystanderStoreDisplayNames": [ "OutlookAI Bystander", "Corpus A" ],
+```
+
+**The example in 2.10 is deliberately left at the three-store floor, and so is section 1.3's
+table.** That floor is the shape of the committed `Testbed/live-test-settings.example.json`, which
+`T1/IdentityDraftCoverageTests` reads in order to pin what a machine WITHOUT an identity account
+does - it is the machine the announcement exists for. Build the fourth store; do not edit the
+example to match it.
+
 ### 2.9 The seed corpus
 
 Corpus work runs under the **no-accounts profile** (section 1.2). The generator is
@@ -347,6 +410,15 @@ Repeat for Corpus B under the other Windows account, with **a different `--corpu
 different manifest path**. Whether the two corpora should share a seed and anchor is not
 settled; sharing them makes the two stores directly comparable, which is probably what you
 want.
+
+**One corpus id per guest, and the ids are assigned, not invented at the keyboard**:
+`vm-indexed` on `OutlookAI-Indexed`, `vm-unindexed` on `OutlookAI-Unindexed`, and `vm2` stays
+`vm2` on the outgoing guest. The manifest is `corpus-<corpusId>.jsonl`, so `--corpus-id` and
+`--manifest` change together, always. `Testbed/host/Copy-FromGuest.ps1` pulls every guest into one
+shared directory, so two guests sharing an id means the second pull replaces the first's manifest -
+and that manifest is the only allowlist `corpus-teardown` will delete from a real store. The
+convention, the reasoning and the backstop that refuses such an overwrite are in
+`Testbed/README.md` section 3.
 
 **The manifest is the only thing that can tear the corpus down**, and it is also what the
 freshness check reads. Copy it somewhere outside the guest. Losing it means `corpus-reindex`
@@ -510,6 +582,22 @@ dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj
 That filter IS the VM bucket, spelled out: everything live except the tests naming a capability
 this machine cannot be given. There is no separate "which bucket" trait to keep in step with it -
 see section 5.
+
+**Do NOT narrow this filter to quieten a machine that lacks a capability - and specifically, do
+not add `&Requires!=IdentityAccount`.** Two tests carry that trait,
+`LiveDraftTests.IdentityDrafts_BusinessAccounts_...` and
+`LiveDraftOptionsTests.NewDraft_BusinessAccounts_...`. On a machine with no identity account they
+still run: they iterate an empty list and print `PROVED NOTHING:` naming the reason and every
+store the write allowlist withheld. **That line is the only record anywhere that the identity path
+is unverified on this machine.** Deselect the two tests and the line goes with them, and the run reports a clean
+pass over a gap nobody is told about - which is the exact vacuous-green failure both the trait and
+the announcement were added to stop, cancelling each other out.
+
+**The trait is for a machine that HAS the account**, so such a machine can select those tests and
+mean it. It is not a way to silence one that does not. A machine without the account leaves the
+filter exactly as written above and reads the `PROVED NOTHING:` line in the output. Section 2.8b
+is how to stop needing that line at all - by building the account, which is the only thing that
+turns those two tests from an announcement into a verification.
 
 To run one class:
 
