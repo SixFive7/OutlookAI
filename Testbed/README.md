@@ -442,6 +442,42 @@ is built, because a testbed VM missing from the list is simply never saved.
 | `guest/Build-Corpus.ps1` | plan, probe, build, census - with the committed parameters as defaults. |
 | `guest/Invoke-GuestMeasure.ps1` | The measurement driver, recovered from the guest. Produced the numbers now in `Docs/magic-numbers.md`. |
 | `guest/Measure-SweepCost.ps1` | Per-folder / per-item sweep cost, out of band. **Reconstructed, never executed** - see its banner. |
+| `guest/tier-profile.prf` | The tier profile as an Outlook .prf: one Unicode PST plus one POP3 account on the loopback sink. A template with `{{...}}` tokens - `New-TierProfile.ps1` renders it. **Never imported by Outlook.** |
+| `guest/New-TierProfile.ps1` | Creates the tier profile by importing that .prf, then reads the profile hive back and asserts whether Outlook honoured it. Three modes: dry run, `-Execute`, `-Verify`. **Never executed** - see its banner and §5c. |
+| `guest/Set-AccountWizardClassic.ps1` | Restores Outlook's classic account wizard and stops AutoDiscover reaching the network. Prerequisite for the UI Automation route. **Never executed.** |
+| `guest/Dump-UiaTree.ps1` | Dumps the UI Automation tree of a dialog that is already open. Read-only; invokes nothing. Decides whether the account wizard can be driven at all. **Never executed against Outlook.** |
+
+---
+
+## 5c. The last three scripts are an EXPERIMENT, not the supported path
+
+Step 7 above still says "by hand", and it still means it. `New-TierProfile.ps1`,
+`Set-AccountWizardClassic.ps1` and `Dump-UiaTree.ps1` exist because creating a POP3 account
+programmatically turned out to have no proven free route - the object model is read-only for
+accounts, Extended MAPI can no longer create POP3 services, and the one component that can is
+excluded by the repository's Dependencies rule. They are the two remaining candidates, written so
+that a guest can settle them in one checkpoint cycle each.
+
+**None of them has ever run.** Each carries a banner saying so, and each verifies its own result
+and exits non-zero rather than reporting a success it did not check. Read the banner before you
+trust an output, and replace it with what actually happened once one of them has run.
+
+**Two questions decide everything, and both are cheap:**
+
+* **Does Outlook 16.x process a .prf's internet-account sections at all?** Every literal POP3 .prf
+  Microsoft ever published is 2000-2007 era. `New-TierProfile.ps1 -Verify` fails loudly with that
+  exact diagnosis if no account subkey appears.
+* **Does the classic account wizard expose non-empty, numeric `AutomationId`s?** If it does, the
+  `Dump-UiaTree.ps1` output *is* the specification for a driver. If the ids are empty or the
+  framework reports `DirectUI`, that route is dead for a PowerShell 5.1 client and no driver
+  should be written.
+
+**And there is a third answer, which is to need less.** Most of what the POP3 account was for is
+satisfied by *any* account whose SMTP address matches - the product never reads
+`Account.AccountType` - and most of the rest is seedable by writing into a PST directly, which the
+corpus generator already does. The analysis behind all three, with a source for every claim, is in
+`.work/pop3-account-routes.md`, which is gitignored scratch: move it under `Docs/` if it should
+outlive the session that produced it.
 
 ---
 
