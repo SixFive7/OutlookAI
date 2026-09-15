@@ -325,6 +325,52 @@ running at all.
     }
 }
 
+function Assert-OutlookClosed {
+    <#
+        REFUSES while Outlook is running, and this is the one refusal here that protects the
+        GUEST rather than the measurement.
+
+        EVIDENCE: MS-DOC, verbatim, from the MAPI dev article on wrapped PSTs and indexing:
+        "The PST provider is very sensitive to the indexing state changing while the PST is
+        open. If the state changes, the PST may end up kicking off an installer to repair
+        Outlook."
+        https://learn.microsoft.com/en-us/archive/blogs/stephen_griffin/wrapped-pst-and-indexing
+
+        This script changes exactly that state and then restarts WSearch, so running it against
+        a guest with Outlook open is the documented way to trigger an Office repair. On a
+        testbed guest that is not a crash, it is worse: the repair runs unattended, the guest's
+        Office state stops matching the one the build script produced, and the checkpoint the
+        whole testbed depends on no longer describes the machine.
+
+        Naming the PSTs matters. "Close Outlook" is easy to satisfy by killing it, and the
+        project's safety rules forbid that outright (never taskkill OUTLOOK.EXE - a killed
+        Outlook is how a PST gets left mid-write). So this says WHICH process and leaves the
+        closing to the caller.
+    #>
+    $outlook = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
+    if ($outlook.Count -eq 0) {
+        return
+    }
+
+    $pids = ($outlook | ForEach-Object { $_.Id }) -join ', '
+    throw @"
+REFUSING TO RUN: Outlook is running on this guest (PID $pids).
+
+Microsoft documents that the PST provider is "very sensitive to the indexing state changing
+while the PST is open", and that if the state changes "the PST may end up kicking off an
+installer to repair Outlook". This script changes precisely that state and then restarts
+WSearch, so running it now is the documented way to start an unattended Office repair on a
+guest whose Office state is supposed to match its checkpoint.
+
+Close Outlook first - GRACEFULLY. Do not taskkill it: the project's mailbox-safety rules
+forbid that, and a PST left mid-write is a worse outcome than an unindexed guest. Quit Outlook
+(or restart the guest, which is the proven way to get a clean Outlook here), then run this
+again.
+
+This refusal does not apply to -Verify, which only reads.
+"@
+}
+
 function Assert-Bitness {
     if (-not [Environment]::Is64BitProcess) {
         throw @"
@@ -644,6 +690,7 @@ Assert-TestbedGuestLocal
 
 if ($Execute -or $Enable) {
     Assert-Elevated
+    Assert-OutlookClosed
 
     $service = Get-WSearchState
     Say ('== Windows Search: startMode={0} status={1} indexerRunning={2} ==' -f

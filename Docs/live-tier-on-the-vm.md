@@ -309,9 +309,50 @@ service produces a machine with no search rather than a mailbox search has not b
 and the product takes a different, untested code path there. Section 8 item 21 keeps that
 distinction from collapsing.
 
-**Run it BEFORE `Build-Corpus.ps1`.** Ordering beats every flag: exclude first and no corpus row
-is ever crawled, so the "indexed, but not yet" state cannot arise and does not have to be waited
-out. `Testbed/README.md` section 1 carries it as step 7b.
+**Run it BEFORE `Build-Corpus.ps1`, and this is LOAD-BEARING rather than an optimisation.**
+Exclude first and no corpus row is ever crawled, so the "indexed, but not **yet**" state cannot
+arise and does not have to be waited out. `Testbed/README.md` section 1 carries it as step 7b.
+
+> **Why it is load-bearing (2026-09-16).** Nobody has established whether setting
+> `PreventIndexingOutlook = 1` **removes rows already in the catalog** or merely stops new ones
+> being added - Microsoft's wording is ambiguous and no source resolves it. If it only stops
+> adding, then a store crawled before the exclusion **stays searchable indefinitely**, and the
+> `-Verify` probe's two readings cannot tell "these rows persist by design" from "the indexer
+> has not settled yet". Excluding first makes the question not arise. If you ever have to
+> exclude a guest whose corpus is already built, do not trust a settle window - rebuild the
+> catalog, or rebuild the guest.
+
+**Three durability risks the script does not defend against**, all established 2026-09-16 and
+none of them a reason to avoid it - they are the reason the Group Policy layer is written *as
+well as* the registry rule:
+
+* **The registry rule can be silently clobbered.** Crawl-scope state lives in a shared memory
+  view with the registry as backing store (`ISearchCrawlScopeManager2::GetVersion` "does not
+  result in a cross-process call" and hands back a mapped view). So any other crawl-scope client
+  calling `SaveAll()` can rewrite `WorkingSetRules` from its own in-memory copy and undo
+  `Include = 0`. The supported equivalent is `AddUserScopeRule(url, fInclude: FALSE, …)` then
+  `SaveAll()` - unreachable from PowerShell 5.1 without hand-declared COM vtables.
+* **`RevertToDefaultScopes()` deletes the rule outright**, and there is no default to fall back
+  to: the `mapi16` rule is `Default = 0` and no `DefaultRules` entry for `mapi16` exists anywhere.
+* **`PreventIndexingOutlook` is machine-wide and is not indexing-only.** It is an HKLM `Machine`
+  policy with no per-user variant, so it hits **every** Windows account on the guest - unlike the
+  per-SID `mapi16` rule. And Outlook reads it itself and switches its own UI to built-in search,
+  surfacing a banner about search performance. That does not change what this product measures
+  (the server queries the catalog directly, not Outlook's UI search), but it does mean mechanism
+  one is a **client-behaviour change**, not purely a scope change.
+
+**Delegate mailboxes are governed separately** and `PreventIndexingOutlook` does not reach them:
+`Search.adml` says in terms that "the 'Enable Indexing of Uncached Exchange Folders' has no effect
+on delegate mailboxes. To stop indexing of online and delegate mailboxes you must disable both
+policies" - the second being `PreventIndexingUncachedExchangeFolders`, same key, **inverted
+polarity**. No guest has a delegate mailbox, so nothing here depends on it today; it is recorded
+because the delegate stores are the ones the tier treats as read-only production data.
+
+**The script REFUSES while Outlook is running**, and that refusal protects the guest rather than
+the measurement: Microsoft documents that the PST provider is "very sensitive to the indexing
+state changing while the PST is open", and that if it changes "the PST may end up kicking off an
+installer to repair Outlook". Quit Outlook gracefully or restart the guest - **never** `taskkill`
+it.
 
 **Verify by asking the INDEX, not the registry.** `Set-OutlookIndexingDisabled.ps1 -Verify` runs
 a control probe, a scoped-MAPI probe and a scope-free mail probe through the same
