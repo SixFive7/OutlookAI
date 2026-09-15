@@ -27,7 +27,10 @@
     replacement line per item, so an old copy is not equivalent.
 
 .PARAMETER VMName
-    Guest name.
+    MANDATORY. Which guest to pull from. There is no default: THREE MACHINES COEXIST during the
+    changeover - OutlookAI-Indexed, OutlookAI-Unindexed and the outgoing OutlookAI-TestVM - and a
+    default that silently picks one of three is the exact shape of mistake this testbed keeps
+    making. Here it would be pulling one guest's manifest and landing it on top of another's.
 
 .PARAMETER GuestPath
     Directory on the guest to collect from. Default C:\OutlookAI-Q5, which is where the guest's
@@ -40,12 +43,12 @@
     Host directory. Defaults to the gitignored live-fixtures/vm-corpus.
 
 .EXAMPLE
-    pwsh -File Testbed/host/Copy-FromGuest.ps1
-    pwsh -File Testbed/host/Copy-FromGuest.ps1 -Include *.jsonl -Destination C:\somewhere\else
+    pwsh -File Testbed/host/Copy-FromGuest.ps1 -VMName OutlookAI-Indexed
+    pwsh -File Testbed/host/Copy-FromGuest.ps1 -VMName OutlookAI-Indexed -Include *.jsonl -Destination C:\somewhere\else
 #>
 [CmdletBinding()]
 param(
-    [string]   $VMName = 'OutlookAI-TestVM',
+    [Parameter(Mandatory = $true)] [string] $VMName,
     [string]   $GuestPath = 'C:\OutlookAI-Q5',
     [string[]] $Include = @('corpus-*.jsonl', 'measure.jsonl', '*.log'),
     [string]   $Destination,

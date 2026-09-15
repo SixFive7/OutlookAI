@@ -26,7 +26,12 @@
     has to read the same leases the operator writes).
 
 .PARAMETER VMName
-    The VM to lease.
+    MANDATORY, and always has been. The VM to lease. There is no default here for the same
+    reason there is none anywhere else in Testbed/host/: THREE MACHINES COEXIST during the
+    changeover - OutlookAI-Indexed, OutlookAI-Unindexed and the outgoing OutlookAI-TestVM - and a
+    default that silently picks one of three is the exact shape of mistake this testbed keeps
+    making. A lease taken on the wrong machine protects nothing and reads, in the log, exactly
+    like one that worked.
 
 .PARAMETER Minutes
     How long the lease lasts from now. Renew before it expires. Do NOT take a very long lease

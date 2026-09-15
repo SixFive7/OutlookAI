@@ -20,10 +20,15 @@ guest itself, by luck rather than by design. **Nothing in here should exist only
 ## 0. Media is a precondition — read `MEDIA.md` first
 
 You cannot start without Windows installation media, and this machine did not have any when the
-question was first asked. `Testbed/MEDIA.md` records what is needed, what exists, the Office
-deployment settings the current guest was built with, and the licence clocks — including the one
+question was first asked. `Testbed/MEDIA.md` records what is needed, **where on this machine it
+actually is** (`.work/media/` for Windows, `.work/office-odt/` for Office — gitignored scratch,
+and the right home precisely because Downloads has been purged without warning once already), the
+Office deployment settings, and the licence clocks — including the one
 correction that matters: **Office's grace is 30 days, not 90**, so it expires before Windows and
 a "rebuild when it expires" policy means rebuilding monthly unless the guest can reach a KMS host.
+
+Both are **preconditions, not artefacts**: nothing here regenerates them, `.work/` is scratch, and
+a rebuilder who finds either directory empty must re-stage it before step 4.
 
 It also carries the rule that came out of nearly getting this wrong: **never destroy a working
 testbed before its replacement runs.**
@@ -35,7 +40,7 @@ testbed before its replacement runs.**
 | 1 | Build the answer volume | `host/New-AnswerFile.ps1` | host |
 | 2 | Create the guest, attach both ISOs, boot it | `host/New-TestbedVm.ps1` | host |
 | 3 | Windows installs itself - edition, disk, account, autologon, locale, power | nobody: the answer file | guest, unattended |
-| 4 | Install Office, the accounts and the profiles | by hand - `Docs/live-tier-on-the-vm.md` §2.2-2.6 | guest |
+| 4 | Install Office, the accounts and the profiles | by hand - `Docs/live-tier-on-the-vm.md` §2.2-2.6, with `.work/office-odt/Testbed.xml` (`MEDIA.md`) | guest |
 | 5 | Give yourself a way to reach session 1 | `guest/Register-InteractiveTask.ps1` | guest, once |
 | 6 | Build the server and the tools, and copy them in | `host/Publish-GuestPayload.ps1` | host |
 | 7 | Install the mail sink and the dummy account | by hand - `Docs/live-tier-on-the-vm.md` §2.7-2.8 | guest |
@@ -100,10 +105,10 @@ checks off is not the machine the userbase runs.
 
 **What the generator needs.** A gitignored `vm-credentials.json` (§4 - the same file everything
 else uses, loaded through the same `host/Get-GuestCredential.ps1`), and something to build an ISO
-with. **One thing to know before building the second guest:** that loader refuses a credential
-whose `vmName` names a different VM, so a single credential file serving both guests must leave
-`vmName` empty. The check only fires when the field has a value, and with one shared account
-there is no wrong machine for it to protect against. It prefers `oscdimg.exe` from the Windows ADK's Deployment Tools and falls back to the
+with. **The credential's `vmName` is now empty, and that is a setting rather than an omission** -
+see §4a. The loader refuses a credential whose `vmName` names a *different* VM, so a pinned file
+would refuse two of the three guests; the check only fires when the field has a value, and with
+one shared account there is no wrong machine for it to protect against. It prefers `oscdimg.exe` from the Windows ADK's Deployment Tools and falls back to the
 IMAPI2FS COM object that ships with Windows, so a machine with no ADK can still build the volume.
 If neither works it says which is missing and writes nothing; it never leaves half an ISO, because
 a broken answer volume looks exactly like an ordinary interactive Setup and tells you nothing.
@@ -179,6 +184,14 @@ match is between two independently recorded things rather than a tautology.
 
 `testbed.json` also carries the whole expected plan output, so a rebuilder can tell a correct
 rebuild from a subtly different one without needing the old store to compare against.
+
+**Its `vmName` says `OutlookAI-TestVM`, and it stays that way.** That field is *provenance* - the
+guest these numbers were taken on - not a build target, and the two are now labelled apart in the
+file itself. Repointing it at `OutlookAI-Indexed` today would assert that measurements were taken
+on a machine nobody has built yet, which is worse than a name that looks stale; emptying it would
+throw away the one record of where the numbers came from. It changes when the measurements
+themselves are retaken, and the whole record changes with it. The guests to *build* are named in
+§4a, and nothing defaults to either of them.
 
 **The manifest itself is deliberately NOT committed.** It is 2.9 MB of EntryIDs describing one
 machine's mailbox state, a build regenerates it, and it belongs in the gitignored
@@ -303,20 +316,59 @@ accounts yet.
 
 ---
 
+## 4a. Nothing guesses which guest you mean
+
+**THREE MACHINES COEXIST during the changeover**: `OutlookAI-Indexed` and `OutlookAI-Unindexed`
+are being built, and `OutlookAI-TestVM` - the guest every published measurement was taken on -
+stays until its replacements are proved (`MEDIA.md`, "never destroy a working testbed before its
+replacement runs"). **A default that silently picks one of three is the exact shape of mistake
+this testbed keeps making**, so as of 2026-09-15 there are no VM-name defaults left in
+`host/`.
+
+**Two changes, decided together.**
+
+1. **The credential's `vmName` is empty.** `host/Get-GuestCredential.ps1` refuses a credential
+   pinned to a different VM, and that refusal fires *before anything else runs* - it stopped
+   `New-AnswerFile.ps1 -VMName OutlookAI-Indexed` at step one while the file still said
+   `OutlookAI-TestVM`. The loader only enforces the match when the field has a value, so an
+   empty string means "usable for any guest", which is what one shared account across three
+   machines actually needs. Pinning stays available for anyone who genuinely has one credential
+   per machine.
+2. **`-VMName` / `-Name` is `[Parameter(Mandatory)]`** in `Copy-FromGuest.ps1`,
+   `Copy-ToGuest.ps1`, `Get-GuestCredential.ps1`, `New-AnswerFile.ps1`, `New-TestbedVm.ps1` and
+   `Set-TestbedLease.ps1`. Omit it and the script asks, or fails; it never assumes.
+   `Publish-GuestPayload.ps1` takes no VM name at all and correctly does not need one - it only
+   builds on the host, and one payload serves all three guests. The naming happens at the
+   copy-in.
+
+**One deliberate exception: `host/Invoke-TestbedIdleSave.ps1` keeps its default of all three
+names.** Its `-VMName` is an **allowlist, not a target** - it bounds the set the saver may touch
+at all rather than picking one to act on, and naming every known guest *is* the intent. Its
+failure direction is the safe one too: a wrong or stale entry makes it do less (a VM is not
+saved, the host keeps its RAM, and `Get-VM` shows it), where a wrong default elsewhere acts on a
+machine nobody was looking at. Making it mandatory would also break the scheduled task outright -
+`host/Register-IdleSaveTask.ps1` invokes it with `-NonInteractive` and no arguments, so a
+mandatory parameter cannot prompt; it would throw every fifteen minutes for ever and the only
+symptom would be a host that never reclaims its RAM. **Keep that list in step with the guests
+that exist:** drop `OutlookAI-TestVM` when the old guest goes, and add any new guest the day it
+is built, because a testbed VM missing from the list is simply never saved.
+
+---
+
 ## 5. What is in here
 
 | Path | What it is |
 | --- | --- |
-| `testbed.json` | The parameter set. Corpus quad, expected plan output, build cost, guest layout, and an explicit list of what is still unrecorded. |
+| `testbed.json` | The parameter set. Corpus quad, expected plan output, build cost, guest layout, and an explicit list of what is still unrecorded. Its `vmName` is the guest this was **measured on**, not a guest to build (§3). |
 | `live-test-settings.example.json` | Complete example of the gitignored settings file, every field present, placeholders only. |
 | `guest/autounattend.template.xml` | The unattended-install answer file. Locale, disk layout, local account, autologon - and placeholder tokens where the password goes. Contains no credential and must never contain one. |
-| `host/New-AnswerFile.ps1` | Fills that template from the gitignored credential and packages it as a small ISO. Writes into gitignored scratch only, and refuses anywhere else. |
+| `host/New-AnswerFile.ps1` | Fills that template from the gitignored credential and packages it as a small ISO. Writes into gitignored scratch only, and refuses anywhere else. `-VMName` is mandatory (§4a). |
 | `guest/Complete-FirstLogon.ps1` | The first-logon fix-ups the answer file cannot express: the en-NL language list, the home location, the locales, no sleep, no fast startup. Logs and reads back everything it set. |
-| `host/New-TestbedVm.ps1` | Creates the Hyper-V guest, attaches the Windows ISO and the answer volume, boots it, and records the spec it chose. |
-| `host/Publish-GuestPayload.ps1` | Publishes the MCP server and the remediation tools on the host and zips them for copy-in. |
-| `host/Get-GuestCredential.ps1` | Loads the guest credential from the gitignored fixtures directory. Documents the one place a credential may live; contains none. |
-| `host/Copy-ToGuest.ps1` | Copies a file or a zip into the guest over PowerShell Direct. |
-| `host/Copy-FromGuest.ps1` | Gets results, logs and the corpus manifest back out. |
+| `host/New-TestbedVm.ps1` | Creates the Hyper-V guest, attaches the Windows ISO and the answer volume, boots it, and records the spec it chose. `-Name` is mandatory (§4a). |
+| `host/Publish-GuestPayload.ps1` | Publishes the MCP server and the remediation tools on the host and zips them for copy-in. Host-only, so it takes no VM name; one payload serves all three guests. |
+| `host/Get-GuestCredential.ps1` | Loads the guest credential from the gitignored fixtures directory. Documents the one place a credential may live; contains none. `-VMName` is mandatory (§4a). |
+| `host/Copy-ToGuest.ps1` | Copies a file or a zip into the guest over PowerShell Direct. `-VMName` is mandatory (§4a). |
+| `host/Copy-FromGuest.ps1` | Gets results, logs and the corpus manifest back out. `-VMName` is mandatory (§4a); its default destination is shared, so pull one guest at a time and move the manifest aside before pulling the next. |
 | `guest/Register-InteractiveTask.ps1` | The session-1 scheduled-task recipe. Everything COM-touching goes through it. |
 | `guest/Build-Corpus.ps1` | plan, probe, build, census - with the committed parameters as defaults. |
 | `guest/Invoke-GuestMeasure.ps1` | The measurement driver, recovered from the guest. Produced the numbers now in `Docs/magic-numbers.md`. |
@@ -357,10 +409,10 @@ taken its lease yet is not immediately put back to sleep.
 
 | Script | What it does |
 | --- | --- |
-| `host/Set-TestbedLease.ps1` | Take, renew or release a lease. |
+| `host/Set-TestbedLease.ps1` | Take, renew or release a lease. `-VMName` is mandatory (§4a). |
 | `host/TestbedLeasePath.ps1` | Where leases live, and how one is read. Dot-sourced by both sides so they cannot disagree. |
-| `host/Invoke-TestbedIdleSave.ps1` | The saver. `-WhatIf` reports without changing anything. |
-| `host/Register-IdleSaveTask.ps1` | Registers it as SYSTEM in session 0, every 15 minutes. Needs elevation. |
+| `host/Invoke-TestbedIdleSave.ps1` | The saver. `-WhatIf` reports without changing anything. The one script here that keeps a VM-name default, because its `-VMName` is an allowlist rather than a target (§4a). |
+| `host/Register-IdleSaveTask.ps1` | Registers it as the invoking user at ordinary privilege, every 15 minutes. Needs local `Hyper-V Administrators` membership, **not** elevation - `Save-VM` does not require it, and a standing elevated task would outlive the reason it was created. |
 
 **Deliberate failure directions**, each chosen so the wrong answer is visible rather than silent:
 

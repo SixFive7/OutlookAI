@@ -62,6 +62,7 @@
     "provenance": "Reported by the coordinator on 2026-08-24 from a direct read of the guest. The .NET runtime version, the absence of an SDK and AutoAdminLogon=1 for 'vmadmin' were verified there; this agent could not inspect the VM and did not."
   },
 
+  "_vmNameNote": "THE GUEST THIS WAS MEASURED ON, NOT THE GUEST TO BUILD. Everything in this file describes one machine's recorded state, so this name is provenance and stays as it is until the measurements themselves are retaken. Do not read it as a default: OutlookAI-Indexed and OutlookAI-Unindexed are the guests being built as of 2026-09-15, and no script in Testbed/host/ has a VM-name default any more - see Testbed/README.md section 4a. When a new guest's measurements replace these, the whole record changes together and this name changes with it.",
   "vmName": "OutlookAI-TestVM",
 
   "checkpoints": [

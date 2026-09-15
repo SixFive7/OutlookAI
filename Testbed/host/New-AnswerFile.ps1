@@ -66,15 +66,24 @@
     to enforce where output may go.
 
 .PARAMETER VMName
-    Which guest this answer file is for. Passed to Get-GuestCredential.ps1, which refuses a
-    credential recorded for a different VM, and used to name the ISO.
+    MANDATORY. Which guest this answer file is for. Passed to Get-GuestCredential.ps1, which
+    refuses a credential pinned to a different VM, and used to name the ISO and derive the
+    computer name.
 
-    TWO GUESTS, ONE CREDENTIAL FILE. That refusal is per-name, so building answer volumes for
-    both guests from a single vm-credentials.json needs its `vmName` left empty or absent - the
-    loader only enforces the match when the field has a value. The alternative is one credential
-    file per guest, which means one of them is not at the documented path. Empty `vmName` is the
-    intended route; the field exists to stop a credential being handed to a machine it was not
-    meant for, and with one shared account there is no such machine.
+    NO DEFAULT, DELIBERATELY. THREE MACHINES COEXIST during the changeover - OutlookAI-Indexed,
+    OutlookAI-Unindexed and the outgoing OutlookAI-TestVM - and a default that silently picks
+    one of three is the exact shape of mistake this testbed keeps making. Here it would be worse
+    than usual: the name also decides the computer name baked into the answer file and the
+    directory the ISO lands in, so a wrong default produces a guest that installs cleanly under
+    somebody else's identity.
+
+    THREE GUESTS, ONE CREDENTIAL FILE. The loader's refusal is per-name, so building answer
+    volumes for all of them from a single vm-credentials.json needs its `vmName` left empty -
+    which is now its recorded setting. The loader only enforces the match when the field has a
+    value. The alternative is one credential file per guest, which means all but one are not at
+    the documented path. Empty `vmName` is the intended route; the field exists to stop a
+    credential being handed to a machine it was not meant for, and with one shared account there
+    is no such machine.
 
 .PARAMETER ComputerName
     The Windows computer name to give the guest. Defaults to the VM name with its 'OutlookAI-'
@@ -109,15 +118,15 @@
     Leave the staging directory in place. It holds the same credential the ISO does.
 
 .EXAMPLE
-    pwsh -File Testbed/host/New-AnswerFile.ps1 -VMName OutlookAI-TestVM
+    pwsh -File Testbed/host/New-AnswerFile.ps1 -VMName OutlookAI-Indexed
 
 .EXAMPLE
-    pwsh -File Testbed/host/New-AnswerFile.ps1 -VMName OutlookAI-Indexed -ComputerName OAI-INDEXED
+    pwsh -File Testbed/host/New-AnswerFile.ps1 -VMName OutlookAI-Unindexed -ComputerName OAI-UNIDX
 #>
 [CmdletBinding()]
 param(
     [string] $RepoRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
-    [string] $VMName = 'OutlookAI-TestVM',
+    [Parameter(Mandatory = $true)] [string] $VMName,
     [string] $ComputerName,
     [string] $ImageName = 'Windows 11 Pro',
     [string] $TemplatePath,

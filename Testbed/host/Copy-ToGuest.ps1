@@ -17,7 +17,11 @@
     service is off. A PSSession over VMBus does both directions with one mechanism.
 
 .PARAMETER VMName
-    Guest name. `OutlookAI-TestVM` by convention.
+    MANDATORY. Which guest to copy into. There is no default: THREE MACHINES COEXIST during the
+    changeover - OutlookAI-Indexed, OutlookAI-Unindexed and the outgoing OutlookAI-TestVM - and a
+    default that silently picks one of three is the exact shape of mistake this testbed keeps
+    making. Here it would be staging a payload on a machine you were not looking at, which then
+    looks like a copy that did not happen.
 
 .PARAMETER Path
     Host file to copy. Repeatable.
@@ -26,11 +30,11 @@
     Guest path. A directory when several files are given; a file path when one is.
 
 .EXAMPLE
-    pwsh -File Testbed/host/Copy-ToGuest.ps1 -Path .work/testbed-payload/McpServer.zip -Destination C:\OutlookAI-Q5\McpServer.zip
+    pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName OutlookAI-Indexed -Path .work/testbed-payload/McpServer.zip -Destination C:\OutlookAI-Q5\McpServer.zip
 #>
 [CmdletBinding()]
 param(
-    [string] $VMName = 'OutlookAI-TestVM',
+    [Parameter(Mandatory = $true)] [string] $VMName,
     [Parameter(Mandatory = $true)] [string[]] $Path,
     [Parameter(Mandatory = $true)] [string] $Destination,
     [string] $RepoRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))

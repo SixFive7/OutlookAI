@@ -66,8 +66,16 @@
     -Execute only once you have.
 
 .PARAMETER Name
-    VM name. `OutlookAI-TestVM` by convention - Docs/live-tier-on-the-vm.md and Testbed/testbed.json
-    both use it.
+    MANDATORY. The VM name to create. There is no default: THREE MACHINES COEXIST during the
+    changeover - OutlookAI-Indexed, OutlookAI-Unindexed and the outgoing OutlookAI-TestVM - and a
+    default that silently picks one of three is the exact shape of mistake this testbed keeps
+    making. This script also derives the VHD path and the spec file from the name, so a wrong
+    default is a new disk in somebody else's directory, or a refusal on top of a VM that already
+    exists.
+
+    `OutlookAI-TestVM` is the OLD guest, the one being replaced; Docs/live-tier-on-the-vm.md and
+    Testbed/testbed.json still name it because they describe the machine the published
+    measurements were taken on. It is not a name to build under.
 
 .PARAMETER IsoPath
     Windows 11 installation ISO. You supply this; see Testbed/README.md section 6.
@@ -91,7 +99,7 @@
     host and you would rather press the key in the console yourself.
 
 .EXAMPLE
-    pwsh -File Testbed/host/New-TestbedVm.ps1 -IsoPath D:\iso\Win11.iso
+    pwsh -File Testbed/host/New-TestbedVm.ps1 -Name OutlookAI-Unindexed -IsoPath D:\iso\Win11.iso
 
 .EXAMPLE
     pwsh -File Testbed/host/New-AnswerFile.ps1 -VMName OutlookAI-Indexed
@@ -99,7 +107,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Name = 'OutlookAI-TestVM',
+    [Parameter(Mandatory = $true)] [string] $Name,
     [Parameter(Mandatory = $true)] [string] $IsoPath,
     [string] $AnswerIsoPath,
     [string] $VhdPath,

@@ -28,6 +28,30 @@
     The testbed VMs. Defaults to the names the testbed uses. Anything not named here is ignored
     entirely - this script must never be able to save a VM that is not part of the testbed.
 
+    THIS ONE KEEPS ITS DEFAULT, AND IT IS THE ONLY ONE IN Testbed/host/ THAT DOES. Every other
+    script there now requires -VMName / -Name, because THREE MACHINES COEXIST during the
+    changeover (OutlookAI-Indexed, OutlookAI-Unindexed and the outgoing OutlookAI-TestVM) and a
+    default that silently picks ONE OF THREE is the exact shape of mistake this testbed keeps
+    making. Two things make this parameter different:
+
+      - It is an ALLOWLIST, not a target. It does not pick a machine to act on; it bounds the
+        set this script is permitted to touch at all. Naming all three is the whole intent -
+        "save any testbed VM nobody is using" - not an unstated guess at one of them.
+      - Its failure direction is the safe one. A wrong or stale entry makes this script do LESS:
+        it skips a VM and the host keeps holding RAM, which is visible in Get-VM and fixed by
+        saving by hand. A wrong default in Copy-ToGuest or New-TestbedVm acts on a machine the
+        operator was not looking at, which is not visible at all.
+
+    Making it mandatory would also break the scheduled task outright. Register-IdleSaveTask.ps1
+    invokes this file with -NonInteractive and no arguments, so a mandatory parameter cannot
+    prompt - it throws, every fifteen minutes, for ever, and the symptom is a host that never
+    reclaims its RAM with nothing anywhere saying why. That is strictly worse than the mistake
+    the mandatory rule exists to prevent.
+
+    KEEP THIS LIST IN STEP WITH THE GUESTS THAT EXIST. Drop OutlookAI-TestVM from it once the
+    old guest is gone, and add any further guest the day it is built: a testbed VM missing from
+    this list is simply never saved.
+
 .PARAMETER MinimumUptimeMinutes
     Grace period after a VM starts, before it becomes eligible to be saved.
 
@@ -40,6 +64,9 @@
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
+    # An allowlist, not a target - see .PARAMETER VMName. This is the one script in Testbed/host/
+    # that keeps a default, because naming every known guest IS the intent here, and a name that
+    # is wrong or stale makes it skip a VM rather than act on the wrong one.
     [string[]] $VMName = @('OutlookAI-Indexed', 'OutlookAI-Unindexed', 'OutlookAI-TestVM'),
     [int] $MinimumUptimeMinutes = 10
 )
@@ -59,14 +86,18 @@ function Write-Line {
 
 # Prove Hyper-V is reachable BEFORE the loop. Without this the per-VM
 # '-ErrorAction SilentlyContinue' swallows a permissions failure exactly as it swallows a VM
-# that lives on another host, and an unelevated run of this task would skip every VM, print
+# that lives on another host, and a run without Hyper-V access would skip every VM, print
 # nothing, exit 0, and look like a machine where nothing was ever idle. Measured: that is
-# precisely what an unelevated dry run did.
+# precisely what an unelevated dry run did - the cause being the account's Hyper-V group
+# membership, not the elevation, which this task deliberately does not have.
 try {
     Get-VM -ErrorAction Stop | Out-Null
 } catch {
     Write-Line "CANNOT QUERY HYPER-V - nothing was checked: $($_.Exception.Message)"
-    Write-Line "This task must run elevated; as registered it runs as SYSTEM, which is."
+    Write-Line "Save-VM needs local 'Hyper-V Administrators' membership, NOT elevation - and as"
+    Write-Line "registered this runs as the invoking user at ordinary privilege, by design."
+    Write-Line "Group membership is fixed when a logon session is created, so a membership added"
+    Write-Line "since the last logon is not in this token yet. Log on again, then re-run."
     exit 1
 }
 

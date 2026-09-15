@@ -14,7 +14,7 @@ been unrebuildable. Hence the rule at the bottom of this file.
 | | Needed | On this machine (checked 2026-08-24) |
 | --- | --- | --- |
 | Windows | A Windows 11 x64 image | **STAGED 2026-08-24**: `.work/media/Win11_25H2_EnglishInternational_x64_v2.iso` (7.9 GB, gitignored). Consumer multi-edition, volume label `CCCOMA_X64FRE_EN-GB_DV9`, so it carries Pro. |
-| Office | Office Deployment Tool + a configuration | **PRESENT**, in an archive under the maintainer's Downloads. |
+| Office | Office Deployment Tool + a configuration | **STAGED**: `.work/office-odt/` (gitignored), holding `setup.exe` and `VoIPFabric.xml`. A testbed-specific `Testbed.xml` sits beside them — see below. |
 
 ### Windows — staged, and it is NOT the edition the old guest ran
 
@@ -91,14 +91,42 @@ The guest is now the place that would show it.
 
 ### Office — the method, which was the actual unknown
 
-The Office Deployment Tool (`setup.exe`) plus an XML configuration. **The configuration file
-contains product keys and is therefore not reproduced here**; it lives with the maintainer's
-media, not in this repository. What a rebuilder needs from it, and what the existing guest was
-built with:
+The Office Deployment Tool (`setup.exe`) plus an XML configuration.
+
+**WHERE IT ACTUALLY IS: `.work/office-odt/`.** This file used to say the Office media sat "in an
+archive under the maintainer's Downloads". That was **wrong, and wrong in the dangerous
+direction** — it named a volatile location as the home of a precondition. On 2026-08-23 everything
+in that Downloads directory older than roughly five days was deleted with no warning and no
+prompt, taking thirteen scratch directories with it. A runbook that points a rebuilder at
+Downloads is a runbook that eventually points at nothing.
+
+`.work/` is the repository's own gitignored scratch directory, and it is the **right** home for
+this precisely because Downloads is volatile: it sits beside the checkout, it is visible to anyone
+who clones and looks, nothing outside this project prunes it, and `.gitignore`'s `.work/` rule
+keeps its contents — a product key among them — out of a public repository. That rule is what
+makes staging here safe; confirm it with `git check-ignore -v .work/office-odt/` before adding
+anything.
+
+| File | What it is |
+| --- | --- |
+| `.work/office-odt/setup.exe` | The Office Deployment Tool. 7.2 MB, dated 2024-08-09. |
+| `.work/office-odt/VoIPFabric.xml` | The **maintainer's workstation** configuration. Carries product keys. |
+| `.work/office-odt/Testbed.xml` | The **testbed** configuration, narrower — see below. Carries a product key. |
+
+**THIS IS A PRECONDITION, NOT AN ARTEFACT.** Nothing in this repository regenerates it, and
+`.work/` is scratch — a tidy-up, a fresh clone or a disk swap leaves the directory empty and
+nothing announces it. **If `.work/office-odt/` is missing, re-stage it before step 4 of the
+runbook:** download the Office Deployment Tool from Microsoft, extract its `setup.exe` there, and
+recreate the configuration from the table below plus the product key, which lives with the
+maintainer and nowhere else. The Windows ISO in `.work/media/` has exactly the same standing.
+
+**The configuration files contain product keys and are therefore not reproduced here.** What the
+**existing** guest was built with — `VoIPFabric.xml`, the workstation configuration, because at
+the time there was no other:
 
 | Setting | Value |
 | --- | --- |
-| Product | `ProPlus2024Volume` |
+| Product | `ProPlus2024Volume` (alongside Visio, Project and proofing tools, which the guest did not need) |
 | Channel | `PerpetualVL2024` |
 | Edition | 64-bit (`OfficeClientEdition="64"`) |
 | Languages | `en-us`, `nl-nl`, `MatchOS` |
@@ -109,10 +137,50 @@ built with:
 Everything this project does goes through classic Outlook's COM object model, which the new
 client does not provide.
 
-**A testbed configuration should be narrower than the maintainer's.** Theirs installs Visio,
-Project and proofing tools because it is a workstation configuration. A testbed wants
-`ProPlus2024Volume` alone — Outlook is required, Word is worth keeping because HTML signatures
-are rendered through it, and the rest is install time and disk for nothing.
+**New guests use `Testbed.xml` instead.** The section below is what to install them with.
+
+### The testbed configuration — `.work/office-odt/Testbed.xml`
+
+**A testbed configuration is narrower than the maintainer's**, and as of 2026-09-15 it exists as
+its own file rather than as an argument in this document. `VoIPFabric.xml` installs Visio, Project
+and proofing tools because it is a workstation configuration. A testbed wants `ProPlus2024Volume`
+alone — Outlook is required, Word is worth keeping because HTML signatures are rendered through
+it, and the rest is install time and disk for nothing.
+
+**Install with it like this, on the guest:**
+
+    .\setup.exe /configure Testbed.xml
+
+**It carries a product key, so it lives in `.work/` and nowhere else.** Never under `Testbed/`,
+never anywhere tracked. `.github/scripts/check-testbed-references.ps1` fails the build on a
+credential-shaped literal under `Testbed/`, but do not rely on that as the guard — the file simply
+does not belong in the repository at all.
+
+**What is in it, so a rebuilder can reconstruct it without the key.** It is `VoIPFabric.xml` with
+the three extra products deleted and nothing else changed:
+
+| | Value |
+| --- | --- |
+| Products | `ProPlus2024Volume` **only** — `VisioPro2024Volume`, `ProjectPro2024Volume` and `ProofingTools` removed |
+| `PIDKEY` | the same volume key `VoIPFabric.xml` carries for `ProPlus2024Volume`. **Not written down anywhere in this repository** |
+| Channel | `PerpetualVL2024` |
+| Edition | `OfficeClientEdition="64"` |
+| Languages | `en-us`, `MatchOS`, `nl-nl` |
+| Excluded apps | `Lync`, `OneDrive`, **`OutlookForWindows`** |
+| Properties | `SharedComputerLicensing=0`, `FORCEAPPSHUTDOWN=TRUE`, `DeviceBasedLicensing=0`, `SCLCacheOverride=0`, `AUTOACTIVATE=1`, `PinIconsToTaskbar=FALSE` |
+| Other elements | `<Updates Enabled="TRUE" />`, `<RemoveMSI />`, `<Display Level="Full" AcceptEULA="TRUE" />`, and the `AppSettings` block (company name, default save formats) |
+
+**Why the product set is the ONLY difference.** This testbed's whole design principle is that the
+guest matches the maintainer's machine — see "The host configuration the guests match" above —
+because that is where the userbase sits. So every property, language and app setting is carried
+over verbatim; deviating on any of them would build a guest that is tidy rather than
+representative, and would make any difference between guest and host a suspect rather than a
+finding. The extra *products* are exempt from that argument because nothing under test touches
+Visio or Project.
+
+**`ExcludeApp OutlookForWindows` must stay in whatever you reconstruct** — see above for why. A
+guest that ends up with the new client is a guest the live tier cannot run on, and the failure
+reads as Outlook automation being broken rather than as a wrong install.
 
 ## The licence clocks, and a correction worth reading
 

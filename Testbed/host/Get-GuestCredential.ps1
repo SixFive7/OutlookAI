@@ -20,13 +20,20 @@
     Its shape:
 
         {
-          "vmName":     "OutlookAI-TestVM",
+          "vmName":     "",
           "username":   "<the guest account>",
           "password":   "<the guest account's password>",
           "rotatedUtc": "2026-08-24T00:00:00Z",
           "rotatedWhy": "<why, so the next rotation has context>",
           "note":       "<anything a reader needs>"
         }
+
+    `vmName` IS EMPTY, AND THAT IS THE CURRENT SETTING, NOT A GAP. The field pins a credential
+    to one guest, and the match below only fires when it has a value - so an empty string means
+    "usable for any guest". Three machines coexist during the changeover (OutlookAI-Indexed,
+    OutlookAI-Unindexed and the outgoing OutlookAI-TestVM) and one account serves all of them,
+    so a pin naming any single one of the three refuses the other two. Fill it in only when the
+    credential really is for one machine alone.
 
     Create it by hand when you create the guest account. Set the password to NEVER EXPIRE: a
     maximum password age silently breaks the tier weeks later and recreates the whole problem.
@@ -40,19 +47,26 @@
     Repository root. Defaults to two levels above this script.
 
 .PARAMETER VMName
-    Optional. When given, the file's `vmName` must match - so a credential for one guest cannot
-    be handed to another by accident.
+    MANDATORY. Which guest the credential is being fetched for. When the file's `vmName` has a
+    value it must match, so a credential pinned to one guest cannot be handed to another by
+    accident.
+
+    It is mandatory rather than optional because THREE MACHINES COEXIST during the changeover -
+    OutlookAI-Indexed, OutlookAI-Unindexed and the outgoing OutlookAI-TestVM - and a caller that
+    does not say which one it means is not making a safe request, it is making an unanswerable
+    one. There is deliberately no default anywhere in Testbed/host/: a default that silently
+    picks one of three is the exact shape of mistake this testbed keeps making.
 
 .OUTPUTS
     [PSCredential]
 
 .EXAMPLE
-    $cred = & Testbed/host/Get-GuestCredential.ps1 -VMName OutlookAI-TestVM
+    $cred = & Testbed/host/Get-GuestCredential.ps1 -VMName OutlookAI-Indexed
 #>
 [CmdletBinding()]
 param(
     [string] $RepoRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
-    [string] $VMName
+    [Parameter(Mandatory = $true)] [string] $VMName
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,8 +89,16 @@ foreach ($field in @('username', 'password')) {
     }
 }
 
+# An EMPTY `vmName` means "usable for any guest", and that is load-bearing rather than lax: the
+# `-and $json.vmName` term is what makes one credential file serve all three coexisting guests.
+# The refusal still fires the moment the field is given a value, so pinning remains available to
+# anyone who genuinely has one credential per machine.
 if ($VMName -and $json.PSObject.Properties.Name.Contains('vmName') -and $json.vmName -and $json.vmName -ne $VMName) {
-    throw "vm-credentials.json holds a credential for '$($json.vmName)', not '$VMName'. Refusing to use it."
+    throw @"
+vm-credentials.json holds a credential pinned to '$($json.vmName)', not '$VMName'. Refusing to use it.
+Three guests coexist during the changeover and one account serves all of them, so the intended
+setting for that field is an empty string. Clear it, or create a per-guest credential file.
+"@
 }
 
 # The username is safe to show and is worth showing: "wrong account" is otherwise indistinguishable

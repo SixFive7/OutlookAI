@@ -89,8 +89,9 @@ if (-not (Test-Path -LiteralPath $ToolsExe)) {
 Tools not found at $ToolsExe
 The guest has no .NET SDK, so nothing can be built here. Publish on the host and copy in:
     pwsh -File Testbed/host/Publish-GuestPayload.ps1
-    pwsh -File Testbed/host/Copy-ToGuest.ps1 -Path .work\testbed-payload\Tools.zip -Destination C:\OutlookAI-Q5\Tools.zip
+    pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <the guest> -Path .work\testbed-payload\Tools.zip -Destination C:\OutlookAI-Q5\Tools.zip
 then on the guest: Expand-Archive C:\OutlookAI-Q5\Tools.zip -DestinationPath C:\OutlookAI-Q5\tools -Force
+-VMName is mandatory: three guests coexist during the changeover and nothing guesses which.
 "@
 }
 
@@ -167,5 +168,6 @@ Write-Host ''
 Write-Host "Log: $LogPath"
 Write-Host "Manifest: $Manifest"
 Write-Host 'NOW COPY THE MANIFEST OFF THE GUEST. Without it the corpus cannot be torn down:'
-Write-Host '    pwsh -File Testbed/host/Copy-FromGuest.ps1'
+Write-Host '    pwsh -File Testbed/host/Copy-FromGuest.ps1 -VMName <this guest>'
+Write-Host '    (-VMName is mandatory - three guests coexist and nothing guesses which.)'
 Write-Host 'Then take a checkpoint, and let Windows Search settle before any index measurement.'
