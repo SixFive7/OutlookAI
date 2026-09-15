@@ -186,12 +186,13 @@ public sealed class LiveSendTests
         // materializing self-send copies of earlier collections (documented sent-copy
         // lag) are purged first, then stable zero is asserted (counts only, S4).
         //
-        // WHICH stores may be purged is ArtifactSweepPolicy's decision, not this loop's.
-        // expectedStoreDisplayNames also carries the declared BYSTANDERS - it has to, or the
-        // count tripwire never censuses them - and this walk used to point a delete at them.
-        // They are counted and left alone now, and a non-zero count in one FAILS the run
-        // rather than being tidied away; nothing else would report it, because the count
-        // tripwire fires on a decrease and that would be an increase.
+        // WHICH stores are visited, and which of them may be purged, is ArtifactSweepPolicy's
+        // decision and not this loop's. It walks the COUNT TRIPWIRE'S OWN watched set - the
+        // primaries, the delegate/shared mailboxes and the declared bystanders - so the two
+        // guards cover one set rather than two overlapping ones. Everything the allowlist
+        // refuses a delete on is COUNTED and left alone, and a non-zero count in one of those
+        // FAILS the run rather than being tidied away: nothing else would report it, because
+        // the count tripwire fires on a decrease and an artifact arriving is an increase.
         //
         // The tag text stays spelled out here on purpose: it is what CountTaggedArtifacts
         // matches, and T1/CorpusTagSeparationTests pins the corpus apart from this literal.

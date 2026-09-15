@@ -269,25 +269,44 @@
         the general split (session budget plus a per-`RoundTripAsync` budget, both named)
         is still open. Raising the DEFAULT is deliberately not the fix - it is CI's only
         safety net against a hung stdio test, and CI's job timeout is 20 minutes.
-  - [ ] **HALF DONE 2026-09-15. `T2/LiveAttachmentKindRecallTests` ~~keeps two bare literals~~**
-        (90 s wait, 5 s poll) - **named** as `SeededCrawlWaitSeconds` / `SeededCrawlPollSeconds`,
-        which cost nothing and changed no behaviour. It is still the last product-shaped index call
-        in the suite relying on the client's default command timeout, and **the figure here was
-        understated**: the default is `OleDbIndexClient.DefaultCommandTimeoutSeconds` = **60 s**, so
-        one slow statement eats TWO THIRDS of the wait, not a third.
+  - [x] **DONE (decision 55) - `T2/LiveAttachmentKindRecallTests` bounds its poll statement, and an
+        expired one costs one poll rather than the run.** The maintainer chose (b). The three
+        numbers now live in `T2/SeededCrawlPoll` with the arithmetic that ties them together -
+        90 s wait, 5 s gap, **15 s statement bound**, and a pin that the budget still affords four
+        polls when every statement runs to the bound. The old default was
+        `OleDbIndexClient.DefaultCommandTimeoutSeconds` = 60 s against a 90 s wait, so one slow
+        statement spent two thirds of the budget and the probe then printed "the gatherer had not
+        crawled it" - the indexer blamed for a statement running out.
 
-        **The remaining half is a decision, not a fix, and it is why it was not made.** Passing a
-        `commandTimeoutSeconds` bounds the statement - and a bounded statement that expires THROWS,
-        so a slow index would turn this from "the probe reports the gatherer did not catch up" into
-        a failed live test. Three ways out: (a) pass the bound and let it throw - honest, and it
-        fails a live run for a slow indexer; (b) pass the bound and treat an expired statement as
-        one lost poll - keeps the current shape, but needs a catch whose exception type depends on
-        which client was selected at runtime (`OleDbException` or a late-bound `COMException`);
-        (c) leave the default and accept that the wait is really "90 s, of which one statement may
-        take 60". **Recommendation: (b)**, because the loop's own design already treats "no rows
-        yet" as an ordinary outcome and a timed-out statement is indistinguishable from it - but it
-        changes a live test's failure behaviour and no run available to an agent here could check
-        it, which is the same trade the bystander and sweep items below refuse.
+        **The exception type does not in fact depend on which client was selected, and that is how
+        the catch stayed narrow.** `IndexClientFactory.CreateAuto` returns one of exactly two
+        implementations, and only `OleDbIndexClient` applies `commandTimeoutSeconds` at all -
+        `AdodbIndexClient` takes the argument and never reads it. So a bound can only exist, and
+        only expire, on the OleDb path, where the failure is `System.Data.OleDb.OleDbException`
+        (the type `CreateAuto`'s own filter names first around the same `ExecuteRows` call). The
+        late-bound `COMException` this item worried about cannot be a bound expiring, because on
+        that client there is no bound; `SeededCrawlPoll.BoundIsHonoured` says so in code and the
+        classifier refuses to call anything on that provider a lost poll.
+
+        **Narrowed a second time, by TIME rather than by HRESULT.** A statement the caller bounded
+        at 15 s which failed only after running ~15 s is the bound firing, whatever number the
+        provider chose; one that failed in a second is a fault and still fails the test. Choosing
+        on the error code would have meant guessing whether Search.CollatorDSO returns
+        `DB_E_ABORTLIMITREACHED` or `DB_E_CANCELED`, and a wrong guess there fails OPEN - the
+        swallow-everything shape the fix exists to avoid.
+
+        **And the reporting half, which is the bug as a person meets it.** A wait that lost polls
+        did not give the gatherer the time the old sentence claimed, and a wait that lost EVERY
+        poll never asked the index at all: that outcome now prints the repository's `PROVED
+        NOTHING:` line and explicitly does not name the gatherer. 16 pins in
+        `T1/SeededCrawlPollTests`, including a source-level one that the live probe still passes
+        the bound and still catches narrowly - both are one-character edits that compile.
+
+        **Still unmeasured, and stated rather than assumed:** whether Search.CollatorDSO honours
+        `DBPROP_COMMANDTIMEOUT` at all. If it ignores it the bound never fires and the behaviour is
+        exactly today's - the change degrades to a no-op rather than to something wrong - and the
+        per-run poll accounting is what will settle it, since a run that loses polls is a run where
+        the bound demonstrably fired.
   - [ ] **Claude Code's 30-minute stdio idle abort is now the nearest client-side limit, and
         nobody owns it.** A 600 s exhaustive scan is 600 s of complete silence on the pipe -
         this server sends no progress notifications. It fits (600 s < 1800 s idle < the
@@ -968,34 +987,39 @@
      it would conclude a corpus item is either sweepable or not test-created. The rule itself
      needed no change; deletion selection is still "EntryID allowlist AND ordinal tag match, both
      required", which corpus teardown obeys exactly.)*
-  2. **Should the artifact sweep ALSO skip declared bystanders?** Recommended: yes, as a second
-     line of defence, but it is a change to `Tests/T2/LiveDraftTests.cs` and `LiveSendTests.cs`,
-     which another agent holds. Rationale and cost are in the next item.
+  2. **ANSWERED - no, it must not SKIP them; it counts them and fails on a non-zero count.** The
+     maintainer chose (c) over the recommended skip, and the recommendation was wrong for the
+     reason recorded in the next item: a skip gives up the one thing worth knowing. See below.
 
-- [ ] **The artifact sweep still walks declared bystander stores, and it no longer needs to.**
-  Left deliberately on 2026-08-25; the two files are outside this change's territory.
+- [x] **DONE (decision 54) - the sweep deletes only where the allowlist permits, counts
+  everywhere the count tripwire watches, and FAILS on a count it may not act on.** Shipped in two
+  passes; the maintainer chose option (c) - count, do not delete, refuse loudly - over the (a)
+  skip this item originally recommended.
 
-  The sweep iterates `expectedStoreDisplayNames` and calls `DeleteTaggedArtifactsUntilStableZero`
-  on any store with a non-zero tagged count. After the tag split it will find zero in a corpus
-  store, so nothing is destroyed and nothing is red - the defect is closed. What remains is
-  defence in depth: the sweep is a DELETE aimed at every store in a list, and the only thing
-  keeping it off a bystander is that the bystander happens to contain nothing it matches.
+  **Pass 1 (2026-08-25, `T2/ArtifactSweepPlan.cs`).** The walk moved out of the two live tests
+  into a pure `ArtifactSweepPolicy`/`ArtifactSweepPlan`: one step per store, each carrying whether
+  the allowlist grants `Delete` there. A `Sweep` store is purged once and re-counted (the
+  documented sent-copy lag); a `CountOnly` store is counted and left alone, says so in its own
+  per-store line, and a non-zero count there throws naming the store, the count and why nothing
+  else would have caught it. `T1/ArtifactSweepPlanTests` pins it, including that the purge
+  delegate is never handed a store the allowlist refuses.
 
-  **The change, if the maintainer wants it:** in `LiveDraftTests.ArtifactSweep_AllThreeAccounts_ZeroTaggedRemain`
-  and its `LiveSendTests` twin, skip stores named in `bystanderStoreDisplayNames` - which the
-  fixture already knows - and print one line per skipped store so the run says what it did not
-  check. Roughly three lines each.
+  **Pass 2 (2026-09-15).** The walk was still over `expectedStoreDisplayNames`, which is NOT the
+  watched set: `LiveStoreCountTripwire.WatchedStores` is that list UNION
+  `expectedDelegateStoreDisplayNames` UNION `bystanderStoreDisplayNames`. So every delegate/shared
+  mailbox was censused for LOSS and never counted for ARRIVAL, and a bystander declared only among
+  the delegates - which `BystanderCorpusDeclarationTests` explicitly permits - was not visited at
+  all. `Assess(LiveTestSettings)` now plans over `WatchedStores` itself, so the two guards cover
+  one set rather than two overlapping ones, and a withheld store says WHICH kind of off-limits it
+  is: declared bystander, declared delegate/shared (rule 3), or simply ungranted. Three new pins,
+  including `TheSweepVisitsEveryStoreTheCountTripwireWatches`, which is set equality rather than a
+  spot check.
 
-  **Against:** CLAUDE.md rule 4 makes the zero-artifact sweep mandatory, and narrowing it is the
-  maintainer's call, not an agent's. A skip also means a genuine artifact that somehow landed in
-  a bystander would never be found - though the count tripwire watches exactly those stores and
-  would report the arrival. **For:** every other write path already refuses a bystander at the
-  guard; the sweep is the one that would still try, and "it finds nothing" is a property of the
-  data, not of the code.
-
-  Recommendation: make the skip, and keep the tag separation as the primary defence. Two
-  independent mechanisms, neither relying on the other, is what the store-count tripwire's own
-  design argues for.
+  **Why not the skip this item recommended.** The usual fallback argument does not hold: the count
+  tripwire fires on a per-store item-count DECREASE, and an artifact appearing in a bystander is an
+  INCREASE. A skip would have been the only guard either way, and it would have reported nothing.
+  Rule 4 also makes the zero-artifact proof mandatory over every watched store, which a skip
+  narrows and a count does not.
 
 - [x] **DECIDED 2026-08-25 - re-anchoring is no longer the maintenance path. Rebuild instead.**
 
