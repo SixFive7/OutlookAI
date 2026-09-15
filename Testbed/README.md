@@ -42,10 +42,10 @@ testbed before its replacement runs.**
 | 1 | Build the answer volume | `host/New-AnswerFile.ps1` | host |
 | 2 | Create the guest, attach both ISOs, boot it | `host/New-TestbedVm.ps1` | host |
 | 3 | Windows installs itself - edition, disk, account, autologon, locale, power | nobody: the answer file | guest, unattended |
-| 4 | Install Office, the accounts and the profiles | by hand - `Docs/live-tier-on-the-vm.md` §2.2-2.6, with `.work/office-odt/Testbed.xml` (`MEDIA.md`) | guest |
+| 4 | Install Office, the accounts and the profiles | Office and the Windows accounts by hand - `Docs/live-tier-on-the-vm.md` §2.2-2.4, with `.work/office-odt/Testbed.xml` (`MEDIA.md`). **Profiles and PSTs now have drafted scripts - §4b** | guest |
 | 5 | Give yourself a way to reach session 1 | `guest/Register-InteractiveTask.ps1` | guest, once |
 | 6 | Build the server and the tools, and copy them in | `host/Publish-GuestPayload.ps1` | host |
-| 7 | Install the mail sink, the dummy account and the identity account | by hand - `Docs/live-tier-on-the-vm.md` §2.7-2.8b | guest |
+| 7 | Install the mail sink, the dummy account and the identity account | Sink and **both mail accounts by hand** - `Docs/live-tier-on-the-vm.md` §2.7-2.8b. Nothing free can create a mail account (§4b). The signature has a script | guest |
 | 8 | Build the corpus | `guest/Build-Corpus.ps1` | guest, session 1 |
 | 9 | Write the live-test settings file | copy `live-test-settings.example.json` - and read §3b, or the tier refuses to start | host or guest |
 | 10 | Take the measurements | `guest/Invoke-GuestMeasure.ps1`, `guest/Measure-SweepCost.ps1` | guest, session 1 |
@@ -472,6 +472,81 @@ is built, because a testbed VM missing from the list is simply never saved.
 
 ---
 
+## 4b. Profiles, PSTs and accounts WITHOUT the GUI - and the one part that cannot be
+
+**Where this came from.** Everything after the Windows install was "by hand", and §2.5 of
+`Docs/live-tier-on-the-vm.md` said outright that profile creation is "not recorded" with the Mail
+control panel as the assumed route. That route had been driven once, through a vision model, and
+it was slow and expensive enough to be worth not repeating.
+
+**THE SCRIPTS IN §5 HAVE NEVER BEEN EXECUTED.** They were written by an agent forbidden to run
+them - the machine they were written on is the maintainer's workstation, with a real profile and
+real delegate mailboxes on it - and verified by PARSING alone. Treat them as a draft to iterate
+against a checkpoint, not as a build step that works. Each carries its own banner saying so, and
+each is designed to **fail loudly rather than half-succeed**, because a script that silently
+half-works costs a revert and a rebuild.
+
+**Four of the five things are automatable. One is not.**
+
+| What | How | Where |
+| --- | --- | --- |
+| Profile with **no mail accounts** - the corpus profile, which `corpus-build` requires | `IProfAdmin::CreateProfile`, no default services | `guest/New-OutlookProfile.ps1` |
+| **PST with an exact display name**, `@` included | `IMsgServiceAdmin::ConfigureMsgService` carrying `PR_DISPLAY_NAME` **at creation** | `guest/Add-OutlookPstStore.ps1` |
+| **Default-profile switch**, no prompt | `IProfAdmin::SetDefaultProfile` + `PickLogonProfile` | `guest/Set-DefaultOutlookProfile.ps1` |
+| The identity account's **signature** | the shipped `manage_signature` tool | `guest/Set-AccountSignature.ps1` |
+| **A POP3 mail account, and its delivery store** | **nothing free can.** GUI, once per guest | `guest/New-PopAccountPrf.ps1` is the spike that proves it |
+
+**Why the mail account is closed rather than merely hard**, because somebody will want to try
+again: the object model has no `Accounts.Add` and `Account.DeliveryStore` is read-only; MAPI has
+no POP3 message service to create, because account administration moved behind the undocumented
+`IOlkAccountManager`; the registry has no published working recipe on 16.x and its stored
+passwords are DPAPI-sealed per user per machine; and the one documented text format, a `.prf`,
+cannot carry `PROP_ACCT_DELIVERY_STORE` because that is a binary EntryID and an INI file is text.
+Three routes, three unrelated reasons, same answer. A paid component (Redemption) is the only
+thing that plausibly closes it, this project has no third-party dependency today, and adding one
+is the maintainer's call rather than a script's.
+
+**So take a checkpoint straight after the GUI pass.** That is the whole consolation prize, and it
+is a real one: everything before it is scripted and reproducible, so a checkpoint there turns the
+only unscripted step from a per-rebuild cost into a **per-guest-lifetime** one.
+
+**Why Extended MAPI rather than the registry.** `IProfAdmin` and `IMsgServiceAdmin` are documented
+and supported; the registry layout underneath is reverse engineering with no published end-to-end
+recipe on 16.x. The stronger reason is specific to this testbed: the PST provider's configure call
+applies `PR_DISPLAY_NAME` **when the store is created**, which is the only route anybody found to
+a store named exactly what we asked for - `Store.DisplayName` is read-only in the object model, and
+`Namespace.AddStoreEx` adds a PST perfectly well but cannot name it.
+
+**The preflight that says this is worth trying at all**, measured on a guest running
+16.0.17932.20996: `DLLPathEx` resolves to a real `msmapi32.dll` under the Click-to-Run `root\VFS`
+tree, Office is x64 and PowerShell is a 64-bit process, so Extended MAPI loads and the bitness
+matches. `DLLPath` being an unresolvable bare filename beside it is the **healthy** shape on
+Click-to-Run, not a fault.
+
+**Run `New-OutlookProfile.ps1 -Preflight` first, on a checkpoint you are willing to lose.** It
+initialises MAPI, reads the profile table and stops. If the C# interop is going to take the
+PowerShell process down with it - the most likely first failure, and one that produces an access
+violation with no error text - that is where it happens, with nothing at stake.
+
+**The guard that keeps these off the wrong machine.** Every one of them refuses unless the session
+is logged on as `vmadmin`, the guests' autologon account (§2). It is not silenceable by a flag:
+the only way past it is `-ExpectedUser <name>`, which is a thing nobody does by accident. The
+second Windows account of `Docs/live-tier-on-the-vm.md` §2.4 will need exactly that.
+
+**One question these close on first run, and it is worth running them for that alone.**
+`Add-OutlookPstStore.ps1 -NameProbe` answers §6 item 10 - whether Outlook accepts `@` in a store
+display name - in a throwaway profile it creates and deletes. It reports **accepted**, **rejected**
+or **transformed**, and the third is why a probe is better than trying it on the real store: a
+silently-renamed store is one the tests cannot find by name, on a machine that looks correctly
+built.
+
+The findings behind all of this, with every claim labelled Microsoft-documented,
+community-reported, guest-measured or inferred - and a list of what could **not** be established -
+are in `.work/profile-automation-research.md`. That file is gitignored scratch: if it matters
+tomorrow, it has to move somewhere tracked.
+
+---
+
 ## 5. What is in here
 
 | Path | What it is |
@@ -487,6 +562,12 @@ is built, because a testbed VM missing from the list is simply never saved.
 | `host/Copy-ToGuest.ps1` | Copies a file or a zip into the guest over PowerShell Direct. `-VMName` is mandatory (§4a). |
 | `host/Copy-FromGuest.ps1` | Gets results, logs and the corpus manifest back out. `-VMName` is mandatory (§4a), and it also names the subdirectory results land in. **The manifest goes to the shared root** - safe because each guest has its own corpus id, and kept there so a reused id still collides visibly; **`measure.jsonl` and the logs go to `<Destination>\<VMName>\`**, because what differs about a transcript is the machine that produced it (§3). It refuses to replace any pulled file whose content differs, unless `-Force` says you mean it. |
 | `guest/Register-InteractiveTask.ps1` | The session-1 scheduled-task recipe. Everything COM-touching goes through it. |
+| `guest/OutlookMapiInterop.ps1` | Shared Extended MAPI layer for the four profile scripts below - `IProfAdmin`, `IMsgServiceAdmin`, the table readers, and the guest guard. **Dot-sourced, never run.** **Never executed** - see its banner, and §4b. |
+| `guest/New-OutlookProfile.ps1` | Creates an Outlook profile with no GUI: account-less (the corpus profile) or carrying named PSTs. `-Preflight` checks the MAPI interop alone, first. **Never executed.** |
+| `guest/Add-OutlookPstStore.ps1` | Adds a PST to a profile with an **exact** display name, and `-NameProbe` settles §6 item 10 - whether Outlook accepts `@` in one. **Never executed.** |
+| `guest/Set-DefaultOutlookProfile.ps1` | Switches the default profile and switches the profile prompt off. Closes §6 item 5. **Never executed.** |
+| `guest/New-PopAccountPrf.ps1` | A **spike**, not a route: the one free candidate for creating a POP3 account, plus the read-back that says how far it got. Expected to fail; §4b says why. **Never executed.** |
+| `guest/Set-AccountSignature.ps1` | Gives the identity account its signature, by driving the shipped `manage_signature` tool rather than improvising. Runs **after** the accounts exist. **Never executed.** |
 | `guest/Build-Corpus.ps1` | plan, probe, build, census - with the committed parameters as defaults. |
 | `guest/Invoke-GuestMeasure.ps1` | The measurement driver, recovered from the guest. Produced the numbers now in `Docs/magic-numbers.md`. |
 | `guest/Measure-SweepCost.ps1` | Per-folder / per-item sweep cost, out of band. **Reconstructed, never executed** - see its banner. |
@@ -581,6 +662,10 @@ that was left out.
    to exist, `Outlook` and `OutlookAITest`. The switch is a registry value under
    `HKCU\...\Outlook` and Outlook must not be running when it changes - but the exact value and
    whether anything automates it is unrecorded.
+   **Half-answered 2026-09-15:** `guest/Set-DefaultOutlookProfile.ps1` now does it through
+   `IProfAdmin::SetDefaultProfile` and switches the profile prompt off with `PickLogonProfile`,
+   verifying both. It has **never been executed**, so this stays open until it has - and it says
+   nothing about which profile the ORIGINAL guest had as default, which remains unrecorded.
 6. **Whether the three-store layout exists at all.** Everything measured so far was taken against
    ONE PST named `Outlook Data File`. Corpus B, the bystander store, the hub named after the
    dummy address, and the dummy account itself are a design in a document; no evidence in this
@@ -597,6 +682,12 @@ that was left out.
 10. **Does Outlook accept `@` in a store display name?** The hub store must be named after the
     dummy account's SMTP address because several tests use the display name as an address. It
     gates the whole draft family and costs five minutes to settle.
+    **Still open, but now one command:** `guest/Add-OutlookPstStore.ps1 -NameProbe -Execute
+    -VerifyWithOutlook` settles it in a throwaway profile it creates and deletes, and reports
+    **accepted**, **rejected** or **transformed**. Nothing in Microsoft's documentation or in any
+    community source states a character restriction either way, which is weak evidence and is why
+    this is a probe rather than an answer. Watch for **transformed**: a silently-renamed store is
+    one no test can find by name, on a machine that looks correctly built.
 11. **Does smtp4dev actually serve POP3?** `Docs/live-tier-on-the-vm.md` §2.7 specifies POP3 on
     port 110 and §2.8 adds the dummy account as POP3, and `MailSinkSettings.RetrievePort`
     documents itself as POP3 - but smtp4dev v3 is usually described as SMTP plus **IMAP**. If it
