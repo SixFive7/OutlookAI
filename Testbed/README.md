@@ -46,6 +46,7 @@ testbed before its replacement runs.**
 | 5 | Give yourself a way to reach session 1 | `guest/Register-InteractiveTask.ps1` | guest, once |
 | 6 | Build the server and the tools, and copy them in | `host/Publish-GuestPayload.ps1` | host |
 | 7 | Install the mail sink, the dummy account and the identity account | Sink: `guest/Install-MailSink.ps1`, from a staged package (§6 item 11 - and read it first, §2.7 of the runbook is wrong in four places). Accounts: `guest/New-TierProfile.ps1`, then the POP3 password **by hand, once**, because the sink refuses an empty one. The signature has a script | guest |
+| 7b | **Decide whether this guest is the indexed one or the unindexed one, and do it BEFORE the corpus exists** | `guest/Set-OutlookIndexingDisabled.ps1` on `OutlookAI-Unindexed`; nothing on `OutlookAI-Indexed`. Order is the whole point: exclude Outlook first and no row is ever crawled, so there is nothing to purge and nothing to wait for | guest |
 | 8 | Build the corpus | `guest/Build-Corpus.ps1` | guest, session 1 |
 | 9 | Write the live-test settings file | copy `live-test-settings.example.json` - and read §3b, or the tier refuses to start | host or guest |
 | 10 | Take the measurements | `guest/Invoke-GuestMeasure.ps1`, `guest/Measure-SweepCost.ps1` | guest, session 1 |
@@ -573,6 +574,7 @@ tomorrow, it has to move somewhere tracked.
 | `guest/New-PopAccountPrf.ps1` | A **spike**, not a route: the one free candidate for creating a POP3 account, plus the read-back that says how far it got. Expected to fail; §4b says why. **Never executed.** |
 | `guest/Set-AccountSignature.ps1` | Gives the identity account its signature, by driving the shipped `manage_signature` tool rather than improvising. Runs **after** the accounts exist. **Never executed.** |
 | `guest/Install-MailSink.ps1` | Installs the loopback sink the POP3 account points at, from a **staged** package - never a download - pinned by SHA-256. Then **proves the round trip over raw sockets** rather than reporting two open ports, which is all the suite's own `T2/LiveMailSink.cs` probe does: submission accepted, message retrievable, dot-stuffing intact, `DELE` honoured, message numbers stable, nothing re-served after a restart. Two of those are **expected to fail** against smtp4dev as shipped and are asserted rather than assumed - see §6 item 11. Touches no Outlook, no MAPI and no mail item. **Never executed.** |
+| `guest/Set-OutlookIndexingDisabled.ps1` | Takes a guest's Outlook **out of** the Windows Search index, which is the only thing that makes `OutlookAI-Unindexed` different from `OutlookAI-Indexed` - both are built from the same answer file and both come up indexed. It never disables the Windows Search **service**: a machine with no indexer is not a store with no index frontier, it is the product's "index unreachable" branch, and it removes `index.perStore[]` - the one instrument the runbook says to read. `-Verify` probes the **catalog** rather than reading registry values back, twice, and returns one of four verdicts; two of them are "not an answer" on purpose. **Run it BEFORE `guest/Build-Corpus.ps1`** (§1 step 8) or you also own purging what was already crawled. **Never executed.** |
 | `guest/Build-Corpus.ps1` | plan, probe, build, census - with the committed parameters as defaults. |
 | `guest/Invoke-GuestMeasure.ps1` | The measurement driver, recovered from the guest. Produced the numbers now in `Docs/magic-numbers.md`. |
 | `guest/Measure-SweepCost.ps1` | Per-folder / per-item sweep cost, out of band. **Reconstructed, never executed** - see its banner. |
@@ -717,9 +719,22 @@ that was left out.
 
 **Things nobody has answered yet, which a rebuilder will hit**
 
-9. **Does one Windows account's Outlook profile really stay out of the index while another's is
-   in it?** The entire two-account layout rests on this and it is derived from how the MAPI scope
-   is addressed, not measured. Verify it before building anything else.
+9. ~~**Does one Windows account's Outlook profile really stay out of the index while another's is
+   in it?**~~ - **NO LONGER LOAD-BEARING** (two guests now, `Docs/live-tier-on-the-vm.md` §1.1a),
+   and the half of it that still matters is **MEASURED, 2026-09-16**: the crawl scope manager on a
+   real Windows 11 machine carries exactly one Outlook rule, `mapi16://{SID}/`, under
+   `HKLM\SOFTWARE\Microsoft\Windows Search\CrawlScopeManager\Windows\SystemIndex\WorkingSetRules`,
+   with `Include=1` and `Default=0` - a **user** rule, one URL per Windows account. Above it sits a
+   documented Group Policy, `PreventIndexingOutlook`, which outranks any user rule and is what makes
+   an exclusion durable. **And one thing the runbook says is wrong**: `Docs/live-tier-on-the-vm.md`
+   §1.1 justifies "one switch per account" by claiming there is no per-store URL, and there is -
+   Microsoft documents excluding a single store through the Crawl Scope Manager with
+   `mapi16://{SID}/StoreDisplayName($Hash)/`. The conclusion holds for the **dialog**, which offers
+   one tick and cannot even display the difference; the reason given for it does not. What is still
+   **open** is whether Outlook re-creates its rule on the next start.
+   `guest/Set-OutlookIndexingDisabled.ps1` writes the policy as well as the rule for exactly that
+   reason, and its `-Verify` is what settles it. Full evidence, every claim labelled by source and
+   with an explicit list of what could not be established, in `.work/unindexed-guest.md`.
 10. **Does Outlook accept `@` in a store display name?** The hub store must be named after the
     dummy account's SMTP address because several tests use the display name as an address. It
     gates the whole draft family and costs five minutes to settle.
