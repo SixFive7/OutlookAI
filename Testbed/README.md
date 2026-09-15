@@ -204,8 +204,8 @@ copy now lives, as `live-fixtures/vm-corpus/corpus-vm2.jsonl`.
 
 **Two guests, one manifest file, and the file is the only thing that can remove a corpus.** A
 manifest is named `corpus-<corpusId>.jsonl` - after the **corpus**, not after the guest - and
-`host/Copy-FromGuest.ps1` lands every guest's pull in the same shared directory. With one guest
-that is harmless. With two it is not: the second pull replaces the first's manifest, and a
+`host/Copy-FromGuest.ps1` lands every guest's manifest in the same shared directory. With one
+guest that is harmless. With two it is not: the second pull replaces the first's manifest, and a
 manifest is the EntryID allowlist `corpus-teardown` requires (EntryID **and** ordinal tag, both,
 always) as well as the file `corpus-verify` reads for freshness. Lose one and that corpus becomes
 items in a real store that nothing is entitled to delete.
@@ -215,6 +215,10 @@ two corpora keep one name and hide the collision behind a path. They are not one
 machines, different index state, genuinely different populations - and they already have to be
 told apart in each machine's settings file and in every measurement that quotes one. The id is
 what names the population, so the id is what has to differ.
+
+**"Measurements and logs get a directory per guest" below gives those files exactly the directory
+this paragraph refuses the manifest, and that is not a contradiction** - the two halves of the
+pull are wrong in different ways. Read them together before changing either.
 
 | Corpus id | Guest | Indexed | State |
 | --- | --- | --- | --- |
@@ -252,12 +256,56 @@ every generator parameter and still must not share an id, because the id names t
 those are two different stores either way.
 
 **The backstop, for the day somebody reuses an id anyway.** `host/Copy-FromGuest.ps1` refuses to
-replace a manifest that is already in the destination and holds different content, unless `-Force`
-is passed. It hashes the guest's copy before it copies anything, so the refusal happens instead of
-the overwrite rather than after it, and the message says what the file is for. Only manifests are
-guarded, and only manifests are name-distinct per guest: **`measure.jsonl` and the `*.log` files
-still collide on every pull**, so move those aside, or pass `-Destination`, when pulling a second
-guest.
+replace a file that is already in the destination and holds different content, unless `-Force` is
+passed. It hashes the guest's copy before it copies anything, so the refusal happens instead of
+the overwrite rather than after it, and the message says what the file is for. **The guard now
+covers every file it pulls**, not only manifests - but the manifest is the reason the guard has to
+be able to fire at all, and that is what keeps manifests in the shared root (next section).
+
+### Measurements and logs get a directory per guest, and that is a different fix
+
+`measure.jsonl` and the `*.log` files had fixed names in a shared directory, so with two guests
+**every second pull silently overwrote the first**. That is not a tidiness problem: comparing the
+indexed and the unindexed guest is the entire reason there are two of them, and replacing guest
+one's transcript with guest two's destroys exactly the comparison the two-VM design exists to
+produce. The loss looks like nothing at all.
+
+**Decided 2026-09-15: the pull lands per guest.**
+
+| What | Where it lands | Named after |
+| --- | --- | --- |
+| `corpus-<corpusId>.jsonl` | `<Destination>\` - the shared root | the **corpus** |
+| `measure.jsonl`, `*.log` | `<Destination>\<VMName>\` | the **machine** |
+
+**Why a directory here when the section above refused one for manifests.** Because the two files
+are wrong in different ways, and the fix has to match the fault:
+
+- For the **corpora** the **identity** was wrong. Two genuinely different populations shared one
+  id, and the id is what appears in every subject, in the teardown match and in every measurement
+  that quotes one. A directory would have let them keep that one name and hidden a modelling error
+  behind a path. So the *names* had to change.
+- For **measurements and logs** the identity is correct. There is one thing called "the
+  measurement transcript" and this really is it; what differs between two copies is **which
+  machine produced them**, which is precisely what a directory expresses. Stamping the machine
+  into the file name would invent an identity these files do not have.
+
+Rename what is genuinely two different things; separate by directory what is one kind of thing
+arriving from two different places.
+
+**The manifest deliberately stays in the shared root.** Moving it down with the rest would disarm
+the backstop above: that refusal can only fire when two different contents arrive at **one path**,
+and a per-guest directory guarantees they never do. Two guests mistakenly given the same corpus id
+would quietly stop colliding and the modelling error would go back to being silent - the state the
+id decision was made to end. The cost is that one pull lands in two places; that is the price of a
+guard that can still fire.
+
+**An existing flat destination from an earlier pull is left exactly where it is.** A destination
+used before this change may hold a `measure.jsonl` or a `.log` at the root. The script does not
+move them and does not delete them, because **which guest wrote them is recorded nowhere** - that
+is the defect being fixed, and filing them under a guess would turn a stale file into a false
+attribution in the very comparison this exists to protect. It names them on every pull until they
+are gone. Move them into the right guest's directory if you know which one it was; delete them if
+you do not.
 
 ### What is actually in the store on the VM
 
@@ -437,7 +485,7 @@ is built, because a testbed VM missing from the list is simply never saved.
 | `host/Publish-GuestPayload.ps1` | Publishes the MCP server and the remediation tools on the host and zips them for copy-in. Host-only, so it takes no VM name; one payload serves all three guests. |
 | `host/Get-GuestCredential.ps1` | Loads the guest credential from the gitignored fixtures directory. Documents the one place a credential may live; contains none. `-VMName` is mandatory (§4a). |
 | `host/Copy-ToGuest.ps1` | Copies a file or a zip into the guest over PowerShell Direct. `-VMName` is mandatory (§4a). |
-| `host/Copy-FromGuest.ps1` | Gets results, logs and the corpus manifest back out. `-VMName` is mandatory (§4a). Its default destination is shared by every guest, which is safe for manifests **because each guest has its own corpus id** (§3); it also refuses outright to replace a manifest whose content differs, unless `-Force` says you mean it. `measure.jsonl` and the logs are not name-distinct: move them aside or pass `-Destination` when pulling a second guest. |
+| `host/Copy-FromGuest.ps1` | Gets results, logs and the corpus manifest back out. `-VMName` is mandatory (§4a), and it also names the subdirectory results land in. **The manifest goes to the shared root** - safe because each guest has its own corpus id, and kept there so a reused id still collides visibly; **`measure.jsonl` and the logs go to `<Destination>\<VMName>\`**, because what differs about a transcript is the machine that produced it (§3). It refuses to replace any pulled file whose content differs, unless `-Force` says you mean it. |
 | `guest/Register-InteractiveTask.ps1` | The session-1 scheduled-task recipe. Everything COM-touching goes through it. |
 | `guest/Build-Corpus.ps1` | plan, probe, build, census - with the committed parameters as defaults. |
 | `guest/Invoke-GuestMeasure.ps1` | The measurement driver, recovered from the guest. Produced the numbers now in `Docs/magic-numbers.md`. |

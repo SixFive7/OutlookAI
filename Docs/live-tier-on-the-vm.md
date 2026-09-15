@@ -414,11 +414,13 @@ want.
 **One corpus id per guest, and the ids are assigned, not invented at the keyboard**:
 `vm-indexed` on `OutlookAI-Indexed`, `vm-unindexed` on `OutlookAI-Unindexed`, and `vm2` stays
 `vm2` on the outgoing guest. The manifest is `corpus-<corpusId>.jsonl`, so `--corpus-id` and
-`--manifest` change together, always. `Testbed/host/Copy-FromGuest.ps1` pulls every guest into one
-shared directory, so two guests sharing an id means the second pull replaces the first's manifest -
-and that manifest is the only allowlist `corpus-teardown` will delete from a real store. The
-convention, the reasoning and the backstop that refuses such an overwrite are in
-`Testbed/README.md` section 3.
+`--manifest` change together, always. `Testbed/host/Copy-FromGuest.ps1` pulls every guest's
+manifest into one shared directory - on purpose, so a reused id still collides where a human can
+see it - so two guests sharing an id means the second pull replaces the first's manifest, and that
+manifest is the only allowlist `corpus-teardown` will delete from a real store. (`measure.jsonl`
+and the logs go to a per-guest subdirectory instead; the two halves of the pull are settled
+differently and `Testbed/README.md` section 3 says why.) The convention, the reasoning and the
+backstop that refuses such an overwrite are in `Testbed/README.md` section 3.
 
 **The manifest is the only thing that can tear the corpus down**, and it is also what the
 freshness check reads. Copy it somewhere outside the guest. Losing it means `corpus-reindex`
