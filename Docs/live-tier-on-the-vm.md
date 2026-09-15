@@ -119,7 +119,42 @@ is exactly what the declaration means. Before that was true, the identity tests 
 other Windows account's profile, and a declared bystander the running profile does not mount is
 censused, not found, and refuses the tier. It belongs in *that* account's settings file.
 
-### 1.4 A dummy account with a LOCAL SINK, because an unroutable one poisons the teardown
+### 1.4 A dummy account, and NO SINK - decided 2026-09-15
+
+**DECISION: the testbed guests get no mail sink.** The dummy account exists and is fully built by
+script - it resolves over COM with `SmtpAddress`, a bound `DeliveryStore` and a Drafts folder -
+but nothing listens on `127.0.0.1`. Mail submitted there goes nowhere.
+
+**Why, when a sink turned out to be buildable after all.** smtp4dev *does* serve POP3: the issue
+that said otherwise was closed "not planned" in 2022 and POP3 shipped three years later from an
+unrelated pull request. `Pop3Server.cs` is absent at tag 3.10.3 and present at 3.11.0, and 3.15.0
+is the version to pin. So this is not a "cannot"; it is a "not worth it", and the arithmetic is:
+
+* A sink buys **exactly one** test method that nothing else covers - the Phase 5 two-step `send`
+  round-trip. One account of any type already reaches 26 of the 34 otherwise-blocked methods, and
+  seeding items straight into the PST reaches 33.
+* It costs a **third precondition**. `Testbed/MEDIA.md` names two - a Windows ISO and the Office
+  Deployment Tool - and `CLAUDE.md`'s Dependencies rule forbids anything a rebuilder must obtain
+  beyond those. The licence is fine (BSD-3-Clause); the precondition is the problem.
+* It costs an **undocumented manual step**: smtp4dev's POP3 refuses an empty password and the
+  `.prf` deliberately carries none, so somebody has to type one once per guest.
+* And the implementation is eleven months old with two RFC 1939 violations found by reading its
+  source - `TOP` advertised in `CAPA` with no handler, and `DELE` re-listing the mailbox per
+  command so `DELE 1; DELE 2` removes the wrong message.
+
+**WHAT THIS GIVES UP, stated plainly rather than discovered later.** The Outbox stops being a
+canary. `LiveMailSink.EnsureOutboxDrained` and the zero-artifact sweep over folder 4 exist to
+catch a genuine send-path leak; with no transport the Outbox can never fill from a seed, so it can
+never prove a leak either. **That guard goes vacuous on the guests** - it will pass, and its
+passing will mean nothing. It still means something on the maintainer's machine, which has real
+transport.
+
+**The reserve.** `Testbed/guest/Install-MailSink.ps1` is written, staged-package-only,
+SHA-256-pinned, and its `-Verify` speaks SMTP and POP3 itself. It is not part of the build path.
+If the Phase 5 method ever has to run on a guest, that script is the route and this decision is
+the thing to revisit - not the research, which is done and is in `Docs/research/`.
+
+### 1.4a Why the account still points at a sink that is not there
 
 The account exists because `NewDraft` resolves an `Account` object by SMTP address and refuses
 when none matches, which is what puts the entire draft, update/discard, HTML-draft and send
@@ -146,9 +181,12 @@ trade for exactly this reason, noting that **drafts are indexed exactly like rec
 
 **`Requires=Transport` over-declares by 12**: 25 methods carry it, 13 use it.
 
-So the account points at a **local sink that delivers back**: submissions on loopback, and the
-same messages served back over POP3 to the same profile, so self-addressed mail round-trips
-into the Inbox. Section 2.7 says which sink and how to install it.
+**So the account is configured for a local sink that delivers back - and on the guests there is
+nothing there.** It points at `127.0.0.1` on 25 and 110 because that is what the design calls for
+and what the reserve installer would satisfy; per 1.4 no sink is installed, so a send queues in
+the Outbox and stays there. On a guest, do not send. The 13 methods that put mail on the wire are
+out of reach there by design, and 12 of them are reachable instead by seeding items straight into
+the PST, which is what the corpus generator already does 20,000 times.
 
 ---
 
@@ -584,7 +622,7 @@ it the whole live tier refuses to start.
 | `subjectOnlyProbe` | Coordinates of a population whose term is in the subject and not the body. Four fields, all or none. | Production only |
 | `delegateNestedFolderProbe` | A delegate folder Outlook nests and the index publishes flat. | never |
 | `corpus` | Where the measurement corpus is and what it was generated from, so the tier can prove it is still measurable. Six fields plus optional `windowDays`. | no, all or none |
-| `mailSink` | Loopback submission and retrieval endpoints. **Absent means this machine has real transport.** | no, all or none |
+| `mailSink` | Loopback submission and retrieval endpoints. **Absent is AMBIGUOUS and that is a known hazard: it means EITHER this machine has real transport OR it has none at all.** The testbed guests are the second case (decided 2026-09-15, no sink), the maintainer's machine is the first, and the settings file cannot currently tell them apart - so a guest with no transport reads exactly like a machine with perfect transport. See the no-sink decision in section 1.4. | no, all or none |
 
 A block that is present must be **complete**: three fields out of four reads as configured and
 behaves as absent, which is the exact silence these checks exist to remove.
