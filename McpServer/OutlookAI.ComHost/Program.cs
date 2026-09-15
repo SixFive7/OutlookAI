@@ -76,6 +76,14 @@ namespace OutlookAI.ComHost
                 await Console.Error.WriteLineAsync($"COM host terminated: {ex}").ConfigureAwait(false);
                 return 1;
             }
+            finally
+            {
+                // Test-only, and a no-op unless OUTLOOKAI_COMHOST_EXIT_DELAY_MS is set. It
+                // runs HERE - after the serve loop, before the `using` above disposes the
+                // gateway - because that is where a real COM release costs its time, and the
+                // parent's shutdown grace is the thing being modelled.
+                ComHostFaultInjection.ApplyExitDelay();
+            }
         }
 
         /// <summary>

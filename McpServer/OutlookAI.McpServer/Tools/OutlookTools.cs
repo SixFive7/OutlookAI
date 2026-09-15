@@ -33,10 +33,115 @@ internal static class ServerRuntime
     private static readonly Lazy<MailService> LazyService = new(
         () => new MailService(LazyGateway.Value), LazyThreadSafetyMode.ExecutionAndPublication);
 
+    private static int _released;
+
     internal static MailService Service => LazyService.Value;
 
     /// <summary>The COM-host gateway, for health reporting that must not go through the service layer.</summary>
     internal static RemoteComGateway Gateway => LazyGateway.Value;
+
+    /// <summary>
+    /// Whether this process has built a gateway yet - which is to say, whether anything has
+    /// asked for Outlook. Test seam, and the only way to observe from outside that
+    /// <see cref="ReleaseOutlookResources"/> left an unused <c>Lazy</c> alone rather than
+    /// forcing it. Reading <c>Gateway</c> to find out would be the defect.
+    /// </summary>
+    internal static bool HasGateway => LazyGateway.IsValueCreated;
+
+    /// <summary>
+    /// Ends the COM host in a way that lets it release Outlook first. Called once, by
+    /// <c>Program</c>, on the way out.
+    /// <para>
+    /// WHY THIS EXISTS. The COM host child holds the Application, the NameSpace, a
+    /// non-displayed pin Explorer and an advise registration inside Outlook, and its only
+    /// release path is the <c>using ComGateway</c> in <c>OutlookAI.ComHost.Program</c>. That
+    /// runs when the child exits of its own accord, and not when it is terminated.
+    /// <c>ComHostSupervisor</c> has had a grace window for exactly this since 2026-08-19 -
+    /// close the pipe, let the child unwind, terminate only if it does not - but the window
+    /// was unreachable in the shipped server: the only caller that reaches it with a live
+    /// session is <c>ComHostSupervisor.Dispose</c>, reached only from
+    /// <c>RemoteComGateway.Dispose</c>, and nothing disposed the gateway. The gateway is a
+    /// static <c>Lazy</c> here, not a DI singleton, so no container disposed it either.
+    /// Every exit was therefore the terminate path, and a documented cleanup nobody could
+    /// reach reads as covered while doing nothing.
+    /// </para>
+    /// <para>
+    /// WHAT IT IS NOT. It is not a fix for a poisoned Outlook. Measured on 2026-09-15 on the
+    /// test guest: a client terminated while holding Application, NameSpace and a Folder left
+    /// the next client's CreateObject/GetNamespace/GetDefaultFolder at 0.37/0.02/0.05 s, and
+    /// so did a client that also held an unclosed pin Explorer. Windows does tear the dead
+    /// client's references down. What the same measurement DID show outliving the kill is the
+    /// pin Explorer itself (<c>explorers=1</c> against a live Outlook afterwards), which this
+    /// repo has already measured the consequence of: an Explorer left in Outlook's collection
+    /// stops a later Application.Quit ending the process, and they accumulate. That - plus
+    /// the advise registration, which is the one reference only we can retract and which
+    /// nobody has been able to test - is what an orderly exit actually buys.
+    /// </para>
+    /// <para>
+    /// SAFETY. Idempotent: the first caller wins and later ones return immediately. It never
+    /// touches <c>.Value</c> on a Lazy it has not already created - a shutdown that CONSTRUCTS
+    /// a gateway would start a COM host child on the way out, which is the opposite of the
+    /// point. And it is bounded twice: the supervisor stops waiting on its own child after
+    /// <c>ShutdownExitGraceMilliseconds</c>, and this runs the whole disposal on a thread-pool
+    /// thread it will abandon after <see cref="ReleaseBudget"/> rather than let a defect down
+    /// there hold a server process open - the failure that left 18 orphans on 2026-08-15.
+    /// </para>
+    /// </summary>
+    internal static void ReleaseOutlookResources()
+    {
+        if (Interlocked.Exchange(ref _released, 1) != 0)
+        {
+            return;
+        }
+
+        // Nothing was ever built, so there is nothing holding Outlook and no child process
+        // to end. This is the ordinary case for a server whose session used only
+        // list_signatures, or none of its tools at all.
+        if (!LazyGateway.IsValueCreated)
+        {
+            return;
+        }
+
+        Task release = Task.Run(() =>
+        {
+            // MailService.Dispose disposes the gateway, so on the normal path the second
+            // call is the idempotent no-op. Both are named anyway: the service is what owns
+            // the gateway, and a future MailService that releases something else as well
+            // would otherwise be missed here silently.
+            if (LazyService.IsValueCreated)
+            {
+                LazyService.Value.Dispose();
+            }
+
+            LazyGateway.Value.Dispose();
+        });
+
+        try
+        {
+            if (!release.Wait(ReleaseBudget))
+            {
+                Console.Error.WriteLine(
+                    "[outlookai] The Outlook COM host did not finish shutting down within "
+                    + $"{ReleaseBudget.TotalSeconds:0.#}s; exiting anyway. The child is in a "
+                    + "kill-on-close job object, so Windows ends it with this process.");
+            }
+        }
+        catch (AggregateException ex)
+        {
+            // Shutdown reports and continues. Throwing here would turn a clean exit into a
+            // crash, which is strictly worse than the leak it was trying to prevent.
+            Console.Error.WriteLine(
+                $"[outlookai] Releasing the Outlook COM host failed: {ex.InnerException?.Message ?? ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// The outer bound on <see cref="ReleaseOutlookResources"/>. Deliberately longer than
+    /// <c>ComHostSupervisor.ShutdownExitGraceMilliseconds</c>, which is the bound that should
+    /// actually apply: this one exists only so a defect in that one cannot wedge a server
+    /// process open forever, and a value close to it would make the two race instead.
+    /// </summary>
+    private static readonly TimeSpan ReleaseBudget = TimeSpan.FromSeconds(5);
 }
 
 /// <summary>
