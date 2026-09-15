@@ -40,6 +40,34 @@ whose profile is not. That is the whole reason this machine has two logons.
 > let the indexer settle, and read `outlook_health`'s `index.perStore[]` on both accounts.
 > Section 8 says what to do if it turns out to be wrong.
 
+### 1.1a SUPERSEDED 2026-09-15 - there are two GUESTS now, so one account each
+
+**Everything in 1.1 is history.** The build is now **two virtual machines**, `OutlookAI-Indexed`
+and `OutlookAI-Unindexed`, with `Corpus A` on the first and `Corpus B` on the second - see the id
+table in `Testbed/README.md` section 3. That is **exactly the fallback section 8 item 1 named**:
+*"the fallback is two VMs, and the store layout collapses to one corpus per machine."*
+
+**Three consequences, and the third is the valuable one:**
+
+1. **Each guest needs ONE Windows account**, the `vmadmin` the answer file already creates. Section
+   2.4's "create two local accounts" is **not work anyone has to do**.
+2. **The toolchain is installed once per guest, not twice.** 2.4's "both accounts need the
+   repository, the SDK and a built server exe" was the expensive half of that step.
+3. **The riskiest unverified assumption in the whole layout is no longer load-bearing.** Whether
+   Windows Search can exclude one Windows account's `mapi16://{SID}/` scope while indexing
+   another's was *derived from how the scope is addressed, never measured*, and the entire
+   three-store design rested on it. **Two guests do not need it to be true**: index state is now a
+   property of the machine, which is the one thing Indexing Options unambiguously controls.
+
+**We did not take this fallback because the assumption failed.** It was taken for an unrelated
+reason - the decision to rebuild from nothing rather than repair the old guest - and the
+simplification came free with it. Worth saying plainly, because "the assumption was disproved" and
+"we stopped depending on the assumption" are different facts and only the second one happened.
+
+**Two OUTLOOK PROFILES per guest is still required** - that is 1.2, and it is a different
+constraint entirely: the corpus generator refuses any profile holding a mail account, so corpus
+work and tier work cannot share one profile even on a machine with a single logon.
+
 ### 1.2 Two OUTLOOK PROFILES, because the corpus generator refuses an account
 
 `corpus-build` refuses any profile that has **a mail account at all**, with no override flag.
@@ -167,7 +195,18 @@ redoing the step above it.
 
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED`, then `CP-05-ADDIN-TRUSTED`.**
 
-### 2.4 The two Windows accounts
+### 2.4 The two Windows accounts - NOT NEEDED, skip to 2.5
+
+**SUPERSEDED 2026-09-15. Do not do this step.** Each guest has one Windows account, `vmadmin`,
+created by the answer file, and index state is a property of the **machine** rather than of an
+account - see 1.1a. Creating a second account, and installing the repository, the SDK and a built
+server exe under it, is work with nothing behind it.
+
+The original text is kept below because it explains a design somebody may meet in the old guest,
+and because if the two-guest arrangement is ever collapsed back to one machine this is what it
+would have to become again.
+
+---
 
 Create two local accounts. Section 1.1 says why. Suggested roles, since neither is recorded:
 
@@ -815,10 +854,15 @@ unrecorded or unverified.
 
 **Verify before building anything else**
 
-1. **That one Windows account's Outlook profile can be excluded from the index while another's
-   is not** (section 1.1). The whole layout rests on it and it is derived rather than measured.
-   If it turns out to be false, the fallback is two VMs, and the store layout collapses to one
-   corpus per machine.
+1. ~~That one Windows account's Outlook profile can be excluded from the index while another's
+   is not~~ - **NO LONGER LOAD-BEARING, 2026-09-15.** This was the riskiest item on the list: the
+   whole three-store layout rested on it, and it was *derived from how the `mapi16://{SID}/` scope
+   is addressed, never measured*. It is now moot, because **the fallback this entry itself named
+   has been taken** - "two VMs, and the store layout collapses to one corpus per machine". Index
+   state is a property of the **machine** now, which Indexing Options controls unambiguously.
+   **Nobody has to verify it, and nobody has to build around it.** See 1.1a. Note the distinction:
+   the assumption was not disproved, we simply stopped depending on it, and the two-guest build
+   was adopted for an unrelated reason.
 2. **That Outlook accepts `@` in a store display name** (section 2.6). It gates the draft
    family and costs five minutes.
 3. **Whether smtp4dev's POP3 side maps an arbitrary `USER` to the catch-all mailbox**, or
