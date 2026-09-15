@@ -43,7 +43,7 @@ testbed before its replacement runs.**
 | 4 | Install Office, the accounts and the profiles | by hand - `Docs/live-tier-on-the-vm.md` §2.2-2.6, with `.work/office-odt/Testbed.xml` (`MEDIA.md`) | guest |
 | 5 | Give yourself a way to reach session 1 | `guest/Register-InteractiveTask.ps1` | guest, once |
 | 6 | Build the server and the tools, and copy them in | `host/Publish-GuestPayload.ps1` | host |
-| 7 | Install the mail sink and the dummy account | by hand - `Docs/live-tier-on-the-vm.md` §2.7-2.8 | guest |
+| 7 | Install the mail sink, the dummy account and the identity account | by hand - `Docs/live-tier-on-the-vm.md` §2.7-2.8b | guest |
 | 8 | Build the corpus | `guest/Build-Corpus.ps1` | guest, session 1 |
 | 9 | Write the live-test settings file | copy `live-test-settings.example.json` - and read §3b, or the tier refuses to start | host or guest |
 | 10 | Take the measurements | `guest/Invoke-GuestMeasure.ps1`, `guest/Measure-SweepCost.ps1` | guest, session 1 |
@@ -197,6 +197,65 @@ themselves are retaken, and the whole record changes with it. The guests to *bui
 machine's mailbox state, a build regenerates it, and it belongs in the gitignored
 `McpServer/OutlookAI.McpServer.Tests/live-fixtures/` directory - which is where the recovered
 copy now lives, as `live-fixtures/vm-corpus/corpus-vm2.jsonl`.
+
+### Every guest gets its OWN corpus id, and the manifest is named after it
+
+**Two guests, one manifest file, and the file is the only thing that can remove a corpus.** A
+manifest is named `corpus-<corpusId>.jsonl` - after the **corpus**, not after the guest - and
+`host/Copy-FromGuest.ps1` lands every guest's pull in the same shared directory. With one guest
+that is harmless. With two it is not: the second pull replaces the first's manifest, and a
+manifest is the EntryID allowlist `corpus-teardown` requires (EntryID **and** ordinal tag, both,
+always) as well as the file `corpus-verify` reads for freshness. Lose one and that corpus becomes
+items in a real store that nothing is entitled to delete.
+
+**The fix is different ids, not different directories.** A per-guest subdirectory would let the
+two corpora keep one name and hide the collision behind a path. They are not one corpus: different
+machines, different index state, genuinely different populations - and they already have to be
+told apart in each machine's settings file and in every measurement that quotes one. The id is
+what names the population, so the id is what has to differ.
+
+| Corpus id | Guest | Indexed | State |
+| --- | --- | --- | --- |
+| `vm2` | `OutlookAI-TestVM` | **unrecorded** | **built and measured** - section 3 above is its record |
+| `vm-indexed` | `OutlookAI-Indexed` | yes | not built; reserved name. `Corpus A` in the store layout |
+| `vm-unindexed` | `OutlookAI-Unindexed` | no | not built; reserved name. `Corpus B` in the store layout |
+
+**Why those two names.** They name **the property that actually differs** - the index state - which
+is the only reason the two guests exist; a rebuilder reading `corpus-vm-indexed.jsonl` in a shared
+directory knows what it is without opening it, which is exactly what failed here. They map
+one-to-one onto the guest names, so there is no second mapping to remember or get wrong. They are
+hyphenated rather than underscored on purpose: `_` is DASL's single-character wildcard, and an id
+containing one turns `CorpusPlan.DaslSubjectFragment` from an exact match into a superset -
+harmless, because every caller re-checks the EntryID, but there is no reason to spend it. And
+**neither id contains the other**, the same discipline `T1/CorpusTagSeparationTests` enforces on
+the two subject tags, so a substring search for one corpus can never select the other. `vm3` and
+`vm4` would have satisfied "distinct" and told a reader nothing, which is the modelling error this
+decision exists to avoid.
+
+`vm2` keeps its name. It is provenance - the corpus every published measurement is a statement
+about - and renaming it to fit a convention invented afterwards would break the pin
+`.github/scripts/check-testbed-references.ps1` holds across `testbed.json`,
+`guest/Build-Corpus.ps1` and `Docs/corpus-measurement-plan.md`, for no gain.
+
+`testbed.json` carries this as **`corpusIdConvention`, a separate top-level key** rather than
+extra fields on `corpus`. That separation is the point: `corpus` is a record of one corpus that
+exists and was measured, and everything in it was read off a machine. The convention block is a
+naming rule plus reserved ids, and its seed, anchor and count are explicitly `null` because those
+corpora **do not exist yet**. Folding the two together would put unmeasured placeholders in the
+one place this repository treats as measured fact.
+
+**Whether the two new corpora share a seed and anchor is still open** (`Docs/live-tier-on-the-vm.md`
+section 8, item 16). Nothing here settles it, and nothing here needs to: two corpora may share
+every generator parameter and still must not share an id, because the id names the population and
+those are two different stores either way.
+
+**The backstop, for the day somebody reuses an id anyway.** `host/Copy-FromGuest.ps1` refuses to
+replace a manifest that is already in the destination and holds different content, unless `-Force`
+is passed. It hashes the guest's copy before it copies anything, so the refusal happens instead of
+the overwrite rather than after it, and the message says what the file is for. Only manifests are
+guarded, and only manifests are name-distinct per guest: **`measure.jsonl` and the `*.log` files
+still collide on every pull**, so move those aside, or pass `-Destination`, when pulling a second
+guest.
 
 ### What is actually in the store on the VM
 
@@ -368,7 +427,7 @@ is built, because a testbed VM missing from the list is simply never saved.
 | `host/Publish-GuestPayload.ps1` | Publishes the MCP server and the remediation tools on the host and zips them for copy-in. Host-only, so it takes no VM name; one payload serves all three guests. |
 | `host/Get-GuestCredential.ps1` | Loads the guest credential from the gitignored fixtures directory. Documents the one place a credential may live; contains none. `-VMName` is mandatory (§4a). |
 | `host/Copy-ToGuest.ps1` | Copies a file or a zip into the guest over PowerShell Direct. `-VMName` is mandatory (§4a). |
-| `host/Copy-FromGuest.ps1` | Gets results, logs and the corpus manifest back out. `-VMName` is mandatory (§4a); its default destination is shared, so pull one guest at a time and move the manifest aside before pulling the next. |
+| `host/Copy-FromGuest.ps1` | Gets results, logs and the corpus manifest back out. `-VMName` is mandatory (§4a). Its default destination is shared by every guest, which is safe for manifests **because each guest has its own corpus id** (§3); it also refuses outright to replace a manifest whose content differs, unless `-Force` says you mean it. `measure.jsonl` and the logs are not name-distinct: move them aside or pass `-Destination` when pulling a second guest. |
 | `guest/Register-InteractiveTask.ps1` | The session-1 scheduled-task recipe. Everything COM-touching goes through it. |
 | `guest/Build-Corpus.ps1` | plan, probe, build, census - with the committed parameters as defaults. |
 | `guest/Invoke-GuestMeasure.ps1` | The measurement driver, recovered from the guest. Produced the numbers now in `Docs/magic-numbers.md`. |
