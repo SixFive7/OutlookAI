@@ -290,7 +290,18 @@ narrowed by text stops where the text stops.
 The GUI route (File > Account Settings > Data Files > Add) remains correct and is what to use if
 you are building a guest by hand.
 
-> **A TENSION WORTH NAMING RATHER THAN QUIETLY RESOLVING (2026-09-15).**
+> **HOW THE TIER STORE GETS ITS NAME, measured 2026-09-15.** Outlook names the store it mints
+`Outlook Data File`, and the tier profile REQUIRES Outlook to mint it (only a store Outlook mints
+gets bound as the account's delivery store). So the name is set afterwards, by
+`Testbed/guest/Rename-OutlookStore.ps1`, and this works:
+
+* `Store.DisplayName` is read-only, and `PropertyAccessor.SetProperty` on `PR_DISPLAY_NAME_W` is
+  widely reported blocked - but **renaming the store's ROOT FOLDER does work, and
+  `Store.DisplayName` FOLLOWS.** No source could answer that; it is now measured.
+* The `@` is accepted: the store reads `tier@vm.invalid` over COM.
+* The account's `DeliveryStore` reports the new name too, so renaming does not break the binding.
+
+**A TENSION WORTH NAMING RATHER THAN QUIETLY RESOLVING (2026-09-15).**
 > `Testbed/guest/Add-OutlookPstStore.ps1` is a script that adds stores, which is the thing the
 > paragraph above tells you not to write. It exists because the display name has to be exact and
 > the GUI route costs a vision-model session, and it is drawn as narrowly as the objection
