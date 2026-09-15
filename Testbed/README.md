@@ -566,6 +566,7 @@ tomorrow, it has to move somewhere tracked.
 | `guest/New-OutlookProfile.ps1` | Creates an Outlook profile with no GUI: account-less (the corpus profile) or carrying named PSTs. `-Preflight` checks the MAPI interop alone, first. **Never executed.** |
 | `guest/Add-OutlookPstStore.ps1` | Adds a PST to a profile with an **exact** display name, and `-NameProbe` settles §6 item 10 - whether Outlook accepts `@` in one. **Never executed.** |
 | `guest/Set-DefaultOutlookProfile.ps1` | Switches the default profile and switches the profile prompt off. Closes §6 item 5. **Never executed.** |
+| `guest/Dump-UiaTree.ps1` | **Read-only.** Dumps the UIAutomation tree of an open dialog and prints a VERDICT: whether Outlook's account wizard is a classic Win32 property sheet (addressable by locale-invariant numeric `AutomationId`) or Office's own DirectUI chrome (no stable ids - dead for a PowerShell client). Two minutes, and it decides the whole GUI-automation route. **Never executed.** |
 | `guest/New-PopAccountPrf.ps1` | A **spike**, not a route: the one free candidate for creating a POP3 account, plus the read-back that says how far it got. Expected to fail; §4b says why. **Never executed.** |
 | `guest/Set-AccountSignature.ps1` | Gives the identity account its signature, by driving the shipped `manage_signature` tool rather than improvising. Runs **after** the accounts exist. **Never executed.** |
 | `guest/Build-Corpus.ps1` | plan, probe, build, census - with the committed parameters as defaults. |
