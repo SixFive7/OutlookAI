@@ -192,8 +192,15 @@ Two profiles are needed on the account that does corpus work:
 * a **tier profile** with the dummy account.
 
 Set Outlook to "always use this profile" and switch by changing that setting, not by prompting:
-a prompting profile cannot be driven over COM. How the profiles are created and switched is
-**not recorded**; the Mail control panel works and is the obvious route.
+a prompting profile cannot be driven over COM. The Mail control panel works and was the assumed
+route.
+
+**Since 2026-09-15 there are drafted scripts for both halves, and they have NEVER BEEN RUN.**
+`Testbed/guest/New-OutlookProfile.ps1` creates a profile through Extended MAPI - including the
+account-less one section 1.2 requires - and `Testbed/guest/Set-DefaultOutlookProfile.ps1` switches
+the default and turns the prompt off. `Testbed/README.md` section 4b is the summary, and
+`.work/profile-automation-research.md` is the evidence with every claim labelled by source. Run
+`New-OutlookProfile.ps1 -Preflight` first, on a checkpoint you are willing to lose.
 
 **Turn AutoArchive OFF, on every store, in both profiles.** It is a client-side actor that
 moves items out of a PST on a schedule, and to a before/after census that is **indistinguishable
@@ -206,6 +213,20 @@ rather than assuming the default.
 Add every store **through Outlook itself** (File > Account Settings > Data Files > Add). Do not
 improvise a script. Creating stores is not something the tested helpers do, and mailbox
 mutation from ad-hoc shell code is the thing that once destroyed real mail.
+
+> **A TENSION WORTH NAMING RATHER THAN QUIETLY RESOLVING (2026-09-15).**
+> `Testbed/guest/Add-OutlookPstStore.ps1` is a script that adds stores, which is the thing the
+> paragraph above tells you not to write. It exists because the display name has to be exact and
+> the GUI route costs a vision-model session, and it is drawn as narrowly as the objection
+> deserves: it creates **new, empty** PST files and registers them in a profile, it never opens a
+> folder, reads an item, moves one or deletes one, and it refuses to run on any machine not logged
+> on as the guest account. So it is not in the class of thing that destroyed real mail - that was
+> shell-side subject matching against a live mailbox.
+>
+> **It has also never been executed, so nothing here is yet evidence of anything.** Whether this
+> paragraph's rule should be relaxed for store creation specifically is the maintainer's call, not
+> a script's: until it is made, the GUI route above remains the recorded one and the script is a
+> draft beside it.
 
 Naming matters more than it looks:
 
@@ -818,7 +839,13 @@ unrecorded or unverified.
    If it turns out to be false, the fallback is two VMs, and the store layout collapses to one
    corpus per machine.
 2. **That Outlook accepts `@` in a store display name** (section 2.6). It gates the draft
-   family and costs five minutes.
+   family and costs five minutes. **Still open, now one command (2026-09-15):**
+   `Testbed/guest/Add-OutlookPstStore.ps1 -NameProbe -Execute -VerifyWithOutlook` settles it in a
+   throwaway profile and reports **accepted**, **rejected** or **transformed**. No documentation
+   and no community source states a restriction either way - which is why this is a probe and not
+   an answer. **Transformed** is the outcome to watch for: a silently-renamed store is one no test
+   can find by name, on a machine that otherwise looks correctly built. Section 2.8b gates the
+   identity store on the same question.
 3. **Whether smtp4dev's POP3 side maps an arbitrary `USER` to the catch-all mailbox**, or
    whether the username must match a configured mailbox name. If the latter, add an explicit
    `Mailboxes` entry with `Recipients: "*"` and use its name as the POP3 username.
@@ -858,6 +885,18 @@ unrecorded or unverified.
    checkpoints must be taken with both logged on.
 9. Outlook profile names, how they are created, which is default, and how the switch between the
    no-accounts profile and the tier profile is automated.
+   **HALF-ANSWERED 2026-09-15, and the other half is CLOSED-NEGATIVE.** Profiles, PSTs with exact
+   display names, and the default-profile switch all now have drafted scripts -
+   `Testbed/README.md` section 4b indexes them, `.work/profile-automation-research.md` is the
+   evidence, and **none of them has ever been executed**, so this item stays open until one has.
+   **The mail account is the closed-negative half: there is no free programmatic route to creating
+   one.** The object model has no `Accounts.Add` and `Account.DeliveryStore` is read-only; MAPI has
+   no POP3 message service, because account administration moved behind the undocumented
+   `IOlkAccountManager`; the registry has no published recipe on 16.x and DPAPI-seals its stored
+   passwords per user per machine; and a `.prf` cannot carry `PROP_ACCT_DELIVERY_STORE`, which is a
+   binary EntryID. `Testbed/guest/New-PopAccountPrf.ps1` is the spike that tests the last of those
+   and is expected to fail. **So sections 2.8 and 2.8b keep ONE GUI pass per guest** - two accounts
+   and their delivery stores - and the mitigation is a checkpoint immediately after it.
 10. The scheduled-task recipe for session 1: task name, principal, working directory, argument
     line, output redirection and exit-code capture. Only "`-LogonType Interactive`" is recorded,
     and an elevated process's stdout cannot reach the caller, so output must go to a file.
