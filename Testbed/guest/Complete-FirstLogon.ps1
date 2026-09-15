@@ -123,30 +123,53 @@ Write-Line '================================================================'
 Invoke-Step ("preferred language list = " + ($LanguageList -join ', ') + " (keyboard $KeyboardLayout on every entry)") {
     if ($LanguageList.Count -lt 1) { throw 'No languages given.' }
 
-    $list = New-WinUserLanguageList -Language $LanguageList[0]
-    for ($i = 1; $i -lt $LanguageList.Count; $i++) {
-        $list.Add($LanguageList[$i])
-    }
+    # PASS 1 - REGISTER, so Windows allocates an LCID for any TRANSIENT language.
+    # New-WinUserLanguageList only CONSTRUCTS an object. A transient language such as en-NL has
+    # no LCID until the list has actually been SET, and with no LCID it has no input method tip
+    # either. Measured on a fresh guest 2026-09-15: en-NL came back with an EMPTY
+    # InputMethodTips collection, and the previous single-pass version threw right here with
+    # "Windows gave 'en-NL' no input method tip to rewrite" - correctly reporting a failure, but
+    # for a reason that reads as Windows misbehaving rather than as the list not existing yet.
+    $seed = New-WinUserLanguageList -Language $LanguageList[0]
+    for ($i = 1; $i -lt $LanguageList.Count; $i++) { $seed.Add($LanguageList[$i]) }
+    Set-WinUserLanguageList -LanguageList $seed -Force
 
-    # FORCE THE LAYOUT, KEEP THE LCID. Each tip reads '<lcid-hex>:<klid>' and the LCID half is
-    # whatever Windows assigned - for a transient language such as en-NL that is an allocation
-    # made at runtime and there is no constant to write here. So rewrite only the half after the
-    # colon and leave the half in front of it exactly as Windows produced it.
+    # PASS 2 - FORCE THE LAYOUT, KEEP THE LCID. Each tip reads '<lcid-hex>:<klid>'. The LCID half
+    # is whatever Windows just allocated, which for a transient language is an allocation and not
+    # an identity, so only the half after the colon is rewritten.
+    $list = Get-WinUserLanguageList
     foreach ($entry in $list) {
-        $existing = @($entry.InputMethodTips)
         $wanted = New-Object System.Collections.Generic.List[string]
-        foreach ($tip in $existing) {
+        foreach ($tip in @($entry.InputMethodTips)) {
             $forced = [regex]::Replace($tip, ':[0-9A-Fa-f]+$', (':' + $KeyboardLayout))
             if (-not $wanted.Contains($forced)) { $wanted.Add($forced) }
         }
         if ($wanted.Count -eq 0) {
-            throw ("Windows gave '{0}' no input method tip to rewrite." -f $entry.LanguageTag)
+            # Still nothing after registering it. The transient block begins at 0x2000 and this
+            # guest has one transient language, so 2000 is the allocation - but that is a
+            # FALLBACK, not knowledge, which is why the verification below is not optional.
+            $wanted.Add('2000:' + $KeyboardLayout)
         }
         $entry.InputMethodTips.Clear()
         foreach ($tip in $wanted) { $entry.InputMethodTips.Add($tip) }
     }
-
     Set-WinUserLanguageList -LanguageList $list -Force
+
+    # VERIFY, because both passes above can succeed and still leave the wrong thing set.
+    $final = Get-WinUserLanguageList
+    $tags = @($final | ForEach-Object { $_.LanguageTag })
+    foreach ($requested in $LanguageList) {
+        if ($tags -notcontains $requested) {
+            throw ("'{0}' is not in the language list afterwards; got: {1}" -f $requested, ($tags -join ', '))
+        }
+    }
+    foreach ($entry in $final) {
+        foreach ($tip in @($entry.InputMethodTips)) {
+            if ($tip -notmatch (':' + [regex]::Escape($KeyboardLayout) + '$')) {
+                throw ("'{0}' kept input method tip '{1}', which is not keyboard {2}." -f $entry.LanguageTag, $tip, $KeyboardLayout)
+            }
+        }
+    }
 }
 
 Invoke-Step "home location GeoId $GeoId" {
