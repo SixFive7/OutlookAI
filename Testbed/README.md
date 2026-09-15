@@ -23,9 +23,11 @@ You cannot start without Windows installation media, and this machine did not ha
 question was first asked. `Testbed/MEDIA.md` records what is needed, **where on this machine it
 actually is** (`.work/media/` for Windows, `.work/office-odt/` for Office — gitignored scratch,
 and the right home precisely because Downloads has been purged without warning once already), the
-Office deployment settings, and the licence clocks — including the one
-correction that matters: **Office's grace is 30 days, not 90**, so it expires before Windows and
-a "rebuild when it expires" policy means rebuilding monthly unless the guest can reach a KMS host.
+Office deployment settings, and the licence clocks — including the correction that matters most:
+**Office's 30-day grace turned out to cost nothing.** Past grace the guest keeps working — every
+COM read succeeds and a cold COM start completes in 3.7 s with no dialog — so the monthly rebuild
+cadence it once justified was **retired on 2026-09-15**. Rebuilds now trigger on `corpus-verify`
+refusing and before a release. The clock that actually bit was the **corpus**, not the licence.
 
 Both are **preconditions, not artefacts**: nothing here regenerates them, `.work/` is scratch, and
 a rebuilder who finds either directory empty must re-stage it before step 4.

@@ -747,16 +747,17 @@ unrecorded or unverified.
    Office Deployment Tool with `ProPlus2024Volume` on `PerpetualVL2024`, 64-bit, and
    **`ExcludeApp OutlookForWindows`, which is load-bearing** - it suppresses the new Outlook,
    which offers no COM object model. The guest build was read on 2026-09-15 and is
-   16.0.17932.20884. **Office's out-of-box grace is 30 days, not 90**, so Office and not Windows
-   is what sets the rebuild cadence - but note two corrections recorded there on 2026-09-15.
+   16.0.17932.20884. Office's out-of-box grace is **30 days, not 90** - but **that clock turned
+   out not to matter, and the monthly rebuild cadence it justified was RETIRED on 2026-09-15**.
    **Past grace, Office does NOT lose functionality**: the documented state is "Unlicensed
-   notification" - nags and a red title bar - and the guest was measured at `LicenseStatus=5`
-   with every COM read this project uses still working. And **the grace clock exists only because
-   the guest is a KMS client**; the maintainer's Office is MAK-activated with no clock at all, so
-   the rebuild cadence is a property of the testbed, not of Office 2024. Still unrecorded: how
-   the first-run wizard is suppressed. Still unmeasured, and the reason the preflight item in
-   `TODO.md` stays open: whether a modal activation prompt appears at Outlook **cold start** on a
-   past-grace guest, which would hang `CreateObject` rather than fail it.
+   notification" - nags and a red title bar - the guest was measured at `LicenseStatus=5` with
+   every COM read this project uses still working, and **a cold COM start completed in 3.7 s with
+   no dialog**. The grace clock also exists only because the guest is a KMS client; the
+   maintainer's Office is MAK-activated with no clock at all. Rebuilds now have two triggers,
+   neither a calendar: `corpus-verify` refusing, and a rebuild before a release. Still
+   unrecorded: how the first-run wizard is suppressed. Still unmeasured, and stated as a gap in
+   evidence rather than a known risk: the **write** path, which mailbox-safety rule 1 keeps out
+   of a probe's reach.
 8. The two Windows account names and their roles; whether both need a clone and an SDK; whether
    checkpoints must be taken with both logged on.
 9. Outlook profile names, how they are created, which is default, and how the switch between the
@@ -859,10 +860,18 @@ unrecorded or unverified.
   a build-difference candidate until ruled out.
 
 * **The guest's 30-day Office grace clock is an artefact of the testbed, not something a user
-  ever experiences.** The guest is a KMS client that has never reached a KMS host, so it runs on
-  out-of-box grace and expires monthly. The maintainer's own Office is **MAK-activated,
-  `LicenseStatus=1`, with no grace clock of any kind**. The rebuild cadence is therefore a
-  property of how the testbed was licensed, and should not be read as describing the userbase -
-  it has previously been discussed as though it did. Past grace the guest does **not** lose
-  functionality (see `Testbed/MEDIA.md`); what is unmeasured is whether a modal activation prompt
-  hangs a **cold** Outlook start, and the preflight item in `TODO.md` stays open for that reason.
+  ever experiences — and it turned out to cost nothing.** The guest is a KMS client that has
+  never reached a KMS host, so it runs on out-of-box grace. The maintainer's own Office is
+  **MAK-activated, `LicenseStatus=1`, with no grace clock of any kind**, so this was never a
+  property of the userbase - though it had previously been discussed as though it were.
+  **Measured past grace on 2026-09-15: every COM read works, and a cold COM start completes in
+  3.7 s with no dialog.** Nothing stops. The monthly rebuild cadence this clock justified is
+  therefore **retired**, and the `TODO.md` preflight item is **closed** - both of its
+  justifications were measured false. Rebuilds now trigger on `corpus-verify` refusing and on a
+  release, neither of which is a calendar.
+
+* **The clock that DID bite was the corpus, and this is the one to respect.** A three-week
+  absence left it 27 days stale with its 1-day and 7-day windows selecting nothing, while the
+  Office clock everyone was watching cost nothing at all. `corpus-verify` catches it fail-closed.
+  The general lesson is worth more than the instance: **the schedule was attached to the visible
+  clock rather than the harmful one.**

@@ -41,10 +41,24 @@ nothing:
 No dialog: titled windows in session 1 were enumerated before and after, none either time.
 
 **So the answer to "does past grace impact our work" is NO, and both justifications the Office
-preflight was ever given are now measured false.** The item is recommended for closing in
-`TODO.md`. **The consequence is bigger than the check:** the monthly rebuild cadence exists
-because this clock was believed to disable the guest. It does not. What actually forces a rebuild
-is **corpus staleness**, which already has a fail-closed guard in `corpus-verify`.
+preflight was ever given are measured false. DECIDED 2026-09-15: the item is CLOSED and the check
+is not built** - what remained was "241 ms is cheap", which would justify adding a check to
+anything, and the standing rule is *if it does not impact our work, do nothing*.
+
+**And the consequence was bigger than the check. DECIDED 2026-09-15: the monthly rebuild cadence
+is RETIRED.** It existed because this clock was believed to disable the guest; it does not. **Two
+triggers replace it, neither a calendar:**
+
+1. **`corpus-verify` refuses** - driven by the windows the machine declares in `windowDays`, so
+   it fires exactly when a measurement has stopped being possible.
+2. **Before a release** - not because anything expires, but because a from-nothing rebuild
+   playbook rots exactly as quietly as a stale corpus, and that is the moment it matters. The
+   guests can go untouched for months, and a schedule nobody needs is one that gets skipped and
+   then distrusted.
+
+**The lesson generalises past this decision: the schedule had been attached to the visible clock
+rather than the harmful one.** The Office clock was watched and cost nothing; the corpus clock
+went 27 days stale during the same absence and emptied two measurement windows.
 
 **Two residual unknowns, so nobody reads this as complete:** the **write** path is unmeasured
 (mailbox-safety rule 1 keeps it out of a probe's reach), and whether notification mode escalates

@@ -1,66 +1,60 @@
 # TODO
 
-- [ ] **Refuse the live tier when the guest's Office licence is nearly out of grace.**
-  Decided 2026-08-24 alongside "accept a monthly rebuild"; **justification corrected 2026-09-15,
-  because the one it was written on was false.** The testbed's Office install is a KMS client on a
-  **30-day** out-of-box grace - measured: installed 2026-08-09, 15.7 days left on 2026-08-24 - so
-  Office, not Windows, sets the rebuild cadence. A cadence that depends on remembering gets
-  skipped exactly once, and a three-week absence duly skipped it: the guest was measured 7 days
-  past grace on 2026-09-15.
+- [x] **CLOSED 2026-09-15 - do NOT build the Office licence preflight. Both reasons it ever had
+  were measured false.** Kept in full rather than deleted, because the reasoning is the useful
+  part and because a future measurement could reopen it.
 
-  **The justification is NOT that Office stops working.** This item used to say that past grace
-  Office "drops into reduced functionality". That term does not appear in Microsoft's
-  volume-activation documentation for Office LTSC 2024 at all - it is an Office 2007 era term and,
-  separately, a Microsoft 365 *subscription* term whose view-and-print app list has never included
-  Outlook. The documented terminal state for a volume KMS client is **"Unlicensed notification"**:
-  activation nags and a red title bar, no functional loss described. Measured on the guest at
-  `LicenseStatus=5` with `GracePeriodRemaining=0`, Outlook still runs and every COM read this
-  project uses still works. `Testbed/MEDIA.md` carries the evidence, the quotations and the
-  caveats on them.
+  **Reason 1, measured false in the morning.** The item was written on "past grace, Office drops
+  into reduced functionality". That term does not appear in Microsoft's volume-activation
+  documentation for Office LTSC 2024 at all - it is an Office 2007 era term and, separately, a
+  Microsoft 365 *subscription* term whose view-and-print app list has never included Outlook. The
+  documented terminal state for a volume KMS client is **"Unlicensed notification"**: nags and a
+  red title bar, no functional loss described. Measured on the guest at `LicenseStatus=5`,
+  `GracePeriodRemaining=0`: Outlook still runs and **every COM read this project uses still
+  works**.
 
-  **AND THE SECOND JUSTIFICATION HAS NOW ALSO BEEN MEASURED FALSE (2026-09-15, later the same
-  day).** The rewritten reason was that "the startup-hang risk is unquantified" - nobody had
-  established whether a modal activation prompt appears at Outlook **cold start** on a past-grace
-  guest. It has now been established. The guest was **restarted** so `OUTLOOK.EXE` was genuinely
-  not running, the probe asserted that before touching COM, and then:
+  **Reason 2, measured false the same afternoon.** The rewritten reason was "the startup-hang
+  risk is unquantified" - nobody had established whether a modal activation prompt appears at
+  Outlook **cold start**, which would leave `CreateObject` "stop responding and never finish".
+  The guest was restarted so `OUTLOOK.EXE` was genuinely not running, the probe asserted that
+  before touching COM, and then:
 
       CreateObject returned in 3.7 s; full bind in 4.4 s - v16.0.0.17932, 1 store(s), 0 account(s)
-      VERDICT: a cold COM start COMPLETED under an expired licence.
 
-  No dialog appeared - titled windows in session 1 were enumerated before and after, none either
-  time. **Both reasons this item was ever given are now false.** What is left is "241 ms is
-  cheap", which would justify adding a check to anything.
+  No dialog: titled windows in session 1 were enumerated before and after, none either time.
 
-  **RECOMMENDATION: CLOSE THIS ITEM**, on the maintainer's own standing rule - "if it does not
-  impact our work, do nothing". Left open only because closing a mailbox-adjacent safety item is
-  the maintainer's call.
+  **What was left was "241 ms is cheap", which would justify adding a check to anything.** On the
+  standing rule - *if it does not impact our work, do nothing* - that is not enough.
 
-  **The larger consequence, which is the part worth deciding on:** the **monthly rebuild cadence
-  was adopted because this clock was believed to disable the guest**, and it does not. The thing
-  that actually forces a rebuild is **corpus staleness**, which already has a fail-closed guard in
-  `corpus-verify`. If the licence does nothing, the cadence it justified does not need to exist.
+  **The argument that once carried it, and why it expired.** It read: *a cadence that depends on
+  remembering gets skipped exactly once, and then the tier stops with no visible cause.* A
+  three-week absence duly skipped it and the guest was found 7 days past grace. But **the tier
+  did not stop - nothing stopped.** The clock worth watching was the corpus, which went 27 days
+  stale with its 1-day and 7-day windows emptied, and `corpus-verify` was already watching that
+  one fail-closed.
 
-  **Two residual unknowns, stated so nobody mistakes this for a complete answer:** the **write**
-  path (`CreateItem`/`Save`/`Move`/`Delete`/`Send`) is unmeasured, because mailbox-safety rule 1
-  puts it out of a probe's reach; and whether notification mode escalates further over time is
-  undocumented. Neither is evidence of impact - both are gaps in the evidence.
+  **Consequence, decided the same day: the monthly rebuild cadence is RETIRED** - see
+  `Testbed/MEDIA.md`. It existed because this clock was believed to disable the guest. Two
+  triggers replace it, neither a calendar: `corpus-verify` refusing, and a rebuild before a
+  release so the from-nothing playbook is exercised at the moment it matters.
 
-  The check belongs in the live tier's preflight, beside the other fail-closed gates: it fires
-  exactly when it matters and nobody has to remember it. A release-time check does not work,
-  because releases can be more than 30 days apart. **Use the query recorded in `Testbed/MEDIA.md`**
-  - `SoftwareLicensingProduct` filtered server-side on Office's `ApplicationID` **and**
-  `PartialProductKey IS NOT NULL`. All three parts are load-bearing: it works unelevated; the
-  server-side filter is 241 ms against 10,679 ms for enumerate-then-filter; and without the
-  `PartialProductKey` clause a healthy machine returns keyless catalogue rows at `LicenseStatus=0`,
-  so "any row not Licensed" fires everywhere forever. **Branch on `LicenseStatus` before reading
-  `GracePeriodRemaining`** - on a licensed KMS client that field is the 180-day renewal countdown,
-  not an expiry. And do **not** let "query failed" and "no Office found" collapse into one answer:
-  `sppsvc` starting can return zero rows transiently, and collapsing them fails the check open on
-  precisely the fault it exists to catch. Refuse under a threshold and say plainly that the VM
-  needs rebuilding rather than that a test failed.
-  The *live* number stays out of the repo - it is a fact about one machine, and the check must
-  read it rather than trust a constant. Dated measurements in `Testbed/MEDIA.md` are history, not
-  a threshold, and are fine.
+  **What would REOPEN this.** Two things are unmeasured, and neither is evidence of impact - they
+  are gaps in evidence: the **write** path (`CreateItem`/`Save`/`Move`/`Delete`/`Send`), which
+  mailbox-safety rule 1 puts out of a probe's reach, and whether notification mode escalates
+  further over time. If either turns out to break something, **the detection recipe is already
+  written down in `Testbed/MEDIA.md`** and the gate can be built from it: `SoftwareLicensingProduct`
+  filtered server-side on Office's `ApplicationID` **and** `PartialProductKey IS NOT NULL`. All
+  three parts are load-bearing - it works unelevated; the server-side filter is 241 ms against
+  10,679 ms for enumerate-then-filter; and without the `PartialProductKey` clause a healthy
+  machine returns keyless catalogue rows at `LicenseStatus=0`, so "any row not Licensed" fires
+  everywhere forever. Branch on `LicenseStatus` **before** reading `GracePeriodRemaining` - on a
+  licensed KMS client that field is the 180-day renewal countdown, not an expiry. And do not let
+  "query failed" and "no Office found" collapse into one answer: `sppsvc` starting can return zero
+  rows transiently, and collapsing them fails the check **open** on precisely the fault it would
+  exist to catch.
+
+  The *live* number stays out of the repo - it is a fact about one machine. Dated measurements in
+  `Testbed/MEDIA.md` are history, not a threshold, and are fine.
 
 - [ ] **Restore the installed MCP server — it is deliberately disabled right now.**
   On 2026-08-16, while developing the COM-host work, the installed executable was moved

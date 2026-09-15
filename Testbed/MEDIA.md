@@ -203,11 +203,33 @@ The old evaluation Windows image reset to 90 days, which is where "Windows reset
 from; the staged replacement is consumer Pro and **never expires at all** (see "Windows — staged"
 above). Either way Windows never becomes the reason to rebuild — the cadence is Office's.
 
-**DECIDED 2026-08-24: accept the monthly rebuild.** The testbed is disposable by design and a
-30-day cadence is the price of that stance. Not chosen, and worth knowing why they were on the
-table: making a KMS host reachable so `AUTOACTIVATE=1` succeeds would remove the clock entirely
-but depends on guest networking nobody has verified; licensing the guest another way spends a
-licence on a machine meant to be thrown away.
+**DECIDED 2026-08-24: accept the monthly rebuild. RETIRED 2026-09-15 — the cadence solved a
+problem that does not exist.**
+
+The monthly rebuild was adopted because Office's 30-day grace was believed to disable the guest.
+**It does not.** Measured past grace on 2026-09-15: every COM read this project uses still works,
+and a cold COM start completes in 3.7 s with no dialog. Nothing stops working when that clock
+runs out.
+
+**The clock that actually bit was the corpus, and it already had a guard.** During a three-week
+absence the corpus went 27 days stale and its 1-day and 7-day windows emptied — while the Office
+clock, which the cadence was attached to, cost nothing. `corpus-verify` already refuses the tier
+fail-closed when a declared window has emptied. So the schedule was watching the harmless clock
+while the harmful one was handled.
+
+**There are now two triggers, and neither is a calendar:**
+
+1. **`corpus-verify` refuses.** Driven by the windows the machine actually declares in
+   `windowDays`, so it fires exactly when a measurement has stopped being possible.
+2. **Before a release.** Not because anything expires, but because **a from-nothing rebuild
+   playbook rots exactly as quietly as a stale corpus**, and this is the moment that matters. A
+   calendar is the wrong instrument for that: the guests can go untouched for months, and a
+   schedule nobody needs is a schedule that gets skipped and then distrusted.
+
+Not chosen, and still worth knowing why they were on the table: making a KMS host reachable so
+`AUTOACTIVATE=1` succeeds would remove the Office clock entirely but depends on guest networking
+nobody has verified; licensing the guest another way spends a licence on a machine meant to be
+thrown away. **Both now buy nothing**, because the clock they would remove costs nothing.
 
 ### What past grace actually does — and it is NOT "reduced functionality"
 
@@ -333,24 +355,30 @@ a healthy machine as one about to die.
 "The query failed" and "no Office is installed" must not collapse into one answer, or the check
 fails **open** on exactly the fault it exists to catch.
 
-### Why the preflight check is still worth building
+### The preflight check was NOT built, and the query above is kept anyway
 
-**A cadence that depends on remembering gets skipped exactly once, and then the tier stops with
-no visible cause.** That is not hypothetical any more: a three-week absence skipped it, and the
-guest was found 7 days past grace on 2026-09-15. So the deadline is checked where it bites — the
-**live tier's own preflight** reads the licence state and refuses when the guest is out of grace,
-rather than letting a run produce failures that look like anything except a licence. A
-release-time check would not do, since releases can be further apart than 30 days.
+**DECIDED 2026-09-15: not building it.** Both justifications it was ever given were measured
+false. It was first written on "past grace, Office drops into reduced functionality" — a term
+that does not apply to this product at all. It was rewritten on "the startup-hang risk is
+unquantified" — and the cold start was then measured at 3.7 s with no dialog. What survived was
+only "241 ms is cheap", which is an argument for adding a check to anything, and was not the
+argument that was authorised. The standing instruction is **"if it does not impact our work, do
+nothing"**, and it does not.
 
-**Both justifications this check was ever given have now been measured false.** It was first
-written on "past grace, Office drops into reduced functionality" — a term that does not apply to
-this product at all. It was then rewritten on "the startup-hang risk is unquantified" — and the
-cold start has since been measured, at 3.7 s with no dialog.
+**The argument that once carried it, and why it no longer applies.** It used to read: *a cadence
+that depends on remembering gets skipped exactly once, and then the tier stops with no visible
+cause* — and a three-week absence duly skipped it, leaving the guest 7 days past grace. That
+reasoning was sound while the licence was believed to stop the tier. It doesn't. **The tier did
+not stop; nothing stopped.** The clock worth watching was the corpus, and `corpus-verify` was
+already watching it fail-closed.
 
-**So on the maintainer's own standing instruction — "if it does not impact our work, do
-nothing" — the honest answer is that this check is no longer justified and the item should
-close.** What survives is only "241 ms is cheap", which is an argument for adding a check to
-anything, and is not the argument that was authorised.
+**Why the query above is kept in this file even so.** It is a measured, non-obvious recipe — the
+unelevated access, the 44x cost difference, the load-bearing `PartialProductKey` clause, the
+branch-before-the-number rule and the `sppsvc` fail-open trap are all things somebody would
+otherwise have to rediscover. Keeping the knowledge is free; building the check was not
+justified. **If a future measurement shows the write path or an escalated licence state does
+break something, this is the recipe to build the gate from** — the reason to close was the
+absence of impact, not the absence of a mechanism.
 
 **The consequence reaches further than the check.** The monthly rebuild cadence was adopted
 because Office's 30-day grace was believed to disable the guest. It does not. Nothing measured so
