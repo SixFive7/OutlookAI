@@ -418,6 +418,50 @@ folder and see whether `Store.DisplayName` follows (the question nobody could an
 documentation), or set `PR_DISPLAY_NAME` through `ConfigureMsgService` with the MAPI scripts that
 are already written.
 
+## THE BUILD IS REPRODUCIBLE - proven on a second guest, 2026-09-15
+
+**Guest two was built from nothing, by script, with nobody intervening at any point**, and it
+reached the same end state as guest one. That is the claim the whole testbed exists to support and
+until now it had not been tested: guest one was hand-patched three times on the way (the
+language-list fix, the Office configuration, the wrong-hive verifier), so it could demonstrate that
+the machine was achievable, never that it was reproducible.
+
+| step | guest one | guest two |
+| --- | --- | --- |
+| Windows, unattended | 5 min 54 s, **13/14** first-logon, one step fixed by hand afterwards | 7 min, **14/14**, untouched |
+| Office, by script | under 6 min; the poll loop then span 22 min on the Click-to-Run service | **3 min**, poll terminated correctly |
+| Office first-run dialogs | suppressed after the fact | suppressed as part of the chain |
+| tier profile + POP3 account | reached after two PRF variants and a wrong-hive verifier | **first attempt** |
+| store named as the SMTP address | measured separately | part of the chain |
+
+**What guest two ended with, read over COM:**
+
+    Accounts.Count                          1
+    Account[1].SmtpAddress                  'tier@vm.invalid'   AccountType=2 (POP3)
+    Account[1].DeliveryStore                'tier@vm.invalid'   C:\OutlookAI-Tier\Outlook.pst
+    DeliveryStore.GetDefaultFolder(Drafts)  'Drafts' items=0
+    Store[1].DisplayName                    'tier@vm.invalid'
+
+Every property `NewDraft` resolves an account by. No dialog on screen at any point. **About twenty
+minutes from an empty VM.**
+
+**Two fixes were validated by this run rather than by inspection**, which is the difference that
+matters:
+
+* The **language-list two-pass fix** is the one that failed on guest one and had to be applied by
+  hand. Guest two got it from the regenerated answer ISO and reported `en-NL, nl-NL` with keyboard
+  `00020409` on the first try. That is the single strongest evidence that the answer file is doing
+  the work rather than me.
+* The **Office install poll** terminated at `running=False` after 3 minutes. On guest one the same
+  loop reported "installing" for 22 minutes because it also tested for a process named
+  `OfficeClickToRun` - which is the Click-to-Run *service*, running permanently once Office is
+  installed. A completion check that cannot observe completion reads as progress.
+
+**What this does NOT yet prove.** The corpus has not been built on either guest; the mail sink does
+not exist, so the POP3 account points at nothing that answers; and guest two is carrying a TIER
+profile although its eventual role is the UNINDEXED guest with Corpus B. The chain is proven, the
+machine's final configuration is not.
+
 ## STILL OPEN - awaiting the maintainer
 
 **Q1+Q2, merged into one: collapse the test-tier vocabulary.** The maintainer's challenge was
