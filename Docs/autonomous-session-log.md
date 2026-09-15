@@ -9,7 +9,7 @@ Windows, Office, an Outlook profile and a working POP3 account **in about twenty
 script, with nobody touching it** - and that was demonstrated on a SECOND guest built from the
 committed scripts, not just achieved once on a machine that had been hand-patched.
 
-`HEAD` at the time of writing is on `master`, **not pushed**, tree clean. **2,494 tests** under
+`HEAD` at the time of writing is on `master`, **not pushed**, tree clean. **2,527 tests** under
 `--filter "Category!=Live"`; 14 pinned invariants, 3 privacy checks, 7 testbed checks.
 
 ### The guests
