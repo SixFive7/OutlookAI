@@ -546,14 +546,22 @@ dotnet run --project <as above> -- corpus-teardown ... --execute
 :: 2. rebuild it against today. Resumable and idempotent, as in section 2.9.
 dotnet run --project <as above> -- corpus-build \
   --store "Corpus A" --allow-store "Corpus A" \
-  --corpus-id vm1 --seed 4242 --anchor <today> --count 40000 \
-  --manifest D:\corpus\vm1-<today>.jsonl --progress-every 250 --execute
+  --corpus-id vm-indexed --seed 7777 --anchor <today> --count 20000 \
+  --manifest D:\corpus\corpus-vm-indexed.jsonl --progress-every 250 --execute
 ```
 
-**Write a NEW manifest rather than reusing the old one.** The manifest's anchor is half the
-corpus's identity and every later `--anchor` argument depends on it; a fresh anchor is a fresh
-corpus and deserves its own file, so that a stale manifest can never be paired with a rebuilt
-store.
+**The manifest file name is `corpus-<corpusId>.jsonl` and that is not cosmetic.** An earlier
+revision of this section said to write `vm1-<today>.jsonl`, which **`Copy-FromGuest.ps1` would
+never have collected** - its default include is `corpus-*.jsonl`, so the rebuilt manifest would
+have stayed on the guest and nobody would have been told. The manifest is the EntryID allowlist
+`corpus-teardown` requires and the file `corpus-verify` reads, so a manifest that silently fails
+to come off the guest is the worst of the available outcomes. See `Testbed/testbed.json`'s
+`corpusIdConvention` for the id rules.
+
+**Do not put the date in the file name to make it "new".** A fresh anchor is a fresh corpus, but
+what distinguishes corpora is the **id**, not the date - and the id is what appears in every
+subject, in the teardown match and in the comparison scope of every measurement. If you want the
+old manifest kept, move it aside yourself; the rebuild writes the canonical name.
 
 **Faster still, and the reason the checkpoints exist:** a corpus lives in its own local `.pst`,
 which the store guard already proves. Deleting that file removes the population completely and
@@ -656,7 +664,7 @@ and not three traits either. It used to be three, and the third one was the prob
 | `MailAccount` | a mail account rather than a bare PST - the dummy account |
 | `Transport` | mail that actually goes out and comes back - the local sink |
 | `MultipleStores` | more than one store mounted - all three |
-| `IdentityAccount` | a second mail account the write allowlist grants an identity draft in - a non-hub primary left OUT of `bystanderStoreDisplayNames`. **The layout in section 1.3 does not have one**: its two non-hub stores are both declared bystanders, so the tests naming this select and then prove nothing, and say so |
+| `IdentityAccount` | a second mail account the write allowlist grants an identity draft in - a non-hub primary left OUT of `bystanderStoreDisplayNames`. **The three-store floor in section 1.3 does not have one** and the tests naming it then prove nothing and say so; **section 2.8b builds one**, which is how a machine stops needing that announcement. Both states are real: 1.3 is the minimum that runs, 2.8b is what a complete guest has |
 | `SmallHubStore` | a hub small enough that a paging assertion means something |
 | `ProbePopulation` | the hand-curated population named in the settings file |
 | **`DelegateStore`** | **a delegate/shared mailbox. The one capability no test machine can be given** |

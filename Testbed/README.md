@@ -346,10 +346,18 @@ profile (`Docs/live-tier-on-the-vm.md` §1.1), so it belongs in that machine's s
 declared the same way - not in the indexed account's.
 
 **One consequence to know about before the first run.** With the hub, the corpus store and the
-plain bystander all accounted for, the three-store layout leaves the identity tests no store they
-may draft in, so they iterate an empty list and pass without proving anything. They are marked
-`Requires=MailAccount`; the VM's single mail account is the hub's. `TODO.md` carries this as an
-open item - do not read a green identity test on this machine as evidence.
+plain bystander all accounted for, the **three-store floor** leaves the identity tests no store
+they may draft in, so they iterate an empty list. **They no longer pass silently when that
+happens** - as of 2026-09-15 they announce `PROVED NOTHING:` with the reason and refuse outright
+on a `Production` profile, and they carry `Requires=IdentityAccount` as well as
+`Requires=MailAccount`.
+
+**The fix is a build step, not a caveat to live with:** `Docs/live-tier-on-the-vm.md` §2.8b adds
+a second mail account, declared in `expectedStoreDisplayNames` and named nowhere in
+`bystanderStoreDisplayNames`. Build it and the tests prove something instead of announcing that
+they cannot. **Do not "fix" an announcing machine by adding `&Requires!=IdentityAccount` to the
+filter** - that deselects the tests and deletes the only record that the identity path is
+unverified, which is the vacuous green both mechanisms exist to prevent.
 
 ---
 
