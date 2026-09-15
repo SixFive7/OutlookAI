@@ -15,10 +15,20 @@
       Tools.zip     -> C:\OutlookAI-Q5\tools\    OutlookAI.RemediationTools, which is every
                                                  corpus-* verb.
 
-    Framework-dependent, not self-contained: the guest already has the matching runtime
-    (10.0.10 as of 2026-08-24) and a self-contained publish would triple the copy for nothing.
-    If you change the guest's runtime, check it still satisfies net10.0-windows before assuming
-    this still works.
+    SELF-CONTAINED, changed 2026-09-15. This used to publish framework-dependent, on the
+    reasoning that "the guest already has the matching runtime (10.0.10) and a self-contained
+    publish would triple the copy for nothing". That was true of the hand-built guest and is
+    false of the ones the answer file builds: they get Windows and Office and nothing else, so
+    the first corpus build on a fresh guest died with "You must install .NET to run this
+    application."
+
+    Self-contained is the better answer rather than merely the quicker one. Installing a runtime
+    would add a precondition to MEDIA.md, a download, and a reason to connect a guest that is
+    deliberately kept off the network - to save disk that this host has 367 GB of. It also makes
+    the payload independent of whatever runtime a future guest happens to carry, which is one
+    fewer thing that can silently drift between the two guests.
+
+    x64 is pinned explicitly below for the same reason it was always required.
 
     x64 is not optional. Both projects set PlatformTarget x64, and the index tier reads the
     Search.CollatorDSO OLE DB provider, which has no 32-bit story in this arrangement.
@@ -87,7 +97,7 @@ foreach ($p in $payloads) {
         # Output is captured rather than streamed: a publish that spawns its own children can
         # otherwise hold the pipe open long after it has finished.
         $log = Join-Path $OutDir ("publish-" + [IO.Path]::GetFileNameWithoutExtension($p.Zip) + ".log")
-        & dotnet publish $proj -c $Configuration -f net10.0-windows --self-contained false -o $dest *> $log
+        & dotnet publish $proj -c $Configuration -f net10.0-windows -r win-x64 --self-contained true -o $dest *> $log
         if ($LASTEXITCODE -ne 0) {
             Write-Host (Get-Content -LiteralPath $log -Tail 40 | Out-String)
             throw "dotnet publish failed for $($p.Project) (exit $LASTEXITCODE). Full log: $log"
