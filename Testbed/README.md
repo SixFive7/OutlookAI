@@ -45,7 +45,7 @@ testbed before its replacement runs.**
 | 4 | Install Office, the accounts and the profiles | Office and the Windows accounts by hand - `Docs/live-tier-on-the-vm.md` §2.2-2.4, with `.work/office-odt/Testbed.xml` (`MEDIA.md`). **Profiles and PSTs now have drafted scripts - §4b** | guest |
 | 5 | Give yourself a way to reach session 1 | `guest/Register-InteractiveTask.ps1` | guest, once |
 | 6 | Build the server and the tools, and copy them in | `host/Publish-GuestPayload.ps1` | host |
-| 7 | Install the mail sink, the dummy account and the identity account | Sink and **both mail accounts by hand** - `Docs/live-tier-on-the-vm.md` §2.7-2.8b. Nothing free can create a mail account (§4b). The signature has a script | guest |
+| 7 | Install the mail sink, the dummy account and the identity account | Sink: `guest/Install-MailSink.ps1`, from a staged package (§6 item 11 - and read it first, §2.7 of the runbook is wrong in four places). Accounts: `guest/New-TierProfile.ps1`, then the POP3 password **by hand, once**, because the sink refuses an empty one. The signature has a script | guest |
 | 8 | Build the corpus | `guest/Build-Corpus.ps1` | guest, session 1 |
 | 9 | Write the live-test settings file | copy `live-test-settings.example.json` - and read §3b, or the tier refuses to start | host or guest |
 | 10 | Take the measurements | `guest/Invoke-GuestMeasure.ps1`, `guest/Measure-SweepCost.ps1` | guest, session 1 |
@@ -572,6 +572,7 @@ tomorrow, it has to move somewhere tracked.
 | `guest/Set-OfficeFirstRunSuppressed.ps1` | Suppresses Office's own first-run dialogs and pins CLASSIC Outlook. `ImportPRF` silences the profile wizard and nothing else - a guest with a perfect profile still came up on "Your privacy matters", and a dialog on an unattended guest is a hang, not a prompt. Ends by saying registry values prove nothing and to start Outlook and look. **Never executed.** |
 | `guest/New-PopAccountPrf.ps1` | A **spike**, not a route: the one free candidate for creating a POP3 account, plus the read-back that says how far it got. Expected to fail; §4b says why. **Never executed.** |
 | `guest/Set-AccountSignature.ps1` | Gives the identity account its signature, by driving the shipped `manage_signature` tool rather than improvising. Runs **after** the accounts exist. **Never executed.** |
+| `guest/Install-MailSink.ps1` | Installs the loopback sink the POP3 account points at, from a **staged** package - never a download - pinned by SHA-256. Then **proves the round trip over raw sockets** rather than reporting two open ports, which is all the suite's own `T2/LiveMailSink.cs` probe does: submission accepted, message retrievable, dot-stuffing intact, `DELE` honoured, message numbers stable, nothing re-served after a restart. Two of those are **expected to fail** against smtp4dev as shipped and are asserted rather than assumed - see §6 item 11. Touches no Outlook, no MAPI and no mail item. **Never executed.** |
 | `guest/Build-Corpus.ps1` | plan, probe, build, census - with the committed parameters as defaults. |
 | `guest/Invoke-GuestMeasure.ps1` | The measurement driver, recovered from the guest. Produced the numbers now in `Docs/magic-numbers.md`. |
 | `guest/Measure-SweepCost.ps1` | Per-folder / per-item sweep cost, out of band. **Reconstructed, never executed** - see its banner. |
@@ -728,12 +729,47 @@ that was left out.
     community source states a character restriction either way, which is weak evidence and is why
     this is a probe rather than an answer. Watch for **transformed**: a silently-renamed store is
     one no test can find by name, on a machine that looks correctly built.
-11. **Does smtp4dev actually serve POP3?** `Docs/live-tier-on-the-vm.md` §2.7 specifies POP3 on
-    port 110 and §2.8 adds the dummy account as POP3, and `MailSinkSettings.RetrievePort`
-    documents itself as POP3 - but smtp4dev v3 is usually described as SMTP plus **IMAP**. If it
-    is IMAP-only, the sink section is wrong in a way that only shows up as mail sitting in a
-    sink nobody can retrieve from. **Settle this before installing anything**, and if it is
-    IMAP-only, the choices are an IMAP dummy account or a different sink.
+11. ~~**Does smtp4dev actually serve POP3?**~~ - **ANSWERED 2026-09-15: YES, and pin 3.15.0.**
+    The doubt was well-founded and the conclusion is the other way. Issue #155, "Support
+    retrieval of messages using POP3", really was closed **as not planned** - in 2022. POP3 then
+    shipped **three years later** from an unrelated pull request (#1888, merged 2025-10-03) with
+    no issue behind it, and first appears in a stable release at **3.11.0** (2025-12-06);
+    `Server/Pop3/Pop3Server.cs` is absent at 3.10.3 and present at 3.11.0. **Pin 3.15.0**, not
+    3.11.0: 3.14.0 added the ability to disable POP3/IMAP by a null port, and 3.15.0 added a POP3
+    `NOOP` handler. So the documented sink design **is** buildable - but POP3 here is an
+    eleven-month-old, single-PR feature with one end-to-end test, and reading its source found
+    two RFC 1939 violations (`TOP` advertised in `CAPA` and not implemented; `DELE` deleting
+    immediately and **renumbering the mailbox mid-session**, so `DELE 1; DELE 2` deletes the
+    wrong item). `guest/Install-MailSink.ps1` asserts both rather than assuming either way.
+
+    **Four corrections fall out of this and are not yet made**, because which of them survives
+    depends on a decision that is the maintainer's - a sink is a third media precondition and
+    `MEDIA.md` names two, so `.work/mail-sink.md` §8 frames it rather than acting on it.
+    `Docs/live-tier-on-the-vm.md` §2.7 names the winget package `RnwoodLtd.smtp4dev`; **the id is
+    `Rnwood.Smtp4dev`**, so that command cannot work. Its configuration keys all live under a
+    **`ServerOptions`** root object, and a key written at the file root is read by nothing. A port
+    of **`0` means auto-assign**, not disabled - only `null` disables a listener. And its TLS
+    settings are incomplete: **`Pop3TlsMode` is a separate key**, documented in the source as
+    independent of the global `TlsMode`, so setting only the latter leaves POP3 advertising
+    `STLS` to a client the PRF configured for no encryption.
+
+    **One new collision, which nothing had recorded.** smtp4dev's POP3 checks credentials against
+    nothing, but its `PASS` handler **refuses an empty password** - while
+    `guest/tier-profile-forcepst.prf` deliberately carries no password key at all. POP3 has no
+    anonymous mode, and on an unattended guest a credential prompt is a hang rather than a
+    prompt. The likely answer is a one-time manual entry with *Remember password*, preserved by
+    the checkpoint, exactly as the accounts themselves are - but §2.8 does not say so.
+
+    **And it settles §8 item 3 of the runbook:** with `AuthenticationRequired: false`, POP3
+    **never consults the username** and always serves the auto-created catch-all mailbox. No
+    mailbox needs provisioning for the account name.
+
+    Full evidence, with a source per claim and an explicit list of what could not be
+    established - including whether Outlook issues `TOP` at all - is in `.work/mail-sink.md`,
+    which is gitignored scratch: move it under `Docs/research/` if it should outlive the session
+    that produced it. **IMAP is not a fallback**: an IMAP account gets its own store,
+    `Account.DeliveryStore` is read-only, and Microsoft documents "deliver to an existing Outlook
+    Data File" only for POP accounts - so the hub-PST arrival assertion is unsatisfiable with one.
 12. **How the built server exe reaches the path the tier-3 tests expect.** The path is baked into
     the test assembly at build time as `AssemblyMetadata("McpServerExePath")` and points into the
     repository's `bin` tree - but the guest cannot build, so nothing puts a binary there.
