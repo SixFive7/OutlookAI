@@ -34,6 +34,29 @@ Rules:
 - Their CI is `.github/workflows/mcpserver.yml` (windows runner, dotnet only; runs `dotnet test --filter "Category!=Live"`). Tests marked `Category=Live` need the real Windows Search index plus Outlook and only run on a configured dev machine.
 - Developer documentation: `McpServer/README.md`.
 
+## Dependencies
+
+**No external applications and no licensed components. Ever.** Decided 2026-09-15, standing.
+
+This is not a preference about tidiness — it is a hard constraint on every design decision, and
+it has already excluded an otherwise-ideal answer. When the question "how do we create an Outlook
+POP3 account programmatically" was researched, the only off-the-shelf component that can do it
+(Redemption, $299.99 distributable / $899.99 with the profile library) was ruled out on this rule
+alone. Its distributable tier also excludes open-source projects, and this repository is public.
+
+**What this permits.** Anything that ships with Windows or with the .NET Framework already
+present on the machine: Extended MAPI through the stub `mapi32.dll`, `System.Windows.Automation`
+(UIAutomation), `Add-Type` (the Framework's own `csc.exe`, which needs no SDK), the Office
+Deployment Tool, `oscdimg` from the Windows ADK. None of these is an install the project owns.
+
+**What this forbids.** Purchased libraries, third-party COM components, anything requiring a
+licence key, and anything a rebuilder would have to download and install beyond the media
+`Testbed/MEDIA.md` already names as preconditions.
+
+**Do not re-litigate this per task.** If a route appears blocked without a paid component, the
+answer is to question the requirement, not the rule — see `TODO.md` for how the POP3 account
+question was reframed rather than bought.
+
 ## Mailbox Safety (MANDATORY — live tests touch REAL mailboxes)
 
 `Category=Live` tests run against the developer's **real production Outlook profile**: real mail accounts plus delegate/shared mailboxes **to which the profile has full write access**. Treat every live run as an operation on production data. A past incident mass-deleted real mail (fully recovered) because an agent improvised a cleanup script — these rules exist so that never repeats. They are non-negotiable and apply to every agent, every session, whether or not live tests are the task:
