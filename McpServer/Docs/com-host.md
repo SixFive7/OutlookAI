@@ -152,9 +152,12 @@ on it rather than by a grace period:
 - a killed SEND reports that the mail may be sitting in the Outbox - the words the
   neighbouring `SendCallFailed` branch has always used - and writes a `send_outcome_unknown`
   audit line, so the trail records the gap instead of merely containing one.
-- an orderly teardown now waits `CleanExitGraceMilliseconds` (250 ms) after closing the pipe
-  before terminating, which makes the child's own EOF-exit path reachable for the first
-  time. It costs nothing on the deadline path, where the process is already gone.
+- an orderly teardown waits after closing the pipe before terminating, which makes the
+  child's own EOF-exit path reachable. It costs nothing on the deadline path, where the
+  process is already gone. A replacement waits `CleanExitGraceMilliseconds` (250 ms, with a
+  caller blocked on it); shutdown waits `ShutdownExitGraceMilliseconds` (2000 ms, with
+  nobody waiting) — see **Lifetime** for why shutdown is the only one that meets a child
+  with a live Outlook session.
 
 **A stop-request-and-grace protocol was considered and rejected.** `ComHostServer.ServeAsync`
 calls `Invoke` synchronously inside its read loop, so while wedged the child is not reading
@@ -285,6 +288,36 @@ orphaned `OutlookAI.McpServer` processes**, one of them wedged.
    the parent's handle closes, including on a hard kill where no cleanup code runs.
 2. The child watches the parent PID and exits if it disappears, covering the case where
    the job could not be created or the handle outlived the process.
+
+### Orderly shutdown
+
+Both guards above are about the child not OUTLIVING the server. Neither is about the child
+leaving tidily, and until this was added nothing was: the child's Outlook references are
+released by the `using ComGateway` in its own `Main`, which runs when it exits of its own
+accord and not when it is terminated. `CleanExitGraceMilliseconds` existed for exactly that
+and had **no production caller holding a session** — the only teardown that meets one is
+`ComHostSupervisor.Dispose`, reached only from `RemoteComGateway.Dispose`, and the shipped
+server never disposed its gateway (a `static Lazy` in `ServerRuntime`, not a DI singleton,
+so the host container never disposed it either). Every exit was the terminate path while the
+code read as though one of them was not.
+
+`Program` now releases in a `finally` around `RunAsync`. That covers stdin closing (how an
+MCP stdio server normally ends — the SDK calls `StopApplication` on EOF rather than
+`Environment.Exit`, checked against the shipped 2.2.0 assembly), Ctrl-C/SIGTERM via the
+default `ConsoleLifetime`, and an exception escaping the host. It cannot cover
+`TerminateProcess`, a `FailFast`, or an unhandled background-thread exception; on those the
+job object still ends the child, holding whatever it held.
+
+**What that is worth, measured.** Not an unusable Outlook. On 2026-09-15, on the test guest
+from a cold boot, a client terminated with `TerminateProcess` while holding `Application`,
+`NameSpace` and a `Folder` left the next client's `CreateObject` / `GetNamespace` /
+`GetDefaultFolder` at 0.37 / 0.02 / 0.05 s, and repeating it with an unclosed pin `Explorer`
+changed nothing. Windows does tear a dead client's references down. What the same run showed
+surviving is the **pin `Explorer` itself** (`explorers=1` against the live Outlook
+afterwards), whose consequence this repo has already measured: an `Explorer` left in
+Outlook's collection stops a later `Application.Quit` ending the process, and they
+accumulate. So the orderly exit buys a `Close()` on the pin and an `Unadvise` of the event
+sink — the one reference only we can retract, and the one nobody has managed to test.
 
 ## Error contract
 

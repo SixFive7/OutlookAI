@@ -32,6 +32,10 @@ namespace OutlookAI.ComHost.Host
     /// Unset - the overwhelmingly normal case - costs one null check per call.
     /// </para>
     /// <para>
+    /// A second variable, <c>OUTLOOKAI_COMHOST_EXIT_DELAY_MS</c>, makes this process slow to
+    /// EXIT rather than slow to answer. See <see cref="ApplyExitDelay"/>.
+    /// </para>
+    /// <para>
     /// <c>sessionthrow</c> is deliberately NOT another <see cref="Apply"/> kind, and the
     /// difference is the whole reason it exists. <c>Apply</c> runs in
     /// <see cref="ComHostServer"/>, ABOVE the routing proxy, so a fault raised there never
@@ -66,13 +70,66 @@ namespace OutlookAI.ComHost.Host
         /// <summary>Environment variable naming the fault to inject. Unset in production.</summary>
         internal const string Variable = "OUTLOOKAI_COMHOST_FAULT";
 
+        /// <summary>
+        /// Environment variable making this process SLOW TO EXIT, in milliseconds. Unset in
+        /// production, and deliberately a second variable rather than another
+        /// <see cref="Variable"/> kind: every kind there names an operation, and this one
+        /// does not - it fires once, on the way out, whatever the child was serving. A test
+        /// also needs it ALONGSIDE an operation fault, which one spec string cannot express.
+        /// </summary>
+        internal const string ExitDelayVariable = "OUTLOOKAI_COMHOST_EXIT_DELAY_MS";
+
+        /// <summary>
+        /// The ceiling on <see cref="ExitDelayVariable"/>. A typo cannot park the child for
+        /// longer than the parent would ever wait for it anyway.
+        /// </summary>
+        internal const int MaxExitDelayMilliseconds = 30_000;
+
         private static readonly string? Spec = Environment.GetEnvironmentVariable(Variable);
 
-        /// <summary>True when any fault is configured. Reported by health so an injected fault is never mistaken for a real one.</summary>
-        internal static bool IsActive => !string.IsNullOrWhiteSpace(Spec);
+        private static readonly string? ExitDelaySpec = Environment.GetEnvironmentVariable(ExitDelayVariable);
 
-        /// <summary>The configured fault specification, for diagnostics.</summary>
-        internal static string? Description => Spec;
+        /// <summary>True when any fault is configured. Reported by health so an injected fault is never mistaken for a real one.</summary>
+        internal static bool IsActive => !string.IsNullOrWhiteSpace(Spec) || !string.IsNullOrWhiteSpace(ExitDelaySpec);
+
+        /// <summary>
+        /// The configured fault specification, for diagnostics. The exit delay is appended
+        /// rather than folded in, so a run that sets only <see cref="Variable"/> - which is
+        /// every existing test - still reports exactly the string it set.
+        /// </summary>
+        internal static string? Description => string.IsNullOrWhiteSpace(ExitDelaySpec)
+            ? Spec
+            : $"{Spec} +exitdelay:{ExitDelaySpec}ms".TrimStart();
+
+        /// <summary>
+        /// Makes this process take a while to exit, when <see cref="ExitDelayVariable"/> asks
+        /// for it. A no-op - one null check - in every production run.
+        /// <para>
+        /// It stands in for the one thing a CI box cannot produce: the time a real
+        /// <c>OutlookComSession.Dispose</c> takes to unadvise its sink, close the pin
+        /// Explorer and release its references. Without it, the parent's shutdown grace is
+        /// unfalsifiable in CI - a child with no Outlook session exits instantly, so a grace
+        /// of 250 ms, 2000 ms or none at all all look identical from outside. With it, the
+        /// grace has an observable consequence: the parent either waits for the child or
+        /// terminates it mid-exit.
+        /// </para>
+        /// <para>
+        /// This is a delay, NOT a COM release. It proves the child was GIVEN time to run its
+        /// exit path; it cannot prove anything about what that path does to Outlook, which
+        /// needs a real Outlook and lives in the live tier.
+        /// </para>
+        /// </summary>
+        internal static void ApplyExitDelay()
+        {
+            if (string.IsNullOrWhiteSpace(ExitDelaySpec)
+                || !int.TryParse(ExitDelaySpec, NumberStyles.Integer, CultureInfo.InvariantCulture, out int delay)
+                || delay <= 0)
+            {
+                return;
+            }
+
+            Thread.Sleep(Math.Min(delay, MaxExitDelayMilliseconds));
+        }
 
         /// <summary>Applies any configured fault for <paramref name="operation"/>.</summary>
         internal static void Apply(string operation)

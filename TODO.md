@@ -220,10 +220,21 @@
         pass. Options: accept and rely on T2; add `InternalsVisibleTo` to `OutlookAI.Core` and
         pin the wiring through an internal seam; or a structural IL assertion, which is
         fragile and unlike anything else here.
-  - [ ] **Same for `ComHostSupervisor.CleanExitGraceMilliseconds`.** Replacing the
-        `WaitForExit(250)` with a no-op leaves the suite green. It is a process-lifecycle
-        behaviour with no observable payload; proving it needs a child that logs its own
-        clean exit, which is a T3-shaped test nobody has written.
+  - [x] **Same for `ComHostSupervisor.CleanExitGraceMilliseconds`.** ~~Replacing the
+        `WaitForExit(250)` with a no-op leaves the suite green.~~ Closed by
+        `T3/ComHostSupervisionCiTests.OnAnOrderlyShutdown_TheComHostIsAskedToLeave_NotTerminated`,
+        which gives the child a measurable cost of exit
+        (`OUTLOOKAI_COMHOST_EXIT_DELAY_MS`) and times the server's shutdown. Replacing the
+        wait with a no-op now fails, as does reverting the shutdown grace to the replacement
+        grace, as does removing `Program`'s release call. What is STILL unpinned is the half
+        that needs Outlook: whether the child's exit path actually releases anything. That
+        is a live-tier test and nobody has written it.
+  - [ ] **The grace values themselves are unmeasured.** `CleanExitGraceMilliseconds` (250)
+        and `ShutdownExitGraceMilliseconds` (2000) are judgements: nobody has timed how long
+        `OutlookComSession.Dispose` takes against a real Outlook, so nobody knows whether
+        2000 ms is generous or short. Measuring it needs a live-tier run that times the
+        child's exit with a session attached. A wrong value degrades to today's behaviour
+        (the child is terminated and releases nothing), which is why it shipped unmeasured.
   - [ ] **`MailService.SearchIndexTimeoutSeconds` is pinned only from above.** T1 asserts it
         never exceeds `OleDbIndexClient.DefaultCommandTimeoutSeconds`, so reverting 60 to 15
         fails nothing. A lower bound would need a measurement constant for "how long a

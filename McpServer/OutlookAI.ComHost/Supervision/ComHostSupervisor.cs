@@ -821,13 +821,40 @@ namespace OutlookAI.ComHost.Supervision
         /// kill skips.
         /// </para>
         /// <para>
-        /// 250 ms is chosen to be invisible: it is paid only when a child is being replaced
-        /// or the server is shutting down, never on a served request. On the DEADLINE path
-        /// it costs nothing at all, because <see cref="KillChild"/> has already terminated
-        /// the process and <c>HasExited</c> is true by the time the wait is reached.
+        /// 250 ms is chosen to be invisible: it is paid only when a child is being REPLACED,
+        /// never on a served request, and a caller is waiting through every millisecond of
+        /// it. On the DEADLINE path it costs nothing at all, because <see cref="KillChild"/>
+        /// has already terminated the process and <c>HasExited</c> is true by the time the
+        /// wait is reached. Server shutdown is the one teardown nobody is waiting on, and it
+        /// gets its own, longer allowance - see <see cref="ShutdownExitGraceMilliseconds"/>.
         /// </para>
         /// </summary>
         private const int CleanExitGraceMilliseconds = 250;
+
+        /// <summary>
+        /// The same grace, for the one teardown where no caller is waiting: the server is
+        /// shutting down and this <see cref="Dispose"/> is the last thing it does.
+        /// <para>
+        /// Longer than <see cref="CleanExitGraceMilliseconds"/> because it is spent on a
+        /// different job. A replacement only needs the child's process to end. A shutdown
+        /// needs the child to finish <c>OutlookComSession.Dispose</c> first - one dispatch
+        /// onto the pumped STA thread, an <c>Unadvise</c>, a <c>Close</c> of the pin
+        /// Explorer, four releases, then <c>GC.Collect</c> and
+        /// <c>WaitForPendingFinalizers</c> - and 250 ms is not a number anyone chose for
+        /// that.
+        /// </para>
+        /// <para>
+        /// 2000 ms is a JUDGEMENT, not a measurement, and is the one number here without a
+        /// date beside it: timing that release needs a real Outlook, and the work that added
+        /// this had none. It is bounded on purpose, and the failure mode if it is too short
+        /// is exactly today's behaviour - the child is killed and releases nothing - so a
+        /// wrong value here cannot be worse than not having it. Against a WEDGED Outlook the
+        /// child's dispose blocks forever (it waits on the STA with no timeout of its own),
+        /// so this bound is what stops shutdown hanging, and it is the reason the kill below
+        /// stays unconditional rather than becoming a wait.
+        /// </para>
+        /// </summary>
+        private const int ShutdownExitGraceMilliseconds = 2000;
 
         /// <summary>
         /// Terminates the child that missed its deadline.
@@ -916,7 +943,13 @@ namespace OutlookAI.ComHost.Supervision
         /// connect timeout. That is a real bug this fixes, not a theoretical one.
         /// </para>
         /// </summary>
-        private void TearDownChild(int? onlyGeneration = null)
+        /// <param name="onlyGeneration">Tear down only if this is still the current child.</param>
+        /// <param name="graceMilliseconds">
+        /// How long the child may take to exit on its own after EOF before it is terminated.
+        /// Left at its default by four of the five call sites, so the only teardown that
+        /// READS differently is the only one that BEHAVES differently: <see cref="Dispose"/>.
+        /// </param>
+        private void TearDownChild(int? onlyGeneration = null, int graceMilliseconds = CleanExitGraceMilliseconds)
         {
             Process? child;
             NamedPipeServerStream? pipe;
@@ -962,12 +995,12 @@ namespace OutlookAI.ComHost.Supervision
             // Give it that chance before terminating it: an orderly exit runs its finally
             // blocks and releases its COM references, which a kill skips. Free on the
             // deadline path (KillChild has already terminated it), and bounded at
-            // CleanExitGraceMilliseconds everywhere else.
+            // graceMilliseconds everywhere else.
             try
             {
                 if (child is { HasExited: false })
                 {
-                    _ = child.WaitForExit(CleanExitGraceMilliseconds);
+                    _ = child.WaitForExit(graceMilliseconds);
                 }
             }
             catch (Exception)
@@ -1080,6 +1113,22 @@ namespace OutlookAI.ComHost.Supervision
             return (long)Stopwatch.GetElapsedTime(timestamp).TotalMilliseconds;
         }
 
+        /// <summary>
+        /// Ends the COM host, giving it long enough to release Outlook first.
+        /// <para>
+        /// This is the ONLY teardown on which the child still holds a live Outlook session,
+        /// which is why it is the only one that pays
+        /// <see cref="ShutdownExitGraceMilliseconds"/> rather than
+        /// <see cref="CleanExitGraceMilliseconds"/>. The other four call
+        /// <see cref="TearDownChild"/> either before the child has connected to anything or
+        /// after it has already been terminated.
+        /// </para>
+        /// <para>
+        /// Idempotent and callable from any thread. Safe to call with a request in flight:
+        /// closing the pipe completes every pending caller through
+        /// <c>OnChildConnectionLost</c>, exactly as a replacement does.
+        /// </para>
+        /// </summary>
         public void Dispose()
         {
             if (_disposed)
@@ -1088,7 +1137,7 @@ namespace OutlookAI.ComHost.Supervision
             }
 
             _disposed = true;
-            TearDownChild();
+            TearDownChild(onlyGeneration: null, graceMilliseconds: ShutdownExitGraceMilliseconds);
             _startLock.Dispose();
         }
 

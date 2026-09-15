@@ -34,18 +34,34 @@ public sealed class ComHostSupervisionCiTests
     /// <summary>Short enough to keep the suite quick, long enough not to be flaky on a loaded CI box.</summary>
     private const string DeadlineMs = "4000";
 
-    private static Dictionary<string, string> Fault(string spec) => new(StringComparer.Ordinal)
+    /// <param name="spec">The <c>OUTLOOKAI_COMHOST_FAULT</c> specification.</param>
+    /// <param name="childExitCostMilliseconds">
+    /// When given, how long the COM host child takes to exit once its pipe closes. Only the
+    /// shutdown test needs it; see that test for what it stands in for.
+    /// </param>
+    private static Dictionary<string, string> Fault(string spec, int? childExitCostMilliseconds = null)
     {
-        ["OUTLOOKAI_COMHOST_FAULT"] = spec,
-        ["OUTLOOKAI_COMHOST_DEADLINE_MS"] = DeadlineMs,
+        Dictionary<string, string> environment = new(StringComparer.Ordinal)
+        {
+            ["OUTLOOKAI_COMHOST_FAULT"] = spec,
+            ["OUTLOOKAI_COMHOST_DEADLINE_MS"] = DeadlineMs,
 
-        // These tests are about the machinery BELOW the liveness gate - deadlines, kills,
-        // respawns, the breaker. The gate sits in front of all of it and, by design,
-        // refuses instantly when Outlook is absent or hung, which is exactly the state of
-        // a CI box and was the state of the dev machine these were written on. Forcing the
-        // observed state keeps the tests deterministic and testing what they claim to.
-        ["OUTLOOKAI_COMHOST_LIVENESS"] = "Responsive",
-    };
+            // These tests are about the machinery BELOW the liveness gate - deadlines, kills,
+            // respawns, the breaker. The gate sits in front of all of it and, by design,
+            // refuses instantly when Outlook is absent or hung, which is exactly the state of
+            // a CI box and was the state of the dev machine these were written on. Forcing the
+            // observed state keeps the tests deterministic and testing what they claim to.
+            ["OUTLOOKAI_COMHOST_LIVENESS"] = "Responsive",
+        };
+
+        if (childExitCostMilliseconds is int cost)
+        {
+            environment[ComHostFaultInjection.ExitDelayVariable] =
+                cost.ToString(CultureInfo.InvariantCulture);
+        }
+
+        return environment;
+    }
 
     private static async Task<JsonElement> CallRawAsync(McpStdioClient client, string tool, object arguments)
     {
@@ -247,5 +263,81 @@ public sealed class ComHostSupervisionCiTests
             string.Format(CultureInfo.InvariantCulture, "0x{0:X8}", ComHostFaultInjection.SessionComHResult),
             message,
             StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The other end of the kill path: when the server shuts down NORMALLY, the COM host is
+    /// asked to leave rather than terminated.
+    /// <para>
+    /// THE DEFECT THIS PINS. The child holds every Outlook reference this product takes out -
+    /// Application, NameSpace, the pin Explorer, an advise registration Outlook itself holds
+    /// a pointer for - and releases them in exactly one place: the <c>using ComGateway</c> in
+    /// its own <c>Main</c>. That runs when the child exits, and not when it is terminated.
+    /// <c>ComHostSupervisor</c> gained a grace window for this on 2026-08-19 and it had no
+    /// production caller: the only teardown that meets a live session is
+    /// <c>ComHostSupervisor.Dispose</c>, reached only from <c>RemoteComGateway.Dispose</c>,
+    /// and nothing in the shipped server disposed the gateway - a static <c>Lazy</c>, not a
+    /// DI singleton, so no container disposed it either. Every exit was the terminate path
+    /// while the code read as though one of them was not.
+    /// </para>
+    /// <para>
+    /// HOW IT IS OBSERVED WITHOUT OUTLOOK. A child with no Outlook session exits instantly,
+    /// so a grace of 250 ms, 2000 ms or none at all all look identical from outside.
+    /// <c>OUTLOOKAI_COMHOST_EXIT_DELAY_MS</c> gives the child a measurable cost of exit,
+    /// standing in for the time a real <c>OutlookComSession.Dispose</c> spends unadvising its
+    /// sink and closing the pin Explorer. The server then either pays that cost - which is
+    /// only possible if it asked the child to leave AND waited - or it does not.
+    /// </para>
+    /// <para>
+    /// 1200 ms sits between the two graces on purpose: above
+    /// <c>CleanExitGraceMilliseconds</c> (250) and below
+    /// <c>ShutdownExitGraceMilliseconds</c> (2000). So one assertion fails three ways -
+    /// removing the shutdown hook, disposing without waiting, and reverting the shutdown
+    /// grace to the replacement grace.
+    /// </para>
+    /// <para>
+    /// WHAT IT DOES NOT PROVE. That the child releases anything. It never connects to Outlook
+    /// here and there is none to connect to. This pins that the release path is REACHED; what
+    /// it does to a real Outlook belongs to the live tier.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task OnAnOrderlyShutdown_TheComHostIsAskedToLeave_NotTerminated()
+    {
+        const int ChildExitCostMilliseconds = 1200;
+
+        await using McpStdioClient client = await McpStdioClient.StartAndInitializeAsync(
+            TimeSpan.FromSeconds(120),
+            Fault($"{ComHostFaultInjection.SessionThrowKind}:folder:*", ChildExitCostMilliseconds),
+            McpStdioClient.OutlookReachingToolsAllowed);
+
+        // Force a COM host child into existence, and prove it really served: the fault is
+        // applied BEHIND the routing proxy, so answering at all means the child started,
+        // connected, reported ready and dispatched - having never touched Outlook. Without
+        // this the shutdown below would be measuring a server with no child, which is the
+        // one state in which the assertion would pass for the wrong reason.
+        JsonElement served = await CallRawAsync(client, "list_accounts", new { });
+        Assert.True(served.GetProperty("isError").GetBoolean());
+        Assert.Equal(
+            ComHostFaultInjection.SessionFolderMessage,
+            PayloadOf(served).GetProperty("error").GetProperty("message").GetString());
+
+        Stopwatch shutdown = Stopwatch.StartNew();
+        bool exited = await client.CloseAndAwaitExitAsync(TimeSpan.FromSeconds(30));
+        shutdown.Stop();
+
+        Assert.True(exited, "the server must still exit when its stdin closes");
+
+        Assert.True(
+            shutdown.Elapsed >= TimeSpan.FromMilliseconds(1000),
+            "the server exited without giving its COM host a chance to release Outlook; shutdown took "
+            + $"{shutdown.Elapsed.TotalMilliseconds:F0} ms and the child needed {ChildExitCostMilliseconds} ms");
+
+        // And the grace is a bound, not a wait: a child that never manages to leave must not
+        // be able to hold the server open. Five times the shutdown grace, so only a genuine
+        // regression in the bound can reach it.
+        Assert.True(
+            shutdown.Elapsed < TimeSpan.FromSeconds(10),
+            $"shutdown must stay bounded; took {shutdown.Elapsed.TotalSeconds:F1}s");
     }
 }
