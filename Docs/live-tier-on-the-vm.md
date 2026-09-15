@@ -117,9 +117,14 @@ redoing the step above it.
 
 * Hyper-V guest, named `OutlookAI-TestVM` by convention. Generation, firmware, vCPU, RAM and
   disk size are **not recorded anywhere and are yours to choose**; see section 8.
-* Windows 11, edition and build unrecorded. Whatever you choose, record it beside the VM: an
-  Outlook build difference is the first thing to suspect when a live test behaves differently
-  here than on the maintainer's machine.
+* Windows 11. The edition, image and locale the guests are built to **are** recorded, in
+  `Testbed/MEDIA.md` (see section 8, item 6); the exact build of whatever you install is still
+  yours to record beside the VM. **An Outlook build difference is the first thing to suspect when
+  a live test behaves differently here than on the maintainer's machine** - and that is not
+  hypothetical. Measured 2026-09-15: the guest's Office is **3,598 builds ahead** of the
+  maintainer's - 16.0.**17932**.20884 (`ProPlus2024Volume`, `PerpetualVL2024`) against
+  16.0.**14334**.20848 (`ProPlusSPLA2021Volume`, `Production::LTSC2021`). That gap is deliberate
+  and accepted; it is a known limit, recorded in section 9 and in `Testbed/MEDIA.md`.
 * **Networking should be Internal, Private or disconnected.** The sink binds to loopback and
   nothing on this machine needs to reach the internet after the toolchain is installed. A test
   VM with a mail server on it and a route to the outside is an open relay waiting to happen.
@@ -741,9 +746,17 @@ unrecorded or unverified.
 7. ~~Office version, channel, bitness, install method~~ - **RECORDED in `Testbed/MEDIA.md`**:
    Office Deployment Tool with `ProPlus2024Volume` on `PerpetualVL2024`, 64-bit, and
    **`ExcludeApp OutlookForWindows`, which is load-bearing** - it suppresses the new Outlook,
-   which offers no COM object model. **Office's out-of-box grace is 30 days, not 90**, so Office
-   and not Windows is what sets the rebuild cadence. Still unrecorded: how the first-run wizard
-   is suppressed.
+   which offers no COM object model. The guest build was read on 2026-09-15 and is
+   16.0.17932.20884. **Office's out-of-box grace is 30 days, not 90**, so Office and not Windows
+   is what sets the rebuild cadence - but note two corrections recorded there on 2026-09-15.
+   **Past grace, Office does NOT lose functionality**: the documented state is "Unlicensed
+   notification" - nags and a red title bar - and the guest was measured at `LicenseStatus=5`
+   with every COM read this project uses still working. And **the grace clock exists only because
+   the guest is a KMS client**; the maintainer's Office is MAK-activated with no clock at all, so
+   the rebuild cadence is a property of the testbed, not of Office 2024. Still unrecorded: how
+   the first-run wizard is suppressed. Still unmeasured, and the reason the preflight item in
+   `TODO.md` stays open: whether a modal activation prompt appears at Outlook **cold start** on a
+   past-grace guest, which would hang `CreateObject` rather than fail it.
 8. The two Windows account names and their roles; whether both need a clone and an SDK; whether
    checkpoints must be taken with both logged on.
 9. Outlook profile names, how they are created, which is default, and how the switch between the
@@ -825,3 +838,31 @@ unrecorded or unverified.
 * **Nobody has yet run the VM bucket end to end anywhere.** The 121 read as runnable there; that
   is not the same as having run there. The count moved from 31 to 121 by re-reading what each
   test needs method by method - no test was changed to make it fit.
+
+* **The VM runs a different Office from the maintainer's machine, by 3,598 builds, and that is
+  accepted rather than fixed.** Measured 2026-09-15: the guest is `ProPlus2024Volume` on
+  `PerpetualVL2024`, build 16.0.**17932**.20884; the maintainer's machine is
+  `ProPlusSPLA2021Volume` on `Production::LTSC2021`, build 16.0.**14334**.20848. **DECIDED
+  2026-09-15: stay on Office 2024.**
+
+  This is a **deliberate exception to the principle the testbed is otherwise built on**. That
+  principle - stated in `Testbed/MEDIA.md` - is that the guests match the maintainer's
+  configuration on purpose, because that configuration is where the userbase sits; it is what
+  justified carrying the maintainer's locale over verbatim rather than building a tidy en-US box.
+  The Office version does not follow it, and saying so is better than leaving the inconsistency
+  for a reader to find and mistake for an oversight.
+
+  **The consequence is the one section 2.1 already names: an Outlook build difference is the
+  first thing to suspect when a live test behaves differently on the VM than on the maintainer's
+  machine.** With 3,598 builds between them that suspicion is well founded, and this entry is why
+  section 2.1 says it. Anything that reproduces on the VM and not on the host, or the reverse, is
+  a build-difference candidate until ruled out.
+
+* **The guest's 30-day Office grace clock is an artefact of the testbed, not something a user
+  ever experiences.** The guest is a KMS client that has never reached a KMS host, so it runs on
+  out-of-box grace and expires monthly. The maintainer's own Office is **MAK-activated,
+  `LicenseStatus=1`, with no grace clock of any kind**. The rebuild cadence is therefore a
+  property of how the testbed was licensed, and should not be read as describing the userbase -
+  it has previously been discussed as though it did. Past grace the guest does **not** lose
+  functionality (see `Testbed/MEDIA.md`); what is unmeasured is whether a modal activation prompt
+  hangs a **cold** Outlook start, and the preflight item in `TODO.md` stays open for that reason.

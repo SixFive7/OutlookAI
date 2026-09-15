@@ -1,16 +1,48 @@
 # TODO
 
 - [ ] **Refuse the live tier when the guest's Office licence is nearly out of grace.**
-  Decided 2026-08-24 alongside "accept a monthly rebuild". The testbed's Office install is a KMS
-  client on a **30-day** out-of-box grace - measured: installed 2026-08-09, 15.7 days left on
-  2026-08-24 - so Office, not Windows' 90-day evaluation, sets the rebuild cadence. Past grace it
-  drops into reduced functionality on the machine whose only purpose is driving Outlook, and the
-  resulting failures look like anything except a licence.
+  Decided 2026-08-24 alongside "accept a monthly rebuild"; **justification corrected 2026-09-15,
+  because the one it was written on was false.** The testbed's Office install is a KMS client on a
+  **30-day** out-of-box grace - measured: installed 2026-08-09, 15.7 days left on 2026-08-24 - so
+  Office, not Windows, sets the rebuild cadence. A cadence that depends on remembering gets
+  skipped exactly once, and a three-week absence duly skipped it: the guest was measured 7 days
+  past grace on 2026-09-15.
+
+  **The justification is NOT that Office stops working.** This item used to say that past grace
+  Office "drops into reduced functionality". That term does not appear in Microsoft's
+  volume-activation documentation for Office LTSC 2024 at all - it is an Office 2007 era term and,
+  separately, a Microsoft 365 *subscription* term whose view-and-print app list has never included
+  Outlook. The documented terminal state for a volume KMS client is **"Unlicensed notification"**:
+  activation nags and a red title bar, no functional loss described. Measured on the guest at
+  `LicenseStatus=5` with `GracePeriodRemaining=0`, Outlook still runs and every COM read this
+  project uses still works. `Testbed/MEDIA.md` carries the evidence, the quotations and the
+  caveats on them.
+
+  **The real justification is twofold.** The licence state is **a fact worth asserting cheaply
+  before a long live run** - 241 ms for a definite answer to "is this machine in the state the
+  tier was validated in?". And **the startup-hang risk is unquantified**: nobody has established
+  whether a modal activation prompt appears at Outlook **cold start** on a past-grace guest, which
+  Microsoft's server-side automation guidance says can leave `CreateObject`/`CoCreateInstance`
+  "stop responding and never finish". The probe that passed had attached to an already-running
+  Outlook, so it proves nothing about that. A hang reads as a wedged suite, not as a licence,
+  which is exactly the failure this gate is cheap insurance against.
+
   The check belongs in the live tier's preflight, beside the other fail-closed gates: it fires
   exactly when it matters and nobody has to remember it. A release-time check does not work,
-  because releases can be more than 30 days apart. Read the guest's `SoftwareLicensingProduct`
-  grace remaining, refuse under a threshold, and say plainly that the VM needs rebuilding rather
-  than that a test failed. Do NOT record the number in the repo - it is a fact about one machine.
+  because releases can be more than 30 days apart. **Use the query recorded in `Testbed/MEDIA.md`**
+  - `SoftwareLicensingProduct` filtered server-side on Office's `ApplicationID` **and**
+  `PartialProductKey IS NOT NULL`. All three parts are load-bearing: it works unelevated; the
+  server-side filter is 241 ms against 10,679 ms for enumerate-then-filter; and without the
+  `PartialProductKey` clause a healthy machine returns keyless catalogue rows at `LicenseStatus=0`,
+  so "any row not Licensed" fires everywhere forever. **Branch on `LicenseStatus` before reading
+  `GracePeriodRemaining`** - on a licensed KMS client that field is the 180-day renewal countdown,
+  not an expiry. And do **not** let "query failed" and "no Office found" collapse into one answer:
+  `sppsvc` starting can return zero rows transiently, and collapsing them fails the check open on
+  precisely the fault it exists to catch. Refuse under a threshold and say plainly that the VM
+  needs rebuilding rather than that a test failed.
+  The *live* number stays out of the repo - it is a fact about one machine, and the check must
+  read it rather than trust a constant. Dated measurements in `Testbed/MEDIA.md` are history, not
+  a threshold, and are fine.
 
 - [ ] **Restore the installed MCP server — it is deliberately disabled right now.**
   On 2026-08-16, while developing the COM-host work, the installed executable was moved

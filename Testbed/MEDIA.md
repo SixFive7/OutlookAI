@@ -184,20 +184,24 @@ Visio or Project.
 guest that ends up with the new client is a guest the live tier cannot run on, and the failure
 reads as Outlook automation being broken rather than as a wrong install.
 
-## The licence clocks, and a correction worth reading
+## The licence clocks, and the corrections worth reading
 
-Both clocks were measured on the guest on 2026-08-24:
+Both clocks were measured on the guest on 2026-08-24, and the Office one again on 2026-09-15:
 
-| | Channel | Remaining |
-| --- | --- | --- |
-| Windows | `TIMEBASED_EVAL` | ~82 days |
-| Office | KMS client, **out-of-box grace** | ~16 days |
+| | Channel | 2026-08-24 | 2026-09-15 |
+| --- | --- | --- | --- |
+| Windows | `TIMEBASED_EVAL` | ~82 days | not re-read; expiry lands mid-November |
+| Office | KMS client, **out-of-box grace** | ~16 days | **expired** — `LicenseStatus=5`, `GracePeriodRemaining=0`, 7 days past |
 
 **The decision was to treat the VM as disposable and rebuild when a clock expires. That does not
 work for Office as configured, and the arithmetic says why.** The guest was installed on
 2026-08-09; 15.7 days of Office grace remained on 2026-08-24. That is a **30-day** out-of-box
-grace begun at install — not a 90-day one. So a rebuild resets Office to 30 days, while Windows
-resets to 90. **Office, not Windows, is the binding constraint, and it binds roughly monthly.**
+grace begun at install — not a 90-day one. **Office is the binding constraint, and it binds
+roughly monthly.**
+
+The old evaluation Windows image reset to 90 days, which is where "Windows resets to 90" came
+from; the staged replacement is consumer Pro and **never expires at all** (see "Windows — staged"
+above). Either way Windows never becomes the reason to rebuild — the cadence is Office's.
 
 **DECIDED 2026-08-24: accept the monthly rebuild.** The testbed is disposable by design and a
 30-day cadence is the price of that stance. Not chosen, and worth knowing why they were on the
@@ -205,17 +209,157 @@ table: making a KMS host reachable so `AUTOACTIVATE=1` succeeds would remove the
 but depends on guest networking nobody has verified; licensing the guest another way spends a
 licence on a machine meant to be thrown away.
 
-Since Windows resets to 90 days and Office to 30, **the rebuild cadence is Office's**. Windows
-never becomes the reason to rebuild.
+### What past grace actually does — and it is NOT "reduced functionality"
+
+**This file used to say that a KMS client past grace "drops Office into reduced functionality".
+That is wrong, and it is wrong in the direction that changes a decision** — it made the rebuild
+cadence read as a hard stop on the machine whose only purpose is driving Outlook, when the
+measured behaviour is a nag.
+
+**The term does not describe this product.** "Reduced functionality" does not appear in
+Microsoft's volume-activation documentation for Office LTSC 2024 at all — not on *Overview of
+volume activation of Office*, not on *Activate volume licensed versions of Office by using KMS*,
+not on *Activate volume editions of Office*, all three of which state that they apply to
+LTSC 2024. The phrase is two other things:
+
+* An **Office 2007 / Windows Vista era** term, from a licensing model this product does not use.
+* Separately, a live **Microsoft 365 Apps subscription** term — an unlicensed or deactivated
+  subscription install, where "users can only view and print their documents. All features for
+  editing or creating new documents are disabled." That is a subscription concept and cannot
+  arise on a volume KMS client. Its closest documented app list is **viewer mode**, which is
+  supported for "Version 1902 or later of Word, Excel, and PowerPoint" and "Version 2005 or later
+  of Project and Visio". **Outlook has never been on that list.**
+
+**The documented terminal state for a volume KMS client is "Unlicensed notification"**, and
+Microsoft's own KMS licence-state table for LTSC 2024 describes it in one sentence: *"Users then
+see notifications that request activation and a red title bar."* No functional loss is described.
+
+*Activate volume editions of Office* — the page that covers 2016 through 2024 and **lists Outlook
+by name** among the applications it applies to — goes further: **"there is no functionality loss
+even if the licenses for KMS clients cannot be renewed."**
+
+**State the caveat honestly, because it is a real one.** That sentence sits in a paragraph about
+the **180-day renewal** path — a client that activated once and then lost its KMS host. This
+guest is on the **out-of-box** path: it has never reached a KMS host at all. Both paths terminate
+in `LicenseStatus 5`, which is why the sentence very likely covers this case too, but **that is
+inference and not a quotation about this machine.**
+
+**MEASURED ON THE GUEST, 2026-09-15** — 7 days past grace, `LicenseStatus=5`,
+`GracePeriodRemaining=0`, `LicenseStatusReason 0xC004F056`, SKU
+`Office24ProPlus2024VL_KMS_Client_AE`, channel `VOLUME_KMSCLIENT`. Outlook was running
+**through** the expiry — 28 days up, `Responding=True` — and **every COM read this project uses
+still works**: `CreateObject`, `GetNamespace`, `Stores`, `Accounts`, `GetDefaultFolder`,
+`GetTable`, `Restrict`, `Sort`, `PropertyAccessor`. The corpus counts came back intact and
+matching `Testbed/testbed.json`.
+
+**Bound that claim to what it covers: reads.** `CreateItem`, `Save`, `Move`, `Delete` and `Send`
+were **not** exercised, because mailbox-safety rule 1 forbids mutating items from ad-hoc shell
+code. So "no functional loss" is measured for the read path and *inferred* for the write path
+from Microsoft's wording. If a write path did degrade past grace, this measurement would not have
+seen it.
+
+**WHAT IS UNMEASURED IS THE ACTUAL RISK: a cold start.** Nobody has established whether a modal
+activation prompt appears when Outlook is **started** on a past-grace guest. Microsoft's
+server-side automation guidance says of a blocking dialog that "the `CreateObject` function and
+the `CoCreateInstance` function stop responding and never finish, or take a long time to return",
+and its unattended-automation article says an Office dialog "might result in the application
+appearing to 'hang' as the application stops until it receives this input". Two caveats on
+applying that here: both articles are about a **non-interactive** desktop, whereas the guest runs
+Outlook in an interactive session where a dialog *could* be dismissed — by a human who is not
+there. And the probe above attached to an **already-running** Outlook, so it says nothing
+whatsoever about a cold start. **This is open.** It is a hang, not an error, which is the
+expensive shape: it reads as a wedged suite rather than as a licence.
+
+### Reading the licence state — the query, and why it is shaped this way
+
+Measured 2026-09-15. Written down rather than left to be re-derived, because it is non-obvious in
+three separate places:
+
+    SELECT Name, Description, LicenseStatus, LicenseStatusReason, GracePeriodRemaining, PartialProductKey
+    FROM   SoftwareLicensingProduct
+    WHERE  ApplicationID = '0ff1ce15-a989-479d-af46-f275c6370663'
+      AND  PartialProductKey IS NOT NULL
+
+* **It works unelevated** — verified on a token where `IsInRole(Administrator)` is `False`. A
+  preflight that needed elevation would not be a preflight.
+* **Filter in the query, not afterwards.** **241 ms** filtered, against **10,679 ms** enumerating
+  the class and filtering in PowerShell — a 45× difference. The naive form is unusable in a
+  preflight; the filtered form is cheap enough that there is no argument against running it.
+* **`PartialProductKey IS NOT NULL` is load-bearing.** Without it, a perfectly healthy machine
+  returns keyless SKU-catalogue rows carrying `LicenseStatus = 0`, so a check phrased as "any row
+  that is not Licensed" fires on **every** healthy machine, forever.
+* `0ff1ce15-a989-479d-af46-f275c6370663` is Office's `ApplicationID`. It is the same on every
+  machine and every Office version.
+
+`LicenseStatus` values, and what a preflight should do with each:
+
+| | Meaning | Preflight |
+| --- | --- | --- |
+| 0 | Unlicensed | refuse |
+| 1 | Licensed | proceed |
+| **2** | **Out-of-box grace** | **warn** — `GracePeriodRemaining` is the countdown, in **minutes** |
+| 3 | Out-of-tolerance grace | warn |
+| 4 | Non-genuine grace | warn |
+| **5** | **Notification** | **refuse** — grace is at zero |
+| 6 | Extended grace | warn |
+
+**Branch on the status before reading the number.** On a *licensed* KMS client
+`GracePeriodRemaining` is the 180-day renewal countdown, not an expiry — read naively it reports
+a healthy machine as one about to die.
+
+**A trap worth recording: the query can return zero rows transiently while `sppsvc` is starting.**
+"The query failed" and "no Office is installed" must not collapse into one answer, or the check
+fails **open** on exactly the fault it exists to catch.
+
+### Why the preflight check is still worth building
 
 **A cadence that depends on remembering gets skipped exactly once, and then the tier stops with
-no visible cause** - a KMS client past grace drops Office into reduced functionality, on the
-machine whose only purpose is driving Outlook. So the deadline is checked where it bites: the
-**live tier's own preflight** refuses to run when the guest's Office licence is nearly out of
-grace, instead of letting the run produce failures that look like anything except a licence.
-That is the right home because it fires exactly when it matters and nobody has to remember
-anything; a release-time check would not, since releases can be further apart than 30 days.
-Tracked in `TODO.md`.
+no visible cause.** That is not hypothetical any more: a three-week absence skipped it, and the
+guest was found 7 days past grace on 2026-09-15. So the deadline is checked where it bites — the
+**live tier's own preflight** reads the licence state and refuses when the guest is out of grace,
+rather than letting a run produce failures that look like anything except a licence. A
+release-time check would not do, since releases can be further apart than 30 days.
+
+**But the justification is not "Office stops working" — that claim has been measured false.** It
+is that **the licence state is a fact worth asserting cheaply before a long live run**, and that
+**the startup-hang risk is unquantified**. 241 ms buys a definite answer to "is this machine in
+the state the tier was validated in?", and the one failure mode that would genuinely be expensive
+— a modal activation prompt hanging a cold `CreateObject` — is the one nobody has measured. A
+preflight that refuses costs a second; a suite that hangs until its timeout and reports nothing
+costs an evening. Tracked in `TODO.md`.
+
+## The Office version gap between host and guest — an ACCEPTED KNOWN LIMIT
+
+**Measured 2026-09-15.**
+
+| | Host (the maintainer's machine) | Guest (the testbed) |
+| --- | --- | --- |
+| `ProductReleaseIds` | `ProPlusSPLA2021Volume` (plus Project and Visio) | `ProPlus2024Volume` |
+| Build | 16.0.**14334**.20848 | 16.0.**17932**.20884 |
+| Audience / channel | `Production::LTSC2021` | `PerpetualVL2024` |
+| Licensing | **MAK, `LicenseStatus=1`, no grace clock at all** | KMS client, `LicenseStatus=5` |
+
+**DECIDED 2026-09-15: stay on Office 2024.** Recorded here as a **known limit**, not as a
+non-issue, because three things have to survive the decision.
+
+**1. It is a deliberate exception to this testbed's own governing principle.** "The host
+configuration the guests match" above says the guests copy the maintainer's machine on purpose,
+because that is where the userbase sits — and that argument is what justified carrying the locale
+over verbatim rather than tidying it to en-US. The Office *version* does not follow it. There are
+**3,598 builds** between the machine the live tier is validated on and the machine the maintainer
+runs. Saying so plainly is better than leaving a reader to find the inconsistency and assume it
+was an accident.
+
+**2. Practical consequence: an Outlook build difference is the FIRST thing to suspect** when a
+live test behaves differently on the VM than on the maintainer's machine. `Docs/live-tier-on-the-vm.md`
+section 2.1 already says as much; this table is the measured reason it says it, and section 9
+records the limit.
+
+**3. The grace clock is an artefact of the guest being a KMS client — the userbase never sees
+it.** The maintainer's own Office is MAK-activated: `LicenseStatus=1`, no clock of any kind, no
+renewal countdown, nothing to expire. So the 30-day rebuild cadence above is a property of **the
+testbed's licensing choice**, not of Office 2024 and not of anything a user experiences. That
+matters because the cadence has previously been discussed as though it described reality.
 
 ## The rule
 
