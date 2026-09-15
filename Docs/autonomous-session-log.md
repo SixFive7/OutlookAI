@@ -76,8 +76,20 @@ was wrong:**
   measurement is confirmation that the number is stable and that **the next rebuild is the test
   of the fix** - which is already the plan. Confirmed alongside it: the profile has **zero mail
   accounts**, so those items have no transport and are inert.
-- **The 9-minute COM block: INVESTIGATED AND EXPLAINED, and the answer is that it was
-  self-inflicted.** A read-only `GetDefaultFolder(olFolderDeletedItems)` blocked for 9+ minutes
+- **The 9-minute COM block: INVESTIGATED, TWO CAUSES ELIMINATED, AND STILL UNEXPLAINED.**
+
+  > **CORRECTION, later the same day.** An earlier revision of this bullet said the block was
+  > "INVESTIGATED AND EXPLAINED" and that "the only surviving explanation is COM references
+  > orphaned by two earlier probes". **That was then tested directly and it failed.** A holder
+  > process was killed with `TerminateProcess` while holding `Application` + `NameSpace` +
+  > `Folder`, and again while additionally holding an orphaned pin `Explorer`; in both trials a
+  > fresh client bound in 0.37 s and ran `GetDefaultFolder` in 0.05 s. See "The COM host kill
+  > path" below. **Orphaned references are not sufficient to cause this.** The block is
+  > unexplained, and must not be cited as evidence about anything - least of all the product's
+  > kill path. Writing "explained" over the last hypothesis standing is exactly the move this
+  > project keeps having to undo.
+
+  A read-only `GetDefaultFolder(olFolderDeletedItems)` blocked for 9+ minutes
   and survived a save/resume still blocked, Outlook `Responding=True` and burning ~8 s of CPU
   across the span - **blocked, not spinning**. Three candidate causes were on the table. After a
   guest restart cleared all orphaned state, every one of them was retested on a clean machine:
@@ -98,6 +110,44 @@ was wrong:**
   shared Outlook can block every later client of that instance. Any probe or tool that binds
   Outlook must release in a `finally`, including on an early `exit`. **It was not a defect in
   Outlook, and not a defect in the project's calls.**
+
+## The COM host kill path - MEASURED 2026-09-15, and the premise HELD
+
+**Why this needed measuring.** An audit of the shipped code (notes in the gitignored
+`.work/com-release-audit.md`) established that `ComHostSupervisor.KillChild` calls
+`Process.Kill(entireProcessTree: true)` while the child still holds `Application`, `NameSpace`, a
+non-displayed pin `Explorer`, an advised event-sink registration inside Outlook, and whatever the
+in-flight call bound. `TerminateProcess` runs no `finally`, so **nothing releases any of it** -
+the code says so itself at `OutlookComSession.cs:5730`. The whole design rested on a comment at
+`ComHostSupervisor.cs:842` asserting that **Windows tears down the dead client's references**, and
+that comment had **no measurement behind it**, unlike everything around it.
+
+**Two experiments, each from a freshly restarted guest so no orphaned state could confound them.**
+
+| | What the holder held before being killed with `TerminateProcess` | Fresh client afterwards |
+| --- | --- | --- |
+| A | `Application` + `NameSpace` + `Folder` | `CreateObject` 0.37 s, `GetDefaultFolder` **0.05 s** |
+| B | the same **plus a pin `Explorer`** (`Explorers.Add(inbox, 0)` at `Explorers.Count == 0`, exactly what `ComposeSurface` does, never `Display()`ed and never `Close()`d) | `CreateObject` 0.37 s, `GetDefaultFolder` **0.05 s**, `explorers=1` |
+
+**Neither poisons the instance.** The premise now has evidence behind it for both cases.
+
+**Three things to carry forward, and the first is a correction to my own earlier framing:**
+
+1. **The nine-minute block is NOT explained by either mechanism and was NOT reproduced.** It must
+   be treated as unexplained, and must not be cited as evidence about the kill path.
+2. **The orphaned pin persists and is visible to the next client** (`explorers=1`), and Outlook
+   stayed up - so "every kill leaks an invisible Explorer" is real, but it is a slow accumulation
+   and a nuisance to a human trying to exit Outlook, **not** a hang. Note also that in trial A
+   `OUTLOOK.EXE` **survived the holder's death with no pin at all**, which weakens the pin's own
+   justification.
+3. **The advised event sink is the one nominated mechanism still unmeasured** - it cannot be
+   created from PowerShell.
+
+**What this does to the two proposed fixes.** Making the clean-exit path reachable still stands,
+but **on a different argument**: not "a kill poisons Outlook" (measured false for both tested
+cases) but "a grace path with **no production caller** is dead code that reads as covered". And
+reducing what a kill leaves behind is **no longer justified by evidence** - the pin is harmless
+when orphaned.
 
 **The host and the guest run different Office versions** - host `ProPlusSPLA2021Volume`
 16.0.14334 under a MAK with no grace clock at all; guest `ProPlus2024Volume` 16.0.17932 as a KMS
