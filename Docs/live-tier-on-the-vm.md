@@ -26,19 +26,36 @@ obvious arrangement, two data files in one Outlook profile with one of them excl
 indexing, **does not work**, and the reason is structural rather than a setting anyone can
 find.
 
-Windows Search does not index Outlook per data file. It indexes a MAPI scope, and that scope
-is expressed as **one URL per Windows user account**, of the form `mapi16://{SID}/`, covering
-that account's whole Outlook profile. There is no per-store URL underneath it, so Indexing
-Options offers exactly one switch per account: the profile is indexed, or it is not. Two
-stores in one profile are therefore indexed together or excluded together.
+Windows Search does not index Outlook per data file. It indexes a MAPI scope, and the scope
+the **Indexing Options dialog** manipulates is **one URL per Windows user account**, of the
+form `mapi16://{SID}/`, covering that account's whole Outlook profile. The dialog offers
+exactly one switch per account: the profile is indexed, or it is not. Two stores in one
+profile are therefore indexed together or excluded together *through that dialog*.
+
+> **CORRECTED 2026-09-16 - the conclusion above holds, the reason this section used to give
+> did not.** It said "there is no per-store URL underneath it". **There is one**:
+> `mapi16://{SID}/StoreDisplayName($Hash)/`, and Microsoft documents excluding a single store
+> with it through `ISearchCrawlScopeManager::AddUserScopeRule`. Per-store URLs are also
+> visible in live index rows. What is actually true is narrower and is about the **GUI**:
+> Outlook's shell extension reports "Microsoft Outlook" as the friendly name for any excluded
+> `mapi` URL, so the dialog cannot even display the difference between a per-account and a
+> per-store exclusion - which is why it offers one switch. The layout below is unaffected, but
+> a document that justifies a layout with a false fact misleads whoever next reconsiders the
+> layout, and someone would have concluded a per-store split was impossible when it is merely
+> not reachable from that dialog.
 
 So the split is per **Windows account**: one account whose Outlook profile is indexed and one
 whose profile is not. That is the whole reason this machine has two logons.
 
-> This is the load-bearing assumption of the layout and it is **derived from how the scope is
-> addressed, not measured on this VM**. Verify it before building anything else: add a store,
-> let the indexer settle, and read `outlook_health`'s `index.perStore[]` on both accounts.
-> Section 8 says what to do if it turns out to be wrong.
+> **The scope SHAPE is now measured** (2026-09-16): one `mapi16://{SID}/` rule per Windows
+> account, carrying an `Include` flag, under `WorkingSetRules`. What remains **underived is
+> DURABILITY** - whether that exclusion survives Outlook re-creating its own user rule, which
+> is why `Testbed/guest/Set-OutlookIndexingDisabled.ps1` writes the Group Policy value as well
+> (documented precedence: Group Policy > user > default). Verify before building anything
+> else: add a store, let the indexer settle, and read `outlook_health`'s `index.perStore[]`.
+> Section 4.1 of the findings behind that script says which fields and which values, including
+> the fourth verdict that looks like success and is not. Section 8 says what to do if the
+> durability half turns out to be wrong.
 
 ### 1.1a SUPERSEDED 2026-09-15 - there are two GUESTS now, so one account each
 
@@ -87,6 +104,13 @@ corpus rebuild is another switch.
 | Corpus A | **yes** | the index tier, and the shape most `Requires=SearchIndex` tests want |
 | Corpus B | **no** | the degraded path: no index frontier, the seven-day fallback window, the sweep and frame measurements |
 | Bystander | either | the store the count tripwire actually watches, and the absent-arrival-folders shape |
+
+**The "no" in row two is a property of the MACHINE, not of that store** (2026-09-16). The
+exclusion is per Windows account, so on the unindexed guest **the hub and the bystander are
+unindexed too** - every store on it is. That is intended and costs nothing, because the tests
+that need an index run on the other guest; but the table reads as though only Corpus B were
+affected, and a rebuilder will otherwise expect the hub on that guest to be searchable and
+treat its empty `index.perStore[]` row as a fault.
 
 The bystander is the one people leave out, and the tripwire is useless without it. The
 tripwire **exempts the hub**, because the hub is where the suite writes; a machine whose only
@@ -267,15 +291,40 @@ Create two local accounts. Section 1.1 says why. Suggested roles, since neither 
 * an **indexed** account, whose Outlook profile carries Corpus A and the dummy account, and
   where the index tier and the send path run;
 * an **unindexed** account, whose Outlook profile carries Corpus B, with its `mapi16://{SID}/`
-  scope removed from Indexing Options.
+  scope excluded.
 
 Both accounts need the repository, the SDK and a built server exe, or the tier can only run
 under one of them. Whether that is a clone each or one clone with both accounts granted access
 is your call; record which.
 
-**Verify the split before going further.** On each account, open Indexing Options, confirm the
-Outlook entry is present or absent as intended, let the indexer settle, then read
-`outlook_health` and check `index.perStore[]`. Establish it; do not assume it.
+---
+
+**WHAT ACTUALLY MAKES A GUEST UNINDEXED, now that there is one account per guest.** The
+sentence above named a GUI on a machine that is driven headlessly, and that sentence was the
+entire specification of half the testbed. The step is
+**`Testbed/guest/Set-OutlookIndexingDisabled.ps1`**, run on the unindexed guest. It writes two
+layers - the documented Group Policy value `PreventIndexingOutlook` and the `mapi16://{SID}/`
+rule's `Include` flag - and **leaves the indexer running**, because stopping the Windows Search
+service produces a machine with no search rather than a mailbox search has not been told about,
+and the product takes a different, untested code path there. Section 8 item 21 keeps that
+distinction from collapsing.
+
+**Run it BEFORE `Build-Corpus.ps1`.** Ordering beats every flag: exclude first and no corpus row
+is ever crawled, so the "indexed, but not yet" state cannot arise and does not have to be waited
+out. `Testbed/README.md` section 1 carries it as step 7b.
+
+**Verify by asking the INDEX, not the registry.** `Set-OutlookIndexingDisabled.ps1 -Verify` runs
+a control probe, a scoped-MAPI probe and a scope-free mail probe through the same
+`Search.CollatorDSO` provider the product uses, **twice**, `-SettleMinutes` apart - because a
+machine believed unindexed while it is quietly still indexing produces measurements that look
+fine and mean nothing. It returns four verdicts, and **two of them are not answers**:
+`SETTLING` and `NO-INDEXER` both mean "ask again", not "pass". Reading back the settings that
+were written proves nothing; neither does a single zero. Cross-check with `outlook_health`'s
+`index.perStore[]`, which is the instrument section 1.1 names.
+
+**That verification needs an x64 host** - the `Search.CollatorDSO` provider has no 32-bit
+in-process form, so a 32-bit PowerShell cannot load it. This is a precondition of every index
+check on the guest, not only of the build.
 
 ### 2.5 The Outlook profiles
 
@@ -1091,6 +1140,21 @@ unrecorded or unverified.
     allowlist checks that list *ahead of* the identity grant, and the tripwire verifies the
     declaration. Sections 1.3 and 2.6 carry the rule. The corpus stores are declared too, which
     is what stopped the identity tests drafting into the measurement corpus.
+
+ 21. **OPEN, and deliberately named rather than folded into item 2 - a guest whose index is
+    genuinely UNREACHABLE.** Corpus B is an *unindexed store on a working indexer*: the frontier
+    probe runs and returns no rows, which is the shape `ResolveSweepWindows` handles through
+    `IndexFrontierMissing` / `GapNoIndexFrontier` and the seven-day fallback window. A machine
+    with **no catalog at all** is a different thing entirely - the probe *throws*, and the
+    product goes down its "SystemIndex is unreachable" branch, which **no test in this
+    repository exercises today**: `MailService.Search` does not wrap `_index.Value.Search` or
+    `GetStaleness` in a catch, and all four `Unindexed*Tests` classes use a client that answers
+    and merely holds nothing. Nobody has established whether `Search.CollatorDSO` throws,
+    returns empty, or serves stale rows with the Windows Search service stopped; measuring it
+    would mean stopping that service on the maintainer's workstation, so it has not been
+    measured. **Conflating this with Corpus B is the mistake section 2.4 exists to prevent, and
+    leaving it unnamed was a different one.** If it is ever built, it is a *third* guest shape,
+    not a setting on the second.
 
 ---
 
