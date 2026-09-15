@@ -80,10 +80,12 @@ public enum ArtifactSweepWithheld
 ///
 /// <para>
 /// <b>Why it is phrased as "may the allowlist delete from this store" rather than "is it
-/// declared a bystander".</b> Both answers are the same one today: <c>LiveStoreWriteGuard.Build</c>
-/// derives the identity-draft grant from <c>expectedStoreDisplayNames</c> itself, so every store
-/// the sweep visits is the hub, a declared bystander, or a store granted delete. Asking the
-/// allowlist keeps them the same answer if that ever stops being true, and it means this class can
+/// declared a bystander".</b> The declaration is the narrower question: every store the sweep
+/// visits is the hub, a declared bystander, a declared delegate/shared mailbox or a store the
+/// identity grant covers, and only the FIRST of those is what "is it declared a bystander" asks
+/// about. Asking the allowlist covers all four with one question, it keeps answering correctly if
+/// <c>LiveStoreWriteGuard.Build</c> ever stops deriving the grant the way it does, and it means
+/// this class can
 /// never hand the purge a store <c>LiveOutlookTestMailer</c> would refuse anyway - which today is
 /// what actually stops the corpus being deleted, and is a refusal thrown from inside the loop that
 /// names the guard rather than the finding. The declaration is still carried separately, because
