@@ -49,6 +49,7 @@ public sealed class ArtifactSweepPlanTests
     private const string Business = "other@example.test";
     private const string Bystander = "OutlookAI Bystander";
     private const string SecondBystander = "Corpus A";
+    private const string Delegate = "Shared Mailbox";
 
     // ------------------------------------------------------------------ the VM layout
 
@@ -60,7 +61,7 @@ public sealed class ArtifactSweepPlanTests
         LiveTestSettings settings = Example();
         ArtifactSweepPlan plan = ArtifactSweepPolicy.Assess(settings);
 
-        Assert.Equal(settings.ExpectedStoreDisplayNames.Count, plan.Steps.Count);
+        Assert.Equal(LiveStoreCountTripwire.WatchedStores(settings).Count, plan.Steps.Count);
         Assert.Equal(new[] { settings.TestHubStoreDisplayName }, plan.Swept);
         Assert.Equal(settings.BystanderStoreDisplayNames.Count, plan.CountedOnly.Count);
         Assert.Contains(settings.Corpus!.StoreDisplayName, plan.CountedOnly, StringComparer.OrdinalIgnoreCase);
@@ -123,23 +124,87 @@ public sealed class ArtifactSweepPlanTests
     {
         // Not a second opinion about which stores are writable - the split IS the allowlist's
         // answer. Two derivations of "may we delete here" is how the aim survived the tag split.
-        foreach (LiveTestSettings settings in new[]
-                 {
-                     Example(),
-                     Settings(LiveMachineProfile.Production, new[] { Hub, Business }, bystander: null),
-                     Settings(LiveMachineProfile.Portable, new[] { Hub, Business, Bystander }, Bystander),
-                 })
+        foreach (LiveTestSettings settings in EveryShape())
         {
             StoreWriteAllowlist allowlist = LiveStoreWriteGuard.Build(settings);
             ArtifactSweepPlan plan = ArtifactSweepPolicy.Assess(settings);
+            IReadOnlyList<string> watched = LiveStoreCountTripwire.WatchedStores(settings);
 
-            Assert.Equal(
-                settings.ExpectedStoreDisplayNames.Where(s => allowlist.IsAllowed(s, StoreWriteKind.Delete)),
-                plan.Swept);
-            Assert.Equal(
-                settings.ExpectedStoreDisplayNames.Where(s => !allowlist.IsAllowed(s, StoreWriteKind.Delete)),
-                plan.CountedOnly);
+            Assert.Equal(watched.Where(s => allowlist.IsAllowed(s, StoreWriteKind.Delete)), plan.Swept);
+            Assert.Equal(watched.Where(s => !allowlist.IsAllowed(s, StoreWriteKind.Delete)), plan.CountedOnly);
         }
+    }
+
+    // ------------------------------------------------------------------ the walk set
+
+    [Fact]
+    public void TheSweepVisitsEveryStoreTheCountTripwireWatches()
+    {
+        // The second half of this decision, closed 2026-09-15. The sweep walked
+        // expectedStoreDisplayNames, and that is NOT the watched set: the tripwire watches it
+        // UNION the delegate/shared mailboxes UNION the declared bystanders. Every delegate store
+        // was therefore censused for LOSS and never counted for ARRIVAL - and the argument is the
+        // one this whole class rests on, unchanged: the tripwire fires on a DECREASE and an
+        // artifact turning up is an INCREASE, so a store covered by only one of the two guards is
+        // a store where one direction goes unreported.
+        foreach (LiveTestSettings settings in EveryShape())
+        {
+            Assert.Equal(
+                LiveStoreCountTripwire.WatchedStores(settings),
+                ArtifactSweepPolicy.Assess(settings).Steps.Select(s => s.Store));
+        }
+    }
+
+    [Fact]
+    public void ADelegateMailboxIsCountedNeverSwept_AndTheRefusalCallsItOne()
+    {
+        // The store class this change actually adds, and the one it is most important to get
+        // right: a delegate/shared mailbox is somebody else's mail. It must be visited (or an
+        // artifact there is invisible), must never be deleted from, and must say WHICH kind of
+        // off-limits it is - "the allowlist grants no delete" would read as a configuration gap
+        // rather than as rule 3.
+        LiveTestSettings settings = Settings(
+            LiveMachineProfile.Production, new[] { Hub, Business }, bystander: null, delegates: new[] { Delegate });
+        ArtifactSweepPlan plan = ArtifactSweepPolicy.Assess(settings);
+        List<string> lines = new();
+
+        Assert.Contains(Delegate, plan.CountedOnly, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain(Delegate, plan.Swept, StringComparer.OrdinalIgnoreCase);
+        ArtifactSweepStep step = plan.Steps.Single(s => s.Store == Delegate);
+        Assert.True(step.ReadOnlyDelegate);
+        Assert.False(step.DeclaredBystander);
+
+        string message = Assert.Throws<InvalidOperationException>(
+            () => ArtifactSweepPolicy.Run(plan, store => store == Delegate ? 1 : 0, ShouldNotPurge, lines.Add))
+            .Message;
+
+        Assert.Contains(ArtifactSweepPolicy.Residue, message, StringComparison.Ordinal);
+        Assert.Contains("DELEGATE/SHARED mailbox", message, StringComparison.Ordinal);
+        Assert.Contains("mailbox-safety rule 3", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("declared BYSTANDER", message, StringComparison.Ordinal);
+
+        // And it said so on the per-store line too, not only in the refusal.
+        Assert.Contains("COUNTED, NOT SWEPT", Assert.Single(
+            lines, l => l.StartsWith("sweep[" + Delegate + "]", StringComparison.Ordinal)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ABystanderDeclaredOnlyAmongTheDelegatesIsStillVisited()
+    {
+        // Permitted by BystanderCorpusDeclarationTests, which requires a declared bystander to be
+        // in expectedStoreDisplayNames OR expectedDelegateStoreDisplayNames. Under the old walk
+        // set the second spelling produced a bystander the sweep never looked at - the one store
+        // in the whole configuration that exists to be looked at.
+        LiveTestSettings settings = Settings(
+            LiveMachineProfile.Production, new[] { Hub }, Delegate, delegates: new[] { Delegate });
+        ArtifactSweepPlan plan = ArtifactSweepPolicy.Assess(settings);
+
+        Assert.Equal(new[] { Hub, Delegate }, plan.Steps.Select(s => s.Store));
+        Assert.Equal(new[] { Delegate }, plan.CountedOnly);
+
+        // The bystander declaration outranks the delegate one: both are refusals, but one is a
+        // decision somebody made about THIS store and the other is a whole tier's default.
+        Assert.True(plan.Steps.Single(s => s.Store == Delegate).DeclaredBystander);
     }
 
     // ------------------------------------------------------------------ what a run says
@@ -390,15 +455,37 @@ public sealed class ArtifactSweepPlanTests
     }
 
     private static LiveTestSettings Settings(
-        LiveMachineProfile profile, IEnumerable<string> stores, string? bystander)
+        LiveMachineProfile profile,
+        IEnumerable<string> stores,
+        string? bystander,
+        IEnumerable<string>? delegates = null)
     {
         return new LiveTestSettings
         {
             MachineProfile = profile,
             TestHubStoreDisplayName = Hub,
             ExpectedStoreDisplayNames = stores.ToList(),
+            ExpectedDelegateStoreDisplayNames = (delegates ?? []).ToList(),
             BystanderStoreDisplayNames = bystander == null ? new List<string>() : new List<string> { bystander },
         };
+    }
+
+    /// <summary>
+    /// The configuration shapes every set-level assertion is made against: the committed example,
+    /// a hub-plus-business machine, a machine with a declared bystander, and - the shapes the old
+    /// walk set could not see - one with a delegate/shared mailbox and one whose bystander is
+    /// declared only among the delegates.
+    /// </summary>
+    private static IEnumerable<LiveTestSettings> EveryShape()
+    {
+        yield return Example();
+        yield return Settings(LiveMachineProfile.Production, new[] { Hub, Business }, bystander: null);
+        yield return Settings(LiveMachineProfile.Portable, new[] { Hub, Business, Bystander }, Bystander);
+        yield return Settings(
+            LiveMachineProfile.Production, new[] { Hub, Business }, Bystander,
+            delegates: new[] { Delegate, "Second Shared Mailbox" });
+        yield return Settings(
+            LiveMachineProfile.Production, new[] { Hub }, Delegate, delegates: new[] { Delegate });
     }
 
     private static string TestProjectDir()

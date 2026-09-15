@@ -1,3 +1,4 @@
+using System.Data.OleDb;
 using System.Diagnostics;
 using OutlookAI.Core.Com;
 using OutlookAI.Core.IndexSearch;
@@ -25,17 +26,6 @@ public sealed class LiveAttachmentKindRecallTests
 {
     /// <summary>TOP for the attachment-hit probe search, shared so a re-run is the SAME search.</summary>
     private const int AttachmentProbeTop = 50;
-
-    /// <summary>
-    /// How long the seeded probe waits for the Windows Search gatherer to crawl the item it just
-    /// created. A CEILING, not an expectation: crawl latency is the gatherer's business and this
-    /// test reports it rather than asserting it - past this the probe records what it saw and says
-    /// the assertion did not run.
-    /// </summary>
-    private const int SeededCrawlWaitSeconds = 90;
-
-    /// <summary>Gap between polls of the index while waiting for that crawl.</summary>
-    private const int SeededCrawlPollSeconds = 5;
 
     private readonly LivePhase1Fixture _fixture;
     private readonly ITestOutputHelper _output;
@@ -376,41 +366,61 @@ public sealed class LiveAttachmentKindRecallTests
             string sql = "SELECT TOP 200 System.ItemUrl, System.Kind FROM SystemIndex WHERE SCOPE='" + scope
                 + "' AND CONTAINS(System.Search.Contents, '\"" + token + "\"')";
 
-            // NOTE, measured 2026-09-15: this is the last product-shaped index call in the suite
-            // still running on the client's DEFAULT command timeout, which is
-            // OleDbIndexClient.DefaultCommandTimeoutSeconds = 60 - two thirds of the whole wait
-            // below. So one slow statement can spend most of the budget and leave the probe
-            // reporting "the gatherer had not crawled it in time" when what ran out was the
-            // statement, not the gatherer. Passing a bound here would fix that and would also turn
-            // a slow statement into a THROWN failure rather than one lost poll, which is a change
-            // to a live test's failure behaviour that no run available here could check - so it is
-            // recorded in TODO.md as a decision rather than made unsupervised. The literals
-            // themselves are named now, which is the half that costs nothing.
+            // The statement is BOUNDED (decision 55, 2026-09-15). Until then this was the last
+            // product-shaped index call in the suite running on the client's DEFAULT command
+            // timeout - OleDbIndexClient.DefaultCommandTimeoutSeconds = 60 against a 90 s wait -
+            // so ONE slow statement spent two thirds of the budget and the probe then printed
+            // "the gatherer had not crawled it", blaming the indexer for a statement running out.
+            //
+            // An expired statement is ONE LOST POLL, not a failure: this loop has always treated
+            // "no rows yet" as ordinary and a timed-out statement is indistinguishable from it.
+            // The catch is narrow on purpose - OleDbException, and only when the statement ran for
+            // the bound before it failed - because a broad one would swallow a real provider fault
+            // and re-report it as the very sentence this change exists to stop. SeededCrawlPoll
+            // carries all of that: the three numbers and the arithmetic tying them together, why
+            // the type is OleDbException rather than a late-bound COMException, and what a run is
+            // entitled to SAY about a wait that lost polls.
             List<IReadOnlyDictionary<string, object?>> rows = new();
+            int pollsCompleted = 0;
+            int pollsLost = 0;
             Stopwatch waited = Stopwatch.StartNew();
-            while (waited.Elapsed < TimeSpan.FromSeconds(SeededCrawlWaitSeconds))
+            while (waited.Elapsed < TimeSpan.FromSeconds(SeededCrawlPoll.WaitSeconds))
             {
-                rows = client.ExecuteRows(sql, 200).ToList();
+                Stopwatch statement = Stopwatch.StartNew();
+                try
+                {
+                    rows = client.ExecuteRows(sql, 200, SeededCrawlPoll.StatementTimeoutSeconds).ToList();
+                    pollsCompleted++;
+                }
+                catch (OleDbException) when (
+                    SeededCrawlPoll.IsExpiredStatement(client.Provider, statement.Elapsed))
+                {
+                    pollsLost++;
+                }
+
                 if (rows.Any(r => IndexRowFilter.IsAttachmentRow(Url(r))))
                 {
                     break;
                 }
 
-                Thread.Sleep(TimeSpan.FromSeconds(SeededCrawlPollSeconds));
+                Thread.Sleep(TimeSpan.FromSeconds(SeededCrawlPoll.PollSeconds));
             }
 
             List<IReadOnlyDictionary<string, object?>> attachmentRows =
                 rows.Where(r => IndexRowFilter.IsAttachmentRow(Url(r))).ToList();
             _output.WriteLine(
                 $"seeded probe: {rows.Count} row(s) after {waited.Elapsed.TotalSeconds:F0} s, "
-                + $"{attachmentRows.Count} attachment row(s); kinds: "
+                + $"{attachmentRows.Count} attachment row(s); "
+                + SeededCrawlPoll.Accounting(client.Provider, pollsCompleted, pollsLost)
+                + "; kinds: "
                 + string.Join(", ", attachmentRows.SelectMany(Kinds).Distinct(StringComparer.OrdinalIgnoreCase)));
 
-            if (attachmentRows.Count == 0)
+            SeededCrawlVerdict verdict = SeededCrawlPoll.Decide(attachmentRows.Count, pollsCompleted);
+            if (verdict != SeededCrawlVerdict.Crawled)
             {
-                _output.WriteLine(
-                    "the gatherer had not crawled the seeded item inside the budget - admission is proven "
-                    + "unconditionally by the corpus tests in this class.");
+                // Which of the two non-crawl outcomes this was decides the sentence: the gatherer
+                // is named only when the index was actually asked and answered.
+                _output.WriteLine(SeededCrawlPoll.Explain(verdict, pollsCompleted, pollsLost));
             }
             else
             {

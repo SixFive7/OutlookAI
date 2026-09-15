@@ -17,13 +17,43 @@ public enum ArtifactSweepAction
 }
 
 /// <summary>
+/// Why the sweep is not entitled to delete from a store. Three different sentences to whoever
+/// reads the refusal, because they are three different situations: somebody declared this store
+/// off limits, this store belongs to somebody else, or nothing ever granted it.
+/// </summary>
+public enum ArtifactSweepWithheld
+{
+    /// <summary>Nothing is withheld - the sweep may delete here.</summary>
+    NotWithheld = 0,
+
+    /// <summary>
+    /// Named in <c>bystanderStoreDisplayNames</c>: watched by the count tripwire precisely
+    /// because nothing writes to it.
+    /// </summary>
+    DeclaredBystander = 1,
+
+    /// <summary>
+    /// Named in <c>expectedDelegateStoreDisplayNames</c>: a delegate/shared mailbox, read-only
+    /// for tests under mailbox-safety rule 3. Somebody else's mail, in the most literal sense of
+    /// any tier here.
+    /// </summary>
+    ReadOnlyDelegate = 2,
+
+    /// <summary>
+    /// No declaration at all - the allowlist simply grants this store no delete. A gap rather
+    /// than a decision, and it reads differently for being one.
+    /// </summary>
+    NoGrant = 3,
+}
+
+/// <summary>
 /// The post-run artifact sweep, decided store by store before any COM call.
 ///
 /// <para>
 /// <b>What the sweep is.</b> Mailbox-safety rule 4: every live run must end with zero items
 /// carrying the live-tier subject tag, proven by walking every store the census watches
-/// (<c>expectedStoreDisplayNames</c>) and counting. Self-send copies materialise with lag, so a
-/// store the suite may write to gets one purge pass before its count is believed.
+/// (<see cref="LiveStoreCountTripwire.WatchedStores"/>) and counting. Self-send copies materialise
+/// with lag, so a store the suite may write to gets one purge pass before its count is believed.
 /// </para>
 ///
 /// <para>
@@ -50,14 +80,34 @@ public enum ArtifactSweepAction
 ///
 /// <para>
 /// <b>Why it is phrased as "may the allowlist delete from this store" rather than "is it
-/// declared a bystander".</b> Both answers are the same one today: <c>LiveStoreWriteGuard.Build</c>
-/// derives the identity-draft grant from <c>expectedStoreDisplayNames</c> itself, so every store
-/// the sweep visits is the hub, a declared bystander, or a store granted delete. Asking the
-/// allowlist keeps them the same answer if that ever stops being true, and it means this class can
+/// declared a bystander".</b> The declaration is the narrower question: every store the sweep
+/// visits is the hub, a declared bystander, a declared delegate/shared mailbox or a store the
+/// identity grant covers, and only the FIRST of those is what "is it declared a bystander" asks
+/// about. Asking the allowlist covers all four with one question, it keeps answering correctly if
+/// <c>LiveStoreWriteGuard.Build</c> ever stops deriving the grant the way it does, and it means
+/// this class can
 /// never hand the purge a store <c>LiveOutlookTestMailer</c> would refuse anyway - which today is
 /// what actually stops the corpus being deleted, and is a refusal thrown from inside the loop that
 /// names the guard rather than the finding. The declaration is still carried separately, because
 /// the two failures read differently to whoever hits them.
+/// </para>
+///
+/// <para>
+/// <b>The half that was still missing, closed 2026-09-15.</b> The walk was over
+/// <c>expectedStoreDisplayNames</c>, and that is NOT the set the run watches: the count tripwire
+/// watches <c>expectedStoreDisplayNames</c> UNION <c>expectedDelegateStoreDisplayNames</c> UNION
+/// <c>bystanderStoreDisplayNames</c>. So every delegate/shared mailbox - the tier mailbox-safety
+/// rule 3 calls read-only, somebody else's mail - was censused for LOSS and never once counted for
+/// ARRIVAL, and a declared bystander that is declared via the delegate list (which
+/// <c>BystanderCorpusDeclarationTests</c> explicitly permits) was not visited at all. The argument
+/// above is the whole argument here too, one store wider: the tripwire fires on a DECREASE, an
+/// artifact turning up is an INCREASE, and the two guards have to cover the SAME set or there is a
+/// store where one direction is unguarded. The sweep now plans over
+/// <see cref="LiveStoreCountTripwire.WatchedStores"/> itself rather than over a list that happens
+/// to overlap it, and <c>TheSweepVisitsEveryStoreTheCountTripwireWatches</c> is the pin that keeps
+/// the two sets one set. Counting is a read; nothing new is deleted anywhere, and a delegate
+/// mailbox is <see cref="ArtifactSweepAction.CountOnly"/> by construction because the allowlist has
+/// always refused it every kind of write.
 /// </para>
 ///
 /// <para>
@@ -80,11 +130,16 @@ public static class ArtifactSweepPolicy
     /// <summary>The phrase for a sweep that was handed nothing to walk.</summary>
     public const string NothingToVisit = "THE ARTIFACT SWEEP WAS GIVEN NO STORE TO VISIT";
 
-    /// <summary>Plans the sweep over the stores <paramref name="settings"/> has the census watch.</summary>
+    /// <summary>
+    /// Plans the sweep over the stores <paramref name="settings"/> has the census watch - the
+    /// tripwire's OWN list, primaries plus delegate/shared mailboxes plus declared bystanders,
+    /// rather than a second derivation of it. Two derivations is how a store ends up watched for
+    /// loss and unwatched for arrival.
+    /// </summary>
     public static ArtifactSweepPlan Assess(LiveTestSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        return Assess(settings.ExpectedStoreDisplayNames, LiveStoreWriteGuard.Build(settings));
+        return Assess(LiveStoreCountTripwire.WatchedStores(settings), LiveStoreWriteGuard.Build(settings));
     }
 
     /// <summary>
@@ -110,10 +165,32 @@ public static class ArtifactSweepPolicy
             steps.Add(new ArtifactSweepStep(
                 store,
                 mayDelete ? ArtifactSweepAction.Sweep : ArtifactSweepAction.CountOnly,
-                allowlist.IsBystander(store)));
+                Withheld(store, mayDelete, allowlist)));
         }
 
         return new ArtifactSweepPlan(steps);
+    }
+
+    /// <summary>
+    /// Which kind of off-limits a store is, asked in the order the declarations outrank each
+    /// other: a declared bystander first (the narrowest and most deliberate), then a declared
+    /// delegate/shared mailbox, then the plain absence of a grant.
+    /// </summary>
+    private static ArtifactSweepWithheld Withheld(string store, bool mayDelete, StoreWriteAllowlist allowlist)
+    {
+        if (mayDelete)
+        {
+            return ArtifactSweepWithheld.NotWithheld;
+        }
+
+        if (allowlist.IsBystander(store))
+        {
+            return ArtifactSweepWithheld.DeclaredBystander;
+        }
+
+        return allowlist.IsKnownReadOnly(store)
+            ? ArtifactSweepWithheld.ReadOnlyDelegate
+            : ArtifactSweepWithheld.NoGrant;
     }
 
     /// <summary>
@@ -203,11 +280,11 @@ public static class ArtifactSweepPolicy
 /// <summary>One store's place in the sweep: whether it is swept or only counted, and why.</summary>
 public sealed class ArtifactSweepStep
 {
-    internal ArtifactSweepStep(string store, ArtifactSweepAction action, bool declaredBystander)
+    internal ArtifactSweepStep(string store, ArtifactSweepAction action, ArtifactSweepWithheld withheld)
     {
         Store = store;
         Action = action;
-        DeclaredBystander = declaredBystander;
+        Withheld = withheld;
     }
 
     /// <summary>The store's display name, as the settings spell it.</summary>
@@ -217,12 +294,24 @@ public sealed class ArtifactSweepStep
     public ArtifactSweepAction Action { get; }
 
     /// <summary>
-    /// True when this store is in <c>bystanderStoreDisplayNames</c> - watched precisely because
-    /// nothing writes to it. Carried separately from <see cref="Action"/> because it is the
-    /// difference between "somebody declared this store off limits" and "the allowlist happens
-    /// not to grant it", and the two mean different things to whoever reads the failure.
+    /// Why the delete is withheld, when it is. Carried separately from <see cref="Action"/>
+    /// because "somebody declared this store off limits", "this mailbox belongs to somebody else"
+    /// and "the allowlist happens not to grant it" mean three different things to whoever reads
+    /// the failure - and the first two are decisions while the third is a gap.
     /// </summary>
-    public bool DeclaredBystander { get; }
+    public ArtifactSweepWithheld Withheld { get; }
+
+    /// <summary>
+    /// True when this store is in <c>bystanderStoreDisplayNames</c> - watched precisely because
+    /// nothing writes to it.
+    /// </summary>
+    public bool DeclaredBystander => Withheld == ArtifactSweepWithheld.DeclaredBystander;
+
+    /// <summary>
+    /// True when this store is in <c>expectedDelegateStoreDisplayNames</c> - a delegate/shared
+    /// mailbox, read-only for tests under mailbox-safety rule 3.
+    /// </summary>
+    public bool ReadOnlyDelegate => Withheld == ArtifactSweepWithheld.ReadOnlyDelegate;
 
     /// <summary>True when the sweep may delete from this store.</summary>
     public bool MayDelete => Action == ArtifactSweepAction.Sweep;
@@ -291,10 +380,19 @@ public sealed class ArtifactSweepStep
     /// <summary>Why this store is counted rather than swept, in the words its reader needs.</summary>
     private string Because()
     {
-        return DeclaredBystander
-            ? "declared BYSTANDER - the count tripwire watches it precisely because nothing "
-                + "writes to it, so no test may write to it"
-            : "the write allowlist grants no delete on it";
+        switch (Withheld)
+        {
+            case ArtifactSweepWithheld.DeclaredBystander:
+                return "declared BYSTANDER - the count tripwire watches it precisely because "
+                    + "nothing writes to it, so no test may write to it";
+
+            case ArtifactSweepWithheld.ReadOnlyDelegate:
+                return "a declared DELEGATE/SHARED mailbox - somebody else's mail, READ-ONLY for "
+                    + "tests under mailbox-safety rule 3";
+
+            default:
+                return "the write allowlist grants no delete on it";
+        }
     }
 }
 
@@ -351,7 +449,9 @@ public sealed class ArtifactSweepPlan
             + ". It would count nothing, find nothing and report zero tagged artifacts, which is "
             + "the same output a genuinely clean run produces - so it cannot tell a swept profile "
             + "from an unswept one." + Environment.NewLine
-            + "  'expectedStoreDisplayNames' in the live-test settings is what this walks; it is "
-            + "empty, or every entry in it is blank.";
+            + "  What this walks is the count tripwire's watched set - "
+            + "'expectedStoreDisplayNames' plus 'expectedDelegateStoreDisplayNames' plus "
+            + "'bystanderStoreDisplayNames' in the live-test settings. All three are empty, or "
+            + "every entry in them is blank.";
     }
 }

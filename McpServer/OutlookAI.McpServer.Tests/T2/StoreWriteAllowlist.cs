@@ -123,6 +123,22 @@ public sealed class StoreWriteAllowlist
     }
 
     /// <summary>
+    /// True when <paramref name="storeDisplayName"/> was declared a delegate/shared mailbox -
+    /// read-only for tests, per mailbox-safety rule 3.
+    /// <para>
+    /// Exposed for the same reason <see cref="IsBystander"/> is: a store the sweep may not delete
+    /// from has to be able to say WHICH kind of off-limits it is, and "a delegate mailbox" and
+    /// "a store nobody granted anything" read very differently to whoever hits the refusal.
+    /// <see cref="Explain"/> already made that distinction inside a message; this makes it
+    /// available to a caller deciding what to say.
+    /// </para>
+    /// </summary>
+    public bool IsKnownReadOnly(string? storeDisplayName)
+    {
+        return storeDisplayName != null && _denied.Contains(storeDisplayName);
+    }
+
+    /// <summary>
     /// Which of <paramref name="candidateStores"/> the identity tests may actually draft in:
     /// everything this allowlist grants <see cref="StoreWriteKind.Draft"/> to, minus the hub,
     /// in the order given and without repeats.
