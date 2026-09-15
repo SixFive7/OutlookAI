@@ -93,7 +93,10 @@ The release run is one command, and it needs the suite log and a live-run file:
 # 1. Standing verification, output kept so the gate can read the suite numbers.
 dotnet build McpServer/OutlookAI.Core/OutlookAI.Core.csproj
 dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj `
-    --filter "Category!=Live&FullyQualifiedName!~Tests.T3." *> .work/test.log
+    --filter "Category!=Live" *> .work/test.log
+# The "&FullyQualifiedName!~Tests.T3." half was retired on 2026-08-24. Category!=Live is now
+# honest - measured, with no COM host spawned across 481 process samples - so excluding tier 3
+# excludes real coverage for no reason.
 
 # 2. Take the live measurements (see below) into a run file.
 pwsh -File .github/scripts/measurement-gate.ps1 -Template > .work/live-run.json   # skeleton
