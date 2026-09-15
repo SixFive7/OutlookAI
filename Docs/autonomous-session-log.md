@@ -9,7 +9,7 @@ Windows, Office, an Outlook profile and a working POP3 account **in about twenty
 script, with nobody touching it** - and that was demonstrated on a SECOND guest built from the
 committed scripts, not just achieved once on a machine that had been hand-patched.
 
-`HEAD` at the time of writing is on `master`, pushed, tree clean. **2,491 tests** under
+`HEAD` at the time of writing is on `master`, **not pushed**, tree clean. **2,494 tests** under
 `--filter "Category!=Live"`; 14 pinned invariants, 3 privacy checks, 7 testbed checks.
 
 ### The guests
@@ -20,8 +20,42 @@ committed scripts, not just achieved once on a machine that had been hand-patche
 | Windows install | 5 min 54 s, 13/14 first-logon | **7 min, 14/14** | - |
 | Office | under 6 min | **3 min** | past grace |
 | tier profile + POP3 | after two PRF variants | **first attempt** | - |
-| corpus | `vm-indexed`, 20,000, verified | `vm-unindexed`, building | `vm2`, 27 days stale |
+| corpus | `vm-indexed`, 20,000, verified | `vm-unindexed`, 20,000 built, **census FAILS** | `vm2`, 27 days stale |
 | checkpoints | 5 | 3 | 10 |
+
+### THE DEFECT FOUND ON 2026-09-16, and it is the one worth remembering
+
+**`corpus-build` could never run its own census.** It holds the manifest open for append for the
+whole run - a `using` **declaration**, disposed only at method exit - then calls `RunCensusPass`,
+which read the manifest back through `File.ReadLines`. That overload opens `FileShare.Read`,
+which will not coexist with an existing WRITE handle. Deterministic; no third party, no timing.
+
+A 20,000-item build on guest two wrote **every** item and **every** manifest line - 20,001 lines,
+0 unparseable, 20,000 distinct EntryIDs, last ordinal 20000, a 1,024 MB store - and then died
+with *"the process cannot access the file … because it is being used by another process"*,
+exit 1. **My first diagnosis blamed my own polling script for holding the file. That was wrong**
+and I said so; a two-minute isolated repro on the host settled it (read while open → the same
+`IOException`; after dispose → fine; `FileShare.ReadWrite` while open → fine). Reason, then
+measure, then correct - in that order, and the correction goes to the user in the same breath.
+
+The exit code was never the cost. **The census is the guard that exists BECAUSE a build once
+created 40,000 items, put every one of them in Drafts, and reported success** - the comment
+above `RunCensusPass` says exactly that. For as long as this stood, that guard **had never once
+run inside a build**, and no test could have caught it: every test that reads a manifest reads
+one nobody is holding. Fixed in `df48617` - `CorpusManifest.ReadFile` opens `FileShare.ReadWrite`
+and the build scopes its writer - with three T1 tests including a control that reproduces the
+refusal so the regression test cannot pass vacuously.
+
+### Corpus B exists and is NOT yet usable - this is the open item
+
+`corpus-verify` (pure, no Outlook) passes outright: 20,000 recorded, 20,000 dated, 19,997 agree
+on the shift, freshness OK. **`corpus-census` fails**: `20,013 item(s) found for 20,000 planned`
+- 12 extra in Deleted Items, 1 in Drafts, **and 1 ordinal existing twice**, which by the census's
+own wording makes every per-item number measured against it wrong. Probably probe residue
+(`corpus-probe --execute` ran once standalone before the build, and `corpus-build` runs both
+probes itself), but **the duplicate ordinal is not explained by that** and must be understood
+before the corpus is trusted. The plan is exclusion → teardown → rebuild with the fixed binary,
+in that order, which also yields the first build whose census actually gates its own exit code.
 
 ### What was solved, and each of these was thought impossible or unknown at some point today
 
@@ -60,9 +94,23 @@ raw count. Worth writing down because "19,996 of 20,000" reads like a defect and
 
 ### What is NOT done
 
-1. **Guest two is not actually unindexed yet.** Both guests are identical in that respect and
-   nothing has made the second one different. Half the live tier depends on the distinction being
-   real. An agent is establishing how, and how to tell "not indexed" from "not indexed **yet**".
+1. **CLOSED 2026-09-16 (script written, never run).** `Testbed/guest/Set-OutlookIndexingDisabled.ps1`
+   excludes the Outlook MAPI scope and **leaves the indexer running**. The obvious shortcut -
+   stopping the Windows Search service - was examined and **refused**, for reasons read out of
+   this repository's own source rather than out of preference: it deletes the `index.perStore[]`
+   instrument section 1.1 tells you to read (the whole index block is one `try`, and a null
+   `perStore` is omitted from the payload entirely); it puts the product on the untested
+   "SystemIndex unreachable" branch instead of the no-rows branch Corpus B exists to measure;
+   and `Phase7Live...Health_OverStdio` asserts `wSearchStartMode == "automatic"` under
+   `Requires=AddInRegistry`, so nothing filters it out and it simply fails. **Run it BEFORE
+   `Build-Corpus.ps1`** - ordering beats every flag, because a row never crawled cannot be in the
+   "not indexed **yet**" state, and that state is the dangerous one. `-Verify` asks the catalog
+   twice, `-SettleMinutes` apart, and two of its four verdicts (`SETTLING`, `NO-INDEXER`) are
+   explicitly **not answers**. The seven documentation corrections it left are applied in
+   `6e0f898`; the biggest was that section 1.1 justified the entire two-machine split with a
+   false fact ("there is no per-store URL underneath it" - there is one, and Microsoft documents
+   excluding a single store with it). **A guest whose index is genuinely UNREACHABLE is now
+   named as a THIRD machine shape** (section 8 item 21), not a setting on the second.
 2. **The live tier cannot run on a guest**: it is `dotnet test`, and the guests have no .NET at
    all. This is the same gap that bit the corpus build, one level up - the automated build is
    LEANER than the hand-built machine every assumption was written against.
@@ -89,6 +137,15 @@ was filed beside two unexplained COM blocks as "a third". It was not a COM probl
 working profile the same call returns in under two seconds. It was a property read on an account
 Outlook had never finished configuring. Twice today a conclusion was reached by elimination and
 had to be withdrawn when the last hypothesis standing was actually tested.
+
+**And a third, added 2026-09-16: blaming the instrument.** When the corpus build died on a file
+lock, the first explanation was that my own polling script had been reading that file. It was
+plausible, it was self-critical, and it was **wrong** - the defect was deterministic and needed
+no observer at all. Two cheap habits caught it: an isolated repro on the host before asserting a
+cause, and reading the actual `FileShare` semantics rather than reasoning from the symptom. The
+general shape is worth keeping: **an explanation that makes you the culprit is not thereby more
+likely to be true**, and it is especially seductive because it feels like honesty. Test it like
+any other hypothesis before writing it down, and correct it in the same voice if it fails.
 
 ## Superseded position - 2026-09-15, morning
 
