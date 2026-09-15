@@ -1,8 +1,78 @@
-# RESUME HERE - state of play at 2026-09-15
+# RESUME HERE - state of play at 2026-09-16
 
 **Read this first after any context loss.** Everything below it is history and reasoning.
 
-## Position - 2026-09-15, after a three-week absence
+## Position - 2026-09-16: THE TESTBED BUILD IS REPRODUCIBLE
+
+**The thing this whole effort exists for is done and proven.** A guest goes from an empty VM to
+Windows, Office, an Outlook profile and a working POP3 account **in about twenty minutes, by
+script, with nobody touching it** - and that was demonstrated on a SECOND guest built from the
+committed scripts, not just achieved once on a machine that had been hand-patched.
+
+`HEAD` at the time of writing is on `master`, pushed, tree clean. **2,491 tests** under
+`--filter "Category!=Live"`; 14 pinned invariants, 3 privacy checks, 7 testbed checks.
+
+### The guests
+
+| | `OutlookAI-Indexed` | `OutlookAI-Unindexed` | `OutlookAI-TestVM` |
+| --- | --- | --- | --- |
+| built | by script | by script, **untouched** | by hand, August |
+| Windows install | 5 min 54 s, 13/14 first-logon | **7 min, 14/14** | - |
+| Office | under 6 min | **3 min** | past grace |
+| tier profile + POP3 | after two PRF variants | **first attempt** | - |
+| corpus | `vm-indexed`, 20,000, verified | `vm-unindexed`, building | `vm2`, 27 days stale |
+| checkpoints | 5 | 3 | 10 |
+
+### What was solved, and each of these was thought impossible or unknown at some point today
+
+* **A POP3 account, created by script, with no GUI and no paid component.** Three research passes
+  concluded this could not be done for free. The recipe: a `.prf` with **no** PST service and
+  **no** `DefaultStore`, plus `ForcePSTPath`. **A store Outlook mints is a store Outlook BINDS**,
+  and binding is the one step a text file cannot perform. Naming the store in the file leaves
+  `Account.DeliveryStore` NULL and `NewDraft` fails.
+* **`Store.DisplayName` follows a root-folder rename**, `@` included, without breaking the
+  account binding. No documentation anywhere answers this; it was the highest-risk unknown in the
+  profile plan.
+* **`/PIM` creates an account-less profile on Office 2024** - `accounts=0`, which `corpus-build`
+  requires and refuses to run without.
+* **Past-grace Office costs nothing.** Every COM read works and a cold COM start completes in
+  3.7 s with no dialog, so the monthly rebuild cadence was retired.
+* **Two Windows accounts per guest are unnecessary** - two guests take the fallback the runbook
+  named for itself, and the layout's riskiest unverified assumption stops being load-bearing.
+
+### What is NOT done
+
+1. **Guest two is not actually unindexed yet.** Both guests are identical in that respect and
+   nothing has made the second one different. Half the live tier depends on the distinction being
+   real. An agent is establishing how, and how to tell "not indexed" from "not indexed **yet**".
+2. **The live tier cannot run on a guest**: it is `dotnet test`, and the guests have no .NET at
+   all. This is the same gap that bit the corpus build, one level up - the automated build is
+   LEANER than the hand-built machine every assumption was written against.
+3. **No mail sink, by decision.** The Outbox canary is therefore vacuous on the guests - it will
+   pass and its passing will mean nothing. `Install-MailSink.ps1` is the reserve.
+4. **The old guest is still alive**, 143 GB, awaiting a word.
+
+### Two habits that paid for themselves today, and one that did not
+
+**Scripts that print their evidence below their conclusions.** `New-TierProfile.ps1 -Verify`
+reported the PRF route dead five times over - "no profile named", "no accounts", "127.0.0.1
+appears in no account value" - while its own raw dump, printed underneath, contradicted every
+line. It was reading the legacy Windows Messaging Subsystem hive; profiles moved to the Office
+hive at Outlook 2013. **A verifier reading the wrong place does not fail loudly - it reports a
+working route as dead**, which here would have meant abandoning the only free path to a POP3
+account.
+
+**Scripts that refuse.** `-Execute` and `-Verify` in one run was refused, because verifying in the
+same run as writing asserts against a profile Outlook has not read yet and passes for the wrong
+reason. The refusal was right and the invocation was wrong.
+
+**And the one that did not: grouping observations by resemblance.** `Account.SmtpAddress` blocking
+was filed beside two unexplained COM blocks as "a third". It was not a COM problem at all - on a
+working profile the same call returns in under two seconds. It was a property read on an account
+Outlook had never finished configuring. Twice today a conclusion was reached by elimination and
+had to be withdrawn when the last hypothesis standing was actually tested.
+
+## Superseded position - 2026-09-15, morning
 
 `HEAD` = `b56bc67`, **pushed**, tree clean, no branches outstanding. **2,441 tests** under
 `--filter "Category!=Live"` in ~95 s with no mailbox contact. `OutlookAI.Core` clean for net48
