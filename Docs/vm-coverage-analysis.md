@@ -5,6 +5,46 @@ test was run, no mailbox, Outlook, Hyper-V guest or registry hive was touched. E
 comes from parsing the test assembly's attributes and from reading the code and the repo's own
 measurement records.
 
+> ## CORRECTIONS, 2026-09-15 — read these before quoting any number below
+>
+> This is a dated analysis and the reasoning in it still stands. Several of its **counts** do not,
+> and `Docs/live-test-inventory.txt` was deleted on 2026-09-15 for exactly this class of error - a
+> tracked figure nothing generated and nothing checked, which kept being quoted. This file is
+> analysis rather than a generated dump, so it is corrected rather than deleted. The corrections
+> are also written in at each place the wrong number appears; they are gathered here because a
+> reader who skims takes the first number they see.
+>
+> 1. **`Requires=Transport` is on 25 live methods, not 41, and only 13 of those 25 use it.**
+>    Measured 2026-09-15 by `dotnet test --list-tests --filter "Category=Live&Requires=Transport"`
+>    (25 methods) and by attributing every `SendSelfMail` / arrival-wait call site to its enclosing
+>    method (13, spread over 11 files). The trait **over-declares by 12**: it is declared per class
+>    in most live classes, so it reads as the union of what any one test in the class needs.
+> 2. **"Six methods genuinely need mail to arrive" is wrong wherever it appears below. It is 13,
+>    and the number that actually matters is 1.** The error was mechanical: six *files* hold an
+>    arrival wait - `T2/LiveInboxArrival.cs` says so in its own header, describing the five copies
+>    it consolidated "and a SIXTH copy [that] was missed" - and that file count was read as a method
+>    count. Of the 13, exactly one needs the wire in a way nothing can substitute:
+>    `T3/Phase5LiveMcpToolShapeTests.SendTool_TwoStepFlow_RoundTrip_OverRealStdio_WithAuditLines`,
+>    the only test that calls the product's own `send` tool and lets Outlook submit. The other 12
+>    need an item to appear in the Inbox with a known subject, which direct PST creation already
+>    produces. **This reframes section 7's question 3 from a blocker into one test** - see the
+>    correction at that question.
+> 3. **116 live methods is now 127**, and the per-tier table in section 0 is a 2026-08-23 reading.
+>    Every "of 116" below should be read as "of the live tier as it stood that day".
+> 4. **The `LiveTier` trait no longer exists.** `T1/LiveTierInventoryTests.RetiredTraits` actively
+>    refuses it, so every `LiveTier=Portable` / `ProfileBound` count below - including the 20/96
+>    split in section 0 and the options in section 7's questions 1 and 2 - describes a vocabulary
+>    the suite has retired. The capability vocabulary (`Requires`) replaced it.
+> 5. **The supporting files this document points at are gone.** `live-inventory.txt` and `inv.json`
+>    were never tracked and went with the scratch directory. `--list-tests` answers the same
+>    questions from the assembly, which is the source of truth; nothing should be re-generated.
+> 6. **The `FullyQualifiedName!~Tests.T3.` filter is no longer standing advice** (sections 7.1 and
+>    the bullets under it). Measured 2026-08-24 after the tier-3 classification pass: the eleven T3
+>    tests that reached Outlook now carry `Category=Live`, and the full `Category!=Live` run moved
+>    Outlook's CPU by 0.19 s in 107 s. CI's plain `Category!=Live` is safe for the whole suite.
+> 7. **Section 8 item 4 is FIXED for three of the four vacuous live assertions it points at**
+>    (2026-09-15) - see the note there.
+
 **How to read the evidence markers.** `[V]` = verified this session by reading the code or by
 parsing it mechanically. `[R]` = recorded in this repository as a past measurement (I did not
 re-take it). `[I]` = inference, reasoned from the code but not observed. Anything unmarked in a
@@ -28,14 +68,34 @@ non-live **cases**, which matches the session log's own count).
 `[V]` The 115/19 in `Docs/live-tier-on-the-vm.md` is one behind: `03a0857` (today) added
 `LiveTableSortProbeTests.ATableDate_IsEitherUtcOrLocal_AndTheRunSaysWhich` as a Portable test.
 
+> **SUPERSEDED 2026-09-15.** The live tier is **127** methods
+> (`--list-tests --filter "Category=Live"`), and the `LiveTier` trait has been RETIRED -
+> `T1/LiveTierInventoryTests` refuses it - so the 20/96 split describes a vocabulary that no longer
+> exists. The per-tier table above is a 2026-08-23 reading and is kept as one.
+
 **Supporting data beside this file:** `live-inventory.txt` is the full 116-method live table, one
 line per test, with its `LiveTier` and its effective `Requires` set. `inv.json` is the machine-readable
 inventory of all 1,607 methods (tier, file, class, method, line, class traits, method traits,
 collection, Fact/Theory), so any count here can be re-derived without re-parsing the assembly.
 
+> **GONE 2026-09-15.** Neither file was ever tracked and both went with the scratch directory they
+> lived in. Nothing should recreate them: a tracked inventory nobody generates is precisely what
+> `Docs/live-test-inventory.txt` was, and it was deleted on 2026-09-15 for printing a retired trait
+> and a per-class `Requires` union as though both were facts. `dotnet test --list-tests --filter`
+> answers the same questions from the assembly.
+
 `Requires` totals across live methods `[V]`: `SearchIndex` 47, `MailAccount` 42, `Transport` 41,
 `MultipleStores` 41, `DelegateStore` 23, `InteractiveDesktop` 16, `ProbePopulation` 7,
 `SmallHubStore` 1, `AddInRegistry` 1.
+
+> **CORRECTED 2026-09-15 for the one that was load-bearing: `Transport` is 25, not 41 - and only
+> **13** of the 25 put mail on the wire.** Measured two independent ways:
+> `--filter "Category=Live&Requires=Transport"` lists 25 methods, and attributing every
+> `LiveOutlookTestMailer.SendSelfMail` / `LiveInboxArrival` / `WaitForInboxArrival` call site to its
+> enclosing method gives 13, across 11 files. So the trait **over-declares by 12**, which is the
+> per-class-union distortion this section names two paragraphs down, measured for the one row where
+> it changed a plan. The other eight totals are 2026-08-23 readings and have not been re-measured;
+> treat every one of them as an upper bound rather than a count.
 
 **`Requires` is declared per CLASS in 30 of 36 live classes** `[V]`, so it is the union of what any
 one test in the class needs. That over-attributes, and it is why the "96 cannot move" figure is an
@@ -169,6 +229,22 @@ surprised by most often.**
 
 **(b) Real transport - 6 methods that genuinely need mail to arrive.**
 
+> **CORRECTED 2026-09-15: it is 13, and the number that matters is 1.** Six *files* hold an arrival
+> wait, and that file count was read as a method count - the list of eight files three paragraphs
+> below is the same mistake showing its working. Measured by attributing every call site to its
+> enclosing method: **13 methods** put mail on the wire, across 11 files
+> (`LiveDraftOptionsTests` x2, `LiveDraftTests`, `LiveFreshModeTests`, `LiveHtmlDraftTests`,
+> `LiveMoveArchiveTests`, `LiveSignatureTests`, `LiveSweepScopeTests`, `LiveUpdateDiscardTests` x2,
+> `T3/MoveArchiveLiveMcpToolTests`, `T3/Phase4LiveMcpToolShapeTests`,
+> `T3/Phase5LiveMcpToolShapeTests`). **Exactly one of the 13 needs the WIRE** rather than an item in
+> the Inbox with a known subject:
+> `T3/Phase5LiveMcpToolShapeTests.SendTool_TwoStepFlow_RoundTrip_OverRealStdio_WithAuditLines`, the
+> only test that calls the product's own `send` tool and lets Outlook submit. The other 12 can be
+> seeded by direct PST creation - the corpus generator does it 20,000 times, and
+> `LiveOutlookTestMailer.SaveTaggedDraftWithAttachments` already makes exactly this trade for
+> exactly this reason, noting that drafts are indexed like received mail. That changes what
+> section 7's question 3 is about: not six tests waiting on a mail server, but one.
+
 `[V]` `LiveOutlookTestMailer.SendSelfMail` finds the profile account whose `SmtpAddress` equals the
 hub name, sets `SendUsingAccount` through the PROPERTYPUTREF accessor, hard-verifies the identity,
 sends, and then `LiveInboxArrival.WaitFor` sweeps the hub Inbox for up to **180 s** until the item
@@ -257,7 +333,7 @@ test fails on a corpus store.
 | Category | Methods | Fixable by seeding? | Fixable by code? |
 |---|---|---|---|
 | Delegate/shared semantics | 6 | no | no |
-| Real transport arrival | 6 | no (needs an SMTP sink) | no |
+| Real transport arrival | 6 → **13**, of which **1** needs the wire (corrected 2026-09-15) | no (needs an SMTP sink) → **one test does; the other 12 can be seeded** | no |
 | Exchange EntryID semantics | 3 | no | no |
 | Hardcoded 3-account arity | 2 | no | yes, at a cost |
 | `ProbePopulation` shapes | 7 | **yes** | no |
@@ -816,6 +892,19 @@ index or real user data. Today all 100 run under `--filter "Category!=Live"`, wh
 and none of them sits in a guarded collection. The interim policy excludes the whole tier by name
 (`FullyQualifiedName!~Tests.T3.`), which throws away 92 good tests to avoid 8.
 
+> **CLOSED 2026-08-24 as option 2-implemented-as-3, which is what this question recommended.** The
+> eleven T3 tests that reached Outlook moved into `ComHostSupervisionLiveTests`,
+> `OutlookAvailabilityLiveTests` and `OutlookHealthLiveToolShapeTests` carrying `Category=Live` +
+> `Requires=OutlookInstance`; `McpStdioClient` refuses `outlook_health`, `list_accounts` and
+> `search` unless a test declares them; and `T1/LiveTierInventoryTests.EveryStdioTestReaching-
+> Outlook_DeclaresIt` reads the declaration out of the compiled IL. Measured afterwards on a
+> machine with Outlook up: the full `Category!=Live` run moved Outlook's CPU by 0.19 s in 107 s and
+> lowered its handle count. **The interim filter is retired** - CI's plain `Category!=Live` is the
+> whole command. The options below are kept as the record of how that was decided; note that the
+> `LiveTier` value option 2 asks for no longer exists, and `Requires=OutlookInstance` is what was
+> used instead. What the pass did NOT fix is recorded in `TODO.md` under the tier-3 classification
+> residuals.
+
 1. **Keep the interim filter.** Cheapest, and wrong: it silently drops 92 wire-conformance tests,
    including every schema and description pin, which is exactly the coverage that catches an
    accidental tool-surface change.
@@ -864,6 +953,17 @@ Outbox for exactly that reason. A queued send that can never leave is a permanen
 Separately, six tests need mail to actually **arrive** (section 2.3(b)), which an unroutable account
 can never deliver.
 
+> **CORRECTED 2026-09-15, and it changes the answer to this question.** It is **13** tests, not six -
+> but only **one** of the 13 needs the wire rather than an item appearing in the Inbox with a known
+> subject, and that one is `T3/Phase5LiveMcpToolShapeTests.SendTool_TwoStepFlow_RoundTrip_-
+> OverRealStdio_WithAuditLines`. The other 12 are seedable by direct PST creation. So the premise
+> "a mail server is needed to unblock six tests" - which is what made option 4 the recommendation -
+> is false in both directions at once: more tests are affected, and far less infrastructure is
+> needed to affect them. **The four directions below were argued on the old number and are NOT
+> re-argued here**; the maintainer should re-read them knowing that the choice is between seeding
+> 12 tests and building a round-tripping mail server for 1. The Outbox half of the question is
+> unchanged - a queued send that can never leave is still a permanent tagged artifact.
+
 1. **Unroutable account, and teach the sweep that an Outbox artifact on a Portable machine is expected
    and deletable.** Cheapest. Weakens the one guard that catches a real stranded send, on the machine
    where sends are most likely to be exercised.
@@ -877,7 +977,8 @@ can never deliver.
 4. **Local SMTP sink plus a local IMAP/POP delivery back to the same account**, so a self-addressed
    send genuinely round-trips. Unblocks all six arrival-dependent tests and makes the fresh-mode proof
    runnable on the VM. It is a real mail server on the VM (hMailServer, Mailpit with delivery, or
-   similar).
+   similar). *(2026-09-15: "all six" is 13, of which 12 are seedable without any of this - and a
+   fifth direction now exists, seeding the 12 and leaving the one send test to the real profile.)*
 5. **Defer to direction D** and let the real test tenant provide transport.
 
 **Recommendation: 4, scoped small, unless direction D is happening soon - then 3 as a stopgap.**
@@ -947,6 +1048,18 @@ constants.
    vacuously on an empty collection**, on any machine with no attachment-bearing indexed mail in the
    first configured store. That is a pre-existing weak assertion, not a VM problem, and it is a
    one-line fix (`Assert.NotEmpty` first, or an explicit `PROVED NOTHING`).
+
+   > **FIXED 2026-09-15, along with three more of the same shape found later.** Reading every
+   > `foreach` and `Assert.All` in the live tier on 2026-08-25 turned up three others; all four now
+   > route their population through `T2/LivePopulationCoverage`, which prints a coverage line on
+   > every run, refuses on a `Production` profile (an empty population there means drift) and prints
+   > a `PROVED NOTHING:` line naming the remedy on a `Portable` one. The four:
+   > `LiveIndexSearchTests.FilterShapes_ReadAndAttachmentFlags_WorkUnder2s` (this one),
+   > `LiveFolderScopeTests.DelegateFirstLevelFolders_StillResolve_AndTheWholeMailboxIsUnfiltered`,
+   > `LiveSignatureTests.ListSignatures_SeesTestSignature_WithExcerpt_AndAccountRows`, and - fixed
+   > earlier, on 2026-08-25 - the identity-draft pair behind `IdentityDraftCoverage`. Pinned by
+   > `T1/LivePopulationCoverageTests`, which also reads the call sites out of the sources, because
+   > a pure function cannot pin that the live tests still ask it.
 5. **`ProbeParity_DateRangeQuery_HitsUnder2s` asserts "no mail indexed in the last 30 days" as a
    failure.** On the real profile that is a real health assertion. On a checkpoint-restored VM it is
    an assertion about the age of the checkpoint. It needs to move to a corpus-relative window.

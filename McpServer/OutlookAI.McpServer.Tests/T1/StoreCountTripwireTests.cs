@@ -33,7 +33,7 @@ public sealed class StoreCountTripwireTests
             Dictionary<string, FolderCensus> byFolder = new(StringComparer.OrdinalIgnoreCase);
             foreach ((string folder, int count) in folders)
             {
-                byFolder[folder] = FolderCensus.CountOnly(count);
+                byFolder[folder] = FolderCensus.CountOnly(count, CensusCountReason.AbovePerFolderLimit);
             }
 
             census[store] = byFolder;
@@ -54,7 +54,8 @@ public sealed class StoreCountTripwireTests
         Dictionary<string, IReadOnlyDictionary<string, FolderCensus>> census,
         string store, string folder, int count)
     {
-        ((Dictionary<string, FolderCensus>)census[store])[folder] = FolderCensus.CountOnly(count);
+        ((Dictionary<string, FolderCensus>)census[store])[folder] =
+            FolderCensus.CountOnly(count, CensusCountReason.AbovePerFolderLimit);
     }
 
     private static void SetItems(
@@ -234,7 +235,10 @@ public sealed class StoreCountTripwireTests
         Assert.True(StoreCountTripwire.Evaluate(Baseline(), missing, Hub).Failed);
 
         var extra = Baseline();
-        extra["surprise@example.test"] = new Dictionary<string, FolderCensus> { ["Inbox"] = FolderCensus.CountOnly(1) };
+        extra["surprise@example.test"] = new Dictionary<string, FolderCensus>
+        {
+            ["Inbox"] = FolderCensus.CountOnly(1, CensusCountReason.AbovePerFolderLimit),
+        };
         Assert.True(StoreCountTripwire.Evaluate(Baseline(), extra, Hub).Failed);
     }
 
@@ -518,7 +522,7 @@ public sealed class StoreCountTripwireTests
         Assert.True(walked.HasIdentities);
         Assert.Equal(2, walked.Count);
 
-        FolderCensus counted = FolderCensus.CountOnly(9);
+        FolderCensus counted = FolderCensus.CountOnly(9, CensusCountReason.AbovePerFolderLimit);
         Assert.False(counted.HasIdentities);
         Assert.Equal(9, counted.Count);
         Assert.Null(counted.Items);

@@ -245,7 +245,29 @@ public sealed class CensusIdentityPlan
     /// <param name="itemCount">What the folder holds right now.</param>
     public bool ShouldIdentify(string folderKey, bool isVolatile, int itemCount)
     {
-        if (!WantsToIdentify(folderKey, isVolatile, itemCount))
+        return TryIdentify(folderKey, isVolatile, itemCount, out _);
+    }
+
+    /// <summary>
+    /// Whether this folder should be walked, and - when it should not - WHY, in the terms the
+    /// census records on the folder and the tripwire's verdict reads back out.
+    /// <para>
+    /// The reason exists because the verdict used to invent one. <c>EvaluateByCount</c> said
+    /// "folder above the identity budget" whatever the cause, so a folder counted because the
+    /// clock expired, because the table would not read, or because the baseline never identified
+    /// it was reported with a sentence naming the wrong remedy. See
+    /// <see cref="CensusReadingStrength"/>.
+    /// </para>
+    /// </summary>
+    /// <param name="folderKey">Census key, volatile prefix included.</param>
+    /// <param name="isVolatile">True for folders the system prunes on its own.</param>
+    /// <param name="itemCount">What the folder holds right now.</param>
+    /// <param name="reason">
+    /// Why the walk was refused, or <see cref="CensusCountReason.Walked"/> when it was not.
+    /// </param>
+    public bool TryIdentify(string folderKey, bool isVolatile, int itemCount, out CensusCountReason reason)
+    {
+        if (!WantsToIdentify(folderKey, isVolatile, itemCount, out reason))
         {
             return false;
         }
@@ -257,31 +279,70 @@ public sealed class CensusIdentityPlan
         if (_elapsed() >= _identityTimeBudget)
         {
             FoldersDeniedByClock++;
+            reason = CensusCountReason.IdentityClockExpired;
             return false;
         }
 
+        reason = CensusCountReason.Walked;
         return true;
     }
 
     /// <summary>The size and comparability rules, with no clock in them.</summary>
-    private bool WantsToIdentify(string folderKey, bool isVolatile, int itemCount)
+    private bool WantsToIdentify(string folderKey, bool isVolatile, int itemCount, out CensusCountReason reason)
     {
         if (_repeatFolders != null)
         {
-            return _repeatFolders.Contains(folderKey) && itemCount <= _perFolderLimit * RepeatGrowthHeadroom;
+            if (!_repeatFolders.Contains(folderKey))
+            {
+                reason = CensusCountReason.NotIdentifiedAtBaseline;
+                return false;
+            }
+
+            if (itemCount > _perFolderLimit * RepeatGrowthHeadroom)
+            {
+                reason = CensusCountReason.AbovePerFolderLimit;
+                return false;
+            }
+
+            reason = CensusCountReason.Walked;
+            return true;
+        }
+
+        // The limit is checked against zero as well: without that, a count-only plan (limit
+        // and budget both zero) would still claim EMPTY folders, which walks nothing but
+        // marks them as compared item by item - a reading the plan was told not to take.
+        if (_perFolderLimit <= 0)
+        {
+            reason = CensusCountReason.PlanIsCountOnly;
+            return false;
         }
 
         // A self-pruning folder can shrink without anyone doing anything, so a departure
         // there is never a failure and identity would only cost time. Deleted Items is also
         // the largest folder in most stores, which is the other half of the reason.
-        //
-        // The limit is checked against zero as well: without that, a count-only plan (limit
-        // and budget both zero) would still claim EMPTY folders, which walks nothing but
-        // marks them as compared item by item - a reading the plan was told not to take.
-        return _perFolderLimit > 0
-            && !isVolatile
-            && itemCount <= _perFolderLimit
-            && itemCount <= _remaining;
+        if (isVolatile)
+        {
+            reason = CensusCountReason.SelfPruningFolder;
+            return false;
+        }
+
+        if (itemCount > _perFolderLimit)
+        {
+            reason = CensusCountReason.AbovePerFolderLimit;
+            return false;
+        }
+
+        // Ordered AFTER the per-folder limit deliberately: a folder that is too big on its own is
+        // too big whatever the store has left, and reporting the store budget for it would send
+        // the reader to the wrong number.
+        if (itemCount > _remaining)
+        {
+            reason = CensusCountReason.StoreItemBudgetSpent;
+            return false;
+        }
+
+        reason = CensusCountReason.Walked;
+        return true;
     }
 
     /// <summary>Records a completed walk. Never called for a walk that had to be abandoned.</summary>

@@ -19,6 +19,19 @@ it is marked, so the history of what was silent stays legible.
 `**CLOSED <date>** — <what the payload says now>` sentence; the severity cell becomes
 `~~OLD~~ → **NEW**`. Nothing is rewritten, so the row still reads as the defect it was.
 
+> **THE LINE NUMBERS IN THIS FILE ARE NOT EVIDENCE. Re-measured 2026-09-15.** 22 `<file>.cs:<line>`
+> citations remain. Every one was resolved against the current sources, and **8 of them land on a
+> bare `{`, a `}`, a blank line, or a lone `/// <para>` or `/// <summary>`** - on nothing at all.
+> The other 14 land on prose or code that may or may not be what the row means, and none has been
+> re-verified. The nine `OutlookComSession.cs` citations were converted to symbols on 2026-08-19
+> after all nine were found to have drifted; the `MailService.cs`, `MailModels.cs` and
+> `OutlookTools.cs` ones were not, and have drifted since.
+>
+> **The policy is unchanged and deliberate: convert each citation to a SYMBOL as its row is next
+> touched.** A symbol found by guessing is worse than a number known to be wrong, because a wrong
+> number announces itself the moment somebody opens the file and a wrong symbol does not. What this
+> note buys is that nobody has to open the file to find out.
+
 Closed so far: **A1**, **A2**, **A3**, **A4**, **B1**, **B2**, **B3**, **B6**, **C1**, **C2**, **C3**, **C4**, **E1**, **E2**, **F1**, **F3**,
 **F4**, **F5**, **G1**, **G2**, **G3**, **G4**, **G5**, **G6**, **H1**, **H2**, **I1** (2026-08-18), **F2** (2026-08-19),
 **J1**-**J9** (2026-08-20, section 7b - the write surface's own version of the same species), and **A5** downgraded

@@ -7918,6 +7918,34 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
+        /// The UTC instant one scanned row contributes to its folder's resume cursor: the date
+        /// the CONTENTS TABLE gave, or - when that column was unreadable for this row - the one
+        /// read off the opened item, converted as an ITEM value.
+        /// <para>
+        /// <b>Both halves are UTC and that is the whole point.</b> A table value and an item value
+        /// both arrive from COM with <see cref="DateTimeKind.Unspecified"/>, so the kind cannot
+        /// tell them apart; a table value is already UTC and an item value is local wall time.
+        /// Handing <c>brief.ReceivedTime</c> straight to a cursor named Utc therefore put a LOCAL
+        /// instant into the next page's date bound whenever one row's date column failed while the
+        /// folder's sort still held - a silent off-by-the-timezone in a resumable scan, which
+        /// shows up as pages that overlap or skip rather than as an error.
+        /// </para>
+        /// <para>
+        /// PURE, and public, for the reason <see cref="SweepSortWasRefused"/> is: it was written
+        /// inline inside a <c>dynamic</c>, COM-driven row loop no mailbox-free test can enter, and
+        /// a mutation dropping the conversion - exactly the defect the line was added to fix - left
+        /// the whole suite green. The VALUE was pinned (<c>ComDateValueTests</c>); the CHOICE to
+        /// make it was not, because nothing could reach the line that makes it.
+        /// </para>
+        /// </summary>
+        /// <param name="fromTable">The row's date column, already UTC, or null if unreadable.</param>
+        /// <param name="fromOpenedItem">The opened item's own received time - local wall time.</param>
+        public static DateTime? ScanCursorDate(DateTime? fromTable, DateTime? fromOpenedItem)
+        {
+            return fromTable ?? ComDateValue.FromItemValue(fromOpenedItem);
+        }
+
+        /// <summary>
         /// Most items whose EntryIDs one folder's cursor may carry for duplicate suppression.
         /// <para>
         /// It bounds the ONE structure in this design that would otherwise grow without
@@ -8365,12 +8393,11 @@ namespace OutlookAI.Core.Com
                             continue;
                         }
 
-                        // Both halves of this fallback are UTC. brief.ReceivedTime comes off
-                        // an OPENED item and is local wall time with an unspecified kind, so
-                        // handing it straight to a cursor named Utc put a local instant into
-                        // the next page's date bound whenever a single row's date column was
-                        // unreadable while the folder's sort still held.
-                        state.Admit(brief, entryId, received ?? ComDateValue.FromItemValue(brief.ReceivedTime));
+                        // The table's date when the row carried one, and the OPENED item's own
+                        // received time converted as an item value when it did not. Both halves
+                        // are UTC, and the conversion is the point - see ScanCursorDate, which
+                        // holds the decision so CI can reach it.
+                        state.Admit(brief, entryId, ScanCursorDate(received, brief.ReceivedTime));
                     }
                     finally
                     {

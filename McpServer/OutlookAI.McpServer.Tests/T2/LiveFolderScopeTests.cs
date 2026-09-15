@@ -43,6 +43,43 @@ public sealed class LiveFolderScopeTests
 
     private MailService Service => _fixture.Service;
 
+    /// <summary>
+    /// The population BOTH delegate tests iterate, named as the Production refusal will wrap it.
+    /// </summary>
+    private const string DelegatePopulation = "a delegate or shared mailbox to resolve folders in";
+
+    /// <summary>What a reader of a PROVED NOTHING line here is to do about it.</summary>
+    private const string DelegateRemedy =
+        "To exercise it, run on a profile that opens a delegate or shared mailbox and name that "
+        + "mailbox in 'expectedDelegateStoreDisplayNames'. A local PST cannot stand in for one: the "
+        + "shape these two tests exist for is Windows Search publishing a delegate mailbox's folders "
+        + "FLAT while Outlook nests them, which no PST produces.";
+
+    /// <summary>
+    /// The delegate mailboxes this machine has - and the ONLY way this file obtains them.
+    /// <para>
+    /// <b>Why it is a method with a sink rather than a read of the settings.</b>
+    /// <see cref="DelegateFirstLevelFolders_StillResolve_AndTheWholeMailboxIsUnfiltered"/> was a
+    /// bare <c>foreach</c> over that list with no non-empty guard, so on any machine whose settings
+    /// name no delegate mailbox it iterated nothing, asserted nothing and reported GREEN - while
+    /// its sibling two methods up had asserted the list was non-empty since the day it was written.
+    /// The omission was an oversight rather than a decision (<c>Requires=DelegateStore</c> should
+    /// keep both unselected on such a machine, but selection is a filter string somebody types, not
+    /// a guarantee). Routing both through one call means the two can no longer answer the same
+    /// question differently. See <see cref="LivePopulationCoverage"/>.
+    /// </para>
+    /// </summary>
+    private IReadOnlyList<string> DelegateStores(string whatWouldNotRun)
+    {
+        return LivePopulationCoverage.Require(
+            _fixture.Settings,
+            _fixture.Settings.ExpectedDelegateStoreDisplayNames,
+            DelegatePopulation,
+            whatWouldNotRun,
+            DelegateRemedy,
+            _output.WriteLine);
+    }
+
     // ==================================================== 1. the delegate defect (read-only)
 
     [Fact]
@@ -50,7 +87,11 @@ public sealed class LiveFolderScopeTests
     [Trait("Requires", "DelegateStore")]
     public void DelegateSubfolders_AreReachableAgain_AndTheOldNestedShapeStillReturnsZero()
     {
-        IReadOnlyList<string> delegates = _fixture.Settings.ExpectedDelegateStoreDisplayNames;
+        // This one has always asserted the list is non-empty, and it keeps doing so: the guard
+        // announces and (on Production) refuses, and the assertion below still fails a Portable
+        // machine that selected this test anyway. Deliberately NOT weakened to an announcement -
+        // the defect being fixed here is a test that passes proving nothing, and this one never did.
+        IReadOnlyList<string> delegates = DelegateStores("the delegate nested-subfolder probe");
         Assert.True(delegates.Count > 0, "the live settings must name at least one delegate store");
 
         IndexSearchService index = IndexSearchService.CreateDefault(out _);
@@ -157,7 +198,7 @@ public sealed class LiveFolderScopeTests
     [Trait("Requires", "DelegateStore")]
     public void DelegateFirstLevelFolders_StillResolve_AndTheWholeMailboxIsUnfiltered()
     {
-        foreach (string delegateStore in _fixture.Settings.ExpectedDelegateStoreDisplayNames)
+        foreach (string delegateStore in DelegateStores("the delegate first-level folder probe"))
         {
             IReadOnlyList<FolderView> tree = FolderTree(delegateStore);
             FolderView? topLevel = tree
