@@ -42,12 +42,25 @@ Inbox 10,912, Sent Items 4,964, Deleted Items 2,461, Junk Email 1,663, and 1,612
 seven-day window. Those numbers were recorded from the STORE; the plan derives them from the
 seed. The two matching is independent evidence, not a tautology.
 
-Two things the store carries that the plan does not, reconciled here so a rebuilder does not read
-them as corruption:
+Two things the store carried that the plan did not. **Both are fixed, so a rebuild today should
+match the plan exactly** - the 2026-08-19 figures are kept because each is what makes its fix
+checkable:
 
-* **Deleted Items holds 2,467, six more than the plan**, all unread - the throwaway items
-  `corpus-probe` creates and deletes.
-* **The Outbox holds 2,761**, all unread, which is EXACTLY the plan's unread count. That is the
+* **Deleted Items held 2,467, six more than the plan** - the throwaway items the placement and
+  date probes create and delete. `MailItem.Delete()` is a SOFT delete, so every "deleted" probe
+  item became a permanent resident of Deleted Items under an EntryID no manifest records. **Six is
+  the low figure**: 4 placement rungs plus 2 date rungs (plus up to 2 compensated re-tries) means
+  one `corpus-build --execute` left 6 to 8, and following `Testbed/guest/Build-Corpus.ps1 -Execute`
+  left **12 to 16**, because that script runs a standalone `corpus-probe --execute` and the build
+  then probes again; the 2026-08-19 run was a hand-run that skipped the standalone probe. **Since
+  2026-09-16 both probes purge their own residue** - at the start of each pass, which heals older
+  stores, and after each item - so **the expected figure is 0**, and the census reports any that
+  remain in their own sentence instead of counting them as duplicated corpus ordinals. The "all
+  unread" that used to be written here was a property of the tooling of the day: the probes then
+  wrote a read state only on the two rungs that clear `MSGFLAG_UNSENT`, and since 2026-08-24 they
+  write `MSGFLAG_READ` on every probe item. Whether that bit survives the soft delete is **not
+  established** and is moot at an expected count of 0.
+* **The Outbox held 2,761**, all unread, which is EXACTLY the plan's unread count. That is the
   `MSGFLAG_SUBMIT` defect described below, and this is its second independent confirmation
   (the first was the 40,000-item build's 5,532). The build now clears that bit, so a rebuild
   should leave the Outbox empty - and because the number is predictable in advance, a non-empty

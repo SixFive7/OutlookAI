@@ -68,6 +68,16 @@ public static class ComCorpusMailbox
     /// <summary>How many rows a probe's verification table may walk before giving up.</summary>
     private const int ProbeTableRowCap = 2_000;
 
+    /// <summary>
+    /// How many purge passes a probe makes over the store. TWO, because
+    /// <c>MailItem.Delete()</c> is a SOFT delete: the first pass moves a probe item out of
+    /// wherever it lives and into Deleted Items under a new EntryID, and the second pass -
+    /// enumerating the store afresh, so it sees the new id - deletes it permanently from
+    /// there. A third pass has nothing to find, which is what the loop's own zero-result exit
+    /// proves on every clean run.
+    /// </summary>
+    private const int ProbeResiduePasses = 2;
+
     /// <summary>How many teardown passes may run before it reports what is left rather than looping.</summary>
     private const int TeardownMaxPasses = 6;
 
@@ -135,6 +145,101 @@ public static class ComCorpusMailbox
     /// "this tool cannot address that corpus" from silence into a sentence.
     /// </param>
     public sealed record ScanResult(IReadOnlyList<ScanRow> Items, int LegacyTagged);
+
+    /// <summary>
+    /// Whether one scanned row is a THROWAWAY PROBE ITEM rather than a corpus item: its
+    /// subject parsed to <see cref="CorpusPlan.ProbeOrdinal"/>, the reserved ordinal every
+    /// probe subject carries and no plan ever produces.
+    /// <para>
+    /// This is the whole selection rule for the residue purge, and it is a pure function over
+    /// a <see cref="ScanRow"/> on purpose - the T1 tier pins it without Outlook, exactly as it
+    /// pins <see cref="CorpusSafety.MayDelete"/>. The purge is a DELETE, and the thing that
+    /// decides which items it addresses must be testable on a machine with no mailbox.
+    /// </para>
+    /// </summary>
+    public static bool IsProbeResidue(ScanRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        return row.Ordinal == CorpusPlan.ProbeOrdinal;
+    }
+
+    /// <summary>
+    /// The probe rows out of a scan, in scan order. PURE - no COM, no store, no mutation.
+    /// <para>
+    /// The result is what the EntryID allowlist is built from, so this is one of the two keys
+    /// <see cref="CorpusSafety.MayDelete"/> requires; the other is the ordinal tag match it
+    /// makes for itself against the subject as it reads at delete time. Nothing here matches a
+    /// subject pattern and nothing is ever selected shell-side.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<ScanRow> SelectProbeResidue(IEnumerable<ScanRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        return rows.Where(IsProbeResidue).ToList();
+    }
+
+    /// <summary>
+    /// Deletes every probe item in the store, and returns how many it deleted.
+    /// <para>
+    /// <b>Why a probe has to clean up after itself.</b> Each rung creates one throwaway item
+    /// and deletes it in a <c>finally</c>, and <c>MailItem.Delete()</c> is a SOFT delete - so
+    /// every "deleted" probe item became a permanent resident of Deleted Items under an
+    /// EntryID no manifest records. One <c>corpus-build --execute</c> from an empty store left
+    /// six to eight of them; the sanctioned <c>Testbed/guest/Build-Corpus.ps1 -Execute</c>
+    /// flow left twelve to sixteen, because it runs a standalone <c>corpus-probe</c> as well
+    /// as the build's own probes. They then counted as corpus items in the census the build
+    /// runs on itself, which failed the build's exit code on a perfect corpus.
+    /// </para>
+    /// <para>
+    /// <b>It runs at the START of a pass as well as after each item</b>, and the start is the
+    /// half that matters most: it is what heals a store built before this existed, and the
+    /// only thing that can recover an item stranded by a kill, by the <c>RunSta</c> timeout,
+    /// or by a throw between the save and the EntryID capture.
+    /// </para>
+    /// <para>
+    /// <b>Two keys, both required, same as a teardown.</b> The EntryID allowlist is built from
+    /// THIS enumeration and nothing remembered - a fresh <see cref="ScanStore"/> of the store's
+    /// own <see cref="ScanFolderIds"/>, filtered by <see cref="IsProbeResidue"/> - and
+    /// <see cref="DeleteOne"/> re-reads each subject and re-applies
+    /// <see cref="CorpusSafety.MayDelete"/> before it deletes anything. One store, no pattern
+    /// matching, nothing shell-side.
+    /// </para>
+    /// <para>
+    /// The cost is one full corpus-tagged table walk per pass, and there are up to five of
+    /// them in the placement probe and five in the date probe. That is bounded work against a
+    /// store that is about to have tens of thousands of items written into it, and the walk
+    /// exits after one pass whenever there is no residue - which is every run after this one.
+    /// </para>
+    /// </summary>
+    private static int PurgeProbeResidue(dynamic store, dynamic ns, string storeId, string corpusId)
+    {
+        // Never the build's manifest: a purge looks at the store's own default folders, and
+        // handing it a manifest would widen it to builder-created folders for no gain - a
+        // probe item is only ever created in the Inbox or in Drafts, and only ever soft-deleted
+        // into Deleted Items, all three of which are in ScanFolderIds.
+        CorpusManifest? noManifest = null;
+        int deleted = 0;
+        for (int pass = 0; pass < ProbeResiduePasses; pass++)
+        {
+            ScanResult scan = ScanStore(store, noManifest, corpusId);
+            IReadOnlyList<ScanRow> residue = SelectProbeResidue(scan.Items);
+            if (residue.Count == 0)
+            {
+                break;
+            }
+
+            HashSet<string> allowlist = CorpusSafety.BuildEntryIdAllowlist(residue.Select(r => r.EntryId));
+            foreach (ScanRow row in residue)
+            {
+                if (DeleteOne(ns, storeId, row.EntryId, allowlist, corpusId) == DeleteVerdict.Deleted)
+                {
+                    deleted++;
+                }
+            }
+        }
+
+        return deleted;
+    }
 
     /// <summary>
     /// Reads the four facts <see cref="CorpusSafety.EvaluateStore"/> judges a store on.
@@ -265,7 +370,10 @@ public static class ComCorpusMailbox
     /// <summary>
     /// Walks <see cref="CorpusPlacement.Ladder"/> against the store's Inbox, one throwaway
     /// item per rung, and reports where each one actually ended up. Every probe item is
-    /// deleted before this returns, by the same two-key rule as the teardown.
+    /// deleted before this returns, by the same two-key rule as the teardown - and then
+    /// PURGED by <see cref="PurgeProbeResidue"/>, because that delete is a soft one and
+    /// leaves the item in Deleted Items. The purge also runs once before the first rung, so a
+    /// store carrying residue from an older build is cleaned by the next probe that touches it.
     /// <para>
     /// The Inbox is the right folder to probe: it is the folder a PST always has, and it is
     /// where the plan puts most of the corpus. A rung that can place an item in the Inbox
@@ -298,10 +406,18 @@ public static class ComCorpusMailbox
                     string targetName = (string)target!.Name;
                     string targetFolderId = (string)target!.EntryID;
 
+                    // Before the first rung: whatever an earlier run, or an earlier build of
+                    // this tool, left lying in the store.
+                    PurgeProbeResidue(store!, ns!, storeId, corpusId);
+
                     foreach (CorpusPlacementMethod method in CorpusPlacement.Ladder)
                     {
                         probes.Add(RunOnePlacementProbe(
                             ns!, target!, drafts!, storeId, targetFolderId, targetName, corpusId, method));
+
+                        // And after each rung's own delete, because that delete was a SOFT one
+                        // and the item is now sitting in Deleted Items under a new id.
+                        PurgeProbeResidue(store!, ns!, storeId, corpusId);
                     }
 
                     return (IReadOnlyList<CorpusPlacementProbe>)probes;
@@ -341,6 +457,13 @@ public static class ComCorpusMailbox
             mail.Body = "placement probe";
             mail.Save();
 
+            // CAPTURED THE INSTANT THE ITEM IS COMMITTED, and re-captured after the move
+            // below. The id used to be read only after ApplyMessageFlags and Move, both of
+            // which can throw - and a committed item whose id nothing holds is an item the
+            // finally block cannot delete and nothing can ever address. TryRead rather than a
+            // cast, because a failure here must not mask the real error that follows.
+            entryId = TryRead<string>(() => (string)mail!.EntryID);
+
             ApplyMessageFlags(mail!, isRead: true, clearUnsent: CorpusPlacement.WritesSentFlag(method));
 
             if (CorpusPlacement.RequiresMove(method))
@@ -352,6 +475,9 @@ public static class ComCorpusMailbox
                 mail = moved;
             }
 
+            // The RE-capture. Unconditional, because the pre-move id names nothing once a move
+            // has happened; if this throws, the finally still has the pre-move id, and the
+            // next probe pass's start-of-pass purge is what collects the item either way.
             entryId = (string)mail!.EntryID;
             bool sentFlag = TryReadStruct(() => (bool)mail!.Sent) ?? false;
             Release(mail);
@@ -505,7 +631,9 @@ public static class ComCorpusMailbox
     /// <summary>
     /// Walks <see cref="CorpusDateFidelity.Ladder"/> against the store's Inbox, one
     /// throwaway item per rung, and reports what each rung actually achieved. Every probe
-    /// item is deleted before this returns, by the same two-key rule as the teardown.
+    /// item is deleted before this returns, by the same two-key rule as the teardown, and
+    /// then purged from Deleted Items by <see cref="PurgeProbeResidue"/> - before the first
+    /// rung as well as after each item.
     /// <para>
     /// A rung that reads back displaced by exactly the machine's UTC offset is re-tried
     /// once with a pre-compensated write, and it is the RE-TRY that is reported - so the
@@ -540,10 +668,16 @@ public static class ComCorpusMailbox
                     folder = store.GetDefaultFolder(6); // Inbox - always present in a PST
                     drafts = store.GetDefaultFolder(DraftsFolderId);
 
+                    // Same as the placement probe: once before the first rung, to heal residue
+                    // this run did not create, and once after every throwaway item's own soft
+                    // delete has dropped it into Deleted Items under a new id.
+                    PurgeProbeResidue(store!, ns!, storeId, corpusId);
+
                     foreach (CorpusDateWriteMethod method in CorpusDateFidelity.Ladder)
                     {
                         CorpusDateProbe first = RunOneProbe(
                             ns!, folder!, drafts!, storeId, corpusId, method, placement, requested, requested);
+                        PurgeProbeResidue(store!, ns!, storeId, corpusId);
                         CorpusDateOffsetVerdict verdict =
                             CorpusDateFidelity.ClassifyOffset(requested, first.ReadBackReceivedUtc, localOffset);
                         if (verdict != CorpusDateOffsetVerdict.LocalOffsetApplied)
@@ -556,6 +690,7 @@ public static class ComCorpusMailbox
                             requested, verdict, localOffset, first.ReadBackReceivedUtc!.Value);
                         probes.Add(RunOneProbe(
                             ns!, folder!, drafts!, storeId, corpusId, method, placement, requested, compensated));
+                        PurgeProbeResidue(store!, ns!, storeId, corpusId);
                     }
 
                     return (IReadOnlyList<CorpusDateProbe>)probes;
@@ -1367,6 +1502,11 @@ public static class ComCorpusMailbox
             mail.Body = "date fidelity probe";
             mail.Save();
 
+            // Captured the instant the item is committed - see RunOnePlacementProbe for why.
+            // ApplyMessageFlags, ApplyDates and Move all sit between here and the re-capture
+            // below, and all three can throw.
+            entryId = TryRead<string>(() => (string)mail!.EntryID);
+
             ApplyMessageFlags(mail!, isRead: true, clearUnsent: CorpusPlacement.WritesSentFlag(placement));
 
             DateTime? readBack;
@@ -1376,7 +1516,7 @@ public static class ComCorpusMailbox
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
-                entryId = TryRead<string>(() => (string)mail!.EntryID);
+                // No id capture here any more: it already happened, above the call that threw.
                 return new CorpusDateProbe(method, requestedUtc, writeUtc, null, false, false, ex.Message);
             }
 
@@ -1387,6 +1527,7 @@ public static class ComCorpusMailbox
                 mail = moved;
             }
 
+            // The re-capture: a move issues a new EntryID.
             entryId = (string)mail!.EntryID;
             Release(mail);
             mail = null;

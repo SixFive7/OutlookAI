@@ -57,6 +57,19 @@ probes itself), but **the duplicate ordinal is not explained by that** and must 
 before the corpus is trusted. The plan is exclusion → teardown → rebuild with the fixed binary,
 in that order, which also yields the first build whose census actually gates its own exit code.
 
+**ANSWERED 2026-09-16, and it was all one thing.** The duplicate ordinal IS the probe residue.
+Every probe item's subject carries `CorpusPlan.ProbeOrdinal` - `int.MaxValue` - so all thirteen
+were sightings of ONE ordinal, and the census counted that as one ordinal existing thirteen
+times; the same thirteen were also the twelve "misplaced" items and the one in Drafts. Not one
+corpus ordinal existed twice. Three fixes went in together: the probes purge their own residue
+(before the first rung, so older stores are healed too, and after each item, because
+`MailItem.Delete()` is a soft delete); a probe item's EntryID is captured the instant the item is
+committed rather than three COM calls later; and the census counts probe items separately,
+excludes them from every corpus statistic and gives them their own fault, which gives the
+duplicate-ordinal sentence back its only real meaning - a resumed build that re-created an
+ordinal whose manifest line was never flushed. **The rebuild plan above is unchanged and still
+the right order**; what changes is that a clean rebuild now exits 0 instead of 1.
+
 ### What was solved, and each of these was thought impossible or unknown at some point today
 
 * **A POP3 account, created by script, with no GUI and no paid component.** Three research passes

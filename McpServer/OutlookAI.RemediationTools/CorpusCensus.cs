@@ -34,6 +34,20 @@ public sealed record CorpusCensusFolder(int FolderId, string Name, int Planned, 
 /// would show up only as an equal number of missing ordinals, which reads as "the build never
 /// happened" rather than "this corpus predates the tag split".
 /// </param>
+/// <param name="ProbeItems">
+/// Throwaway items the placement and date probes create, carrying
+/// <see cref="CorpusPlan.ProbeOrdinal"/>. Like <paramref name="LegacyTagged"/> these are NOT
+/// sightings and are excluded from every other number on this record - <paramref name="Sightings"/>,
+/// <paramref name="DistinctOrdinals"/>, <paramref name="DuplicatedOrdinals"/>,
+/// <paramref name="Misplaced"/> and the per-folder observed counts included.
+/// <para>
+/// They used to be counted as ordinary sightings, and every number they touched was then
+/// false. The 20,000-item build of 2026-09-16 produced a perfect corpus and a census saying
+/// "1 ordinal(s) exist more than once, so the corpus holds more items than the plan describes
+/// and every per-item number measured against it is wrong" - thirteen probe items, all
+/// carrying the one reserved ordinal, read as one corpus ordinal existing thirteen times.
+/// </para>
+/// </param>
 public sealed record CorpusCensusReport(
     int PlannedItems,
     int PlannedUnread,
@@ -45,7 +59,8 @@ public sealed record CorpusCensusReport(
     IReadOnlyList<CorpusCensusFolder> Folders,
     int StrayOutboxPlannedUnread,
     int StrayOutboxPlannedRead,
-    int LegacyTagged)
+    int LegacyTagged,
+    int ProbeItems)
 {
     /// <summary>Items sitting in the Outbox, where the plan never puts anything.</summary>
     public int StrayOutbox => StrayOutboxPlannedUnread + StrayOutboxPlannedRead;
@@ -88,7 +103,11 @@ public static class CorpusCensus
     /// </summary>
     /// <param name="plan">The corpus shape - the authority on where each ordinal belongs.</param>
     /// <param name="itemCount">How many ordinals the corpus is supposed to hold.</param>
-    /// <param name="sightings">Every item a scan found, one entry per copy.</param>
+    /// <param name="sightings">
+    /// Every item a scan found, one entry per copy. Probe items are passed in with everything
+    /// else and separated HERE, not by the caller - see
+    /// <see cref="CorpusCensusReport.ProbeItems"/>.
+    /// </param>
     /// <param name="legacyTagged">
     /// How many items the same scan found carrying the OLD corpus tag. Defaulted so the pure
     /// tests that only exercise the plan-vs-sightings arithmetic stay unchanged; the COM scan
@@ -124,8 +143,24 @@ public static class CorpusCensus
         int misplaced = 0;
         int outboxUnread = 0;
         int outboxRead = 0;
+        int probeItems = 0;
         foreach (CorpusSighting sighting in sightings)
         {
+            // A PROBE ITEM IS NOT A CORPUS ITEM, and it is separated here rather than filtered
+            // by the caller so that no caller can forget. It carries CorpusPlan.ProbeOrdinal -
+            // int.MaxValue, which is never a planned ordinal - so every number it was
+            // previously folded into said something false: thirteen of them, all carrying the
+            // one reserved ordinal, reported as "1 ordinal(s) exist more than once" plus
+            // twelve items "in a folder the plan does not put them in", about a corpus in
+            // which every ordinal existed exactly once where the plan names. It is excluded
+            // from the per-folder observed counts too, because a probe item stranded in Drafts
+            // is litter rather than a corpus item the freshness sweep cannot see.
+            if (sighting.Ordinal == CorpusPlan.ProbeOrdinal)
+            {
+                probeItems++;
+                continue;
+            }
+
             total++;
             observedByFolder[sighting.FolderId] =
                 observedByFolder.TryGetValue(sighting.FolderId, out int m) ? m + 1 : 1;
@@ -179,7 +214,8 @@ public static class CorpusCensus
             folders,
             outboxUnread,
             outboxRead,
-            legacyTagged);
+            legacyTagged,
+            probeItems);
     }
 
     /// <summary>
@@ -202,6 +238,20 @@ public static class CorpusCensus
                 + "corpus built before 2026-08-25. Nothing in this build may delete or rewrite them - the delete "
                 + "and rewrite predicates require the current tag - and corpus-teardown will refuse. REBUILD: "
                 + "remove the .pst and build a fresh corpus, which is the supported way to deal with a stale one");
+        }
+
+        // Second, and for the same reason: these are not corpus items either, and every count
+        // in this line already excludes them. Said out loud because the alternative is
+        // silence - the previous behaviour folded them into the duplicate and misplaced
+        // counts, where they described a corruption that had not happened.
+        if (report.ProbeItems > 0)
+        {
+            faults.Add($"{report.ProbeItems.ToString("N0", invariant)} throwaway probe item(s) were left behind - "
+                + "the items the placement and date probes create and delete, whose SOFT delete leaves them sitting "
+                + "in Deleted Items under an EntryID no manifest records. They are not part of the corpus and every "
+                + "count in this line excludes them. The probes now purge their own residue, at the start of each "
+                + "pass and after each item, so a non-zero count here means a store built before 2026-09-16, or a "
+                + "probe killed mid-run; re-running corpus-probe --execute clears it");
         }
 
         if (report.StrayDrafts > 0)

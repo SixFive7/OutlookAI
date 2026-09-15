@@ -5,7 +5,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
 /// Pins what the census says when the only thing wrong with a store is PROBE RESIDUE, and
-/// shows that what it says is indistinguishable from a real defect.
+/// pins the predicate that selects that residue for deletion.
 ///
 /// <para>
 /// <b>The observation these tests explain.</b> A 20,000-item corpus built on the test guest
@@ -13,17 +13,32 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// and a <c>corpus-census</c> that reported three FAULTS: one item in Drafts, twelve in a
 /// folder the plan does not name, and <b>"1 ordinal(s) exist more than once, so the corpus
 /// holds more items than the plan describes and every per-item number measured against it is
-/// wrong"</b>. That last sentence is the one that matters, and it is false here: not one
-/// corpus ordinal exists twice. The thirteen extra items are the throwaway items the two
-/// probes create, and every one of them carries <see cref="CorpusPlan.ProbeOrdinal"/>
-/// (<see cref="int.MaxValue"/>) in its subject - so the scan sees thirteen sightings of ONE
-/// ordinal, and <see cref="CorpusCensus.Compare"/> counts that as a duplicated ordinal.
+/// wrong"</b>. That last sentence is the one that matters, and it was false: not one corpus
+/// ordinal existed twice. The thirteen extra items were the throwaway items the two probes
+/// create, and every one of them carries <see cref="CorpusPlan.ProbeOrdinal"/>
+/// (<see cref="int.MaxValue"/>) in its subject - so the scan saw thirteen sightings of ONE
+/// ordinal, and <see cref="CorpusCensus.Compare"/> counted that as a duplicated ordinal.
+/// </para>
+///
+/// <para>
+/// <b>What changed on 2026-09-16, and why these tests changed with it.</b> Two of the tests
+/// below used to pin the DEFECT - one reproduced the guest's census line verbatim
+/// (<c>ThirteenProbeItemsReproduceTheGuestsCensusVerbatim</c>), the other showed that probe
+/// residue and a genuine double-create raise the identical fault
+/// (<c>ARealDoubleCreateAndProbeResidueRaiseTheIdenticalFault</c>). Both now pin the fix: the
+/// census counts probe items in their own number, excludes them from every corpus statistic,
+/// and gives them their own sentence. The guest's measured line is kept below, in the test
+/// that used to assert it, because it is evidence and nothing else records it.
 /// </para>
 ///
 /// <para>
 /// <b>These are pure</b> - no Outlook, no COM, no mailbox, no settings file, and no
-/// <c>Category=Live</c> trait. They are arithmetic over <see cref="CorpusCensus.Compare"/>
-/// and <see cref="CorpusPlan.ClassifySubject"/>.
+/// <c>Category=Live</c> trait. They are arithmetic over <see cref="CorpusCensus.Compare"/>,
+/// <see cref="CorpusPlan.ClassifySubject"/> and
+/// <see cref="ComCorpusMailbox.SelectProbeResidue"/>. That last one is the point of the
+/// residue sweep's design: the sweep is a DELETE, and the predicate that decides which items
+/// it addresses is a pure function over scan rows precisely so a machine with no mailbox can
+/// pin it.
 /// </para>
 /// </summary>
 public sealed class CorpusProbeResidueCensusTests
@@ -40,13 +55,31 @@ public sealed class CorpusProbeResidueCensusTests
     private static CorpusPlan Plan() => new(new CorpusPlanOptions(CorpusId, 7777, Anchor));
 
     /// <summary>
-    /// The exact census line the guest printed on 2026-09-16, reproduced from nothing but the
-    /// plan plus thirteen probe-ordinal sightings: twelve in Deleted Items (probe items whose
-    /// <c>MailItem.Delete()</c> soft-deleted them there) and one in Drafts (a probe item whose
-    /// delete never ran).
+    /// The guest's thirteen probe items, put through the census again - and now reported as
+    /// thirteen items of litter rather than as a corrupt corpus.
+    ///
+    /// <para>
+    /// <b>The string this test used to assert</b>, printed by the guest on 2026-09-16 and
+    /// reproduced here from nothing but the plan plus these same thirteen sightings. It is
+    /// kept verbatim because it is the measured evidence, and because every clause of it that
+    /// is wrong is wrong in a way the new line fixes:
+    /// </para>
+    /// <code>
+    /// Census: 20,013 item(s) found for 20,000 planned; per folder found/planned: Deleted
+    /// Items=2,473/2,461, Sent Items=4,964/4,964, Inbox=10,912/10,912, Drafts=1/0, Junk
+    /// Email=1,663/1,663. FAULTS: 1 item(s) are in DRAFTS, which the freshness sweep does not
+    /// cover - those items are invisible to the measurement this corpus exists for; 1
+    /// ordinal(s) exist more than once, so the corpus holds more items than the plan describes
+    /// and every per-item number measured against it is wrong; 12 item(s) are in a folder the
+    /// plan does not put them in.
+    /// </code>
+    /// <para>
+    /// Twelve of the thirteen were in Deleted Items - probe items whose <c>MailItem.Delete()</c>
+    /// soft-deleted them there - and one was in Drafts, a probe item whose delete never ran.
+    /// </para>
     /// </summary>
     [Fact]
-    public void ThirteenProbeItemsReproduceTheGuestsCensusVerbatim()
+    public void ThirteenProbeItemsAreCountedAsLitterAndNotAsACorruptCorpus()
     {
         CorpusPlan plan = Plan();
         var sightings = new List<CorpusSighting>(ItemCount + 13);
@@ -65,34 +98,54 @@ public sealed class CorpusProbeResidueCensusTests
         CorpusCensusReport report = CorpusCensus.Compare(plan, ItemCount, sightings);
         (bool clean, string message) = CorpusCensus.Decide(report);
 
+        // Still not clean - thirteen items that nothing owns are still thirteen items that
+        // nothing owns - but every number in the line is now true, and the fault names what
+        // they actually are.
         Assert.False(clean);
         Assert.Equal(
-            "Census: 20,013 item(s) found for 20,000 planned; per folder found/planned: "
-            + "Deleted Items=2,473/2,461, Sent Items=4,964/4,964, Inbox=10,912/10,912, Drafts=1/0, "
-            + "Junk Email=1,663/1,663. FAULTS: 1 item(s) are in DRAFTS, which the freshness sweep does not "
-            + "cover - those items are invisible to the measurement this corpus exists for; 1 ordinal(s) "
-            + "exist more than once, so the corpus holds more items than the plan describes and every "
-            + "per-item number measured against it is wrong; 12 item(s) are in a folder the plan does not "
-            + "put them in.",
+            "Census: 20,000 item(s) found for 20,000 planned; per folder found/planned: "
+            + "Deleted Items=2,461/2,461, Sent Items=4,964/4,964, Inbox=10,912/10,912, "
+            + "Junk Email=1,663/1,663. FAULTS: 13 throwaway probe item(s) were left behind - the items the "
+            + "placement and date probes create and delete, whose SOFT delete leaves them sitting in Deleted "
+            + "Items under an EntryID no manifest records. They are not part of the corpus and every count in "
+            + "this line excludes them. The probes now purge their own residue, at the start of each pass and "
+            + "after each item, so a non-zero count here means a store built before 2026-09-16, or a probe "
+            + "killed mid-run; re-running corpus-probe --execute clears it.",
             message);
 
-        // The claim inside that message, tested directly: every corpus ordinal exists exactly
-        // once. The "duplicate" is the reserved probe ordinal and nothing else.
+        // What the old line got wrong, clause by clause.
+        Assert.Equal(13, report.ProbeItems);
+        Assert.Equal(ItemCount, report.Sightings);          // was 20,013
+        Assert.Equal(ItemCount, report.DistinctOrdinals);   // was 20,001
+        Assert.Equal(0, report.DuplicatedOrdinals);         // was 1, and it was false
+        Assert.Equal(0, report.Misplaced);                  // was 13
+        Assert.Equal(0, report.StrayDrafts);                // was 1 - it was a probe item
         Assert.Equal(0, report.MissingOrdinals);
-        Assert.Equal(ItemCount + 1, report.DistinctOrdinals);
-        Assert.Equal(1, report.DuplicatedOrdinals);
-        Assert.Equal(13, report.Misplaced);
     }
 
     /// <summary>
-    /// The defect, stated as a test: a store whose ONLY flaw is probe residue and a store
-    /// holding a genuinely double-created corpus item produce the SAME duplicate-ordinal
-    /// fault, so the sentence cannot be used to tell them apart. A resumed build is the way
-    /// the second one happens - an item created but not yet flushed to the manifest is
-    /// re-created by the next run.
+    /// A store whose only flaw is probe residue and a store holding a genuinely double-created
+    /// corpus item now produce DIFFERENT faults, and the difference is the whole point: one is
+    /// litter the next probe pass sweeps up, the other means every per-item number measured
+    /// against the corpus is wrong.
+    ///
+    /// <para>
+    /// <b>This test used to assert the opposite.</b> As
+    /// <c>ARealDoubleCreateAndProbeResidueRaiseTheIdenticalFault</c> it pinned the defect - the
+    /// two shapes raising one sentence, so an operator could not tell them apart - and it was
+    /// written that way deliberately, to make the defect fail a test rather than live in a
+    /// note. It is rewritten rather than deleted so the history stays attached to the code it
+    /// is about.
+    /// </para>
+    /// <para>
+    /// A resumed build is how the second shape happens: an item created but not yet flushed to
+    /// the manifest is re-created by the next run, leaving an orphan copy outside the manifest
+    /// that nothing can ever delete by id. That is the case the duplicate-ordinal sentence was
+    /// written for, and it now says only that.
+    /// </para>
     /// </summary>
     [Fact]
-    public void ARealDoubleCreateAndProbeResidueRaiseTheIdenticalFault()
+    public void ARealDoubleCreateAndProbeResidueNowRaiseDifferentFaults()
     {
         CorpusPlan plan = Plan();
         var planned = new List<CorpusSighting>(ItemCount);
@@ -117,17 +170,28 @@ public sealed class CorpusProbeResidueCensusTests
         CorpusCensusReport residueReport = CorpusCensus.Compare(plan, ItemCount, residue);
         CorpusCensusReport doubleReport = CorpusCensus.Compare(plan, ItemCount, doubleCreated);
 
-        Assert.Equal(1, residueReport.DuplicatedOrdinals);
+        Assert.Equal(0, residueReport.DuplicatedOrdinals);
+        Assert.Equal(2, residueReport.ProbeItems);
         Assert.Equal(1, doubleReport.DuplicatedOrdinals);
+        Assert.Equal(0, doubleReport.ProbeItems);
 
-        const string fault = "1 ordinal(s) exist more than once, so the corpus holds more items than the plan "
-            + "describes and every per-item number measured against it is wrong";
-        Assert.Contains(fault, CorpusCensus.Decide(residueReport).Message, StringComparison.Ordinal);
-        Assert.Contains(fault, CorpusCensus.Decide(doubleReport).Message, StringComparison.Ordinal);
+        const string duplicateFault = "1 ordinal(s) exist more than once, so the corpus holds more items than the "
+            + "plan describes and every per-item number measured against it is wrong";
+        const string probeFault = "2 throwaway probe item(s) were left behind";
 
-        // And only one of the two is actually true. The residue corpus holds 20,000 corpus
-        // items, one per ordinal; the double-created one holds 20,001 in 20,000 ordinals.
-        Assert.Equal(ItemCount, residueReport.Sightings - 2);
+        string residueMessage = CorpusCensus.Decide(residueReport).Message;
+        string doubleMessage = CorpusCensus.Decide(doubleReport).Message;
+
+        Assert.Contains(probeFault, residueMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain(duplicateFault, residueMessage, StringComparison.Ordinal);
+
+        Assert.Contains(duplicateFault, doubleMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain("throwaway probe item", doubleMessage, StringComparison.Ordinal);
+
+        // And the numbers now match the reality each message describes. The residue store
+        // holds 20,000 corpus items, one per ordinal; the double-created one holds 20,001 in
+        // 20,000 ordinals.
+        Assert.Equal(ItemCount, residueReport.Sightings);
         Assert.Equal(ItemCount + 1, doubleReport.Sightings);
     }
 
@@ -141,21 +205,18 @@ public sealed class CorpusProbeResidueCensusTests
     public void AProbeSubjectParsesAsThisCorpusAndYieldsTheReservedOrdinal()
     {
         // Built exactly as ComCorpusMailbox.ProbeSubject builds it.
-        string subject = CorpusPlan.SubjectTag + CorpusPlan.CorpusTagOpen + CorpusId + "#"
-            + CorpusPlan.ProbeOrdinal.ToString("D7", System.Globalization.CultureInfo.InvariantCulture)
-            + "] placement InPlaceOnly";
+        string subject = ProbeSubject("placement InPlaceOnly");
 
         Assert.Equal(CorpusSubjectKind.Current, CorpusPlan.ClassifySubject(subject, CorpusId, out int ordinal));
         Assert.Equal(CorpusPlan.ProbeOrdinal, ordinal);
         Assert.True(CorpusPlan.TryParseOrdinal(subject, CorpusId, out _));
 
-        // Which is also what lets teardown's second phase delete them: the two-key rule needs
-        // the subject to parse, and it does.
+        // Which is also what lets teardown's second phase - and the probes' own residue sweep -
+        // delete them: the two-key rule needs the subject to parse, and it does.
         HashSet<string> allowlist = CorpusSafety.BuildEntryIdAllowlist(new[] { "ABCD" });
         Assert.True(CorpusSafety.MayDelete("ABCD", subject, allowlist, CorpusId));
 
-        // The ordinal is far outside any plan, so the census can never match it to a folder -
-        // every probe sighting is counted as misplaced, whichever folder it is found in.
+        // The ordinal is far outside any plan, so the census can never match it to a folder.
         Assert.True(CorpusPlan.ProbeOrdinal > ItemCount);
     }
 
@@ -174,4 +235,126 @@ public sealed class CorpusProbeResidueCensusTests
             CorpusPlan.DaslSubjectFragment(CorpusId, CorpusPlan.ProbeOrdinal),
             StringComparison.Ordinal);
     }
+
+    // ------------------------------------------------------------- the residue sweep's predicate
+
+    /// <summary>
+    /// The sweep selects exactly the probe rows out of a mixed scan, and nothing else. This is
+    /// the predicate a DELETE is aimed with, so it is pinned by identity - the selected rows
+    /// are compared as rows, not counted.
+    /// </summary>
+    [Fact]
+    public void TheSweepSelectsEveryProbeRowAndOnlyProbeRows()
+    {
+        var probeInInbox = new ComCorpusMailbox.ScanRow(CorpusPlan.ProbeOrdinal, "P-INBOX", 6);
+        var probeInDrafts = new ComCorpusMailbox.ScanRow(CorpusPlan.ProbeOrdinal, "P-DRAFTS", DraftsFolderId);
+        var probeInDeleted = new ComCorpusMailbox.ScanRow(CorpusPlan.ProbeOrdinal, "P-DELETED", DeletedItemsFolderId);
+
+        var rows = new List<ComCorpusMailbox.ScanRow>
+        {
+            new(1, "C-FIRST", 6),
+            probeInInbox,
+            new(7_431, "C-MIDDLE", 5),
+            probeInDrafts,
+            new(ItemCount, "C-LAST", 23),
+            probeInDeleted,
+        };
+
+        IReadOnlyList<ComCorpusMailbox.ScanRow> selected = ComCorpusMailbox.SelectProbeResidue(rows);
+
+        Assert.Equal(new[] { probeInInbox, probeInDrafts, probeInDeleted }, selected);
+        Assert.All(selected, r => Assert.Equal(CorpusPlan.ProbeOrdinal, r.Ordinal));
+    }
+
+    /// <summary>
+    /// The boundaries, one test each way. Ordinal 1, ordinal <c>count</c> and
+    /// <c>int.MaxValue - 1</c> are all ordinary corpus items and none of them may be selected;
+    /// <see cref="CorpusPlan.ProbeOrdinal"/> alone is.
+    /// <para>
+    /// <c>int.MaxValue - 1</c> is in here because it is the value an off-by-one in the
+    /// predicate would catch, and because the probe ordinal is deliberately the largest one
+    /// there is - a "greater than the plan" test would pass on both and delete a corpus item.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(1, false)]
+    [InlineData(2, false)]
+    [InlineData(ItemCount - 1, false)]
+    [InlineData(ItemCount, false)]
+    [InlineData(ItemCount + 1, false)]
+    [InlineData(int.MaxValue - 1, false)]
+    [InlineData(int.MaxValue, true)]
+    public void OnlyTheReservedProbeOrdinalIsResidue(int ordinal, bool expected)
+    {
+        var row = new ComCorpusMailbox.ScanRow(ordinal, "ENTRY-" + ordinal, 6);
+        Assert.Equal(expected, ComCorpusMailbox.IsProbeResidue(row));
+        Assert.Equal(expected ? 1 : 0, ComCorpusMailbox.SelectProbeResidue(new[] { row }).Count);
+    }
+
+    /// <summary>
+    /// A scan with no probe rows selects nothing, so the sweep's loop exits on its first pass
+    /// and deletes nothing at all. That is the state of every store after the first purge, and
+    /// it is what keeps the sweep's cost a single table walk rather than two.
+    /// </summary>
+    [Fact]
+    public void ACleanScanSelectsNothing()
+    {
+        CorpusPlan plan = Plan();
+        var rows = new List<ComCorpusMailbox.ScanRow>();
+        for (int ordinal = 1; ordinal <= 500; ordinal++)
+        {
+            rows.Add(new ComCorpusMailbox.ScanRow(ordinal, "E-" + ordinal, plan.Describe(ordinal).FolderId));
+        }
+
+        Assert.Empty(ComCorpusMailbox.SelectProbeResidue(rows));
+        Assert.Empty(ComCorpusMailbox.SelectProbeResidue(Array.Empty<ComCorpusMailbox.ScanRow>()));
+    }
+
+    /// <summary>
+    /// The two keys, joined up: the allowlist the sweep hands
+    /// <see cref="CorpusSafety.MayDelete"/> is built FROM the selected rows, so it names probe
+    /// EntryIDs and no others - and a corpus item's id, re-read subject and all, is refused by
+    /// the same call the sweep makes.
+    /// <para>
+    /// This is the reason the sweep builds its allowlist from a fresh enumeration rather than
+    /// from anything it remembers: the ids it deletes are exactly the ids it just saw carrying
+    /// the reserved ordinal.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheSweepsAllowlistNamesOnlyTheProbeRowsItJustEnumerated()
+    {
+        CorpusPlan plan = Plan();
+        var rows = new List<ComCorpusMailbox.ScanRow>
+        {
+            new(1, "C-ONE", plan.Describe(1).FolderId),
+            new(CorpusPlan.ProbeOrdinal, "P-ONE", DeletedItemsFolderId),
+            new(2, "C-TWO", plan.Describe(2).FolderId),
+            new(CorpusPlan.ProbeOrdinal, "P-TWO", DeletedItemsFolderId),
+        };
+
+        HashSet<string> allowlist = CorpusSafety.BuildEntryIdAllowlist(
+            ComCorpusMailbox.SelectProbeResidue(rows).Select(r => r.EntryId));
+
+        Assert.Equal(new[] { "P-ONE", "P-TWO" }, allowlist.OrderBy(id => id, StringComparer.Ordinal));
+
+        // Key 1 holds for a probe item and key 2 holds for its subject, so it is deletable.
+        Assert.True(CorpusSafety.MayDelete("P-ONE", ProbeSubject("placement InPlaceOnly"), allowlist, CorpusId));
+
+        // A corpus item fails key 1 even though its subject parses perfectly - which is the
+        // half of the rule that makes the sweep safe to run against a populated store.
+        string corpusSubject = plan.Describe(1).Subject;
+        Assert.True(CorpusPlan.TryParseOrdinal(corpusSubject, CorpusId, out _));
+        Assert.False(CorpusSafety.MayDelete("C-ONE", corpusSubject, allowlist, CorpusId));
+
+        // And an id on the allowlist whose subject does not parse fails key 2 - the case a
+        // recycled EntryID would produce.
+        Assert.False(CorpusSafety.MayDelete("P-ONE", "Quarterly numbers", allowlist, CorpusId));
+    }
+
+    /// <summary>Exactly what <c>ComCorpusMailbox.ProbeSubject</c> builds.</summary>
+    private static string ProbeSubject(string what)
+        => CorpusPlan.SubjectTag + CorpusPlan.CorpusTagOpen + CorpusId + "#"
+            + CorpusPlan.ProbeOrdinal.ToString("D7", System.Globalization.CultureInfo.InvariantCulture)
+            + "] " + what;
 }

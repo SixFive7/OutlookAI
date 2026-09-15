@@ -2381,6 +2381,54 @@
         `LiveTierInventoryTests` gained a fourth verdict
         (`ReachesOutlookWithoutTheClientToken`) so it cannot recur.
 
+- [ ] **`RunSta`'s timeout does not stop the work it gave up on.** Found 2026-09-16 while fixing
+      the corpus probes' delete residue, by reading the path an interrupted probe takes.
+      `ComCorpusMailbox.RunSta` (`McpServer/OutlookAI.RemediationTools/ComCorpusMailbox.cs:1739`)
+      runs its delegate on a dedicated STA thread and, when `thread.Join(timeout)` returns false,
+      **throws `TimeoutException` and returns to the caller while that thread keeps running**
+      (`:1766`). The thread is `IsBackground = true` (`:1755`), so nothing joins it and nothing
+      cancels it: it holds its `Application`, `NameSpace`, `Store` and `Folder` references and goes
+      on driving Outlook until the process exits.
+      **What it costs.** For a read (`ReadStoreFacts`, `ReadProfileFacts` - 3 min) it is a leak. For
+      a WRITE it is an abandoned COM session with no cleanup: `ProbePlacement` and
+      `ProbeDateFidelity` carry a 10-minute timeout, and both create and delete mail. A probe
+      abandoned at minute ten goes on creating throwaway items in a store the caller believes it
+      has stopped touching, and the `finally` blocks that delete them run on a thread whose result
+      nobody will ever read. The build itself passes `timeout: null` deliberately, so the worst
+      case is bounded to the probes - but it is exactly the path that leaves items nothing can
+      address. The residue sweep added on 2026-09-16 collects that litter on the NEXT probe pass,
+      which is a mitigation, not a fix: it does nothing about the abandoned session still running.
+      **What the fix would be.** Give the delegate a `CancellationToken` that the timeout trips, and
+      have the STA body check it at its loop boundaries (per rung, per item) so it unwinds through
+      its own `finally` blocks and releases its references. A thread cannot be safely aborted on
+      .NET, and `Thread.Interrupt` only unblocks waits, so cooperative cancellation is the only
+      route. Until then the honest alternative is to say so in the `TimeoutException` message:
+      "the STA thread is still running and still holds Outlook references".
+
+- [ ] **`corpus-reindex` → `corpus-teardown` silently loses rows whenever two scan rows share an
+      ordinal.** Found 2026-09-16 while establishing what the census's duplicate-ordinal fault is
+      actually for. `CorpusCommands.RunReindex` writes one manifest line per scan row, taking
+      `row.Ordinal` straight through
+      (`McpServer/OutlookAI.RemediationTools/CorpusCommands.cs:866-869`), and `CorpusManifest.Parse`
+      keys items by ordinal - `manifest._items[item.Ordinal] = item;`
+      (`McpServer/OutlookAI.RemediationTools/CorpusManifest.cs:226`), and `Add` does the same at
+      `:248`. So the second line for an ordinal **overwrites** the first, in memory, with no
+      unparseable-line record and no count anywhere that a reader could compare against the
+      "Wrote N entries" the command prints.
+      **What it costs.** Reindex is the RECOVERY path for a lost manifest, and a duplicated ordinal
+      is one of the two things it exists to recover from: a build interrupted between the COM create
+      and the manifest flush re-creates that ordinal on the next run, leaving an orphan copy that
+      only a scan can find. Reindex would find both copies, write both lines, and then hand
+      `corpus-teardown` a manifest naming only one of them - dropping the orphan from the very
+      recovery manifest that exists to catch it. Teardown's phase 2 re-scan would in practice still
+      reach it, so the item is not permanently stranded; what is lost is the EVIDENCE, at the one
+      moment somebody is looking for it. Bounded by how rarely a build is interrupted, which is why
+      this is recorded rather than fixed.
+      **What the fix would be.** Key the manifest by EntryID rather than by ordinal (the EntryID is
+      what every delete is addressed with; the ordinal is only ever a label), or - smaller - have
+      `Parse` and `Add` refuse to overwrite and route the loser to `UnparseableLines`, and have
+      `RunReindex` print the duplicate count beside the total it already prints.
+
 - [ ] **Retire v3 planning ignores** — once the local v3 planning files (`v3.MD`, `Docs/v3-probes/`) are no longer needed:
   - [ ] remove the "v3 planning documents" section at the bottom of `.gitignore`
   - [ ] delete the local plan-doc backup folder (location documented in v3.MD §0.8 D16 on the machine that holds it)

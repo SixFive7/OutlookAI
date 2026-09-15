@@ -310,22 +310,51 @@ you do not.
 
 ### What is actually in the store on the VM
 
-Reconciling the plan against the census taken straight after the build, because the two do not
-match exactly and the difference is not a fault:
+Reconciling the plan against the census taken straight after the build. **Both differences this
+section used to describe are now fixed, so the expectation is that plan and store MATCH EXACTLY** -
+the middle column is history, kept because each number is what makes the fix checkable:
 
-| Folder | Plan | Store | Difference |
+| Folder | Plan | Store, 2026-08-19 | Expect today |
 | --- | --- | --- | --- |
-| Inbox | 10,912 | 10,912 | - |
-| Sent Items | 4,964 | 4,964 | - |
-| Junk Email | 1,663 | 1,663 | - |
-| Deleted Items | 2,461 | 2,467 | +6, all unread - the probe items `corpus-probe` creates and deletes |
-| Outbox | 0 | 2,761 | +2,761, **all unread** |
+| Inbox | 10,912 | 10,912 | 10,912 |
+| Sent Items | 4,964 | 4,964 | 4,964 |
+| Junk Email | 1,663 | 1,663 | 1,663 |
+| Deleted Items | 2,461 | 2,467 (+6 probe items) | **2,461** |
+| Outbox | 0 | 2,761 (+2,761, all unread) | **0** |
 
-The Outbox residue is the known `MSGFLAG_SUBMIT` defect, and this is the second independent
-confirmation of its identity: 2,761 is *exactly* the plan's unread count, not approximately. The
+**The Outbox residue** is the known `MSGFLAG_SUBMIT` defect, and 2,761 is the second independent
+confirmation of its identity: it is *exactly* the plan's unread count, not approximately. The
 first confirmation was the 40,000-item build's 5,532. The build now clears `MSGFLAG_SUBMIT` on
 every item, so a rebuild today should leave the Outbox empty - **and if it does not, that is the
 signal that the fix did not take**, because the count is predictable in advance.
+
+**The Deleted Items residue was the probes' own litter, and the figure this table used to print
+was too low.** Each rung of the placement ladder (4 rungs) and the date ladder (2 rungs, plus up
+to 2 compensated re-tries) creates one throwaway item and deletes it in a `finally` - and
+`MailItem.Delete()` is a SOFT delete, so every "deleted" probe item became a permanent resident of
+Deleted Items under an EntryID no manifest records. **One `corpus-build --execute` therefore left 6
+to 8 of them, and following the committed `Testbed/guest/Build-Corpus.ps1 -Execute` left 12 to
+16** - that script runs a standalone `corpus-probe --execute` of its own and the build then probes
+again. The +6 in the table is from the 2026-08-19 hand-run, which did not run the standalone probe.
+A probe interrupted between the item's save and the capture of its EntryID additionally stranded
+one item in **Drafts** permanently, because the delete was gated on having an id.
+
+**Since 2026-09-16 the expected figure is 0.** Both probes purge their own residue - once at the
+start of each pass, which is what heals a store built before this change, and again after each
+item's soft delete - selecting by the reserved probe ordinal and deleting under the same two-key
+rule as a teardown. The census counts probe items in their own number, excludes them from every
+corpus statistic, and gives them their own sentence, so a non-zero count is reported as
+`N throwaway probe item(s) were left behind` rather than as a duplicated ordinal. **A non-zero
+count today means a store built before 2026-09-16, or a probe killed mid-run; re-running
+`corpus-probe --execute` clears it.**
+
+**"All unread" was a property of the tooling of the day, and is no longer one.** On 2026-08-19 the
+probes wrote a read state only on the two rungs that clear `MSGFLAG_UNSENT`, so four of the six
+items should have been READ and two UNREAD - which already does not match "all unread". Since
+2026-08-24 both probes write `MSGFLAG_READ` on **every** probe item and save it, so a probe item is
+created read. **What is NOT established** is whether that bit survives the soft delete into Deleted
+Items: nothing on the host can settle it, no run since has recorded it, and a mis-recorded
+observation fits the evidence just as well. It is moot while the expected count is 0.
 
 ### A stale corpus is REBUILT, not re-anchored
 
