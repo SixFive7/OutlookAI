@@ -237,6 +237,43 @@ public sealed class IdentityDraftCoverageTests
         }
     }
 
+    [Fact]
+    public void BothIdentityTestsAlsoDECLARETheAccountTheyNeed()
+    {
+        // The capability and the announcement are two halves of one answer, and keeping BOTH was
+        // the decision. The trait is selection: a machine with no second account can leave these
+        // out of the filter instead of running them to be told they proved nothing. The
+        // announcement is honesty: a machine that selects them anyway - because the trait says
+        // the machine HAS one and the settings say otherwise - still has to say so. Dropping the
+        // trait loses the first; dropping the announcement restores the silent green pass. The
+        // test above holds the second half; this one holds the first.
+        foreach ((Type type, string name) in new[]
+                 {
+                     (typeof(LiveDraftTests),
+                         "IdentityDrafts_BusinessAccounts_RightStore_NeverDisplayed_DeletedImmediately"),
+                     (typeof(LiveDraftOptionsTests),
+                         "NewDraft_BusinessAccounts_BodyAboveTheirOwnIntactHtmlSignature"),
+                 })
+        {
+            MethodInfo? method = type.GetMethod(name);
+            Assert.True(method != null, type.Name + "." + name + " was renamed and this pin no longer reaches it");
+            Assert.Contains(
+                IdentityAccountCapability,
+                method!.GetCustomAttributesData()
+                    .Where(a => a.AttributeType == typeof(TraitAttribute) && a.ConstructorArguments.Count == 2)
+                    .Where(a => string.Equals(a.ConstructorArguments[0].Value as string, "Requires", StringComparison.Ordinal))
+                    .Select(a => (a.ConstructorArguments[1].Value as string) ?? string.Empty),
+                StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// The capability value spelled out rather than read from <c>LiveTierInventoryTests</c>: that
+    /// array is private, and a pin that read the same constant the production code reads would
+    /// follow a rename instead of catching one.
+    /// </summary>
+    private const string IdentityAccountCapability = "IdentityAccount";
+
     // ------------------------------------------------------------------ helpers
 
     private static LiveTestSettings Settings(

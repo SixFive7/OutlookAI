@@ -237,6 +237,7 @@ public sealed class LiveDraftTests
     [Trait("Requires", "MailAccount")]
     [Trait("Requires", "MultipleStores")]
     [Trait("Requires", "Transport")]
+    [Trait("Requires", "IdentityAccount")]
     public void IdentityDrafts_BusinessAccounts_RightStore_NeverDisplayed_DeletedImmediately()
     {
         // Q-it2-3a: ONE tagged identity-verification draft per business account -
@@ -324,19 +325,21 @@ public sealed class LiveDraftTests
         // race; worst on a store mid-resync), outliving their test's stable-zero
         // window - such stragglers are purged here first (S3-legal: tag-matched), then
         // stable zero is asserted. Counts only in output (S4).
-        foreach (string store in _fixture.Settings.ExpectedStoreDisplayNames)
-        {
-            int count = LiveOutlookTestMailer.CountTaggedArtifacts(store, "OutlookAI-McpTest");
-            if (count > 0)
-            {
-                _output.WriteLine($"sweep[{store}]: {count} late-materialized tagged artifact(s) found - purging (documented sent-copy lag)");
-                LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(store, "OutlookAI-McpTest");
-                count = LiveOutlookTestMailer.CountTaggedArtifacts(store, "OutlookAI-McpTest");
-            }
-
-            _output.WriteLine($"sweep[{store}]: taggedArtifacts={count}");
-            Assert.Equal(0, count);
-        }
+        //
+        // WHICH stores may be purged is ArtifactSweepPolicy's decision, not this loop's.
+        // expectedStoreDisplayNames also carries the declared BYSTANDERS - it has to, or the
+        // count tripwire never censuses them - and this walk used to point a delete at them.
+        // They are counted and left alone now, and a non-zero count in one FAILS the run
+        // rather than being tidied away; nothing else would report it, because the count
+        // tripwire fires on a decrease and that would be an increase.
+        //
+        // The tag text stays spelled out here on purpose: it is what CountTaggedArtifacts
+        // matches, and T1/CorpusTagSeparationTests pins the corpus apart from this literal.
+        ArtifactSweepPolicy.Run(
+            _fixture.Settings,
+            store => LiveOutlookTestMailer.CountTaggedArtifacts(store, "OutlookAI-McpTest"),
+            store => LiveOutlookTestMailer.DeleteTaggedArtifactsUntilStableZero(store, "OutlookAI-McpTest"),
+            _output.WriteLine);
     }
 
     // ------------------------------------------------------------------ helpers

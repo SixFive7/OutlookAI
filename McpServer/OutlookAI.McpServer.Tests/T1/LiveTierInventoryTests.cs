@@ -105,6 +105,15 @@ public sealed class LiveTierInventoryTests
         // More than one store mounted at once.
         "MultipleStores",
 
+        // A SECOND mail account the write allowlist grants an identity draft in - a non-hub
+        // primary left out of 'bystanderStoreDisplayNames'. Narrower than MultipleStores on
+        // purpose: three stores satisfy that and still leave the identity tests nothing to
+        // draft into, which is the documented VM layout and is exactly the state where they
+        // used to iterate nothing and report green. Named for the concept the code already
+        // carries - StoreWriteAllowlist.IdentityAccountsAmong, IdentityDraftCoverage - because
+        // a second spelling of one capability is how this vocabulary drifts.
+        "IdentityAccount",
+
         // A hub store small enough for a paging assertion to mean something.
         "SmallHubStore",
 

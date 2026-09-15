@@ -107,6 +107,7 @@ public sealed class LiveDraftOptionsTests
     [Fact]
     [Trait("Requires", "MailAccount")]
     [Trait("Requires", "MultipleStores")]
+    [Trait("Requires", "IdentityAccount")]
     public void NewDraft_BusinessAccounts_BodyAboveTheirOwnIntactHtmlSignature()
     {
         // Q-it2-3a identity grant: ONE tagged, never-displayed draft per business

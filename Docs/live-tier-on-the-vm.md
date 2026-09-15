@@ -552,7 +552,7 @@ and not three traits either. It used to be three, and the third one was the prob
 | VM | `--filter "Category=Live&Requires!=DelegateStore"` | 121 |
 | production-only | `--filter "Category=Live&Requires=DelegateStore"` | 6 |
 
-**The vocabulary, all ten values.** Nine of them this VM can be given; one it cannot.
+**The vocabulary, all eleven values.** Ten of them this VM can be given; one it cannot.
 
 | Capability | What the machine must have |
 | --- | --- |
@@ -563,11 +563,12 @@ and not three traits either. It used to be three, and the third one was the prob
 | `MailAccount` | a mail account rather than a bare PST - the dummy account |
 | `Transport` | mail that actually goes out and comes back - the local sink |
 | `MultipleStores` | more than one store mounted - all three |
+| `IdentityAccount` | a second mail account the write allowlist grants an identity draft in - a non-hub primary left OUT of `bystanderStoreDisplayNames`. **The layout in section 1.3 does not have one**: its two non-hub stores are both declared bystanders, so the tests naming this select and then prove nothing, and say so |
 | `SmallHubStore` | a hub small enough that a paging assertion means something |
 | `ProbePopulation` | the hand-curated population named in the settings file |
 | **`DelegateStore`** | **a delegate/shared mailbox. The one capability no test machine can be given** |
 
-`.github/scripts/check-pinned-constants.ps1` fails the build if any of those ten names stops
+`.github/scripts/check-pinned-constants.ps1` fails the build if any of those eleven names stops
 appearing in this file, so the table above is load-bearing text and not decoration.
 
 **Why `DelegateStore` is the only production-only capability.** A delegate/shared mailbox is
