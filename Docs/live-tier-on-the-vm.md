@@ -265,9 +265,30 @@ rather than assuming the default.
 
 ### 2.6 The stores
 
-Add every store **through Outlook itself** (File > Account Settings > Data Files > Add). Do not
-improvise a script. Creating stores is not something the tested helpers do, and mailbox
-mutation from ad-hoc shell code is the thing that once destroyed real mail.
+**NARROWED 2026-09-15, deliberately and with the boundary written out rather than left to
+precedent.** The old text said: *"Add every store through Outlook itself. Do not improvise a
+script."* The rule's real subject is **items in a mailbox that matters** - ad-hoc shell code
+deleting real mail is what it was written for - and creating an empty data file on a disposable
+guest is a different act. So the line now runs between items and stores, not between GUI and
+script:
+
+* **No script may create, delete, move or modify an ITEM.** That is unchanged, absolute, and
+  `CLAUDE.md` mailbox-safety rule 1 remains the authority: item mutation goes through the tested
+  helpers or the shipped MCP tools, never through improvised code.
+* **Creating a NEW, EMPTY store on a testbed guest is permitted from a script**, provided the
+  script verifies which machine and which account it is running as before it writes anything.
+  `Testbed/guest/Add-OutlookPstStore.ps1` and `New-OutlookProfile.ps1` are that, and they refuse
+  unless logged on as the guest's own account.
+* **Attaching an existing store that already holds items is NOT covered by this narrowing.** It
+  is one step from there to a script that opens a real mailbox, which is where the original rule
+  came from.
+
+**Why write the boundary out rather than just permitting it.** A rule narrowed by precedent keeps
+narrowing - the next person reasons "it's only a store" and then "it's only one item". A rule
+narrowed by text stops where the text stops.
+
+The GUI route (File > Account Settings > Data Files > Add) remains correct and is what to use if
+you are building a guest by hand.
 
 > **A TENSION WORTH NAMING RATHER THAN QUIETLY RESOLVING (2026-09-15).**
 > `Testbed/guest/Add-OutlookPstStore.ps1` is a script that adds stores, which is the thing the

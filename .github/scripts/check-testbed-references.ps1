@@ -92,6 +92,11 @@ Write-Host ''
 # ---------------------------------------------------------------------------------------------
 $intentionallyAbsent = @(
     @{
+        Path       = 'Docs/live-test-inventory.txt'
+        MustIgnore = $false
+        Why        = 'DELETED 2026-09-15. A tracked snapshot of the live-tier traits that had gone stale in a way that misled: it printed the RETIRED LiveTier trait, and printed Requires as a PER-CLASS UNION - the exact shape that once turned a real floor of six impossible tests into a reported 96. Nothing generated it and nothing checked it. The traits on the tests are the authority and "dotnet test --list-tests" answers the same question from the source of truth. Docs/research/pop3-account-routes.md still names it because that note is a dated snapshot and is deliberately not edited to stay current.'
+    }
+    @{
         Path       = 'McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json'
         MustIgnore = $true
         Why        = 'Machine-local. Names real stores, and this repository is public. Testbed/live-test-settings.example.json is the committed shape.'
