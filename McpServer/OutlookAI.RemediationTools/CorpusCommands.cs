@@ -424,32 +424,39 @@ public static class CorpusCommands
             chosen.ToString(),
             placement.ToString()));
 
-        using StreamWriter writer = OpenManifest(options.ManifestPath!, existing == null, manifest.Header);
-        ComCorpusMailbox.BuildOutcome outcome = ComCorpusMailbox.Build(
-            plan,
-            options.Store!,
-            options.Count,
-            chosen,
-            placement,
-            writeShift,
-            manifest,
-            item =>
-            {
-                // Flushed per item on purpose. A build runs for hours and will be
-                // interrupted; the cost of a flush is nothing beside a COM item write, and
-                // an unflushed line is an item nothing can ever delete.
-                writer.WriteLine(CorpusManifest.RenderLine(item));
-                writer.Flush();
-            },
-            folder =>
-            {
-                writer.WriteLine(CorpusManifest.RenderLine(folder));
-                writer.Flush();
-            },
-            p => output.WriteLine(
-                $"  progress: created {p.Created:N0}, skipped {p.Skipped:N0}, failed {p.Failed:N0}, "
-                + $"remaining {p.Remaining:N0}, {p.BodyBytesWritten:N0} body bytes, {p.Elapsed:hh\\:mm\\:ss} elapsed"),
-            options.ProgressEvery);
+        // SCOPED, not a using declaration. The census below reads this manifest back, and it
+        // must read a file nobody is holding open for write - see CorpusManifest.ReadFile for
+        // what a method-scoped writer cost. ReadFile now tolerates a live writer as well; both
+        // halves are kept, because the census should in any case be reading a finished file.
+        ComCorpusMailbox.BuildOutcome outcome;
+        using (StreamWriter writer = OpenManifest(options.ManifestPath!, existing == null, manifest.Header))
+        {
+            outcome = ComCorpusMailbox.Build(
+                plan,
+                options.Store!,
+                options.Count,
+                chosen,
+                placement,
+                writeShift,
+                manifest,
+                item =>
+                {
+                    // Flushed per item on purpose. A build runs for hours and will be
+                    // interrupted; the cost of a flush is nothing beside a COM item write, and
+                    // an unflushed line is an item nothing can ever delete.
+                    writer.WriteLine(CorpusManifest.RenderLine(item));
+                    writer.Flush();
+                },
+                folder =>
+                {
+                    writer.WriteLine(CorpusManifest.RenderLine(folder));
+                    writer.Flush();
+                },
+                p => output.WriteLine(
+                    $"  progress: created {p.Created:N0}, skipped {p.Skipped:N0}, failed {p.Failed:N0}, "
+                    + $"remaining {p.Remaining:N0}, {p.BodyBytesWritten:N0} body bytes, {p.Elapsed:hh\\:mm\\:ss} elapsed"),
+                options.ProgressEvery);
+        }
 
         output.WriteLine($"Build finished: created {outcome.Created:N0}, already present {outcome.Skipped:N0}, "
             + $"failed {outcome.Failed:N0}, {outcome.BodyBytesWritten:N0} body bytes in {outcome.Elapsed:hh\\:mm\\:ss}"
@@ -961,7 +968,10 @@ public static class CorpusCommands
             return null;
         }
 
-        CorpusManifest manifest = CorpusManifest.Parse(File.ReadLines(path));
+        // NOT File.ReadLines: that overload's FileShare.Read refuses to open a file another
+        // handle holds for WRITE, and the caller that matters most - a build reading its own
+        // manifest back for the census - is exactly that case. See CorpusManifest.ReadFile.
+        CorpusManifest manifest = CorpusManifest.ReadFile(path);
         if (manifest.UnparseableLines.Count > 0)
         {
             output.WriteLine($"  NOTE: {manifest.UnparseableLines.Count} manifest line(s) could not be read "

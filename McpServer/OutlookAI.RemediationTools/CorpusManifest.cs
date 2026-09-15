@@ -138,6 +138,44 @@ public sealed class CorpusManifest
     }
 
     /// <summary>
+    /// Reads a manifest from disk, TOLERATING A WRITER THAT STILL HOLDS THE FILE.
+    /// <para>
+    /// <b>Why this exists, measured 2026-09-16.</b> A 20,000-item build on the test VM wrote
+    /// every item, then died with <c>IOException: the process cannot access the file ...
+    /// because it is being used by another process</c> and returned exit 1. The cause was its
+    /// own handle: <c>corpus-build</c> holds the manifest open for append for the whole run,
+    /// and then runs a census that read it back with <see cref="File.ReadLines(string)"/>.
+    /// That overload opens <c>FileAccess.Read, FileShare.Read</c> - a share mode that refuses
+    /// to coexist with an existing WRITE handle - so the read could never succeed while the
+    /// build was the one asking. The census is the guard that exists to catch a build which
+    /// creates every item in the wrong folder and reports success, so for as long as this
+    /// stood, that guard had never once run inside a build.
+    /// </para>
+    /// <para>
+    /// Opening <c>FileShare.ReadWrite</c> makes the read succeed whoever else holds the file.
+    /// A manifest is append-only and flushed per line, so a concurrent reader sees a prefix of
+    /// the truth - never a corrupt one - and a torn trailing line is already handled by
+    /// <see cref="Parse"/> rather than thrown.
+    /// </para>
+    /// </summary>
+    public static CorpusManifest ReadFile(string path)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        return Parse(ReadLinesShared(path));
+    }
+
+    private static IEnumerable<string> ReadLinesShared(string path)
+    {
+        using var stream = new FileStream(
+            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+        while (reader.ReadLine() is { } line)
+        {
+            yield return line;
+        }
+    }
+
+    /// <summary>
     /// Parses a manifest from its lines. A trailing partial line - the shape an interrupted
     /// build leaves - is reported in <see cref="UnparseableLines"/> rather than throwing,
     /// because losing one item's record must not make the other 40 000 unreadable.
