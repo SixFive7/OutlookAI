@@ -157,7 +157,8 @@ credential-shaped literal under `Testbed/`, but do not rely on that as the guard
 does not belong in the repository at all.
 
 **What is in it, so a rebuilder can reconstruct it without the key.** It is `VoIPFabric.xml` with
-the three extra products deleted and nothing else changed:
+the three extra products deleted; nothing else is changed except the two cosmetic identifiers in
+the last row:
 
 | | Value |
 | --- | --- |
@@ -169,6 +170,7 @@ the three extra products deleted and nothing else changed:
 | Excluded apps | `Lync`, `OneDrive`, **`OutlookForWindows`** |
 | Properties | `SharedComputerLicensing=0`, `FORCEAPPSHUTDOWN=TRUE`, `DeviceBasedLicensing=0`, `SCLCacheOverride=0`, `AUTOACTIVATE=1`, `PinIconsToTaskbar=FALSE` |
 | Other elements | `<Updates Enabled="TRUE" />`, `<RemoveMSI />`, `<Display Level="Full" AcceptEULA="TRUE" />`, and the `AppSettings` block (company name, default save formats) |
+| Cosmetic, and the only other difference | a fresh `Configuration ID` GUID, and an `Info Description` naming this as the testbed configuration. Neither affects the install; they exist so the two files cannot be mistaken for each other. |
 
 **Why the product set is the ONLY difference.** This testbed's whole design principle is that the
 guest matches the maintainer's machine — see "The host configuration the guests match" above —
