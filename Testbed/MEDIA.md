@@ -169,13 +169,31 @@ the last row:
 | Languages | `en-us`, `MatchOS`, `nl-nl` |
 | Excluded apps | `Lync`, `OneDrive`, **`OutlookForWindows`** |
 | Properties | `SharedComputerLicensing=0`, `FORCEAPPSHUTDOWN=TRUE`, `DeviceBasedLicensing=0`, `SCLCacheOverride=0`, `AUTOACTIVATE=1`, `PinIconsToTaskbar=FALSE` |
-| Other elements | `<Updates Enabled="TRUE" />`, `<RemoveMSI />`, `<Display Level="Full" AcceptEULA="TRUE" />`, and the `AppSettings` block (company name, default save formats) |
+| Other elements | **`<Updates Enabled="FALSE" />`**, `<RemoveMSI />`, **`<Display Level="None" AcceptEULA="TRUE" />`**, and the `AppSettings` block (company name, default save formats) |
 | Cosmetic, and the only other difference | a fresh `Configuration ID` GUID, and an `Info Description` naming this as the testbed configuration. Neither affects the install; they exist so the two files cannot be mistaken for each other. |
 
-**Why the product set is the ONLY difference.** This testbed's whole design principle is that the
-guest matches the maintainer's machine — see "The host configuration the guests match" above —
-because that is where the userbase sits. So every property, language and app setting is carried
-over verbatim; deviating on any of them would build a guest that is tidy rather than
+**TWO elements deliberately do NOT match the maintainer's file, corrected 2026-09-15 while
+actually building a guest. Both were carried over verbatim and both are wrong for a testbed:**
+
+* **`Display Level` was `Full`.** That puts the Office installer's UI on the guest, which defeats
+  an unattended build outright — somebody has to be watching a console. `None` with
+  `AcceptEULA="TRUE"` is the only setting compatible with the rest of this machine being built by
+  script.
+* **`Updates` was `Enabled="TRUE"`.** The runbook is explicit in section 2.2: *"Pin the update
+  channel. An Office auto-update invalidates the Office checkpoint silently."* A testbed whose
+  Office moves underneath its own checkpoints cannot be rebuilt to a known state, and the failure
+  is silent — `CP-04-OFFICE-GOLD` stops meaning what it says with nothing to announce it.
+
+**These are the exception that shows where the matching principle stops.** It governs what the
+guest *is* — locale, languages, bitness, app settings — not how it is *built* or how it is kept
+still. Deviating on a rendering or licensing property would make a guest that is tidy rather than
+representative; deviating on the installer's display level makes no difference to any behaviour
+under test, and pinning updates is what makes the guest reproducible at all.
+
+**Why the product set is otherwise the ONLY difference.** This testbed's whole design principle is
+that the guest matches the maintainer's machine — see "The host configuration the guests match"
+above — because that is where the userbase sits. So every property, language and app setting is
+carried over verbatim; deviating on any of them would build a guest that is tidy rather than
 representative, and would make any difference between guest and host a suspect rather than a
 finding. The extra *products* are exempt from that argument because nothing under test touches
 Visio or Project.
