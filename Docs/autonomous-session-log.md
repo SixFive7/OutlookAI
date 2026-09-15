@@ -28,20 +28,62 @@ Outlook ran continuously **through** the grace expiry and still responds, and **
 this project uses still works** - `GetTable`, `Restrict`, `Sort`, `PropertyAccessor`, folder
 resolution. The repo's own premise was wrong: `MEDIA.md` and the `TODO.md` preflight item both
 say a KMS client past grace "drops Office into reduced functionality", and that phrase is not in
-Microsoft's Office LTSC 2024 documentation at all. **Those two files still say the wrong thing.**
+Microsoft's Office LTSC 2024 documentation at all. Both files were corrected the same day.
 
-**Still unmeasured, and it is the dangerous half:** whether a modal activation prompt appears at
-Outlook **startup**, which would make `CoCreateInstance` hang forever. The probe that passed had
-attached to an already-running Outlook, so it proves nothing about a cold start.
+**The dangerous half has now ALSO been measured, and it does not happen.** The worry was a modal
+activation prompt at Outlook **startup**, which would make `CoCreateInstance` hang forever. The
+guest was restarted so `OUTLOOK.EXE` was genuinely not running, and the probe asserted that
+before touching COM - the earlier attempt attached to a running instance, which is why it proved
+nothing:
 
-**Found while measuring, neither looked for:**
-- The corpus store's **Outbox holds 2,761 items the plan does not account for** (`testbed.json`
-  places all 20,000 across four folders, Outbox not among them). The profile has **zero mail
-  accounts**, confirmed, so they are inert - the known generator defect, live.
-- A **read-only** folder enumeration wedged for 9+ minutes on `GetDefaultFolder(DeletedItems)`
-  with Outlook responsive and 928 s of CPU burned. Cause NOT established; the plausible
-  explanation is that it queued behind an `Items.Sort` over 10,912 items, which would itself
-  matter to the open sweep-budget and sort-failure items.
+    CreateObject returned in 3.7 s; full bind in 4.4 s - v16.0.0.17932, 1 store(s), 0 account(s)
+
+No dialog: titled windows in session 1 were enumerated before and after, none either time.
+
+**So the answer to "does past grace impact our work" is NO, and both justifications the Office
+preflight was ever given are now measured false.** The item is recommended for closing in
+`TODO.md`. **The consequence is bigger than the check:** the monthly rebuild cadence exists
+because this clock was believed to disable the guest. It does not. What actually forces a rebuild
+is **corpus staleness**, which already has a fail-closed guard in `corpus-verify`.
+
+**Two residual unknowns, so nobody reads this as complete:** the **write** path is unmeasured
+(mailbox-safety rule 1 keeps it out of a probe's reach), and whether notification mode escalates
+over time is undocumented. Neither is evidence of impact; both are gaps in evidence.
+
+**Two observations from the guest. The first CONFIRMS a recorded finding rather than being a new
+one - an earlier revision of this block called it "found while measuring, not looked for", which
+was wrong:**
+
+- The corpus store's Outbox holds **2,761** items. `Docs/corpus-measurement-plan.md` line 50
+  already records exactly this number, notes it is EXACTLY the plan's unread count, and states
+  that **a non-empty Outbox after a rebuild is the specific signal that the fix did not take**.
+  The fix is in the code (`ComCorpusMailbox.ApplyMessageFlags` - "MSGFLAG_SUBMIT is ALWAYS
+  cleared"); this guest's corpus was built on 2026-08-19 and predates it. So the value of the
+  measurement is confirmation that the number is stable and that **the next rebuild is the test
+  of the fix** - which is already the plan. Confirmed alongside it: the profile has **zero mail
+  accounts**, so those items have no transport and are inert.
+- **The 9-minute COM block: INVESTIGATED AND EXPLAINED, and the answer is that it was
+  self-inflicted.** A read-only `GetDefaultFolder(olFolderDeletedItems)` blocked for 9+ minutes
+  and survived a save/resume still blocked, Outlook `Responding=True` and burning ~8 s of CPU
+  across the span - **blocked, not spinning**. Three candidate causes were on the table. After a
+  guest restart cleared all orphaned state, every one of them was retested on a clean machine:
+
+  | call | time |
+  | --- | --- |
+  | `GetDefaultFolder` x6 (Inbox, Deleted, Outbox, Sent, Drafts, Junk) | **0.05 s each** |
+  | `Items.Count` on each | **0.03 s each** |
+  | `Items.Sort('[ReceivedTime]')` over **10,912** items | **0.02 s** |
+
+  So "`GetDefaultFolder` is slow on an account-less PST profile" is **dead**, and "contention
+  behind the big `Items.Sort`" is **dead** - the sort is 20 ms, not slow at all. The only
+  surviving explanation is **COM references orphaned by two earlier probes that exited while
+  still holding `Application` and `Namespace`** (one of them via `exit 2` mid-flight).
+
+  **The lesson is the one CLAUDE.md rule 7 already states in its other half** - "release COM
+  references BEFORE quitting" - generalised: a process that *exits* holding references to a
+  shared Outlook can block every later client of that instance. Any probe or tool that binds
+  Outlook must release in a `finally`, including on an early `exit`. **It was not a defect in
+  Outlook, and not a defect in the project's calls.**
 
 **The host and the guest run different Office versions** - host `ProPlusSPLA2021Volume`
 16.0.14334 under a MAK with no grace clock at all; guest `ProPlus2024Volume` 16.0.17932 as a KMS

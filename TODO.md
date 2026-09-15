@@ -18,14 +18,32 @@
   project uses still works. `Testbed/MEDIA.md` carries the evidence, the quotations and the
   caveats on them.
 
-  **The real justification is twofold.** The licence state is **a fact worth asserting cheaply
-  before a long live run** - 241 ms for a definite answer to "is this machine in the state the
-  tier was validated in?". And **the startup-hang risk is unquantified**: nobody has established
-  whether a modal activation prompt appears at Outlook **cold start** on a past-grace guest, which
-  Microsoft's server-side automation guidance says can leave `CreateObject`/`CoCreateInstance`
-  "stop responding and never finish". The probe that passed had attached to an already-running
-  Outlook, so it proves nothing about that. A hang reads as a wedged suite, not as a licence,
-  which is exactly the failure this gate is cheap insurance against.
+  **AND THE SECOND JUSTIFICATION HAS NOW ALSO BEEN MEASURED FALSE (2026-09-15, later the same
+  day).** The rewritten reason was that "the startup-hang risk is unquantified" - nobody had
+  established whether a modal activation prompt appears at Outlook **cold start** on a past-grace
+  guest. It has now been established. The guest was **restarted** so `OUTLOOK.EXE` was genuinely
+  not running, the probe asserted that before touching COM, and then:
+
+      CreateObject returned in 3.7 s; full bind in 4.4 s - v16.0.0.17932, 1 store(s), 0 account(s)
+      VERDICT: a cold COM start COMPLETED under an expired licence.
+
+  No dialog appeared - titled windows in session 1 were enumerated before and after, none either
+  time. **Both reasons this item was ever given are now false.** What is left is "241 ms is
+  cheap", which would justify adding a check to anything.
+
+  **RECOMMENDATION: CLOSE THIS ITEM**, on the maintainer's own standing rule - "if it does not
+  impact our work, do nothing". Left open only because closing a mailbox-adjacent safety item is
+  the maintainer's call.
+
+  **The larger consequence, which is the part worth deciding on:** the **monthly rebuild cadence
+  was adopted because this clock was believed to disable the guest**, and it does not. The thing
+  that actually forces a rebuild is **corpus staleness**, which already has a fail-closed guard in
+  `corpus-verify`. If the licence does nothing, the cadence it justified does not need to exist.
+
+  **Two residual unknowns, stated so nobody mistakes this for a complete answer:** the **write**
+  path (`CreateItem`/`Save`/`Move`/`Delete`/`Send`) is unmeasured, because mailbox-safety rule 1
+  puts it out of a probe's reach; and whether notification mode escalates further over time is
+  undocumented. Neither is evidence of impact - both are gaps in the evidence.
 
   The check belongs in the live tier's preflight, beside the other fail-closed gates: it fires
   exactly when it matters and nobody has to remember it. A release-time check does not work,

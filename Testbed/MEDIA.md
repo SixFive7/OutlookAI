@@ -258,17 +258,39 @@ code. So "no functional loss" is measured for the read path and *inferred* for t
 from Microsoft's wording. If a write path did degrade past grace, this measurement would not have
 seen it.
 
-**WHAT IS UNMEASURED IS THE ACTUAL RISK: a cold start.** Nobody has established whether a modal
-activation prompt appears when Outlook is **started** on a past-grace guest. Microsoft's
-server-side automation guidance says of a blocking dialog that "the `CreateObject` function and
-the `CoCreateInstance` function stop responding and never finish, or take a long time to return",
-and its unattended-automation article says an Office dialog "might result in the application
-appearing to 'hang' as the application stops until it receives this input". Two caveats on
-applying that here: both articles are about a **non-interactive** desktop, whereas the guest runs
-Outlook in an interactive session where a dialog *could* be dismissed — by a human who is not
-there. And the probe above attached to an **already-running** Outlook, so it says nothing
-whatsoever about a cold start. **This is open.** It is a hang, not an error, which is the
-expensive shape: it reads as a wedged suite rather than as a licence.
+**THE COLD START WAS THE ACTUAL RISK, AND IT HAS NOW BEEN MEASURED. IT DOES NOT HAPPEN.**
+
+The concern was a modal activation prompt appearing when Outlook is **started** on a past-grace
+guest. Microsoft's server-side automation guidance says of a blocking dialog that "the
+`CreateObject` function and the `CoCreateInstance` function stop responding and never finish, or
+take a long time to return", and the unattended-automation article says an Office dialog "might
+result in the application appearing to 'hang'". That is a hang rather than an error, which is the
+expensive shape — it reads as a wedged suite rather than as a licence.
+
+**Measured 2026-09-15 on the guest**, `LicenseStatus=5`, `GracePeriodRemaining=0`, 7 days past
+grace. The guest was **restarted** so that `OUTLOOK.EXE` was genuinely not running; the probe
+asserted that before touching COM and would have refused otherwise, because attaching to a
+running instance is what made the earlier attempt uninformative.
+
+```
+--- precondition: Outlook must NOT be running ---
+   confirmed: OUTLOOK.EXE is not running
+--- COLD CreateObject, watchdogged at 150 s ---
+   CreateObject returned in 3.7 s; full bind in 4.4 s - v16.0.0.17932, 1 store(s), 0 account(s)
+   VERDICT: a cold COM start COMPLETED under an expired licence.
+```
+
+**No dialog appeared** — the probe enumerated titled windows in session 1 before and after and
+found none either time. So the documented "no functionality loss" holds for the one path that
+would actually have cost an evening.
+
+**Two bounds on that result, both real.** It started into the **configured** `OutlookAITest`
+profile. A *bare* profile — this guest's other one, which references no data file — would raise
+Outlook's account-setup wizard, and that **is** a modal dialog that would hang a COM start. That
+is a profile fault, not a licence fault, but the symptom is identical, so a rebuilder who sees a
+cold start hang should check the profile before blaming the licence. And the **write path**
+(`CreateItem`/`Save`/`Move`/`Delete`/`Send`) is still unmeasured, because mailbox-safety rule 1
+puts it out of reach of a probe.
 
 ### Reading the licence state — the query, and why it is shaped this way
 
@@ -320,13 +342,23 @@ guest was found 7 days past grace on 2026-09-15. So the deadline is checked wher
 rather than letting a run produce failures that look like anything except a licence. A
 release-time check would not do, since releases can be further apart than 30 days.
 
-**But the justification is not "Office stops working" — that claim has been measured false.** It
-is that **the licence state is a fact worth asserting cheaply before a long live run**, and that
-**the startup-hang risk is unquantified**. 241 ms buys a definite answer to "is this machine in
-the state the tier was validated in?", and the one failure mode that would genuinely be expensive
-— a modal activation prompt hanging a cold `CreateObject` — is the one nobody has measured. A
-preflight that refuses costs a second; a suite that hangs until its timeout and reports nothing
-costs an evening. Tracked in `TODO.md`.
+**Both justifications this check was ever given have now been measured false.** It was first
+written on "past grace, Office drops into reduced functionality" — a term that does not apply to
+this product at all. It was then rewritten on "the startup-hang risk is unquantified" — and the
+cold start has since been measured, at 3.7 s with no dialog.
+
+**So on the maintainer's own standing instruction — "if it does not impact our work, do
+nothing" — the honest answer is that this check is no longer justified and the item should
+close.** What survives is only "241 ms is cheap", which is an argument for adding a check to
+anything, and is not the argument that was authorised.
+
+**The consequence reaches further than the check.** The monthly rebuild cadence was adopted
+because Office's 30-day grace was believed to disable the guest. It does not. Nothing measured so
+far stops working when that clock runs out, so **the thing that actually forces a rebuild is
+corpus staleness, not the licence** — and that already has a fail-closed guard in
+`corpus-verify`, which refuses the tier when a measurement window has emptied. Left open in
+`TODO.md` pending the maintainer's decision, because closing a mailbox-adjacent safety item and
+retiring a rebuild cadence are both theirs to make, not an agent's.
 
 ## The Office version gap between host and guest — an ACCEPTED KNOWN LIMIT
 
