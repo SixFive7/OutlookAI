@@ -15,6 +15,7 @@ been unrebuildable. Hence the rule at the bottom of this file.
 | --- | --- | --- |
 | Windows | A Windows 11 x64 image | **STAGED 2026-08-24**: `.work/media/Win11_25H2_EnglishInternational_x64_v2.iso` (7.9 GB, gitignored). Consumer multi-edition, volume label `CCCOMA_X64FRE_EN-GB_DV9`, so it carries Pro. |
 | Office | Office Deployment Tool + a configuration | **STAGED**: `.work/office-odt/` (gitignored), holding `setup.exe` and `VoIPFabric.xml`. A testbed-specific `Testbed.xml` sits beside them — see below. |
+| .NET SDK | The .NET 10 SDK, **win-x64**, as the `.exe` installer | **NOT STAGED as of 2026-09-17**, and nothing in this repository has ever fetched it. It is what lets a guest run `dotnet test` at all — see "The .NET SDK" below for the version, the source and the hash. |
 
 ### Windows — staged, and it is NOT the edition the old guest ran
 
@@ -201,6 +202,124 @@ Visio or Project.
 **`ExcludeApp OutlookForWindows` must stay in whatever you reconstruct** — see above for why. A
 guest that ends up with the new client is a guest the live tier cannot run on, and the failure
 reads as Outlook automation being broken rather than as a wrong install.
+
+## The .NET SDK — the precondition the live tier has been blocked on
+
+**A guest cannot run the live tier without one, and until 2026-09-17 nothing in this repository
+said so in a place a rebuilder would hit.** `Testbed/README.md` question 13 records the shape of
+it: everything ever measured on a guest was driven by `Testbed/guest/Invoke-GuestMeasure.ps1`
+talking raw stdio to the server, never by `dotnet test` — "which the guest cannot run, having no
+SDK". The live tier is an xUnit suite and `dotnet test` is the only supported way to start it,
+because the safety machinery — the per-store count tripwire, the `StoreWriteAllowlist`, the
+signature-directory snapshot, the zero-artifact sweep — lives in **xUnit fixtures**. Any other
+launcher runs the tier with its guards absent, against a real mailbox. That is worse than not
+running it, and it is why the answer is an SDK on the guest rather than a cleverer runner.
+
+**This is media, not a dependency.** The repository's `## Dependencies` rule in `CLAUDE.md`
+forbids "anything a rebuilder would have to download and install beyond the media
+`Testbed/MEDIA.md` already names as preconditions" — so naming it here is exactly the mechanism
+that rule points at, the same one the Windows ISO, the Office Deployment Tool and the mail sink
+package already use. Microsoft's own SDK, free, no licence key, no third-party component.
+
+### Which version, and why
+
+| | Value |
+| --- | --- |
+| Product | **.NET SDK 10**, Windows, **x64** |
+| Pinned version | **10.0.401** — what the host runs, read with `dotnet --list-sdks` on 2026-09-17 |
+| File | `dotnet-sdk-10.0.401-win-x64.exe` (~250 MB, the figure is an estimate — nobody has staged it yet) |
+| Where it comes from | Microsoft's .NET 10 download page, the win-x64 **Installer** under SDK. Not a zip, not `dotnet-install.ps1` (that one downloads, and the guest has no network). |
+| Staged at | `.work/media/dotnet-sdk-10.0.401-win-x64.exe` on the host — beside the Windows ISO, for the reason the Office section gives about volatile directories |
+| Verified by | **SHA-512**, which is what Microsoft publishes for .NET installers. `Testbed/host/Publish-LiveTierPayload.ps1` prints the hash of the file you staged; compare it against Microsoft's before recording it here. |
+| Recorded hash | **NONE YET.** See "the hash is deliberately blank" below. |
+| Installed with | `Testbed/guest/Install-DotnetSdk.ps1`, which runs it `/install /quiet /norestart` |
+
+**Why 10, and whether a newer one would do.** Every project under `McpServer/` targets
+`net10.0-windows`. `OutlookAI.Core` additionally targets `net48`, and that needs **no** separate
+install: `McpServer/OutlookAI.Core/OutlookAI.Core.csproj` carries
+`Microsoft.NETFramework.ReferenceAssemblies`, which is a NuGet package and travels in the offline
+feed below — the csproj says as much, "lets `dotnet build` compile the net48 target without a
+Visual Studio install". **There is no `global.json` anywhere in this repository**, so nothing
+pins a feature band, and `.github/workflows/mcpserver.yml` asks `actions/setup-dotnet` for
+`10.0.x` — meaning CI itself floats. So any .NET 10 SDK would compile the suite, and a .NET 11
+SDK almost certainly would too.
+
+**Pin it to the host's version anyway.** The host is the machine that publishes the payload the
+guest measures with, and one toolchain across both is one fewer difference to suspect when a
+guest behaves unlike the host. That is the same argument this file makes about locale, and the
+same one the Office version-gap section makes in reverse when it accepts a 3,598-build gap *and
+writes it down as a known limit*. Bump this row when the host is bumped; do not let the guest
+drift ahead of it by accident.
+
+**x64 is not optional.** Both the server and the test project set `PlatformTarget x64`, and the
+index tier reads the `Search.CollatorDSO` OLE DB provider, which has no 32-bit story here. The
+`-Verify` in the guest script reads the RID out of `dotnet --info` and refuses anything else.
+
+### The hash is deliberately blank, and that is not laziness
+
+`Testbed/guest/Install-MailSink.ps1` carries a default SHA-256 taken from a published manifest
+and says honestly that it has never been compared against a downloaded file. **This entry carries
+no hash at all**, because the agent that wrote it could neither stage nor download the installer,
+and a number nobody has compared against anything is worse than an empty field — it reads as
+verified.
+
+So the guest script has **no default and refuses without one**:
+
+    .\Install-DotnetSdk.ps1 -ExpectedSha512 <hash> -Execute
+
+**Fill this in on the first real run.** Stage the installer, run
+`Testbed/host/Publish-LiveTierPayload.ps1` (it prints the SHA-512 of the staged file), compare
+that against the checksum Microsoft publishes beside the download, and write the value into the
+table above. From then on it is a one-line check rather than a piece of work.
+
+### The other two halves, which an SDK alone does not buy
+
+**A guest with an SDK still cannot run `dotnet test`.** It also needs the source — the suite is
+built from source, there is no prebuilt test assembly — and it needs **54 NuGet packages, ~76 MB**
+(counted from the host's restore graph on 2026-09-17), on a machine with no route to nuget.org.
+`Testbed/host/Publish-LiveTierPayload.ps1` stages both:
+
+| Artefact | Guest path | What it is |
+| --- | --- | --- |
+| `Source.zip` | `C:\OutlookAI-Q5\src` | `git archive` of a named commit. Built from a commit, not the working tree, so a payload is reproducible and carries no stale `obj/`. |
+| `NuGet.zip` | `C:\OutlookAI-Q5\nuget-offline` | A flat folder feed of every `.nupkg` the restore graph names. The script re-restores the whole suite through a config that clears every other source, so a feed that is short of a package fails on the **host**, where the fix is a minute. |
+
+**Those two are ARTEFACTS, not media** — a script regenerates them from this repository, which is
+the distinction this file draws everywhere else. They are listed here because they are
+preconditions for the same act, and because a reader who stages only the SDK will get the guest
+script's `SDK-ONLY` verdict and should know in advance what it means.
+
+**One thing no script can stage:**
+`McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json`. It is gitignored
+because it names real stores and this repository is public, so each guest needs its own.
+`Testbed/live-test-settings.example.json` is the committed shape. Without it the tier has no
+write allowlist, which is a refusal rather than a pass — by design.
+
+### Installing it, and where in the build order it goes
+
+    pwsh -File Testbed/host/Publish-LiveTierPayload.ps1
+    pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\media\dotnet-sdk-10.0.401-win-x64.exe -Destination C:\OutlookAI-Q5\media\dotnet-sdk-10.0.401-win-x64.exe
+    pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\testbed-livetier-payload\Source.zip -Destination C:\OutlookAI-Q5\Source.zip
+    pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\testbed-livetier-payload\NuGet.zip  -Destination C:\OutlookAI-Q5\NuGet.zip
+
+then on the guest, elevated — **PowerShell Direct is fine for this, and only for this**: an SDK
+install touches no COM and no Outlook, so it does not need
+`Testbed/guest/Register-InteractiveTask.ps1`. The `dotnet test` that follows *does*, because
+Outlook cannot finish starting in session 0.
+
+    Expand-Archive C:\OutlookAI-Q5\Source.zip -DestinationPath C:\OutlookAI-Q5\src            -Force
+    Expand-Archive C:\OutlookAI-Q5\NuGet.zip  -DestinationPath C:\OutlookAI-Q5\nuget-offline  -Force
+    .\Install-DotnetSdk.ps1 -ExpectedSha512 <hash> -Execute
+
+**Budget ~2.5 GB on the guest's C:** — roughly 900 MB installed SDK, ~300 MB extracted package
+cache, and a Release build of the suite on top.
+
+**Take the checkpoint after this, not before.** An SDK, a machine `PATH` edit and a package cache
+are a real change to the machine, and the whole point of the checkpoint discipline in
+`Testbed/README.md` is that a named checkpoint describes a state somebody can return to.
+
+**Neither script has ever been run.** Both carry the banner saying so. Replace those banners with
+what actually happened the first time either of them runs on a guest.
 
 ## The licence clocks, and the corrections worth reading
 
