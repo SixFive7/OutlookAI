@@ -1,8 +1,22 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    THIS SCRIPT HAS NEVER BEEN EXECUTED.
+    RUN 2026-09-17, FIRST TIME, AND IT WORKED. 21 SECONDS, EXIT 0.
     ============================================================================================
+
+    What it produced, on the maintainer's workstation against HEAD: 5 projects restored,
+    **54 packages / 75.7 MB** - exactly the figure predicted by reading the existing
+    project.assets.json files without running a restore - `Source.zip` 2.6 MB, `NuGet.zip`
+    74.5 MB, and the feed check passing on all five projects with every other source cleared.
+
+    That last step is the one that earns its keep: it proves the offline feed is self-sufficient
+    HERE, in seconds, rather than after a ~283 MB copy into a guest. The payload was then copied
+    into OutlookAI-Indexed and `guest/Install-DotnetSdk.ps1` reached VERDICT: TEST-READY on it -
+    2,698 tests discovered, 17 executed, 0 failed, entirely offline.
+
+    THE THING IT CANNOT STAGE, and it says so at the end of every run: the gitignored per-guest
+    `live-test-settings.json`. It names real stores, so it is per-machine and never committed.
+    Without it the live tier has no write allowlist, and that is a REFUSAL rather than a pass.
 
     Written by an agent that was not allowed to run it: it restores NuGet packages, which is a
     download, and downloads were out of scope for the session that produced it. Verified by

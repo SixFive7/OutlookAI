@@ -1,15 +1,39 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    THIS SCRIPT HAS NEVER BEEN EXECUTED.
+    RUN 2026-09-17 ON `OutlookAI-Indexed`. VERDICT: TEST-READY. AND IT FAILED THE FIRST TIME.
     ============================================================================================
 
-    Written by an agent forbidden to run it: the machine it was written on is the maintainer's
-    workstation, which already has the SDK this installs, and no guest was reachable from where
-    it was written. Verified by PARSING only - the same check
-    .github/scripts/check-testbed-references.ps1 applies to every script under Testbed/. Nothing
-    below has run anywhere: no installer was downloaded, none was executed, no SDK was installed
-    and no `dotnet test` was driven to write it.
+    This banner replaces the "never been executed" one. What it did, on OAI-INDEXED over
+    PowerShell Direct, elevated, 64-bit:
+
+      * hashed the staged installer and matched it;
+      * installed .NET SDK 10.0.401 with /install /quiet /norestart /log - and `/log` IS accepted
+        by the bundle, which had been flagged as the likeliest thing to be wrong and was not;
+      * rung 1: `10.0.401`, x64 RID;
+      * rung 2: a throwaway net10.0-windows project restored, built and RAN offline against the
+        staged folder feed - `OUTLOOKAI-SDK-PROBE-OK 10.0.12 x64`;
+      * rung 3: the real suite enumerated, **2,698 tests discovered**;
+      * rung 4: 17 tests executed, 0 failed.
+
+    THE FIRST RUN REPORTED `BROKEN` ON A MACHINE WHERE EVERYTHING HAD WORKED, and the bug is
+    worth reading before touching this file. `Start-Process -PassThru` returns a Process object
+    whose native handle is NOT retained, so once the process exits `.ExitCode` reads `$null`.
+    Every rung compared that `$null` against 0, failed, and printed its own tell: "the installer
+    exited ." and "dotnet --list-sdks exited " - an EMPTY code, not a bad one. The SDK was
+    installed correctly the whole time and `dotnet --list-sdks` was printing `10.0.401` two lines
+    below the failure it caused.
+
+    The fix is to read `.Handle` before waiting, which forces the handle to be cached; there is
+    now also an explicit `$null` branch, because an empty exit code and a failing command must
+    never again be reported as the same thing. A second PowerShell trap was hit while fixing it
+    and is recorded where it happened: `throw ("a" + <newline> + "b")` does not parse.
+
+    WHAT IS STILL NOT PROVEN BY THIS SCRIPT, and it is deliberate: that the LIVE TIER passes.
+    TEST-READY means `dotnet test` builds, discovers and executes here. The tier needs the
+    per-guest `live-test-settings.json` - which names real stores, so no script can supply it -
+    and it must run through guest/Register-InteractiveTask.ps1, because Outlook cannot finish
+    starting in session 0 and a tier run over PowerShell Direct hangs rather than failing.
 
     That class of script has just cost this project five failed builds, so the logic below is
     deliberately dull. Every mechanism it uses is one this testbed has already proved somewhere
@@ -411,7 +435,19 @@ function Invoke-Dotnet {
 
     Say ("    dotnet " + ($Arguments -join ' '))
     $process = Start-Process @startArgs
+    # TOUCH .Handle BEFORE WAITING. Start-Process -PassThru hands back a Process object whose
+    # native handle is not retained, and once the process exits .NET has nothing left to read the
+    # code from: ExitCode comes back $null. Reading .Handle forces the handle to be cached, which
+    # is what keeps ExitCode readable afterwards.
+    # MEASURED 2026-09-17 on OAI-INDEXED, first run of this script: the SDK installed correctly and
+    # every rung was then reported as a failure, because $null is not 0. The messages read
+    # "the installer exited ." and "dotnet --list-sdks exited " - an EMPTY code, not a bad one,
+    # which is the signature of this bug rather than of a failing command.
+    $null = $process.Handle
     $exited = $process.WaitForExit($TimeoutMinutes * 60 * 1000)
+    # The timeout overload returns as soon as the process object signals. Call the parameterless
+    # overload afterwards so redirected output is flushed and the exit state has settled.
+    if ($exited) { $process.WaitForExit() }
 
     if (-not $exited) {
         try { $process.Kill() } catch { }
@@ -568,7 +604,9 @@ SHA-512, and update Testbed/MEDIA.md so the next rebuilder is not doing this aga
             if ($a -match '\s') { $installerArgs += ('"' + $a + '"') } else { $installerArgs += $a }
         }
         $installer = Start-Process -FilePath $InstallerPath -ArgumentList $installerArgs -PassThru -NoNewWindow
+        $null = $installer.Handle   # see Invoke-Dotnet: without this, ExitCode reads $null
         $exited = $installer.WaitForExit($InstallTimeoutMinutes * 60 * 1000)
+        if ($exited) { $installer.WaitForExit() }
         if (-not $exited) {
             try { $installer.Kill() } catch { }
             throw "The installer did not finish within $InstallTimeoutMinutes minutes. Its own log is at $installLog; read that before re-running."
@@ -582,6 +620,14 @@ SHA-512, and update Testbed/MEDIA.md so the next rebuilder is not doing this aga
             Say "  installer exited $ExitRebootRequired - SUCCESS, but Windows wants a reboot."
             Say '  THIS IS NOT A FAILURE. Finish the verification, then reboot the guest before'
             Say '  taking a checkpoint, so the checkpoint is of a settled machine.'
+        }
+        elseif ($null -eq $code) {
+            # Assigned then thrown: PowerShell does NOT parse a multi-line parenthesised expression
+            # after `throw` - it reports "Missing closing ')'". Measured 2026-09-17.
+            $emptyCodeMessage = "The installer exit code came back EMPTY, which is not the same as a failure - "
+            $emptyCodeMessage += "it is this script failing to read it. See the .Handle note in Invoke-Dotnet. "
+            $emptyCodeMessage += "Check $installLog and run dotnet --list-sdks before assuming the install went wrong."
+            throw $emptyCodeMessage
         }
         else {
             throw "The installer exited $code. Its own log is at $installLog; the failing line is usually near the end of it."
