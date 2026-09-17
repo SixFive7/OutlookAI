@@ -191,6 +191,24 @@ worked around without waiting for a release.
 | `HKCU\Software\OutlookAI\Model` | String | absent -> **no `--model` argument at all**, so Claude Code resolves the model itself | the model the CLI is asked for. Written by the Model group on the Claude Code settings tab: a picked alias applies immediately, a typed id commits on Enter, on leaving the box, on Apply now and on close. Accepted only if it is letters, digits, dots, dashes, underscores and square brackets (the last for `opus[1m]` / `sonnet[1m]`) - it goes inside a quoted `--model "..."` argument, and anything else is refused rather than passed on. No model id is hardcoded anywhere any more |
 | `HKCU\Software\OutlookAI\RequestTimeoutSeconds` | DWORD | absent -> `120` | seconds one request may take; clamped to 10 - 3600, so a typo cannot disable the cap or make it useless |
 
+## Corpus STA bounds, added 2026-09-17
+
+The corpus tools drive Outlook on a dedicated STA thread. Until this pass the bound on that
+thread was a single total duration that the thread ignored when it expired - it kept running and
+kept its Outlook references. These are the numbers the replacement uses. **Two of the three are
+ceilings rather than measurements, and are labelled as such**, because the failure they were
+written for has never been reproduced off the guest.
+
+| Value | Default | Override | Where it came from |
+|---|---|---|---|
+| Cold-start allowance (`ComStaBudget.Startup`) | 10 min | `OUTLOOKAI_CORPUS_STA_STARTUP_MS`, `0` disables | **A ceiling, not a measurement.** The only timed cold start in this repository is 3.7 s to `CreateObject` and 4.4 s to a full bind (TODO.md, 2026-09-15 licence probe), and the product's own connect budget is 180 s (below). Two expiries on the unindexed guest on 2026-09-16 were therefore something slower than a normal start, and what that was is **not known** - the evidence is on the guest. Separated from the work bound precisely so a slow start stops being charged to the work |
+| Work bound (`ComStaBudget.Work`) | per command: 3 min reads, 10 min probes, unbounded for build / re-anchor / teardown / scan | - | Unchanged per command. What changed is that it is now a **silence** bound reset by every safe point, not a total duration - so a long but progressing build is no longer racing a clock |
+| Grace after cancelling (`ComStaBudget.Grace`) | 60 s | - | **A ceiling.** How long the runner waits for the thread to acknowledge before declaring it unacknowledged. Chosen to be comfortably longer than one loop iteration; never observed being hit |
+| Acknowledgement poll | 250 ms | - | Arbitrary, and cheap; it only runs during the grace window |
+| Exit code for an unacknowledged stop | `3` | - | `1` means the command failed. `3` means it failed **and something may still be writing**, which invites the opposite next move - do not re-run. `Testbed/guest/Build-Corpus.ps1` tests `-ne 0`, so it is unaffected |
+
+---
+
 ---
 
 ## MCP server

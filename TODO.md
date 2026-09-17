@@ -2405,7 +2405,7 @@
         `LiveTierInventoryTests` gained a fourth verdict
         (`ReachesOutlookWithoutTheClientToken`) so it cannot recur.
 
-- [ ] **`RunSta`'s timeout does not stop the work it gave up on.** Found 2026-09-16 while fixing
+- [x] **FIXED 2026-09-17. `RunSta`'s timeout did not stop the work it gave up on.** Found 2026-09-16 while fixing
       the corpus probes' delete residue, by reading the path an interrupted probe takes.
       `ComCorpusMailbox.RunSta` (`McpServer/OutlookAI.RemediationTools/ComCorpusMailbox.cs:1739`)
       runs its delegate on a dedicated STA thread and, when `thread.Join(timeout)` returns false,
@@ -2429,6 +2429,27 @@
       route. Until then the honest alternative is to say so in the `TimeoutException` message:
       "the STA thread is still running and still holds Outlook references".
 
+      **How it was fixed.** `ComStaRunner` (new, and deliberately COM-free so T1 can pin the whole
+      protocol) replaces `RunSta`. A `ComStaCheckpoint` records a safe point AND answers whether to
+      continue, and `Steps(source, what)` builds that check into the loop's own enumerator - so a
+      corpus loop cannot be written without it, which is what stops the defect recurring rather than
+      merely removing it. All eight call sites converted; write loops stop where the previous
+      manifest line has already been persisted.
+      **The reporting is the other half.** On expiry the runner cancels, WAITS a 60s grace, and then
+      says which happened: acknowledged - unwound, released Outlook, "got as far as N 'build item'
+      step(s)" - or NOT acknowledged, which prints *STILL RUNNING AND STILL HOLDS OUTLOOK REFERENCES*
+      and says not to re-run. `Program.cs` exits **3** for the unacknowledged case and 1 otherwise,
+      because "this failed" and "this failed and something may still be writing" invite opposite
+      next moves.
+      **And the trigger is separated from the work.** The bound was a total duration, so a cold
+      Outlook start was charged against it - which is what actually expired on the guest twice on
+      2026-09-16. `Startup` is now its own allowance ending at `BindNamespace`, and `Work` is a
+      SILENCE bound reset by every safe point.
+      **Still open, and it is a real gap:** what took over ten minutes on the guest that day is not
+      known. The only timed cold start in this repo is 4.4s, so those two expiries were something
+      slower than a normal start, and the 10-minute default is a stated ceiling rather than a
+      measurement. The fix does not depend on the answer - it stops charging the start to the work
+      bound either way - but the number is unvalidated against the failure that motivated it.
 - [ ] **`corpus-reindex` → `corpus-teardown` silently loses rows whenever two scan rows share an
       ordinal.** Found 2026-09-16 while establishing what the census's duplicate-ordinal fault is
       actually for. `CorpusCommands.RunReindex` writes one manifest line per scan row, taking
