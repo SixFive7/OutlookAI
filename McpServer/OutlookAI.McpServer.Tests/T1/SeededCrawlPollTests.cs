@@ -30,7 +30,19 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// </para>
 ///
 /// <para>
-/// Synthetic numbers only. Nothing here touches Outlook, an index, a settings file or a mailbox.
+/// <b>The second defect, found in the first one's shadow (decision 57, 2026-09-17).</b> Bounding
+/// the poll said what ONE lost poll costs and left the case where every poll is lost still
+/// reporting green - a live test passing on the strength of a wait that never asked the index
+/// anything. The fix is the profile split this repository already uses for exactly this ambiguity:
+/// refuse on Production, say so and pass on Portable. It is pinned on both sides here, and
+/// <see cref="TheTwoProfilesCarryTheSameFindingAndDifferOnlyInWhetherTheyStopTheRun"/> is the
+/// control - each side alone still passes if the profile is never read at all, which is the old
+/// always-green behaviour wearing the new wording.
+/// </para>
+///
+/// <para>
+/// Synthetic numbers and a fabricated settings object. Nothing here touches Outlook, an index, a
+/// machine-local settings file or a mailbox, and no real store or account name appears (S6).
 /// </para>
 /// </summary>
 public sealed class SeededCrawlPollTests
@@ -167,12 +179,24 @@ public sealed class SeededCrawlPollTests
         Assert.Contains("ran out of its " + SeededCrawlPoll.StatementTimeoutSeconds + "s bound", line, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The outcome the defect used to print as a statement about the indexer. Nothing was asked,
+    /// so nothing may be concluded - and the line carries the repository's own greppable idiom
+    /// rather than a new one.
+    /// <para>
+    /// <b>What this test used to be, kept because it is the evidence.</b> Until 2026-09-17 these
+    /// four assertions were the WHOLE of what the repository said about this case: the verdict was
+    /// classified, the sentence was written - and the live test then <b>passed</b>, on every
+    /// machine, having established nothing whatever about the crawl. Nothing was deleted to close
+    /// that; every assertion below is the one that was here. What was missing is underneath, in the
+    /// three methods that pin what a run now DOES with the sentence. This one goes on pinning the
+    /// sentence itself, because the sentence is the finding and the profile only decides whether
+    /// the finding stops the run.
+    /// </para>
+    /// </summary>
     [Fact]
     public void AWaitThatCompletedNoPollAtAllProvesNothingAndSaysSo()
     {
-        // The outcome the defect used to print as a statement about the indexer. Nothing was
-        // asked, so nothing may be concluded - and the line carries the repository's own greppable
-        // idiom rather than a new one.
         Assert.Equal(SeededCrawlVerdict.NothingAsked, SeededCrawlPoll.Decide(attachmentRows: 0, pollsCompleted: 0));
 
         string line = SeededCrawlPoll.Explain(SeededCrawlVerdict.NothingAsked, pollsCompleted: 0, pollsLost: 5);
@@ -181,6 +205,138 @@ public sealed class SeededCrawlPollTests
         Assert.Contains("the index was never actually asked", line, StringComparison.Ordinal);
         Assert.Contains("NOT evidence that the gatherer was slow", line, StringComparison.Ordinal);
         Assert.Contains("what ran out was the statement", line, StringComparison.Ordinal);
+    }
+
+    // ------------------------------------------- and what the run DOES about it, by profile
+
+    [Fact]
+    public void AProductionProfileRefusesAWaitThatAskedTheIndexNothing()
+    {
+        // Same idiom, same call, as LivePopulationCoverage and IdentityDraftCoverage: on the
+        // profile this probe was written for, a wait that could not get one statement through
+        // means the machine or its search client has drifted, and a green test hides it.
+        List<string> lines = new();
+
+        InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
+            () => SeededCrawlPoll.Report(
+                Settings(LiveMachineProfile.Production),
+                attachmentRows: 0, pollsCompleted: 0, pollsLost: 5, lines.Add));
+
+        // WHAT was not established comes first - a bare "a population was expected and is missing"
+        // reads here as a flaky wait, which is the misreading this whole file exists to remove.
+        Assert.Contains("the index was never actually asked", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("NOT evidence that the gatherer was slow", refusal.Message, StringComparison.Ordinal);
+
+        // ...including what a saturated indexer would have looked like INSTEAD, because "this is
+        // not the gatherer" is only useful to a reader who knows what the gatherer does look like.
+        Assert.Contains("looks the OTHER way round", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("the statements COMPLETE", refusal.Message, StringComparison.Ordinal);
+
+        // ...and what to do about it, on both halves of the message.
+        Assert.Contains("Windows Search service is running", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains(SeededCrawlPoll.Population, refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("Production", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("Portable", refusal.Message, StringComparison.Ordinal);
+
+        // It refused BEFORE announcing anything - nothing on a Production machine may read as an
+        // acceptable emptiness - so the PROVED NOTHING line never reaches the log at all.
+        Assert.Empty(lines);
+    }
+
+    [Fact]
+    public void APortableProfileSaysSoJustAsLoudlyAndLetsTheRunContinue()
+    {
+        // The other half of the same emptiness. On a machine with no working search index the
+        // absence is simply true, and this test names Requires=SearchIndex, so it should not have
+        // been selected here - failing it would fail a machine for a property of the machine.
+        List<string> lines = new();
+
+        SeededCrawlVerdict verdict = SeededCrawlPoll.Report(
+            Settings(LiveMachineProfile.Portable),
+            attachmentRows: 0, pollsCompleted: 0, pollsLost: 5, lines.Add);
+
+        Assert.Equal(SeededCrawlVerdict.NothingAsked, verdict);
+
+        string line = Assert.Single(lines);
+        Assert.StartsWith(SeededCrawlPoll.NothingAsked + ":", line, StringComparison.Ordinal);
+        Assert.Contains("the index was never actually asked", line, StringComparison.Ordinal);
+        Assert.Contains("looks the OTHER way round", line, StringComparison.Ordinal);
+        Assert.Contains("Windows Search service is running", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheTwoProfilesCarryTheSameFindingAndDifferOnlyInWhetherTheyStopTheRun()
+    {
+        // THE control, and it is needed in both directions. Delete the profile check and the
+        // Portable half above still warns and still passes - which IS the always-green behaviour
+        // this decision removed, in new words. So the assertion is the DIFFERENCE: one wait, the
+        // same five lost polls, refused on one profile and merely reported on the other.
+        List<string> portableLines = new();
+        SeededCrawlVerdict portable = SeededCrawlPoll.Report(
+            Settings(LiveMachineProfile.Portable),
+            attachmentRows: 0, pollsCompleted: 0, pollsLost: 5, portableLines.Add);
+
+        List<string> productionLines = new();
+        InvalidOperationException refusal = Assert.Throws<InvalidOperationException>(
+            () => SeededCrawlPoll.Report(
+                Settings(LiveMachineProfile.Production),
+                attachmentRows: 0, pollsCompleted: 0, pollsLost: 5, productionLines.Add));
+
+        Assert.Equal(SeededCrawlVerdict.NothingAsked, portable);
+        Assert.Empty(productionLines);
+
+        // And that the Portable machine is told exactly as much: the announced line is the
+        // greppable label in front of the finding, and the refusal is the same finding with the
+        // shared drift sentence behind it. Word for word, so neither side can quietly become the
+        // louder one - a warning that says less than the failure is a warning nobody acts on.
+        string finding = Assert.Single(portableLines)[(SeededCrawlPoll.NothingAsked.Length + 2)..];
+        Assert.StartsWith(finding, refusal.Message, StringComparison.Ordinal);
+        Assert.True(
+            refusal.Message.Length > finding.Length,
+            "the Production refusal must add the drift sentence to the finding, not replace it");
+    }
+
+    [Fact]
+    public void AProductionProfileIsNotRefusedForAWaitThatSIMPLYDidNotFindTheRow()
+    {
+        // The second control, and the reason NothingAsked is a separate verdict at all. An index
+        // that ANSWERED and did not have the item is the gatherer's business and the machine's,
+        // not drift - refusing there would fail a Production run for a slow indexer, which is
+        // exactly the option decision 55 rejected. Reported, never refused, on either profile.
+        List<string> lines = new();
+
+        SeededCrawlVerdict verdict = SeededCrawlPoll.Report(
+            Settings(LiveMachineProfile.Production),
+            attachmentRows: 0, pollsCompleted: 6, pollsLost: 0, lines.Add);
+
+        Assert.Equal(SeededCrawlVerdict.NotCrawled, verdict);
+        Assert.Contains("the gatherer had not crawled", Assert.Single(lines), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(LiveMachineProfile.Portable)]
+    [InlineData(LiveMachineProfile.Production)]
+    public void AWaitThatFoundTheRowSaysNothingAndRefusesNothingOnEitherProfile(LiveMachineProfile profile)
+    {
+        // Rows found is rows found, however many polls were lost getting to them: the seed WAS
+        // crawled, so there is nothing to announce and nothing to refuse.
+        List<string> lines = new();
+
+        Assert.Equal(
+            SeededCrawlVerdict.Crawled,
+            SeededCrawlPoll.Report(
+                Settings(profile), attachmentRows: 2, pollsCompleted: 1, pollsLost: 3, lines.Add));
+
+        Assert.Empty(lines);
+    }
+
+    [Fact]
+    public void TheSettingsAndTheSinkAreBothRequired()
+    {
+        Assert.Throws<ArgumentNullException>(
+            () => SeededCrawlPoll.Report(null!, 0, 0, 1, _ => { }));
+        Assert.Throws<ArgumentNullException>(
+            () => SeededCrawlPoll.Report(Settings(LiveMachineProfile.Portable), 0, 0, 1, null!));
     }
 
     [Fact]
@@ -228,9 +384,7 @@ public sealed class SeededCrawlPollTests
         // third argument compiles - it is optional on IIndexClient.ExecuteRows - and restores the
         // 60 s default exactly; widening the catch to Exception compiles too, and turns every
         // provider fault into a quiet lost poll.
-        string path = Path.Combine(TestProjectDir(), "T2", "LiveAttachmentKindRecallTests.cs");
-        Assert.True(File.Exists(path), "the seeded attachment probe's source is missing: " + path);
-        string source = File.ReadAllText(path);
+        string source = LiveProbeSource();
 
         Assert.Contains(
             "client.ExecuteRows(sql, 200, SeededCrawlPoll.StatementTimeoutSeconds)", source, StringComparison.Ordinal);
@@ -241,6 +395,49 @@ public sealed class SeededCrawlPollTests
         // And the three numbers are not re-typed beside the call that uses them.
         Assert.DoesNotContain("SeededCrawlWaitSeconds = ", source, StringComparison.Ordinal);
         Assert.DoesNotContain("SeededCrawlPollSeconds = ", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheLiveProbeGoesThroughReportRatherThanRoundIt()
+    {
+        // Report is the only member that reads the machine profile, so the profile check is only
+        // in force while the live probe actually calls it. Calling Decide and printing Explain
+        // beside it compiles, reads almost identically, prints the identical line - and is exactly
+        // the always-green code this decision replaced. So the call is read out of the source,
+        // which is the substitute the method above already uses for the same reason.
+        string source = LiveProbeSource();
+
+        Assert.Contains(
+            "_fixture.Settings, attachmentRows.Count, pollsCompleted, pollsLost, _output.WriteLine)",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains("SeededCrawlPoll.Report(", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SeededCrawlPoll.Decide(", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SeededCrawlPoll.Explain(", source, StringComparison.Ordinal);
+    }
+
+    // ------------------------------------------------------------------ helpers
+
+    /// <summary>
+    /// A fabricated settings object carrying nothing but the profile and the two fields
+    /// <c>LiveTestSettings</c> will not be constructed without. Synthetic names only (S6) - the
+    /// same shape <c>LivePopulationCoverageTests</c> uses.
+    /// </summary>
+    private static LiveTestSettings Settings(LiveMachineProfile profile)
+    {
+        return new LiveTestSettings
+        {
+            MachineProfile = profile,
+            TestHubStoreDisplayName = "hub@example.test",
+            ExpectedStoreDisplayNames = new List<string> { "hub@example.test" },
+        };
+    }
+
+    private static string LiveProbeSource()
+    {
+        string path = Path.Combine(TestProjectDir(), "T2", "LiveAttachmentKindRecallTests.cs");
+        Assert.True(File.Exists(path), "the seeded attachment probe's source is missing: " + path);
+        return File.ReadAllText(path);
     }
 
     private static string TestProjectDir()

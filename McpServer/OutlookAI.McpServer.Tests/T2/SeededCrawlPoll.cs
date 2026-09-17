@@ -81,11 +81,28 @@ public enum SeededCrawlVerdict
 /// </para>
 ///
 /// <para>
-/// Pure: counts, a <see cref="TimeSpan"/> and a provider in, strings out. No COM, no index, no
-/// settings file. The consumer is <c>Category=Live</c> and CI can never run it - the same reason
-/// <see cref="ArtifactSweepPolicy"/>, <see cref="LivePopulationCoverage"/> and
-/// <see cref="TripwireWatchSoundness"/> are shaped this way - so the decision lives where every
-/// branch of it is reachable from a runner with no Outlook and no search index.
+/// <b>What decision 55 left open, and what decision 57 did with it (2026-09-17).</b> "An expired
+/// statement is one lost poll" says nothing about the case where EVERY poll is lost. That case
+/// printed its sentence and the live test then <b>passed</b> - on every machine, having
+/// established nothing whatever about the crawl. It is the same always-green shape
+/// <see cref="LivePopulationCoverage"/> exists to stop, and it gets the same answer, because the
+/// ambiguity is the same one: is this true of the MACHINE, or is it DRIFT? So
+/// <see cref="Report"/> refuses the run on a Production profile and says so and passes on a
+/// Portable one - through <see cref="LiveTestSettings.RequireProductionPopulation"/>, the very
+/// call the other coverage guards use, so the repository keeps ONE answer to "which machines does
+/// this stop?". Both profiles carry the same diagnosis word for word; they differ only in whether
+/// it stops the run here.
+/// </para>
+///
+/// <para>
+/// Pure: counts, a <see cref="TimeSpan"/>, a provider and the machine's declared profile in,
+/// strings out. No COM, no index and no settings FILE - <see cref="Report"/> takes the loaded
+/// <see cref="LiveTestSettings"/> object and reads one property off it, exactly as
+/// <see cref="LivePopulationCoverage.Require"/> does. The consumer is <c>Category=Live</c> and CI
+/// can never run it - the same reason <see cref="ArtifactSweepPolicy"/>,
+/// <see cref="LivePopulationCoverage"/> and <see cref="TripwireWatchSoundness"/> are shaped this
+/// way - so the decision lives where every branch of it is reachable from a runner with no Outlook
+/// and no search index.
 /// </para>
 /// </summary>
 public static class SeededCrawlPoll
@@ -138,6 +155,26 @@ public static class SeededCrawlPoll
     /// T1 pin greps for it.
     /// </summary>
     public const string NothingAsked = "PROVED NOTHING";
+
+    /// <summary>
+    /// What a Production profile is told it did not get. One phrase, because
+    /// <see cref="LiveTestSettings.RequireProductionPopulation"/> wraps it ("...where
+    /// &lt;this&gt; is expected to exist") and the T1 pin greps for it - the same shape as
+    /// <see cref="IdentityDraftCoverage.Population"/>.
+    /// <para>
+    /// Calling one answered poll a "population" reads oddly for a moment, and then stops: it is
+    /// the identical question every other caller of that method asks - was there anything here to
+    /// measure WITH? - and here the answer is no for the identical reason.
+    /// </para>
+    /// </summary>
+    public const string Population = "a search index that answers at least one of the seeded probe's polls";
+
+    /// <summary>
+    /// The sentence every non-crawl outcome ends on, so that no reader of one takes the whole
+    /// class to have proven nothing.
+    /// </summary>
+    private const string Admission = "Admission is proven unconditionally by the corpus tests in "
+        + "this class, which do not depend on this seed.";
 
     /// <summary>
     /// How many polls <see cref="WaitSeconds"/> affords when every statement runs to the bound and
@@ -233,9 +270,6 @@ public static class SeededCrawlPoll
     /// <param name="pollsLost">Polls whose statement ran out of its bound.</param>
     public static string Explain(SeededCrawlVerdict verdict, int pollsCompleted, int pollsLost)
     {
-        const string admission = "Admission is proven unconditionally by the corpus tests in "
-            + "this class, which do not depend on this seed.";
-
         switch (verdict)
         {
             case SeededCrawlVerdict.Crawled:
@@ -244,21 +278,116 @@ public static class SeededCrawlPoll
 
             case SeededCrawlVerdict.NotCrawled when pollsLost == 0:
                 return "the gatherer had not crawled the seeded item inside the budget - the index "
-                    + "answered all " + pollsCompleted + " poll(s) and did not have it. " + admission;
+                    + "answered all " + pollsCompleted + " poll(s) and did not have it. " + Admission;
 
             case SeededCrawlVerdict.NotCrawled:
                 return "the gatherer had not crawled the seeded item in what was LEFT of the budget: "
                     + pollsLost + " of " + (pollsCompleted + pollsLost) + " poll(s) ended in a statement "
                     + "that ran out of its " + StatementTimeoutSeconds + "s bound, so part of this wait "
                     + "was the search client's rather than the gatherer's. Read the crawl latency off a "
-                    + "run with no lost polls, not off this one. " + admission;
+                    + "run with no lost polls, not off this one. " + Admission;
 
             default:
-                return NothingAsked + ": not one of the " + pollsLost + " poll(s) completed - every "
-                    + "statement ran out of its " + StatementTimeoutSeconds + "s bound, so the index was "
-                    + "never actually asked whether it had the seeded item. This is NOT evidence that "
-                    + "the gatherer was slow: what ran out was the statement. Treat the crawl half of "
-                    + "this test as not having run. " + admission;
+                // The greppable label, then the finding. The label is the ONLY thing the Production
+                // refusal does not repeat, because there it is not an announcement - it is a failure.
+                return NothingAsked + ": " + NothingAskedFinding(pollsLost);
         }
+    }
+
+    /// <summary>
+    /// The whole of what a wait is entitled to do about its own outcome: classify it, say what it
+    /// established, and - when it established nothing at all - refuse or declare, by profile.
+    /// <para>
+    /// The ONLY way the live probe may obtain its verdict. <see cref="Decide"/> and
+    /// <see cref="Explain"/> remain public because the T1 pins exercise each branch of them
+    /// directly, and calling those two side by side at the call site would compile, read almost
+    /// identically, and restore the always-green behaviour exactly - so
+    /// <c>TheLiveProbeGoesThroughReportRatherThanRoundIt</c> reads the call out of the source.
+    /// </para>
+    /// </summary>
+    /// <param name="settings">The machine's live-test settings; only its profile is read.</param>
+    /// <param name="attachmentRows">Attachment-content rows the last completed poll returned.</param>
+    /// <param name="pollsCompleted">Polls whose statement returned rows or an empty result.</param>
+    /// <param name="pollsLost">Polls whose statement ran out of its bound.</param>
+    /// <param name="report">Where the line goes - normally <c>ITestOutputHelper.WriteLine</c>.</param>
+    /// <returns>
+    /// The verdict. <see cref="SeededCrawlVerdict.NothingAsked"/> comes back only on a Portable
+    /// profile, and only after the run has been told so in writing.
+    /// </returns>
+    public static SeededCrawlVerdict Report(
+        LiveTestSettings settings,
+        int attachmentRows,
+        int pollsCompleted,
+        int pollsLost,
+        Action<string> report)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(report);
+
+        SeededCrawlVerdict verdict = Decide(attachmentRows, pollsCompleted);
+        if (verdict == SeededCrawlVerdict.Crawled)
+        {
+            return verdict;
+        }
+
+        if (verdict == SeededCrawlVerdict.NotCrawled)
+        {
+            // The index answered and did not have it. That IS a statement about the gatherer, it is
+            // the machine's property and not the product's, and refusing a Production run over it is
+            // precisely the option decision 55 rejected. Reported on both profiles, refused on
+            // neither.
+            report(Explain(verdict, pollsCompleted, pollsLost));
+            return verdict;
+        }
+
+        // Refusal BEFORE the announcement, the same order as LivePopulationCoverage.Require and for
+        // the same reason: nothing on a Production machine may read as an acceptable emptiness.
+        RefuseOnProduction(settings, pollsLost);
+        report(Explain(verdict, pollsCompleted, pollsLost));
+        return verdict;
+    }
+
+    /// <summary>
+    /// Throws on a Production profile and no-ops on a Portable one - by asking
+    /// <see cref="LiveTestSettings.RequireProductionPopulation"/> rather than by reading the
+    /// profile a second time, so the repository keeps one answer to "which machines does this
+    /// stop?" and this one cannot drift away from the others.
+    /// <para>
+    /// What it adds in front of that shared refusal is WHAT was not established. The refusal on its
+    /// own says a population was expected and is absent, which a reader meeting it here would take
+    /// for a flaky wait; the finding says the index was never asked at all, that this is not the
+    /// gatherer being slow, and what a saturated gatherer would have looked like instead. It is the
+    /// same text the Portable line carries, so neither profile learns less than the other.
+    /// </para>
+    /// </summary>
+    private static void RefuseOnProduction(LiveTestSettings settings, int pollsLost)
+    {
+        try
+        {
+            settings.RequireProductionPopulation(Population);
+        }
+        catch (InvalidOperationException refusal)
+        {
+            throw new InvalidOperationException(
+                NothingAskedFinding(pollsLost) + " " + refusal.Message, refusal);
+        }
+    }
+
+    /// <summary>
+    /// The finding itself, with no label and no verdict on what should happen next - which is why
+    /// both profiles can carry it unchanged.
+    /// </summary>
+    private static string NothingAskedFinding(int pollsLost)
+    {
+        return "not one of the " + pollsLost + " poll(s) completed - every statement ran out of its "
+            + StatementTimeoutSeconds + "s bound, so the index was never actually asked whether it "
+            + "had the seeded item. This is NOT evidence that the gatherer was slow: what ran out "
+            + "was the statement. A gatherer that really is saturated looks the OTHER way round - "
+            + "the statements COMPLETE, one after another, and keep coming back without the row, "
+            + "which this probe reports as the gatherer not having crawled the seeded item inside "
+            + "the budget. So nothing at all was established here about the crawl: treat that half "
+            + "of this test as not having run, check that the Windows Search service is running and "
+            + "answering on this machine, and re-run. Until one statement gets through, this probe "
+            + "measures the search client and not the gatherer. " + Admission;
     }
 }
