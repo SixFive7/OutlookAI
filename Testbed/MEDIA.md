@@ -15,7 +15,7 @@ been unrebuildable. Hence the rule at the bottom of this file.
 | --- | --- | --- |
 | Windows | A Windows 11 x64 image | **STAGED 2026-08-24**: `.work/media/Win11_25H2_EnglishInternational_x64_v2.iso` (7.9 GB, gitignored). Consumer multi-edition, volume label `CCCOMA_X64FRE_EN-GB_DV9`, so it carries Pro. |
 | Office | Office Deployment Tool + a configuration | **STAGED**: `.work/office-odt/` (gitignored), holding `setup.exe` and `VoIPFabric.xml`. A testbed-specific `Testbed.xml` sits beside them — see below. |
-| .NET SDK | The .NET 10 SDK, **win-x64**, as the `.exe` installer | **NOT STAGED as of 2026-09-17**, and nothing in this repository has ever fetched it. It is what lets a guest run `dotnet test` at all — see "The .NET SDK" below for the version, the source and the hash. |
+| .NET SDK | The .NET 10 SDK, **win-x64**, as the `.exe` installer | **STAGED 2026-09-17**: `.work/media/dotnet-sdk-10.0.401-win-x64.exe` (215,437,248 bytes, gitignored), SHA-512 **matched against Microsoft's published hash**. It is what lets a guest run `dotnet test` at all — see "The .NET SDK" below for the version, the source and the hash. |
 
 ### Windows — staged, and it is NOT the edition the old guest ran
 
@@ -227,11 +227,12 @@ package already use. Microsoft's own SDK, free, no licence key, no third-party c
 | --- | --- |
 | Product | **.NET SDK 10**, Windows, **x64** |
 | Pinned version | **10.0.401** — what the host runs, read with `dotnet --list-sdks` on 2026-09-17 |
-| File | `dotnet-sdk-10.0.401-win-x64.exe` (~250 MB, the figure is an estimate — nobody has staged it yet) |
+| File | `dotnet-sdk-10.0.401-win-x64.exe` — **215,437,248 bytes exactly** (the earlier ~250 MB was an estimate; it is ~205 MiB) |
 | Where it comes from | Microsoft's .NET 10 download page, the win-x64 **Installer** under SDK. Not a zip, not `dotnet-install.ps1` (that one downloads, and the guest has no network). |
 | Staged at | `.work/media/dotnet-sdk-10.0.401-win-x64.exe` on the host — beside the Windows ISO, for the reason the Office section gives about volatile directories |
 | Verified by | **SHA-512**, which is what Microsoft publishes for .NET installers. `Testbed/host/Publish-LiveTierPayload.ps1` prints the hash of the file you staged; compare it against Microsoft's before recording it here. |
-| Recorded hash | **NONE YET.** See "the hash is deliberately blank" below. |
+| Recorded hash | `f0d8f8e7ec24efb05172a65dd80c4a9b1ef17efcebdbf0f57c15f436eea417960a7eeb6726c473a042373d6a8b94ac1adc7d680decbf7d2c45fa5c5662d62265` |
+| Hash provenance | **Matched against Microsoft's own published value**, not merely computed from the file received. Taken from `https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json`, release **10.0.12**, `sdk.files[]`. **The file is named `dotnet-sdk-win-x64.exe` in that metadata - WITHOUT the version** - so a lookup keyed on the download's filename finds nothing and silently reports "not found", which is exactly what happened on the first attempt. |
 | Installed with | `Testbed/guest/Install-DotnetSdk.ps1`, which runs it `/install /quiet /norestart` |
 
 **Why 10, and whether a newer one would do.** Every project under `McpServer/` targets
@@ -255,7 +256,14 @@ drift ahead of it by accident.
 index tier reads the `Search.CollatorDSO` OLE DB provider, which has no 32-bit story here. The
 `-Verify` in the guest script reads the RID out of `dotnet --info` and refuses anything else.
 
-### The hash is deliberately blank, and that is not laziness
+### The hash WAS deliberately blank, and is now filled - the reasoning is kept
+
+> **FILLED 2026-09-17.** The installer is staged and its SHA-512 is in the table above, matched
+> against Microsoft's published value rather than merely computed from what arrived. The argument
+> below is kept because it is why the parameter stays **mandatory and undefaulted** in
+> `Install-DotnetSdk.ps1`: a hash that travels with the thing it checks proves nothing, and a
+> rebuilder staging a different build must be made to look the number up rather than inherit it.
+
 
 `Testbed/guest/Install-MailSink.ps1` carries a default SHA-256 taken from a published manifest
 and says honestly that it has never been compared against a downloaded file. **This entry carries
