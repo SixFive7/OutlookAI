@@ -1,13 +1,35 @@
 <#
     ============================================================================================
-    THIS SCRIPT HAS NEVER BEEN EXECUTED. Nothing below has touched a MAPI profile.
+    RUN 2026-09-16 ON A GUEST, AND `MAPIAdminProfiles` FAILED. READ THIS BEFORE USING IT.
     ============================================================================================
 
-    It was written by an agent that was FORBIDDEN to run any of it: the machine it was written on
-    is the maintainer's own workstation, with a real Outlook profile and delegate mailboxes on it,
-    and everything here creates, renames and deletes profiles. Every file in this set was verified
-    by PARSING it - [System.Management.Automation.Language.Parser]::ParseFile - and by nothing
-    else. Once it HAS run on a guest, replace this banner with what it actually did.
+    This banner replaces the "never been executed" one, as that banner asked - and the answer is
+    not the happy one. The first time anything in this file was executed anywhere, it threw:
+
+        Exception calling "MAPIAdminProfiles" with "2" argument(s): "Unable to cast COM object of
+        type 'System.__ComObject' to interface type 'OutlookAI.Testbed.IProfAdmin'. This operation
+        failed because the QueryInterface call on the COM component for the interface with IID
+        '{00020379-0000-0000-C000-000000000046}' failed due to the following error: No such
+        interface supported (Exception from HRESULT: 0x80004002 (E_NOINTERFACE))."
+
+    Measured on `OutlookAI-Unindexed` / OAI-UNINDEXED, Office LTSC 2024 (`ProPlus2024Volume` on
+    `PerpetualVL2024`, build 16.0.17932.20884), 64-bit elevated PowerShell, user `vmadmin`,
+    called from `Set-DefaultOutlookProfile.ps1 -Name CorpusProfile -Execute`.
+
+    So the MAPI stub RESOLVES and `MAPIAdminProfiles` is CALLABLE, but the object it hands back
+    does not answer to this file's `IProfAdmin` declaration. Whether that is the declaration, the
+    IID, the vtable order or an initialisation ordering problem has NOT been established. Do not
+    assume any other entry point here works because this one was reached: nothing else in this
+    file has been executed either, and one proven-broken export is a reason to treat the rest as
+    unproven rather than as merely unrun.
+
+    WHAT WAS DONE INSTEAD. `Set-DefaultOutlookProfile.ps1` no longer depends on this path; the
+    default profile is set through the documented HKCU `DefaultProfile` value, which is MEASURED
+    working on the same guest on the same day. See that script's header.
+
+    THE GENERAL LESSON, recorded because it cost five failed corpus builds to learn: a script
+    verified by PARSING is a script whose syntax is verified. This one parsed perfectly and its
+    central call does not work.
 
     WHAT THIS FILE IS. The shared Extended MAPI layer for the profile scripts beside it. It is
     DOT-SOURCED, never run:

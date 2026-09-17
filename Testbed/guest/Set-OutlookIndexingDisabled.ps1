@@ -1,21 +1,36 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    THIS SCRIPT HAS NEVER BEEN EXECUTED.
+    RUN 2026-09-16 ON `OutlookAI-Unindexed`, AND IT WORKED. VERDICT: UNINDEXED.
     ============================================================================================
 
-    Written by an agent forbidden to run it: the machine it was written on is the maintainer's
-    workstation, with a real Outlook profile, real mail and a real Windows Search catalog on it,
-    and this script changes what Windows Search indexes. Verified by PARSING only - the same
-    check .github/scripts/check-testbed-references.ps1 applies to every script under Testbed/.
-    Nothing below has run anywhere; no crawl scope was altered, no service restarted and no
-    catalog rebuilt to write it.
+    This banner replaces the "never been executed" one, as that banner asked. What it did, on
+    OAI-UNINDEXED, 64-bit elevated over PowerShell Direct, with Outlook closed:
 
-    What WAS measured, read-only, on that workstation, and is therefore fact rather than
-    inference: the registry shape of the Outlook crawl-scope rule, the COM registration of the
-    Search Crawl Scope Manager, and the host of that COM class. Those measurements are in
-    .work/unindexed-guest.md with their evidence class. Replace this banner with what the script
-    actually did once it has run on a guest, and say which of the four verdicts it printed.
+      * dry run first, which wrote nothing and printed the blast radius;
+      * `-Execute -RebuildCatalog`: created the policy key, set `PreventIndexingOutlook = 1`,
+        requested a catalog rebuild and restarted WSearch (never disabled it);
+      * `-Verify`: two catalog readings 10 minutes apart, both `catalog reachable=True anyRow=1
+        mapiRows=0 mailRows=0`, and `VERDICT: UNINDEXED` - the shape the degraded tier wants,
+        with the indexer still running and `wSearchStartMode` still `automatic`.
+
+    THE ONE THING WORTH READING BEFORE YOU TRUST IT. It reported `no mapi rule for this account
+    under WorkingSetRules - nothing to change`, because Outlook had never registered a crawl
+    scope on that guest. So on THAT machine the registry layer changed nothing and the GROUP
+    POLICY layer did all the work. The script said so in plain words rather than reporting
+    success for a write it never made - "absent is not the same as excluded" - which is the
+    distinction a registry-only implementation would have got wrong. The registry half therefore
+    remains UNEXERCISED: it has never had a rule to flip.
+
+    ADDED AFTER THE RUN: `Assert-OutlookClosed`. Microsoft documents that the PST provider is
+    "very sensitive to the indexing state changing while the PST is open", and that the PST "may
+    end up kicking off an installer to repair Outlook" if it changes. This script changes exactly
+    that state and restarts WSearch, so it now refuses while Outlook is running. That refusal did
+    not exist during the run above; Outlook happened to be closed.
+
+    Read-only measurements behind the design - the registry shape of the crawl-scope rule, the
+    COM registration of the Search Crawl Scope Manager and the host of that COM class - are in
+    .work/unindexed-guest.md with their evidence class.
 
 .SYNOPSIS
     Takes a testbed guest's Outlook OUT of the Windows Search index - and then proves the store

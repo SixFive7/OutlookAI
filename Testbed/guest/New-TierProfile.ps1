@@ -1,14 +1,28 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    DRAFT. THIS SCRIPT HAS NEVER BEEN EXECUTED.
+    RUN ON BOTH GUESTS, 2026-09-15/16, AND IT WORKS. NOT A DRAFT.
     ============================================================================================
 
-    It was written by an agent that was forbidden to touch Outlook, MAPI, a mail profile or the
-    profile registry hive, on a workstation holding real mail and delegate mailboxes. Nothing
-    here has been run anywhere. It has been verified by PARSING only - the same check
-    .github/scripts/check-testbed-references.ps1 applies to every script under Testbed/. Once it
-    HAS run on a guest, replace this banner with what it actually did.
+    This banner replaces the "never been executed" one, as that banner asked. It built the tier
+    profile - one Unicode PST plus a POP3 account - on `OutlookAI-Indexed` (after two PRF
+    variants) and on `OutlookAI-Unindexed` (first attempt, from the committed scripts, untouched
+    by hand). That is the step three research passes had concluded could not be done for free.
+
+    THE BUG THE FIRST RUN FOUND, because it is the reason to trust the script now and the reason
+    not to trust a verifier generally. `-Verify` reported the PRF route DEAD five times over -
+    "no profile named", "no accounts", "127.0.0.1 appears in no account value" - while its own
+    raw dump, printed directly underneath, contradicted every line. It was reading the LEGACY
+    Windows Messaging Subsystem hive; profiles moved to the Office hive at Outlook 2013. A
+    verifier reading the wrong place does not fail loudly: it reports a working route as dead,
+    and here that would have meant abandoning the only free path to a POP3 account. Fixed, and
+    the fix is why the script now prefers the modern hive and falls back to the legacy one.
+
+    WHAT MAKES THE PRF WORK, since it is not obvious and was expensive to find: the file must
+    name NO PST service and NO `DefaultStore`, and `ForcePSTPath` decides where Outlook mints
+    the store. A store Outlook MINTS is a store Outlook BINDS, and binding is the one step a
+    text file cannot perform - name the store in the file and `Account.DeliveryStore` comes back
+    NULL, after which `NewDraft` fails.
 
 .SYNOPSIS
     Creates the testbed TIER profile - one Unicode PST plus one POP3 account on a loopback mail
