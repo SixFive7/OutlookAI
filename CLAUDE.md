@@ -12,6 +12,25 @@ Rules:
 - Never modify released sections (any `## v...` heading). Only add to `## Unreleased`.
 - If the Unreleased section already has entries from earlier in the session, add to it rather than replacing it.
 
+## Pushing
+
+**Push every commit individually, as it is made.** Decided 2026-09-17, standing. Do not
+accumulate a local backlog and push it in one go.
+
+**One by one means the FIRST-PARENT MAINLINE, not `git rev-list` order.** A repository with
+merges is a DAG, and the commits on a merged side branch are not fast-forwards from one
+another - pushing them in `rev-list --reverse` order fails on the first side-branch commit
+with *"the tip of your current branch is behind its remote counterpart"*. The sequence that
+works is:
+
+```
+git rev-list --reverse --first-parent origin/master..master
+git push origin <sha>:refs/heads/master      # for each, in that order
+```
+
+Each step advances `master` by exactly one mainline commit, and a merge carries its whole
+branch with it. Measured 2026-09-17 on a 16-commit backlog: 12 mainline steps, all clean.
+
 ## Build and Release
 
 - **Build** runs automatically on every pull request (`.github/workflows/build.yml`), and can be triggered on demand. It only compiles — no releases, no tags, no changelog changes. On pull requests it also runs a dependency review.
