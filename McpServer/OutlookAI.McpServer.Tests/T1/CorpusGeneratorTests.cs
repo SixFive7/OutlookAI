@@ -486,11 +486,48 @@ public class CorpusGeneratorTests
     public void Store_ExplanationNamesOnlyTheOffendingStore()
     {
         string text = CorpusSafety.Explain(
-            CorpusStoreRefusal.NotOnAllowlist, GoodFacts("Production Mailbox"));
+            CorpusStoreRefusal.NotOnAllowlist, GoodFacts("Production Mailbox"), NoAccounts());
         Assert.Contains("Production Mailbox", text, StringComparison.Ordinal);
         Assert.Contains("REFUSING", text, StringComparison.Ordinal);
         Assert.Contains("--allow-store", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Corpus PST", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Store_ExplanationNamesTheBoundProfileAndNotOnlyTheStore()
+    {
+        // 2026-09-16: five corpus-build attempts were refused with "store '(unnamed store)'
+        // ... profile accounts: 1" and nothing else. The tool logs on with the DEFAULT profile
+        // and does not attach to the Outlook on screen, so the store name alone cannot tell an
+        // operator whether the thing being vetted is the thing they meant.
+        string text = CorpusSafety.Explain(
+            CorpusStoreRefusal.ProfileCanSend,
+            GoodFacts() with { DisplayName = null },
+            new CorpusProfileFacts(1, 0, 0, "Outlook Measurement Profile"));
+        Assert.Contains("(unnamed store)", text, StringComparison.Ordinal);
+        Assert.Contains("Outlook Measurement Profile", text, StringComparison.Ordinal);
+        Assert.Contains("DEFAULT profile", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Store_ExplanationSaysSoWhenTheProfileNameCouldNotBeRead()
+    {
+        // Unreadable is a THIRD answer, not a blank: "which profile?" left empty reads as
+        // "there isn't one", and an operator would stop looking at the question that matters.
+        string refusal = CorpusSafety.Explain(
+            CorpusStoreRefusal.NotOnAllowlist,
+            GoodFacts("Production Mailbox"),
+            new CorpusProfileFacts(1, 0, 0));
+        Assert.Contains("(profile name unreadable)", refusal, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Store_AcceptanceAlsoNamesTheBoundProfile()
+    {
+        string text = CorpusSafety.Explain(
+            CorpusStoreRefusal.None, GoodFacts(), new CorpusProfileFacts(0, 0, 0, "Measurement"));
+        Assert.Contains("accepted as a corpus target", text, StringComparison.Ordinal);
+        Assert.Contains("Measurement", text, StringComparison.Ordinal);
     }
 
     // -------------------------------------------------- profile / send capability
@@ -569,7 +606,8 @@ public class CorpusGeneratorTests
     [Fact]
     public void Profile_RefusalMessageSaysWhatToDoAndOffersNoFlag()
     {
-        string text = CorpusSafety.Explain(CorpusStoreRefusal.ProfileCanSend, GoodFacts());
+        string text = CorpusSafety.Explain(
+            CorpusStoreRefusal.ProfileCanSend, GoodFacts(), new CorpusProfileFacts(1, 0, 0));
         Assert.Contains("no mail accounts", text, StringComparison.Ordinal);
         Assert.Contains("There is no flag for this", text, StringComparison.Ordinal);
         Assert.Contains("Outbox", text, StringComparison.Ordinal);

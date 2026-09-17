@@ -23,6 +23,15 @@ namespace OutlookAI.RemediationTools;
 /// because a session per item would spend more time creating Outlook Application objects
 /// than writing mail.
 /// </para>
+/// <para>
+/// <b>Every loop in here steps through a <see cref="ComStaCheckpoint"/>, and that is not a
+/// style.</b> The STA thread is where this process touches a mailbox, and until 2026-09-17 a
+/// run whose bound expired was simply left running: the caller was told it had failed while
+/// the thread went on creating and deleting items. Cancellation is cooperative because .NET
+/// gives no safe alternative, which means a loop that does not step cannot be stopped - so
+/// stepping is how these loops iterate rather than something added to them. See
+/// <see cref="ComStaRunner"/> for what the caller is told when a stop is not acknowledged.
+/// </para>
 /// </summary>
 public static class ComCorpusMailbox
 {
@@ -193,8 +202,9 @@ public static class ComCorpusMailbox
     /// <para>
     /// <b>It runs at the START of a pass as well as after each item</b>, and the start is the
     /// half that matters most: it is what heals a store built before this existed, and the
-    /// only thing that can recover an item stranded by a kill, by the <c>RunSta</c> timeout,
-    /// or by a throw between the save and the EntryID capture.
+    /// only thing that can recover an item stranded by a kill, by an STA run that was
+    /// abandoned without acknowledging its stop (see <see cref="ComStaRunner"/>), or by a
+    /// throw between the save and the EntryID capture.
     /// </para>
     /// <para>
     /// <b>Two keys, both required, same as a teardown.</b> The EntryID allowlist is built from
@@ -211,7 +221,8 @@ public static class ComCorpusMailbox
     /// exits after one pass whenever there is no residue - which is every run after this one.
     /// </para>
     /// </summary>
-    private static int PurgeProbeResidue(dynamic store, dynamic ns, string storeId, string corpusId)
+    private static int PurgeProbeResidue(
+        dynamic store, dynamic ns, string storeId, string corpusId, ComStaCheckpoint checkpoint)
     {
         // Never the build's manifest: a purge looks at the store's own default folders, and
         // handing it a manifest would widen it to builder-created folders for no gain - a
@@ -221,7 +232,12 @@ public static class ComCorpusMailbox
         int deleted = 0;
         for (int pass = 0; pass < ProbeResiduePasses; pass++)
         {
-            ScanResult scan = ScanStore(store, noManifest, corpusId);
+            if (!checkpoint.Step("purge pass"))
+            {
+                break;
+            }
+
+            ScanResult scan = ScanStore(store, noManifest, corpusId, checkpoint);
             IReadOnlyList<ScanRow> residue = SelectProbeResidue(scan.Items);
             if (residue.Count == 0)
             {
@@ -229,7 +245,7 @@ public static class ComCorpusMailbox
             }
 
             HashSet<string> allowlist = CorpusSafety.BuildEntryIdAllowlist(residue.Select(r => r.EntryId));
-            foreach (ScanRow row in residue)
+            foreach (ScanRow row in checkpoint.Steps(residue, "purge delete"))
             {
                 if (DeleteOne(ns, storeId, row.EntryId, allowlist, corpusId) == DeleteVerdict.Deleted)
                 {
@@ -248,8 +264,10 @@ public static class ComCorpusMailbox
     /// </summary>
     public static CorpusStoreFacts ReadStoreFacts(string storeDisplayName)
     {
-        return RunSta(
-            () =>
+        return RunSta<CorpusStoreFacts>(
+            "corpus store facts",
+            TimeSpan.FromMinutes(3),
+            checkpoint =>
             {
                 dynamic app = CreateOutlookApplication();
                 dynamic? ns = null;
@@ -257,7 +275,7 @@ public static class ComCorpusMailbox
                 dynamic? store = null;
                 try
                 {
-                    ns = app.GetNamespace("MAPI");
+                    ns = BindNamespace(app, checkpoint);
                     stores = ns.Stores;
                     store = FindStore(stores, storeDisplayName);
                     if (store == null)
@@ -278,8 +296,7 @@ public static class ComCorpusMailbox
                     Release(ns);
                     Release(app);
                 }
-            },
-            TimeSpan.FromMinutes(3));
+            });
     }
 
     /// <summary>
@@ -298,8 +315,10 @@ public static class ComCorpusMailbox
     /// </summary>
     public static CorpusProfileFacts ReadProfileFacts(string storeDisplayName)
     {
-        return RunSta(
-            () =>
+        return RunSta<CorpusProfileFacts>(
+            "corpus profile facts",
+            TimeSpan.FromMinutes(3),
+            checkpoint =>
             {
                 dynamic app = CreateOutlookApplication();
                 dynamic? ns = null;
@@ -308,7 +327,7 @@ public static class ComCorpusMailbox
                 dynamic? accounts = null;
                 try
                 {
-                    ns = app.GetNamespace("MAPI");
+                    ns = BindNamespace(app, checkpoint);
                     stores = ns.Stores;
                     store = FindStore(stores, storeDisplayName);
                     string? targetStoreId = store == null ? null : TryRead<string>(() => (string)store!.StoreID);
@@ -317,13 +336,18 @@ public static class ComCorpusMailbox
                     int? count = TryReadStruct(() => (int)accounts!.Count);
                     if (count == null)
                     {
-                        return new CorpusProfileFacts(null, 0, 0);
+                        return new CorpusProfileFacts(null, 0, 0, checkpoint.ProfileName);
                     }
 
                     int delivering = 0;
                     int unreadable = 0;
                     for (int i = 1; i <= count.Value; i++)
                     {
+                        if (!checkpoint.Step("profile account"))
+                        {
+                            break;
+                        }
+
                         dynamic? account = null;
                         dynamic? deliveryStore = null;
                         try
@@ -353,7 +377,7 @@ public static class ComCorpusMailbox
                         }
                     }
 
-                    return new CorpusProfileFacts(count, delivering, unreadable);
+                    return new CorpusProfileFacts(count, delivering, unreadable, checkpoint.ProfileName);
                 }
                 finally
                 {
@@ -363,8 +387,7 @@ public static class ComCorpusMailbox
                     Release(ns);
                     Release(app);
                 }
-            },
-            TimeSpan.FromMinutes(3));
+            });
     }
 
     /// <summary>
@@ -384,8 +407,10 @@ public static class ComCorpusMailbox
     public static IReadOnlyList<CorpusPlacementProbe> ProbePlacement(string storeDisplayName, string corpusId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
-        return RunSta(
-            () =>
+        return RunSta<IReadOnlyList<CorpusPlacementProbe>>(
+            "corpus placement probe",
+            TimeSpan.FromMinutes(10),
+            checkpoint =>
             {
                 dynamic app = CreateOutlookApplication();
                 dynamic? ns = null;
@@ -396,7 +421,7 @@ public static class ComCorpusMailbox
                 var probes = new List<CorpusPlacementProbe>();
                 try
                 {
-                    ns = app.GetNamespace("MAPI");
+                    ns = BindNamespace(app, checkpoint);
                     stores = ns.Stores;
                     store = FindStore(stores, storeDisplayName)
                         ?? throw new InvalidOperationException("Store not found for the placement probe.");
@@ -408,16 +433,20 @@ public static class ComCorpusMailbox
 
                     // Before the first rung: whatever an earlier run, or an earlier build of
                     // this tool, left lying in the store.
-                    PurgeProbeResidue(store!, ns!, storeId, corpusId);
+                    PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint);
 
-                    foreach (CorpusPlacementMethod method in CorpusPlacement.Ladder)
+                    // The RUNG is the safe point, not anything inside it: a rung creates one
+                    // throwaway item and deletes it in its own finally, so stopping between
+                    // rungs leaves nothing behind, and stopping inside one would leave an item
+                    // no manifest records.
+                    foreach (CorpusPlacementMethod method in checkpoint.Steps(CorpusPlacement.Ladder, "placement rung"))
                     {
                         probes.Add(RunOnePlacementProbe(
-                            ns!, target!, drafts!, storeId, targetFolderId, targetName, corpusId, method));
+                            ns!, target!, drafts!, storeId, targetFolderId, targetName, corpusId, method, checkpoint));
 
                         // And after each rung's own delete, because that delete was a SOFT one
                         // and the item is now sitting in Deleted Items under a new id.
-                        PurgeProbeResidue(store!, ns!, storeId, corpusId);
+                        PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint);
                     }
 
                     return (IReadOnlyList<CorpusPlacementProbe>)probes;
@@ -431,8 +460,7 @@ public static class ComCorpusMailbox
                     Release(ns);
                     Release(app);
                 }
-            },
-            TimeSpan.FromMinutes(10));
+            });
     }
 
     private static CorpusPlacementProbe RunOnePlacementProbe(
@@ -443,7 +471,8 @@ public static class ComCorpusMailbox
         string targetFolderId,
         string targetFolderName,
         string corpusId,
-        CorpusPlacementMethod method)
+        CorpusPlacementMethod method,
+        ComStaCheckpoint checkpoint)
     {
         dynamic? items = null;
         dynamic? mail = null;
@@ -519,7 +548,7 @@ public static class ComCorpusMailbox
             // The decisive check. The freshness sweep enumerates a folder through its TABLE,
             // so an item the table does not carry does not exist as far as the measurement
             // is concerned - however correct its Parent looks.
-            TableLookup lookup = TableFind(target, ProbeSubjectFilter(corpusId), entryId!);
+            TableLookup lookup = TableFind(target, ProbeSubjectFilter(corpusId), entryId!, checkpoint);
 
             return new CorpusPlacementProbe(
                 method,
@@ -648,8 +677,10 @@ public static class ComCorpusMailbox
         DateTime requested = DateTime.SpecifyKind(requestedUtc, DateTimeKind.Utc);
         TimeSpan localOffset = TimeZoneInfo.Local.GetUtcOffset(requested);
 
-        return RunSta(
-            () =>
+        return RunSta<IReadOnlyList<CorpusDateProbe>>(
+            "corpus date fidelity probe",
+            TimeSpan.FromMinutes(10),
+            checkpoint =>
             {
                 dynamic app = CreateOutlookApplication();
                 dynamic? ns = null;
@@ -660,7 +691,7 @@ public static class ComCorpusMailbox
                 var probes = new List<CorpusDateProbe>();
                 try
                 {
-                    ns = app.GetNamespace("MAPI");
+                    ns = BindNamespace(app, checkpoint);
                     stores = ns.Stores;
                     store = FindStore(stores, storeDisplayName)
                         ?? throw new InvalidOperationException("Store not found for the date probe.");
@@ -671,13 +702,14 @@ public static class ComCorpusMailbox
                     // Same as the placement probe: once before the first rung, to heal residue
                     // this run did not create, and once after every throwaway item's own soft
                     // delete has dropped it into Deleted Items under a new id.
-                    PurgeProbeResidue(store!, ns!, storeId, corpusId);
+                    PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint);
 
-                    foreach (CorpusDateWriteMethod method in CorpusDateFidelity.Ladder)
+                    foreach (CorpusDateWriteMethod method in checkpoint.Steps(CorpusDateFidelity.Ladder, "date rung"))
                     {
                         CorpusDateProbe first = RunOneProbe(
-                            ns!, folder!, drafts!, storeId, corpusId, method, placement, requested, requested);
-                        PurgeProbeResidue(store!, ns!, storeId, corpusId);
+                            ns!, folder!, drafts!, storeId, corpusId, method, placement, requested, requested,
+                            checkpoint);
+                        PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint);
                         CorpusDateOffsetVerdict verdict =
                             CorpusDateFidelity.ClassifyOffset(requested, first.ReadBackReceivedUtc, localOffset);
                         if (verdict != CorpusDateOffsetVerdict.LocalOffsetApplied)
@@ -689,8 +721,9 @@ public static class ComCorpusMailbox
                         DateTime compensated = CorpusDateFidelity.CompensatedWriteValue(
                             requested, verdict, localOffset, first.ReadBackReceivedUtc!.Value);
                         probes.Add(RunOneProbe(
-                            ns!, folder!, drafts!, storeId, corpusId, method, placement, requested, compensated));
-                        PurgeProbeResidue(store!, ns!, storeId, corpusId);
+                            ns!, folder!, drafts!, storeId, corpusId, method, placement, requested, compensated,
+                            checkpoint));
+                        PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint);
                     }
 
                     return (IReadOnlyList<CorpusDateProbe>)probes;
@@ -704,8 +737,7 @@ public static class ComCorpusMailbox
                     Release(ns);
                     Release(app);
                 }
-            },
-            TimeSpan.FromMinutes(10));
+            });
     }
 
     /// <summary>
@@ -752,7 +784,9 @@ public static class ComCorpusMailbox
         Stopwatch elapsed = Stopwatch.StartNew();
 
         return RunSta<BuildOutcome>(
-            () =>
+            "corpus build",
+            null,
+            checkpoint =>
             {
                 dynamic app = CreateOutlookApplication();
                 dynamic? ns = null;
@@ -767,7 +801,7 @@ public static class ComCorpusMailbox
                 string? firstError = null;
                 try
                 {
-                    ns = app.GetNamespace("MAPI");
+                    ns = BindNamespace(app, checkpoint);
                     stores = ns.Stores;
                     store = FindStore(stores, storeDisplayName)
                         ?? throw new InvalidOperationException("Store not found for the corpus build.");
@@ -783,7 +817,12 @@ public static class ComCorpusMailbox
                         draftsItems = draftsFolder.Items;
                     }
 
-                    foreach (int ordinal in todo)
+                    // THE SAFE POINT OF A WRITE LOOP, and the reason the stop is cooperative
+                    // rather than an abort: `record` has already persisted the previous item's
+                    // manifest line by the time the next iteration begins, so a build stopped
+                    // at this boundary leaves a store the manifest describes exactly - which is
+                    // what makes it resumable and, more to the point, tearable-down.
+                    foreach (int ordinal in checkpoint.Steps(todo, "build item"))
                     {
                         CorpusItemSpec spec = plan.Describe(ordinal);
                         if (!folderItems.TryGetValue(spec.FolderId, out dynamic? items))
@@ -875,8 +914,7 @@ public static class ComCorpusMailbox
                     Release(ns);
                     Release(app);
                 }
-            },
-            timeout: null);
+            });
     }
 
     /// <summary>What a re-anchor did.</summary>
@@ -936,7 +974,9 @@ public static class ComCorpusMailbox
 
         Stopwatch elapsed = Stopwatch.StartNew();
         return RunSta<ReanchorOutcome>(
-            () =>
+            "corpus re-anchor",
+            null,
+            checkpoint =>
             {
                 dynamic app = CreateOutlookApplication();
                 dynamic? ns = null;
@@ -949,13 +989,17 @@ public static class ComCorpusMailbox
                 string? firstError = null;
                 try
                 {
-                    ns = app.GetNamespace("MAPI");
+                    ns = BindNamespace(app, checkpoint);
                     stores = ns.Stores;
                     store = FindStore(stores, storeDisplayName)
                         ?? throw new InvalidOperationException("Store not found for the corpus re-anchor.");
                     string storeId = (string)store.StoreID;
 
-                    foreach (CorpusReanchorItem item in reanchor.Todo)
+                    // Same safe point as the build: `record` has persisted the previous item's
+                    // replacement line before the next iteration starts, and manifest item
+                    // lines are last-writer-wins by ordinal, so a stop here leaves a manifest
+                    // that describes exactly what the store now holds.
+                    foreach (CorpusReanchorItem item in checkpoint.Steps(reanchor.Todo, "re-anchor item"))
                     {
                         dynamic? mail = null;
                         try
@@ -1032,8 +1076,7 @@ public static class ComCorpusMailbox
                     Release(ns);
                     Release(app);
                 }
-            },
-            timeout: null);
+            });
     }
 
     /// <summary>
@@ -1055,8 +1098,10 @@ public static class ComCorpusMailbox
         ArgumentNullException.ThrowIfNull(manifest);
         HashSet<string> manifestIds = CorpusSafety.BuildEntryIdAllowlist(manifest.EntryIds);
 
-        return RunSta(
-            () =>
+        return RunSta<TeardownOutcome>(
+            "corpus teardown",
+            null,
+            checkpoint =>
             {
                 dynamic app = CreateOutlookApplication();
                 dynamic? ns = null;
@@ -1071,7 +1116,7 @@ public static class ComCorpusMailbox
                 int remaining;
                 try
                 {
-                    ns = app.GetNamespace("MAPI");
+                    ns = BindNamespace(app, checkpoint);
                     stores = ns.Stores;
                     store = FindStore(stores, storeDisplayName)
                         ?? throw new InvalidOperationException("Store not found for the corpus teardown.");
@@ -1082,15 +1127,17 @@ public static class ComCorpusMailbox
                     // proceeding would walk the whole manifest, refuse 20 000 times, and
                     // report it as "refused by rule" - a number that also means "the ids were
                     // wrong". One count and one sentence instead.
-                    ScanResult preflight = ScanStore(store!, manifest, corpusId);
+                    ScanResult preflight = ScanStore(store!, manifest, corpusId, checkpoint);
                     if (preflight.LegacyTagged > 0)
                     {
                         return new TeardownOutcome(
                             0, 0, 0, 0, 0, 0, preflight.Items.Count, preflight.LegacyTagged);
                     }
 
-                    // Phase 1: the manifest's own ids.
-                    foreach (string entryId in manifestIds)
+                    // Phase 1: the manifest's own ids. One delete is the safe point - every id
+                    // is addressed independently, so stopping between two of them leaves the
+                    // rest exactly where the manifest says they are.
+                    foreach (string entryId in checkpoint.Steps(manifestIds, "teardown delete"))
                     {
                         considered++;
                         DeleteVerdict verdict = DeleteOne(ns!, storeId, entryId, manifestIds, corpusId);
@@ -1107,14 +1154,19 @@ public static class ComCorpusMailbox
                     // manifest line left behind.
                     for (int pass = 0; pass < TeardownMaxPasses; pass++)
                     {
-                        IReadOnlyList<ScanRow> found = ScanStore(store!, manifest, corpusId).Items;
+                        if (!checkpoint.Step("teardown pass"))
+                        {
+                            break;
+                        }
+
+                        IReadOnlyList<ScanRow> found = ScanStore(store!, manifest, corpusId, checkpoint).Items;
                         if (found.Count == 0)
                         {
                             break;
                         }
 
                         HashSet<string> passIds = CorpusSafety.BuildEntryIdAllowlist(found.Select(r => r.EntryId));
-                        foreach (string entryId in passIds)
+                        foreach (string entryId in checkpoint.Steps(passIds, "teardown delete"))
                         {
                             considered++;
                             DeleteVerdict verdict = DeleteOne(ns!, storeId, entryId, passIds, corpusId);
@@ -1128,8 +1180,8 @@ public static class ComCorpusMailbox
                         }
                     }
 
-                    foldersRemoved = RemoveCreatedFolders(ns!, storeId, manifest);
-                    remaining = ScanStore(store!, manifest, corpusId).Items.Count;
+                    foldersRemoved = RemoveCreatedFolders(ns!, storeId, manifest, checkpoint);
+                    remaining = ScanStore(store!, manifest, corpusId, checkpoint).Items.Count;
                 }
                 finally
                 {
@@ -1141,8 +1193,7 @@ public static class ComCorpusMailbox
 
                 return new TeardownOutcome(
                     considered, deleted, refused, gone, failed, foldersRemoved, remaining, 0);
-            },
-            timeout: null);
+            });
     }
 
     /// <summary>
@@ -1153,8 +1204,10 @@ public static class ComCorpusMailbox
     /// </summary>
     public static ScanResult Scan(string storeDisplayName, string corpusId, CorpusManifest? manifest)
     {
-        return RunSta(
-            () =>
+        return RunSta<ScanResult>(
+            "corpus scan",
+            null,
+            checkpoint =>
             {
                 dynamic app = CreateOutlookApplication();
                 dynamic? ns = null;
@@ -1162,11 +1215,11 @@ public static class ComCorpusMailbox
                 dynamic? store = null;
                 try
                 {
-                    ns = app.GetNamespace("MAPI");
+                    ns = BindNamespace(app, checkpoint);
                     stores = ns.Stores;
                     store = FindStore(stores, storeDisplayName)
                         ?? throw new InvalidOperationException("Store not found for the corpus scan.");
-                    return ScanStore(store!, manifest, corpusId);
+                    return ScanStore(store!, manifest, corpusId, checkpoint);
                 }
                 finally
                 {
@@ -1175,8 +1228,7 @@ public static class ComCorpusMailbox
                     Release(ns);
                     Release(app);
                 }
-            },
-            timeout: null);
+            });
     }
 
     private enum DeleteVerdict
@@ -1223,11 +1275,12 @@ public static class ComCorpusMailbox
         }
     }
 
-    private static ScanResult ScanStore(dynamic store, CorpusManifest? manifest, string corpusId)
+    private static ScanResult ScanStore(
+        dynamic store, CorpusManifest? manifest, string corpusId, ComStaCheckpoint checkpoint)
     {
         var rows = new List<ScanRow>();
         int legacyTagged = 0;
-        foreach (int folderId in ScanFolderIds)
+        foreach (int folderId in checkpoint.Steps(ScanFolderIds, "scan folder"))
         {
             dynamic? folder = null;
             try
@@ -1241,7 +1294,7 @@ public static class ComCorpusMailbox
                     continue;
                 }
 
-                CollectCorpusItems(folder!, folderId, corpusId, rows, ref legacyTagged);
+                CollectCorpusItems(folder!, folderId, corpusId, rows, ref legacyTagged, checkpoint);
             }
             finally
             {
@@ -1249,7 +1302,9 @@ public static class ComCorpusMailbox
             }
         }
 
-        foreach (CorpusManifestFolder created in manifest?.Folders ?? (IReadOnlyList<CorpusManifestFolder>)Array.Empty<CorpusManifestFolder>())
+        foreach (CorpusManifestFolder created in checkpoint.Steps(
+            manifest?.Folders ?? (IReadOnlyList<CorpusManifestFolder>)Array.Empty<CorpusManifestFolder>(),
+            "scan created folder"))
         {
             dynamic? folder = null;
             try
@@ -1258,7 +1313,7 @@ public static class ComCorpusMailbox
                 // The folder id the substitute STANDS IN FOR, not 0. A census compares where
                 // an item is against where the plan puts it, and a Junk item found in the
                 // folder created because the PST has no Junk Email is where it belongs.
-                CollectCorpusItems(folder!, created.FolderId, corpusId, rows, ref legacyTagged);
+                CollectCorpusItems(folder!, created.FolderId, corpusId, rows, ref legacyTagged, checkpoint);
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
@@ -1282,7 +1337,12 @@ public static class ComCorpusMailbox
     /// subject.
     /// </summary>
     private static void CollectCorpusItems(
-        dynamic folder, int folderId, string corpusId, List<ScanRow> rows, ref int legacyTagged)
+        dynamic folder,
+        int folderId,
+        string corpusId,
+        List<ScanRow> rows,
+        ref int legacyTagged,
+        ComStaCheckpoint checkpoint)
     {
         dynamic? table = null;
         int legacyHere = 0;
@@ -1290,7 +1350,12 @@ public static class ComCorpusMailbox
         {
             table = folder.GetTable(
                 "@SQL=\"urn:schemas:httpmail:subject\" LIKE '%" + CorpusPlan.DaslCountFragment + "%'");
-            while (!(bool)table.EndOfTable)
+
+            // Per ROW, because this is the longest-running read in the tool: a 40 000 item
+            // store walked folder by folder is where a run goes quiet for minutes at a time,
+            // and a row is a safe point for a read by construction - it collects, it does not
+            // write. An abandoned walk simply returns what it had.
+            while (!(bool)table.EndOfTable && checkpoint.Step("scan row"))
             {
                 dynamic? row = null;
                 try
@@ -1334,10 +1399,11 @@ public static class ComCorpusMailbox
     /// agree: the folder's EntryID is one the manifest recorded creating AND its name
     /// ordinal-contains <see cref="CorpusManifest.CreatedFolderPrefix"/>.
     /// </summary>
-    private static int RemoveCreatedFolders(dynamic ns, string storeId, CorpusManifest manifest)
+    private static int RemoveCreatedFolders(
+        dynamic ns, string storeId, CorpusManifest manifest, ComStaCheckpoint checkpoint)
     {
         int removed = 0;
-        foreach (CorpusManifestFolder record in manifest.Folders)
+        foreach (CorpusManifestFolder record in checkpoint.Steps(manifest.Folders, "remove created folder"))
         {
             dynamic? folder = null;
             try
@@ -1480,7 +1546,8 @@ public static class ComCorpusMailbox
         CorpusDateWriteMethod method,
         CorpusPlacementMethod placement,
         DateTime requestedUtc,
-        DateTime writeUtc)
+        DateTime writeUtc,
+        ComStaCheckpoint checkpoint)
     {
         dynamic? items = null;
         dynamic? mail = null;
@@ -1550,9 +1617,12 @@ public static class ComCorpusMailbox
             }
 
             TableLookup inside = TableFind(
-                folder, DateWindowFilter(corpusId, requestedUtc.AddDays(-1), requestedUtc.AddDays(1)), entryId!);
+                folder,
+                DateWindowFilter(corpusId, requestedUtc.AddDays(-1), requestedUtc.AddDays(1)),
+                entryId!,
+                checkpoint);
             TableLookup outside = TableFind(
-                folder, DateWindowFilter(corpusId, requestedUtc.AddDays(2), null), entryId!);
+                folder, DateWindowFilter(corpusId, requestedUtc.AddDays(2), null), entryId!, checkpoint);
             if (inside == TableLookup.Inconclusive || outside == TableLookup.Inconclusive)
             {
                 // Reported as an ERROR rather than as a negative result. A date rung that
@@ -1634,7 +1704,8 @@ public static class ComCorpusMailbox
     /// is a bound on a runaway walk, not a search budget - and reaching it is reported as
     /// <see cref="TableLookup.Inconclusive"/> rather than as an answer.
     /// </summary>
-    private static TableLookup TableFind(dynamic folder, string filter, string entryId)
+    private static TableLookup TableFind(
+        dynamic folder, string filter, string entryId, ComStaCheckpoint checkpoint)
     {
         dynamic? table = null;
         try
@@ -1643,6 +1714,14 @@ public static class ComCorpusMailbox
             int walked = 0;
             while (walked < ProbeTableRowCap)
             {
+                // A walk the run was asked to abandon has not ANSWERED the question, and
+                // Inconclusive is the value that says so. Returning NotFound here would be the
+                // same conflation that once made a large folder look like a placement failure.
+                if (!checkpoint.Step("table row"))
+                {
+                    return TableLookup.Inconclusive;
+                }
+
                 if ((bool)table.EndOfTable)
                 {
                     return TableLookup.NotFound;
@@ -1704,6 +1783,17 @@ public static class ComCorpusMailbox
         }
     }
 
+    /// <summary>
+    /// The store with this display name, or null.
+    /// <para>
+    /// DELIBERATELY NOT a <see cref="ComStaCheckpoint"/> loop, unlike every other loop in this
+    /// file. A profile mounts a handful of stores, so it is not a walk anything can get lost
+    /// in - and a cancelled FindStore would have to return null, which every caller turns into
+    /// "Store not found", a sentence that is false and would arrive as the cause of the
+    /// timeout the run is already reporting. Nothing here is silent for long enough to need a
+    /// liveness tick, and a wrong answer is worse than none.
+    /// </para>
+    /// </summary>
     private static dynamic? FindStore(dynamic stores, string storeDisplayName)
     {
         int storeCount = stores.Count;
@@ -1731,47 +1821,46 @@ public static class ComCorpusMailbox
     }
 
     /// <summary>
-    /// Runs <paramref name="work"/> on a dedicated STA thread. <paramref name="timeout"/> is
-    /// nullable and the BUILD passes null on purpose: a corpus of tens of thousands of items
-    /// legitimately runs for hours, and a timeout that fires mid-build would abandon a
-    /// half-written PST with no manifest line for the item in flight.
+    /// Runs <paramref name="work"/> on a dedicated STA thread under two bounds: a cold-start
+    /// allowance, and <paramref name="workSilence"/> - how long the run may go without
+    /// reporting a safe point ONCE OUTLOOK HAS ANSWERED. See <see cref="ComStaBudget"/> for
+    /// why the two are separate, and <see cref="ComStaRunner"/> for what happens when one
+    /// expires (it signals the thread and waits for it, rather than walking away from a live
+    /// COM session).
+    /// <para>
+    /// <paramref name="workSilence"/> is nullable and the BUILD, RE-ANCHOR, TEARDOWN and SCAN
+    /// pass null on purpose: a corpus of tens of thousands of items legitimately runs for
+    /// hours, and abandoning one mid-write is what leaves a half-written PST with no manifest
+    /// line for the item in flight. They are still held to the cold-start allowance, which
+    /// costs them nothing - no item has been written at that point - and turns an Outlook that
+    /// never answers from an unbounded wait into a sentence.
+    /// </para>
     /// </summary>
-    private static T RunSta<T>(Func<T> work, TimeSpan? timeout)
+    private static T RunSta<T>(string operation, TimeSpan? workSilence, Func<ComStaCheckpoint, T> work)
+        => ComStaRunner.Run(operation, ComStaBudget.For(workSilence), work);
+
+    /// <summary>
+    /// Binds the MAPI namespace, reads the profile it bound, and tells
+    /// <paramref name="checkpoint"/> the cold start is over.
+    /// <para>
+    /// ONE place does this, for two reasons that turn out to be the same reason. It is the
+    /// moment the cold-start allowance must give way to the work bound - a run that forgot to
+    /// say so would be judged by the wrong clock. And it is where the PROFILE NAME comes from:
+    /// this tool logs on with the DEFAULT profile and does not attach to whatever Outlook a
+    /// human happens to be looking at, so "which profile did it bind?" is the first question a
+    /// refusal has to answer. On 2026-09-16 it did not, and five corpus builds were refused
+    /// before anybody worked out which profile was being vetted.
+    /// </para>
+    /// </summary>
+    private static dynamic BindNamespace(dynamic app, ComStaCheckpoint checkpoint)
     {
-        T result = default!;
-        Exception? failure = null;
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                result = work();
-            }
-            catch (Exception ex)
-            {
-                failure = ex;
-            }
-        })
-        {
-            IsBackground = true,
-            Name = "OutlookAI.Corpus.Sta",
-        };
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        if (timeout == null)
-        {
-            thread.Join();
-        }
-        else if (!thread.Join(timeout.Value))
-        {
-            throw new TimeoutException("Corpus STA operation timed out.");
-        }
+        dynamic ns = app.GetNamespace("MAPI");
 
-        if (failure != null)
-        {
-            throw new InvalidOperationException("Corpus operation failed.", failure);
-        }
-
-        return result;
+        // Read INSIDE the cold-start phase and TryRead-guarded: the first property read off a
+        // just-started Outlook is part of the start, and a profile name that cannot be read is
+        // reported as unknown rather than failing a run over a diagnostic string.
+        checkpoint.OutlookBound(TryRead<string>(() => (string)ns.CurrentProfileName));
+        return ns;
     }
 
     private static void Release(object? comObject)
