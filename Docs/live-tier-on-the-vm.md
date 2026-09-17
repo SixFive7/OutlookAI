@@ -401,12 +401,51 @@ Set Outlook to "always use this profile" and switch by changing that setting, no
 a prompting profile cannot be driven over COM. The Mail control panel works and was the assumed
 route.
 
-**Since 2026-09-15 there are drafted scripts for both halves, and they have NEVER BEEN RUN.**
-`Testbed/guest/New-OutlookProfile.ps1` creates a profile through Extended MAPI - including the
-account-less one section 1.2 requires - and `Testbed/guest/Set-DefaultOutlookProfile.ps1` switches
-the default and turns the prompt off. `Testbed/README.md` section 4b is the summary, and
-`.work/profile-automation-research.md` is the evidence with every claim labelled by source. Run
-`New-OutlookProfile.ps1 -Preflight` first, on a checkpoint you are willing to lose.
+**Both halves are scripted, and the first attempt at both was built on a call that does not work
+here.** `Testbed/guest/New-OutlookProfile.ps1` creates a profile - including the account-less one
+section 1.2 requires - and `Testbed/guest/Set-DefaultOutlookProfile.ps1` switches the default and
+turns the prompt off. Both originally went through Extended MAPI's `IProfAdmin`, and on
+2026-09-16 that route was **measured broken** on Office LTSC 2024 16.0.17932.20884:
+`E_NOINTERFACE` on `IID_IProfAdmin`, with `MAPIInitialize` and `MAPIAdminProfiles` both
+succeeding and only the QueryInterface failing. Cause not established.
+
+**What they do now:**
+
+* the profile comes from a **`.prf` import** - write the file, point `ImportPRF` at it, start
+  Outlook once. Same mechanism as `Testbed/guest/New-TierProfile.ps1`, which is measured working
+  on both guests. **Then clear `ImportPRF`** - see section 2.5a, which is not optional;
+* the default switch writes the documented `HKCU\...\Outlook\DefaultProfile` REG_SZ, measured
+  working on the same guest the same day;
+* a PST going into a profile that already exists uses `NameSpace.AddStoreEx` plus a root-folder
+  rename (section 2.6), which is how the name is made exact.
+
+`Testbed/README.md` section 4b is the summary and marks which parts are measured and which are
+inferred; `Docs/research/profile-automation-research.md` is the evidence with every claim labelled
+by source. Run `New-OutlookProfile.ps1 -Preflight` first - it reads only, makes no COM call and no
+MAPI call, and needs no checkpoint.
+
+### 2.5a `ImportPRF` is read at EVERY Outlook start, and that can cost you the corpus
+
+**This is a data-shaped hazard, not housekeeping.** The `.prf` written by
+`New-OutlookProfile.ps1` carries `OverwriteProfile=Yes` - correct for a rebuild, because it is
+what makes a repeat import converge instead of leaving a `Backup Of <name>` profile behind.
+Outlook reads `ImportPRF` (under `HKCU\...\Outlook\Setup`) **every time it starts**.
+
+**WHETHER OUTLOOK CLEARS THAT VALUE ONCE IT HAS PROCESSED IT IS UNKNOWN.** Nothing in this
+repository has ever checked, on any build - `New-TierProfile.ps1` did not look either. Treat it
+as unverified rather than as a risk somebody has already sized.
+
+**If it does not clear it,** every later Outlook start re-imports the file and rebuilds the
+profile from it. No `.pst` is deleted - nothing here deletes a data file - but a store attached or
+filled after the import **stops being part of the profile**. On the corpus guest that presents as
+a corpus that has disappeared, and the repair is a ~13-minute rebuild of 20,000 items.
+
+**The remedy, after `-Verify` and before `Testbed/guest/Build-Corpus.ps1`:**
+
+    .\New-OutlookProfile.ps1 -ClearImportPrf -Execute
+
+`-Verify` reads the value back and warns by name when it is still set, so a run that forgets this
+says so at the time rather than leaving it to be found later.
 
 **Turn AutoArchive OFF, on every store, in both profiles.** It is a client-side actor that
 moves items out of a PST on a schedule, and to a before/after census that is **indistinguishable
@@ -452,28 +491,43 @@ gets bound as the account's delivery store). So the name is set afterwards, by
 * The `@` is accepted: the store reads `tier@vm.invalid` over COM.
 * The account's `DeliveryStore` reports the new name too, so renaming does not break the binding.
 
-**A TENSION WORTH NAMING RATHER THAN QUIETLY RESOLVING (2026-09-15).**
+**A TENSION WORTH NAMING RATHER THAN QUIETLY RESOLVING (2026-09-15, restated 2026-09-17).**
 > `Testbed/guest/Add-OutlookPstStore.ps1` is a script that adds stores, which is the thing the
 > paragraph above tells you not to write. It exists because the display name has to be exact and
 > the GUI route costs a vision-model session, and it is drawn as narrowly as the objection
-> deserves: it creates **new, empty** PST files and registers them in a profile, it never opens a
-> folder, reads an item, moves one or deletes one, and it refuses to run on any machine not logged
-> on as the guest account. So it is not in the class of thing that destroyed real mail - that was
-> shell-side subject matching against a live mailbox.
+> deserves: it creates **new, empty** PST files and registers them in a profile, it never reads an
+> item, moves one or deletes one, and it refuses to run on any machine not logged on as the guest
+> account. So it is not in the class of thing that destroyed real mail - that was shell-side
+> subject matching against a live mailbox.
 >
-> **It has also never been executed, so nothing here is yet evidence of anything.** Whether this
-> paragraph's rule should be relaxed for store creation specifically is the maintainer's call, not
-> a script's: until it is made, the GUI route above remains the recorded one and the script is a
-> draft beside it.
+> **ONE THING IN THAT LIST CHANGED AND IS WORTH SAYING OUT LOUD.** The script now names a store by
+> **renaming the store's root folder**, because the MAPI route that set the name at creation time
+> is measured broken (2026-09-16, `E_NOINTERFACE` on `IID_IProfAdmin`). So it does now modify a
+> FOLDER - the store's root node - where the older version did not. That is deliberately on the
+> permitted side of the line drawn above, and for the same reason
+> `Testbed/guest/Rename-OutlookStore.ps1` gives: the rule's subject is **items**, the folder in
+> question is a store this project created and has just attached, and no item is created, deleted,
+> moved or modified by it. If that reading is too generous it is the maintainer's call to narrow
+> it - but it should be narrowed explicitly, not by leaving this paragraph describing a script
+> that no longer matches it.
+>
+> **Its guest half has still never been executed**, so nothing here is yet evidence about the
+> script - though the mechanism under it is measured, by `Rename-OutlookStore.ps1`, on this build.
+> Its decision logic is covered by `-SelfTest` (39 assertions), which is a statement about the
+> decisions and not about Outlook. Whether this paragraph's rule should be relaxed for store
+> creation specifically is the maintainer's call, not a script's: until it is made, the GUI route
+> above remains the recorded one and the script is a draft beside it.
 
 Naming matters more than it looks:
 
 * **The hub store must be named exactly the dummy account's SMTP address.** Several tests use
   `testHubStoreDisplayName` as an address (`NewDraft(Hub, Hub, ...)`, `FindAccountBySmtp(Hub)`),
-  so the hub PST has to be called something like `test@vm.invalid` literally. Whether Outlook
-  accepts `@` in a store display name is **untested and it gates the whole draft family** - try
-  it first, it costs five minutes. `.invalid` is guaranteed unresolvable by RFC 2606, so a
-  misconfiguration cannot leak mail anywhere.
+  so the hub PST has to be called something like `test@vm.invalid` literally. **Outlook accepts
+  `@` there - ANSWERED and measured; section 8 item 2 has the evidence and the two caveats.** This
+  used to be called out here as untested and gating the whole draft family; it is neither any
+  more, and it is not restated here so that there is one place to correct if it ever changes.
+  `.invalid` is guaranteed unresolvable by RFC 2606, so a misconfiguration cannot leak mail
+  anywhere.
 * **The dummy account's delivery store must be a separate throwaway PST**, not a corpus store.
   An account delivering into the corpus store can flip that store's `IsDataFileStore`, and
   `CorpusSafety` reads that property as one of four independent facts it requires before it
@@ -593,9 +647,9 @@ DISPLAY NAME and then hand that same string to `NewDraft` as an address:
   Add it exactly as section 2.8 adds the dummy account - POP3 against the same sink, which is
   catch-all, so a new address needs no provisioning anywhere.
 * **The store display name IS the address**, as it is for the hub. `identity@vm.invalid` is the
-  obvious choice, and `.invalid` keeps it unroutable by RFC 2606. Section 8 item 2 gates this one
-  as well: if Outlook refuses `@` in a store display name, this store and the hub need the same
-  different answer.
+  obvious choice, and `.invalid` keeps it unroutable by RFC 2606. Section 8 item 2 used to gate
+  this one as well; it no longer does - the `@` is accepted, measured, and that item carries the
+  evidence.
 * **Its own delivery store.** "Deliver new messages to" must be this account's own PST: the draft
   is asserted to land in *that account's own Drafts folder*. Not the hub's, and never a corpus -
   section 2.6 says why an account delivering into a corpus store locks the generator out of it.
@@ -1090,11 +1144,25 @@ unrecorded or unverified.
    Office LTSC 2024 build 16.0.17932 carries a `MSUPST MS` service whose `Account Name` reads
    literally **`tier@vm.invalid`**. The `@` is accepted, stored and read back unchanged.
 
-   Two caveats, so nobody over-reads it. The name was set **at profile-creation time through the
-   PRF**, not typed into Data File Properties, so a validation rule in that dialog is still
-   untested - irrelevant if stores are always created by script, which is now the plan. And this
-   is the name on the profile's PST *service*; whether `Store.DisplayName` reports the same string
-   over COM has not been read back yet, and that is the property the live tier keys on.
+   **The second caveat this item used to carry is now closed as well**, and by a second
+   independent measurement. It read: *"this is the name on the profile's PST service; whether
+   `Store.DisplayName` reports the same string over COM has not been read back yet, and that is
+   the property the live tier keys on."* It has been read back, twice:
+   - from the PRF-built profile, `Store.DisplayName` reports `tier@vm.invalid` **over COM**;
+   - `Testbed/guest/Rename-OutlookStore.ps1` renamed a store's **root folder** from `Outlook Data
+     File` to `tier@vm.invalid` and `Store.DisplayName` FOLLOWED - which also settles a question
+     four research passes could not answer in any source - and the account afterwards still
+     reported `SmtpAddress='tier@vm.invalid'` and `DeliveryStore='tier@vm.invalid'`, so the rename
+     does not break the binding.
+
+   **One caveat stands.** The name was set **at profile-creation time through the PRF**, or by a
+   scripted folder rename - never typed into Data File Properties - so a validation rule in *that
+   dialog* is still untested. It is irrelevant while stores are always created by script, which is
+   the plan.
+
+   **THIS ITEM IS THE SINGLE PLACE THIS ANSWER LIVES.** Sections 2.6 and 2.8b used to restate the
+   question as open and now point here instead. A document that contradicts itself is worse than
+   one that is merely out of date, so if this ever changes, change it here.
 3. **Whether smtp4dev's POP3 side maps an arbitrary `USER` to the catch-all mailbox**, or
    whether the username must match a configured mailbox name. If the latter, add an explicit
    `Mailboxes` entry with `Recipients: "*"` and use its name as the POP3 username.
@@ -1134,10 +1202,17 @@ unrecorded or unverified.
    checkpoints must be taken with both logged on.
 9. Outlook profile names, how they are created, which is default, and how the switch between the
    no-accounts profile and the tier profile is automated.
-   **HALF-ANSWERED 2026-09-15, and the other half is CLOSED-NEGATIVE.** Profiles, PSTs with exact
-   display names, and the default-profile switch all now have drafted scripts -
-   `Testbed/README.md` section 4b indexes them, `.work/profile-automation-research.md` is the
-   evidence, and **none of them has ever been executed**, so this item stays open until one has.
+   **HALF-ANSWERED, and the other half is CLOSED-NEGATIVE.** Profiles, PSTs with exact display
+   names, and the default-profile switch all have scripts - `Testbed/README.md` section 4b
+   indexes them and `Docs/research/profile-automation-research.md` is the evidence. **The first
+   route they were all built on, Extended MAPI's `IProfAdmin`, is measured broken on this Office
+   build** (2026-09-16, `E_NOINTERFACE` on `IID_IProfAdmin`) and all three have been moved onto
+   routes that work: a `.prf` import for the profile and its named stores, `AddStoreEx` plus a
+   root-folder rename for a store going into a profile that already exists, and the registry
+   `DefaultProfile` value for the switch. The default switch **has run on a guest**; the other two
+   have not, so this item stays open until they have - what exists for them today is a `-SelfTest`
+   over their decision logic, which is not the same claim. Section 2.5a carries the one hazard a
+   rebuilder must not skip.
    **The mail account is the closed-negative half: there is no free programmatic route to creating
    one.** The object model has no `Accounts.Add` and `Account.DeliveryStore` is read-only; MAPI has
    no POP3 message service, because account administration moved behind the undocumented

@@ -42,7 +42,8 @@ testbed before its replacement runs.**
 | 1 | Build the answer volume | `host/New-AnswerFile.ps1` | host |
 | 2 | Create the guest, attach both ISOs, boot it | `host/New-TestbedVm.ps1` | host |
 | 3 | Windows installs itself - edition, disk, account, autologon, locale, power | nobody: the answer file | guest, unattended |
-| 4 | Install Office, the accounts and the profiles | Office and the Windows accounts by hand - `Docs/live-tier-on-the-vm.md` §2.2-2.4, with `.work/office-odt/Testbed.xml` (`MEDIA.md`). **Profiles and PSTs now have drafted scripts - §4b** | guest |
+| 4 | Install Office, the accounts and the profiles | Office and the Windows accounts by hand - `Docs/live-tier-on-the-vm.md` §2.2-2.4, with `.work/office-odt/Testbed.xml` (`MEDIA.md`). **The corpus profile and its PSTs are scripted - §4b**: `guest/New-OutlookProfile.ps1 -Preflight`, then `-Execute`, then start Outlook once by hand, then `-Verify` | guest |
+| 4b | **Clear `ImportPRF`, before anything fills a store** | `guest/New-OutlookProfile.ps1 -ClearImportPrf -Execute`. Not optional and not tidying: Outlook reads that value at EVERY start and the `.prf` carries `OverwriteProfile=Yes`, so if Outlook does not clear it itself - **which nobody has verified** - every later start rebuilds the profile and **detaches whatever store the corpus went into**. §4b-i | guest |
 | 5 | Give yourself a way to reach session 1 | `guest/Register-InteractiveTask.ps1` | guest, once |
 | 6 | Build the server and the tools, and copy them in | `host/Publish-GuestPayload.ps1` | host |
 | 7 | Install the mail sink, the dummy account and the identity account | Sink: `guest/Install-MailSink.ps1`, from a staged package (§6 item 11 - and read it first, §2.7 of the runbook is wrong in four places). Accounts: `guest/New-TierProfile.ps1`, then the POP3 password **by hand, once**, because the sink refuses an empty one. The signature has a script | guest |
@@ -510,19 +511,45 @@ is built, because a testbed VM missing from the list is simply never saved.
 control panel as the assumed route. That route had been driven once, through a vision model, and
 it was slow and expensive enough to be worth not repeating.
 
-**THE SCRIPTS IN §5 HAVE NEVER BEEN EXECUTED.** They were written by an agent forbidden to run
-them - the machine they were written on is the maintainer's workstation, with a real profile and
-real delegate mailboxes on it - and verified by PARSING alone. Treat them as a draft to iterate
-against a checkpoint, not as a build step that works. Each carries its own banner saying so, and
-each is designed to **fail loudly rather than half-succeed**, because a script that silently
-half-works costs a revert and a rebuild.
+**THE FIRST VERSION OF THESE SCRIPTS WAS BUILT ON A CALL THAT DOES NOT WORK HERE, and finding
+that out cost one guest run.** All three profile scripts went through Extended MAPI's
+`IProfAdmin`. The first time any of that code executed anywhere - 2026-09-16, on `OAI-UNINDEXED`,
+Office LTSC 2024 16.0.17932.20884 - it threw `E_NOINTERFACE` on `IID_IProfAdmin`, with
+`MAPIInitialize` and `MAPIAdminProfiles` both succeeding and only the QueryInterface failing. The
+cause has **not** been established. All three have since been moved onto routes that do work; the
+shared MAPI interop they stood on is deleted, and there is **no MAPI call left anywhere in this
+repository**.
 
-**Four of the five things are automatable. One is not.**
+**The lesson, because it is the expensive half:** those scripts carried "verified by PARSING"
+banners and they parsed perfectly. A script verified by parsing is a script whose syntax is
+verified. What replaced that is a `-SelfTest` switch on each one - pure decision functions driven
+against synthetic inputs, reading no registry and making no COM call, so they run on any machine
+including the maintainer's workstation. That still does not prove a guest run: each self-test ends
+by printing the list of things only a guest can settle, and those lists are the honest statement
+of what is unproven.
+
+> **IF YOU EXTEND THOSE SELF-TESTS, DO NOT ASSERT WITH `-like`. USE `String.Contains`.**
+> PowerShell's `-like` treats `[...]` as a **character class**, not as literal brackets - so
+> `$prf -like '*[Account1]*'` asks "does this text contain any one of `A c o u n t 1`", which is
+> true of very nearly any text. **Every section header in a `.prf` is bracketed**, so this hits the
+> most interesting assertions and hits them silently: the test passes, and it passes for the wrong
+> reason. Four assertions in `New-OutlookProfile.ps1` were written with `-like` and did exactly
+> that before they were caught.
+>
+> It is the same wildcard trap as `CLAUDE.md` mailbox-safety rule 2, which exists because
+> `-like "*[tag]*"` once matched nearly every subject in a real mailbox and destroyed real mail.
+> Here it costs a false green rather than data - but it is the same operator, the same
+> misunderstanding, and worth recognising on sight. `Contains` is ordinal and case-sensitive, which
+> is what an exact-name assertion wants anyway.
+
+**Five things. Four are automatable, one is not, and two of the four now rest partly on inference
+rather than on measurement** - marked below, because a reader must be able to tell which claims
+have been run and which have been reasoned.
 
 | What | How | Where |
 | --- | --- | --- |
-| Profile with **no mail accounts** - the corpus profile, which `corpus-build` requires | `IProfAdmin::CreateProfile`, no default services - **and `IProfAdmin` is MEASURED BROKEN on Office LTSC 2024**, so this route does not currently work. `outlook.exe /PIM <name>` is measured to produce `accounts=0` on that build and is how both guests' corpus profiles were actually made | `guest/New-OutlookProfile.ps1` |
-| **PST with an exact display name**, `@` included | `IMsgServiceAdmin::ConfigureMsgService` carrying `PR_DISPLAY_NAME` **at creation** - reached through the same **measured-broken** `IProfAdmin` gateway. `guest/Rename-OutlookStore.ps1` is MEASURED WORKING and gets an exact name a different way: `Store.DisplayName` follows a rename of the store's root folder, `@` and all | `guest/Add-OutlookPstStore.ps1` |
+| Profile with **no mail accounts** - the corpus profile, which `corpus-build` requires | A **`.prf` import**: write the file, point `ImportPRF` at it, start Outlook once. [MEASURED] as a mechanism - it is what `guest/New-TierProfile.ps1` does on both guests. [INFERRED] for the account-less part: the file names no account, and whether an empty `[Internet Account List]` really yields `Accounts.Count = 0` has not been run. **Fallback if it does not:** `outlook.exe /PIM <name>` is measured to produce `accounts=0` on this build and is how both guests' corpus profiles were actually made - it just cannot name a store. ~~`IProfAdmin::CreateProfile`~~ is measured broken here | `guest/New-OutlookProfile.ps1` |
+| **PST with an exact display name**, `@` included | Two routes, both off MAPI. **At profile creation:** the same `.prf`'s `[ServiceN] Name=`, which maps to `PT_UNICODE,0x3001` - `PR_DISPLAY_NAME_W`. [MEASURED]: `Store.DisplayName` read back over COM as exactly `tier@vm.invalid`. **Into a profile that already exists:** `NameSpace.AddStoreEx` [MS-DOC] then a **root-folder rename** [MEASURED, `guest/Rename-OutlookStore.ps1`]. [INFERRED] only for more than one PST in one `.prf` - `UniqueService=No` is the documented key that permits it, and it has not been run with two. ~~`IMsgServiceAdmin::ConfigureMsgService`~~ is behind the broken gateway | `guest/Add-OutlookPstStore.ps1` |
 | **Default-profile switch**, no prompt | **`HKCU\...\Outlook\DefaultProfile` (REG_SZ) + `PickLogonProfile`** - NOT `IProfAdmin::SetDefaultProfile`, which is measured broken here (2026-09-16: `E_NOINTERFACE` on `IID_IProfAdmin`, Office LTSC 2024 16.0.17932.20884). The registry value is measured WORKING on the same guest the same day | `guest/Set-DefaultOutlookProfile.ps1` |
 | The identity account's **signature** | the shipped `manage_signature` tool | `guest/Set-AccountSignature.ps1` |
 | **A POP3 mail account, and its delivery store** | **nothing free can.** GUI, once per guest | `guest/New-PopAccountPrf.ps1` is the spike that proves it |
@@ -541,40 +568,75 @@ is the maintainer's call rather than a script's.
 is a real one: everything before it is scripted and reproducible, so a checkpoint there turns the
 only unscripted step from a per-rebuild cost into a **per-guest-lifetime** one.
 
-**Why Extended MAPI rather than the registry.** `IProfAdmin` and `IMsgServiceAdmin` are documented
-and supported; the registry layout underneath is reverse engineering with no published end-to-end
-recipe on 16.x. The stronger reason is specific to this testbed: the PST provider's configure call
-applies `PR_DISPLAY_NAME` **when the store is created**, which is the only route anybody found to
-a store named exactly what we asked for - `Store.DisplayName` is read-only in the object model, and
-`Namespace.AddStoreEx` adds a PST perfectly well but cannot name it.
+**Why Extended MAPI WAS chosen, and why the argument collapsed.** `IProfAdmin` and
+`IMsgServiceAdmin` are documented and supported, and the registry layout underneath them is
+reverse engineering with no published end-to-end recipe on 16.x - so the API was the contract and
+the registry was only the storage. The stronger reason was specific to this testbed: the PST
+provider's configure call applies `PR_DISPLAY_NAME` **when the store is created**, and that was
+believed to be the only route to a store named exactly what we asked for, because
+`Store.DisplayName` is read-only in the object model and **`Namespace.AddStoreEx` adds a PST
+perfectly well but cannot name it**.
 
-**The preflight that says this is worth trying at all**, measured on a guest running
+That last sentence is still true and **no longer matters**, which is what unblocked all of this.
+`guest/Rename-OutlookStore.ps1` measured, on this build, that `Store.DisplayName` FOLLOWS a rename
+of the store's root folder - `@` included, and without breaking an account's delivery-store
+binding. Four research passes had failed to settle that either way in any source, Microsoft's or
+the community's. So the store can be added unnamed and named afterwards, and the one capability
+that justified reaching for MAPI is reachable without it.
+
+**A preflight that passed, and proved less than it looked.** Measured on a guest running
 16.0.17932.20996: `DLLPathEx` resolves to a real `msmapi32.dll` under the Click-to-Run `root\VFS`
 tree, Office is x64 and PowerShell is a 64-bit process, so Extended MAPI loads and the bitness
 matches. `DLLPath` being an unresolvable bare filename beside it is the **healthy** shape on
-Click-to-Run, not a fault.
+Click-to-Run, not a fault. All of that is still correct - and every bit of it was true on the
+machine where `MAPIAdminProfiles` then failed. **It proved the DLL resolves. It did not prove the
+interface is reachable**, and nothing short of calling it would have.
 
-**Run `New-OutlookProfile.ps1 -Preflight` first, on a checkpoint you are willing to lose.** It
-initialises MAPI, reads the profile table and stops. If the C# interop is going to take the
-PowerShell process down with it - the most likely first failure, and one that produces an access
-violation with no error text - that is where it happens, with nothing at stake.
+**`New-OutlookProfile.ps1 -Preflight` still exists and now checks the route that shipped**: the
+Office hive, the `Setup` key, the profiles already present, the current `ImportPRF` value, whether
+`FirstRun`/`First-Run` are absent, and whether Outlook is running. It reads only - no COM call and
+no MAPI call, because a preflight that could itself start Outlook, or itself hang, would be the
+fault it is checking for. Run it first; it costs nothing and needs no checkpoint.
 
 **The guard that keeps these off the wrong machine.** Every one of them refuses unless the session
 is logged on as `vmadmin`, the guests' autologon account (§2). It is not silenceable by a flag:
 the only way past it is `-ExpectedUser <name>`, which is a thing nobody does by accident. The
 second Windows account of `Docs/live-tier-on-the-vm.md` §2.4 will need exactly that.
 
-**One question these close on first run, and it is worth running them for that alone.**
-`Add-OutlookPstStore.ps1 -NameProbe` answers §6 item 10 - whether Outlook accepts `@` in a store
-display name - in a throwaway profile it creates and deletes. It reports **accepted**, **rejected**
-or **transformed**, and the third is why a probe is better than trying it on the real store: a
-silently-renamed store is one the tests cannot find by name, on a machine that looks correctly
-built.
+### 4b-i. `ImportPRF` can rebuild the profile at every Outlook start, and that would detach the corpus
+
+**Read this before building a corpus on a profile made by `New-OutlookProfile.ps1`.** It is a
+data-shaped hazard on a machine whose entire purpose is a 20,000-item corpus that takes about
+thirteen minutes to rebuild.
+
+`ImportPRF` is a registry value under `HKCU\...\Outlook\Setup`. Outlook reads it **at every
+start**, and the `.prf` this project writes carries `OverwriteProfile=Yes` - which is correct for
+a rebuild, because it is what makes a repeat import converge instead of producing a
+`Backup Of <name>` profile.
+
+**WHETHER OUTLOOK CLEARS THE VALUE AFTER PROCESSING IT IS UNKNOWN.** Nothing in this repository has
+ever checked, on any build. `guest/New-TierProfile.ps1` did not look, and neither did anything
+else. This is an unverified gap, not a residual risk somebody has sized.
+
+**If it does not clear it**, then every subsequent Outlook start re-imports the file and REBUILDS
+the profile from it. The `.pst` files are not deleted - nothing here deletes a data file - but a
+store that was attached after the import, or filled after it, **stops being part of the profile**.
+On the corpus guest that reads as a corpus that has vanished, and the repair is a rebuild.
+
+**The remedy is one command, and it belongs in the build sequence rather than in a footnote:**
+
+    .\New-OutlookProfile.ps1 -ClearImportPrf -Execute
+
+Run it after `-Verify` and **before** `guest/Build-Corpus.ps1`. `-Verify` also reads the value back
+and warns, by name, when it is still set - so a run that forgets this says so rather than leaving
+it to be discovered later.
+
+### 4b-ii. Where the evidence is
 
 The findings behind all of this, with every claim labelled Microsoft-documented,
 community-reported, guest-measured or inferred - and a list of what could **not** be established -
-are in `.work/profile-automation-research.md`. That file is gitignored scratch: if it matters
-tomorrow, it has to move somewhere tracked.
+are in `Docs/research/profile-automation-research.md`. Read its §1 table first: it summarises the
+answer per capability, and it now carries the measured-broken marker on the rows that named MAPI.
 
 ---
 
@@ -593,9 +655,9 @@ tomorrow, it has to move somewhere tracked.
 | `host/Copy-ToGuest.ps1` | Copies a file or a zip into the guest over PowerShell Direct. `-VMName` is mandatory (§4a). |
 | `host/Copy-FromGuest.ps1` | Gets results, logs and the corpus manifest back out. `-VMName` is mandatory (§4a), and it also names the subdirectory results land in. **The manifest goes to the shared root** - safe because each guest has its own corpus id, and kept there so a reused id still collides visibly; **`measure.jsonl` and the logs go to `<Destination>\<VMName>\`**, because what differs about a transcript is the machine that produced it (§3). It refuses to replace any pulled file whose content differs, unless `-Force` says you mean it. |
 | `guest/Register-InteractiveTask.ps1` | The session-1 scheduled-task recipe. Everything COM-touching goes through it. |
-| `guest/OutlookMapiInterop.ps1` | Shared Extended MAPI layer for the four profile scripts below - `IProfAdmin`, `IMsgServiceAdmin`, the table readers, and the guest guard. **Dot-sourced, never run directly.** **RUN 2026-09-16 AND ITS CENTRAL CALL FAILED**: `MAPIAdminProfiles` returned `E_NOINTERFACE` casting to `IProfAdmin` on Office LTSC 2024 (16.0.17932.20884). Nothing else in the file has been executed either, so treat the rest as unproven rather than merely unrun. See its banner. |
-| `guest/New-OutlookProfile.ps1` | Creates an Outlook profile with no GUI: account-less (the corpus profile) or carrying named PSTs. `-Preflight` checks the MAPI interop alone, first. **Never executed, and it is on the MEASURED-BROKEN `IProfAdmin` route** (see the interop row) - so it is expected to fail on its first call. It is also the documented way to make the corpus profile, which makes this a blocker for any from-scratch rebuild. |
-| `guest/Add-OutlookPstStore.ps1` | Adds a PST to a profile with an **exact** display name, and `-NameProbe` settles §6 item 10 - whether Outlook accepts `@` in one. **Never executed, and it is on the MEASURED-BROKEN `IProfAdmin` route** (see the interop row) - so it is expected to fail on its first call, exactly as `Set-DefaultOutlookProfile.ps1` did. |
+| `guest/OutlookMapiInterop.ps1` | **The name is historical: there is no MAPI in it any more.** It held ~550 lines of C# Extended MAPI interop - `IProfAdmin`, `IMsgServiceAdmin`, the table readers - whose central call was RUN 2026-09-16 AND FAILED (`MAPIAdminProfiles` returned S_OK; the QueryInterface for `IID_IProfAdmin` returned `E_NOINTERFACE`, Office LTSC 2024 16.0.17932.20884). It is **deleted** rather than kept as a fallback, because an unexercised second route is the bug this file was just bitten by - and every script dot-sourcing it was paying an `Add-Type` compile for code nothing could call. It is one `git show 8b610c2` away. What remains is the shared guest layer: the `vmadmin` guard, the PST path normaliser, and one Outlook COM session helper whose release path is shared rather than copied. Its banner states the leading hypothesis for the `E_NOINTERFACE`, names the ten-line experiment that would settle it, and says plainly that nobody has run it. **Dot-sourced, never run directly.** |
+| `guest/New-OutlookProfile.ps1` | Creates an Outlook profile with no GUI - account-less (the corpus profile) or carrying named PSTs, each under an exact display name - by writing a `.prf` and pointing `ImportPRF` at it. **Rewritten off the dead MAPI route.** Five modes: `-Preflight` (read-only, no COM, no MAPI), `-Execute`, `-Verify` (`-WithOutlook` adds the COM read), `-ClearImportPrf` and `-SelfTest`. The mechanism is measured working via `guest/New-TierProfile.ps1`; the account-less shape and the multi-PST shape are INFERRED and `-Verify` asserts both - see §4b. **The guest half has not been run; `-SelfTest` is 101 assertions over its decision logic, 0 failures.** Read §4b-i before building a corpus on a profile this makes. |
+| `guest/Add-OutlookPstStore.ps1` | Adds a PST to a profile that already exists, with an **exact** display name: `NameSpace.AddStoreEx` and then a rename of the store's root folder. **Rewritten off the dead MAPI route.** Three things invert from the old version - it needs Outlook **running** rather than closed, it works on the **default** profile and refuses if that is not the one named, and it matches stores on `FilePath` rather than display name. `-NameProbe` is **gone**: the question it asked is answered (§6 item 10) and it needed to delete a throwaway profile, which has no free route. `-ListOnly` reports the current profile's stores. **The guest half has not been run; `-SelfTest` is 39 assertions, 0 failures.** |
 | `guest/Set-DefaultOutlookProfile.ps1` | Switches the default profile and switches the profile prompt off. Closes §6 item 5. **RUN 2026-09-16; the MAPI route FAILED** (`E_NOINTERFACE`, see the interop row) and the script now uses the documented HKCU `DefaultProfile` value instead, which is measured working on the same guest. Matters more than it looks: the corpus tool LOGS ON with the default profile and does not attach to whatever Outlook is running, so the wrong default makes a corpus build refuse. |
 | `guest/Dump-UiaTree.ps1` | **Read-only.** Dumps the UIAutomation tree of an open dialog and prints a VERDICT: whether Outlook's account wizard is a classic Win32 property sheet (addressable by locale-invariant numeric `AutomationId`) or Office's own DirectUI chrome (no stable ids - dead for a PowerShell client). Two minutes, and it decides the whole GUI-automation route. **Never executed.** |
 | `guest/Rename-OutlookStore.ps1` | Renames a store to an exact display name, which the tier profile needs because Outlook names the store it mints 'Outlook Data File' and section 2.6 requires the hub store to be named as an SMTP address. **MEASURED WORKING 2026-09-15** - and it settles a question no documentation could: `Store.DisplayName` is read-only, but it DOES follow a rename of the store's root folder, `@` and all, without breaking the account's delivery-store binding. |
@@ -625,26 +687,35 @@ accounts, Extended MAPI can no longer create POP3 services, and the one componen
 excluded by the repository's Dependencies rule. They are the two remaining candidates, written so
 that a guest can settle them in one checkpoint cycle each.
 
-**None of them has ever run.** Each carries a banner saying so, and each verifies its own result
-and exits non-zero rather than reporting a success it did not check. Read the banner before you
-trust an output, and replace it with what actually happened once one of them has run.
+**ONE OF THEM RAN, AND IT WORKED - so this section is no longer three unrun experiments.**
+`New-TierProfile.ps1` built the tier profile on BOTH guests (2026-09-15/16), first attempt on the
+second guest from the committed scripts, untouched by hand. `Set-AccountWizardClassic.ps1` and
+`Dump-UiaTree.ps1` have still never run, each carries a banner saying so, and each verifies its own
+result and exits non-zero rather than reporting a success it did not check.
 
-**Two questions decide everything, and both are cheap:**
+**Of the two questions that decided this, one is answered:**
 
-* **Does Outlook 16.x process a .prf's internet-account sections at all?** Every literal POP3 .prf
-  Microsoft ever published is 2000-2007 era. `New-TierProfile.ps1 -Verify` fails loudly with that
-  exact diagnosis if no account subkey appears.
-* **Does the classic account wizard expose non-empty, numeric `AutomationId`s?** If it does, the
-  `Dump-UiaTree.ps1` output *is* the specification for a driver. If the ids are empty or the
-  framework reports `DirectUI`, that route is dead for a PowerShell 5.1 client and no driver
-  should be written.
+* ~~**Does Outlook 16.x process a .prf's internet-account sections at all?**~~ - **YES, MEASURED
+  2026-09-15.** Every literal POP3 .prf Microsoft ever published is 2000-2007 era, so this was a
+  complete absence of evidence rather than evidence of breakage. The profile Outlook built carries
+  a genuine POP3 account: `clsid={ED475411-...}` = `CLSID_OlkPOP3Account`, with the sink's host,
+  user and address all landed from section 5. What a `.prf` still **cannot** do is bind the
+  account's delivery store - `PROP_ACCT_DELIVERY_STORE` is a binary EntryID and an INI file is
+  text - and the way around that is measured too: name no PST service, set `ForcePSTPath`, and let
+  Outlook MINT the store, because a store Outlook mints is a store Outlook binds. That is
+  `guest/tier-profile-forcepst.prf`.
+* **Does the classic account wizard expose non-empty, numeric `AutomationId`s?** **Still open, and
+  now much less urgent** - the PRF route works, so the UI Automation route is a fallback nobody
+  needs yet. If the ids are non-empty the `Dump-UiaTree.ps1` output *is* the specification for a
+  driver; if they are empty or the framework reports `DirectUI`, that route is dead for a
+  PowerShell 5.1 client and no driver should be written.
 
 **And there is a third answer, which is to need less.** Most of what the POP3 account was for is
 satisfied by *any* account whose SMTP address matches - the product never reads
 `Account.AccountType` - and most of the rest is seedable by writing into a PST directly, which the
 corpus generator already does. The analysis behind all three, with a source for every claim, is in
-`.work/pop3-account-routes.md`, which is gitignored scratch: move it under `Docs/` if it should
-outlive the session that produced it.
+`Docs/research/pop3-account-routes.md` - it was gitignored scratch when this paragraph was written
+and has since been moved under `Docs/`, which is where it now lives.
 
 ---
 
@@ -771,15 +842,25 @@ that was left out.
    `guest/Set-OutlookIndexingDisabled.ps1` writes the policy as well as the rule for exactly that
    reason, and its `-Verify` is what settles it. Full evidence, every claim labelled by source and
    with an explicit list of what could not be established, in `.work/unindexed-guest.md`.
-10. **Does Outlook accept `@` in a store display name?** The hub store must be named after the
-    dummy account's SMTP address because several tests use the display name as an address. It
-    gates the whole draft family and costs five minutes to settle.
-    **Still open, but now one command:** `guest/Add-OutlookPstStore.ps1 -NameProbe -Execute
-    -VerifyWithOutlook` settles it in a throwaway profile it creates and deletes, and reports
-    **accepted**, **rejected** or **transformed**. Nothing in Microsoft's documentation or in any
-    community source states a character restriction either way, which is weak evidence and is why
-    this is a probe rather than an answer. Watch for **transformed**: a silently-renamed store is
-    one no test can find by name, on a machine that looks correctly built.
+10. ~~**Does Outlook accept `@` in a store display name?**~~ - **ANSWERED: YES, MEASURED TWICE,
+    2026-09-15, Office LTSC 2024 16.0.17932.** The hub store must be named after the dummy
+    account's SMTP address because several tests use the display name as an address, and this
+    gated the whole draft family. Nothing in Microsoft's documentation or in any community source
+    states a character restriction either way, so it could only ever be settled empirically - and
+    it was, twice, by two different routes, neither of them the probe written for it:
+    - through a **`.prf` import** - the profile Outlook built from `guest/tier-profile.prf` carries
+      a store whose `Store.DisplayName` reads back **over COM** as literally `tier@vm.invalid`;
+    - through a **root-folder rename** - `guest/Rename-OutlookStore.ps1` renamed a store from
+      `Outlook Data File` to `tier@vm.invalid` and `Store.DisplayName` followed, without breaking
+      the account's delivery-store binding.
+
+    The `@` is accepted, stored, and read back unchanged through both. `Docs/live-tier-on-the-vm.md`
+    §8 item 2 carries the same answer with the full evidence.
+    **`Add-OutlookPstStore.ps1 -NameProbe` has been REMOVED** rather than left pointing at a
+    settled question - and it could not have survived anyway, because it created and deleted a
+    throwaway profile, and **deleting a profile has no free route** now that `IProfAdmin` is gone.
+    That missing capability is recorded in `guest/OutlookMapiInterop.ps1`'s banner rather than
+    quietly dropped; nothing in the build needs it.
 11. ~~**Does smtp4dev actually serve POP3?**~~ - **ANSWERED 2026-09-15: YES, and pin 3.15.0.**
     The doubt was well-founded and the conclusion is the other way. Issue #155, "Support
     retrieval of messages using POP3", really was closed **as not planned** - in 2022. POP3 then
