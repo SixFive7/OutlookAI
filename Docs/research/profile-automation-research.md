@@ -35,7 +35,7 @@ An unlabelled sentence is structure, not a claim.
 | 2 | Profile with a **POP3/SMTP account** (the tier profile) | **No free programmatic route exists.** `.prf` import is the only candidate and it cannot express the delivery-store binding. | **Poor. This is the wall.** |
 | 3 | **Third mail account** + own delivery store + signature | Account: same wall as #2. **Signature: solved** — this repository already ships the tool. | Split: signature good, account poor. |
 | 4 | **PST store with an exact display name** (incl. `@`) | Extended MAPI `IMsgServiceAdmin::CreateMsgService("MSUPST MS")` + `ConfigureMsgService` carrying `PR_DISPLAY_NAME` | **Good for the mechanism, unknown for `@`.** See §5. |
-| 5 | **Switch the default profile**, no prompt | `IProfAdmin::SetDefaultProfile`, plus `PickLogonProfile = 0` | **Good.** |
+| 5 | **Switch the default profile**, no prompt | ~~`IProfAdmin::SetDefaultProfile`~~ **measured broken 2026-09-16** - `E_NOINTERFACE` on `IID_IProfAdmin`, Office LTSC 2024. The working route is the documented `HKCU\...\Outlook\DefaultProfile` REG_SZ, plus `PickLogonProfile = 0` | **Good, but not by the mechanism this table originally named.** See §7. |
 
 **The headline.** Four of the five are automatable and one is not. The one that is not is the mail
 account, and it is not a gap in this research — it is a capability Microsoft removed from every
@@ -327,6 +327,18 @@ will, because nothing in the suite writes to it. Do not name it with that prefix
 ---
 
 ## 7. Switching the default profile
+
+> **[MEASURED] 2026-09-16 - THE MAPI ROUTE BELOW DOES NOT WORK ON OFFICE LTSC 2024.** The first
+> execution of `Invoke-WithProfAdmin` anywhere threw *"Unable to cast COM object … to interface type
+> `IProfAdmin` … QueryInterface … `{00020379-0000-0000-C000-000000000046}` … No such interface
+> supported (`E_NOINTERFACE`)"* on `OAI-UNINDEXED`, 64-bit elevated PowerShell 5.1, build
+> 16.0.17932.20884. `MAPIInitialize` and `MAPIAdminProfiles` BOTH SUCCEEDED; only the QueryInterface
+> failed. The cause was not established and was deliberately not chased.
+>
+> **The registry half of this section is the route that shipped**, and it is measured working on the
+> same guest the same day. Everything below about `SetDefaultProfile` is kept because it is correct
+> as documentation of the API - it is simply not reachable from PowerShell on this build. The same
+> gateway blocks `New-OutlookProfile.ps1` and `Add-OutlookPstStore.ps1`, which is tracked separately.
 
 **[MS-DOC]** `IProfAdmin::SetDefaultProfile(LPTSTR lpszProfileName, ULONG ulFlags)`, `ulFlags = 0`
 (<https://learn.microsoft.com/en-us/office/client-developer/outlook/mapi/iprofadmin-setdefaultprofile>).
