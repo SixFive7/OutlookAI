@@ -1,4 +1,4 @@
-# RESUME HERE - state of play at 2026-09-16
+# RESUME HERE - state of play at 2026-09-17
 
 **Read this first after any context loss.** Everything below it is history and reasoning.
 
@@ -9,8 +9,13 @@ Windows, Office, an Outlook profile and a working POP3 account **in about twenty
 script, with nobody touching it** - and that was demonstrated on a SECOND guest built from the
 committed scripts, not just achieved once on a machine that had been hand-patched.
 
-`HEAD` at the time of writing is on `master`, **not pushed**, tree clean. **2,527 tests** under
-`--filter "Category!=Live"`; 14 pinned invariants, 3 privacy checks, 7 testbed checks.
+`HEAD` is on `master`, **pushed**, tree clean. **2,566 tests** under `--filter "Category!=Live"`;
+14 pinned invariants, 3 privacy checks, 7 testbed checks.
+
+**PUSH EVERY COMMIT AS IT IS MADE, one at a time** - standing decision 2026-09-17, in `CLAUDE.md`.
+One by one means the FIRST-PARENT MAINLINE, not `git rev-list` order: side-branch commits are not
+fast-forwards from one another, and a 16-commit backlog failed on its second push before this was
+understood. 16 commits were 12 mainline steps.
 
 ### The guests
 
@@ -20,8 +25,9 @@ committed scripts, not just achieved once on a machine that had been hand-patche
 | Windows install | 5 min 54 s, 13/14 first-logon | **7 min, 14/14** | - |
 | Office | under 6 min | **3 min** | past grace |
 | tier profile + POP3 | after two PRF variants | **first attempt** | - |
-| corpus | `vm-indexed`, 20,000, verified | `vm-unindexed`, 20,000 built, **census FAILS** | `vm2`, 27 days stale |
-| checkpoints | 5 | 3 | 10 |
+| corpus | `vm-indexed`, 20,000, verified | `vm-unindexed`, 20,000, **census CLEAN, exit 0** | `vm2`, 27 days stale |
+| indexed? | yes | **NO - verified by probing the catalog twice** | yes |
+| checkpoints | 5 | 5 | 10 |
 
 ### THE DEFECT FOUND ON 2026-09-16, and it is the one worth remembering
 
@@ -104,6 +110,48 @@ whose dates nobody can account for."* This corpus is at **0.9998**.
 So four items out of twenty thousand is the expected shape of a bulk date write, the metric was
 built to tolerate exactly this, and the number to watch is the ratio against 0.90 rather than the
 raw count. Worth writing down because "19,996 of 20,000" reads like a defect and is not one.
+
+### 2026-09-17: WHAT LANDED, and the one thing it uncovered
+
+Seven decisions were answered and six are implemented, tested and pushed.
+
+* **Corpus B is CLEAN.** `Census: 20,000 for 20,000 … Every ordinal exists exactly once, in the
+  folder the plan names.` Exit 0, and `corpus-verify` agrees. Checkpoint
+  `CP-05-CORPUS-B-CLEAN-UNINDEXED`.
+* **The guest is verifiably unindexed** - `VERDICT: UNINDEXED`, the catalog probed twice ten
+  minutes apart, indexer still running.
+* **Corpus probes purge their own litter.** Every build used to strand 6-16 items in Deleted Items
+  (soft delete leaves them there under an EntryID no manifest records) and the census called that
+  a corrupt corpus. The COM half is now verified on the guest, not just at T1.
+* **A timed-out STA operation stops.** `ComStaRunner` replaces `RunSta`: the cancellation check
+  lives inside the loop's own enumerator, so a corpus loop **cannot be written without one**.
+  Cold start is a separate allowance; the work bound is now a SILENCE bound. Exit code **3** means
+  "failed AND something may still be writing" - do not re-run.
+* **A crawl poll that asked the index nothing now fails on Production, warns on Portable.**
+* **The profile switcher works**, by the registry rather than by MAPI - see below.
+* **The corpus build refuses early** when its two preconditions are unmet, and fixes neither.
+* **The live tier's blocker is scripted but UNRUN:** the guests have no SDK, no git, no clone and
+  no network, so `Publish-LiveTierPayload.ps1` stages the source and an offline package feed, and
+  `Install-DotnetSdk.ps1` installs the SDK from staged media. Neither has ever run.
+
+**THE THING THAT WAS UNCOVERED, and it is the one to act on first.** `IProfAdmin` does not work on
+Office LTSC 2024. `Invoke-WithProfAdmin`'s first execution anywhere returned `E_NOINTERFACE` on
+`IID_IProfAdmin` (16.0.17932.20884) - `MAPIInitialize` and `MAPIAdminProfiles` both SUCCEEDED, only
+the QueryInterface failed, and **the cause has not been established**. That is not one script's
+problem: `New-OutlookProfile.ps1` and `Add-OutlookPstStore.ps1` are on the same gateway, and they
+are the documented way to create the corpus profile and add its stores. **A from-scratch rebuild
+walks straight into it.**
+
+### THE RECIPE THAT MAKES A CORPUS BUILD WORK, because it cost five failed attempts
+
+Both conditions, and the only build that ever succeeded satisfied them **by accident** - an earlier
+task had left a `/PIM CorpusProfile` instance running, which is why it looked reproducible:
+
+1. **The default profile must be the account-less one.** The corpus tool **LOGS ON with the default
+   profile**; it does NOT attach to whatever Outlook is running. Wrong default -> the store guard
+   refuses. This is now checked before anything touches COM.
+2. **Outlook must already be running and warm.** 180 s settles it; 75 s did not always. A cold start
+   inside the STA used to blow the bound - fixed, but starting warm is still the fast path.
 
 ### What is NOT done
 
