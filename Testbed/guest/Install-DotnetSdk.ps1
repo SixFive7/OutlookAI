@@ -390,9 +390,18 @@ function Invoke-Dotnet {
     $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
     $env:DOTNET_NOLOGO = '1'
 
+    # Start-Process joins -ArgumentList with spaces and quotes NOTHING, so an argument that
+    # contains a space silently becomes two arguments. Every path here is space-free by default,
+    # but -SourceRoot and -InstallerPath are parameters and 'C:\Program Files\...' is exactly the
+    # value somebody would pass.
+    $quoted = @()
+    foreach ($a in $Arguments) {
+        if ($a -match '\s') { $quoted += ('"' + $a + '"') } else { $quoted += $a }
+    }
+
     $startArgs = @{
         FilePath               = $DotnetPath
-        ArgumentList           = $Arguments
+        ArgumentList           = $quoted
         RedirectStandardOutput = $outFile
         RedirectStandardError  = $errFile
         NoNewWindow            = $true
@@ -554,7 +563,11 @@ SHA-512, and update Testbed/MEDIA.md so the next rebuilder is not doing this aga
         # this project has measured and banned outright (guest/Register-InteractiveTask.ps1).
         # The session is already elevated, asserted above, so the bundle needs no elevation of
         # its own.
-        $installer = Start-Process -FilePath $InstallerPath -ArgumentList $arguments -PassThru -NoNewWindow
+        $installerArgs = @()
+        foreach ($a in $arguments) {
+            if ($a -match '\s') { $installerArgs += ('"' + $a + '"') } else { $installerArgs += $a }
+        }
+        $installer = Start-Process -FilePath $InstallerPath -ArgumentList $installerArgs -PassThru -NoNewWindow
         $exited = $installer.WaitForExit($InstallTimeoutMinutes * 60 * 1000)
         if (-not $exited) {
             try { $installer.Kill() } catch { }
