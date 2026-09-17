@@ -85,6 +85,13 @@ using OutlookAI.RemediationTools;
 /// </summary>
 internal static class Program
 {
+    /// <summary>
+    /// Exit code for the one failure a caller must not retry: an STA run was abandoned and
+    /// the thread did not acknowledge the stop, so a COM session may still be writing to the
+    /// store until this process exits. Everything else that fails still exits 1.
+    /// </summary>
+    internal const int AbandonedStaSessionExitCode = 3;
+
     private static int Main(string[] args)
     {
         // Every number this console prints is meant to be saved beside a measurement and
@@ -138,6 +145,16 @@ internal static class Program
                 "dedupe" => RunDedupe(LoadSettings(options), Require(options, "store"), execute),
                 _ => Fail($"Unknown command '{args[0]}'."),
             };
+        }
+        catch (ComStaTimeoutException ex)
+        {
+            // Its own exit code when the STA thread did NOT stop, because "this failed" and
+            // "this failed AND something may still be writing to the store" call for opposite
+            // next moves: the first invites a re-run, and a re-run during the second is two
+            // writers against one store. Any wrapper testing for non-zero still sees a
+            // failure; one that can tell the two apart now can.
+            Console.Error.WriteLine($"FATAL: {ex.GetType().Name}: {ex.Message}");
+            return ex.Acknowledged ? 1 : AbandonedStaSessionExitCode;
         }
         catch (Exception ex)
         {
@@ -510,5 +527,10 @@ internal static class Program
         Console.WriteLine("Stale:    rebuild - corpus-teardown --execute (or delete the .pst), then corpus-build");
         Console.WriteLine("Override: [--allow-undated] [--allow-drafts-placement]  (each says what it costs)");
         Console.WriteLine($"Tags:     corpus items carry {CorpusPlan.SubjectTag}, NOT the live tier's artifact tag");
+        Console.WriteLine($"Bounds:   cold start {ComStaBudget.Format(ComStaBudget.DefaultStartup)} "
+            + $"({ComStaBudget.StartupVariable}), work silence per command ({ComStaBudget.WorkVariable});"
+            + " milliseconds, 0 removes the bound");
+        Console.WriteLine($"Exit:     0 ok, 1 failed, {AbandonedStaSessionExitCode} an abandoned COM session may still "
+            + "be writing - do NOT re-run until this process has exited");
     }
 }

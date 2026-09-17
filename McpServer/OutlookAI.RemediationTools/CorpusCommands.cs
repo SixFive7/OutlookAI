@@ -891,8 +891,12 @@ public static class CorpusCommands
         facts = ComCorpusMailbox.ReadStoreFacts(options.Store!);
         CorpusProfileFacts profile = ComCorpusMailbox.ReadProfileFacts(options.Store!);
         CorpusStoreRefusal refusal = CorpusSafety.Evaluate(facts, profile, options.AllowStores);
-        output.WriteLine(CorpusSafety.Explain(refusal, facts));
-        output.WriteLine($"  profile accounts: {(profile.AccountCount == null ? "(unreadable)" : profile.AccountCount)}"
+        output.WriteLine(CorpusSafety.Explain(refusal, facts, profile));
+
+        // The profile NAME leads this line, because it is the fact that decides whether the
+        // rest of it is about the store the operator has in mind - see CorpusSafety.Explain.
+        output.WriteLine($"  bound profile: {profile.ProfileName ?? "(unreadable)"}"
+            + $", profile accounts: {(profile.AccountCount == null ? "(unreadable)" : profile.AccountCount)}"
             + $", delivering into this store: {profile.AccountsDeliveringToTarget}"
             + $", unreadable delivery store: {profile.AccountsWithUnreadableDeliveryStore}");
         if (refusal != CorpusStoreRefusal.None)

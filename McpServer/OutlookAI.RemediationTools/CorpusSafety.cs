@@ -31,10 +31,24 @@ public sealed record CorpusStoreFacts(
 /// unprovable, because an account that cannot be examined is an account that might deliver
 /// into the target.
 /// </param>
+/// <param name="ProfileName">
+/// The MAPI profile this run actually bound - <c>NameSpace.CurrentProfileName</c> - or null
+/// when it could not be read.
+/// <para>
+/// It decides NOTHING, and it is here anyway, because it is the fact the operator needs and
+/// the one the refusal used to leave out. The corpus tool creates its own
+/// <c>Outlook.Application</c> and so logs on with the DEFAULT profile; it does not attach to
+/// whatever Outlook a human is looking at. On 2026-09-16 that cost five refused
+/// <c>corpus-build</c> runs before anyone worked out that the profile being vetted was not
+/// the profile on screen - all five reporting only "store '(unnamed store)' ... profile
+/// accounts: 1".
+/// </para>
+/// </param>
 public sealed record CorpusProfileFacts(
     int? AccountCount,
     int AccountsDeliveringToTarget,
-    int AccountsWithUnreadableDeliveryStore);
+    int AccountsWithUnreadableDeliveryStore,
+    string? ProfileName = null);
 
 /// <summary>Why a store was refused as a corpus target. <see cref="None"/> is the only value that permits a write.</summary>
 public enum CorpusStoreRefusal
@@ -238,11 +252,28 @@ public static class CorpusSafety
     /// <summary>
     /// The refusal message. Names only the offending store, never any other store's name,
     /// subject or content - the same discipline the live tier's guard keeps.
+    /// <para>
+    /// IT ALSO NAMES THE BOUND PROFILE, and that is not decoration. This tool creates its own
+    /// <c>Outlook.Application</c>, so it logs on with the DEFAULT profile and does NOT attach
+    /// to whatever Outlook is on screen - which means "which store?" and "which profile?" are
+    /// two different questions and the answer to the first is useless without the second. The
+    /// message used to answer only the first: <i>REFUSING to build a corpus in store
+    /// '(unnamed store)' ... profile accounts: 1</i>, which on 2026-09-16 cost five failed
+    /// build attempts to diagnose.
+    /// </para>
+    /// <para>
+    /// The profile facts are a REQUIRED parameter rather than an optional extra for exactly
+    /// that reason: an overload that omits them is an overload that reproduces the defect.
+    /// </para>
     /// </summary>
-    public static string Explain(CorpusStoreRefusal refusal, CorpusStoreFacts facts)
+    public static string Explain(CorpusStoreRefusal refusal, CorpusStoreFacts facts, CorpusProfileFacts profile)
     {
         ArgumentNullException.ThrowIfNull(facts);
+        ArgumentNullException.ThrowIfNull(profile);
         string target = string.IsNullOrWhiteSpace(facts.DisplayName) ? "(unnamed store)" : facts.DisplayName!;
+        string boundProfile = string.IsNullOrWhiteSpace(profile.ProfileName)
+            ? "(profile name unreadable)"
+            : profile.ProfileName!;
         string why = refusal switch
         {
             CorpusStoreRefusal.None => "permitted",
@@ -267,7 +298,9 @@ public static class CorpusSafety
 
         if (refusal == CorpusStoreRefusal.None)
         {
-            return $"Store '{target}' accepted as a corpus target.";
+            // The acceptance says it too: the operator who has to trust a 40 000 item write
+            // deserves to see which profile it was vetted against, not only which store.
+            return $"Store '{target}' accepted as a corpus target (bound profile: '{boundProfile}').";
         }
 
         bool profileRefusal = refusal is CorpusStoreRefusal.TargetIsAccountDeliveryStore
@@ -280,8 +313,10 @@ public static class CorpusSafety
             : "A corpus may only be written into a LOCAL .pst named explicitly by the caller. Widen the "
                 + "--allow-store list, never the guard.";
 
-        return $"REFUSING to build a corpus in store '{target}': {why}. {remedy} "
-            + "See the mailbox-safety rules in CLAUDE.md.";
+        return $"REFUSING to build a corpus in store '{target}' (bound profile: '{boundProfile}'): {why}. {remedy} "
+            + "This tool logs on with the DEFAULT profile and does not attach to a running Outlook, so if that "
+            + "profile name is not the one you expected, the target you are looking at is not the target being "
+            + "vetted. See the mailbox-safety rules in CLAUDE.md.";
     }
 
     /// <summary>
