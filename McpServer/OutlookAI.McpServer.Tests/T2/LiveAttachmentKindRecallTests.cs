@@ -415,14 +415,14 @@ public sealed class LiveAttachmentKindRecallTests
                 + "; kinds: "
                 + string.Join(", ", attachmentRows.SelectMany(Kinds).Distinct(StringComparer.OrdinalIgnoreCase)));
 
-            SeededCrawlVerdict verdict = SeededCrawlPoll.Decide(attachmentRows.Count, pollsCompleted);
-            if (verdict != SeededCrawlVerdict.Crawled)
-            {
-                // Which of the two non-crawl outcomes this was decides the sentence: the gatherer
-                // is named only when the index was actually asked and answered.
-                _output.WriteLine(SeededCrawlPoll.Explain(verdict, pollsCompleted, pollsLost));
-            }
-            else
+            // Which of the three outcomes this was decides both the sentence and whether the run
+            // may go on: the gatherer is named only when the index was actually asked and answered,
+            // and a wait that asked it NOTHING refuses here on a Production profile (decision 57)
+            // instead of reporting green for a crawl nobody measured. The refusal lands inside the
+            // try, so the artifact sweep in the finally still runs.
+            SeededCrawlVerdict verdict = SeededCrawlPoll.Report(
+                _fixture.Settings, attachmentRows.Count, pollsCompleted, pollsLost, _output.WriteLine);
+            if (verdict == SeededCrawlVerdict.Crawled)
             {
                 // Every one of them is admitted by the shipped shape...
                 Assert.All(
