@@ -263,11 +263,34 @@ redoing the step above it.
 
 ### 2.3 Toolchain, repository and add-in
 
-* .NET SDK (version unrecorded; it must build `net10.0-windows` and `net48`), git, and a clone
-  of this repository.
+> **CORRECTED 2026-09-17, and it was wrong in three ways.** This section used to say ".NET SDK
+> (version unrecorded), git, and a clone of this repository", which described the hand-built
+> August guest and was never true of the scripted ones. **The guests have no SDK, no git, no
+> clone and no network**, and that - not anything about Outlook - is why the live tier has never
+> run on one.
+
+* **.NET SDK 10.0.401, win-x64, installed from STAGED media** by `Testbed/guest/Install-DotnetSdk.ps1`
+  (`Testbed/MEDIA.md` declares the precondition). Nothing pins a feature band - there is no
+  `global.json` in this repository and CI asks `setup-dotnet` for `10.0.x` - so any .NET 10 SDK
+  would compile. 10.0.401 is chosen because it is what the host runs, and the host publishes the
+  payload the guest measures with: one toolchain across both is one fewer difference to suspect.
+  **x64 is not optional** (`PlatformTarget x64`, and `Search.CollatorDSO` has no 32-bit story here).
+* **`net48` needs no separate install.** `OutlookAI.Core` carries `Microsoft.NETFramework.ReferenceAssemblies`,
+  so the reference assemblies travel in the offline package feed. The tests project targets
+  `net10.0-windows` only, so a `dotnet test` run never builds the `net48` target at all.
+* **No git and no clone.** The source arrives as a `git archive` of a NAMED COMMIT, and every
+  NuGet package in the restore closure arrives as an offline folder feed - both staged by
+  `Testbed/host/Publish-LiveTierPayload.ps1`, which re-restores the whole suite against that feed
+  **on the host** first, so a feed short of one transitive package fails in seconds here rather
+  than after a slow copy-in there. An archive rather than the working tree, so no stale `obj/`
+  travels across carrying the host's package paths.
 * Build once so the server exe exists where the tier-3 tests look for it. That path is baked
   into the test assembly at build time as `AssemblyMetadata("McpServerExePath")` and points at
   `McpServer\OutlookAI.McpServer\bin\<Config>\net10.0-windows\OutlookAI.McpServer.exe`.
+  **This stops being a question once the guest builds the suite itself**: a guest that builds it
+  bakes a path into its own tree where its own build just put the exe. The staged
+  `C:\OutlookAI-Q5\server\` payload stays what it is, and the two no longer have to be the same
+  path.
 * Install the add-in and let it run once. Tests carrying `Requires=AddInRegistry` read tuning
   state the add-in writes on first run; without it they have nothing to read.
 
@@ -1212,6 +1235,14 @@ unrecorded or unverified.
 * **The VM bucket does not prove the delegate-store paths at all**, and no test machine can:
   `Requires=DelegateStore` needs a mailbox somebody else owns. Six tests, named by the
   production-only filter in section 5.
+* **The guest's SDK is PINNED to whatever the host was running when the payload was staged**,
+  and nothing enforces that they stay equal. 10.0.401 was chosen for sameness rather than for any
+  requirement - no `global.json` exists and CI asks only for `10.0.x` - so the two can drift the
+  moment the host updates, and the first symptom would be a guest measurement that differs from a
+  host one for a reason nobody is looking for. `Testbed/MEDIA.md` records the pinned version; it is
+  the thing to check when host and guest disagree about something that should not depend on the
+  toolchain.
+
 * **Nobody has yet run the VM bucket end to end anywhere.** The 121 read as runnable there; that
   is not the same as having run there. The count moved from 31 to 121 by re-reading what each
   test needs method by method - no test was changed to make it fit.
