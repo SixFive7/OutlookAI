@@ -37,8 +37,12 @@ param(
     [Parameter(Mandatory = $true)] [string] $VMName,
     [Parameter(Mandatory = $true)] [string[]] $Path,
     [Parameter(Mandatory = $true)] [string] $Destination,
-    [string] $RepoRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+    [string] $RepoRoot
 )
+# Defaults that need $PSScriptRoot are set HERE, not in param(). Windows PowerShell 5.1 leaves
+# $PSScriptRoot empty while param() defaults are evaluated under -File, so a default built from
+# it threw before the script ran. Measured 2026-09-24; this repository targets 5.1 (Q78).
+if (-not $PSBoundParameters.ContainsKey('RepoRoot')) { $RepoRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) }
 
 $ErrorActionPreference = 'Stop'
 
