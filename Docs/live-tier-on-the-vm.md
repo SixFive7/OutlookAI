@@ -1058,6 +1058,38 @@ SMTP side - is retired.
 > and reading `Account.SmtpAddress` over COM, which the Object Model Guard blocks on these guests
 > (section 8 item 23). The rest of this section is the specification the script was built to.
 
+> **BUILT AGAIN, 2026-09-24, on `OutlookAI-Unindexed` - from `CP-09-ADDIN-READY` to checkpoint
+> `CP-10-IDENTITY-ACCOUNT`.** Same script, same result: two POP3 accounts, `OutlookAI tier sink`
+> on `tier@vm.invalid` and `OutlookAI identity sink` on its own `identity@vm.invalid`, each Drafts
+> resolving, two distinct delivery stores - read over COM, then again after Outlook's own graceful
+> quit and a fresh start. Before `-Phase Bind` the identity account sat on the tier store's
+> EntryID, exactly as the Q64 measurement predicts. What that run added:
+>
+> * **The identity account PROMPTS for its POP3 password**, like the tier account (section 2.7):
+>   the start that imports it raised an `Internet Email - identity` logon dialog. The build order
+>   is therefore Bind, then - Outlook still closed - `New-TierProfile.ps1 -StoreSinkPassword
+>   -Execute`, which stores the password on every account that polls the sink. Proven: the next
+>   start raised no dialog, and the sink's debug log shows `read USER identity`,
+>   `read PASS any-value`, `STAT`.
+> * **Closing Outlook for `-Phase Bind` needs no guest restart**: the graceful quit of
+>   `Testbed/README.md` step 4d, after cancelling that logon dialog (IDCANCEL; nothing typed).
+> * **`Account.SmtpAddress` reads** - `tier@vm.invalid` and `identity@vm.invalid`, no prompt -
+>   because this guest has `Set-OutlookProgrammaticAccess.ps1` (Q80). That closes the third
+>   "still to do" above for any guest built with it.
+> * **The signature is NOT done, and the shipped tool said it was.** `Set-AccountSignature.ps1
+>   -Account identity@vm.invalid -Execute` (its first run anywhere) wrote the `Identity` file set
+>   and printed `Verified` - but `manage_signature` had written `New Signature` onto the identity
+>   PST's **data-file** entry (subkey `00000005`, clsid `{ED475414-...}`, whose `Account Name` is
+>   the store's name `identity@vm.invalid`), not onto the POP3 account (`00000004`, `Account Name`
+>   `OutlookAI identity sink`). `ProfileSignatureDefaultsStore` selects every subkey whose
+>   `Account Name` contains `@`, whatever its clsid, and `list_signatures` reads back from the same
+>   wrong place. Two consequences: the identity account has no signature Outlook will inject, so
+>   `NewDraft_BusinessAccounts_BodyAboveTheirOwnIntactHtmlSignature` is expected to fail on this
+>   guest until it is fixed; and on a real machine whose PST or data file is named after its
+>   address - Outlook's own default for a POP3/IMAP account - the tool can write a user's default
+>   signature onto the wrong subkey and report success. The fix is a product decision, not a
+>   testbed one; it is left in place on this guest so the live run shows what Outlook does with it.
+
 **Add a SECOND mail account, give it its own delivery PST, and leave that PST out of
 `bystanderStoreDisplayNames`.** That is the whole of the `IdentityAccount` capability: a non-hub
 primary the write allowlist grants an identity draft in. Section 1.3's three-store layout is the
@@ -1609,6 +1641,7 @@ outside the repository (`.work\g2-buildout\` in the main checkout).
 | 2. Programmatic access (Q80) | `Set-OutlookProgrammaticAccess.ps1`: a control `-Verify` with nothing written, `-Execute`, `-Verify` | control `PROMPTED` in 0.7 s; then `NO-PROMPT`, `SmtpAddress` in 16 ms | `CP-07-PROGRAMMATIC-ACCESS` |
 | 3. Mail sink | `Install-MailSink.ps1 -LogLevel debug -Execute`, graceful restart, `-Verify`; then the password question (section 2.7) | `SINK-READY` twice, started 7 s after boot; Outlook PROMPTED and never connected, so `New-TierProfile.ps1 -StoreSinkPassword` - then `read USER tier` / `read PASS any-value` | `CP-08-MAIL-SINK` |
 | 4. Add-in | `Publish-AddInPayload.ps1` on the host (`fe65ced`, host unchanged), `Install-OutlookAIAddIn.ps1` `-SelfTest`, `-Verify`, `-Execute`, restart, `-Execute`; then `Set-OutlookIndexingDisabled.ps1 -Verify` | `NOT-INSTALLED`, then `ADDIN-READY` twice (tuning state 3.5 s and 3 s after the start; trust entry kept the second time); the index verify `NO-INDEXER` when its first reading fell 74 s after boot, before Windows Search's delayed start, then `UNINDEXED` on a re-run | `CP-09-ADDIN-READY` (the identity import of step 5 already pending in it) |
+| 5. Identity account | `Add-IdentityAccount.ps1` Import (before CP-09), a start that imported it, `Add-OutlookPstStore.ps1` + `-Phase CaptureStore`, graceful quit, `-Phase Bind`, `New-TierProfile.ps1 -StoreSinkPassword -Execute`, start, `-Phase Verify -TrySmtpAddress`; quit, start, Verify again. Then `Set-AccountSignature.ps1 -Execute` | the import start raised the identity account's POP3 logon dialog (cancelled); after Bind + the stored password no dialog, the sink logged `read USER identity` / `read PASS any-value`; `OK` - 2 accounts, 2 distinct delivery stores, `SmtpAddress` of both read with no prompt - twice. The signature printed `Verified` and landed on the wrong subkey (section 2.8b) | `CP-10-IDENTITY-ACCOUNT` |
 
 **What the build-out found, beyond the step verdicts:**
 
@@ -1621,6 +1654,10 @@ outside the repository (`.work\g2-buildout\` in the main checkout).
 * **Office LTSC 2024 does not register the VSTO runtime** Installer.iss looks for (`v4R` absent; only
   `v4` `10.0.60910`), so the add-in installer's own runtime step is load-bearing on a guest.
 * **Inbucket's log is written through a 4 KB buffer** (section 2.7): read it after more has been logged.
+  An SMTP session that only says `EHLO` and `QUIT` - no `MAIL`, no `RCPT`, no `DATA`, so no message
+  and no mailbox - adds enough debug lines to push the buffer out; one such session was enough.
+* **`manage_signature` can bind a signature to a data file** (section 2.8b): it picks the profile
+  subkey by an `@` in `Account Name`, and a PST named after an address has one.
 
 ---
 

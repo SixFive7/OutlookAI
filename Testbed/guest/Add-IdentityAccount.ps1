@@ -39,13 +39,16 @@
                           -Execute  - AddStoreEx, then a root-folder rename. [MEASURED]
       -Phase CaptureStore Outlook RUNNING. Reads that store's StoreID and Inbox EntryID over COM
                           and writes them to a JSON file beside the PST. Reads only.
-                          Then: close Outlook (restart the guest - never taskkill it).
+                          Then: close Outlook - a graceful Quit() in session 1, or restart the
+                          guest; never taskkill it.
       -Phase Bind         Outlook CLOSED. Writes those two byte strings into the identity
                           account's two registry values. THIS IS THE UNDOCUMENTED STEP. It writes
                           only bytes Outlook produced, only into values Outlook created, and reads
                           them back; the object model offers no setter (Account.DeliveryStore is
                           read-only) and Microsoft documents only the GUI's "Change Folder".
-      -Phase Verify       Reads over COM what NewDraft needs, for EVERY account: DeliveryStore,
+      (existing script)   Outlook CLOSED. New-TierProfile.ps1 -StoreSinkPassword -Execute - the
+                          account's POP3 password, or Outlook prompts for it. [MEASURED]
+      -Phase Verify      Reads over COM what NewDraft needs, for EVERY account: DeliveryStore,
                           its Drafts folder, and that no two accounts share a store. Reads only.
 
     MEASURED RESULT of that sequence on OAI-INDEXED (driven from checkpoint
@@ -55,14 +58,44 @@
     for two accounts - and the same after a guest restart, i.e. Outlook neither rejected nor
     rewrote the binding across its own shutdown and a fresh start.
 
+    RUN AGAIN 2026-09-24 ON `OutlookAI-Unindexed` (OAI-UNINDEXED), FROM CP-09-ADDIN-READY, AND IT
+    WORKS THERE TOO - checkpoint CP-10-IDENTITY-ACCOUNT. Same sequence, same result: two POP3
+    accounts, `OutlookAI tier sink` on tier@vm.invalid (Outlook.pst) and `OutlookAI identity sink`
+    on its own identity@vm.invalid (identity.pst), Drafts resolving on both, two distinct delivery
+    stores - and the same after Outlook's own graceful quit and a fresh start. Before Bind the
+    identity account sat on the tier store's EntryID, exactly as Q64 predicts. Three things that
+    run added, all measured on that guest:
+      * THE IDENTITY ACCOUNT PROMPTS FOR ITS POP3 PASSWORD. The start that imports it raises an
+        "Internet Email - identity" logon dialog (user name filled, password empty), because the
+        .prf stores no password - the same finding as the tier account's (New-TierProfile.ps1's
+        banner). So after Bind, still with Outlook closed, run
+        `New-TierProfile.ps1 -StoreSinkPassword -Execute`: it stores the password on EVERY
+        account that polls the sink, the identity account included. Proven: the next start raised
+        no dialog, and the sink's debug log shows `read USER identity` then `read PASS any-value`
+        and a STAT. The NEXT lines below now say so.
+      * "CLOSE OUTLOOK" DOES NOT NEED A GUEST RESTART. A graceful quit in session 1 - attach,
+        refuse while an Inspector is open or an Outbox holds anything, release every COM reference
+        but the Application, Application.Quit(), wait for OUTLOOK.EXE to exit, never kill it - is
+        enough for Bind, and took 2-3 s each time. Cancel the identity logon dialog first (post
+        IDCANCEL to it: nothing typed, nothing stored); a modal Outlook dialog is known on this
+        guest to make Quit() be ignored (the Object Model Guard prompt did exactly that).
+      * ACCOUNT.SMTPADDRESS READS. With Set-OutlookProgrammaticAccess.ps1 applied (Q80),
+        -TrySmtpAddress returned tier@vm.invalid and identity@vm.invalid with no prompt, before and
+        after the restart. Without Q80 the section below still holds.
+
     WHAT IS STILL NOT KNOWN, stated where it matters:
-      * Account.SmtpAddress over COM. It is on Microsoft's list of members protected by the Object
-        Model Guard, and on these guests the guard prompts ("A program is trying to access email
-        address information...") because Windows Security Center reports Defender's signatures
-        out of date - the guests have no network. -TrySmtpAddress attempts it last, in its own job,
-        and reports a block as a block. The registry's `Email` value is read regardless.
+      * Account.SmtpAddress over COM ON A GUEST WITHOUT Q80. It is on Microsoft's list of members
+        protected by the Object Model Guard, and on these guests the guard prompts ("A program is
+        trying to access email address information...") because Windows Security Center reports
+        Defender's signatures out of date - the guests have no network. -TrySmtpAddress attempts it
+        last, in its own job, and reports a block as a block. The registry's `Email` value is read
+        regardless. Set-OutlookProgrammaticAccess.ps1 removes the prompt (measured, above).
       * Whether a later Outlook REPAIR or an account edit in the GUI rewrites the binding. Not tried.
       * The signature section 2.8b also wants on this account. Not done here: Set-AccountSignature.ps1.
+        Run on OAI-UNINDEXED 2026-09-24 it reported "Verified" and was NOT: the shipped
+        manage_signature bound 'Identity' to the identity PST's DATA-FILE entry (subkey 00000005,
+        whose 'Account Name' is the store name identity@vm.invalid), not to this account (00000004,
+        'Account Name' = 'OutlookAI identity sink'). Docs/live-tier-on-the-vm.md section 2.8b.
 
     WHAT IT NEVER DOES: start, quit or kill Outlook; create, modify, move or delete an item; touch
     any profile other than -ProfileName, or any account other than the one whose Email is
@@ -93,6 +126,7 @@
     .\Add-OutlookPstStore.ps1 -ProfileName OutlookAI-Tier -DisplayName identity@vm.invalid -Path C:\OutlookAI-Tier\identity.pst -Execute
     .\Add-IdentityAccount.ps1 -Phase CaptureStore -Execute
     .\Add-IdentityAccount.ps1 -Phase Bind -Execute
+    .\New-TierProfile.ps1 -StoreSinkPassword -Execute
     .\Add-IdentityAccount.ps1 -Phase Verify -TrySmtpAddress
 #>
 [CmdletBinding()]
@@ -343,7 +377,7 @@ switch ($Phase) {
         if (-not $Execute) { Say "Dry run. Would write $IdsPath."; return }
         Set-Content -LiteralPath $IdsPath -Value ($c | ConvertTo-Json) -Encoding UTF8
         Say "wrote $IdsPath"
-        Say 'NEXT: close Outlook - restart the guest, never taskkill it - then:  .\Add-IdentityAccount.ps1 -Phase Bind -Execute'
+        Say 'NEXT: close Outlook - a graceful Application.Quit() in session 1 (cancel the identity logon dialog first), never taskkill it - then:  .\Add-IdentityAccount.ps1 -Phase Bind -Execute'
     }
     'Bind' {
         Assert-OutlookNotRunning
@@ -367,7 +401,8 @@ switch ($Phase) {
         if ((ConvertTo-HexString $back.GetValue($StoreValue)) -ne $ids.StoreID.ToUpperInvariant()) { throw "$StoreValue did not read back." }
         if ((ConvertTo-HexString $back.GetValue($FolderValue)) -ne $ids.InboxEntryID.ToUpperInvariant()) { throw "$FolderValue did not read back." }
         Say "  after:  bound to '$($ids.DisplayName)' - both values read back byte-identical"
-        Say 'NEXT: start Outlook, then  .\Add-IdentityAccount.ps1 -Phase Verify -TrySmtpAddress'
+        Say 'NEXT: with Outlook still closed, store the POP3 password it will otherwise prompt for:  .\New-TierProfile.ps1 -StoreSinkPassword -Execute'
+        Say 'THEN: start Outlook, then  .\Add-IdentityAccount.ps1 -Phase Verify -TrySmtpAddress'
     }
     'Verify' {
         Say "registry, profile ${ProfileName}:"
