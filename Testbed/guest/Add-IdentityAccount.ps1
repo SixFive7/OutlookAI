@@ -83,6 +83,18 @@
         -TrySmtpAddress returned tier@vm.invalid and identity@vm.invalid with no prompt, before and
         after the restart. Without Q80 the section below still holds.
 
+    AND ONE THING THAT RUN GOT WRONG, found afterwards (Docs/live-tier-on-the-vm.md section 4.1,
+    step 6, defect 4) and NOT fixed here, because the fix is a decision about how a secondary PST
+    gets default folders at all:
+      * THE "INBOX ENTRYID" CAPTURED IS THE PST'S ROOT. identity.pst is attached by AddStoreEx and
+        has no Inbox; Store.GetDefaultFolder(6) on it returns the PST's non-IPM root folder (NID
+        0x122, no display name - its EntryID ends 22010000). CaptureStore recorded that, Bind wrote
+        it into `Delivery Folder EntryID`, and Verify cannot see it, because it checks the delivery
+        STORE and its Drafts. On both guests, then, POP3 mail for this account would be filed in a
+        folder Outlook's folder tree does not show.
+      * CAPTURESTORE AND VERIFY ARE NOT PURE READS. GetDefaultFolder(16) creates a missing Drafts
+        folder on such a PST; the identity PST's Drafts very likely came from these two phases.
+
     WHAT IS STILL NOT KNOWN, stated where it matters:
       * Account.SmtpAddress over COM ON A GUEST WITHOUT Q80. It is on Microsoft's list of members
         protected by the Object Model Guard, and on these guests the guard prompts ("A program is

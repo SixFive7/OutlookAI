@@ -1089,6 +1089,13 @@ SMTP side - is retired.
 >   address - Outlook's own default for a POP3/IMAP account - the tool can write a user's default
 >   signature onto the wrong subkey and report success. The fix is a product decision, not a
 >   testbed one; it is left in place on this guest so the live run shows what Outlook does with it.
+> * **The account's delivery FOLDER is the PST's hidden root, not an Inbox** - found at step 6
+>   (section 4.1, defect 4). `identity.pst`, attached by `AddStoreEx`, has no Inbox, and
+>   `GetDefaultFolder(6)` on it returns the root folder (NID `0x122`, no display name), so
+>   `-Phase CaptureStore` captured that and `-Phase Bind` bound it. The same script did the same on
+>   `OutlookAI-Indexed`. The draft tests are unaffected - they use the store's Drafts - but mail
+>   delivered to this account lands where Outlook's folder tree does not show it. How a secondary
+>   PST gets real default folders is the open question section 4.1 names.
 
 **Add a SECOND mail account, give it its own delivery PST, and leave that PST out of
 `bystanderStoreDisplayNames`.** That is the whole of the `IdentityAccount` capability: a non-hub
@@ -1642,6 +1649,48 @@ outside the repository (`.work\g2-buildout\` in the main checkout).
 | 3. Mail sink | `Install-MailSink.ps1 -LogLevel debug -Execute`, graceful restart, `-Verify`; then the password question (section 2.7) | `SINK-READY` twice, started 7 s after boot; Outlook PROMPTED and never connected, so `New-TierProfile.ps1 -StoreSinkPassword` - then `read USER tier` / `read PASS any-value` | `CP-08-MAIL-SINK` |
 | 4. Add-in | `Publish-AddInPayload.ps1` on the host (`fe65ced`, host unchanged), `Install-OutlookAIAddIn.ps1` `-SelfTest`, `-Verify`, `-Execute`, restart, `-Execute`; then `Set-OutlookIndexingDisabled.ps1 -Verify` | `NOT-INSTALLED`, then `ADDIN-READY` twice (tuning state 3.5 s and 3 s after the start; trust entry kept the second time); the index verify `NO-INDEXER` when its first reading fell 74 s after boot, before Windows Search's delayed start, then `UNINDEXED` on a re-run | `CP-09-ADDIN-READY` (the identity import of step 5 already pending in it) |
 | 5. Identity account | `Add-IdentityAccount.ps1` Import (before CP-09), a start that imported it, `Add-OutlookPstStore.ps1` + `-Phase CaptureStore`, graceful quit, `-Phase Bind`, `New-TierProfile.ps1 -StoreSinkPassword -Execute`, start, `-Phase Verify -TrySmtpAddress`; quit, start, Verify again. Then `Set-AccountSignature.ps1 -Execute` | the import start raised the identity account's POP3 logon dialog (cancelled); after Bind + the stored password no dialog, the sink logged `read USER identity` / `read PASS any-value`; `OK` - 2 accounts, 2 distinct delivery stores, `SmtpAddress` of both read with no prompt - twice. The signature printed `Verified` and landed on the wrong subkey (section 2.8b) | `CP-10-IDENTITY-ACCOUNT` |
+| 6. Fixture populations (section 3b) | In the tier profile `Add-OutlookPstStore.ps1` made `bystander@vm.invalid` (`C:\OutlookAI-Tier\bystander.pst`); all three population stores read 0 items. Default to `CorpusProfile`, the hub (`Outlook.pst`), bystander and identity PSTs attached there by path, names byte-identical. `corpus-probe --population hub`, then per population a dry run and `--execute` - `hub-unindexed` 8181, `bystander-unindexed` 8282, `identity-unindexed` 8383 (the last id is not yet in `testbed.json`), one anchor `2026-09-24T16:08:00Z` - then `corpus-census` of all three and of Corpus B. Default back to `OutlookAI-Tier` | **NOT CLEAN - every population build exited 1.** Placement census clean: 56, 300 and 8 items, each ordinal once, in the folder the manifest records. Read-back FAULTS: 42 of 56, 244 of 300 and 5 of 8 items - exactly the RECEIVED ones - carry no owner recipient. And three more defects, below. Corpus B: its own census clean (20,000), but 12 probe items now sit in its Drafts | `CP-11-POPULATIONS-BUILT-WITH-FAULTS` - evidence, not a base to build on |
+
+**Step 6's defects, measured on the guest, none fixed here** (the generator is outside this work's
+files; each needs its owner's fix and a rebuild, and two need a decision first):
+
+1. **The owner is never a resolved recipient.** For a store named as an address the generator makes
+   the owner `Name = Address = tier@vm.invalid` and adds the recipient as the spec
+   `tier@vm.invalid <tier@vm.invalid>`; Outlook's `Resolve()` refuses that string, so every received
+   item carries one UNRESOLVED To row whose `Address` is empty and whose `Name` is the whole spec.
+   Sent items (`Kester Wren <kester.wren@margie.invalid>`) resolve to SMTP one-offs. The enrichment
+   probe passed because its throwaway item is addressed to correspondents, never to the owner.
+2. **A PST attached with `AddStoreEx` has no Inbox and no Sent Items, and the generator does not
+   notice.** `Store.GetDefaultFolder(olFolderInbox)` on such a PST returns the PST's non-IPM ROOT
+   folder (NID `0x122`, display name empty), so the bystander's 172 Inbox items and the identity
+   store's 5 sit there, invisible in Outlook's folder tree - and the bystander's two "Inbox"
+   subfolders were created under that root, outside the IPM subtree. Sent Items fell back to a
+   created `OutlookAI-Corpus-Folder-5` at the top of the IPM tree (bystander 56, identity 3). The
+   placement probe reported `target= landedIn=` - empty names - and VERIFIED it, and the census,
+   which checks the recorded folder by EntryID, calls it clean. The hub is unaffected: it is the
+   tier profile's minted default store and has every default folder. Deciding how a secondary PST
+   gets real default folders before anything is built into it is the open question.
+3. **Failed probe rungs strand their item in the DEFAULT store's Drafts - a store not on
+   `--allow-store`.** Every probe session left three items (`placement InPlaceWithSentFlag`,
+   `placement InPlaceOnly`, `date ObjectModel` - exactly the three rungs that failed) in the Drafts
+   of `Outlook Data File`, Corpus B, which was the account-less profile's default store and was
+   named on no allowlist: 12 items from four sessions, including both hub sessions. The purge only
+   scans the target store. Nothing here deletes them - mailbox-safety rule 1, and no helper covers
+   it.
+4. **The identity account delivers into that invisible root.** `Add-IdentityAccount.ps1 -Phase
+   CaptureStore` reads the "Inbox EntryID" with `GetDefaultFolder(6)`, so on this guest - and by the
+   same script on `OutlookAI-Indexed` - the account's `Delivery Folder EntryID` is the PST root
+   (`...22010000`), not an Inbox. Drafts resolves, which is all section 2.8b's two tests use; mail
+   delivered to the account would land where nothing shows it.
+
+Also measured here, and the reason for the harness fix the first live run now waits for:
+`GetDefaultFolder` CREATES some missing special folders on such a PST. The bystander PST held only
+`Deleted Items` before its build and gained `Drafts` and `Junk Email` during it - the generator's
+store scan calls `GetDefaultFolder` for Drafts, Inbox, Sent Items, Junk Email, Outbox and Deleted
+Items (`ScanFolderIds`) - while Inbox came back as the root and neither Outbox nor Sent Items was
+created. The identity PST gained `Junk Email` the same way; its `Drafts` was already there, very
+likely from `Add-IdentityAccount.ps1`'s own `GetDefaultFolder(16)` reads (CaptureStore, Verify),
+which are therefore not the pure reads that script's banner calls them.
 
 **What the build-out found, beyond the step verdicts:**
 
