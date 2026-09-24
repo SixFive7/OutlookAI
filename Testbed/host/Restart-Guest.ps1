@@ -610,6 +610,7 @@ public static class OaiRestartTokenProbe {
             OutlookSession = @($outlook | ForEach-Object { $_.SessionId })
             Elevation      = $elevation
             Clients        = $clients
+            # ps51-native-stderr-ok: runs inside an Invoke-Command block on the guest, where the host's 'Stop' does not apply - the remote session's default is 'Continue' - and 2>&1 folds stderr into the output
             Sessions       = ((query session 2>&1) -join "`n")
         }
     } -ArgumentList @(, $script:ComClientProcessNames)
@@ -762,6 +763,7 @@ try {
     $sd = Invoke-InGuest -Block {
         param($why)
         if (@(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue).Count -gt 0) { return 'OUTLOOK-RUNNING' }
+        # ps51-native-stderr-ok: runs inside an Invoke-Command block on the guest, where the host's 'Stop' does not apply - the remote session's default is 'Continue' - and 2>&1 folds stderr into the output
         $o = & shutdown.exe /r /t 0 /d p:4:1 /c $why 2>&1
         return "exit=$LASTEXITCODE $o"
     } -ArgumentList @($reasonText)
@@ -821,6 +823,7 @@ while (((Get-Date) - $tc) -lt $limit) {
     try {
         $state = Invoke-InGuest -Block {
             $os = Get-CimInstance Win32_OperatingSystem
+            # ps51-native-stderr-ok: runs inside an Invoke-Command block on the guest, where the host's 'Stop' does not apply - the remote session's default is 'Continue' - and 2>&1 folds stderr into the output
             [pscustomobject]@{ LastBoot = $os.LastBootUpTime.ToUniversalTime().ToString('o'); Sessions = ((query session 2>&1) -join "`n"); Outlook = @(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue).Count }
         }
         $last = $state

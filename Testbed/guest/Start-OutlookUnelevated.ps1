@@ -158,11 +158,16 @@ if ($SelfTest) { Invoke-SelfTest }
 
 if (-not $Profile) { throw '-Profile is mandatory: name the Outlook profile to open.' }
 
-# The guard: the autologon account on an OAI- guest, both.
-$machineOk = $env:COMPUTERNAME -and $ExpectedComputerNamePrefix -and $env:COMPUTERNAME.StartsWith($ExpectedComputerNamePrefix, [StringComparison]::OrdinalIgnoreCase)
-if (-not ($ExpectedUser -contains $env:USERNAME) -or -not $machineOk) {
-    throw "REFUSING TO RUN: '$env:USERNAME' on '$env:COMPUTERNAME' is not a testbed guest (allowed users: $($ExpectedUser -join ', '); computer prefix '$ExpectedComputerNamePrefix')."
+# The guest guard: the autologon account on an OAI- guest, both. Restated locally so this script
+# needs nothing staged beside it; check 9 of .github/scripts/check-testbed-references.ps1 recognises
+# Assert-TestbedGuestLocal by name and requires it before the first write (the scheduled task below).
+function Assert-TestbedGuestLocal {
+    $machineOk = $env:COMPUTERNAME -and $ExpectedComputerNamePrefix -and $env:COMPUTERNAME.StartsWith($ExpectedComputerNamePrefix, [StringComparison]::OrdinalIgnoreCase)
+    if (-not ($ExpectedUser -contains $env:USERNAME) -or -not $machineOk) {
+        throw "REFUSING TO RUN: '$env:USERNAME' on '$env:COMPUTERNAME' is not a testbed guest (allowed users: $($ExpectedUser -join ', '); computer prefix '$ExpectedComputerNamePrefix')."
+    }
 }
+Assert-TestbedGuestLocal
 
 $running = @(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)
 if ($running.Count -gt 0) {
