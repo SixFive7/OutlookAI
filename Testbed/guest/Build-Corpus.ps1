@@ -12,12 +12,44 @@
     Windows PowerShell 5.1 - no ternary, no `??`.
 
     ============================================================================================
-    TWO PRECONDITIONS, AND THEY COST FIVE FAILED BUILDS TO ESTABLISH (2026-09-16).
+    THE PREFLIGHT'S FIRST GUEST RUN, OAI-UNINDEXED 2026-09-24, FROM CP-05
     ============================================================================================
 
-    A corpus build succeeds only if BOTH of these hold before it starts. Neither is a nicety and
-    neither auto-repairs, so this script now CHECKS both and REFUSES with the remedy rather than
-    letting the tool discover them one expensive attempt at a time.
+      both failing     default OutlookAI-Tier, Outlook closed, -Execute: REFUSED with BOTH
+                       reasons, and wrote nothing - the manifest's SHA-256 and line count, the
+                       corpus .pst's size AND last-write time, DefaultProfile, PickLogonProfile and
+                       ImportPRF all read the same before and after. Only this run's own log was
+                       rewritten, which the refusal used to deny; it now says so.
+      the good case    default CorpusProfile, Outlook up 210 s: REFUSED - "it has 2 account entries
+                       under ...\CorpusProfile\9375CFF0413111d3B88A00104B2A6676". That profile has
+                       no mail account (COM: Accounts.Count 0, "profile accounts: 0"); the two
+                       entries are its data file and its address book, which Outlook lists in the
+                       same key. The preflight would have refused every correct build. Fixed:
+                       Test-IsMailAccountEntry, below, and the measured shapes are in -SelfTest.
+      after the fix    fresh CP-05, default CorpusProfile, Outlook up 208 s: the preflight PASSED -
+                       "mail accounts : 0", "ImportPRF : <not set>", then "OK - the default profile
+                       has no accounts, Outlook is up and warm, and ImportPRF is not set." - and
+                       the whole pipeline ran against this guest's corpus (vm-unindexed, seed 7777,
+                       anchor 2026-09-16, 20,000 items, store 'Outlook Data File', its existing
+                       manifest): both probes VERIFIED (DraftsThenMoveWithSentFlag,
+                       PropertyAccessorDates), "Build finished: created 0, already present 20,000,
+                       failed 0", and the census "20,000 item(s) found for 20,000 planned ...
+                       Every ordinal exists exactly once, in the folder the plan names." Exit 0,
+                       1,490 s wall clock, the manifest's SHA-256 unchanged.
+      ImportPRF set    on top of both failures above: REFUSED with THREE reasons; with
+                       -SkipPreflight it still REFUSED, on ImportPRF alone; nothing written either
+                       time. New-OutlookProfile.ps1 -ClearImportPrf -Execute then removed the
+                       value, read back absent.
+
+    ============================================================================================
+    THREE PRECONDITIONS. THE FIRST TWO COST FIVE FAILED BUILDS TO ESTABLISH (2026-09-16).
+    ============================================================================================
+
+    A corpus build succeeds only if BOTH of the first two hold before it starts. Neither is a
+    nicety and neither auto-repairs, so this script CHECKS both and REFUSES with the remedy rather
+    than letting the tool discover them one expensive attempt at a time. The third is different in
+    kind - it protects a corpus rather than predicting a build - and is described where it is
+    listed.
 
     1. THE DEFAULT OUTLOOK PROFILE MUST BE THE ACCOUNT-LESS ONE. The corpus tool LOGS ON with the
        DEFAULT profile - it does not attach to whatever Outlook happens to be running, and there
@@ -34,6 +66,19 @@
     left an Outlook running on the corpus profile. That is exactly why it looked reproducible and
     was not - and it is why this check exists rather than a paragraph in a runbook.
 
+    3. NOTHING MAY BE WAITING TO REBUILD THE PROFILE - ImportPRF must not be set. Added 2026-09-24
+       (Q66), and unlike the two above it protects the CORPUS rather than predicting the build.
+       The profile scripts build profiles by pointing ImportPRF at a .prf carrying
+       OverwriteProfile=Yes, and a re-import rebuilds the profile from the file - a store attached
+       or filled since stops being part of it. Outlook DOES remove the value itself when it
+       imports (measured on OAI-UNINDEXED 2026-09-24: gone within 5 s of the start that imported
+       it), so on the normal path this never fires; it is here for the abnormal one, because a
+       corpus is thirteen minutes and twenty thousand items to lose. It is FAIL-CLOSED - an
+       unreadable value refuses - because nothing downstream ever re-checks it, and -SkipPreflight
+       does NOT skip it. The remedy is printed: the -Verify of the script that wrote the value
+       removes it once its import has run, and New-OutlookProfile.ps1 -ClearImportPrf -Execute
+       removes it unconditionally.
+
     THE PREFLIGHT DOES NOT FIX EITHER OF THEM, DELIBERATELY. A script that silently rewrites the
     DefaultProfile value changes the machine out from under the next step - the tier tests need
     the TIER profile as the default - and one that starts Outlook for you hides the cold-start
@@ -47,13 +92,17 @@
     count is still the tool's own - it prints "profile accounts: N" from COM when it vets the
     store - and this is only the early, cheap version of the same question.
 
-    THE ACCOUNT COUNT IS THE SUBKEY COUNT under the profile's account-manager key
-    (9375CFF0413111d3B88A00104B2A6676). Measured on this project's own guest on 2026-09-15, in
-    New-TierProfile.ps1 -Verify: a profile that had a PST store but no internet account held
-    NOTHING under that key. So zero subkeys is the account-less shape, and it is not a guess.
-    If the read fails for any reason the preflight says so and does NOT refuse on it - the tool's
-    COM count is the one that decides, and a preflight that blocks a legitimate build on a
-    registry read it could not make would be worse than no preflight at all.
+    THE ACCOUNT COUNT IS THE MAIL ACCOUNTS under the profile's account-manager key
+    (9375CFF0413111d3B88A00104B2A6676) - NOT its subkey count, which is what it was until the
+    first guest run of this preflight, 2026-09-24, refused the real corpus profile with "2 account
+    entries". Outlook lists every MAPI service of a profile there once it has opened it: the
+    account-less CorpusProfile, whose COM Accounts.Count is 0, holds its data file and its address
+    book as two {ED475414-...} wrappers, and the tier profile holds the same two plus its POP3
+    account ({ED475411-...}). The old "zero subkeys is the account-less shape" was measured on a
+    profile Outlook had never opened - which also holds the key empty. Test-IsMailAccountEntry
+    now excludes only a wrapper around a data file or an address book, and counts everything else,
+    so an unknown shape refuses rather than slips through. If the read fails for any reason the
+    preflight says so and does NOT refuse on it - the tool's COM count is the one that decides.
 
     THE PARAMETERS ARE NOT AN EXAMPLE. corpusId vm2, seed 7777, anchor 2026-08-19, count 20000,
     default shape: those four values reproduce the corpus that every published sweep and frame
@@ -121,9 +170,11 @@
     detection reads wrongly.
 
 .PARAMETER SkipPreflight
-    Run without checking the two preconditions. This does NOT weaken any safety guard - the tool's
-    own store guard still refuses a profile that can send, and that guard is what protects the
-    mailbox. Use it when the preflight is wrong about this machine, and say so in the run log.
+    Run without checking preconditions 1 and 2 (the default profile, a warm Outlook). This does NOT
+    weaken any safety guard - the tool's own store guard still refuses a profile that can send, and
+    that guard is what protects the mailbox - and it does NOT skip precondition 3, the ImportPRF
+    check, which is the only thing that stands between a corpus and a profile rebuild. Use it when
+    the preflight is wrong about this machine, and say so in the run log.
 
 .PARAMETER SelfTest
     Run the preflight decision tests and exit. Touches nothing.
@@ -173,6 +224,19 @@ $script:OfficeRootKeyPath = 'HKCU:\Software\Microsoft\Office'
 # The per-account container inside a profile. An Outlook-internal GUID, stable across every
 # Outlook version this product supports: OutlookProfileRegistry.AccountsSubKeyName.
 $script:AccountsSubKeyName = '9375CFF0413111d3B88A00104B2A6676'
+
+# NOT EVERY ENTRY IN THAT CONTAINER IS A MAIL ACCOUNT - measured on OAI-UNINDEXED 2026-09-24, and
+# the preflight's first guest run refused the real corpus profile over it. Outlook lists EVERY
+# MAPI service of the profile there, wrapping the non-account ones under one CLSID: CorpusProfile,
+# whose COM Accounts.Count is 0, holds two entries - clsid {ED475414-...} 'Outlook Address Book'
+# (Service Name CONTAB) and {ED475414-...} 'Outlook Data File' (MSUPST MS) - and the tier
+# profile holds the same two plus its POP3 account, clsid {ED475411-...}. A wrapper around a data
+# file or an address book is not an account; anything else is counted, including a wrapper around
+# a service not named here (an Exchange mailbox is a wrapper around MSEMS), so an unknown shape
+# refuses rather than slipping through. The service names are the ones section 6 of this
+# project's .prf files maps.
+$script:ServiceWrapperClsid = '{ED475414-B0D6-11D2-8C3B-00104B2A6676}'
+$script:NonMailServiceNames = @('MSUPST MS', 'MSPST MS', 'CONTAB', 'EMABLT', 'MSPST AB')
 
 # =============================================================================================
 # PURE PREFLIGHT DECISIONS. No registry, no processes, no tool, no Outlook, no output.
@@ -228,17 +292,75 @@ function Select-OutlookHive {
 }
 
 <#
-    Both preconditions, judged against facts somebody else gathered.
+    Whether one entry of the account-manager container is a MAIL account. Pure.
+
+    $false only for a service wrapper ($script:ServiceWrapperClsid) around a data file or an
+    address book. Everything else is an account - including a wrapper around a service this list
+    does not name, and an entry whose clsid cannot be read - because the cost of calling a real
+    account "not one" is a build that queues mail, and the cost of the opposite is a refusal that
+    names the entry.
+#>
+function Test-IsMailAccountEntry {
+    param([string] $Clsid, [string] $ServiceName)
+
+    if ($Clsid -eq $script:ServiceWrapperClsid -and $script:NonMailServiceNames -contains $ServiceName) { return $false }
+    return $true
+}
+
+<#
+    Precondition 3, and the one that protects the CORPUS rather than predicting the build.
+
+    Returns the refusal text, or $null. Pure, and deliberately a function of its own: it is the one
+    check -SkipPreflight does NOT skip, so the script calls it on that path too.
+
+    THE HAZARD. The profile scripts build profiles by pointing ImportPRF at a .prf that carries
+    OverwriteProfile=Yes. Outlook acts on ImportPRF at a start where First-Run is absent - and a
+    profile it re-imports is REBUILT from the file, so a store attached or filled since is no
+    longer part of it. The corpus is exactly such a store: twenty thousand items, about thirteen
+    minutes to rebuild. Building one while ImportPRF is set is building it under a value that can
+    detach it.
+
+    WHY IT IS FAIL-CLOSED WHEN THE OTHER TWO ARE NOT. Preconditions 1 and 2 predict whether the
+    build will SUCCEED, and the tool's own guards decide that authoritatively, so an unreadable
+    fact there is a note. Nothing downstream ever looks at ImportPRF - the tool vets accounts and
+    stores, not the Setup key - so if this cannot prove the value absent, nothing will, and it
+    refuses.
+
+    First-Run's state changes the WORDING, not the verdict. Present, Outlook ignores ImportPRF for
+    now and the hazard is latent; absent, the very next start acts on it. Either way the remedy is
+    the same and it is one command.
+#>
+function Test-CorpusImportPrfGuard {
+    param([psobject] $Facts)
+
+    if ($null -eq $Facts.ImportPrfValue) {
+        $where = $Facts.SetupKeyPath
+        if ([string]::IsNullOrEmpty($where)) { $where = "the Setup key (no Outlook hive was found to hold one)" }
+        return "ImportPRF could not be read from $where, so nothing proves that no Outlook start is waiting to rebuild the profile this corpus goes into. Refused on, unlike an unreadable account count or uptime: nothing downstream re-checks ImportPRF. If the hive detection is wrong for this machine, pass -OfficeVersion."
+    }
+
+    if ($Facts.ImportPrfValue.Length -eq 0) { return $null }
+
+    $state = "First-Run is ABSENT, so the very next Outlook start acts on it"
+    if ($Facts.FirstRunPresent -eq $true) {
+        $state = "First-Run is present, so Outlook ignores it for now - latent, not gone: whatever next removes First-Run arms it"
+    }
+    return "ImportPRF is set under $($Facts.SetupKeyPath): '$($Facts.ImportPrfValue)'. $state. The profile scripts' .prf files carry OverwriteProfile=Yes, and a re-import REBUILDS the profile - a store attached or filled since stops being part of it, and this build is about to fill one with twenty thousand items. Remove it first: the -Verify of the script that wrote it does so once the import has run (.\New-OutlookProfile.ps1 -Name <profile> -Verify, or .\New-TierProfile.ps1 -Verify), and .\New-OutlookProfile.ps1 -ClearImportPrf -Execute removes it unconditionally."
+}
+
+<#
+    All three preconditions, judged against facts somebody else gathered.
 
     Returns Ok, Problems (each one a refusal reason, all of them collected rather than the first -
     an operator who has to fix them one run at a time is exactly what this replaces) and Notes
     (things worth saying that do not justify refusing).
 
-    WHAT IS A PROBLEM AND WHAT IS A NOTE. A problem is a fact that PROVES the build will fail. A
-    note is a fact this preflight could not read, or one that is merely unusual. Unreadable is
-    never a refusal here: the tool's own guards are the ones that protect the mailbox, and a
-    preflight that blocked a good build over a registry read it could not make would cost more
-    than it saves.
+    WHAT IS A PROBLEM AND WHAT IS A NOTE. For preconditions 1 and 2, a problem is a fact that
+    PROVES the build will fail, and a note is a fact this preflight could not read, or one that is
+    merely unusual. Unreadable is never a refusal for those two: the tool's own guards are the
+    ones that protect the mailbox, and a preflight that blocked a good build over a registry read
+    it could not make would cost more than it saves. Precondition 3 is the exception and says why
+    - see Test-CorpusImportPrfGuard.
 #>
 function Test-CorpusPrecondition {
     param([psobject] $Facts)
@@ -262,9 +384,13 @@ function Test-CorpusPrecondition {
         $notes += "The account count for '$($Facts.DefaultProfile)' could not be read from $($Facts.AccountsKeyPath). NOT refused on: the tool's own COM count is the one that decides, and it prints it as 'profile accounts: N' when it vets the store. Read that line before you trust this run."
     }
     elseif ($Facts.AccountEntryCount -gt 0) {
-        $plural = 'entries'
-        if ($Facts.AccountEntryCount -eq 1) { $plural = 'entry' }
-        $problems += "The default profile is '$($Facts.DefaultProfile)', and it has $($Facts.AccountEntryCount) account $plural under $($Facts.AccountsKeyPath). The corpus tool refuses ANY profile holding a mail account, with no override: a build creates unsent items in bulk, and a real one put 5,532 of them into the target store's Outbox - inert only because that profile could not send. Make the ACCOUNT-LESS profile the default."
+        $plural = 'accounts'
+        if ($Facts.AccountEntryCount -eq 1) { $plural = 'account' }
+        $named = ''
+        if ($null -ne $Facts.AccountEntryNames -and @($Facts.AccountEntryNames).Count -gt 0) {
+            $named = " (" + ((@($Facts.AccountEntryNames) | ForEach-Object { "'$_'" }) -join ', ') + ")"
+        }
+        $problems += "The default profile is '$($Facts.DefaultProfile)', and it has $($Facts.AccountEntryCount) mail $plural$named under $($Facts.AccountsKeyPath) - data files and address books listed there are not counted. The corpus tool refuses ANY profile holding a mail account, with no override: a build creates unsent items in bulk, and a real one put 5,532 of them into the target store's Outbox - inert only because that profile could not send. Make the ACCOUNT-LESS profile the default."
     }
 
     # ---- precondition 2: Outlook is already running, and warm --------------------------------
@@ -293,6 +419,10 @@ function Test-CorpusPrecondition {
         }
     }
 
+    # ---- precondition 3: nothing is waiting to rebuild the profile ---------------------------
+    $importProblem = Test-CorpusImportPrfGuard -Facts $Facts
+    if ($null -ne $importProblem) { $problems += $importProblem }
+
     return [pscustomobject]@{
         Ok       = ($problems.Count -eq 0)
         Problems = $problems
@@ -320,7 +450,14 @@ REFUSING TO BUILD. The corpus preconditions are not met on this machine.
     }
 
     $text += @"
-THE KNOWN-GOOD RECIPE, in this order. It is four steps and none of them is optional:
+THE KNOWN-GOOD RECIPE, in this order. Steps 1 to 4 are none of them optional; step 0 applies only
+when ImportPRF is one of the reasons above.
+
+  0. Remove ImportPRF. Once the import it belongs to has run - Outlook started once since the
+     profile script's -Execute - that script's own -Verify removes it:
+         .\New-OutlookProfile.ps1 -Name <the profile> -Verify      (or .\New-TierProfile.ps1 -Verify)
+     and this removes it unconditionally, whichever script wrote it:
+         .\New-OutlookProfile.ps1 -ClearImportPrf -Execute
 
   1. Make the account-less profile the default:
          .\Set-DefaultOutlookProfile.ps1 -Name <the account-less profile> -Execute
@@ -335,13 +472,15 @@ THE KNOWN-GOOD RECIPE, in this order. It is four steps and none of them is optio
      enough. The tool COM-activates Outlook.Application, so a cold one starts inside its STA
      thread and blocks past the three-minute bound.
 
-  4. Run this script again. It re-checks both preconditions, and the tool then confirms the
+  4. Run this script again. It re-checks all three preconditions, and the tool then confirms the
      account count over COM and prints it as "profile accounts: 0" when it vets the store. That
      printed line is the authoritative one; this preflight is only the cheap early version of it.
 
-Nothing has been created, written or deleted. -SkipPreflight runs without these checks; it does
-not weaken any safety guard, because the tool's own store guard still refuses a profile that can
-send - but it does hand back the five failed builds this check was written to prevent.
+Nothing in Outlook, the store, the manifest or the registry has been created, written or deleted -
+only this run's own log, which every run starts afresh. -SkipPreflight skips preconditions 1 and 2
+and NOT the ImportPRF check, so it weakens no safety guard: the tool's own store guard still
+refuses a profile that can send, and the ImportPRF check still refuses a corpus that a re-import
+could detach. It does hand back the five failed builds this preflight was written to prevent.
 "@
 
     return $text
@@ -357,12 +496,18 @@ function New-PreflightFact {
         [string] $DefaultProfile = 'CorpusProfile',
         [string[]] $ProfileNames = @('Outlook', 'CorpusProfile', 'TierProfile'),
         $AccountEntryCount = 0,
+        [string[]] $AccountEntryNames = @(),
         [string] $AccountsKeyPath = 'HKCU:\Software\Microsoft\Office\16.0\Outlook\Profiles\CorpusProfile\9375CFF0413111d3B88A00104B2A6676',
         [int] $OutlookProcessCount = 1,
         $OutlookUptimeSeconds = 900,
         $OutlookResponding = $true,
         [string] $OutlookCommandLine = '',
-        [int] $WarmupSeconds = 180
+        [int] $WarmupSeconds = 180,
+        # '' = absent, $null = could not be read. Untyped on purpose: a [string] parameter would
+        # turn $null into '' and the unreadable case could not be expressed at all.
+        $ImportPrfValue = '',
+        $FirstRunPresent = $true,
+        [string] $SetupKeyPath = 'HKCU:\Software\Microsoft\Office\16.0\Outlook\Setup'
     )
 
     return [pscustomobject]@{
@@ -370,12 +515,16 @@ function New-PreflightFact {
         DefaultProfile       = $DefaultProfile
         ProfileNames         = $ProfileNames
         AccountEntryCount    = $AccountEntryCount
+        AccountEntryNames    = $AccountEntryNames
         AccountsKeyPath      = $AccountsKeyPath
         OutlookProcessCount  = $OutlookProcessCount
         OutlookUptimeSeconds = $OutlookUptimeSeconds
         OutlookResponding    = $OutlookResponding
         OutlookCommandLine   = $OutlookCommandLine
         WarmupSeconds        = $WarmupSeconds
+        ImportPrfValue       = $ImportPrfValue
+        FirstRunPresent      = $FirstRunPresent
+        SetupKeyPath         = $SetupKeyPath
     }
 }
 
@@ -479,11 +628,26 @@ function Invoke-SelfTest {
 
     $verdict = Test-CorpusPrecondition -Facts (New-PreflightFact -AccountEntryCount 1)
     Test-Case 'one account on the default profile REFUSES' $false $verdict.Ok
-    Test-Case 'and says "1 account entry", singular' $true ($verdict.Problems[0] -like '*1 account entry under*')
+    Test-Case 'and says "1 mail account", singular' $true ($verdict.Problems[0] -like '*1 mail account under*')
     Test-Case 'and says why there is no override' $true ($verdict.Problems[0] -like '*5,532*')
 
+    $verdict = Test-CorpusPrecondition -Facts (New-PreflightFact -AccountEntryCount 1 -AccountEntryNames @('OutlookAI tier sink'))
+    Test-Case 'and names the account when it can' $true ($verdict.Problems[0].Contains("1 mail account ('OutlookAI tier sink') under"))
+
     $verdict = Test-CorpusPrecondition -Facts (New-PreflightFact -AccountEntryCount 3)
-    Test-Case 'three accounts pluralise' $true ($verdict.Problems[0] -like '*3 account entries under*')
+    Test-Case 'three accounts pluralise' $true ($verdict.Problems[0] -like '*3 mail accounts under*')
+
+    Write-Host ''
+    Write-Host '== which account-manager entries are MAIL accounts (measured shapes, 2026-09-24) =='
+
+    $wrapper = '{ED475414-B0D6-11D2-8C3B-00104B2A6676}'
+    Test-Case "CorpusProfile's 'Outlook Data File' (MSUPST MS wrapper) is NOT an account" $false (Test-IsMailAccountEntry -Clsid $wrapper -ServiceName 'MSUPST MS')
+    Test-Case "CorpusProfile's 'Outlook Address Book' (CONTAB wrapper) is NOT an account" $false (Test-IsMailAccountEntry -Clsid $wrapper -ServiceName 'CONTAB')
+    Test-Case "the tier profile's POP3 account ({ED475411-...}) IS one" $true (Test-IsMailAccountEntry -Clsid '{ED475411-B0D6-11D2-8C3B-00104B2A6676}' -ServiceName '')
+    Test-Case 'an ANSI PST wrapper is not one either' $false (Test-IsMailAccountEntry -Clsid $wrapper -ServiceName 'MSPST MS')
+    Test-Case 'an Exchange mailbox (a wrapper around MSEMS) IS one' $true (Test-IsMailAccountEntry -Clsid $wrapper -ServiceName 'MSEMS')
+    Test-Case 'a wrapper around a service nobody named IS one - fail closed' $true (Test-IsMailAccountEntry -Clsid $wrapper -ServiceName 'SOMETHINGNEW')
+    Test-Case 'an entry with no readable clsid IS one - fail closed' $true (Test-IsMailAccountEntry -Clsid '' -ServiceName 'MSUPST MS')
 
     $verdict = Test-CorpusPrecondition -Facts (New-PreflightFact -AccountEntryCount $null)
     Test-Case 'an unreadable account count does NOT refuse' $true $verdict.Ok
@@ -521,10 +685,40 @@ function Invoke-SelfTest {
     Test-Case 'the command line is reported' $true ($verdict.Notes[0] -like '*/PIM CorpusProfile*')
 
     Write-Host ''
-    Write-Host '== both failing at once, and the refusal text =='
+    Write-Host '== precondition 3: nothing is waiting to rebuild the profile (ImportPRF) =='
+
+    $verdict = Test-CorpusPrecondition -Facts (New-PreflightFact -ImportPrfValue '')
+    Test-Case 'ImportPRF absent passes' $true $verdict.Ok
+
+    $verdict = Test-CorpusPrecondition -Facts (New-PreflightFact -ImportPrfValue 'C:\OutlookAI-Profiles\CorpusProfile.prf' -FirstRunPresent $false)
+    Test-Case 'ImportPRF set REFUSES' $false $verdict.Ok
+    Test-Case 'as exactly one reason' 1 $verdict.Problems.Count
+    Test-Case 'and names the value it found' $true ($verdict.Problems[0].Contains("'C:\OutlookAI-Profiles\CorpusProfile.prf'"))
+    Test-Case 'and says the next start acts on it when First-Run is absent' $true ($verdict.Problems[0].Contains('the very next Outlook start acts on it'))
+    Test-Case 'and says what a re-import does to a store' $true ($verdict.Problems[0].Contains('REBUILDS the profile'))
+    Test-Case 'and gives the unconditional remedy' $true ($verdict.Problems[0].Contains('-ClearImportPrf -Execute'))
+
+    $verdict = Test-CorpusPrecondition -Facts (New-PreflightFact -ImportPrfValue 'C:\OutlookAI-Profiles\CorpusProfile.prf' -FirstRunPresent $true)
+    Test-Case 'with First-Run present it STILL refuses - latent is not gone' $false $verdict.Ok
+    Test-Case 'and says it is latent' $true ($verdict.Problems[0].Contains('latent, not gone'))
+
+    $verdict = Test-CorpusPrecondition -Facts (New-PreflightFact -ImportPrfValue $null)
+    Test-Case 'an UNREADABLE ImportPRF refuses - fail-closed, unlike the other two' $false $verdict.Ok
+    Test-Case 'and says why this one is different' $true ($verdict.Problems[0].Contains('nothing downstream re-checks ImportPRF'))
+
+    $guard = Test-CorpusImportPrfGuard -Facts (New-PreflightFact -ImportPrfValue 'C:\x.prf' -OutlookProcessCount 0 -AccountEntryCount 5)
+    Test-Case 'the guard alone - the -SkipPreflight path - refuses on its own' $true ($null -ne $guard)
+    $guard = Test-CorpusImportPrfGuard -Facts (New-PreflightFact -ImportPrfValue '' -OutlookProcessCount 0 -AccountEntryCount 5)
+    Test-Case 'and does NOT judge preconditions 1 and 2, which -SkipPreflight skips' '<null>' $guard
+
+    Write-Host ''
+    Write-Host '== all failing at once, and the refusal text =='
 
     $verdict = Test-CorpusPrecondition -Facts (New-PreflightFact -AccountEntryCount 1 -OutlookProcessCount 0)
     Test-Case 'both preconditions failing gives BOTH reasons' 2 $verdict.Problems.Count
+
+    $verdict3 = Test-CorpusPrecondition -Facts (New-PreflightFact -AccountEntryCount 1 -OutlookProcessCount 0 -ImportPrfValue 'C:\x.prf')
+    Test-Case 'all three failing gives THREE reasons' 3 $verdict3.Problems.Count
 
     $refusal = Format-CorpusPreflightRefusal -Problems $verdict.Problems
     Test-Case 'the refusal opens by refusing' $true ($refusal -like 'REFUSING TO BUILD.*')
@@ -533,14 +727,17 @@ function Invoke-SelfTest {
     Test-Case 'it says restart the guest' $true ($refusal -like '*RESTART THE GUEST*')
     Test-Case 'it forbids taskkill' $true ($refusal -like '*NEVER taskkill OUTLOOK.EXE*')
     Test-Case 'it gives the settle time and the one that failed' $true ($refusal -like '*180 seconds was used successfully; 75 seconds was not always*')
-    Test-Case 'it promises nothing was written' $true ($refusal -like '*Nothing has been created, written or deleted*')
-    Test-Case 'and it names the escape hatch' $true ($refusal -like '*-SkipPreflight*')
+    Test-Case 'it says what was NOT written, and the one thing that was' $true ($refusal.Contains('Nothing in Outlook, the store, the manifest or the registry has been created, written or deleted') -and $refusal.Contains("only this run's own log"))
+    Test-Case 'it names the escape hatch' $true ($refusal -like '*-SkipPreflight*')
+    Test-Case 'and says the escape hatch does not skip the ImportPRF check' $true ($refusal.Contains('NOT the ImportPRF check'))
+    Test-Case 'it carries the ImportPRF step' $true ($refusal.Contains('-ClearImportPrf -Execute'))
 
     Write-Host ''
     Write-Host "$($script:SelfTestChecks) assertion(s), $($script:SelfTestFailures.Count) failure(s)."
     Write-Host ''
     Write-Host 'NOT COVERED HERE. These need a guest:'
     Write-Host '  * reading the hive, DefaultProfile, the Profiles subkeys and the account subkeys'
+    Write-Host '  * reading ImportPRF and First-Run/FirstRun out of the Setup key'
     Write-Host '  * reading OUTLOOK.EXE out of the process list, with its start time and command line'
     Write-Host '  * every corpus verb - plan, probe, build, census - and the tool itself'
 
@@ -635,10 +832,32 @@ function Get-CorpusPreflightFact {
     $profileNames = @()
     $accountsKeyPath = ''
     $accountEntryCount = $null
+    $accountEntryNames = @()
+    $setupKeyPath = ''
+    $importPrfValue = $null
+    $firstRunPresent = $null
 
     if ($null -ne $hive) {
         $hivePath = $hive.Path
         $defaultProfile = (Get-ItemProperty -Path $hivePath -Name 'DefaultProfile' -ErrorAction SilentlyContinue).DefaultProfile
+
+        # ImportPRF and First-Run. An absent Setup key is an ANSWER (nothing set), not a failure to
+        # read one; only an exception leaves $importPrfValue at $null, which precondition 3 refuses.
+        $setupKeyPath = Join-Path $hivePath 'Setup'
+        try {
+            $importPrfValue = ''
+            $firstRunPresent = $false
+            if (Test-Path -LiteralPath $setupKeyPath) {
+                $setupKey = Get-Item -LiteralPath $setupKeyPath -ErrorAction Stop
+                $raw = $setupKey.GetValue('ImportPRF', $null)
+                if ($null -ne $raw) { $importPrfValue = [string] $raw }
+                $firstRunPresent = ($null -ne $setupKey.GetValue('First-Run', $null)) -or ($null -ne $setupKey.GetValue('FirstRun', $null))
+            }
+        }
+        catch {
+            $importPrfValue = $null
+            $firstRunPresent = $null
+        }
 
         $profilesKeyPath = Join-Path $hivePath 'Profiles'
         if (Test-Path -LiteralPath $profilesKeyPath) {
@@ -650,7 +869,16 @@ function Get-CorpusPreflightFact {
             $accountsKeyPath = Join-Path (Join-Path $profilesKeyPath $defaultProfile) $script:AccountsSubKeyName
             try {
                 if (Test-Path -LiteralPath $accountsKeyPath) {
-                    $accountEntryCount = @(Get-ChildItem -LiteralPath $accountsKeyPath -ErrorAction Stop).Count
+                    # MAIL accounts, not entries: see $script:ServiceWrapperClsid for why the two differ.
+                    $accountEntryCount = 0
+                    foreach ($entry in @(Get-ChildItem -LiteralPath $accountsKeyPath -ErrorAction Stop)) {
+                        $clsid = [string] $entry.GetValue('clsid', '')
+                        $serviceName = [string] $entry.GetValue('Service Name', '')
+                        if (Test-IsMailAccountEntry -Clsid $clsid -ServiceName $serviceName) {
+                            $accountEntryCount++
+                            $accountEntryNames += [string] $entry.GetValue('Account Name', $entry.PSChildName)
+                        }
+                    }
                 }
                 else {
                     # The key is absent, which is not a failure to read: a profile that never had
@@ -697,12 +925,16 @@ function Get-CorpusPreflightFact {
         DefaultProfile       = $defaultProfile
         ProfileNames         = $profileNames
         AccountEntryCount    = $accountEntryCount
+        AccountEntryNames    = $accountEntryNames
         AccountsKeyPath      = $accountsKeyPath
         OutlookProcessCount  = $processes.Count
         OutlookUptimeSeconds = $uptime
         OutlookResponding    = $responding
         OutlookCommandLine   = $commandLine
         WarmupSeconds        = $WarmupSecondsWanted
+        ImportPrfValue       = $importPrfValue
+        FirstRunPresent      = $firstRunPresent
+        SetupKeyPath         = $setupKeyPath
     }
 }
 
@@ -718,17 +950,36 @@ Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
 # still hand back the expectation sheet rather than nothing at all.
 Invoke-Corpus -Verb 'corpus-plan' -Arguments $identity -Fatal | Out-Null
 
-# --- 0b. the two preconditions. Everything after this line drives Outlook over COM, including
+# --- 0b. the three preconditions. Everything after this line drives Outlook over COM, including
 #         the dry run - corpus-build vets the store whether or not --execute is passed. ---------
+$facts = Get-CorpusPreflightFact -RequestedOfficeVersion $OfficeVersion -WarmupSecondsWanted $WarmupSeconds
+$importText = '(unreadable)'
+if ($null -ne $facts.ImportPrfValue) {
+    $importText = '<not set>'
+    if ($facts.ImportPrfValue.Length -gt 0) { $importText = "'$($facts.ImportPrfValue)'" }
+    $importText += "   First-Run/FirstRun present: $($facts.FirstRunPresent)"
+}
+
 if ($SkipPreflight) {
+    # Preconditions 1 and 2 predict whether the build SUCCEEDS, and -SkipPreflight exists for a
+    # machine they read wrongly. Precondition 3 protects the corpus, and nothing downstream
+    # re-checks it - so it is not skipped. See Test-CorpusImportPrfGuard.
     Write-Preflight ''
-    Write-Preflight '=== preflight SKIPPED (-SkipPreflight). The tool''s own store guard still applies.'
+    Write-Preflight '=== preflight SKIPPED (-SkipPreflight) for the default profile and warmth. The tool''s own'
+    Write-Preflight '    store guard still applies, and the ImportPRF check below is NOT skipped.'
+    Write-Preflight "  ImportPRF       : $importText"
+    $guard = Test-CorpusImportPrfGuard -Facts $facts
+    if ($null -ne $guard) {
+        $refusal = Format-CorpusPreflightRefusal -Problems @($guard)
+        Add-Content -LiteralPath $LogPath -Value $refusal -ErrorAction SilentlyContinue
+        throw $refusal
+    }
+    Write-Preflight '  OK - nothing is waiting to rebuild the profile.'
 }
 else {
     Write-Preflight ''
-    Write-Preflight '=== preflight: default profile, and a warm Outlook'
+    Write-Preflight '=== preflight: default profile, a warm Outlook, and nothing waiting to rebuild the profile'
 
-    $facts = Get-CorpusPreflightFact -RequestedOfficeVersion $OfficeVersion -WarmupSecondsWanted $WarmupSeconds
     $uptimeText = '(unreadable)'
     if ($null -ne $facts.OutlookUptimeSeconds) { $uptimeText = "$([int]$facts.OutlookUptimeSeconds)s" }
     $accountsText = '(unreadable)'
@@ -736,8 +987,9 @@ else {
 
     Write-Preflight "  hive            : $($facts.HivePath)"
     Write-Preflight "  DefaultProfile  : $($facts.DefaultProfile)"
-    Write-Preflight "  account entries : $accountsText   (registry; the tool's COM count is the authoritative one)"
+    Write-Preflight "  mail accounts   : $accountsText   (registry, data-file and address-book entries excluded; the tool's COM count is the authoritative one)"
     Write-Preflight "  OUTLOOK.EXE     : $($facts.OutlookProcessCount) running, up $uptimeText, wanted $($facts.WarmupSeconds)s"
+    Write-Preflight "  ImportPRF       : $importText"
 
     $verdict = Test-CorpusPrecondition -Facts $facts
     foreach ($note in $verdict.Notes) { Write-Preflight "  note: $note" }
@@ -748,7 +1000,7 @@ else {
         throw $refusal
     }
 
-    Write-Preflight '  OK - the default profile has no accounts, and Outlook is up and warm.'
+    Write-Preflight '  OK - the default profile has no accounts, Outlook is up and warm, and ImportPRF is not set.'
 }
 
 if (-not $Execute) {

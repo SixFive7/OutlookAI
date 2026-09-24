@@ -1,6 +1,46 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
+    RUN ON OAI-UNINDEXED 2026-09-24, FROM CP-05, EVERY PATH, AND IT WORKS AS WRITTEN.
+    ============================================================================================
+
+    The first guest run of this form of the script, against the Outlook the checkpoint left
+    running on CorpusProfile (the default, with the 20,000-item corpus in it), in session 1, on
+    Office LTSC 2024 16.0.17932. Nothing in the script needed changing:
+
+      -ListOnly                profile 'CorpusProfile' holds 1 store(s): 'Outlook Data File'
+                               <- C:\OutlookAI-Tier\Outlook Data File - CorpusProfile.pst;
+                               Accounts.Count : 0.
+      -ProfileName             REFUSED: "Outlook is logged on to 'CorpusProfile' and you asked
+        OutlookAI-Tier         for 'OutlookAI-Tier'" - before anything was attached.
+      -DisplayName             REFUSED as NameTaken, naming the store that has it, on the DRY run
+        'Outlook Data File'    (refusals fire before the -Execute gate, as documented).
+      dry run                  decision AddThenRename, nothing attached.
+      -Execute                 "calling NameSpace.AddStoreEx(..., 2)" then "AddStoreEx returned"
+                               at once - NO SPIN - then before 'Outlook Data File' / root 'Outlook
+                               Data File', after 'OutlookAI Bystander' / 'OutlookAI Bystander'.
+                               The .pst was created, 271,360 bytes.
+      the same -Execute        AlreadyCorrect: two stores listed, nothing attached a second time.
+      again
+      a new -DisplayName,      RenameOnly: 'OutlookAI Bystander' -> 'bystander@vm.invalid', the
+        same -Path             '@' intact, the store NOT attached twice.
+      -ListOnly after          2 stores, 'bystander@vm.invalid' <- C:\OutlookAI-Q5\pst\bystander.pst,
+                               Accounts.Count 0. The corpus .pst kept its size (1,363,231,744).
+
+    So the AddStoreEx spin the banner below warns about did not happen, the root-folder rename
+    carried through to Store.DisplayName for a store this script attached (the earlier evidence
+    was a store Outlook minted), and every refusal fired before any write. The corpus .pst's
+    last-write time DID move - at 13:18:49, four seconds after the before-reading and before
+    this run had made any COM call: that is the checkpoint's own Outlook resuming, not this
+    script.
+
+    ONE THING SEEN ON SCREEN AFTERWARDS, recorded for whoever meets it next: the checkpoint's
+    Outlook was showing the object-model guard prompt ("A program is trying to access email
+    address information stored in Outlook", Allow / Deny) at the end of the run. Nothing this
+    script calls reads an address; whether the prompt came with the checkpoint's memory or was
+    raised during the run is answered in Docs/live-tier-on-the-vm.md section 2.5.
+
+    ============================================================================================
     THE MAPI ROUTE IS DEAD ON THIS BUILD. THIS SCRIPT USES AddStoreEx PLUS A ROOT-FOLDER RENAME.
     ============================================================================================
 

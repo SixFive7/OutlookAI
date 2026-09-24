@@ -1,5 +1,50 @@
 <#
     ============================================================================================
+    RUN ON OAI-UNINDEXED 2026-09-24 IN THIS REGISTRY FORM, FROM CP-05, AND IT WORKS.
+    ============================================================================================
+
+    The banner below asked for a guest run to replace its promises with results. Every step here
+    ran from a fresh restore of CP-05-CORPUS-B-CLEAN-UNINDEXED, in session 1, on Office LTSC 2024
+    16.0.17932:
+
+      -ListOnly              hive 16.0 (5 values, 15 subkeys), DefaultProfile 'CorpusProfile',
+                             PickLogonProfile absent, profiles CorpusProfile and OutlookAI-Tier.
+      -Name NoSuchProfile    REFUSED: "no Outlook profile named 'NoSuchProfile' exists". And it
+        -Execute             wrote nothing, shown rather than asserted: DefaultProfile,
+                             PickLogonProfile, the Outlook key's value list AND the key's own
+                             last-write time (2026-09-16 02:11:42.939) read identical before and
+                             after.
+      -Name OutlookAI-Tier   with the checkpoint's Outlook still up: REFUSED by
+        -Execute             Assert-OutlookNotRunning ("OUTLOOK.EXE is running (pid 9356)"), key
+                             untouched. After a guest restart: DefaultProfile = 'OutlookAI-Tier'
+                             and PickLogonProfile = 0 (REG_DWORD), both read back. Run a second
+                             time it said AlreadyDefault and rewrote only the prompt setting.
+      Outlook's own answer   after another restart, Outlook came up on the tier profile with no
+                             profile prompt, and COM from session 1 read CurrentProfileName
+                             'OutlookAI-Tier', Accounts.Count 1 (AccountType 2 = POP3,
+                             DeliveryStore 'tier@vm.invalid'), and one store: 'tier@vm.invalid'
+                             <- C:\OutlookAI-Tier\Outlook.pst.
+
+    ONE THING THE RUN FOUND IN THIS SCRIPT, AND FIXED. The listing printed "other real Outlook
+    hive(s) here: 8.0 - use -OfficeVersion if this one is wrong". On this guest
+    HKCU\...\Office\8.0\Outlook holds exactly one value, First-Run, and nothing else; the shape
+    rule rightly calls that a hive, and the old line then offered Office 97's hive as the fix.
+    Format-OtherHiveNote names an unsupported major without offering it, and -SelfTest pins that.
+
+    TWO THINGS IT FOUND ABOUT THE TIER PROFILE, not about this script - recorded here because this
+    is the step that makes the tier profile the one Outlook opens:
+      * every start of the tier profile raises the POP3 logon dialog ('Internet Email - tier',
+        "Enter your user name and password for the following server"): its account points at
+        127.0.0.1:110 and stores no password. It did NOT block the COM read above, which ran with
+        it on screen - but it is a modal dialog on an unattended guest, on every start.
+      * reading Account.SmtpAddress over COM raised Outlook's object-model guard - "A program is
+        trying to access email address information stored in Outlook", Allow / Deny - and THAT
+        blocks: the reading call waited on it for minutes and never returned. The same read did
+        not prompt on 2026-09-15. Defender's signatures on this guest are 372 days old (last
+        updated 2025-09-17; the guest has no network); an out-of-date antivirus is the documented
+        trigger for that guard, but it was not proven to be the trigger here.
+
+    ============================================================================================
     THE MAPI ROUTE IS DEAD ON THIS BUILD. THIS SCRIPT WRITES THE REGISTRY INSTEAD.
     ============================================================================================
 
@@ -259,6 +304,39 @@ supports, so nothing here will choose it for you. If it is the one Outlook reall
     }
 
     return [pscustomobject]@{ Chosen = $null; RealHives = $real; Problem = $problem }
+}
+
+<#
+    The line(s) printed under the chosen hive when other Outlook-shaped keys exist. Pure.
+
+    MEASURED 2026-09-24 on OAI-UNINDEXED: HKCU\Software\Microsoft\Office\8.0\Outlook holds exactly
+    one value, First-Run, and nothing else. The shape rule rightly calls any key with a value a
+    hive, so the first guest run printed "other real Outlook hive(s) here: 8.0 - use -OfficeVersion
+    if this one is wrong" - an invitation to point Outlook at Office 97's hive. An unsupported
+    major is still NAMED, because hiding it would also hide a genuine second Outlook, but it is no
+    longer offered as the fix.
+#>
+function Format-OtherHiveNote {
+    param([string] $ChosenVersion, [object[]] $RealHives)
+
+    $supported = @()
+    $unsupported = @()
+    if ($null -ne $RealHives) {
+        foreach ($hive in $RealHives) {
+            if ($null -eq $hive -or $hive.Version -eq $ChosenVersion) { continue }
+            if ($script:SupportedOfficeVersions -contains $hive.Version) { $supported += $hive.Version }
+            else { $unsupported += $hive.Version }
+        }
+    }
+
+    $lines = @()
+    if ($supported.Count -gt 0) {
+        $lines += "other supported Outlook hive(s) here: $($supported -join ', ') - use -OfficeVersion if this one is wrong"
+    }
+    if ($unsupported.Count -gt 0) {
+        $lines += "also an Outlook-shaped key under unsupported major(s) $($unsupported -join ', ') - never chosen, and not a fix for anything"
+    }
+    return , $lines
 }
 
 <#
@@ -532,6 +610,24 @@ function Invoke-SelfTest {
     Test-Case 'and says why that key is not real' $true ($pick.Problem -like '*silent no-op*')
 
     Write-Host ''
+    Write-Host '== the note under the chosen hive =='
+
+    # The measured shape: 8.0\Outlook holding one value, First-Run, beside a real 16.0.
+    $stray8 = New-HiveCandidate -Version '8.0' -ValueNames @('First-Run')
+    $pick = Select-OutlookHive -Candidates @($real16, $stray8)
+    Test-Case 'the 8.0 First-Run shell does not displace 16.0' '16.0' $pick.Chosen.Version
+    $note = Format-OtherHiveNote -ChosenVersion $pick.Chosen.Version -RealHives $pick.RealHives
+    Test-Case 'it is still named - one line' 1 $note.Count
+    Test-Case 'but as unsupported, never as the fix' $true ($note[0].Contains('unsupported major(s) 8.0 - never chosen'))
+    Test-Case 'and -OfficeVersion is NOT offered for it' $false ($note[0].Contains('-OfficeVersion'))
+    $note = Format-OtherHiveNote -ChosenVersion '16.0' -RealHives @($real16, $real15)
+    Test-Case 'a second SUPPORTED hive still gets the -OfficeVersion hint' $true ($note[0].Contains('other supported Outlook hive(s) here: 15.0 - use -OfficeVersion'))
+    $note = Format-OtherHiveNote -ChosenVersion '16.0' -RealHives @($real16)
+    Test-Case 'the chosen hive alone prints nothing' 0 $note.Count
+    $note = Format-OtherHiveNote -ChosenVersion '16.0' -RealHives $null
+    Test-Case 'a null list prints nothing, and does not throw' 0 $note.Count
+
+    Write-Host ''
     Write-Host '== the prompt setting, as printed =='
 
     Test-Case 'absent reads as Outlook default' 'absent (Outlook default: always use the default profile)' (Format-PromptSetting $null)
@@ -683,12 +779,8 @@ $root = $selection.Chosen
 $profilesKeyPath = "$($root.Path)\Profiles"
 
 Write-Host "outlook hive : $($root.Path)   (Office $($root.Version); $($root.ValueNames.Count) value(s), $($root.SubKeyNames.Count) subkey(s))"
-if ($selection.RealHives.Count -gt 1) {
-    $others = @()
-    foreach ($hive in $selection.RealHives) {
-        if ($hive.Version -ne $root.Version) { $others += $hive.Version }
-    }
-    Write-Host "               other real Outlook hive(s) here: $($others -join ', ') - use -OfficeVersion if this one is wrong"
+foreach ($line in (Format-OtherHiveNote -ChosenVersion $root.Version -RealHives $selection.RealHives)) {
+    Write-Host "               $line"
 }
 
 $currentDefault = (Get-ItemProperty -Path $root.Path -Name 'DefaultProfile' -ErrorAction SilentlyContinue).DefaultProfile
