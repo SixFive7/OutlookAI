@@ -244,14 +244,23 @@ public sealed class LiveFolderScopeTests
     public void PrimaryStore_ExcludeSubfolders_NarrowsExactly_AndCostsNothing()
     {
         // A primary-store folder WITH children: recursive must return strictly more than
-        // non-recursive, and the difference must be the children's own populations.
-        string store = _fixture.Settings.ExpectedStoreDisplayNames
+        // non-recursive, and the difference must be the children's own populations. The store
+        // is the first non-hub entry of the INDEXED list - the list of stores the index tier
+        // measures - because this is an index measurement; the watched list can name stores
+        // with no index scope at all.
+        string store = _fixture.Settings.RequireIndexedStores()
             .First(s => !string.Equals(s, Hub, StringComparison.OrdinalIgnoreCase));
 
         IReadOnlyList<FolderView> tree = FolderTree(store);
         IndexSearchService index = IndexSearchService.CreateDefault(out _);
+
+        // The unordered 2000-row sample first, then the targeted per-address discovery for a store
+        // the sample missed - the same two steps LivePhase1Fixture, LiveSearchInTests and
+        // LiveExhaustiveSearchTests take. The sample alone finds a store only when it dominates the
+        // index; a small store beside a big one is found by the mail addressed to it.
         StoreScopeInfo scope = index.DiscoverStoreScopes(2000)
             .FirstOrDefault(s => string.Equals(s.StoreDisplayName, store, StringComparison.OrdinalIgnoreCase))
+            ?? index.TryDiscoverStoreScopeByAddress(store)
             ?? throw new InvalidOperationException($"store scope for '{store}' not discovered");
 
         // A MAIL folder with populated children. Item counts alone would happily select

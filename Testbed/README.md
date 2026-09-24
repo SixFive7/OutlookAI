@@ -55,8 +55,9 @@ testbed before its replacement runs.**
 | 7 | Install the mail sink, the dummy account and the identity account | **Sink first**, so Outlook's first send/receive finds it: `host/Get-MailSinkMedia.ps1 -Execute` stages the pinned Inbucket release on the host (`MEDIA.md`, "The mail sink"), `host/Copy-ToGuest.ps1` carries it in, then `guest/Install-MailSink.ps1 -ExpectedSha256 <hash> -Execute` registers it to start with the guest and ends by proving an SMTP-to-POP3 round trip - `SINK-READY`. Reboot and `-Verify` once more. Accounts: `guest/New-TierProfile.ps1`. **The POP3 password: the sink accepts none and any; whether Outlook connects without a stored one is NOT yet measured** - run the first Outlook start with the sink at `-LogLevel debug` and read its log, runbook §2.7. The signature has a script | guest |
 | 7b | **Decide whether this guest is the indexed one or the unindexed one, and do it BEFORE the corpus exists** | `guest/Set-OutlookIndexingDisabled.ps1` on `OutlookAI-Unindexed`; nothing on `OutlookAI-Indexed`. Order is the whole point: exclude Outlook first and no row is ever crawled, so there is nothing to purge and nothing to wait for | guest |
 | 8 | Build the corpus | `guest/Build-Corpus.ps1` | guest, session 1 |
+| 8a | **Build the fixture populations** into the hub, the bystander and - once it exists - the identity store: small, tagged, deterministic, and what the hub and index tests read | `OutlookAI.RemediationTools corpus-build --population hub\|bystander\|identity`, in the corpus profile, with every such store attached to BOTH profiles while it is still empty - `Docs/live-tier-on-the-vm.md` §3b has the order and the commands, and the hub is rebuilt before every run. **None of it has run on a guest yet** | guest, session 1 |
 | 8b | **Make the guest able to RUN the suite at all** - it has no .NET, no git and no clone. Stage on the host, then install: `host/Publish-LiveTierPayload.ps1` then `guest/Install-DotnetSdk.ps1`. The SDK alone is not enough; the source and an offline NuGet feed travel with it. | host, then guest |
-| 9 | Write the live-test settings file | **render it, do not write it by hand**: read the guest's store names over COM into its `liveTestSettings` section of `testbed.json`, then `host/New-LiveTestSettings.ps1 -VMName <guest>`, then the `host/Copy-ToGuest.ps1` line it prints. It refuses while any value is still a placeholder, naming each. Read §3b first, or the tier refuses to start | host, then guest |
+| 9 | Write the live-test settings file | **render it, do not write it by hand**: read the guest's store names over COM into its `liveTestSettings` section of `testbed.json` - the watched list, and on the indexed guest the INDEXED list in the order hub, bystander, corpus - then `host/New-LiveTestSettings.ps1 -VMName <guest>`, then the `host/Copy-ToGuest.ps1` line it prints. It refuses while any value is still a placeholder, naming each. `probeTerm` and three of `subjectOnlyProbe`'s fields are already filled in: they are the population generator's own constants. Read §3b first, or the tier refuses to start | host, then guest |
 | 10 | Take the measurements | `guest/Invoke-GuestMeasure.ps1`, `guest/Measure-SweepCost.ps1` | guest, session 1 |
 | 11 | Get the results out | `host/Copy-FromGuest.ps1` | host |
 
@@ -422,10 +423,10 @@ reached any other answer, and which then sits in a run report looking exactly li
 
 **The corpus store is declared a bystander too, and this one is load-bearing.** No live test
 writes to a corpus: the freshness check reads the manifest and never the store, and re-anchoring
-is an operator action run from the accountless profile. But a corpus store has to appear in
-`expectedStoreDisplayNames` to be censused at all, and every non-hub entry of that list is inside
-the identity-draft grant unless something says otherwise. Left undeclared, two different code
-paths write into the measurement corpus:
+is an operator action run from the accountless profile. But a guest names its corpus store in
+`expectedStoreDisplayNames` - that is the list `outlook_health` and `list_accounts` read - and every
+non-hub entry of that list is inside the identity-draft grant unless something says otherwise. Left
+undeclared, two different code paths write into the measurement corpus:
 
 * **the identity tests** create one draft per granted store - so they would draft into the corpus
   the moment this machine gains the dummy mail account it is getting;
@@ -467,6 +468,38 @@ a second mail account, declared in `expectedStoreDisplayNames` and named nowhere
 they cannot. **Do not "fix" an announcing machine by adding `&Requires!=IdentityAccount` to the
 filter** - that deselects the tests and deletes the only record that the identity path is
 unverified, which is the vacuous green both mechanisms exist to prevent.
+
+**What the tier refuses, and what it does not - corrected 2026-09-24 (Q77).** An earlier version of
+this section and of the runbook said a store named in only one of `expectedStoreDisplayNames` and
+`bystanderStoreDisplayNames` refuses the tier. The code does not do that, and the maintainer chose to
+correct the documents rather than the loader. A store declared in `bystanderStoreDisplayNames` alone
+is still censused - the census adds every declared bystander back in, on purpose
+(`T1/TripwireBystanderStoreTests.TheCensusWatchesEveryDeclaredBystanderEvenOneNoOtherListNames`) - and
+a store named in `expectedStoreDisplayNames` alone is inside the identity-draft grant, which is
+exactly the identity account's shape. The tier refuses only when no watched store is left that is
+both non-hub and denied every write. `host/New-LiveTestSettings.ps1` still holds a guest to naming
+every declared bystander in `expectedStoreDisplayNames` as well, because that list is what
+`outlook_health`'s reachability check and `list_accounts` read.
+
+**Two lists since 2026-09-24 (Q70): WATCHED and INDEXED.** `expectedStoreDisplayNames` used to be
+both the stores the census watches and the stores every index test demands an index scope of, and
+the identity store - watched, written to, holding almost nothing - could not be described
+truthfully by one list. So `indexedStoreDisplayNames` now says which stores the index tier
+measures, in order: **the hub first, the bystander second, the corpus last**, because several index
+tests read entry 0 and the exclude-subfolders measurement reads the first non-hub entry. Absent, it
+means the watched list, which is what every older settings file meant. On the unindexed guest it is
+empty, and every index test there refuses rather than iterate nothing. The renderer holds the order,
+and requires every indexed store except the corpus to be named as an `.invalid` address: the product
+finds a small store in the index only through mail addressed to it, and only for a name shaped like
+an address. `Docs/live-tier-on-the-vm.md` §1.3 and §2.10 have the whole of it.
+
+**The bystander, the hub and the identity store are POPULATED BY THE GENERATOR** -
+`corpus-build --population bystander|hub|identity`, 300, 56 and 8 tagged items, deterministic from a
+seed recorded in `testbed.json` under `corpusIdConvention.populations`. The bystander is named as an
+address too (`bystander@vm.invalid` in the example). The old objection - that the generator tags
+everything and a bystander must be untouched - does not hold: the tag is `[OutlookAI-Corpus]`, which
+no artifact sweep can select, and no test writes to the store either way. `Docs/live-tier-on-the-vm.md`
+§3b is the procedure, and says what only a guest can answer.
 
 ---
 
@@ -691,10 +724,10 @@ answer per capability, and it now carries the measured-broken marker on the rows
 
 | Path | What it is |
 | --- | --- |
-| `testbed.json` | The parameter set. Corpus quad, expected plan output, build cost, guest layout, and an explicit list of what is still unrecorded. Its `vmName` is the guest this was **measured on**, not a guest to build (§3). Its `liveTestSettings` section holds each guest's live-test settings values, keyed by VM name - **placeholders until they are read off the guest over COM**, which nobody has done yet. |
-| `live-test-settings.example.json` | Complete example of the gitignored settings file, every field present, placeholders only. |
+| `testbed.json` | The parameter set. Corpus quad, expected plan output, build cost, guest layout, and an explicit list of what is still unrecorded. Its `vmName` is the guest this was **measured on**, not a guest to build (§3). `corpusIdConvention` also records the indexed guest's **minimum corpus size, 160,000 items** - a requirement, so the index tier's latency bounds are tests there - and, under `populations`, the ids and seeds of the generated hub, bystander and identity populations (none built yet). Its `liveTestSettings` section holds each guest's live-test settings values, keyed by VM name - **placeholders until they are read off the guest over COM**, which nobody has done yet - except the values that are recorded decisions, which `_decided` lists: the probe term and three of the subject-only probe's fields are the population generator's own constants. |
+| `live-test-settings.example.json` | Complete example of the gitignored settings file, every field present, placeholders only - the watched and the indexed list, the probe term and the subject-only probe as a test guest carries them. Every address in it is under `.invalid`, and `.github/scripts/check-testbed-references.ps1` check 8 fails the build if one ever is not. |
 | `live-test-settings.template.json` | The same shape as the example, holding **tokens only**: every value is a double-brace token spelling its own JSON path in a guest's `liveTestSettings` section. `.github/scripts/check-testbed-references.ps1` check 8 fails the build if its fields stop matching the example's or a value in it stops being a token, and `T1/LiveTestSettingsTemplateTests` renders it with synthetic values through the live tier's own loader. |
-| `host/New-LiveTestSettings.ps1` | Renders one guest's gitignored `live-test-settings.json` from that template and the guest's section of `testbed.json`, into `.work/`. `-VMName` is mandatory (§4a). **Refuses** while any value is still a placeholder (naming each), anything the tier would refuse at start, and the documented rules the tier does not itself enforce - a bystander must also be in `expectedStoreDisplayNames`, the corpus store must be a bystander, the hub must be shaped as an address. **Never writes into a `live-fixtures` directory on the host**, however the path is spelled - checked first, on the resolved path and again on the path Windows reports - and inside a git working tree only under `.work/`. Prints the `Copy-ToGuest.ps1` line for the guest's destination, and what it could not check: that the guest's tier profile actually mounts every store it names. **Never rendered a real guest's file** - their values are still placeholders; `-SelfTest` is 142 assertions over its decisions, 0 failures, under Windows PowerShell 5.1 and PowerShell 7. |
+| `host/New-LiveTestSettings.ps1` | Renders one guest's gitignored `live-test-settings.json` from that template and the guest's section of `testbed.json`, into `.work/`. `-VMName` is mandatory (§4a). **Refuses** while any value is still a placeholder (naming each), anything the tier would refuse at start, and the documented rules the tier does not itself enforce - a bystander must also be in `expectedStoreDisplayNames`, the corpus store must be a bystander, the hub must be shaped as an address; on the indexed guest the indexed list must run hub, bystander, corpus, with every entry but the corpus named as an address, and carry the generator's probe term and a complete subject-only probe on the hub; on the unindexed guest the indexed list, the probe term and the probe block must be empty or absent; every address must be under `.invalid`; and a corpus below the size `corpusIdConvention` requires is refused. **Never writes into a `live-fixtures` directory on the host**, however the path is spelled - checked first, on the resolved path and again on the path Windows reports - and inside a git working tree only under `.work/`. Prints the `Copy-ToGuest.ps1` line for the guest's destination, and what it could not check: that the guest's tier profile actually mounts every store it names. **Never rendered a real guest's file** - their values are still placeholders; `-SelfTest` is 168 assertions over its decisions, 0 failures, under Windows PowerShell 5.1 and PowerShell 7 (2026-09-24). |
 | `guest/autounattend.template.xml` | The unattended-install answer file. Locale, disk layout, local account, autologon - and placeholder tokens where the password goes. Contains no credential and must never contain one. |
 | `host/New-AnswerFile.ps1` | Fills that template from the gitignored credential and packages it as a small ISO. Writes into gitignored scratch only, and refuses anywhere else. `-VMName` is mandatory (§4a). |
 | `guest/Complete-FirstLogon.ps1` | The first-logon fix-ups the answer file cannot express: the en-NL language list, the home location, the locales, no sleep, no fast startup. Logs and reads back everything it set. |
@@ -997,7 +1030,10 @@ when:
 * the live-test settings template stops holding tokens only, or its fields stop matching
   `live-test-settings.example.json`'s, or a guest section of `testbed.json` names different ones,
   or the renderer's guest destination stops agreeing with where `host/Publish-LiveTierPayload.ps1`
-  builds the suite, or any file called `live-test-settings.json` becomes tracked.
+  builds the suite, or any file called `live-test-settings.json` becomes tracked, or an
+  address-shaped value in `live-test-settings.example.json` stops ending in `.invalid` (Q79,
+  2026-09-24: this repository is public, and an address that can resolve is one somebody could
+  own).
 
 The last two are not paranoia. The value they look for has been committed to this repository
 before, and an unattend password is `<Password><Value>...</Value></Password>` - which does not

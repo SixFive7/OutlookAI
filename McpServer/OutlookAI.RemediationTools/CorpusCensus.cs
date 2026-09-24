@@ -189,7 +189,7 @@ public static class CorpusCensus
         {
             folders.Add(new CorpusCensusFolder(
                 folderId,
-                FolderName(folderId),
+                plan.FolderLabel(folderId),
                 plannedByFolder.TryGetValue(folderId, out int p) ? p : 0,
                 observedByFolder.TryGetValue(folderId, out int o) ? o : 0));
         }
@@ -297,16 +297,4 @@ public static class CorpusCensus
             ? (true, head + " Every ordinal exists exactly once, in the folder the plan names.")
             : (false, head + " FAULTS: " + string.Join("; ", faults) + ".");
     }
-
-    private static string FolderName(int folderId) => folderId switch
-    {
-        3 => "Deleted Items",
-        OutboxFolderId => "Outbox",
-        5 => "Sent Items",
-        6 => "Inbox",
-        DraftsFolderId => "Drafts",
-        23 => "Junk Email",
-        0 => "created folder",
-        _ => "folder " + folderId.ToString(CultureInfo.InvariantCulture),
-    };
 }

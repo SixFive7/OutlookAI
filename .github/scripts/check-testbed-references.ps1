@@ -65,8 +65,11 @@
        field set to equal the example's (_-prefixed notes aside) and every value in it to be the
        double-brace token spelling its own path, never a value; every guest section of testbed.json
        to name exactly the template's fields; the renderer's guest destination to sit under the
-       same source root Testbed/host/Publish-LiveTierPayload.ps1 stages the suite into; and no file
-       called live-test-settings.json to be tracked anywhere, since the real one names real stores.
+       same source root Testbed/host/Publish-LiveTierPayload.ps1 stages the suite into; every
+       address-shaped value in the example - fields, lists and notes alike - to end in the RFC 2606
+       .invalid domain, so the documented shape can never carry a real mailbox (Q79, 2026-09-24);
+       and no file called live-test-settings.json to be tracked anywhere, since the real one names
+       real stores.
        It lives here rather than in a T1 test because every one of those files is under Testbed/,
        and the workflow that runs T1 only triggers on McpServer/ - this script runs on every pull
        request. T1/LiveTestSettingsTemplateTests covers the other half: that the template still
@@ -99,6 +102,12 @@ param(
 if (-not $PSBoundParameters.ContainsKey('RepoRoot')) { $RepoRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) }
 
 $ErrorActionPreference = 'Stop'
+
+# Defaulted HERE rather than in param(): Windows PowerShell 5.1 leaves $PSScriptRoot EMPTY inside the
+# param() defaults of a script run with -File, so the one-liner that used to sit there threw before the
+# first check ran - on 5.1 this guard never checked anything. PowerShell 7 fills it, which is why CI
+# never noticed.
+if (-not $RepoRoot) { $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }
 if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
@@ -606,6 +615,46 @@ if ($null -ne $exampleJson -and $null -ne $settingsTemplateJson) {
     }
 }
 
+# The example is what a rebuilder copies, and it is committed to a PUBLIC repository: it must never
+# hold a real address (decided 2026-09-24, Q79). So every address-shaped value in it - at any depth,
+# in any list, in the _-notes as much as in the fields - must end in the RFC 2606 .invalid domain,
+# which cannot resolve. Only WHERE is reported, never the value: a real address found here goes into
+# a public build log otherwise.
+function Get-AddressLeaks($node, [string] $path) {
+    $leaks = @()
+    if ($null -eq $node) { return $leaks }
+    if ($node -is [string]) {
+        foreach ($m in [regex]::Matches($node, '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+')) {
+            if (-not $m.Value.EndsWith('.invalid', [System.StringComparison]::OrdinalIgnoreCase)) { $leaks += $path }
+        }
+        return $leaks
+    }
+    if ($node -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($p in $node.PSObject.Properties) {
+            $child = $p.Name
+            if ($path) { $child = $path + '.' + $p.Name }
+            $leaks += Get-AddressLeaks $p.Value $child
+        }
+        return $leaks
+    }
+    if ($node -is [System.Array]) {
+        for ($i = 0; $i -lt $node.Count; $i++) { $leaks += Get-AddressLeaks $node[$i] ('{0}[{1}]' -f $path, $i) }
+    }
+    return $leaks
+}
+
+$exampleAddressCount = 0
+if ($null -ne $exampleJson) {
+    $exampleRaw = Get-Content -LiteralPath (Join-Path $RepoRoot $exampleRelative) -Raw
+    $exampleAddressCount = [regex]::Matches($exampleRaw, '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+').Count
+    foreach ($where in @(Get-AddressLeaks $exampleJson '' | Select-Object -Unique)) {
+        $settingsProblems += "$exampleRelative '$where' holds an address outside the RFC 2606 .invalid domain. The example is committed to a public repository and must never name a real mailbox - use one under .invalid (the value is not printed here)."
+    }
+    if ($exampleAddressCount -eq 0) {
+        $settingsProblems += "$exampleRelative holds no address at all, so the .invalid rule checks nothing - the example's hub is an address by design (tests hand it to NewDraft as one). Either the example changed shape or this pattern stopped matching."
+    }
+}
+
 # The per-guest values must name exactly the template's fields. A block may be null (none on that
 # guest) or a placeholder still waiting to be read off the guest - but never a different shape.
 $guestCount = 0
@@ -684,7 +733,7 @@ if ($settingsProblems.Count -gt 0) {
     Fail 'live-test settings template holds tokens only, with the example''s fields' (($settingsProblems | Sort-Object -Unique) -join "`n        ")
 }
 else {
-    Pass 'live-test settings template holds tokens only, with the example''s fields' "$($templateLeaves.Count) token(s) matching $exampleRelative, $guestCount guest section(s) in testbed.json of the same shape, the guest root agreeing with the stager, no live-test-settings.json tracked"
+    Pass 'live-test settings template holds tokens only, with the example''s fields' "$($templateLeaves.Count) token(s) matching $exampleRelative, $guestCount guest section(s) in testbed.json of the same shape, the guest root agreeing with the stager, $exampleAddressCount address(es) in the example all under .invalid, no live-test-settings.json tracked"
 }
 
 # ---------------------------------------------------------------------------------------------

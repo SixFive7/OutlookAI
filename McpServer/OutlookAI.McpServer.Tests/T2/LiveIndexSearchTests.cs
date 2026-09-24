@@ -25,6 +25,12 @@ public sealed class LiveIndexSearchTests
         _output = output;
     }
 
+    /// <summary>
+    /// The stores the index tier measures - the settings' INDEXED list, never the watched one, and
+    /// refused rather than empty (see <see cref="LiveTestSettings.RequireIndexedStores"/>).
+    /// </summary>
+    private List<string> Indexed => _fixture.Settings.RequireIndexedStores().ToList();
+
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
@@ -59,7 +65,7 @@ public sealed class LiveIndexSearchTests
     [Trait("Requires", "MultipleStores")]
     public void ProbeParity_AllThreeStores_ReturnRowsUnder2s()
     {
-        foreach (string storeName in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string storeName in Indexed)
         {
             StoreScopeInfo scope = _fixture.GetScope(storeName);
             IndexSearchResult result = _fixture.Service.Search(new IndexQuery
@@ -82,7 +88,7 @@ public sealed class LiveIndexSearchTests
     {
         // Section-5 R3 shape: store scope + kind + CONTAINS + ORDER BY DESC, TOP 25.
         int totalHits = 0;
-        foreach (string storeName in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string storeName in Indexed)
         {
             StoreScopeInfo scope = _fixture.GetScope(storeName);
             IndexSearchResult result = _fixture.Service.Search(new IndexQuery
@@ -132,7 +138,7 @@ public sealed class LiveIndexSearchTests
     [Trait("Requires", "MultipleStores")]
     public void FilterShapes_ReadAndAttachmentFlags_WorkUnder2s()
     {
-        StoreScopeInfo scope = _fixture.GetScope(_fixture.Settings.ExpectedStoreDisplayNames[0]);
+        StoreScopeInfo scope = _fixture.GetScope(Indexed[0]);
 
         IndexSearchResult unread = _fixture.Service.Search(new IndexQuery
         {
@@ -163,9 +169,10 @@ public sealed class LiveIndexSearchTests
             LivePopulationCoverage.Require(
                 _fixture.Settings,
                 withAttachments.Hits,
-                "an indexed mail item carrying an attachment in the first configured store",
+                "an indexed mail item carrying an attachment in the first indexed store",
                 "the has-attachments index filter shape check",
-                "To exercise it, point the first entry of 'expectedStoreDisplayNames' at a store "
+                "To exercise it, point the first entry of 'indexedStoreDisplayNames' (or, with that list absent, "
+                    + "of 'expectedStoreDisplayNames') at a store "
                     + "whose indexed mail includes at least one message with an attachment.",
                 _output.WriteLine),
             h => Assert.NotEqual(false, h.HasAttachments));
@@ -177,7 +184,7 @@ public sealed class LiveIndexSearchTests
     public void SenderFilter_PerColumnContains_IndexBackedUnder2s()
     {
         // Any sender address seen in recent mail of the first store; asserted content-free.
-        StoreScopeInfo scope = _fixture.GetScope(_fixture.Settings.ExpectedStoreDisplayNames[0]);
+        StoreScopeInfo scope = _fixture.GetScope(Indexed[0]);
         IndexSearchResult recent = _fixture.Service.Search(new IndexQuery
         {
             Scope = scope.StorePrefix,
@@ -265,7 +272,7 @@ public sealed class LiveIndexSearchTests
         _output.WriteLine("discovered scopes: "
             + string.Join(", ", _fixture.StoreScopes.Select(s => $"{s.StoreDisplayName}({s.SampleCount})")));
 
-        foreach (string expected in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string expected in Indexed)
         {
             Assert.NotNull(_fixture.GetScope(expected));
         }

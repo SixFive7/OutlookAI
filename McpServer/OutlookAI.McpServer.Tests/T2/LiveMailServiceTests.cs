@@ -27,13 +27,21 @@ public sealed class LiveMailServiceTests
 
     private MailService Service => _fixture.Service;
 
+    /// <summary>
+    /// The stores the index tier measures - the settings' INDEXED list, refused rather than empty
+    /// (see <see cref="LiveTestSettings.RequireIndexedStores"/>). Every test here that searches the
+    /// index store by store reads this; <c>ListAccounts_ExactAccountsDelegatesAndFlags</c> keeps the
+    /// WATCHED list, because what it pins is the profile's account and store set, not the index.
+    /// </summary>
+    private List<string> Indexed => _fixture.Settings.RequireIndexedStores().ToList();
+
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
     public void RoundTrip_SearchThenRead_TenHitsAcrossStores()
     {
         List<HitSummary> hits = new();
-        foreach (string store in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string store in Indexed)
         {
             SearchOutcome outcome = Service.Search(new SearchRequest
             {
@@ -52,7 +60,7 @@ public sealed class LiveMailServiceTests
             SearchOutcome extra = Service.Search(new SearchRequest
             {
                 IndexOnly = true,
-                Store = _fixture.Settings.ExpectedStoreDisplayNames[0],
+                Store = Indexed[0],
                 IncludeAttachmentHits = false,
                 Top = 30,
             });
@@ -103,7 +111,7 @@ public sealed class LiveMailServiceTests
     {
         // A real mail with a body long enough to window (>= 120 chars).
         ReadOutcome? full = null;
-        foreach (string store in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string store in Indexed)
         {
             SearchOutcome outcome = Service.Search(new SearchRequest
             {
@@ -173,7 +181,7 @@ public sealed class LiveMailServiceTests
     {
         const int cap = 20000;
         ReadOutcome? bigRead = null;
-        foreach (string store in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string store in Indexed)
         {
             List<HitSummary> candidates;
             try
@@ -233,7 +241,7 @@ public sealed class LiveMailServiceTests
     public void AttachmentHit_ReadParent_SaveToScratch()
     {
         HitSummary? attachmentHit = null;
-        foreach (string store in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string store in Indexed)
         {
             SearchOutcome outcome = Service.Search(new SearchRequest
             {
@@ -382,7 +390,7 @@ public sealed class LiveMailServiceTests
         // contract - it failed exactly that way, twice, with the index tier happily
         // returning 50 members for the same conversation.
         List<HitSummary> candidates = new();
-        foreach (string store in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string store in Indexed)
         {
             candidates.AddRange(Service.Search(new SearchRequest
             {

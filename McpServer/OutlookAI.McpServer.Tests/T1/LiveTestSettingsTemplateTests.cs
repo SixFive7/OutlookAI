@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using OutlookAI.McpServer.Tests.T2;
+using OutlookAI.RemediationTools;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -29,21 +30,20 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// <b>The controls are the point.</b> A test that only ever sees a good file passes whether or not
 /// anything is checked. So each refusal the tier makes on a rendered file is driven here too, from
 /// the same render: the unrendered template itself, a file declaring its bystanders only in the
-/// census list, the hub declared a bystander, a half-written block, and a Production profile the
-/// template has no fields for.
+/// census list, the hub declared a bystander, a half-written block, an indexed list that names a store
+/// the census does not watch or leaves out the hub, and a Production profile without its probes.
 /// </para>
 /// <para>
-/// <b>One documented rule the loader does NOT enforce, recorded here because it surprised the work
-/// that wrote this class.</b> <c>Docs/live-tier-on-the-vm.md</c> sections 1.3, 2.6 and 2.10 say a
-/// store named in only one of <c>expectedStoreDisplayNames</c> and <c>bystanderStoreDisplayNames</c>
-/// refuses the tier. Read against the code on 2026-09-24, that holds in one direction and only
-/// conditionally: a store left OUT of the bystander list is inside the identity-draft grant, and is
-/// refused only when that leaves the census nothing it could fail on - which is the control below.
-/// A bystander left out of the census list is NOT refused at all:
-/// <see cref="LiveStoreCountTripwire.WatchedStores"/> adds declared bystanders back in, deliberately
-/// (<c>T1/TripwireBystanderStoreTests.TheCensusWatchesEveryDeclaredBystanderEvenOneNoOtherListNames</c>).
-/// The renderer refuses that second shape itself. Which of the documents or the loader should change
-/// is an open question and nothing here decides it.
+/// <b>What the tier does NOT refuse, stated because the documents once said it did.</b> A store named
+/// in only one of <c>expectedStoreDisplayNames</c> and <c>bystanderStoreDisplayNames</c> is refused by
+/// the tier only when, left out of the bystander list, it leaves the census nothing it could fail on -
+/// the control below. Otherwise such a store is simply inside the identity-draft grant, which is
+/// exactly the identity account's shape. A bystander left out of the census list is not refused at
+/// all: <see cref="LiveStoreCountTripwire.WatchedStores"/> adds declared bystanders back in,
+/// deliberately (<c>T1/TripwireBystanderStoreTests.TheCensusWatchesEveryDeclaredBystanderEvenOneNoOtherListNames</c>).
+/// The maintainer chose (Q77, 2026-09-24) to correct the documents to that rather than the loader; the
+/// renderer keeps its own stricter convention for guests, and <c>Docs/live-tier-on-the-vm.md</c>
+/// section 2.10 says why.
 /// </para>
 /// <para>
 /// Synthetic names only - RFC 2606 <c>.invalid</c> addresses and made-up store names. The one real
@@ -56,13 +56,16 @@ public sealed class LiveTestSettingsTemplateTests
 {
     private const string Hub = "hub@render.invalid";
     private const string CorpusStore = "Synthetic Corpus";
-    private const string Bystander = "Synthetic Bystander";
+    private const string Bystander = "bystander@render.invalid";
     private const string Identity = "identity@render.invalid";
 
     /// <summary>Every placeholder in testbed.json begins with this; the renderer refuses a section holding one.</summary>
     private const string PlaceholderMarker = "<FILL";
 
     private const string NoFailableStore = "NO STORE THIS CENSUS WATCHES CAN PRODUCE A FAILURE";
+
+    /// <summary>How many token fields the template carries: the renderer's self-test and check 8 count the same.</summary>
+    private const int TemplateFieldCount = 23;
 
     private readonly ITestOutputHelper _output;
 
@@ -94,9 +97,10 @@ public sealed class LiveTestSettingsTemplateTests
     }
 
     /// <summary>
-    /// What a guest's section of testbed.json holds, for a four-store guest: hub, corpus, plain
-    /// bystander, and an identity account left out of the bystander list on purpose
-    /// (Docs/live-tier-on-the-vm.md section 2.8b).
+    /// What a guest's section of testbed.json holds, for a four-store INDEXED guest: hub, corpus,
+    /// plain bystander, and an identity account left out of the bystander list on purpose
+    /// (Docs/live-tier-on-the-vm.md section 2.8b) - and left out of the INDEXED list too, which is
+    /// what the watched/indexed split exists to be able to say.
     /// </summary>
     private static JsonObject SyntheticValues()
     {
@@ -106,9 +110,18 @@ public sealed class LiveTestSettingsTemplateTests
               "_note": "comment keys are not settings",
               "machineProfile": "Portable",
               "testHubStoreDisplayName": "hub@render.invalid",
-              "expectedStoreDisplayNames": [ "hub@render.invalid", "Synthetic Corpus", "Synthetic Bystander", "identity@render.invalid" ],
+              "expectedStoreDisplayNames": [ "hub@render.invalid", "Synthetic Corpus", "bystander@render.invalid", "identity@render.invalid" ],
+              "indexedStoreDisplayNames": [ "hub@render.invalid", "bystander@render.invalid", "Synthetic Corpus" ],
               "expectedDelegateStoreDisplayNames": [],
-              "bystanderStoreDisplayNames": [ "Synthetic Bystander", "Synthetic Corpus" ],
+              "bystanderStoreDisplayNames": [ "bystander@render.invalid", "Synthetic Corpus" ],
+              "probeTerm": "invoice",
+              "subjectOnlyProbe": {
+                "_note": "the hub population's notices folder",
+                "storeDisplayName": "hub@render.invalid",
+                "folderPath": "Inbox/OutlookAI-Corpus-Folder-Notices",
+                "subjectTerm": "bulletin",
+                "senderFragment": "noticebot"
+              },
               "corpus": {
                 "storeDisplayName": "Synthetic Corpus",
                 "manifestPath": "C:\\OutlookAI-Q5\\corpus-vm-synthetic.jsonl",
@@ -199,6 +212,21 @@ public sealed class LiveTestSettingsTemplateTests
         };
     }
 
+    private static JsonObject Guests()
+    {
+        string path = Path.Combine(RepoRoot(), "Testbed", "testbed.json");
+        JsonObject testbed = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        return Assert.IsType<JsonObject>(testbed["liveTestSettings"]);
+    }
+
+    private static bool? GuestIsIndexed(string guest)
+    {
+        string path = Path.Combine(RepoRoot(), "Testbed", "testbed.json");
+        JsonArray assigned = JsonNode.Parse(File.ReadAllText(path))!["corpusIdConvention"]!["assigned"]!.AsArray();
+        JsonNode? entry = assigned.SingleOrDefault(a => a?["guest"]?.GetValue<string>() == guest);
+        return entry?["indexed"]?.GetValue<bool>();
+    }
+
     // ------------------------------------------------------------------------ the good path
 
     [Fact]
@@ -232,7 +260,10 @@ public sealed class LiveTestSettingsTemplateTests
             fields.Add(entry.Key);
         }
 
-        Assert.Equal(17, fields.Count);
+        Assert.Equal(TemplateFieldCount, fields.Count);
+        Assert.Contains("indexedStoreDisplayNames", fields);
+        Assert.Contains("probeTerm", fields);
+        Assert.Contains("subjectOnlyProbe.senderFragment", fields);
     }
 
     [Fact]
@@ -243,8 +274,16 @@ public sealed class LiveTestSettingsTemplateTests
         Assert.Equal(LiveMachineProfile.Portable, settings.MachineProfile);
         Assert.Equal(Hub, settings.TestHubStoreDisplayName);
         Assert.Equal(new[] { Hub, CorpusStore, Bystander, Identity }, settings.ExpectedStoreDisplayNames);
+        Assert.Equal(new[] { Hub, Bystander, CorpusStore }, settings.IndexedStoreDisplayNames);
+        Assert.Equal(new[] { Hub, Bystander, CorpusStore }, settings.RequireIndexedStores());
         Assert.Empty(settings.ExpectedDelegateStoreDisplayNames);
         Assert.Equal(new[] { Bystander, CorpusStore }, settings.BystanderStoreDisplayNames);
+
+        Assert.Equal("invoice", settings.ProbeTerm);
+        Assert.NotNull(settings.SubjectOnlyProbe);
+        Assert.True(settings.SubjectOnlyProbe!.IsComplete);
+        Assert.Equal(Hub, settings.SubjectOnlyProbe.StoreDisplayName);
+        Assert.Equal("Inbox/OutlookAI-Corpus-Folder-Notices", settings.SubjectOnlyProbe.FolderPath);
 
         Assert.NotNull(settings.Corpus);
         Assert.True(settings.Corpus!.IsComplete);
@@ -262,6 +301,7 @@ public sealed class LiveTestSettingsTemplateTests
         Assert.Equal(1500, settings.MailSink.ConnectTimeoutMs);
 
         Assert.Contains("machineProfile=Portable", settings.Describe(), StringComparison.Ordinal);
+        Assert.Contains("indexed=3", settings.Describe(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -286,23 +326,33 @@ public sealed class LiveTestSettingsTemplateTests
     }
 
     [Fact]
-    public void WithBothOptionalBlocksDeclaredAbsent_ItLeavesThemOut_AndStillLoadsAndIsAdmitted()
+    public void WithEveryOptionalBlockDeclaredAbsent_ItLeavesThemOut_AndStillLoadsAndIsAdmitted()
     {
-        // The shape both guests are expected to render to while no corpus is built and no sink is
-        // installed (Docs/live-tier-on-the-vm.md section 1.4). Left OUT, not written as null: absent
-        // is the documented shape, and the loader's default path.
+        // The shape the UNINDEXED guest renders to: no index, so no indexed store, no probe term and
+        // no subject-only probe; no corpus built yet; no sink (Docs/live-tier-on-the-vm.md section
+        // 1.4). Blocks are left OUT, not written as null: absent is the documented shape, and the
+        // loader's default path.
         JsonObject values = SyntheticValues();
+        values["indexedStoreDisplayNames"] = new JsonArray();
+        values["probeTerm"] = string.Empty;
+        values["subjectOnlyProbe"] = null;
         values["corpus"] = null;
         values["mailSink"] = null;
 
         JsonObject rendered = JsonNode.Parse(Render(TemplateText(), values))!.AsObject();
+        Assert.False(rendered.ContainsKey("subjectOnlyProbe"));
         Assert.False(rendered.ContainsKey("corpus"));
         Assert.False(rendered.ContainsKey("mailSink"));
 
         LiveTestSettings settings = LiveTestSettings.Parse(rendered.ToJsonString());
+        Assert.Null(settings.SubjectOnlyProbe);
         Assert.Null(settings.Corpus);
         Assert.Null(settings.MailSink);
+        Assert.Empty(settings.IndexedStores);
         Assert.True(Admit(settings).Usable);
+
+        // ...and an index test on it refuses, rather than iterating an empty list and passing.
+        Assert.Throws<InvalidOperationException>(() => settings.RequireIndexedStores());
     }
 
     // -------------------------------------------------------------- the controls: it can fail
@@ -344,6 +394,36 @@ public sealed class LiveTestSettingsTemplateTests
     }
 
     [Fact]
+    public void AnIndexedStoreTheCensusDoesNotWatch_IsRefusedByTheLoader()
+    {
+        JsonObject values = SyntheticValues();
+        values["indexedStoreDisplayNames"]!.AsArray().Add("stranger@render.invalid");
+
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => Load(values));
+        Assert.Contains("never censuses", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnIndexedListWithoutTheHub_IsRefusedByTheLoader()
+    {
+        JsonObject values = SyntheticValues();
+        values["indexedStoreDisplayNames"] = new JsonArray(Bystander, CorpusStore);
+
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => Load(values));
+        Assert.Contains("not the hub", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AHalfWrittenSubjectOnlyProbe_IsRefusedByTheLoader()
+    {
+        JsonObject values = SyntheticValues();
+        values["subjectOnlyProbe"]!["senderFragment"] = string.Empty;
+
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => Load(values));
+        Assert.Contains("partially filled 'subjectOnlyProbe' block", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AHalfWrittenCorpusBlock_IsRefusedByTheLoader()
     {
         JsonObject values = SyntheticValues();
@@ -364,15 +444,22 @@ public sealed class LiveTestSettingsTemplateTests
     }
 
     [Fact]
-    public void AProductionProfile_IsRefused_BecauseTheTemplateHasNoFieldForItsProbes()
+    public void AProductionProfileWithoutItsProbes_IsRefused_AndWithThemTheLoaderAcceptsTheShape()
     {
-        // Why the renderer refuses Production outright: the template is the Portable shape, like the
-        // example, and a Production profile must also carry probeTerm and subjectOnlyProbe.
+        // The template now carries both probe fields, so it is the LOADER'S rule that refuses a
+        // Production profile without them - not a gap in the template. The renderer still refuses
+        // Production for a guest, but as a decision (testbed.json's _decided), and says so.
         JsonObject values = SyntheticValues();
         values["machineProfile"] = "Production";
+        values["probeTerm"] = string.Empty;
+        values["subjectOnlyProbe"] = null;
 
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => Load(values));
         Assert.Contains("probeTerm", ex.Message, StringComparison.Ordinal);
+
+        JsonObject complete = SyntheticValues();
+        complete["machineProfile"] = "Production";
+        Assert.Equal(LiveMachineProfile.Production, Load(complete).MachineProfile);
     }
 
     // ------------------------------------------------------------- the committed guest values
@@ -384,14 +471,10 @@ public sealed class LiveTestSettingsTemplateTests
         // This pushes them through the loader itself, so a restatement that has drifted cannot let a
         // committed guest through. A section still holding a placeholder is one the renderer refuses
         // outright; it is reported here as waiting rather than rendered.
-        string path = Path.Combine(RepoRoot(), "Testbed", "testbed.json");
-        JsonObject testbed = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
-        JsonObject sections = Assert.IsType<JsonObject>(testbed["liveTestSettings"]);
-
         string template = TemplateText();
         List<string> guests = new();
         List<string> waiting = new();
-        foreach (KeyValuePair<string, JsonNode?> section in sections)
+        foreach (KeyValuePair<string, JsonNode?> section in Guests())
         {
             if (section.Key.StartsWith('_'))
             {
@@ -418,5 +501,57 @@ public sealed class LiveTestSettingsTemplateTests
                 "PROVED NOTHING about " + string.Join(", ", waiting) + ": still waiting on values only the "
                 + "guest can supply, so the renderer refuses them and there is nothing to load yet.");
         }
+    }
+
+    [Fact]
+    public void TheCommittedProbeValues_AreTheGeneratorsOwn_OnTheIndexedGuestAndAbsentOnTheOther()
+    {
+        // probeTerm and three of subjectOnlyProbe's fields are DECISIONS recorded in testbed.json,
+        // and the decision is "whatever the population generator puts in the hub". Held equal here so
+        // the two can never quietly part - a guest carrying a term the hub does not contain would fail
+        // six index tests somewhere far from the cause.
+        CorpusSubjectOnlyProbe generated = new CorpusPlan(
+            new CorpusPlanOptions("hub-check", 1, new DateTime(2026, 9, 24, 0, 0, 0, DateTimeKind.Utc))
+            {
+                Population = CorpusPopulationKind.Hub,
+                Owner = CorpusMailboxOwner.ForStore(Hub),
+            }).Population!.SubjectOnlyProbe!;
+
+        int indexedGuests = 0;
+        foreach (KeyValuePair<string, JsonNode?> section in Guests())
+        {
+            if (section.Key.StartsWith('_'))
+            {
+                continue;
+            }
+
+            JsonObject values = section.Value!.AsObject();
+            bool? indexed = GuestIsIndexed(section.Key);
+            Assert.True(indexed != null, section.Key + " has no corpusIdConvention entry saying whether it is indexed.");
+            if (indexed == true)
+            {
+                indexedGuests++;
+                Assert.Equal(CorpusPopulation.ProbeTerm, values["probeTerm"]!.GetValue<string>());
+                JsonObject probe = values["subjectOnlyProbe"]!.AsObject();
+                Assert.Equal(generated.FolderPath, probe["folderPath"]!.GetValue<string>());
+                Assert.Equal(generated.SubjectTerm, probe["subjectTerm"]!.GetValue<string>());
+                Assert.Equal(generated.SenderFragment, probe["senderFragment"]!.GetValue<string>());
+            }
+            else
+            {
+                Assert.Empty(values["indexedStoreDisplayNames"]!.AsArray());
+                Assert.Equal(string.Empty, values["probeTerm"]!.GetValue<string>());
+                Assert.Null(values["subjectOnlyProbe"]);
+            }
+        }
+
+        Assert.Equal(1, indexedGuests);
+
+        // And the documented example models the same values.
+        JsonObject example = JsonNode.Parse(File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "live-test-settings.example.json")))!.AsObject();
+        Assert.Equal(CorpusPopulation.ProbeTerm, example["probeTerm"]!.GetValue<string>());
+        Assert.Equal(generated.FolderPath, example["subjectOnlyProbe"]!["folderPath"]!.GetValue<string>());
+        Assert.Equal(generated.SubjectTerm, example["subjectOnlyProbe"]!["subjectTerm"]!.GetValue<string>());
+        Assert.Equal(generated.SenderFragment, example["subjectOnlyProbe"]!["senderFragment"]!.GetValue<string>());
     }
 }

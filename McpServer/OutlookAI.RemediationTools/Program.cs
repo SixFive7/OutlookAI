@@ -51,6 +51,15 @@ using OutlookAI.RemediationTools;
 ///       Creates the corpus. Resumable and idempotent - it builds the ordinals the manifest
 ///       does not already record.
 ///
+///   --population hub|bystander|identity, on any corpus verb
+///       Builds a curated FIXTURE population for a test guest's hub, bystander or identity
+///       store instead of the measurement corpus (CorpusPopulation; Docs/live-tier-on-the-vm.md
+///       section 3b). Same generator, same guards, same tag, same manifest and teardown - plus
+///       senders, recipients, attachments, conversations and subfolders, each proved by a probe
+///       before the build and read back after it. Its item count is fixed by the kind, and
+///       --store is required even by corpus-plan, because the population is addressed to the
+///       store's owner.
+///
 ///   corpus-census   --store ... --allow-store ... --corpus-id ... --count N [--manifest ...]
 ///       READ-ONLY. Says whether the corpus in the store is the corpus the plan describes:
 ///       right count, right folders, one copy each, and nothing stranded in Drafts or the
@@ -523,6 +532,9 @@ internal static class Program
         Console.WriteLine("Target:   --store <display name> --allow-store <display name> (repeatable; a local .pst only)");
         Console.WriteLine("Target:   the profile must have NO mail accounts (no override - see Program.cs)");
         Console.WriteLine("Build:    --count <n> --manifest <path> [--progress-every <n>]");
+        Console.WriteLine("Fixture:  --population hub|bystander|identity   a curated test-guest population, not the corpus:");
+        Console.WriteLine("          its count is fixed (--count optional), --store is required even by corpus-plan,");
+        Console.WriteLine("          and every verb that reads its manifest needs the same --population");
         Console.WriteLine("Verify:   --count <n> --manifest <path> [--window <days> (repeatable)]   (pure - no Outlook)");
         Console.WriteLine("Stale:    rebuild - corpus-teardown --execute (or delete the .pst), then corpus-build");
         Console.WriteLine("Override: [--allow-undated] [--allow-drafts-placement]  (each says what it costs)");

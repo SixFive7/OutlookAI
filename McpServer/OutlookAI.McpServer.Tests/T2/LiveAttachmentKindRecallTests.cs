@@ -36,6 +36,12 @@ public sealed class LiveAttachmentKindRecallTests
         _output = output;
     }
 
+    /// <summary>
+    /// The stores the index tier measures - the settings' INDEXED list, never the watched one, and
+    /// refused rather than empty (see <see cref="LiveTestSettings.RequireIndexedStores"/>).
+    /// </summary>
+    private List<string> Indexed => _fixture.Settings.RequireIndexedStores().ToList();
+
     private static IIndexClient Client => IndexClientFactory.CreateAuto(out _);
 
     [Fact]
@@ -48,7 +54,7 @@ public sealed class LiveAttachmentKindRecallTests
         int recoveredAttachmentRows = 0;
         Dictionary<string, int> recoveredKinds = new(StringComparer.OrdinalIgnoreCase);
 
-        foreach (string store in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string store in Indexed)
         {
             string scope = _fixture.GetScope(store).StorePrefix;
 
@@ -83,7 +89,7 @@ public sealed class LiveAttachmentKindRecallTests
             recoveredAttachmentRows += storeRecovered;
             bool capped = newRows.Count >= 30000 || oldRows.Count >= 30000;
             _output.WriteLine(
-                $"store#{_fixture.Settings.ExpectedStoreDisplayNames.IndexOf(store)}: old {oldRows.Count} rows, "
+                $"store#{Indexed.IndexOf(store)}: old {oldRows.Count} rows, "
                 + $"new {newRows.Count} rows"
                 + (capped ? " (CAPPED at the TOP window)" : $" (+{Percent(newRows.Count - oldRows.Count, oldRows.Count)}%)")
                 + $", attachment rows recovered {storeRecovered}.");
@@ -115,7 +121,7 @@ public sealed class LiveAttachmentKindRecallTests
         // predicate did for MESSAGE rows (mail only - meeting requests stay out) while
         // keeping every attachment row.
         IIndexClient client = Client;
-        string scope = _fixture.GetScope(_fixture.Settings.ExpectedStoreDisplayNames[0]).StorePrefix;
+        string scope = _fixture.GetScope(Indexed[0]).StorePrefix;
         IReadOnlyList<IReadOnlyDictionary<string, object?>> rows = client.ExecuteRows(
             "SELECT TOP 20000 System.ItemUrl, System.Kind FROM SystemIndex WHERE SCOPE='" + scope + "'", 20000);
 
@@ -167,7 +173,7 @@ public sealed class LiveAttachmentKindRecallTests
         long oldTotal = 0;
         long newTotal = 0;
 
-        foreach (string store in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string store in Indexed)
         {
             string scope = _fixture.GetScope(store).StorePrefix;
             string contains = "(CONTAINS(System.Subject, '\"" + term + "\"') OR CONTAINS(System.Search.Contents, '\""
@@ -185,7 +191,7 @@ public sealed class LiveAttachmentKindRecallTests
             oldTotal += oldMs;
             newTotal += newMs;
             _output.WriteLine(
-                $"store#{_fixture.Settings.ExpectedStoreDisplayNames.IndexOf(store)} latency: old {oldMs} ms -> new {newMs} ms.");
+                $"store#{Indexed.IndexOf(store)} latency: old {oldMs} ms -> new {newMs} ms.");
         }
 
         _output.WriteLine($"query-set latency: old {oldTotal} ms -> new {newTotal} ms across the store set.");
@@ -216,7 +222,7 @@ public sealed class LiveAttachmentKindRecallTests
 
         HitSummary? probe = null;
         string? probeStore = null;
-        foreach (string store in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string store in Indexed)
         {
             SearchOutcome outcome = service.Search(new SearchRequest
             {
@@ -228,7 +234,7 @@ public sealed class LiveAttachmentKindRecallTests
 
             int droppedKindHits = outcome.Hits.Count(h => HasExtension(h.AttachmentFileName, previouslyDropped));
             _output.WriteLine(
-                $"store#{_fixture.Settings.ExpectedStoreDisplayNames.IndexOf(store)}: {outcome.Hits.Count} attachment "
+                $"store#{Indexed.IndexOf(store)}: {outcome.Hits.Count} attachment "
                 + $"hit(s), {droppedKindHits} of a type the old kind filter dropped.");
 
             if (probe == null)
@@ -258,7 +264,7 @@ public sealed class LiveAttachmentKindRecallTests
 
         Assert.NotNull(probe);
         Assert.NotNull(probeStore);
-        int probeStoreIndex = _fixture.Settings.ExpectedStoreDisplayNames.IndexOf(probeStore!);
+        int probeStoreIndex = Indexed.IndexOf(probeStore!);
 
         // Attachment -> parent mapping through the product: read resolves the PARENT mail.
         //

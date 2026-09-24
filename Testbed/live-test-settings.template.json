@@ -1,9 +1,11 @@
 {
   "_what": "TEMPLATE for the gitignored McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json on a TEST GUEST. It holds tokens and nothing else: no value in this file names a store, and none ever may. Do not fill it in by hand. Testbed/host/New-LiveTestSettings.ps1 renders it for ONE guest from the liveTestSettings section of Testbed/testbed.json, keyed by VM name, checks the result against the rules the live tier applies before it touches a mailbox, and writes it into gitignored scratch - never into a live-fixtures directory on the host, which is where the maintainer's own hand-written file lives.",
 
-  "_tokens": "Every value below is a double-brace token spelling the JSON path of its own value inside that guest's section - machineProfile, corpus.seed and so on. Rendering replaces the token, quotes included, with that value as JSON: a string, a number or a list. A block whose value in the guest's section is null (corpus, mailSink) is left out of the rendered file altogether, which the loader reads as absent. A block is never rendered half-filled: the loader refuses a partial one, and so does the renderer, first.",
+  "_tokens": "Every value below is a double-brace token spelling the JSON path of its own value inside that guest's section - machineProfile, corpus.seed and so on. Rendering replaces the token, quotes included, with that value as JSON: a string, a number or a list. A block whose value in the guest's section is null (subjectOnlyProbe, corpus, mailSink) is left out of the rendered file altogether, which the loader reads as absent. A block is never rendered half-filled: the loader refuses a partial one, and so does the renderer, first.",
 
   "_drift": "The field set here must equal Testbed/live-test-settings.example.json's, _-prefixed notes aside, and every token must spell its own path. .github/scripts/check-testbed-references.ps1 check 8 fails the build when either stops being true, and when a guest section of Testbed/testbed.json stops naming exactly these fields. T1/LiveTestSettingsTemplateTests renders this file with synthetic values and pushes the result through the live tier's own loader and its admission gate, so it cannot drift away from what the loader accepts either.",
+
+  "_twoLists": "expectedStoreDisplayNames is the WATCHED list - what the count tripwire censuses and what the identity-draft grant and outlook_health read. indexedStoreDisplayNames is the INDEXED list - the stores the index-tier tests measure, in order, the hub first. They were one list until 2026-09-24; Docs/live-tier-on-the-vm.md section 2.10 says what each means.",
 
   "machineProfile": "{{machineProfile}}",
 
@@ -11,9 +13,20 @@
 
   "expectedStoreDisplayNames": "{{expectedStoreDisplayNames}}",
 
+  "indexedStoreDisplayNames": "{{indexedStoreDisplayNames}}",
+
   "expectedDelegateStoreDisplayNames": "{{expectedDelegateStoreDisplayNames}}",
 
   "bystanderStoreDisplayNames": "{{bystanderStoreDisplayNames}}",
+
+  "probeTerm": "{{probeTerm}}",
+
+  "subjectOnlyProbe": {
+    "storeDisplayName": "{{subjectOnlyProbe.storeDisplayName}}",
+    "folderPath": "{{subjectOnlyProbe.folderPath}}",
+    "subjectTerm": "{{subjectOnlyProbe.subjectTerm}}",
+    "senderFragment": "{{subjectOnlyProbe.senderFragment}}"
+  },
 
   "corpus": {
     "storeDisplayName": "{{corpus.storeDisplayName}}",

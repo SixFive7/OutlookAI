@@ -51,6 +51,24 @@ public static class ComCorpusMailbox
 
     private const int MsgFlagUnsent = 0x8;
 
+    // The sender and conversation properties a population writes, all through the
+    // PropertyAccessor: the object model has no setter for any of them. Both the SENDER and the
+    // SENT-REPRESENTING halves are written, because which one a reader shows - Outlook's From, the
+    // index's System.Message.FromAddress - is the reader's choice and not ours.
+    private const string PrSenderName = "http://schemas.microsoft.com/mapi/proptag/0x0C1A001F";
+    private const string PrSenderAddrType = "http://schemas.microsoft.com/mapi/proptag/0x0C1E001F";
+    private const string PrSenderEmailAddress = "http://schemas.microsoft.com/mapi/proptag/0x0C1F001F";
+    private const string PrSenderSmtpAddress = "http://schemas.microsoft.com/mapi/proptag/0x5D01001F";
+    private const string PrSentRepresentingName = "http://schemas.microsoft.com/mapi/proptag/0x0042001F";
+    private const string PrSentRepresentingAddrType = "http://schemas.microsoft.com/mapi/proptag/0x0064001F";
+    private const string PrSentRepresentingEmailAddress = "http://schemas.microsoft.com/mapi/proptag/0x0065001F";
+    private const string PrSentRepresentingSmtpAddress = "http://schemas.microsoft.com/mapi/proptag/0x5D02001F";
+    private const string PrConversationTopic = "http://schemas.microsoft.com/mapi/proptag/0x0070001F";
+    private const string PrConversationIndex = "http://schemas.microsoft.com/mapi/proptag/0x00710102";
+
+    /// <summary>Default-folder ids whose direct children a scan looks through for created folders.</summary>
+    private static readonly int[] CreatedFolderParentIds = { 6, 5 };
+
     /// <summary>Default-folder id for Junk Email; a PST often has no such default folder.</summary>
     private const int JunkFolderId = 23;
 
@@ -153,7 +171,16 @@ public static class ComCorpusMailbox
     /// because nothing in this build may delete or rewrite them; the count is what turns
     /// "this tool cannot address that corpus" from silence into a sentence.
     /// </param>
-    public sealed record ScanResult(IReadOnlyList<ScanRow> Items, int LegacyTagged);
+    public sealed record ScanResult(IReadOnlyList<ScanRow> Items, int LegacyTagged)
+    {
+        /// <summary>
+        /// Every folder the scan found that a build CREATED - a stand-in for a missing default
+        /// folder, or a population's subfolder - whether or not the manifest recorded it. What
+        /// <c>corpus-reindex</c> writes into a recovered manifest, so teardown can remove the
+        /// folders as well as the items even after the original manifest is lost.
+        /// </summary>
+        public IReadOnlyList<CorpusManifestFolder> Folders { get; init; } = Array.Empty<CorpusManifestFolder>();
+    }
 
     /// <summary>
     /// Whether one scanned row is a THROWAWAY PROBE ITEM rather than a corpus item: its
@@ -237,7 +264,7 @@ public static class ComCorpusMailbox
                 break;
             }
 
-            ScanResult scan = ScanStore(store, noManifest, corpusId, checkpoint);
+            ScanResult scan = ScanStore(store, noManifest, corpusId, checkpoint, population: null, walkCreatedFolders: false);
             IReadOnlyList<ScanRow> residue = SelectProbeResidue(scan.Items);
             if (residue.Count == 0)
             {
@@ -577,6 +604,279 @@ public static class ComCorpusMailbox
     }
 
     /// <summary>
+    /// Makes every write a population build makes - two recipient rows, one attachment, the sender
+    /// and a conversation index - on ONE throwaway item, places it the way the build will, re-opens
+    /// it by EntryID and reads every one of them back. Deletes the item by the two-key rule and
+    /// purges the soft-delete residue, exactly like the placement probe.
+    /// <para>
+    /// It exists for the same reason the placement and date probes do: a write the object model
+    /// quietly declines leaves an item that looks built. Better to learn that from one throwaway
+    /// item than from a population whose sender filter has no senders in it.
+    /// </para>
+    /// </summary>
+    public static CorpusEnrichmentProbe ProbeEnrichment(
+        string storeDisplayName, string corpusId, CorpusPlacementMethod placement)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
+        CorpusCorrespondent from = CorpusPopulation.Correspondents[0];
+        CorpusCorrespondent to = CorpusPopulation.Correspondents[1];
+        CorpusCorrespondent cc = CorpusPopulation.Correspondents[2];
+        var planned = new CorpusItemEnrichment(
+            from,
+            new[] { new CorpusRecipient(to, CorpusRecipientKind.To), new CorpusRecipient(cc, CorpusRecipientKind.Cc) },
+            new[] { new CorpusAttachment("notes-probe.txt", CorpusAttachmentKind.Text, CorpusAttachmentContent.Text("gasket valve piston")) },
+            threadKey: 0,
+            conversationTopic: "enrichment probe",
+            conversationIndex: ProbeConversationIndex());
+
+        return RunSta<CorpusEnrichmentProbe>(
+            "corpus enrichment probe",
+            TimeSpan.FromMinutes(10),
+            checkpoint =>
+            {
+                dynamic app = CreateOutlookApplication();
+                dynamic? ns = null;
+                dynamic? stores = null;
+                dynamic? store = null;
+                dynamic? target = null;
+                dynamic? drafts = null;
+                dynamic? items = null;
+                dynamic? mail = null;
+                string? entryId = null;
+                string directory = NewAttachmentDirectory(corpusId);
+                List<string> files = new();
+                try
+                {
+                    ns = BindNamespace(app, checkpoint);
+                    stores = ns.Stores;
+                    store = FindStore(stores, storeDisplayName)
+                        ?? throw new InvalidOperationException("Store not found for the enrichment probe.");
+                    string storeId = (string)store.StoreID;
+                    target = store.GetDefaultFolder(6);
+                    drafts = store.GetDefaultFolder(DraftsFolderId);
+                    PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint);
+
+                    items = (CorpusPlacement.CreatesInDrafts(placement) ? drafts : target)!.Items;
+                    mail = items!.Add(0);
+                    mail!.Subject = ProbeSubject(corpusId, "enrichment");
+                    mail.Body = "enrichment probe";
+                    AddRecipients(mail, planned);
+                    files = AddAttachments(mail, planned, directory);
+                    mail.Save();
+                    entryId = TryRead<string>(() => (string)mail!.EntryID);
+                    ApplyEnrichmentProperties(mail, planned);
+                    ApplyMessageFlags(mail, isRead: true, clearUnsent: CorpusPlacement.WritesSentFlag(placement));
+                    if (CorpusPlacement.RequiresMove(placement))
+                    {
+                        dynamic moved = mail.Move(target);
+                        Release(mail);
+                        mail = moved;
+                    }
+
+                    entryId = (string)mail!.EntryID;
+                    Release(mail);
+                    mail = null;
+
+                    CorpusEnrichmentObservation seen = ReadOneEnrichment(ns!, storeId, entryId!, 0);
+                    if (seen.Error != null)
+                    {
+                        return new CorpusEnrichmentProbe(false, false, false, false, null, seen.Error);
+                    }
+
+                    bool sender = string.Equals(seen.SenderAddress, from.Address, StringComparison.OrdinalIgnoreCase);
+                    bool recipients = seen.Recipients != null
+                        && seen.Recipients.Count == 2
+                        && seen.Recipients.Any(r => string.Equals(r.Address, to.Address, StringComparison.OrdinalIgnoreCase) && r.Kind == 1)
+                        && seen.Recipients.Any(r => string.Equals(r.Address, cc.Address, StringComparison.OrdinalIgnoreCase) && r.Kind == 2);
+                    bool attachment = seen.AttachmentNames != null
+                        && seen.AttachmentNames.Count == 1
+                        && string.Equals(seen.AttachmentNames[0], "notes-probe.txt", StringComparison.OrdinalIgnoreCase);
+                    bool index = string.Equals(seen.ConversationIndexHex, planned.ConversationIndexHex, StringComparison.OrdinalIgnoreCase);
+                    return new CorpusEnrichmentProbe(sender, recipients, attachment, index, seen.ConversationId, null);
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    return new CorpusEnrichmentProbe(false, false, false, false, null, ex.Message);
+                }
+                finally
+                {
+                    Release(mail);
+                    Release(items);
+                    DeleteQuietly(files);
+                    DeleteDirectoryQuietly(directory);
+                    if (store != null && ns != null)
+                    {
+                        string? storeId = TryRead<string>(() => (string)store!.StoreID);
+                        if (entryId != null && storeId != null)
+                        {
+                            DeleteOne(ns, storeId, entryId, CorpusSafety.BuildEntryIdAllowlist(new[] { entryId }), corpusId);
+                        }
+
+                        if (storeId != null)
+                        {
+                            PurgeProbeResidue(store, ns, storeId, corpusId, checkpoint);
+                        }
+                    }
+
+                    Release(drafts);
+                    Release(target);
+                    Release(store);
+                    Release(stores);
+                    Release(ns);
+                    Release(app);
+                }
+            });
+    }
+
+    /// <summary>
+    /// READ-ONLY: opens every item the manifest records and reads back what a population wrote -
+    /// sender, recipients, attachment names, conversation index and the conversation id the store
+    /// computed from it. What <see cref="CorpusEnrichmentCheck.Compare"/> judges.
+    /// </summary>
+    public static IReadOnlyList<CorpusEnrichmentObservation> ReadEnrichment(string storeDisplayName, CorpusManifest manifest)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        return RunSta<IReadOnlyList<CorpusEnrichmentObservation>>(
+            "corpus enrichment read-back",
+            null,
+            checkpoint =>
+            {
+                dynamic app = CreateOutlookApplication();
+                dynamic? ns = null;
+                dynamic? stores = null;
+                dynamic? store = null;
+                var observations = new List<CorpusEnrichmentObservation>();
+                try
+                {
+                    ns = BindNamespace(app, checkpoint);
+                    stores = ns.Stores;
+                    store = FindStore(stores, storeDisplayName)
+                        ?? throw new InvalidOperationException("Store not found for the enrichment read-back.");
+                    string storeId = (string)store.StoreID;
+                    foreach (CorpusManifestItem item in checkpoint.Steps(
+                        manifest.Items.Values.OrderBy(i => i.Ordinal).ToList(), "enrichment read-back"))
+                    {
+                        observations.Add(ReadOneEnrichment(ns!, storeId, item.EntryId, item.Ordinal));
+                    }
+
+                    return (IReadOnlyList<CorpusEnrichmentObservation>)observations;
+                }
+                finally
+                {
+                    Release(store);
+                    Release(stores);
+                    Release(ns);
+                    Release(app);
+                }
+            });
+    }
+
+    private static CorpusEnrichmentObservation ReadOneEnrichment(dynamic ns, string storeId, string entryId, int ordinal)
+    {
+        dynamic? item = null;
+        dynamic? recipients = null;
+        dynamic? attachments = null;
+        dynamic? accessor = null;
+        try
+        {
+            try
+            {
+                item = ns.GetItemFromID(entryId, storeId);
+            }
+            catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+            {
+                return new CorpusEnrichmentObservation(ordinal, null, null, null, null, null, null, ex.Message);
+            }
+
+            string? senderAddress = TryRead<string>(() => (string)item!.SenderEmailAddress);
+            string? senderName = TryRead<string>(() => (string)item!.SenderName);
+
+            List<CorpusObservedRecipient>? rows = null;
+            recipients = TryRead<object>(() => (object)item!.Recipients);
+            if (recipients != null)
+            {
+                rows = new List<CorpusObservedRecipient>();
+                int count = TryReadStruct(() => (int)recipients!.Count) ?? 0;
+                for (int i = 1; i <= count; i++)
+                {
+                    dynamic? recipient = null;
+                    try
+                    {
+                        recipient = recipients![i];
+                        rows.Add(new CorpusObservedRecipient(
+                            TryRead<string>(() => (string)recipient!.Address),
+                            TryReadStruct(() => (int)recipient!.Type) ?? 0));
+                    }
+                    finally
+                    {
+                        Release(recipient);
+                    }
+                }
+            }
+
+            List<string>? names = null;
+            attachments = TryRead<object>(() => (object)item!.Attachments);
+            if (attachments != null)
+            {
+                names = new List<string>();
+                int count = TryReadStruct(() => (int)attachments!.Count) ?? 0;
+                for (int i = 1; i <= count; i++)
+                {
+                    dynamic? attachment = null;
+                    try
+                    {
+                        attachment = attachments![i];
+                        names.Add(TryRead<string>(() => (string)attachment!.FileName) ?? string.Empty);
+                    }
+                    finally
+                    {
+                        Release(attachment);
+                    }
+                }
+            }
+
+            string? indexHex = null;
+            accessor = TryRead<object>(() => (object)item!.PropertyAccessor);
+            if (accessor != null)
+            {
+                object? raw = TryRead<object>(() => (object)accessor!.GetProperty(PrConversationIndex));
+                if (raw is byte[] bytes)
+                {
+                    indexHex = Convert.ToHexString(bytes);
+                }
+            }
+
+            string? conversationId = TryRead<string>(() => (string)item!.ConversationID);
+            return new CorpusEnrichmentObservation(ordinal, senderAddress, senderName, rows, names, indexHex, conversationId);
+        }
+        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+        {
+            return new CorpusEnrichmentObservation(ordinal, null, null, null, null, null, null, ex.Message);
+        }
+        finally
+        {
+            Release(accessor);
+            Release(attachments);
+            Release(recipients);
+            Release(item);
+        }
+    }
+
+    /// <summary>A fixed, valid 22-byte conversation header for the probe: 0x01, a FILETIME, a GUID.</summary>
+    private static byte[] ProbeConversationIndex()
+    {
+        var bytes = new List<byte> { 0x01 };
+        long high = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc).ToFileTimeUtc() >> 24;
+        for (int shift = 32; shift >= 0; shift -= 8)
+        {
+            bytes.Add((byte)((high >> shift) & 0xFF));
+        }
+
+        bytes.AddRange(new Guid("6f75746c-6f6f-6b61-692d-70726f626521").ToByteArray());
+        return bytes.ToArray();
+    }
+
+    /// <summary>
     /// A bracket-free DASL LIKE restriction selecting ONE probe item: the corpus tag plus
     /// the reserved probe ordinal.
     /// <para>
@@ -795,6 +1095,7 @@ public static class ComCorpusMailbox
                 var folderItems = new Dictionary<int, dynamic>();
                 var folders = new Dictionary<int, dynamic>();
                 dynamic? draftsItems = null;
+                string? attachmentDirectory = null;
                 int created = 0;
                 int failed = 0;
                 long bytes = 0;
@@ -827,13 +1128,14 @@ public static class ComCorpusMailbox
                         CorpusItemSpec spec = plan.Describe(ordinal);
                         if (!folderItems.TryGetValue(spec.FolderId, out dynamic? items))
                         {
-                            dynamic resolved = ResolveFolder(store!, spec.FolderId, manifest, recordFolder);
+                            dynamic resolved = ResolveFolder(store!, spec.FolderId, manifest, recordFolder, plan.Population);
                             folders[spec.FolderId] = resolved;
                             items = resolved.Items;
                             folderItems[spec.FolderId] = items!;
                         }
 
                         dynamic? mail = null;
+                        List<string> attachmentFiles = new();
                         try
                         {
                             // The order is load-bearing: flags and dates are written BEFORE
@@ -843,7 +1145,24 @@ public static class ComCorpusMailbox
                             mail = (CorpusPlacement.CreatesInDrafts(placement) ? draftsItems! : items!).Add(0);
                             mail.Subject = spec.Subject;
                             mail.Body = plan.BuildBody(spec);
+
+                            // A population item's recipients and attachments go on BEFORE the
+                            // first save, the way a person composes one; its sender and
+                            // conversation are properties written after it, and saved by the flag
+                            // write below. A measurement-corpus item has none of them.
+                            CorpusItemEnrichment? enrichment = plan.Enrich(ordinal);
+                            if (enrichment != null)
+                            {
+                                AddRecipients(mail!, enrichment);
+                                attachmentDirectory ??= NewAttachmentDirectory(plan.Options.CorpusId);
+                                attachmentFiles = AddAttachments(mail!, enrichment, attachmentDirectory);
+                            }
+
                             mail.Save();
+                            if (enrichment != null)
+                            {
+                                ApplyEnrichmentProperties(mail!, enrichment);
+                            }
 
                             // The read state is written HERE and nowhere else. It used to be
                             // set through MailItem.UnRead as well, one line above the Save,
@@ -885,6 +1204,7 @@ public static class ComCorpusMailbox
                         finally
                         {
                             Release(mail);
+                            DeleteQuietly(attachmentFiles);
                         }
 
                         if ((created + failed) % progressEvery == 0)
@@ -898,6 +1218,11 @@ public static class ComCorpusMailbox
                 }
                 finally
                 {
+                    if (attachmentDirectory != null)
+                    {
+                        DeleteDirectoryQuietly(attachmentDirectory);
+                    }
+
                     Release(draftsItems);
                     foreach (dynamic items in folderItems.Values)
                     {
@@ -1202,7 +1527,8 @@ public static class ComCorpusMailbox
     /// This is what <c>corpus-reindex</c> reports and what the teardown's second phase
     /// consumes; it never deletes anything itself.
     /// </summary>
-    public static ScanResult Scan(string storeDisplayName, string corpusId, CorpusManifest? manifest)
+    public static ScanResult Scan(
+        string storeDisplayName, string corpusId, CorpusManifest? manifest, CorpusPopulation? population = null)
     {
         return RunSta<ScanResult>(
             "corpus scan",
@@ -1219,7 +1545,7 @@ public static class ComCorpusMailbox
                     stores = ns.Stores;
                     store = FindStore(stores, storeDisplayName)
                         ?? throw new InvalidOperationException("Store not found for the corpus scan.");
-                    return ScanStore(store!, manifest, corpusId, checkpoint);
+                    return ScanStore(store!, manifest, corpusId, checkpoint, population);
                 }
                 finally
                 {
@@ -1276,9 +1602,16 @@ public static class ComCorpusMailbox
     }
 
     private static ScanResult ScanStore(
-        dynamic store, CorpusManifest? manifest, string corpusId, ComStaCheckpoint checkpoint)
+        dynamic store,
+        CorpusManifest? manifest,
+        string corpusId,
+        ComStaCheckpoint checkpoint,
+        CorpusPopulation? population = null,
+        bool walkCreatedFolders = true)
     {
         var rows = new List<ScanRow>();
+        var createdFolders = new List<CorpusManifestFolder>();
+        var walkedFolderIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int legacyTagged = 0;
         foreach (int folderId in checkpoint.Steps(ScanFolderIds, "scan folder"))
         {
@@ -1314,6 +1647,8 @@ public static class ComCorpusMailbox
                 // an item is against where the plan puts it, and a Junk item found in the
                 // folder created because the PST has no Junk Email is where it belongs.
                 CollectCorpusItems(folder!, created.FolderId, corpusId, rows, ref legacyTagged, checkpoint);
+                walkedFolderIds.Add(created.EntryId);
+                createdFolders.Add(created);
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
@@ -1325,7 +1660,95 @@ public static class ComCorpusMailbox
             }
         }
 
-        return new ScanResult(rows, legacyTagged);
+        // And every created folder the manifest does NOT record - which is every one of them when
+        // there is no manifest at all, the corpus-reindex case. Created folders are the stand-ins
+        // under the store root and a population's subfolders under the Inbox and Sent Items, and
+        // every one carries CreatedFolderPrefix. Without this, a reindex of a population would
+        // find none of the items filed one folder down, and hand teardown a manifest that could
+        // never remove them.
+        //
+        // The probe-residue purge skips it: a probe item is only ever created in the Inbox or in
+        // Drafts and only ever soft-deleted into Deleted Items, so a walk of created folders there
+        // would cost time on every rung and could find nothing.
+        if (walkCreatedFolders)
+        {
+            CollectUnrecordedCreatedFolders(
+                store, corpusId, population, rows, createdFolders, walkedFolderIds, ref legacyTagged, checkpoint);
+        }
+
+        return new ScanResult(rows, legacyTagged) { Folders = createdFolders };
+    }
+
+    /// <summary>
+    /// Walks the direct children of the store root, the Inbox and Sent Items for folders whose
+    /// name carries <see cref="CorpusManifest.CreatedFolderPrefix"/> and that were not already
+    /// walked, collects their corpus items, and reports each folder. READ-ONLY.
+    /// </summary>
+    private static void CollectUnrecordedCreatedFolders(
+        dynamic store,
+        string corpusId,
+        CorpusPopulation? population,
+        List<ScanRow> rows,
+        List<CorpusManifestFolder> createdFolders,
+        HashSet<string> walkedFolderIds,
+        ref int legacyTagged,
+        ComStaCheckpoint checkpoint)
+    {
+        var parents = new List<(int? ParentId, string What)> { (null, "store root") };
+        parents.AddRange(CreatedFolderParentIds.Select(id => ((int?)id, "default folder " + id.ToString(System.Globalization.CultureInfo.InvariantCulture))));
+        foreach ((int? parentId, string _) in checkpoint.Steps(parents, "scan created-folder parent"))
+        {
+            dynamic? parent = null;
+            dynamic? children = null;
+            try
+            {
+                try
+                {
+                    parent = parentId == null ? store.GetRootFolder() : store.GetDefaultFolder(parentId.Value);
+                    children = parent!.Folders;
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    continue;
+                }
+
+                int count = TryReadStruct(() => (int)children!.Count) ?? 0;
+                for (int i = 1; i <= count && checkpoint.Step("scan created folder"); i++)
+                {
+                    dynamic? child = null;
+                    try
+                    {
+                        child = children![i];
+                        string? name = TryRead<string>(() => (string)child!.Name);
+                        string? entryId = TryRead<string>(() => (string)child!.EntryID);
+                        if (name == null || entryId == null
+                            || !name.Contains(CorpusManifest.CreatedFolderPrefix, StringComparison.Ordinal)
+                            || walkedFolderIds.Contains(entryId))
+                        {
+                            continue;
+                        }
+
+                        int folderId = CorpusFolderIds.ForCreatedFolder(parentId, name, population);
+                        CollectCorpusItems(child!, folderId, corpusId, rows, ref legacyTagged, checkpoint);
+                        walkedFolderIds.Add(entryId);
+                        createdFolders.Add(new CorpusManifestFolder(entryId, name, folderId));
+                    }
+                    catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                    {
+                        // A child that cannot be opened is reported by its absence, like any folder.
+                    }
+                    finally
+                    {
+                        Release(child);
+                    }
+                }
+            }
+            finally
+            {
+                Release(children);
+                Release(parent);
+            }
+        }
     }
 
     /// <summary>
@@ -1443,8 +1866,19 @@ public static class ComCorpusMailbox
     /// under the store root created for the purpose and recorded in the manifest so the
     /// teardown can remove it.
     /// </summary>
-    private static dynamic ResolveFolder(dynamic store, int folderId, CorpusManifest manifest, Action<CorpusManifestFolder> recordFolder)
+    private static dynamic ResolveFolder(
+        dynamic store,
+        int folderId,
+        CorpusManifest manifest,
+        Action<CorpusManifestFolder> recordFolder,
+        CorpusPopulation? population = null)
     {
+        CorpusPopulationFolder? subfolder = population?.FolderOf(folderId);
+        if (subfolder != null)
+        {
+            return ResolvePopulationFolder(store, subfolder, manifest, recordFolder, population!);
+        }
+
         try
         {
             return store.GetDefaultFolder(folderId);
@@ -1454,7 +1888,7 @@ public static class ComCorpusMailbox
             // Fall through to the substitute folder.
         }
 
-        string name = CorpusManifest.CreatedFolderPrefix + "-" + (folderId == JunkFolderId ? "Junk" : folderId.ToString());
+        string name = CorpusFolderIds.StandInName(folderId);
         foreach (CorpusManifestFolder known in manifest.Folders)
         {
             if (known.FolderId == folderId)
@@ -1483,6 +1917,224 @@ public static class ComCorpusMailbox
         finally
         {
             Release(root);
+        }
+    }
+
+    /// <summary>
+    /// A population's subfolder: the one the manifest already records, else an existing child of
+    /// the parent default folder with exactly that name, else a new one - recorded in the manifest
+    /// in the last two cases, BEFORE any item is filed into it, so teardown can remove it.
+    /// <para>
+    /// Reusing an existing child is safe for the same reason the stand-in is: the name carries
+    /// <see cref="CorpusManifest.CreatedFolderPrefix"/>, which nothing but this builder writes, and
+    /// only a build interrupted between creating a folder and flushing its manifest line leaves one
+    /// that no manifest records. Teardown removes a created folder only when it is EMPTY and its
+    /// EntryID is recorded AND its name carries the prefix - both keys, as for items.
+    /// </para>
+    /// </summary>
+    private static dynamic ResolvePopulationFolder(
+        dynamic store,
+        CorpusPopulationFolder subfolder,
+        CorpusManifest manifest,
+        Action<CorpusManifestFolder> recordFolder,
+        CorpusPopulation population)
+    {
+        foreach (CorpusManifestFolder known in manifest.Folders)
+        {
+            if (known.FolderId == subfolder.FolderId)
+            {
+                try
+                {
+                    return store.Session.GetFolderFromID(known.EntryId);
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    break; // recorded folder is gone - find or make a fresh one
+                }
+            }
+        }
+
+        dynamic? parent = null;
+        dynamic? children = null;
+        try
+        {
+            parent = ResolveFolder(store, subfolder.ParentFolderId, manifest, recordFolder, population);
+            children = parent!.Folders;
+            int count = (int)children!.Count;
+            for (int i = 1; i <= count; i++)
+            {
+                dynamic child = children[i];
+                string? name = TryRead<string>(() => (string)child.Name);
+                if (string.Equals(name, subfolder.Name, StringComparison.Ordinal))
+                {
+                    var existing = new CorpusManifestFolder((string)child.EntryID, subfolder.Name, subfolder.FolderId);
+                    manifest.Add(existing);
+                    recordFolder(existing);
+                    return child;
+                }
+
+                Release(child);
+            }
+
+            dynamic created = children.Add(subfolder.Name);
+            var record = new CorpusManifestFolder((string)created.EntryID, subfolder.Name, subfolder.FolderId);
+            manifest.Add(record);
+            recordFolder(record);
+            return created;
+        }
+        finally
+        {
+            Release(children);
+            Release(parent);
+        }
+    }
+
+    /// <summary>
+    /// Adds the planned To/Cc rows to an item that has not been saved yet, each as a
+    /// <c>Name &lt;address&gt;</c> spec resolved to a one-off entry. The addresses are all under
+    /// <c>.invalid</c>, and the profile a population is built in has no mail account, so nothing
+    /// here can send - a resolved recipient is only what makes the index record the address.
+    /// </summary>
+    private static void AddRecipients(dynamic mail, CorpusItemEnrichment enrichment)
+    {
+        dynamic? recipients = null;
+        try
+        {
+            recipients = mail.Recipients;
+            foreach (CorpusRecipient planned in enrichment.Recipients)
+            {
+                dynamic? recipient = null;
+                try
+                {
+                    recipient = recipients!.Add(planned.Person.ToAddressSpec());
+                    recipient!.Type = planned.Kind == CorpusRecipientKind.To ? 1 : 2;
+                    _ = recipient.Resolve();
+                }
+                finally
+                {
+                    Release(recipient);
+                }
+            }
+        }
+        finally
+        {
+            Release(recipients);
+        }
+    }
+
+    /// <summary>
+    /// Attaches the planned files by value. Each is written to <paramref name="directory"/> under its
+    /// own file name - Outlook names the attachment after the file - and returned so the caller can
+    /// delete it once the item is SAVED, not before.
+    /// </summary>
+    private static List<string> AddAttachments(dynamic mail, CorpusItemEnrichment enrichment, string directory)
+    {
+        var written = new List<string>();
+        if (enrichment.Attachments.Count == 0)
+        {
+            return written;
+        }
+
+        dynamic? attachments = null;
+        try
+        {
+            attachments = mail.Attachments;
+            foreach (CorpusAttachment planned in enrichment.Attachments)
+            {
+                string path = Path.Combine(directory, planned.FileName);
+                File.WriteAllBytes(path, planned.Content);
+                written.Add(path);
+                dynamic? added = null;
+                try
+                {
+                    added = attachments!.Add(path);
+                }
+                finally
+                {
+                    Release(added);
+                }
+            }
+        }
+        finally
+        {
+            Release(attachments);
+        }
+
+        return written;
+    }
+
+    /// <summary>
+    /// Writes the sender and, for a conversation member, the conversation topic and index - every
+    /// one of them through the PropertyAccessor, since the object model has no setter for any. The
+    /// caller saves (the flag write that follows saves the item).
+    /// </summary>
+    private static void ApplyEnrichmentProperties(dynamic mail, CorpusItemEnrichment enrichment)
+    {
+        dynamic? accessor = null;
+        try
+        {
+            accessor = mail.PropertyAccessor;
+            accessor!.SetProperty(PrSenderName, enrichment.Sender.Name);
+            accessor.SetProperty(PrSenderAddrType, "SMTP");
+            accessor.SetProperty(PrSenderEmailAddress, enrichment.Sender.Address);
+            accessor.SetProperty(PrSenderSmtpAddress, enrichment.Sender.Address);
+            accessor.SetProperty(PrSentRepresentingName, enrichment.Sender.Name);
+            accessor.SetProperty(PrSentRepresentingAddrType, "SMTP");
+            accessor.SetProperty(PrSentRepresentingEmailAddress, enrichment.Sender.Address);
+            accessor.SetProperty(PrSentRepresentingSmtpAddress, enrichment.Sender.Address);
+            byte[]? index = enrichment.ConversationIndex;
+            if (index != null)
+            {
+                accessor.SetProperty(PrConversationTopic, enrichment.ConversationTopic ?? string.Empty);
+                accessor.SetProperty(PrConversationIndex, index);
+            }
+        }
+        finally
+        {
+            Release(accessor);
+        }
+    }
+
+    /// <summary>
+    /// A scratch directory for the attachment files one run writes and deletes again. Named after
+    /// the corpus and unique per run, so two runs never share one.
+    /// </summary>
+    private static string NewAttachmentDirectory(string corpusId)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "OutlookAI-Corpus-" + corpusId + "-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        return directory;
+    }
+
+    private static void DeleteQuietly(IEnumerable<string> paths)
+    {
+        foreach (string path in paths)
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // Left in the run's own scratch directory, which is removed at the end anyway.
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
+    private static void DeleteDirectoryQuietly(string directory)
+    {
+        try
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 

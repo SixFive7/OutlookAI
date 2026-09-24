@@ -49,8 +49,64 @@ public sealed class LiveTestSettings
     /// <summary>Display name of the designated test-hub store (v3.MD S2/D14).</summary>
     public string TestHubStoreDisplayName { get; set; } = string.Empty;
 
-    /// <summary>Display names of the three primary account stores.</summary>
+    /// <summary>
+    /// THE WATCHED LIST: display names of the primary stores this profile has - the stores the
+    /// count tripwire censuses (with the delegate and bystander lists unioned in), the identity-draft
+    /// grant is drawn from, <c>list_accounts</c> exactness counts and <c>outlook_health</c> must reach.
+    /// <para>
+    /// <b>It no longer also means "indexed" (split 2026-09-24).</b> Until then every index-tier test
+    /// iterated this list and demanded each entry be discoverable in the search index with mail in
+    /// it - which a store can legitimately fail to be while still being watched: the identity
+    /// account's store, or every store on a guest whose index is switched off. Those tests now read
+    /// <see cref="IndexedStores"/>, and this list keeps only the meanings it always had.
+    /// </para>
+    /// </summary>
     public List<string> ExpectedStoreDisplayNames { get; set; } = new();
+
+    /// <summary>
+    /// THE INDEXED LIST: the stores the index tier measures - each one must be discoverable in the
+    /// Windows Search index and hold indexed mail, and the index-tier tests iterate exactly these, in
+    /// this order (several read the FIRST entry).
+    /// <para>
+    /// <b>Absent means the same as <see cref="ExpectedStoreDisplayNames"/></b>, which is exactly what
+    /// every index-tier test read before the split - so a settings file written before this field
+    /// existed keeps the behaviour it was written under, on a Production profile especially, where
+    /// every primary is indexed. Present, it must name only stores the census watches, never a
+    /// delegate mailbox (a delegate is indexed under its owner's subtree and has no scope of its own),
+    /// and include the hub whenever it names anything; empty is allowed on a Portable machine with no
+    /// index and refused on a Production one. See <see cref="Validate"/>.
+    /// </para>
+    /// </summary>
+    public List<string>? IndexedStoreDisplayNames { get; set; }
+
+    /// <summary>
+    /// The indexed list as the tests read it: <see cref="IndexedStoreDisplayNames"/>, or the watched
+    /// list when that is absent. May be EMPTY on a Portable machine with no index - a test that
+    /// iterates it must go through <see cref="RequireIndexedStores"/>, which refuses rather than
+    /// iterate nothing and pass.
+    /// </summary>
+    [JsonIgnore]
+    public IReadOnlyList<string> IndexedStores => IndexedStoreDisplayNames ?? ExpectedStoreDisplayNames;
+
+    /// <summary>
+    /// The indexed list, or a refusal. The ONLY way an index-tier test obtains the stores it
+    /// measures: an empty list would let a <c>foreach</c> assert nothing and report green, which is
+    /// the vacuous pass every guard in this tier exists to prevent.
+    /// </summary>
+    public IReadOnlyList<string> RequireIndexedStores()
+    {
+        IReadOnlyList<string> stores = IndexedStores;
+        if (stores.Count > 0)
+        {
+            return stores;
+        }
+
+        throw new InvalidOperationException(
+            "This test reads the Windows Search index, and these live-test settings name no indexed store - "
+            + "'indexedStoreDisplayNames' is empty. That is the truth on a machine whose index is switched off "
+            + "(the OutlookAI-Unindexed guest), where this test can prove nothing: deselect it there with "
+            + "'Requires!=SearchIndex'. It is never a reason to pass.");
+    }
 
     /// <summary>Display names of the delegate/shared-mailbox cache stores (Phase-2 list_accounts exactness).</summary>
     public List<string> ExpectedDelegateStoreDisplayNames { get; set; } = new();
@@ -210,6 +266,8 @@ public sealed class LiveTestSettings
                 + "the silence the freshness check exists to remove.");
         }
 
+        ValidateIndexedStores(settings);
+
         if (settings.MachineProfile != LiveMachineProfile.Production)
         {
             return;
@@ -230,6 +288,86 @@ public sealed class LiveTestSettings
                 + "subjectTerm, senderFragment) required by the D40/SF-6 recall regression. Required on a "
                 + "Production profile; set machineProfile to 'Portable' on a test machine that has no such "
                 + "population.");
+        }
+    }
+
+    /// <summary>
+    /// The rules for the indexed list, when a file names one. Each closes a way the split could
+    /// quietly weaken a guard or a test:
+    /// <list type="bullet">
+    /// <item>every indexed store is WATCHED - a store the tests read but the census never visits
+    /// could lose mail with nothing to say so;</item>
+    /// <item>no delegate mailbox - a delegate is indexed under its owner's subtree, has no scope of
+    /// its own, and the store-by-store tests would fail on it far from the mistake;</item>
+    /// <item>the hub is in it whenever it names anything - every hub test reads the hub through the
+    /// scope discovered for the stores in this list;</item>
+    /// <item>on a Production profile it is not empty - that profile declares a populated index;</item>
+    /// <item>no blank entry and no store twice.</item>
+    /// </list>
+    /// </summary>
+    private static void ValidateIndexedStores(LiveTestSettings settings)
+    {
+        List<string>? indexed = settings.IndexedStoreDisplayNames;
+        if (indexed == null)
+        {
+            return;
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string store in indexed)
+        {
+            if (string.IsNullOrWhiteSpace(store))
+            {
+                throw new InvalidOperationException(
+                    "Live-test settings have a blank entry in 'indexedStoreDisplayNames'. Every entry is a store "
+                    + "display name, exactly as Outlook shows it.");
+            }
+
+            if (!seen.Add(store))
+            {
+                throw new InvalidOperationException(
+                    "Live-test settings name '" + store + "' twice in 'indexedStoreDisplayNames'. Store names are "
+                    + "matched ignoring case, so these are one store.");
+            }
+
+            bool delegateStore = settings.ExpectedDelegateStoreDisplayNames
+                .Any(d => string.Equals(d, store, StringComparison.OrdinalIgnoreCase));
+            if (delegateStore)
+            {
+                throw new InvalidOperationException(
+                    "Live-test settings name the delegate mailbox '" + store + "' in 'indexedStoreDisplayNames'. A "
+                    + "delegate mailbox is indexed under its owner's subtree and has no index scope of its own, so "
+                    + "the tests that measure each indexed store would fail on it. Leave delegates to "
+                    + "'expectedDelegateStoreDisplayNames'.");
+            }
+
+            bool watched = settings.ExpectedStoreDisplayNames.Concat(settings.BystanderStoreDisplayNames)
+                .Any(w => string.Equals(w, store, StringComparison.OrdinalIgnoreCase));
+            if (!watched)
+            {
+                throw new InvalidOperationException(
+                    "Live-test settings name '" + store + "' in 'indexedStoreDisplayNames' and in neither "
+                    + "'expectedStoreDisplayNames' nor 'bystanderStoreDisplayNames', so the tests would read a store "
+                    + "the count tripwire never censuses. Name it in the watched list as well.");
+            }
+        }
+
+        if (indexed.Count > 0
+            && !indexed.Any(s => string.Equals(s, settings.TestHubStoreDisplayName, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                "Live-test settings name indexed stores but not the hub '" + settings.TestHubStoreDisplayName + "' "
+                + "among them. Every test that reads the hub through the index finds it in the scopes discovered for "
+                + "this list, so a hub left out is a hub those tests cannot find. Name it - first, by the testbed's "
+                + "convention, because several index tests read the first entry.");
+        }
+
+        if (indexed.Count == 0 && settings.MachineProfile == LiveMachineProfile.Production)
+        {
+            throw new InvalidOperationException(
+                "Live-test settings declare machineProfile 'Production' and an EMPTY 'indexedStoreDisplayNames'. A "
+                + "Production profile is one with a populated search index; leave the list out to mean "
+                + "'every watched store', or name the stores.");
         }
     }
 
@@ -265,6 +403,9 @@ public sealed class LiveTestSettings
     {
         return "machineProfile=" + MachineProfile
             + ", stores=" + ExpectedStoreDisplayNames.Count
+            + ", indexed=" + (IndexedStoreDisplayNames == null
+                ? "as-watched(" + ExpectedStoreDisplayNames.Count + ")"
+                : IndexedStoreDisplayNames.Count.ToString(System.Globalization.CultureInfo.InvariantCulture))
             + ", delegateStores=" + ExpectedDelegateStoreDisplayNames.Count
             + ", bystanders=" + BystanderStoreDisplayNames.Count
             + ", probeTerm=" + (string.IsNullOrWhiteSpace(ProbeTerm) ? "none" : "set")
@@ -361,9 +502,11 @@ public sealed class LivePhase1Fixture : IDisposable
 
         // Store discovery: broad sample first, then targeted per-address discovery for
         // stores the sample misses (Phase-1 finding: an unordered 30k sample never
-        // surfaced the tiny idle store, and SCOPE needs the exact ($hash) segment).
+        // surfaced the tiny idle store, and SCOPE needs the exact ($hash) segment). Over the
+        // INDEXED list - the stores the index tier measures - not the watched one: a watched
+        // store the settings do not claim is indexed has nothing here to be discovered.
         List<StoreScopeInfo> scopes = Service.DiscoverStoreScopes(2000).ToList();
-        foreach (string expected in Settings.ExpectedStoreDisplayNames)
+        foreach (string expected in Settings.IndexedStores)
         {
             if (scopes.Any(s => string.Equals(s.StoreDisplayName, expected, StringComparison.OrdinalIgnoreCase)))
             {
