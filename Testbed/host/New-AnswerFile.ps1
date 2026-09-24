@@ -189,6 +189,17 @@ if (-not $ComputerName) {
 if ($ComputerName -notmatch '^[A-Za-z0-9-]{1,15}$') {
     throw "Computer name '$ComputerName' is not a legal NetBIOS name (letters, digits and hyphens, 15 characters or fewer)."
 }
+# The first-logon guard in guest/Complete-FirstLogon.ps1 refuses any computer name that does not
+# start with its -ExpectedComputerNamePrefix, 'OAI-', compared ordinal and case-insensitive. It
+# travels alone on the answer disc, so it has nothing else to tell a guest from a workstation with.
+# An answer file naming anything else therefore builds a guest that stops at first logon - about
+# seven minutes into an unattended install. Refuse it here, on the host, before any of that, using
+# the same comparison the guard uses.
+if (-not $ComputerName.StartsWith('OAI-', [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw ("Computer name '$ComputerName' does not start with 'OAI-'. The first-logon script's guest " +
+        "guard (guest/Complete-FirstLogon.ps1) refuses any other name, so this guest would stop at its " +
+        "first logon. Use a name that starts with 'OAI-'.")
+}
 if ($VolumeLabel -notmatch '^[A-Z0-9_-]{1,32}$') {
     throw "Volume label '$VolumeLabel' is not usable. Use up to 32 uppercase letters, digits, underscores or hyphens."
 }

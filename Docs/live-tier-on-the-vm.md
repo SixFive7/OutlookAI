@@ -310,7 +310,14 @@ redoing the step above it.
   silently returns the wrong rows. The corpus tool formats its own literals year-first for
   exactly this reason, but nothing protects a query typed by hand.
 
-**Checkpoint `CP-01-WIN-CLEAN`.**
+**Checkpoint `CP-01-WIN-CLEAN` - with BOTH discs ejected first, then delete the answer ISO.** Use
+`Testbed/host/New-TestbedVm.ps1 -Name <vm> -CompleteInstall -Execute`, which waits for first logon to
+finish, ejects the Windows ISO and the answer disc, takes the checkpoint, confirms it holds no disc,
+and only then deletes the answer ISO. The order matters because the answer ISO carries the guest
+password in clear text, and a checkpoint taken with the disc still attached references the file: it
+then cannot be deleted without breaking that checkpoint's restore. Measured 2026-09-24 - both current
+guests' `CP-01-WIN-CLEAN` reference their answer ISO, which is why those two ISOs are kept until the
+from-scratch rebuild replaces the guests (see `Testbed/README.md` section 1b).
 
 ### 2.2 Office
 
