@@ -9,11 +9,13 @@
     RUN ON THE HOST. Windows PowerShell 5.1 or PowerShell 7. Everything inside the guest runs
     over PowerShell Direct, which needs no network.
 
-    WHY THIS EXISTS. Every guest restart before 2026-09-24 was `shutdown /r /t 5`. Microsoft
-    documents, on the shutdown command's own page, that "if the timeout period is greater than 0,
-    the /f parameter is implied" - and /f is "forces running applications to close without
-    warning users". So every one of those restarts FORCE-CLOSED Outlook, with a 400 MB corpus PST
-    open, which is as close to `taskkill OUTLOOK.EXE` as makes no difference. Mailbox-safety rule 7
+    WHY THIS EXISTS. The guest restarts on record before 2026-09-24 - the earlier rounds' scratch
+    scripts under .work/ - were `shutdown /r` with a timeout: /t 5 in most, 10, 15 or 20 in others,
+    /t 0 in a few. Microsoft documents, on the shutdown command's own page, that "if the timeout
+    period is greater than 0, the /f parameter is implied" - and /f is "forces running applications
+    to close without warning users". So every one of those with a timeout FORCE-CLOSED whatever
+    Outlook was still running, PSTs open, which is as close to `taskkill OUTLOOK.EXE` as makes no
+    difference. Mailbox-safety rule 7
     forbids the kill; a forced close skips the same shutdown path the kill skips. Nothing broke
     that anyone noticed - which is not the same as nothing having broken.
     https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/shutdown

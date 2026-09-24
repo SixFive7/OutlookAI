@@ -1569,8 +1569,8 @@ unrecorded or unverified.
     all.** The session-1 route, `Testbed/guest/Register-InteractiveTask.ps1`, registers its task at
     `RunLevel Highest`, so every Outlook started through it - every UI watch, every
     `Build-Corpus.ps1` run, every COM start - inherited an elevated token. A non-elevated Outlook
-    adds itself to the crawl scope within seconds - and the maintainer's workstation, where Outlook is
-    started the ordinary, unelevated way, has exactly that rule. Measured on `OutlookAI-Indexed` from the same clean
+    adds itself to the crawl scope within seconds - and the maintainer's workstation has exactly that
+    rule (its Outlook's integrity level was not inspected: the host is read-only registry and files). Measured on `OutlookAI-Indexed` from the same clean
     checkpoint (`CP-09-IDENTITY-ACCOUNT`: no `mapi16` rule, zero Outlook rows), the same profile
     (`CorpusProfile`), a graceful restart in between, and nothing but the integrity level differing
     (`.work/aa5e-2026-09-24-q69-index-scope/ab-control.txt`):
