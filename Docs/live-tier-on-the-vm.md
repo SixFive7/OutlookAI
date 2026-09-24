@@ -56,6 +56,23 @@ whose profile is not. That is the whole reason this machine has two logons.
 > Section 4.1 of the findings behind that script says which fields and which values, including
 > the fourth verdict that looks like success and is not. Section 8 says what to do if the
 > durability half turns out to be wrong.
+>
+> **WHO WRITES THE RULE, AND WHETHER AN EXCLUSION LASTS - MEASURED 2026-09-24 (Q69).** Outlook
+> writes it itself - a search root and a user INCLUDE rule for `mapi16://{SID}/`, within seconds of
+> starting - but **only when it runs NOT elevated**: an elevated Outlook never touches Windows
+> Search, which is why neither guest ever had the rule (section 8 item 22). The testbed now writes
+> the same rule, value for value, through the Crawl Scope Manager API
+> (`Set-OutlookIndexingDisabled.ps1 -Enable -Execute`), and the durability half is no longer
+> underived. **A user EXCLUDE rule written through the API holds**: in three runs a non-elevated
+> Outlook - the one that registers the scope - ran five minutes on top of it and left it excluded,
+> nothing queued and no row back, and it held through the reboots after. **The policy alone is not
+> an exclusion the service knows about**: with only `PreventIndexingOutlook = 1` the service still
+> reports the scope IN and purges nothing - which is why the rule is now the exclusion and the
+> policy the second layer. On a guest that was never indexed the policy alone does stop a
+> non-elevated Outlook registering itself - six minutes, nothing added - but it cannot undo a scope
+> something else included. And rows crawled BEFORE an exclusion go only if the service
+> is left alone while it purges them: a restart in that window loses the purge - every row was still
+> there after a reboot (section 2.4, the Q69 block, item 3).
 
 ### 1.1a SUPERSEDED 2026-09-15 - there are two GUESTS now, so one account each
 
@@ -322,18 +339,90 @@ is your call; record which.
 
 ---
 
-**WHAT ACTUALLY MAKES A GUEST UNINDEXED, now that there is one account per guest.** The
+**WHAT ACTUALLY SETS A GUEST'S INDEX STATE, now that there is one account per guest.** The
 sentence above named a GUI on a machine that is driven headlessly, and that sentence was the
 entire specification of half the testbed. The step is
-**`Testbed/guest/Set-OutlookIndexingDisabled.ps1`**, run on the unindexed guest. It writes
-**one** value - the documented Group Policy `PreventIndexingOutlook` - reports the
-`mapi16://{SID}/` rule **read-only**, and **leaves the indexer running**, because stopping the
-Windows Search service produces a machine with no search rather than a mailbox search has not
-been told about, and the product takes a different, untested code path there. Section 8 item 21
-keeps that distinction from collapsing.
+**`Testbed/guest/Set-OutlookIndexingDisabled.ps1`**, with `Testbed/guest/SearchCrawlScope.cs`
+staged beside it, Outlook closed. On the unindexed guest **`-Execute`** writes the documented Group
+Policy `PreventIndexingOutlook = 1` **and** a user EXCLUDE rule for `mapi16://{SID}/` through the
+Crawl Scope Manager API - the writer Indexing Options itself uses, which runs inside the service and
+so is not stopped by the registry ACL that stops an administrator. On the indexed guest
+**`-Enable -Execute`** writes the inverse: policy 0, a search root and a user INCLUDE rule. Either
+way the script then asks the service whether the scope is now in or out, and throws if it does
+not agree. Both **leave the indexer running**, because stopping the Windows Search service produces
+a machine with no search rather than a mailbox search has not been told about, and the product
+takes a different, untested code path there. Section 8 item 21 keeps that distinction from
+collapsing.
 
-> **MEASURED 2026-09-24 on `OutlookAI-Indexed` - the registry half was exercised, and three things
-> changed.** Full evidence in the script's banner.
+> **MEASURED 2026-09-24 on `OutlookAI-Indexed` (Q69) - why no guest was ever indexed, the fix, and
+> the exclusion measured on a guest that is.** Evidence in `.work/aa5e-2026-09-24-q69-index-scope/`
+> and the script's banner.
+>
+> 1. **The cause: every Outlook the testbed ever started was elevated.** An elevated Outlook does
+>    not use Windows Search - no rule, no store pushed, `Store.IsInstantSearchEnabled = False` -
+>    while the same Outlook started without elevation adds a root and a user INCLUDE rule for
+>    `mapi16://{SID}/` within seconds and pushes every item of its profile's stores. The testbed's
+>    only route into session 1, `Testbed/guest/Register-InteractiveTask.ps1`, runs at `RunLevel
+>    Highest`. Controlled A/B and the evidence: section 8 item 22.
+> 2. **The fix is the documented writer, in both directions.** `-Enable -Execute` adds the root and
+>    the INCLUDE rule through the Crawl Scope Manager API and the service confirms it (`included=True
+>    reason=USER`); the registry afterwards holds, value for value, what the non-elevated Outlook
+>    wrote and what the maintainer's workstation holds. **A rule alone crawls nothing**: with the
+>    scope in, the catalog stayed at zero Outlook rows for four minutes with Outlook closed and for
+>    six more with Outlook running ELEVATED - the index moves only while a NON-elevated Outlook
+>    runs, which is why `Testbed/README.md` section 1 step 8c starts it with
+>    `Testbed/guest/Start-OutlookUnelevated.ps1`. Started that way, Outlook queued ~19,800 item
+>    notifications in its first minute and the corpus was fully crawled 7.6 to 9.6 minutes after its
+>    start (four runs); "finished" is the catalog's queues at 0, its status back to IDLE and the row count
+>    standing still, all three, which is what `-Verify` now requires for `INDEXED` (section 8 item 22).
+> 3. **The exclusion, from the indexed checkpoint - and the ORDER is the finding.** Five ways, each
+>    from `CP-10-INDEXED` (20,048 Outlook rows: corpus 20,028, identity store 4, tier store 16),
+>    Outlook closed, then watched with Outlook closed and - all but R - with a NON-elevated Outlook
+>    running on top, the one that registers itself (`task3-variant-*.txt`):
+>
+>    | | what was written | the scope, per the service | the 20,048 rows | with the self-registering Outlook, then a reboot |
+>    | --- | --- | --- | --- | --- |
+>    | U | the user EXCLUDE rule alone | out (`USER`) at once | **purged by the indexer itself**: 0 rows 4.2 min after the rule | stayed out, 0 rows, nothing queued |
+>    | R | the same rule, then a WSearch restart a second later | out (`USER`) | **nothing purged** - 20,048 after 6.5 min | (not run) |
+>    | S | the script as it stood: policy 1 + rule + restart, in one go | out (`USER`) | **nothing purged** - 20,048 after 6 min | stayed out; still 20,048 after 5 min of Outlook and a reboot |
+>    | P | `PreventIndexingOutlook = 1` alone, + restart | **still IN** (`USER`) | nothing purged | still in, still 20,048 |
+>    | N | the script now: rule, wait for the purge, then policy and restart | out (`USER`) | **0 rows 4.5 min after the rule**, then `UNINDEXED` | stayed out, 0 rows; `UNINDEXED` again after the reboot |
+>
+>    So the purge of a newly excluded scope is work the service holds and **loses in a restart** -
+>    and does not redo afterwards: R and S still held every row after a reboot. `-Execute` therefore
+>    writes the rule, waits for the purge, and only then writes the policy and restarts (its
+>    `-SelfTest` pins that order); a purge that does not finish in `-PurgeMinutes` stops it before
+>    either. The way out when rows outlived an exclusion anyway is `-Execute -RebuildCatalog`:
+>    `ISearchCatalogManager::Reset` took S's 20,048 rows out at once, and the catalog re-crawled its
+>    other 431 items in about two minutes. **The policy is not a crawl-scope rule**: on its own it
+>    leaves the scope IN and purges nothing - what it does is make Outlook's own
+>    `Store.IsInstantSearchEnabled` read `False`, as did every exclusion above. **And the exclusion
+>    holds against Outlook**: in U, S and N a non-elevated Outlook - which registers an INCLUDED
+>    scope within seconds - ran five minutes on top and left it excluded. On a guest that was never
+>    indexed (`CP-09`, no rule), the policy ALONE kept a non-elevated Outlook from registering at
+>    all - six minutes, no rule, no row, the same after a reboot - so the unindexed guest's recorded
+>    state (policy only) already holds against either kind of Outlook; what the policy cannot do is
+>    exclude, or purge, a scope something else included. Not established:
+>    whether the policy would also stop the purge (R shows the restart alone does), and why
+>    `EnumerateScopeRules` stops listing the mapi16 rule once it excludes while
+>    `IncludedInCrawlScopeEx` and `WorkingSetRules` both show it - `-Verify` judges by the former
+>    and prints the registry beside it.
+> 4. **What `OutlookAI-Unindexed` needs - written down, not done: that guest was not touched.** Its
+>    recorded state (2026-09-16, not re-read here) is the policy only: no rule, no Outlook row. Item
+>    3 says that holds against either kind of Outlook as it stands, but it is the one exclusion the
+>    service does not report. To make it the real one: stage `Set-OutlookIndexingDisabled.ps1` and
+>    `SearchCrawlScope.cs` from this change into `C:\OutlookAI-Q5\`; close Outlook with
+>    `Testbed/host/Restart-Guest.ps1 -VMName OutlookAI-Unindexed -Execute` (add `-CancelLogonPrompt`
+>    if its tier profile is up); then, elevated over PowerShell Direct, `-Execute` - it adds the user
+>    EXCLUDE rule, finds no row to purge, keeps the policy and restarts the service - and `-Verify`,
+>    which should now say `UNINDEXED` with reason `USER` and **without** the policy-only caveat.
+>    Checkpoint it. If `-Execute` finds Outlook rows after all (a non-elevated Outlook ran there
+>    before the policy), let it wait them out and do not restart the guest meanwhile - or use
+>    `-RebuildCatalog`. Nothing else - no `Start-OutlookUnelevated.ps1` there - and once the rule is
+>    in, that guest's index state no longer depends on how its Outlook is started (items 1 and 3).
+>
+> **MEASURED 2026-09-24 on `OutlookAI-Indexed` (Q68) - the registry half was exercised, and three
+> things changed.** Full evidence in the script's banner.
 >
 > 1. **An administrator cannot write the crawl-scope rule at all.** The crawl scope manager's
 >    keys (`SystemIndex`, `WorkingSetRules`, each `WorkingSetRules\<n>`, `SearchRoots`,
@@ -354,7 +443,8 @@ keeps that distinction from collapsing.
 >    absent on the maintainer's workstation too, which has the rule); nor after the documented
 >    *Default indexed paths* policy value was written for `mapi16://{SID}/` and `gpupdate /force`
 >    run. The maintainer's workstation, on the same Windows release, **does** carry the rule.
->    Why a freshly built guest never gets one is **not established** - section 8 item 22.
+>    Why a freshly built guest never gets one was **not established** here - it is now: every one
+>    of those Outlook starts was elevated (the Q69 block above, and section 8 item 22).
 >    `-Verify` used to call this state `SETTLING`, "wait and re-run", which never converges; it now
 >    has its own verdict, **`NOT-IN-SCOPE`**, reported as a failure.
 > 3. **So the 2026-09-16 `UNINDEXED` on the other guest proves less than it read.** It proves that
@@ -390,6 +480,16 @@ arise and does not have to be waited out. `Testbed/README.md` section 1 carries 
 > reading distinguishes nothing. Both questions need a machine with Outlook **in** the crawl
 > scope, and neither guest is one (section 8 item 22). Ordering therefore still matters for the
 > day that changes; on today's guests it happens to be moot.
+>
+> **ANSWERED 2026-09-24 (Q69), on a guest that IS indexed** - both questions, and the ordering
+> question with them (item 3 of the Q69 block above): `PreventIndexingOutlook = 1` removes
+> **nothing** - it is not even a crawl-scope rule; a user EXCLUDE rule written through the API
+> **does** remove the rows, the indexer purging them itself in about four and a half minutes - but
+> only if nothing restarts the service in the meantime; and the exclusion **survives** a
+> non-elevated Outlook, the one that would otherwise register the scope. Excluding first is still
+> the cheaper order - nothing to purge, nothing to wait for - but it is no longer the only safe
+> one: `-Execute` now waits the purge out itself, and `-RebuildCatalog` is the documented reset
+> when rows outlived an exclusion made in the wrong order.
 
 **Three durability risks the script does not defend against**, all established 2026-09-16 and
 none of them a reason to avoid it - they are the reason the Group Policy layer is written *as
@@ -422,8 +522,10 @@ because the delegate stores are the ones the tier treats as read-only production
 **The script REFUSES while Outlook is running**, and that refusal protects the guest rather than
 the measurement: Microsoft documents that the PST provider is "very sensitive to the indexing
 state changing while the PST is open", and that if it changes "the PST may end up kicking off an
-installer to repair Outlook". Quit Outlook gracefully or restart the guest - **never** `taskkill`
-it.
+installer to repair Outlook". Close it with **`Testbed/host/Restart-Guest.ps1 -VMName <guest>
+-Execute`**, which quits Outlook the way mailbox-safety rule 7 describes and then restarts the guest
+without forcing anything - **never** `taskkill` it, and never `shutdown /r /t 5`, which is a forced
+close by another name (Microsoft: a timeout above 0 implies `/f`).
 
 **Verify by asking the INDEX, not the registry.** `Set-OutlookIndexingDisabled.ps1 -Verify` runs
 a control probe, a scoped-MAPI probe and a scope-free mail probe through the same
@@ -705,7 +807,7 @@ SMTP side - is retired.
 > .\Add-OutlookPstStore.ps1 -ProfileName OutlookAI-Tier -DisplayName identity@vm.invalid `
 >                           -Path C:\OutlookAI-Tier\identity.pst -Execute      # Outlook RUNNING
 > .\Add-IdentityAccount.ps1 -Phase CaptureStore -Execute    # Outlook RUNNING: read the store's IDs
-> <restart the guest - never taskkill Outlook>
+> <restart the guest: Testbed/host/Restart-Guest.ps1 -VMName OutlookAI-Indexed -Execute -CancelLogonPrompt - never taskkill Outlook>
 > .\Add-IdentityAccount.ps1 -Phase Bind -Execute            # Outlook CLOSED: bind the account
 > .\Add-IdentityAccount.ps1 -Phase Verify                   # session 1, COM
 > ```
@@ -1462,24 +1564,85 @@ unrecorded or unverified.
     leaving it unnamed was a different one.** If it is ever built, it is a *third* guest shape,
     not a setting on the second.
 
-22. **OPEN, and it is the largest gap in the testbed today - `OutlookAI-Indexed` has never been
-    indexed.** Measured 2026-09-24: no `mapi16://{SID}/` rule in `DefaultRules`,
-    `WorkingSetRules` or `SearchRoots`; `mapiRows=0 mailRows=0` on two catalog readings ten minutes
-    apart, nine days after its 20,000-item corpus was built; catalog 31.6 MB. `-Verify` now calls
-    this `NOT-IN-SCOPE`. Outlook did **not** add its scope with its UI open for 10 minutes on the
-    tier profile or 8 on the corpus profile; nor after the community-reported 25H2 key
-    (`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Search\SetupCompletedSuccessfully = 1`, absent
-    on the maintainer's workstation too); nor after the documented *Default indexed paths* policy
-    value was written for `mapi16://{SID}/` and `gpupdate /force` run. A registry-written rule is not
-    an option either: administrators hold **ReadKey only** on the crawl scope manager's keys.
-    The maintainer's workstation, same Windows release, **has** the rule. So **the index half of the
-    live tier cannot run on either guest as built**, and the two guests do not differ in the one
-    property that is supposed to separate them. Routes not tried, each a decision: the documented
-    Crawl Scope Manager API (`ISearchCrawlScopeManager::AddUserScopeRule` + `SaveAll`, which runs
-    inside WSearch and is what Indexing Options calls - hand-declared COM interop from PowerShell
-    5.1), the Indexing Options dialog itself (UIAutomation), a local Group Policy object carrying
-    *Default indexed paths* (registry.pol, not a raw value), or finding what a freshly built machine
-    lacks by comparing with one Outlook did register on.
+22. **CLOSED 2026-09-24 (Q69) - `OutlookAI-Indexed` was never indexed because every Outlook the
+    testbed ever started on it was ELEVATED, and an elevated Outlook does not use Windows Search at
+    all.** The session-1 route, `Testbed/guest/Register-InteractiveTask.ps1`, registers its task at
+    `RunLevel Highest`, so every Outlook started through it - every UI watch, every
+    `Build-Corpus.ps1` run, every COM start - inherited an elevated token. A non-elevated Outlook
+    adds itself to the crawl scope within seconds - and the maintainer's workstation, where Outlook is
+    started the ordinary, unelevated way, has exactly that rule. Measured on `OutlookAI-Indexed` from the same clean
+    checkpoint (`CP-09-IDENTITY-ACCOUNT`: no `mapi16` rule, zero Outlook rows), the same profile
+    (`CorpusProfile`), a graceful restart in between, and nothing but the integrity level differing
+    (`.work/aa5e-2026-09-24-q69-index-scope/ab-control.txt`):
+
+    | | ELEVATED (`RunLevel Highest`, the testbed's route) | NOT elevated (`RunLevel Limited`) |
+    | --- | --- | --- |
+    | crawl scope | no rule in 8 minutes, Explorer up the whole time | a search root and a user INCLUDE rule for `mapi16://{SID}/` within 8 s of the start |
+    | catalog | 0 Outlook rows, nothing queued | crawl running at once: 19,874 item notifications queued within 70 s (the whole corpus took 8.5 min - below) |
+    | `Store.IsInstantSearchEnabled` - Outlook's own view, read over COM at the same level | `False` | `True` |
+    | `mssprxy.dll` - the Windows Search interfaces' proxy - loaded in OUTLOOK.EXE | no | yes |
+    | per-store marker in `HKCU\...\Outlook\Search` (a DWORD named by the PST path) | never written | written - the same kind of value the maintainer's machine carries per store |
+
+    Microsoft's own wording for the state, as support pages quote it: *"Instant Search is not
+    available when Outlook is running with administrator permissions."* Nothing announces it: no
+    event, no prompt, no log line.
+
+    **Ruled out, each by evidence rather than by assumption.** The protocol handler: `Mapi16` is
+    registered (`ProtocolHandlers\Mapi16\0` -> `Outlook.Search.MAPI16Handler.1` -> CLSID
+    `{F8E61EDD-...}` -> Click-to-Run's `Interceptor.dll` -> `MAPIPH.DLL`), identically on the
+    maintainer's workstation, and it crawls the moment a rule exists. Outlook's search settings: the
+    guest's `HKCU\...\Outlook\Search` holds only `IndexAvailableBody=0`; there is no disabling value.
+    Policy: nothing under `Windows Search` or `Outlook\Search` in HKLM or HKCU. Event logs: no
+    protocol-handler or gatherer failure. The 25H2 key and *Default indexed paths* (Q68). **And the
+    comparison with the maintainer's workstation settles the shape**: the rule a non-elevated Outlook
+    wrote on the guest - `WorkingSetRules` `Include=1 Suppress=0 Default=0 Policy=0 NoContent=0
+    Container=0`, `SearchRoots` `ProvidesNotifications=1 Container=0` - is value for value the
+    workstation's (which carries one more, `IntelligentlyAdded=0`). The workstation's key timestamps
+    cannot say when its rule was made: every crawl-scope key there carries the same last-write time,
+    because the service rewrites them all on every save.
+
+    **The fix is two steps, and both are now in the build order** (`Testbed/README.md` section 1,
+    7b and 8c). The scope is written deterministically through the documented API -
+    `Set-OutlookIndexingDisabled.ps1 -Enable -Execute` (the Crawl Scope Manager interop in
+    `Testbed/guest/SearchCrawlScope.cs`), which leaves exactly the shape above - and the stores are
+    crawled with Outlook running NOT elevated (`Testbed/guest/Start-OutlookUnelevated.ps1`): **the
+    20,000-item corpus was fully crawled 7.6 to 9.6 minutes after Outlook's start**, four times over:
+    9.6, 8.6, 7.6 and 8.8 minutes to the first reading with nothing left, readings a minute apart
+    (the last two are the committed build step replayed from the clean checkpoint -
+    `.work/aa5e-2026-09-24-q69-index-scope/task2b-build-step-and-checkpoint.txt`), about 3,500 items a
+    minute at the peak; the tier profile's two small stores then took under three. **How
+    "finished" is known**: three signals fell due in the same minute - the catalog's
+    `NumberOfItemsToIndex` queues at 0, `GetCatalogStatus` back to `IDLE` (it had gone
+    `INCREMENTAL_CRAWL` -> `PROCESSING_NOTIFICATIONS`), and the Outlook row count no longer moving
+    (20,030 = 20,000 items plus the store's folders). `Set-OutlookIndexingDisabled.ps1 -Verify`
+    now requires all three across two readings before it says `INDEXED`, and `-WaitMinutes` waits
+    for them. **A rule alone crawls nothing**: with the scope in, the count stayed at zero for four
+    minutes with Outlook closed and for six with Outlook running ELEVATED, whose
+    `IsInstantSearchEnabled` still read `False`. The guest is INDEXED and checkpointed as
+    `CP-10-INDEXED`. The exclusion was then measured from that checkpoint - five ways, and the order
+    it needs - in section 2.4's Q69 block, item 3; the guest was restored to `CP-10-INDEXED` after
+    it and re-verified `INDEXED` (20,048 rows over three stores, the catalog IDLE, nothing queued).
+
+    **What follows for the live tier on the guests - a decision, not taken here.** The index tests
+    need the index to MOVE while they run - a test creates an item and waits for the index to show it
+    - and on these guests the index moves only while a NON-elevated Outlook runs. Run through `Register-InteractiveTask.ps1` as the tier would be
+    today, Outlook is elevated, `IsInstantSearchEnabled` is `False`, and nothing a test creates is
+    ever indexed: the "not indexed yet" state, permanently, which the suite reads as a slow indexer.
+    So the tier's session-1 route must run Outlook - and the test host with it, because an elevation
+    mismatch breaks COM attach (v3.MD S8) - at `RunLevel Limited`. Options: a `-RunLevel` parameter
+    on `Register-InteractiveTask.ps1`; a second, Limited task for the tier; or Outlook started by
+    `Start-OutlookUnelevated.ps1` with the suite in a Limited task beside it. Not built here -
+    `Register-InteractiveTask.ps1` was not this round's file, and which route is the user's call.
+
+    **A side finding for the identity tests, not chased.** The index names a store by the name in
+    its profile's service, not by the root-folder name COM reports. The tier store appears as
+    `tier@vm.invalid($93f42b43)`, but the identity store - named by `Add-OutlookPstStore.ps1` through a
+    root-folder rename - appears as `Outlook Data File($b25ac20a)`, its folders under
+    `/Outlook Data File`, while `Store.DisplayName` reads `identity@vm.invalid` (identified by
+    elimination: it is the tier profile's only other store). `IndexSearchService.TryDiscoverStoreScopeByAddress`
+    accepts a store only when the index's name EQUALS the address, so it cannot find the identity
+    store here. Whether anything the identity tests exercise goes through that path is not
+    established.
 23. **OPEN - Outlook's Object Model Guard prompts on the guests, and the live tier reads protected
     members.** Windows Security Center reports Defender's signatures out of date (dated 2025-09-17,
     372 days on 2026-09-24; the guests have no network), so Outlook treats every out-of-process COM
@@ -1494,6 +1657,13 @@ unrecorded or unverified.
     `SmtpAddress` freely; what changed in between is not established. Options, each a decision: the
     documented Outlook security policy that auto-approves programmatic access, updated signatures
     staged offline, or the Trust Center's programmatic-access setting (HKLM, per machine).
+    **Still open and still the user's decision, 2026-09-24 (Q69) - one thing changed around it.** A
+    pending prompt used to be cleared by a forced guest restart. `Testbed/host/Restart-Guest.ps1`
+    will not do that: it refuses to quit Outlook behind ANY visible Outlook dialog and names it, and
+    it never answers a security prompt - its one exception, `-CancelLogonPrompt`, cancels only the
+    POP3 "Internet Email - <account>" logon prompt. So a guest with this prompt up now needs a person
+    (or the decision above) before it can be restarted gracefully. Q69 read no address property and
+    raised no prompt: `Store.DisplayName`, `FilePath` and `IsInstantSearchEnabled` never did.
 
 ---
 
