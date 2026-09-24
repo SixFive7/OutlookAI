@@ -6387,16 +6387,18 @@ namespace OutlookAI.Core.Services
         /// DESIGNATED Archive folder - the folder Outlook's own Archive action
         /// (Backspace/mobile swipe/OWA) uses, resolved per store
         /// (localization-proof, never guessed by name; see
-        /// <see cref="ArchiveFolderResolution"/>). A store without a designated
-        /// archive folder fails per-item; nothing is ever created for it. Same result,
-        /// undo and audit semantics as <see cref="MoveMail"/>.
+        /// <see cref="ArchiveFolderResolution"/>). This is the one path allowed to CREATE
+        /// that folder (Q84 (c)): on a store that has none - a POP/IMAP account, a data file -
+        /// resolving it makes Outlook create one, and <see cref="ArchiveMailOutcome.CreatedFolders"/>
+        /// says so, as <see cref="MoveMail"/> reports the folders it makes. Same result, undo
+        /// and audit semantics as <see cref="MoveMail"/>.
         /// </summary>
         public ArchiveMailOutcome ArchiveMail(IReadOnlyList<string>? ids)
         {
             IReadOnlyList<string> requestIds = ValidateMoveIds(ids);
 
-            Dictionary<string, (ComArchiveFolderInfo? Info, string? Error)> archiveByStore =
-                new Dictionary<string, (ComArchiveFolderInfo?, string?)>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, (ComArchiveFolderInfo? Info, string? Error, string? CreatedPath)> archiveByStore =
+                new Dictionary<string, (ComArchiveFolderInfo?, string?, string?)>(StringComparer.OrdinalIgnoreCase);
             List<MoveItemView> items = new List<MoveItemView>(requestIds.Count);
             bool auditBroken = false;
             Stopwatch batchClock = Stopwatch.StartNew();
@@ -6432,15 +6434,33 @@ namespace OutlookAI.Core.Services
                 .OrderBy(v => v.Store, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
+            // Every folder a resolution CREATED, whether that store's items then moved or not.
+            List<string> created = archiveByStore
+                .Where(entry => entry.Value.CreatedPath != null)
+                .Select(entry => CreatedArchiveFolderLabel(entry.Key, entry.Value.CreatedPath!))
+                .OrderBy(label => label, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
             return new ArchiveMailOutcome
             {
                 Requested = requestIds.Count,
                 Archived = archivedCount,
                 Failed = items.Count - archivedCount,
                 ArchiveFolders = resolved.Count > 0 ? resolved : null,
+                CreatedFolders = created.Count > 0 ? created : null,
                 Items = items,
                 Advice = archivedCount > 0 ? new[] { MoveEntryIdAdvice } : null,
             };
+        }
+
+        /// <summary>
+        /// How archive_mail names a folder it created: <c>store/path</c>, the form the sweep
+        /// block already uses for a folder in a named store. A batch can span stores, and a
+        /// bare <c>Archive</c> would not say which one gained it. Pure, public for T1.
+        /// </summary>
+        public static string CreatedArchiveFolderLabel(string store, string storeRelativePath)
+        {
+            return store + "/" + storeRelativePath;
         }
 
         /// <summary>
@@ -6475,7 +6495,7 @@ namespace OutlookAI.Core.Services
 
         private MoveItemView ArchiveOne(
             string id,
-            Dictionary<string, (ComArchiveFolderInfo? Info, string? Error)> archiveByStore,
+            Dictionary<string, (ComArchiveFolderInfo? Info, string? Error, string? CreatedPath)> archiveByStore,
             int itemBudgetMs,
             out bool auditFailed)
         {
@@ -6525,13 +6545,17 @@ namespace OutlookAI.Core.Services
                     return FailedItem(id, "The item could not be opened. Re-run search - it may have moved (EntryIDs change on moves).");
                 }
 
-                if (!archiveByStore.TryGetValue(info.StoreDisplayName, out (ComArchiveFolderInfo? Info, string? Error) archive))
+                if (!archiveByStore.TryGetValue(
+                    info.StoreDisplayName, out (ComArchiveFolderInfo? Info, string? Error, string? CreatedPath) archive))
                 {
+                    // The create-allowed resolution (Q84 (c)): the one lookup that may make the
+                    // Archive folder, because this call is moving mail into it.
                     archive = _gateway.Run(
                         s =>
                         {
-                            ComArchiveFolderInfo? resolvedInfo = s.TryResolveArchiveFolder(info.StoreDisplayName, out string? resolveError);
-                            return (resolvedInfo, resolveError);
+                            ComArchiveFolderInfo? resolvedInfo = s.TryResolveOrCreateArchiveFolder(
+                                info.StoreDisplayName, out string? createdPath, out string? resolveError);
+                            return (resolvedInfo, resolveError, createdPath);
                         },
                         itemBudgetMs,
                         allowConnectFloor: true);
@@ -6540,7 +6564,11 @@ namespace OutlookAI.Core.Services
 
                 if (archive.Info == null)
                 {
-                    return FailedItem(id, DescribeArchiveResolutionFailure(info.StoreDisplayName, archive.Error));
+                    return FailedItem(
+                        id,
+                        DescribeArchiveResolutionFailure(info.StoreDisplayName, archive.Error)
+                            + DescribeCreatedFolderResidue(
+                                archive.CreatedPath == null ? null : new[] { archive.CreatedPath }));
                 }
 
                 ComArchiveFolderInfo target = archive.Info;
@@ -6933,15 +6961,35 @@ namespace OutlookAI.Core.Services
 
         /// <summary>
         /// Maps archive-resolution failures to agent-actionable per-item error text
-        /// (pure, public for T1 pinning). A store without a designated archive folder
-        /// is an ERROR - nothing is created silently.
+        /// (pure, public for T1 pinning). Every refusal named here happened before anything
+        /// was moved; a folder the resolution created on the way is appended by the caller.
         /// </summary>
         public static string DescribeArchiveResolutionFailure(string store, string? resolveError)
         {
-            if (resolveError == "NoDesignatedArchiveFolder")
+            if (resolveError == ArchiveFolderResolution.NoDesignatedArchiveFolder)
             {
                 return "Store '" + store + "' has no designated Archive folder. Nothing was created - set one up via "
                     + "Outlook/OWA first (the folder the Archive button uses), then retry.";
+            }
+
+            if (resolveError == ArchiveFolderResolution.ArchiveFolderStateUnreadable)
+            {
+                return "Store '" + store + "': its top-level folders could not be listed, so whether archiving would "
+                    + "CREATE an Archive folder there could not be checked. Nothing was moved or created - retry when "
+                    + "Outlook is responsive (see outlook_health).";
+            }
+
+            if (resolveError == ArchiveFolderResolution.ArchiveDesignationUnreadable)
+            {
+                return "Store '" + store + "': whether it has a designated Archive folder could not be read without "
+                    + "asking Outlook to create one. Nothing was created.";
+            }
+
+            if (resolveError == ArchiveFolderResolution.ArchiveFolderCreationUnverified)
+            {
+                return "Store '" + store + "': Outlook returned no Archive folder, and its top-level folders no longer "
+                    + "list as they did before it was asked (or could not be listed again), so it may have CREATED one. "
+                    + "Nothing was moved - check the store's top-level folders in Outlook before retrying.";
             }
 
             if (resolveError != null && resolveError.StartsWith("ArchiveFolderVerificationFailed", StringComparison.Ordinal))

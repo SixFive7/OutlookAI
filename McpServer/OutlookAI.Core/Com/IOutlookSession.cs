@@ -163,8 +163,27 @@ namespace OutlookAI.Core.Com
         /// <summary>Basic mail properties, used to resolve a hit before acting on it.</summary>
         ComDraftInfo? TryGetMailInfo(string entryIdHex, string? storeId, out string? error);
 
-        /// <summary>Resolves the archive target for a store.</summary>
+        /// <summary>
+        /// Resolves a store's designated Archive folder READ-ONLY: never creates anything. A
+        /// store without one answers <c>NoDesignatedArchiveFolder</c>; a non-Exchange store
+        /// whose designation could not be read answers <c>ArchiveDesignationUnreadable</c>.
+        /// </summary>
         ComArchiveFolderInfo? TryResolveArchiveFolder(string storeDisplayName, out string? error);
+
+        /// <summary>
+        /// Resolves a store's designated Archive folder for archive_mail - the ONE lookup that
+        /// may CREATE it (on a store that has none, Outlook makes it), because the caller asked
+        /// for mail to be moved into it.
+        /// </summary>
+        /// <param name="createdFolderPath">
+        /// Store-relative path of the Archive folder this call CREATED, reported whether the
+        /// resolution then succeeded or was refused by verification; null when it created
+        /// nothing. This server cannot delete folders, so the caller has to be told.
+        /// </param>
+        ComArchiveFolderInfo? TryResolveOrCreateArchiveFolder(
+            string storeDisplayName,
+            out string? createdFolderPath,
+            out string? error);
 
         /// <summary>Moves an item to a folder identified by store-relative path.</summary>
         /// <param name="createdFolderPaths">

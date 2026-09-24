@@ -831,8 +831,10 @@ namespace OutlookAI.Core.Com
         /// <summary>
         /// Total item count across every store's Outbox (the S7 quit-when-safe count -
         /// graceful tooling and the lifecycle tests refuse to close/quit Outlook while
-        /// anything is pending). Stores without an Outbox (delegate caches) are skipped;
-        /// returns -1 when the walk itself failed (callers treat unknown as unsafe).
+        /// anything is pending). Stores without an Outbox (delegate caches, data files) are
+        /// skipped; returns -1 when the walk itself failed (callers treat unknown as unsafe).
+        /// The Outbox is looked up with <see cref="SpecialFolders.Resolve"/>, so a store that
+        /// has none is never given one by being counted (Q84).
         /// </summary>
         public int CountOutboxItems()
         {
@@ -855,7 +857,14 @@ namespace OutlookAI.Core.Com
                         try
                         {
                             store = list[i];
-                            outbox = ((dynamic)store!).GetDefaultFolder(4); // olFolderOutbox
+                            string? storeId = TryGetString(() => (string?)((dynamic)store!).StoreID);
+                            ComSpecialFolderStore special = new ComSpecialFolderStore(store!, (object)ns, storeId);
+                            if (SpecialFolders.Resolve(special, SpecialFolders.OlFolderOutbox, out outbox, out _)
+                                != DefaultFolderResolution.Resolved)
+                            {
+                                continue;
+                            }
+
                             items = ((dynamic)outbox!).Items;
                             total += (int)((dynamic)items!).Count;
                         }
@@ -1777,6 +1786,15 @@ namespace OutlookAI.Core.Com
         /// <see cref="DefaultFolderResolution.Unreadable"/>.
         /// </para>
         /// <para>
+        /// <b>That documented sentence is not the whole truth, and the sweep no longer relies
+        /// on it to find out whether a folder exists.</b> Measured 2026-09-24 on a POP3 PST,
+        /// <c>GetDefaultFolder(23)</c> and <c>GetDefaultFolder(39)</c> did not return null for
+        /// folders the store lacked - they CREATED them. So a read-only path asks
+        /// <see cref="SpecialFolders.Resolve"/>, which calls <c>GetDefaultFolder</c> only on an
+        /// Exchange store (as before) or once the folder is proven to exist, and classifies
+        /// that call's answer with this function.
+        /// </para>
+        /// <para>
         /// A thrown error is deliberately NEVER read as absence, however much its HRESULT
         /// looks like "not found": that is the fail-safe direction, because misreading a
         /// failure as absence would silently drop a folder whose mail really is missing
@@ -1801,39 +1819,18 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
-        /// STA-side resolution of one of a store's default folders, kept separate from the
-        /// verdict itself (<see cref="ClassifyDefaultFolder"/>) so the rule lives in one
-        /// pure, testable place. <paramref name="folder"/> is set only for
-        /// <see cref="DefaultFolderResolution.Resolved"/>, so the caller releases exactly
-        /// what it received.
-        /// <para>
-        /// <paramref name="store"/> is typed <c>object</c> rather than <c>dynamic</c> on
-        /// purpose: a dynamic argument makes the CALL itself late-bound, and this one
-        /// carries an <c>out</c> parameter. Only the COM member invoke below needs the
-        /// runtime binder.
-        /// </para>
+        /// STA-side resolution of one of a store's default folders for the freshness sweep,
+        /// WITHOUT creating it (Q84): <see cref="SpecialFolders.Resolve"/> decides, and the
+        /// verdict is the same three-way <see cref="ClassifyDefaultFolder"/> split it always
+        /// was. This used to call <c>GetDefaultFolder</c> directly, and on a PST with no Junk
+        /// Email folder the sweep's <c>GetDefaultFolder(23)</c> is the call measured to make
+        /// one - on every search. <paramref name="folder"/> is set only for
+        /// <see cref="DefaultFolderResolution.Resolved"/>, so the caller releases exactly what
+        /// it received.
         /// </summary>
-        private static DefaultFolderResolution ResolveDefaultFolder(object store, int olDefaultFolderId, out object? folder)
+        private static DefaultFolderResolution ResolveDefaultFolder(ISpecialFolderStore store, int olDefaultFolderId, out object? folder)
         {
-            folder = null;
-            object? resolved = null;
-            Exception? failure = null;
-            try
-            {
-                resolved = ((dynamic)store).GetDefaultFolder(olDefaultFolderId);
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-                failure = ex;
-            }
-
-            DefaultFolderResolution resolution = ClassifyDefaultFolder(resolved, failure);
-            if (resolution == DefaultFolderResolution.Resolved)
-            {
-                folder = resolved;
-            }
-
-            return resolution;
+            return SpecialFolders.Resolve(store, olDefaultFolderId, out folder, out _);
         }
 
         /// <summary>
@@ -1997,6 +1994,10 @@ namespace OutlookAI.Core.Com
                             StoreSweepBucket bucket = new StoreSweepBucket(storeName);
                             buckets.Add(bucket);
 
+                            // One per store, so its ExchangeStoreType is read once. It
+                            // borrows the store; the finally below still releases it.
+                            ISpecialFolderStore special = new ComSpecialFolderStore((object)store, (object)ns, storeId);
+
                             foreach ((int folderId, string folderKind) in DefaultSweepFolders)
                             {
                                 // Graceful expiry (maintainer decision (d)): stop at the
@@ -2014,7 +2015,7 @@ namespace OutlookAI.Core.Com
                                 try
                                 {
                                     DefaultFolderResolution resolution =
-                                        ResolveDefaultFolder((object)store, folderId, out folder);
+                                        ResolveDefaultFolder(special, folderId, out folder);
                                     if (resolution == DefaultFolderResolution.Absent)
                                     {
                                         // This store HAS no such folder, so no mail can be
@@ -3280,8 +3281,10 @@ namespace OutlookAI.Core.Com
 
         /// <summary>
         /// STA-side: resolves the navigation target for goto/show tools. Empty path =
-        /// the store's Inbox when it has one (delegate caches may not), else the store
-        /// root. Returns a folder RCW (CALLER must Release) or null + error.
+        /// the store's Inbox when it has one (delegate caches and data files may not), else
+        /// the store root. The Inbox is looked up with <see cref="SpecialFolders.Resolve"/>,
+        /// so navigating to a store that has none never gives it one (Q84). Returns a folder
+        /// RCW (CALLER must Release) or null + error.
         /// </summary>
         private object? ResolveNavigationFolder(string storeDisplayName, IReadOnlyList<string>? folderPath, out string? error)
         {
@@ -3300,15 +3303,16 @@ namespace OutlookAI.Core.Com
 
             try
             {
-                try
+                string? storeId = TryGetString(() => (string?)store.StoreID);
+                ComSpecialFolderStore special = new ComSpecialFolderStore((object)store, _namespace!, storeId);
+                if (SpecialFolders.Resolve(special, SpecialFolders.OlFolderInbox, out object? inbox, out _)
+                    == DefaultFolderResolution.Resolved)
                 {
-                    return store.GetDefaultFolder(6); // olFolderInbox
-                }
-                catch (Exception ex) when (IsComCallFailure(ex))
-                {
-                    // Store without an Inbox (some delegate caches) - fall back to root.
+                    return inbox;
                 }
 
+                // No Inbox this store will hand over without being asked to make one (some
+                // delegate caches, a data file that is not a delivery store) - fall back to root.
                 try
                 {
                     return store.GetRootFolder();
@@ -4024,7 +4028,11 @@ namespace OutlookAI.Core.Com
         /// <summary>
         /// Identity of a store's default folder (6 = Inbox, 16 = Drafts, ...): EntryID +
         /// localized name. The draft tests compare a draft's parent folder EntryID
-        /// against this instead of asserting locale-dependent folder names.
+        /// against this instead of asserting locale-dependent folder names. READ-ONLY: the
+        /// folder is looked up with <see cref="SpecialFolders.Resolve"/>, so asking about a
+        /// folder the store does not have answers <c>DefaultFolderAbsent</c> instead of making
+        /// one (Q84); <c>DefaultFolderUnreadable</c> means it could not be established either
+        /// way without that risk.
         /// </summary>
         public ComDefaultFolderInfo? TryGetDefaultFolderInfo(string storeDisplayName, int olDefaultFolderId, out string? error)
         {
@@ -4047,7 +4055,17 @@ namespace OutlookAI.Core.Com
                 object? folder = null;
                 try
                 {
-                    folder = store.GetDefaultFolder(olDefaultFolderId);
+                    string? storeId = TryGetString(() => (string?)store.StoreID);
+                    ComSpecialFolderStore special = new ComSpecialFolderStore((object)store, _namespace!, storeId);
+                    DefaultFolderResolution resolution = SpecialFolders.Resolve(special, olDefaultFolderId, out folder, out _);
+                    if (resolution != DefaultFolderResolution.Resolved)
+                    {
+                        capturedError = resolution == DefaultFolderResolution.Absent
+                            ? "DefaultFolderAbsent"
+                            : "DefaultFolderUnreadable";
+                        return null;
+                    }
+
                     dynamic f = folder!;
                     return new ComDefaultFolderInfo((string)f.EntryID, (string)f.Name);
                 }
@@ -4114,17 +4132,45 @@ namespace OutlookAI.Core.Com
 
         /// <summary>
         /// Resolves a store's DESIGNATED Archive folder - the folder Outlook's own
-        /// Archive action (Backspace), mobile swipe-archive and OWA use. Resolution is
-        /// localization-proof and never guesses by name: primary =
-        /// <c>Store.GetDefaultFolder(39)</c> (undocumented but live-proven value, see
-        /// <see cref="ArchiveFolderResolution"/>), fallback = PR_IPM_ARCHIVE_ENTRYID on
-        /// the store object. The resolved folder is VERIFIED (same store, mail folder,
-        /// not one of the core default folders) before it is trusted - paranoia against
-        /// the undocumented enum meaning something else on another build. Read-only;
-        /// when a store has no designated archive folder the resolution FAILS
-        /// (content-free error) and nothing is created.
+        /// Archive action (Backspace), mobile swipe-archive and OWA use - WITHOUT creating
+        /// anything (Q84, maintainer decision (c), 2026-09-24). Localization-proof, never
+        /// guessed by name. An Exchange store resolves exactly as before -
+        /// <c>Store.GetDefaultFolder(39)</c>, then PR_IPM_ARCHIVE_ENTRYID on the store object -
+        /// because its Archive folder is a server default folder; any other store only from its
+        /// PR_IPM_ARCHIVE_ENTRYID designation, because on a PST <c>GetDefaultFolder(39)</c>
+        /// CREATES the folder (measured). The candidate is VERIFIED (same store, mail folder,
+        /// not one of the core default folders) without creating anything either. A store
+        /// with no designated Archive folder answers <c>NoDesignatedArchiveFolder</c> and
+        /// nothing is created. See <see cref="ArchiveFolderResolution.ResolveReadOnly"/>.
         /// </summary>
         public ComArchiveFolderInfo? TryResolveArchiveFolder(string storeDisplayName, out string? error)
+        {
+            // Nothing to report as created: the read-only resolution never calls the creating
+            // lookup (ArchiveFolderResolution.ResolveReadOnly), so its Created is always false.
+            return ResolveArchiveFolderCore(storeDisplayName, allowCreate: false, out _, out error);
+        }
+
+        /// <summary>
+        /// The move-to-archive resolution (archive_mail): the ONE lookup allowed to create the
+        /// designated Archive folder, because the caller asked for mail to be moved into it.
+        /// Resolves exactly as archive_mail always did, and on a non-Exchange store reports a
+        /// folder the call created in <paramref name="createdFolderPath"/> (store-relative) -
+        /// whether the resolution then succeeded or was refused by verification. See
+        /// <see cref="ArchiveFolderResolution.ResolveForMove"/>.
+        /// </summary>
+        public ComArchiveFolderInfo? TryResolveOrCreateArchiveFolder(
+            string storeDisplayName,
+            out string? createdFolderPath,
+            out string? error)
+        {
+            return ResolveArchiveFolderCore(storeDisplayName, allowCreate: true, out createdFolderPath, out error);
+        }
+
+        private ComArchiveFolderInfo? ResolveArchiveFolderCore(
+            string storeDisplayName,
+            bool allowCreate,
+            out string? createdFolderPath,
+            out string? error)
         {
             EnsureNotDisposed();
             if (string.IsNullOrWhiteSpace(storeDisplayName))
@@ -4133,9 +4179,9 @@ namespace OutlookAI.Core.Com
             }
 
             string? capturedError = null;
+            string? capturedCreated = null;
             ComArchiveFolderInfo? result = _runner.Run<ComArchiveFolderInfo?>(() =>
             {
-                dynamic ns = _namespace!;
                 dynamic? store = FindStoreByDisplayName(storeDisplayName);
                 if (store == null)
                 {
@@ -4143,66 +4189,38 @@ namespace OutlookAI.Core.Com
                     return null;
                 }
 
-                object? folder = null;
                 try
                 {
                     string storeId = (string)store.StoreID;
-                    string via = "outlookDefaultFolder";
-                    try
+                    ComSpecialFolderStore special = new ComSpecialFolderStore((object)store, _namespace!, storeId);
+                    ArchiveFolderAnswer answer = allowCreate
+                        ? ArchiveFolderResolution.ResolveForMove(special, storeId)
+                        : ArchiveFolderResolution.ResolveReadOnly(special, storeId);
+
+                    if (answer.Created)
                     {
-                        folder = store.GetDefaultFolder(ArchiveFolderResolution.OlFolderArchive);
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                        folder = null;
+                        capturedCreated = ToStoreRelativeFolderPath(answer.FolderPath, storeDisplayName);
                     }
 
-                    if (folder == null)
+                    if (answer.Error != null)
                     {
-                        via = "storeArchiveProperty";
-                        object? accessor = null;
-                        try
-                        {
-                            accessor = store.PropertyAccessor;
-                            object? value = ((dynamic)accessor!).GetProperty(ArchiveFolderResolution.ArchiveEntryIdPropertySchema);
-                            string? hex = ArchiveFolderResolution.TryReadEntryIdHex(value);
-                            if (hex != null)
-                            {
-                                folder = ns.GetFolderFromID(hex, storeId);
-                            }
-                        }
-                        catch (Exception ex) when (IsComCallFailure(ex))
-                        {
-                            folder = null;
-                        }
-                        finally
-                        {
-                            Release(accessor);
-                        }
-                    }
-
-                    if (folder == null)
-                    {
-                        capturedError = "NoDesignatedArchiveFolder";
+                        capturedError = answer.Error;
                         return null;
                     }
 
-                    dynamic f = folder;
-                    string entryId = (string)f.EntryID;
-                    string? verification = VerifyArchiveCandidate(f, store, storeId, entryId);
-                    if (verification != null)
+                    if (answer.EntryId == null || answer.Name == null)
                     {
-                        capturedError = verification;
+                        capturedError = "ArchiveFolderVerificationFailed:probe";
                         return null;
                     }
 
                     return new ComArchiveFolderInfo(
                         storeDisplayName,
                         storeId,
-                        entryId,
-                        (string)f.Name,
-                        ToStoreRelativeFolderPath((string?)f.FolderPath, storeDisplayName),
-                        via);
+                        answer.EntryId,
+                        answer.Name,
+                        ToStoreRelativeFolderPath(answer.FolderPath, storeDisplayName),
+                        answer.Via ?? ArchiveFolderResolution.ViaOutlookDefaultFolder);
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
@@ -4211,70 +4229,13 @@ namespace OutlookAI.Core.Com
                 }
                 finally
                 {
-                    Release(folder);
                     Release(store);
                 }
             });
 
+            createdFolderPath = capturedCreated;
             error = capturedError;
             return result;
-        }
-
-        /// <summary>
-        /// STA-side verification of a resolved archive-folder candidate: it must live
-        /// in the SAME store, be a mail folder, and not be one of the core default
-        /// folders (Deleted Items/Outbox/Sent/Inbox/Drafts/Junk) - mis-designating any
-        /// of those as "archive" would make archive_mail silently do something else.
-        /// Returns a content-free error or null when the candidate is sound.
-        /// </summary>
-        private static string? VerifyArchiveCandidate(dynamic candidate, dynamic store, string storeId, string candidateEntryId)
-        {
-            object? candidateStore = null;
-            try
-            {
-                candidateStore = candidate.Store;
-                string? candidateStoreId = candidateStore != null ? (string?)((dynamic)candidateStore!).StoreID : null;
-                if (!string.Equals(candidateStoreId, storeId, StringComparison.OrdinalIgnoreCase))
-                {
-                    return "ArchiveFolderVerificationFailed:store";
-                }
-
-                if ((int)candidate.DefaultItemType != 0)
-                {
-                    return "ArchiveFolderVerificationFailed:itemType";
-                }
-
-                // 3=Deleted Items 4=Outbox 5=Sent 6=Inbox 16=Drafts 23=Junk
-                foreach (int coreDefault in new[] { 3, 4, 5, 6, 16, 23 })
-                {
-                    object? defaultFolder = null;
-                    try
-                    {
-                        defaultFolder = store.GetDefaultFolder(coreDefault);
-                        if (string.Equals((string)((dynamic)defaultFolder!).EntryID, candidateEntryId, StringComparison.OrdinalIgnoreCase))
-                        {
-                            return "ArchiveFolderVerificationFailed:coreDefault";
-                        }
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                    }
-                    finally
-                    {
-                        Release(defaultFolder);
-                    }
-                }
-
-                return null;
-            }
-            catch (Exception ex) when (IsComCallFailure(ex))
-            {
-                return "ArchiveFolderVerificationFailed:probe";
-            }
-            finally
-            {
-                Release(candidateStore);
-            }
         }
 
         /// <summary>
@@ -4408,7 +4369,7 @@ namespace OutlookAI.Core.Com
         /// <summary>
         /// Moves one mail item to an already-resolved folder (archive_mail: the target
         /// is the store's designated Archive folder from
-        /// <see cref="TryResolveArchiveFolder"/>). Same-store is enforced (the item's
+        /// <see cref="TryResolveOrCreateArchiveFolder"/>). Same-store is enforced (the item's
         /// own store must match <paramref name="targetStoreId"/>); an item already in
         /// the target folder is refused with <c>AlreadyInTargetFolder</c>. Result
         /// semantics identical to <see cref="TryMoveItemToPath"/>.
@@ -10457,8 +10418,19 @@ namespace OutlookAI.Core.Com
 
             try
             {
-                // 6 = olFolderInbox.
-                return store.GetDefaultFolder(6);
+                // The Inbox, looked up without ever being made (Q84): a read-only probe must
+                // not give a store that has none an Inbox.
+                string? storeId = TryGetString(() => (string?)store.StoreID);
+                ComSpecialFolderStore special = new ComSpecialFolderStore((object)store, _namespace!, storeId);
+                if (SpecialFolders.Resolve(special, SpecialFolders.OlFolderInbox, out object? inbox, out _)
+                    != DefaultFolderResolution.Resolved)
+                {
+                    throw new InvalidOperationException(
+                        "Store '" + storeDisplayName + "' has no Inbox that can be opened without creating one - "
+                        + "name a folder to probe instead.");
+                }
+
+                return inbox!;
             }
             finally
             {

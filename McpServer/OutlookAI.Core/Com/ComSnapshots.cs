@@ -1553,7 +1553,12 @@ namespace OutlookAI.Core.Com
         /// <summary>Store-relative folder path (list_folders convention).</summary>
         public string StoreRelativePath { get; }
 
-        /// <summary>Resolution mechanism: "outlookDefaultFolder" (GetDefaultFolder 39) or "storeArchiveProperty" (PR_IPM_ARCHIVE_ENTRYID).</summary>
+        /// <summary>
+        /// Resolution mechanism: "outlookDefaultFolder" (GetDefaultFolder 39),
+        /// "storeArchiveProperty" (PR_IPM_ARCHIVE_ENTRYID on the store object) or
+        /// "inboxArchiveProperty" (PR_IPM_ARCHIVE_ENTRYID on the Inbox - how a read-only lookup
+        /// finds a non-Exchange store's Archive folder without asking Outlook for it).
+        /// </summary>
         public string Via { get; }
     }
 

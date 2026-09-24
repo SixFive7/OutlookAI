@@ -83,6 +83,11 @@ namespace OutlookAI.Core.Com
         /// <see cref="IOutlookSession.TryMoveItemToFolderId"/> - the item is gone from where
         /// the second attempt expects to find it, so the re-run reports a failure that did
         /// not happen, over a move that did.</description></item>
+        /// <item><description><see cref="IOutlookSession.TryResolveOrCreateArchiveFolder"/> -
+        /// on a store with no Archive folder it CREATES one, and a re-run would find that
+        /// folder already there and report nothing created, losing the one fact the caller has
+        /// to be told (Q84). Its read-only twin <see cref="IOutlookSession.TryResolveArchiveFolder"/>
+        /// creates nothing, which is what keeps THAT one retryable.</description></item>
         /// <item><description><see cref="IOutlookSession.TrySaveAttachment"/> - it writes a
         /// file to disk outside this process's control.</description></item>
         /// <item><description><see cref="IOutlookSession.TryDisplayItem"/>,
@@ -101,6 +106,7 @@ namespace OutlookAI.Core.Com
             nameof(IOutlookSession.TryShowSearchResults),
             nameof(IOutlookSession.TryMoveItemToPath),
             nameof(IOutlookSession.TryMoveItemToFolderId),
+            nameof(IOutlookSession.TryResolveOrCreateArchiveFolder),
             nameof(IOutlookSession.TryCreateNewDraft),
             nameof(IOutlookSession.TryCreateDerivedDraft),
             nameof(IOutlookSession.TryUpdateDraft),

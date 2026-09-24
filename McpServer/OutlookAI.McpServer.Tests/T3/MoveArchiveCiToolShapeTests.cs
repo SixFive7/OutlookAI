@@ -80,7 +80,12 @@ public sealed class MoveArchiveCiToolShapeTests
         Assert.Contains("Backspace", description, StringComparison.Ordinal);
         Assert.Contains("localization-proof", description, StringComparison.Ordinal);
         Assert.Contains("never guessed by name", description, StringComparison.Ordinal);
-        Assert.Contains("NOTHING is created", description, StringComparison.Ordinal);
+
+        // Q84: on a POP/IMAP/data-file store the Archive folder IS created when mail is
+        // archived into it - that was always true and the old sentence denied it. The
+        // contract is now that the creation is REPORTED, and the denial must not come back.
+        Assert.Contains("createdFolders", description, StringComparison.Ordinal);
+        Assert.DoesNotContain("NOTHING is created", description, StringComparison.Ordinal);
         Assert.Contains("fromFolder", description, StringComparison.Ordinal);
         Assert.Contains("newEntryId", description, StringComparison.Ordinal);
     }
