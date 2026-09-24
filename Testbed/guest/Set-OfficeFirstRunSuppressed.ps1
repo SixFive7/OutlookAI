@@ -18,6 +18,14 @@
     -Execute on 2026-09-15, and then ran `New-Item -Force` on the Outlook key, which deleted the
     three values it had just written there - CP-05 lacks exactly those three.
 
+    THAT DAMAGE IS REPAIRED ON OutlookAI-Unindexed (2026-09-24, from CP-05). -Verify first: 10 OK
+    and 3 FAIL - exactly HideNewOutlookToggle, DoNewOutlookAutoMigration and UseNewOutlook absent.
+    -Execute with Outlook closed (it recreated Options\General), then -Verify: 13 of 13. After two
+    starts and two graceful exits of Outlook on the tier profile, -Verify again: 13 of 13 - Outlook
+    wrote none of them away - and neither start showed any dialog but the POP3 logon prompt.
+    Checkpoint CP-06-FIRSTRUN-REPAIRED. OutlookAI-Indexed ran the same `New-Item -Force` line and
+    was not checked by this run.
+
     RUN ON THE GUEST, in the interactive session, as the account Outlook will run as. Windows
     PowerShell 5.1 - no ternary, no `??`.
 

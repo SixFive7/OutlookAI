@@ -139,9 +139,13 @@
         2026-09-24: the guests' sink is **Inbucket 3.1.1**, not smtp4dev, chosen because its POP3
         accepts a login with no password and shows each login only its own mailbox (the
         maintainer asked for a ready-made open-source tool; `Testbed/MEDIA.md`, "The mail sink").
-        What is still open is not this question: `Testbed/guest/Install-MailSink.ps1` has never
-        run on a guest, and whether Outlook logs in without a stored POP3 password is a guest
-        measurement - `Docs/live-tier-on-the-vm.md` section 2.7. The original item follows.
+        **Both follow-ups are settled too, 2026-09-24 on `OutlookAI-Unindexed`:**
+        `Testbed/guest/Install-MailSink.ps1` reported `SINK-READY` at its first `-Execute` and again
+        after a graceful restart (the sink started 7 s after boot); and Outlook holding no stored
+        POP3 password PROMPTS and never connects, so `Testbed/guest/New-TierProfile.ps1
+        -StoreSinkPassword -Execute` now stores one - proven by the sink's debug log
+        (`read USER tier`, `read PASS any-value`) - `Docs/live-tier-on-the-vm.md` section 2.7. The
+        original item follows.
 
         **Settle whether smtp4dev serves POP3 at all.** The runbook specifies POP3 on 110 and a
         POP3 dummy account, and `MailSinkSettings.RetrievePort` documents itself as POP3, but
@@ -159,11 +163,17 @@
         `Docs/vm-coverage-analysis.md`), so if smtp4dev turns out to be IMAP-only the choice is
         between an IMAP dummy account, a different sink, and leaving that one test to the real
         profile.
-  - [ ] **Resolve how a built server exe reaches the path tier 3 expects on the guest.** The path
-        is baked in as `AssemblyMetadata("McpServerExePath")` and points into the repository's
-        `bin` tree; the guest has no SDK, so nothing puts a binary there, and
-        `Testbed/host/Publish-GuestPayload.ps1` stages `C:\OutlookAI-Q5\server\` instead. Nothing
-        has needed this yet because the guest cannot run `dotnet test` either. Question 12.
+  - [x] **CLOSED 2026-09-24 - answered by construction, and measured.** ~~Resolve how a built
+        server exe reaches the path tier 3 expects on the guest.~~ A guest that builds the suite
+        bakes the path into ITS OWN tree, where the same build has just put the exe - the answer
+        `Testbed/guest/Install-DotnetSdk.ps1`'s banner predicted. Measured on `OutlookAI-Unindexed`
+        at `TEST-READY` (`Docs/live-tier-on-the-vm.md` section 4.1, step 7): the guest-built test
+        assembly carries `McpServerExePath` =
+        `C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer\bin\Release\net10.0-windows\OutlookAI.McpServer.exe`,
+        and that file exists. The staged `C:\OutlookAI-Q5\server\` stays the measurement driver's
+        server; the two no longer need to be the same path. Question 12.
+        Was: the path is baked in as `AssemblyMetadata("McpServerExePath")` and points into the
+        repository's `bin` tree; the guest had no SDK, so nothing put a binary there.
   - [ ] **Run `Testbed/guest/Measure-SweepCost.ps1` once.** It is the reconstruction of
         `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1`, which is gitignored and gone with its
         scratch directory. Written from the shipped `SweepFolder` source, read-only by

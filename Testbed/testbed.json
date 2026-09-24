@@ -171,25 +171,23 @@
     },
 
     "OutlookAI-Unindexed": {
+      "_readOffTheGuest": "READ, NOT TYPED: every store name below is what Outlook reported over COM in the TIER profile on OAI-UNINDEXED, 2026-09-24 18:20, after the step-6 populations (Docs/live-tier-on-the-vm.md section 4.1): exactly three stores - tier@vm.invalid (C:\\OutlookAI-Tier\\Outlook.pst, the tier account's delivery store), identity@vm.invalid (identity.pst, the identity account's) and bystander@vm.invalid (bystander.pst, no account). The identity store is watched and deliberately NOT a bystander (section 2.8b). corpus is null because this tier profile does not mount Corpus B - it lives in CorpusProfile only - and corpusIdConvention still records vm-unindexed as NOT BUILT. mailSink is filled because Testbed/guest/Install-MailSink.ps1 reported SINK-READY on this guest the same day, loopback, on its default ports.",
       "machineProfile": "Portable",
-      "testHubStoreDisplayName": "<FILL: the hub's Store.DisplayName - the dummy account's delivery store, named exactly as that account's SMTP address>",
-      "expectedStoreDisplayNames": [ "<FILL: the Store.DisplayName of every store the tier profile mounts and the census must watch - the hub, the bystander, this guest's corpus store and, once it exists, the identity account's store>" ],
+      "testHubStoreDisplayName": "tier@vm.invalid",
+      "expectedStoreDisplayNames": [ "tier@vm.invalid", "bystander@vm.invalid", "identity@vm.invalid" ],
       "indexedStoreDisplayNames": [],
       "expectedDelegateStoreDisplayNames": [],
-      "bystanderStoreDisplayNames": [ "<FILL: the stores no test may write to - the plain bystander and this guest's corpus store. Name each in expectedStoreDisplayNames as well; never the hub, never the identity account's store>" ],
+      "bystanderStoreDisplayNames": [ "bystander@vm.invalid" ],
       "probeTerm": "",
       "subjectOnlyProbe": null,
-      "corpus": {
-        "_note": "Corpus B in Docs/live-tier-on-the-vm.md section 1.3. Or null - see _blocks above.",
-        "storeDisplayName": "<FILL: the corpus store's Store.DisplayName in the tier profile>",
-        "manifestPath": "<FILL: where the build wrote the manifest on the guest - by the convention in corpusIdConvention, C:\\OutlookAI-Q5\\corpus-vm-unindexed.jsonl>",
-        "corpusId": "vm-unindexed",
-        "seed": "<FILL: an integer, from the manifest's header line>",
-        "anchorUtc": "<FILL: yyyy-MM-ddTHH:mm:ssZ, from the manifest's header line>",
-        "itemCount": "<FILL: an integer, from the manifest's header line>",
-        "windowDays": [ 7, 30, 60 ]
-      },
-      "mailSink": null
+      "corpus": null,
+      "mailSink": {
+        "submitHost": "127.0.0.1",
+        "submitPort": 25,
+        "retrieveHost": "127.0.0.1",
+        "retrievePort": 110,
+        "connectTimeoutMs": 2000
+      }
     }
   },
 
