@@ -1,13 +1,22 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    DRAFT. THIS SCRIPT HAS NEVER BEEN EXECUTED.
+    THE REGISTRY HALF HAS RUN ON A GUEST (2026-09-24). THE EFFECT IS STILL UNVERIFIED.
     ============================================================================================
 
-    It was written by an agent forbidden to read or write any Outlook registry key, on a
-    workstation holding real mail. Verified by PARSING only. Once it HAS run on a guest, replace
-    this banner with what it actually did - including, specifically, whether the knob still works
-    on the guest's Office 2024 build, because that is genuinely in doubt.
+    Run on OAI-UNINDEXED from a fresh CP-02 (Office LTSC 2024, 16.0.17932.20996), as vmadmin in
+    session 1: the guard passed; -Execute wrote all 18 values, creating three of the four keys,
+    and read every one back; a second -Execute wrote them again and read them back, creating
+    nothing; -Revert -Execute removed all 18 and left the keys in place, as documented - the
+    three it had created are left empty, and Outlook's own Setup key keeps its own values. Each
+    run exited 0.
+
+    WHAT IS STILL NOT KNOWN is the only thing this script is for: whether Outlook then opens the
+    CLASSIC account wizard on this Office 2024 build. Nobody has opened the Mail applet afterwards
+    and looked, and a value reading back proves the write, not the effect. The original
+    banner's doubt stands until that is done (Dump-UiaTree.ps1 on whichever wizard appears).
+    It was first written by an agent forbidden to read or write any Outlook registry key, on a
+    workstation holding real mail, and verified by parsing only.
 
 .SYNOPSIS
     Restores Outlook's CLASSIC account-setup wizard and stops AutoDiscover reaching the network.
@@ -16,6 +25,16 @@
 .DESCRIPTION
     RUN ON THE GUEST. Windows PowerShell 5.1 - no ternary, no `??`.
     NEVER run this on the maintainer's workstation: it changes how Outlook adds accounts.
+
+    THAT SENTENCE WAS THE ONLY THING STOPPING IT UNTIL 2026-09-24. -Execute writes eighteen HKCU
+    values - nine names, each under both the user key and the Policies key - with no check of which
+    machine it was on, and -Revert removes them just as blindly. It now
+    dot-sources OutlookMapiInterop.ps1 and calls Assert-TestbedGuest, the guard every other
+    writing script here uses, before anything else runs - the dry run included, so the plan is
+    never printed on a machine it would refuse to change. STAGE OutlookMapiInterop.ps1 BESIDE IT.
+    Proven on the maintainer's workstation the same day with -Execute: "REFUSING TO RUN. This
+    session is logged on as ...", and all four keys it names read back unchanged - every value,
+    and each key's own last-write time.
 
     TWO THINGS, AND THEY ARE INDEPENDENT.
 
@@ -72,6 +91,9 @@
     Write only the wizard value, not the AutoDiscover ones. For a guest that genuinely has a
     reachable mail server and wants AutoDiscover left working.
 
+.PARAMETER ExpectedUser
+    The account the guest guard accepts. The default is the guard; see OutlookMapiInterop.ps1.
+
 .EXAMPLE
     .\Set-AccountWizardClassic.ps1
     .\Set-AccountWizardClassic.ps1 -Execute
@@ -80,12 +102,17 @@
 [CmdletBinding()]
 param(
     [string] $OfficeVersion = '16.0',
+    [string[]] $ExpectedUser = @('vmadmin'),
     [switch] $Execute,
     [switch] $Revert,
     [switch] $SkipAutoDiscover
 )
 
 $ErrorActionPreference = 'Stop'
+
+# THE GUARD, FIRST - before the plan is even printed. See the DESCRIPTION.
+. "$PSScriptRoot\OutlookMapiInterop.ps1"
+Assert-TestbedGuest -ExpectedUser $ExpectedUser
 
 $setupUser   = "HKCU:\SOFTWARE\Microsoft\Office\$OfficeVersion\Outlook\setup"
 $setupPolicy = "HKCU:\SOFTWARE\Policies\Microsoft\Office\$OfficeVersion\Outlook\setup"

@@ -14,7 +14,7 @@
 
     So this script asks one question of the tree: DOES THE THING THE DOCUMENT NAMES EXIST HERE?
 
-    EIGHT CHECKS.
+    NINE CHECKS.
 
     1. NO DANGLING REPOSITORY REFERENCE. Every repository-relative path named in a tracked
        document or testbed script must exist, or be on the declared list below with a reason.
@@ -71,6 +71,17 @@
        and the workflow that runs T1 only triggers on McpServer/ - this script runs on every pull
        request. T1/LiveTestSettingsTemplateTests covers the other half: that the template still
        renders into something the live tier's loader accepts.
+
+    9. EVERY GUEST SCRIPT THAT WRITES CALLS THE GUEST GUARD, AND BEFORE ITS FIRST WRITE. The
+       guard (Assert-TestbedGuest, or a restated Assert-TestbedGuestLocal) is what keeps a
+       testbed script off the maintainer's workstation, where the Outlook profile is real. Three
+       scripts were found on 2026-09-24 writing without one - one of them renaming stores while
+       its banner claimed an identity check it did not have. So this parses every script under
+       Testbed/guest/, finds its first write to the registry, the mailbox (any Outlook COM
+       session), a scheduled task, a service, a locale or power setting, or a process launch, and
+       requires the guard to come first. The writers it found unguarded on that day and that the
+       same change did not own are declared by name with a reason, and the list is a ratchet: an
+       entry that stops being true fails the check until it is deleted.
 
     Run it from anywhere:
         pwsh -File .github/scripts/check-testbed-references.ps1
@@ -670,6 +681,280 @@ if ($settingsProblems.Count -gt 0) {
 }
 else {
     Pass 'live-test settings template holds tokens only, with the example''s fields' "$($templateLeaves.Count) token(s) matching $exampleRelative, $guestCount guest section(s) in testbed.json of the same shape, the guest root agreeing with the stager, no live-test-settings.json tracked"
+}
+
+# ---------------------------------------------------------------------------------------------
+# 9. Every guest script that writes calls the guest guard - and calls it before its first write.
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+
+# WHY THIS EXISTS. On 2026-09-24 three scripts under Testbed/guest/ were found writing with no
+# check of which machine they were on: Rename-OutlookStore.ps1 - whose banner claimed it ran "on a
+# guest whose identity this script verifies" and verified nothing - renames a store in whatever
+# profile Outlook has open, and Set-AccountWizardClassic.ps1 and Set-OfficeFirstRunSuppressed.ps1
+# write Office policy values. Run on the maintainer's workstation, the first renames a REAL
+# mailbox. A banner is not a guard, and a guard nothing checks for is one refactor from gone.
+#
+# WHAT COUNTS AS A WRITE. The subject is the MACHINE and the MAILBOX, never files: every script
+# here writes its own log, and a log on the wrong machine harms nothing. A script writes when a
+# statement that runs at script level - or a function of the same file that it calls, followed
+# transitively - does one of the things in $guardWriteCommands, or: New-Item / Remove-Item /
+# Set-Item / Rename-Item / Move-Item / Copy-Item / Clear-Item with a literal registry path;
+# reg.exe add/delete/import/restore/load/unload/copy; New-Object -ComObject Outlook.*; the .NET
+# registry mutators (SetValue, DeleteValue, CreateSubKey, DeleteSubKey, DeleteSubKeyTree);
+# GetActiveObject on Outlook; or the corpus tool's literal '--execute'.
+#
+# WHY AN OUTLOOK COM SESSION COUNTS, READ-ONLY OR NOT. Rename-OutlookStore.ps1's only write is
+# `$root.Name = $DisplayName` - a COM property set, which no static reading can tell from any other
+# assignment. What CAN be seen is the session that makes it possible, and a session opened on the
+# workstation is already the harm: it is the real profile, with real delegate mailboxes.
+#
+# WHAT COUNTS AS THE GUARD. A call to Assert-TestbedGuest (OutlookMapiInterop.ps1, which the file
+# must dot-source first) or to Assert-TestbedGuestLocal (a restatement the file itself defines,
+# which must read $env:USERNAME and throw). And the shared one is itself checked: a guard whose
+# body stopped reading $env:USERNAME or stopped throwing would satisfy every call site while
+# guarding nothing.
+#
+# BEFORE THE FIRST WRITE. Statements are walked in source order, expanding calls into the same
+# file's functions, and the first guard-or-write event must be the guard. Branches are NOT
+# evaluated: a write anywhere before the guard fails even if its branch would not run, and a
+# guard inside a branch counts even if that branch would not run. The first half is the safe
+# direction; the second is a known limit, and every guarded script today calls it
+# unconditionally.
+#
+# WHAT IT CANNOT SEE. A registry path held in a variable handed to New-Item/Remove-Item (the
+# value writes beside it are seen); functions from a dot-sourced file other than the shared
+# Outlook session helper; and anything an executable does once launched with the call operator or
+# [Diagnostics.Process]::Start rather than Start-Process. Build-Corpus.ps1's corpus tool is caught
+# only by its '--execute'; Set-AccountSignature.ps1's signature write happens inside the shipped
+# server and is not seen at all (that script is guarded anyway); Invoke-GuestMeasure.ps1 starts
+# the MCP server that way and calls read-only tools through it, so it passes as a non-writer.
+#
+# KNOWN GAPS ARE DECLARED, NOT HIDDEN. $guardExemptions lists the writers this check found
+# unguarded on the day it was written, each with its reason. It is a RATCHET: an entry whose
+# script gains the guard, stops writing or disappears FAILS the check until the entry is deleted,
+# so the list can only shrink. A new unguarded writer cannot join it quietly - adding one is a
+# visible edit to this file.
+
+$guardWriteCommands = @{
+    'New-ItemProperty' = 'a registry write'; 'Set-ItemProperty' = 'a registry write'
+    'Remove-ItemProperty' = 'a registry write'; 'Rename-ItemProperty' = 'a registry write'
+    'Clear-ItemProperty' = 'a registry write'; 'Copy-ItemProperty' = 'a registry write'
+    'Move-ItemProperty' = 'a registry write'
+    'Invoke-WithOutlookSession' = 'an Outlook COM session'
+    'Start-Process' = 'a process launch (Outlook, an installer)'; 'Stop-Process' = 'a process kill'
+    'taskkill' = 'a process kill'; 'taskkill.exe' = 'a process kill'
+    'Register-ScheduledTask' = 'a scheduled task'; 'Unregister-ScheduledTask' = 'a scheduled task'
+    'Set-ScheduledTask' = 'a scheduled task'; 'schtasks' = 'a scheduled task'; 'schtasks.exe' = 'a scheduled task'
+    'New-Service' = 'a service'; 'Set-Service' = 'a service'; 'Remove-Service' = 'a service'
+    'Start-Service' = 'a service'; 'Stop-Service' = 'a service'; 'Restart-Service' = 'a service'
+    'sc.exe' = 'a service'
+    'Set-WinUserLanguageList' = 'a locale setting'; 'Set-WinSystemLocale' = 'a locale setting'
+    'Set-Culture' = 'a locale setting'; 'Set-WinHomeLocation' = 'a locale setting'
+    'Set-WinUILanguageOverride' = 'a locale setting'; 'Set-WinDefaultInputMethodOverride' = 'a locale setting'
+    'Set-TimeZone' = 'a locale setting'
+    'powercfg' = 'a power setting'; 'powercfg.exe' = 'a power setting'
+    'msiexec' = 'an installer'; 'msiexec.exe' = 'an installer'
+}
+$guardItemCommands = @('New-Item', 'Remove-Item', 'Set-Item', 'Rename-Item', 'Move-Item', 'Copy-Item', 'Clear-Item')
+$guardRegistryMembers = @('SetValue', 'DeleteValue', 'CreateSubKey', 'DeleteSubKey', 'DeleteSubKeyTree')
+$guardNames = @('Assert-TestbedGuest', 'Assert-TestbedGuestLocal')
+
+$guardExemptions = @(
+    @{
+        Path = 'Testbed/guest/Build-Corpus.ps1'
+        Why  = 'Writes 20,000 items into a store through the corpus tool''s --execute, and never asks which machine it is on. The workstation is covered twice, but not by this guard: its own preflight refuses a default profile holding any mail account, and the tool''s CorpusSafety refuses again with no override - the maintainer''s profile has several. -SkipPreflight removes the first layer. Outside the change that added this check; give it the guard and delete this entry.'
+    }
+    @{
+        Path = 'Testbed/guest/Complete-FirstLogon.ps1'
+        Why  = 'Rewrites the language list, locales, home location, power and screen-saver settings of whatever machine runs it. It runs once, unattended, from the answer volume that Testbed/host/New-AnswerFile.ps1 builds - which carries this file ALONE, so the shared guard cannot be dot-sourced there. It needs a restated guard (Assert-TestbedGuestLocal on the user AND the OAI- computer-name prefix, as Set-OutlookIndexingDisabled.ps1 has), and that change belongs to whoever next rebuilds the answer volume, because it has to be proven on a fresh install.'
+    }
+    @{
+        Path = 'Testbed/guest/Measure-SweepCost.ps1'
+        Why  = 'Binds Outlook over COM and walks a store''s folders. Its banner says read-only by construction and never executed - so on the workstation it would open the real mailbox rather than change it, which is still what the guard exists to prevent. Guard it before its first run.'
+    }
+    @{
+        Path = 'Testbed/guest/Register-InteractiveTask.ps1'
+        Why  = 'Registers and unregisters a scheduled task that runs arbitrary script text in the interactive session as the current user. It is the transport every session-1 step in this directory rides, always invoked over PowerShell Direct as vmadmin; on the workstation it would install a task running as the maintainer. The fix is one guard call - Testbed/README.md section 1 already stages OutlookMapiInterop.ps1 beside it - but it changes the one route everything else depends on, so it waits for a change that is proven on a guest the same day.'
+    }
+)
+
+# Walks an AST in source order, expanding calls into the same file's functions where they happen,
+# and records the FIRST guard, the FIRST write and the FIRST dot-source of OutlookMapiInterop.ps1,
+# each with its position in that walk. $State is shared across the recursion; $Chain stops a
+# function expanding into itself; $Pure remembers functions whose whole body holds no event.
+function Invoke-GuardWalk {
+    param($Ast, [hashtable] $Functions, [hashtable] $State, [string[]] $Chain, [hashtable] $Pure)
+
+    $before = $State.Events
+    $nodes = @($Ast.FindAll({
+                param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -or
+                $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -or
+                $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                $n -is [System.Management.Automation.Language.CommandParameterAst]
+            }, $true) | Sort-Object { $_.Extent.StartOffset })
+
+    foreach ($node in $nodes) {
+        if ($null -ne $State.Guard -and $null -ne $State.Write -and $null -ne $State.Interop) { return }
+
+        # A nested function's body runs only when called - and a call is expanded where it happens.
+        $inner = $false
+        $p = $node.Parent
+        while ($null -ne $p -and -not [object]::ReferenceEquals($p, $Ast)) {
+            if ($p -is [System.Management.Automation.Language.FunctionDefinitionAst]) { $inner = $true; break }
+            $p = $p.Parent
+        }
+        if ($inner) { continue }
+
+        $kind = $null
+        $what = $null
+        $line = $node.Extent.StartLineNumber
+        if ($node -is [System.Management.Automation.Language.CommandAst]) {
+            $name = $node.GetCommandName()
+            if ($node.InvocationOperator -eq 'Dot' -and $node.Extent.Text -match 'OutlookMapiInterop\.ps1') {
+                $kind = 'interop'; $what = 'the dot-source of OutlookMapiInterop.ps1'
+            }
+            elseif (-not $name) { continue }
+            else {
+                $texts = @($node.CommandElements | Select-Object -Skip 1 | ForEach-Object { $_.Extent.Text.Trim('''', '"') })
+                if ($guardNames -contains $name) {
+                    $kind = 'guard'; $what = $name
+                }
+                elseif ($guardWriteCommands.ContainsKey($name)) {
+                    $kind = 'write'; $what = "$name ($($guardWriteCommands[$name]))"
+                }
+                elseif ($guardItemCommands -contains $name -and @($texts | Where-Object { $_ -match '^(HK[A-Z_]*:|HKEY_|Registry::|Microsoft\.PowerShell\.Core\\Registry::)' }).Count -gt 0) {
+                    $kind = 'write'; $what = "$name on a registry path (a registry write)"
+                }
+                elseif (@('reg', 'reg.exe') -contains $name -and $texts.Count -gt 0 -and @('add', 'delete', 'import', 'restore', 'load', 'unload', 'copy') -contains $texts[0].ToLowerInvariant()) {
+                    $kind = 'write'; $what = "reg $($texts[0]) (a registry write)"
+                }
+                elseif ($name -eq 'New-Object' -and ($node.Extent.Text -match '(?i)-ComObject\s+[''"]?Outlook\.')) {
+                    $kind = 'write'; $what = 'New-Object -ComObject Outlook.* (an Outlook COM session)'
+                }
+                elseif ($Functions.ContainsKey($name) -and $Chain -notcontains $name -and -not $Pure.ContainsKey($name.ToLowerInvariant())) {
+                    $mark = $State.Events
+                    Invoke-GuardWalk -Ast $Functions[$name].Body -Functions $Functions -State $State -Chain (@($Chain) + $name) -Pure $Pure
+                    if ($State.Events -eq $mark) { $Pure[$name.ToLowerInvariant()] = $true }
+                    continue
+                }
+            }
+        }
+        elseif ($node -is [System.Management.Automation.Language.InvokeMemberExpressionAst]) {
+            $member = $node.Member.Extent.Text.Trim('''', '"')
+            if ($guardRegistryMembers -contains $member) {
+                $kind = 'write'; $what = ".$member() (a .NET registry write)"
+            }
+            elseif ($member -eq 'GetActiveObject' -and $node.Extent.Text -match '(?i)Outlook\.') {
+                $kind = 'write'; $what = 'GetActiveObject(Outlook.*) (an Outlook COM session)'
+            }
+        }
+        elseif ($node -is [System.Management.Automation.Language.CommandParameterAst]) {
+            if ($node.ParameterName -ceq '-execute') { $kind = 'write'; $what = "--execute handed to the corpus tool (mailbox items)" }
+        }
+        elseif ($node.Value -ceq '--execute') {
+            $kind = 'write'; $what = "'--execute' handed to the corpus tool (mailbox items)"
+        }
+
+        if ($null -eq $kind) { continue }
+        $State.Events++
+        if ($Chain.Count -gt 0) { $what = "$what, reached through $($Chain -join ' -> ')" }
+        $event = [pscustomobject]@{ Seq = $State.Events; What = $what; Line = $line }
+        if ($kind -eq 'guard' -and $null -eq $State.Guard) { $State.Guard = $event }
+        if ($kind -eq 'write' -and $null -eq $State.Write) { $State.Write = $event }
+        if ($kind -eq 'interop' -and $null -eq $State.Interop) { $State.Interop = $event }
+    }
+}
+
+$guardProblems = @()
+$guardedWriters = @()
+$nonWriters = @()
+$declaredGaps = @()
+$guestDir = Join-Path $RepoRoot 'Testbed\guest'
+$guestScripts = @(Get-ChildItem -LiteralPath $guestDir -Filter '*.ps1' -File -ErrorAction SilentlyContinue | Sort-Object Name)
+if ($guestScripts.Count -eq 0) {
+    $guardProblems += 'No scripts found under Testbed/guest/ - either they moved or this check is switched off.'
+}
+
+# The shared guard itself, first: every call site below trusts it.
+$interopPath = Join-Path $guestDir 'OutlookMapiInterop.ps1'
+if (-not (Test-Path -LiteralPath $interopPath)) {
+    $guardProblems += 'Testbed/guest/OutlookMapiInterop.ps1 does not exist, so Assert-TestbedGuest is defined nowhere and every script calling it fails - or this check is out of date.'
+}
+else {
+    $interopAst = [System.Management.Automation.Language.Parser]::ParseFile($interopPath, [ref]$null, [ref]$null)
+    $sharedGuard = @($interopAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-TestbedGuest' }, $true))
+    if ($sharedGuard.Count -ne 1 -or $sharedGuard[0].Body.Extent.Text -notmatch '\$env:USERNAME' -or $sharedGuard[0].Body.Extent.Text -notmatch '\bthrow\b') {
+        $guardProblems += 'Assert-TestbedGuest in Testbed/guest/OutlookMapiInterop.ps1 is missing, duplicated, or no longer both reads $env:USERNAME and throws. Every guarded call site trusts it; a gutted guard passes them all while guarding nothing.'
+    }
+}
+
+$exemptionIndex = @{}
+foreach ($e in $guardExemptions) { $exemptionIndex[$e.Path.ToLowerInvariant()] = $e }
+$seenExemptions = @{}
+
+foreach ($file in $guestScripts) {
+    $rel = 'Testbed/guest/' + $file.Name
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$parseErrors)
+    if ($parseErrors -and $parseErrors.Count -gt 0) { continue }   # check 5 reports it
+
+    $functions = @{}
+    foreach ($fd in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+        $functions[$fd.Name] = $fd
+    }
+    $walk = @{ Events = 0; Guard = $null; Write = $null; Interop = $null }
+    Invoke-GuardWalk -Ast $ast -Functions $functions -State $walk -Chain @() -Pure @{}
+
+    $problem = $null
+    if ($null -eq $walk.Write) {
+        # Nothing this check recognises as a write. Guarded anyway is still worth saying.
+        if ($null -ne $walk.Guard) { $nonWriters += "$($file.Name) (guarded)" } else { $nonWriters += $file.Name }
+    }
+    elseif ($null -eq $walk.Guard) {
+        $problem = "$rel writes - first $($walk.Write.What), line $($walk.Write.Line) - and never calls the guest guard. Dot-source OutlookMapiInterop.ps1 and call Assert-TestbedGuest before anything touches the machine, as Set-DefaultOutlookProfile.ps1 does."
+    }
+    elseif ($walk.Write.Seq -lt $walk.Guard.Seq) {
+        $problem = "$rel calls the guard, but only after it first writes: $($walk.Write.What), line $($walk.Write.Line), comes before $($walk.Guard.What), line $($walk.Guard.Line). A guard that runs after a write has already failed."
+    }
+    elseif ($walk.Guard.What -like 'Assert-TestbedGuestLocal*') {
+        # A restated guard must be a real one.
+        $local = $functions['Assert-TestbedGuestLocal']
+        if ($null -eq $local -or $local.Body.Extent.Text -notmatch '\$env:USERNAME' -or $local.Body.Extent.Text -notmatch '\bthrow\b') {
+            $problem = "$rel calls Assert-TestbedGuestLocal, and its own definition of it is missing or no longer both reads `$env:USERNAME and throws."
+        }
+    }
+    elseif ($null -eq $walk.Interop -or $walk.Interop.Seq -gt $walk.Guard.Seq) {
+        $problem = "$rel calls Assert-TestbedGuest without first dot-sourcing OutlookMapiInterop.ps1, which is where it is defined - at run time that is a 'not recognized' error rather than a refusal."
+    }
+
+    $exemption = $exemptionIndex[$rel.ToLowerInvariant()]
+    if ($null -ne $exemption) {
+        $seenExemptions[$rel.ToLowerInvariant()] = $true
+        if ($null -eq $problem) {
+            $guardProblems += "$rel is declared an unguarded writer in `$guardExemptions, and it no longer is one - it is guarded, or it stopped writing. Delete its entry: the list only shrinks."
+        }
+        else {
+            $declaredGaps += $file.Name
+        }
+        continue
+    }
+    if ($null -ne $problem) { $guardProblems += $problem }
+    elseif ($null -ne $walk.Write) { $guardedWriters += $file.Name }
+}
+
+foreach ($e in $guardExemptions) {
+    if (-not $seenExemptions.ContainsKey($e.Path.ToLowerInvariant())) {
+        $guardProblems += "$($e.Path) is declared in `$guardExemptions and does not exist. Delete its entry."
+    }
+}
+
+if ($guardProblems.Count -gt 0) {
+    Fail 'every guest script that writes calls the guest guard first' (($guardProblems | Sort-Object -Unique) -join "`n        ")
+}
+else {
+    Pass 'every guest script that writes calls the guest guard first' ("$($guardedWriters.Count) writer(s) guarded before their first write ($($guardedWriters -join ', ')); $($nonWriters.Count) with no write this check recognises ($($nonWriters -join ', ')); $($declaredGaps.Count) KNOWN UNGUARDED writer(s), each declared with its reason in `$guardExemptions: $($declaredGaps -join ', ')")
 }
 
 # ---------------------------------------------------------------------------------------------

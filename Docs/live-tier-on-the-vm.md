@@ -413,10 +413,49 @@ went through Extended MAPI's `IProfAdmin`, which is **measured broken** on Offic
 | An account-less profile | `outlook.exe /PIM <name>` | **The route, and measured again.** Opens the new profile with no dialog at all ("Outlook Today", on a guest whose default stayed `CorpusProfile` - `/PIM` does **not** change the default). It names its one store `Outlook Data File`; both guests' `CorpusProfile` were made this way. |
 | A named PST into an existing profile | `Testbed/guest/Add-OutlookPstStore.ps1` - `NameSpace.AddStoreEx`, then a root-folder rename (section 2.6) | **Works, every path, unchanged.** `AddStoreEx` returned at once (the spin it warns about did not happen); `Store.DisplayName` followed the rename, `@` included; a re-run is a no-op, a new name renames without a second attach, a taken name or the wrong profile is refused before anything runs. |
 | An account-less profile from a `.prf` | `Testbed/guest/New-OutlookProfile.ps1` | **The import works; the profile it makes does not open unattended.** Outlook consumes `ImportPRF` within 5 s, creates the profile and every named PST - two in one `.prf` - and then stops on its **"Email Account Setup"** dialog, at that start and every later one, with First-Run absent and again with it put back. COM reads "You are not connected". `-Execute` now **refuses** unless `-AcceptAccountWizard`, and names the `/PIM` route. |
+| The tier profile and its POP3 account | `Testbed/guest/New-TierProfile.ps1 -Execute` - `tier-profile-forcepst.prf`, the default since 2026-09-24, and the `ForcePSTPath` it now writes - then one Outlook start, then `Testbed/guest/Rename-OutlookStore.ps1` | **Works from the scripts alone - proven from `CP-02` twice on 2026-09-24.** Imported at Outlook's first start on the machine: `C:\OutlookAI-Tier\Outlook.pst` minted and bound in that start (COM `DeliveryStore` and its Drafts resolve), renamed `tier@vm.invalid`, every `-Verify` check passing. Imported at a later start instead, the account stayed **unbound** until the start after - `-Verify` failed on it until then. |
 
 So **the corpus profile is `/PIM` plus `Add-OutlookPstStore.ps1`**, then - after a guest restart,
 because it refuses while Outlook runs - `Set-DefaultOutlookProfile.ps1` to make it the default. That
 is also exactly how both guests' corpus profiles already exist.
+
+**And the tier profile comes FIRST, at Outlook's first start on the machine** (Testbed/README.md
+section 1 has the order and the two runs behind it). Three things about it a rebuilder meets:
+
+* **Until 2026-09-24 it could not be rebuilt from the repository.** The working route needs
+  `ForcePSTPath` - the directory Outlook mints an unnamed PST into, `REG_EXPAND_SZ` under
+  `HKCU\Software\Microsoft\Office\16.0\Outlook` - and nothing under `Testbed/` set it; both guests
+  got it from hand-run scratch scripts, which also defaulted to the wrong template by passing the
+  right one explicitly. `New-TierProfile.ps1 -Execute` now writes it and reads it back, refuses a
+  template that names a PST service or `DefaultStore` (the shape measured to leave `DeliveryStore`
+  NULL), and `-Verify` requires the account's delivery store to be the profile's only PST, under
+  `ForcePSTPath`. **The hand-run scripts also did damage worth knowing about:** they created the
+  Outlook key with `New-Item -Force`, which on an existing key deletes every value under it - and
+  `CP-05` is missing exactly the three values `Set-OfficeFirstRunSuppressed.ps1` writes inside that
+  key (the classic-Outlook pins), while everything it writes elsewhere is present.
+* **`ForcePSTPath` outlives the tier build.** It is per-user, so the corpus profile's `/PIM` store is
+  minted there too: in the tier-first rehearsal and on `CP-05` it is `C:\OutlookAI-Tier\Outlook Data
+  File - CorpusProfile.pst` (made corpus-first, before the value existed, it went to
+  `Documents\Outlook Files`). Harmless - the tier's `-Verify` judges the profile's own PSTs, not the
+  directory - but it is why a corpus lives in a directory called `OutlookAI-Tier`.
+* **The account binds late when the import is not Outlook's first start.** In the corpus-first
+  rehearsal the import start showed Office's one-time "Check out our new look" dialog, reached no
+  account (no POP3 prompt), and left `DeliveryStore` NULL; the next start raised the POP3 prompt and
+  bound it. The dialog is the likely cause, not a proven one. If a rebuild must import late:
+  restart, start once more, and re-run `-Verify`.
+
+**The hub has no Archive folder until something asks for one** (Q75, measured read-only
+2026-09-24 on the rehearsed tier profile). The product resolves a store's designated Archive folder
+with the undocumented `Store.GetDefaultFolder(39)` (`McpServer/OutlookAI.Core/Com/ArchiveFolderResolution.cs`).
+On the hub PST - which had no `Archive` folder - that call **returned a folder named `Archive` at
+the store's root, which it had just created**, and it passed the product's own verification (same
+store, a mail folder, none of the core defaults). The verification step then also created
+`Junk Email`: its `GetDefaultFolder(23)` is the only call there that names that folder. A second
+resolution returned the same folder and created nothing. So for the one live test that depends on
+it - `LiveMoveArchiveTests.ArchiveResolution_AllFiveStores_ReadOnly` - the answer is that it
+resolves, and that it is **not read-only on a PST**: the first run writes a folder into every
+store it resolves that lacks one. Whether a PST that is not an account's delivery store (the
+bystander, a corpus) behaves the same was not measured.
 
 Two things the runs showed about the machine rather than the scripts, recorded here because this
 is where a rebuilder meets them:
