@@ -60,6 +60,7 @@ testbed before its replacement runs.**
 | 8a | **Build the fixture populations** into the hub, the bystander and - once it exists - the identity store: small, tagged, deterministic, and what the hub and index tests read | `OutlookAI.RemediationTools corpus-build --population hub\|bystander\|identity`, in the corpus profile, with every such store attached to BOTH profiles while it is still empty - `Docs/live-tier-on-the-vm.md` §3b has the order and the commands, and the hub is rebuilt before every run. **FIRST RUN, `OutlookAI-Unindexed` 2026-09-24: NOT CLEAN** (runbook §4.1, step 6; checkpoint `CP-11-POPULATIONS-BUILT-WITH-FAULTS`). The hub - the tier profile's own default store - built right: 56 items in its real folders. But every build exited 1, because no received item carries a resolved owner recipient; a PST attached with `AddStoreEx` has no Inbox or Sent Items, so the bystander's and identity store's "Inbox" items went into the PST's hidden root; and failed probe rungs left 12 items in the account-less profile's DEFAULT store (Corpus B's Drafts), which no `--allow-store` named. **Do not build a population into a PST that is not a minted default store until those are fixed** | guest, session 1 |
 | 8b | **Make the guest able to RUN the suite at all** - it has no .NET, no git and no clone. Stage on the host, then install: `host/Publish-LiveTierPayload.ps1` then `guest/Install-DotnetSdk.ps1`. The SDK alone is not enough; the source and an offline NuGet feed travel with it. **`TEST-READY` on `OutlookAI-Unindexed` too, 2026-09-24** (runbook §4.1 step 7, `CP-12-SDK-TEST-READY`): 2,794 tests discovered, 17 run, 148 s end to end, and again from a new session - and the guest-built test assembly's `McpServerExePath` names a server exe that exists, so the T3 path question needs nothing more | host, then guest |
 | 9 | Write the live-test settings file | **render it, do not write it by hand**: read the guest's store names over COM into its `liveTestSettings` section of `testbed.json` - the watched list, and on the indexed guest the INDEXED list in the order hub, bystander, corpus - then `host/New-LiveTestSettings.ps1 -VMName <guest>`, then the `host/Copy-ToGuest.ps1` line it prints. It refuses while any value is still a placeholder, naming each. `probeTerm` and three of `subjectOnlyProbe`'s fields are already filled in: they are the population generator's own constants. Read §3b first, or the tier refuses to start. **Done for `OutlookAI-Unindexed`, 2026-09-24** (§4.1 step 8, `CP-13-LIVE-SETTINGS`): three watched stores, one bystander, no index, no corpus, the sink on loopback | host, then guest |
+| 9b | **Run the tier - and opt in, for that run and this machine** | Through `guest/Register-InteractiveTask.ps1`, with `$env:OUTLOOKAI_LIVE_OPT_IN` set to THIS guest's computer name inside the script it runs, right before `dotnet test`. Without it every live test refuses at its fixture and nothing touches Outlook. The exact lines are in §4c; the filter is the runbook's (`Docs/live-tier-on-the-vm.md` §4) | guest, session 1 |
 | 10 | Take the measurements | `guest/Invoke-GuestMeasure.ps1`, `guest/Measure-SweepCost.ps1` | guest, session 1 |
 | 11 | Get the results out | `host/Copy-FromGuest.ps1` | host |
 
@@ -754,6 +755,49 @@ The findings behind all of this, with every claim labelled Microsoft-documented,
 community-reported, guest-measured or inferred - and a list of what could **not** be established -
 are in `Docs/research/profile-automation-research.md`. Read its §1 table first: it summarises the
 answer per capability, and it now carries the measured-broken marker on the rows that named MAPI.
+
+---
+
+## 4c. Every live run opts in - for that run, on its own machine
+
+**No `Category=Live` test starts unless the run sets `OUTLOOKAI_LIVE_OPT_IN` to the computer name
+of the machine it runs on.** Decided 2026-09-24, after a targeted `dotnet test` whose name filter
+lacked `Category!=Live` selected three live tests: they failed only because that worktree had no
+settings file, and the same command in the main checkout would have run them - writes included -
+against the maintainer's real mailbox. A settings file is permanent, so it cannot be what says a
+run is MEANT to reach a mailbox; the opt-in says that, once per run. It is checked first thing in
+`LiveTestSettings.Load()`, which every live fixture starts with, and `T1/LiveRunOptInTests`
+proves from the compiled code that no live class - the stdio tier's included - can start without
+it.
+
+On a guest, the tier runs through `guest/Register-InteractiveTask.ps1` (session 0 cannot finish
+starting Outlook), so the opt-in goes INTO the script it is handed, right before `dotnet test`:
+
+```powershell
+.\Register-InteractiveTask.ps1 -TimeoutSeconds 7200 -Script @'
+$env:OUTLOOKAI_LIVE_OPT_IN = 'OAI-INDEXED'   # THIS guest's computer name - $env:COMPUTERNAME prints it
+Set-Location C:\OutlookAI-Q5\src
+dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj --filter "Category=Live&Requires!=DelegateStore"
+'@
+```
+
+`C:\OutlookAI-Q5\src` is where step 8b expands the source; the filter is the runbook's
+(`Docs/live-tier-on-the-vm.md` §4). Three rules, each refused with a message that says why:
+
+* **The value is the computer name, not "1" or "true"**, so an opt-in carried to another machine -
+  a copied script, a roaming profile - opens nothing there. Spell it out rather than pasting
+  `$env:COMPUTERNAME` into a script you might run somewhere else.
+* **Set it in the session, for the run.** A value saved with `setx`, or in System Properties, is
+  refused even on its own machine: it would open every later run there, the accidental ones
+  included. Do not put it in a PowerShell profile either - nothing can detect that, and it defeats
+  the point the same way.
+* **It changes nothing else.** It says a live run was intended; it makes no test read-only and
+  chooses no tests. **The maintainer's workstation is read-only for live tests, always** (CLAUDE.md,
+  Mailbox Safety); how that is enforced in code is the maintainer's open decision (Q74), not this.
+
+Without the opt-in, every live collection fails at its fixture with `LIVE TEST REFUSED` and nothing
+touches Outlook. `--list-tests` still discovers everything without it, because discovery never
+builds a fixture.
 
 ---
 

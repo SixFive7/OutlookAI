@@ -178,9 +178,16 @@ public sealed class LiveTestSettings
         Converters = { new JsonStringEnumConverter() },
     };
 
-    /// <summary>Loads the settings file or throws with setup instructions.</summary>
+    /// <summary>
+    /// Loads the settings file or throws with setup instructions - and FIRST refuses unless this
+    /// run opted in (<see cref="LiveRunOptIn"/>). Every live collection fixture starts here, so
+    /// this line is the one door every Category=Live test passes through; T1/LiveRunOptInTests
+    /// proves both halves from the compiled code.
+    /// </summary>
     public static LiveTestSettings Load()
     {
+        LiveRunOptIn.Require();
+
         string testProjectDir =
             typeof(LiveTestSettings).Assembly
                 .GetCustomAttributes<AssemblyMetadataAttribute>()
