@@ -1368,6 +1368,22 @@ unrecorded or unverified.
   section 2.1 says it. Anything that reproduces on the VM and not on the host, or the reverse, is
   a build-difference candidate until ruled out.
 
+  **DECIDED 2026-09-24, and it settles the version policy for good (Q73).** The maintainer's
+  words: *never* a subscription - no Microsoft 365 Apps, on any machine. So:
+
+  * **The guests stay on Office LTSC 2024**, the perpetual volume-licensed release.
+  * **The maintainer's workstation stays on Office LTSC 2021 until he chooses to move it**, and
+    until then it counts as **a production user on an older version**: a defect that reproduces
+    only there is a real defect a real user on that version would hit, reported by the one user
+    who happens to be the maintainer. LTSC 2021 leaves Microsoft support on 13 October 2026; that
+    is his call, not the testbed's.
+  * **There is no current-channel coverage anywhere, and that is accepted.** Most users on
+    Microsoft 365 run builds newer than either machine. Nothing in this repository can close that
+    gap without a subscription, and the subscription is ruled out.
+  * **LTSC 2024 is not the last perpetual release.** Microsoft has committed to another
+    on-premises release after it (see `Testbed/MEDIA.md` for sources). When it ships, moving the
+    guests is a change of staged media in a scripted build, not a rebuild by hand.
+
 * **The guest's 30-day Office grace clock is an artefact of the testbed, not something a user
   ever experiences — and it turned out to cost nothing.** The guest is a KMS client that has
   never reached a KMS host, so it runs on out-of-box grace. The maintainer's own Office is

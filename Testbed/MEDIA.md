@@ -569,6 +569,23 @@ renewal countdown, nothing to expire. So the 30-day rebuild cadence above is a p
 testbed's licensing choice**, not of Office 2024 and not of anything a user experiences. That
 matters because the cadence has previously been discussed as though it described reality.
 
+**4. The policy is settled: perpetual releases only, never a subscription (decided 2026-09-24).**
+The guests stay on LTSC 2024. The maintainer's workstation stays on LTSC 2021 until he chooses to
+move it, and meanwhile counts as a production user on an older version. There is therefore **no
+current-channel coverage anywhere**, and that is accepted — see `Docs/live-tier-on-the-vm.md`
+section 9 for the full reasoning.
+
+**LTSC 2024 is not the last perpetual release.** In its April 2024 *preview* announcement of
+LTSC 2024, Microsoft said it is committed to another on-premises release after it; an independent
+analyst reads the usual three-year cadence as pointing to around 2027. When that ships, moving the
+guests is a change of staged media here, not a rebuild by hand. **Evidence class, stated
+honestly:** the commitment is recorded here as REPORTED - Microsoft's page renders client-side and
+could not be read verbatim when this was written (2026-09-24), so the sentence was not quoted from
+it directly. Sources:
+[Upcoming preview of Microsoft Office LTSC 2024 (Microsoft Tech Community)](https://techcommunity.microsoft.com/blog/microsoft_365blog/upcoming-preview-of-microsoft-office-ltsc-2024/4082963),
+[Microsoft's subscription-free 'perpetual' Office LTSC 2024 (Directions on Microsoft)](https://www.directionsonmicrosoft.com/microsofts-subscription-free-perpetual-office-ltsc-2024-to-ship-this-year/),
+[Office 2024 and Office LTSC 2024 FAQ (Microsoft Support)](https://support.microsoft.com/en-us/office/lifecycle/office-2024-and-office-ltsc-2024-faq).
+
 ## The rule
 
 **Never destroy a working testbed before the replacement runs.**
