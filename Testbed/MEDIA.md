@@ -16,6 +16,7 @@ been unrebuildable. Hence the rule at the bottom of this file.
 | Windows | A Windows 11 x64 image | **STAGED 2026-08-24**: `.work/media/Win11_25H2_EnglishInternational_x64_v2.iso` (7.9 GB, gitignored). Consumer multi-edition, volume label `CCCOMA_X64FRE_EN-GB_DV9`, so it carries Pro. |
 | Office | Office Deployment Tool + a configuration | **STAGED**: `.work/office-odt/` (gitignored), holding `setup.exe` and `VoIPFabric.xml`. A testbed-specific `Testbed.xml` sits beside them — see below. |
 | .NET SDK | The .NET 10 SDK, **win-x64**, as the `.exe` installer | **STAGED 2026-09-17**: `.work/media/dotnet-sdk-10.0.401-win-x64.exe` (215,437,248 bytes, gitignored), SHA-512 **matched against Microsoft's published hash**. It is what lets a guest run `dotnet test` at all — see "The .NET SDK" below for the version, the source and the hash. |
+| Mail sink | Inbucket **3.1.1**, the Windows x64 release zip | **STAGED 2026-09-24**: `.work/media/inbucket_3.1.1_windows_amd64.zip` (11,444,052 bytes, gitignored), SHA-256 **matched three ways** - the maintainers' own checksums file, GitHub's asset digest, and the file itself. The one third-party program on the guests, by the maintainer's decision - see "The mail sink" below. `Testbed/host/Get-MailSinkMedia.ps1` stages it. |
 
 ### Windows — staged, and it is NOT the edition the old guest ran
 
@@ -331,6 +332,100 @@ are a real change to the machine, and the whole point of the checkpoint discipli
 
 **Neither script has ever been run.** Both carry the banner saying so. Replace those banners with
 what actually happened the first time either of them runs on a guest.
+
+## The mail sink - Inbucket, the one third-party program the guests run
+
+**Decided 2026-09-24, and it is a deliberate exception to a standing rule.** `CLAUDE.md`'s
+`## Dependencies` section says no external applications, ever. The maintainer set that aside for
+exactly this job: asked to put a loopback mail sink on the guests, they asked for "a simple ready
+made open source tool" rather than one written here - "try to keep it as simple as possible" - and
+confirmed the carve-out for this tool (Q71). It is one program, on the test guests only. Nothing in
+the product, the add-in installer or the build depends on it, and nothing is fetched at install
+time: it is media, staged and hash-pinned like everything else in this file.
+
+**Why a sink at all** is `Docs/live-tier-on-the-vm.md` section 1.4: thirteen live methods put mail
+on the wire and need it to arrive back in the hub store's Inbox, and one of them - the product's own
+two-step `send` - cannot be replaced by seeding. The guests have no network, so the transport is a
+server on `127.0.0.1` that accepts what Outlook submits and hands it back over POP3.
+
+**What the rule's spirit still asks, and how this meets it:**
+
+| The rule's spirit | Inbucket 3.1.1 |
+| --- | --- |
+| Free, open source, a permissive licence | **MIT** - the `LICENSE` in the zip: "Copyright (c) 2012 James Hillyerd" |
+| No licence key, no account | none; it is configured entirely by environment variables |
+| No telemetry, no update check | none found. The server makes no outbound connection: in its source, HTTP requests appear only in the separate REST **client** library and in the web UI calling its own API. [SOURCE, tag `v3.1.1`] |
+| Nothing fetched on the guest | the release zip is staged on the host and copied in |
+| Pinned by a hash its maintainers publish | `inbucket_3.1.1_checksums.txt`, attached to the release by the maintainers' own release pipeline (goreleaser) |
+| No runtime to install | a single static Go binary |
+
+### Which version, and where it comes from
+
+| | Value |
+| --- | --- |
+| Product | **Inbucket** - a disposable-mail server: SMTP in; POP3, a web UI and a REST API out. `github.com/inbucket/inbucket` |
+| Pinned version | **3.1.1** - tag `v3.1.1`, released 2025-12-06, the newest release on 2026-09-24 |
+| File | `inbucket_3.1.1_windows_amd64.zip` - **11,444,052 bytes** |
+| Contents | one folder, `inbucket_3.1.1_windows_amd64\`, 83 entries: `inbucket.exe` (13,698,560 bytes; an x64 **console** program; **not Authenticode-signed**), the web UI under `ui\`, licence, readme, changelog and sample scripts |
+| Where it comes from | `https://github.com/inbucket/inbucket/releases/download/v3.1.1/inbucket_3.1.1_windows_amd64.zip` |
+| Staged at | `.work/media/inbucket_3.1.1_windows_amd64.zip` on the host, beside the Windows ISO and the SDK, by `Testbed/host/Get-MailSinkMedia.ps1` |
+| Verified by | **SHA-256** |
+| Recorded hash | `232fb49c92f88505be1feceb4be90b70ca59bb7853216dee7c8b2814c85235d0` |
+| Hash provenance | **Three-way match, 2026-09-24**: (1) the line for this zip in `inbucket_3.1.1_checksums.txt`, the checksums file the maintainers attach to the release; (2) GitHub's asset `digest` in the release API; (3) the SHA-256 of the file as downloaded. |
+| For reference | `inbucket.exe` inside it: SHA-256 `bdf60308d21037fbeec5fe40287b045d16d5450ebb668b18613fbe072309172c`. `Install-MailSink.ps1` logs this after unpacking; it is not a pin. |
+| Installed with | `Testbed/guest/Install-MailSink.ps1 -ExpectedSha256 <recorded hash> -Execute` |
+
+**What the checksum proves, and what it does not.** The checksums file is not signed and is served
+from the same release page as the zip, so it proves provenance exactly as far as that page does -
+the standing of Microsoft's `releases.json` for the SDK above, no more. The recorded value adds the
+other direction: a release re-uploaded after 2026-09-24 still matches its own checksums file and no
+longer matches this table, and `Get-MailSinkMedia.ps1` refuses it for exactly that reason.
+
+**The recorded hash lives in two places, and they must agree:** this table, and the
+`$RecordedSha256` lookup in `Testbed/host/Get-MailSinkMedia.ps1`, whose every run fails when they
+do not. The guest script carries none, for the reason the SDK section gives - a number that
+travels inside the script it checks is a number nobody looks up.
+
+**Why not a newer build, and when to move.** Pin, and move deliberately: a sink whose behaviour
+changes under the tier is the same class of problem as an Office update invalidating a checkpoint.
+To move, stage the new release with `Get-MailSinkMedia.ps1 -Version <v> -ExpectedSha256 <its hash
+from the maintainers' checksums file>`, record the hash here and in that script, and re-run the guest
+install and its `-Verify`, which exists to catch a behaviour change before the tier does.
+
+### Why Inbucket, and not Mailpit or smtp4dev
+
+All three were read at the source, at the release that would be pinned. The deciding facts are two,
+and neither is a matter of taste - the full comparison is `Docs/live-tier-on-the-vm.md` section 2.7:
+
+* **The password.** On an unattended guest an Outlook logon prompt is a hang, and the tier's POP3
+  account stores no password. Inbucket's POP3 accepts any password **including none**; Mailpit
+  refuses an empty one and closes the connection, and keeps POP3 switched off until a login is
+  configured; smtp4dev refuses an empty one.
+* **Two accounts.** Mailpit and smtp4dev show every message to every POP3 login, so with the dummy
+  and the identity account both polling, whichever polls first takes the other's mail. Inbucket
+  files each message under the recipient's local part and a login reads only its own mailbox.
+
+Inbucket is also the only one of the three whose maintainers publish a checksums file.
+
+### Staging it, installing it, and where it goes in the build
+
+    pwsh -File Testbed/host/Get-MailSinkMedia.ps1 -Execute
+    pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\media\inbucket_3.1.1_windows_amd64.zip -Destination C:\OutlookAI-Q5\media\inbucket_3.1.1_windows_amd64.zip
+    pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path Testbed\guest\Install-MailSink.ps1 -Destination C:\OutlookAI-Q5\Install-MailSink.ps1
+
+then on the guest, elevated - **PowerShell Direct is fine for this**: installing the sink touches
+no COM and no Outlook:
+
+    C:\OutlookAI-Q5\Install-MailSink.ps1 -ExpectedSha256 232fb49c92f88505be1feceb4be90b70ca59bb7853216dee7c8b2814c85235d0 -Execute
+
+It goes in `Testbed/README.md` section 1 **step 7, before the tier profile**, so Outlook's very
+first send/receive finds something listening. It needs nothing from Office and could go earlier.
+**Budget ~30 MB on the guest's C:.** **Take the checkpoint after `-Verify` reports `SINK-READY`**,
+not before: a scheduled task, a launcher and a mail store are a real change to the machine.
+
+**Neither script has run on a guest.** `Install-MailSink.ps1`'s banner says so and lists what its
+`-SelfTest` covers on the host; replace it with what actually happened the first time `-Execute`
+runs.
 
 ## The licence clocks, and the corrections worth reading
 

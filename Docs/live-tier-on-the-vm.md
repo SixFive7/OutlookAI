@@ -143,42 +143,46 @@ is exactly what the declaration means. Before that was true, the identity tests 
 other Windows account's profile, and a declared bystander the running profile does not mount is
 censused, not found, and refuses the tier. It belongs in *that* account's settings file.
 
-### 1.4 A dummy account, and NO SINK - decided 2026-09-15
+### 1.4 A dummy account AND a loopback sink - decided 2026-09-24, reversing 2026-09-15
 
-**DECISION: the testbed guests get no mail sink.** The dummy account exists and is fully built by
-script - it resolves over COM with `SmtpAddress`, a bound `DeliveryStore` and a Drafts folder -
-but nothing listens on `127.0.0.1`. Mail submitted there goes nowhere.
+**DECISION (2026-09-24): the testbed guests get a mail sink - Inbucket 3.1.1 on `127.0.0.1`,
+started with the guest.** The maintainer's direction is that every live test moves to the guests
+**without compromising on the tests**, and that the guests stay deterministic, reproducible and
+rebuildable from scratch. Thirteen live methods put mail on the wire (section 1.4a). Twelve could
+have been rewritten to seed items into the PST instead - but that is a change to the tests - and
+the thirteenth, the product's own two-step `send`, cannot be replaced at all. A sink runs all
+thirteen as written. Asked to build one, the maintainer asked instead for "a simple ready made
+open source tool... as simple as possible"; section 2.7 says why that is Inbucket, and
+`Testbed/MEDIA.md` records it as the one third-party program on the guests, under a carve-out of
+`CLAUDE.md`'s Dependencies rule that the maintainer confirmed.
 
-**Why, when a sink turned out to be buildable after all.** smtp4dev *does* serve POP3: the issue
-that said otherwise was closed "not planned" in 2022 and POP3 shipped three years later from an
-unrelated pull request. `Pop3Server.cs` is absent at tag 3.10.3 and present at 3.11.0, and 3.15.0
-is the version to pin. So this is not a "cannot"; it is a "not worth it", and the arithmetic is:
+**What the 2026-09-15 decision weighed, and what answers each point now:**
 
-* A sink buys **exactly one** test method that nothing else covers - the Phase 5 two-step `send`
-  round-trip. One account of any type already reaches 26 of the 34 otherwise-blocked methods, and
-  seeding items straight into the PST reaches 33.
-* It costs a **third precondition**. `Testbed/MEDIA.md` names two - a Windows ISO and the Office
-  Deployment Tool - and `CLAUDE.md`'s Dependencies rule forbids anything a rebuilder must obtain
-  beyond those. The licence is fine (BSD-3-Clause); the precondition is the problem.
-* It costs an **undocumented manual step**: smtp4dev's POP3 refuses an empty password and the
-  `.prf` deliberately carries none, so somebody has to type one once per guest.
-* And the implementation is eleven months old with two RFC 1939 violations found by reading its
-  source - `TOP` advertised in `CAPA` with no handler, and `DELE` re-listing the mailbox per
-  command so `DELE 1; DELE 2` removes the wrong message.
+| Declined on 2026-09-15 because | Answered on 2026-09-24 by |
+| --- | --- |
+| A sink is a third media precondition, which the Dependencies rule forbids | the maintainer's carve-out for this one tool. It is media in `Testbed/MEDIA.md`: staged on the host by `Testbed/host/Get-MailSinkMedia.ps1`, pinned by a hash its maintainers publish, never fetched on a guest |
+| smtp4dev's POP3 refuses an empty password and the `.prf` carries none, so somebody types one per guest | Inbucket's POP3 accepts any password, **including none** [SOURCE]. What is left is Outlook's half - whether it sends a PASS without prompting - and that is one guest measurement, section 2.7 |
+| smtp4dev deletes at `DELE` and renumbers the mailbox mid-session, and advertises `TOP` without implementing it | Inbucket deletes at `QUIT`, keeps message numbers fixed and implements `TOP` [SOURCE]; `Testbed/guest/Install-MailSink.ps1 -Verify` asserts each one on the guest |
+| a sink buys exactly one method nothing else covers | still true, and no longer the question: the decision is not to rewrite the other twelve |
 
-**WHAT THIS GIVES UP, stated plainly rather than discovered later.** The Outbox stops being a
-canary. `LiveMailSink.EnsureOutboxDrained` and the zero-artifact sweep over folder 4 exist to
-catch a genuine send-path leak; with no transport the Outbox can never fill from a seed, so it can
-never prove a leak either. **That guard goes vacuous on the guests** - it will pass, and its
-passing will mean nothing. It still means something on the maintainer's machine, which has real
-transport.
+`[SOURCE]` means read in Inbucket's source at tag `v3.1.1`, not yet observed; the first `-Verify`
+on a guest turns each one into a measurement or a named failure.
 
-**The reserve.** `Testbed/guest/Install-MailSink.ps1` is written, staged-package-only,
-SHA-256-pinned, and its `-Verify` speaks SMTP and POP3 itself. It is not part of the build path.
-If the Phase 5 method ever has to run on a guest, that script is the route and this decision is
-the thing to revisit - not the research, which is done and is in `Docs/research/`.
+**What this gives back.** The Outbox is a canary on the guests again. With delivery really
+happening, mail that stays in the Outbox is a send-path fault, so `LiveMailSink.EnsureOutboxDrained`
+and the zero-artifact sweep over folder 4 mean on a guest what they already meant on the
+maintainer's machine. The no-sink decision had made that guard vacuous there; this undoes it.
 
-### 1.4a Why the account still points at a sink that is not there
+**What it costs, stated plainly.** One third-party program on the guests, never in the product; a
+SYSTEM scheduled task that starts it at boot; three loopback listeners (`25`, `110`, and the web
+UI's `9000`, which cannot be switched off); and one question only a guest can settle - whether
+Outlook, holding no stored POP3 password, logs in or prompts (section 2.7).
+
+**NOTHING HERE HAS RUN ON A GUEST YET.** `Install-MailSink.ps1` passes its `-SelfTest` on the host
+and has never been executed on a guest. Until its `-Verify` reports `SINK-READY` on one, every
+statement in this section about how Inbucket behaves is read from source, not measured.
+
+### 1.4a Why the account points at `127.0.0.1`
 
 The account exists because `NewDraft` resolves an `Account` object by SMTP address and refuses
 when none matches, which is what puts the entire draft, update/discard, HTML-draft and send
@@ -205,12 +209,17 @@ trade for exactly this reason, noting that **drafts are indexed exactly like rec
 
 **`Requires=Transport` over-declares by 12**: 25 methods carry it, 13 use it.
 
-**So the account is configured for a local sink that delivers back - and on the guests there is
-nothing there.** It points at `127.0.0.1` on 25 and 110 because that is what the design calls for
-and what the reserve installer would satisfy; per 1.4 no sink is installed, so a send queues in
-the Outbox and stays there. On a guest, do not send. The 13 methods that put mail on the wire are
-out of reach there by design, and 12 of them are reachable instead by seeding items straight into
-the PST, which is what the corpus generator already does 20,000 times.
+**So the account is configured for a local sink that delivers back, and since 2026-09-24 the
+guests have one.** It points at `127.0.0.1` on `25` and `110`, which is exactly where
+`Testbed/guest/Install-MailSink.ps1` binds Inbucket, and the tier profile needs no change of
+server, port or encryption for it (section 2.7 lists what it must say). All 13 methods that put
+mail on the wire run on a guest as written, and section 4's VM filter - which already selects
+them - becomes correct rather than a list of tests that could only fail.
+
+**Until a guest's sink is installed and its `-Verify` reports `SINK-READY`, do not send on that
+guest.** A send with nothing listening queues in the Outbox, and the tier's Outbox check then
+refuses every later run until that item is removed - through the suite's own helpers, never from a
+shell (`CLAUDE.md`, mailbox-safety rule 1).
 
 ---
 
@@ -540,58 +549,152 @@ Naming matters more than it looks:
 Populate the bystander with a few hundred ordinary items. The corpus generator cannot honestly
 do this: it tags everything it creates, and the bystander's whole job is to be untouched.
 
-### 2.7 The mail sink
+### 2.7 The mail sink - Inbucket 3.1.1
 
-**The sink is a third-party component and is deliberately not in this repository.** A loopback
-SMTP-plus-POP3 server is a few hundred lines of RFC 1939 whose failure modes - dot-stuffing a
-body line that begins with a period, UIDL identities that move when the store is recreated,
-`STAT` octet counts - all produce INTERMITTENT wrong answers against Outlook, which is the
-fussiest POP3 client there is. This suite exists to eliminate intermittent artifacts; writing a
-new source of them to serve it is the wrong trade, and a maintained component already does the
-job.
+**The sink is a ready-made open-source program, not code in this repository, and that is the
+maintainer's decision (2026-09-24).** A loopback SMTP-plus-POP3 server is a few hundred lines of
+RFC 1939 whose failure modes - dot-stuffing a body line that begins with a period, UIDL identities
+that move when the store is recreated, `STAT` octet counts - produce INTERMITTENT wrong answers
+against Outlook, the fussiest POP3 client there is. Asked for a sink, the maintainer asked for "a
+simple ready made open source tool... as simple as possible" rather than a new source of those.
+It is media, recorded in `Testbed/MEDIA.md` under the Dependencies carve-out they confirmed.
 
-**Use smtp4dev** (`rnwood/smtp4dev`, BSD-3-Clause, actively maintained). It is the only
-candidate that is simultaneously deliver-back, maintained, a native Windows service, and
-catch-all by default. That last point matters here specifically: the hub is named after its own
-fabricated address, and smtp4dev's auto-created mailbox accepts `Recipients="*"`, so there is
-nothing to provision per address and nothing to re-provision after a rebuild.
+**Which one, and why.** Three were read at the source of the release that would be pinned:
 
-Install and configure:
+| | **Inbucket 3.1.1** | Mailpit 1.31.2 | smtp4dev 3.15.0 |
+| --- | --- | --- | --- |
+| Licence | MIT | MIT | BSD-3-Clause |
+| Shape | one static Go binary; 11 MB zip | one static Go binary | self-contained .NET app; 77 MB zip |
+| POP3 `PASS` with no password | **accepted** | refused, and the connection closed | refused |
+| POP3 with no login configured | on | **off** - it starts only once a login is set | on, with authentication off |
+| Which mail a POP3 login sees | **only the mailbox its `USER` names** | every message, to every login | every message, to every login |
+| `DELE` | applied at `QUIT`, numbers fixed (RFC 1939) | applied at `QUIT`, numbers fixed | applied **at once**, and the mailbox renumbers |
+| `TOP` | implemented | implemented | advertised in `CAPA`, not implemented |
+| Hash published by its maintainers | `checksums.txt` on every release | none - only GitHub's computed digest | none - only GitHub's computed digest |
+| Starts as a Windows service | no; a scheduled task does it | no | yes |
+| Latest release, 2026-09-24 | 2025-12-06 | 2026-09-19 | 2026-03-03 |
+
+Where each row was read: Inbucket `pkg/server/pop3/handler.go` (the `PASS` case checks only that a
+`USER` came first; deletes run in `processDeletes` on `QUIT`), `pkg/policy/address.go` (mailbox
+naming) and `pkg/config/config.go`; Mailpit `internal/pop3/server.go` (`PASS` with no argument
+answers `-ERR must supply a password` and returns, closing the connection; `Run` returns at once
+when no POP3 credentials are loaded) and `internal/pop3/functions.go` (every login is served the
+latest 100 messages of the whole store); smtp4dev `Server/Pop3/CommandHandlers/PassCommand.cs`,
+`DeleCommand.cs` and `CapaCommand.cs`, with no `TOP` handler in the tree.
+
+**Two rows decide it, and neither is taste.**
+
+* **The password.** On an unattended guest an Outlook logon prompt is a hang, and the tier
+  profile's POP3 account deliberately stores no password. Inbucket accepts whatever arrives -
+  `PASS` with an argument, with an empty one, or with none - so the sink half of the problem
+  disappears. With either of the other two a password has to be stored in Outlook, and on Mailpit it
+  would also have to match one configured in the sink.
+* **Two accounts.** Section 2.8b adds an identity account beside the dummy one, both POP3 against
+  this sink. A sink that shows every login every message lets whichever account polls first
+  download the other's mail - an intermittent misdelivery that reads exactly like "the mail never
+  arrived". Inbucket files each message under its recipient's local part and a login reads only
+  that mailbox, so each account sees its own mail and nothing else.
+
+What Inbucket costs in return: it is not a Windows service, so a SYSTEM scheduled task starts it -
+Task Scheduler ships with Windows, so this adds nothing - and it releases about twice a year, which
+does not matter for a pinned version and is why `-Verify` exists for the day it is bumped.
+
+**Also set aside:** MailHog (MIT; SMTP and a web UI, no POP3, last release 2020-08-11); Papercut
+SMTP (Apache-2.0; SMTP capture and a viewer, no POP3); MailDev (MIT; needs Node.js, no POP3);
+MailCatcher (MIT; a Ruby gem, no POP3); GreenMail (Apache-2.0; has POP3, needs a Java runtime); and
+full mail servers - hMailServer, Stalwart, mox - each far more machine than a sink.
+
+**How it is configured.** Inbucket reads its configuration from `INBUCKET_*` environment variables
+and nothing else, and a scheduled task cannot set environment for what it starts, so the task runs
+a launcher, `C:\OutlookAI-Sink\run-sink.cmd`, that `Testbed/guest/Install-MailSink.ps1` generates
+and whose `-Verify` fails on any hand edit. The dry run prints every value with its reason; the ones
+that matter:
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| `INBUCKET_SMTP_ADDR` / `_POP3_ADDR` / `_WEB_ADDR` | `127.0.0.1:25` / `:110` / `:9000` | loopback only - anything else is an open relay on a test VM. The web UI cannot be switched off, so it is confined too |
+| `INBUCKET_MAILBOXNAMING` | `local` | a message for `NAME@anything` is filed under mailbox `name` |
+| `INBUCKET_SMTP_TLSENABLED`, `INBUCKET_POP3_TLSENABLED` | `false` | the tier profile sets `SMTPUseSSL=0` and `POP3UseSSL=0`; no `STARTTLS`, no `STLS` is offered |
+| `INBUCKET_STORAGE_TYPE` / `_PARAMS` | `file` / `path:C$\OutlookAI-Sink\store` | survives a restart, and its message ids are timestamps - the memory store would reuse UIDLs after every restart |
+| `INBUCKET_STORAGE_RETENTIONPERIOD`, `_MAILBOXMSGCAP` | `24h`, `500` | the defaults, written down: uncollected mail is purged after a day |
+
+SMTP accepts mail for any domain, and `AUTH PLAIN`/`LOGIN` with any credentials or none, so the
+tier profile's `SMTPUseAuth=0` works as it stands. Messages up to 10,240,000 bytes are accepted; a
+live run's largest is a few kilobytes.
+
+**THE MAILBOX RULE, WHICH EVERY ACCOUNT ON THIS SINK MUST FOLLOW.** A POP3 login's `USER` is used
+*verbatim* as the mailbox name, and a mailbox name is the recipient's local part, lowercased, cut at
+any `+`. So an account's POP3 user name must be exactly its lowercase local part: `tier` for
+`tier@vm.invalid` - which is what `Testbed/guest/New-TierProfile.ps1` already sets - and `identity`
+for section 2.8b's `identity@vm.invalid`. Get it wrong and nothing fails: the account reads an empty
+mailbox for ever, and every arrival wait times out pointing nowhere. `-Verify` prints each account's
+mailbox name so it can be compared.
+
+**THE PASSWORD: SETTLED FOR THE SINK, OPEN FOR OUTLOOK.**
+
+* **The sink half is settled from source and asserted on the guest.** There is no credential store
+  at all; `-Verify` logs in with `PASS` alone, `PASS ` and `PASS <anything>`, and fails if any of
+  the three is refused.
+* **The Outlook half is OPEN.** The tier `.prf` stores no POP3 password, on purpose. Whether Outlook
+  16.0.17932, holding none, sends an empty `PASS` or raises its "Internet E-mail" logon prompt is
+  documented nowhere this project could find, and it cannot be measured on the maintainer's machine.
+* **How to settle it, with no mail anywhere.** Install the sink with `-LogLevel debug`. Build the
+  tier profile and start Outlook in session 1 as usual (`Testbed/guest/Register-InteractiveTask.ps1`);
+  it connects for its start-up send/receive, and a `Namespace.SendAndReceive` asks again if it does
+  not. Then read `C:\OutlookAI-Sink\inbucket.log`:
+    * `read USER tier`, then `read PASS...`, then `Processing deletes` with `mailbox=tier` - Outlook
+      logged in holding no password. **Settled; nothing to change.**
+    * the session stops after `USER` - `Client closed connection (state AUTHORIZATION)` - or never
+      opens, and a window like "Internet E-mail - tier@vm.invalid" sits in session 1 - **Outlook
+      prompts.** Close it; do not type into it, because a typed password is a step no rebuild repeats.
+* **If Outlook prompts, the fix is on the Outlook side and belongs to the tier profile script:**
+  store a password in the account - ANY value, because this sink compares it with nothing. The
+  community-documented storage, never yet written by this project: a `REG_BINARY` value named
+  `POP3 Password` in the account's subkey under
+  `HKCU\Software\Microsoft\Office\16.0\Outlook\Profiles\<profile>\9375CFF0413111d3B88A00104B2A6676\<n>`,
+  holding a `0x02` byte followed by a DPAPI blob (current user, no entropy) of the password as
+  UTF-16LE. [COMMUNITY: SecurityXploded's Outlook password notes for 2002-2013, LaZagne's Outlook
+  module, a 2022 borncity write-up placing it under the 16.0 hive.] It is consistent with what this
+  project has MEASURED: the guest's account subkey carries `POP3 Server`, `POP3 User` and `Email` in
+  exactly that naming family (2026-09-15). What is NOT known is the precise byte layout on
+  16.0.17932 - whether the plaintext ends in a NUL. The check is the same measurement: write it with
+  Outlook closed, start Outlook, and the debug log shows `read PASS <that value>`.
+
+**Installing it.** `Testbed/MEDIA.md`, "The mail sink", has the staging and copy-in lines. On the
+guest, elevated - PowerShell Direct is fine, nothing here touches COM:
 
 ```
-winget install RnwoodLtd.smtp4dev
+C:\OutlookAI-Q5\Install-MailSink.ps1                                    # the plan; reads and writes nothing
+C:\OutlookAI-Q5\Install-MailSink.ps1 -ExpectedSha256 <hash> -Execute    # install, start, and the whole -Verify
+C:\OutlookAI-Q5\Install-MailSink.ps1 -Verify                            # again, any time
 ```
 
-Then, in `appsettings.json` beside the executable:
+Then **reboot the guest and run `-Verify` once more**: it reports how many seconds after boot the
+sink process started, which is the evidence that it starts WITH the guest rather than because the
+installer started it. Checkpoint after that. `-Uninstall -Execute` takes everything back out.
 
-* `AllowRemoteConnections: false` - **it ships as `true`; change it.** Loopback only.
-* SMTP on 25, POP3 on 110, **IMAP disabled** (nothing here needs it).
-* `AuthenticationRequired: false`, `SecureConnectionRequired: false`, `TlsMode: "None"`.
-* Leave `Mailboxes: []` so the catch-all is created automatically.
-* `Urls: "http://localhost:5000"` for its web UI.
+**What `-Verify` proves** is in the script's own banner, check by check. In short: the task and the
+launcher are what the script writes; the process runs from the install root and owns all three
+listeners on `127.0.0.1`; a message submitted over SMTP comes back over POP3 byte-intact through
+every dot-stuffing case and a base64 attachment; `TOP` works; one mailbox cannot see another's mail;
+numbers stay fixed after `DELE`; a `DELE` without `QUIT` loses nothing; and after a restart nothing
+deleted comes back and no id is reused. It writes to and deletes from only two mailboxes of its own,
+which no account reads, so it may run while Outlook is open - it then skips the restart.
 
-Register it as a service, which is what keeps it windowless and running before Outlook starts:
+**Known deviations from RFC 1939, none of which this tier trips** [SOURCE]:
 
-```
-smtp4dev --install-service
-sc.exe start Smtp4dev
-```
+* `STAT` and `LIST` report the stored size, with LF line endings, which is smaller than the CRLF
+  bytes `RETR` sends. Outlook reads to the terminator.
+* `RETR` and `TOP` still serve a message marked for deletion, where RFC 1939 wants `-ERR`. Outlook
+  never asks.
+* A single line over 64 KB ends a `RETR` with an error. Outlook's own MIME never writes one.
 
-Use `Rnwood.Smtp4dev.exe`, **not** `Rnwood.Smtp4dev.Desktop.exe`: the Desktop build creates a
-window, which this machine must never do.
-
-Before committing to ports 25 and 110, check they are free and not inside a reserved block -
-Hyper-V and WinNAT genuinely do reserve ranges on a VM:
-
-```
-netsh interface ipv4 show excludedportrange protocol=tcp
-netstat -ano -p tcp | findstr ":25 "
-```
-
-Nothing about the tests needs the well-known numbers; 2525 and 1110 are fine, and the settings
-file carries whichever you pick. **Create no inbound firewall rule.** Loopback traffic is not
-filtered, so a listener that needs a rule is a listener bound to `0.0.0.0`, which on a test VM
-is an open relay.
+**Ports.** Nothing needs the well-known numbers. If `25`, `110` or `9000` is taken or inside a
+Windows reserved range - Hyper-V and WinNAT do reserve ranges on a VM - `-Execute` says so and writes
+nothing; pick others and carry them into the tier profile and the settings `mailSink` block, which
+must agree with the script. **Create no inbound firewall rule.** Loopback traffic is not filtered,
+so a listener that needs a rule is a listener bound to `0.0.0.0`, which on a test VM is an open
+relay; `-Verify` fails if a rule names the sink.
 
 ### 2.8 The dummy account
 

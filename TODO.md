@@ -119,7 +119,16 @@
         are different facts and only the second happened: the per-account index assumption was NOT
         disproved - the design stopped depending on it, which also retired the riskiest unverified
         assumption in the whole layout.
-  - [ ] **Settle whether smtp4dev serves POP3 at all.** The runbook specifies POP3 on 110 and a
+  - [x] **CLOSED 2026-09-24 - answered, and then superseded.** Answered 2026-09-15 in
+        `Testbed/README.md` question 11: yes, smtp4dev serves POP3 from 3.11.0. Superseded
+        2026-09-24: the guests' sink is **Inbucket 3.1.1**, not smtp4dev, chosen because its POP3
+        accepts a login with no password and shows each login only its own mailbox (the
+        maintainer asked for a ready-made open-source tool; `Testbed/MEDIA.md`, "The mail sink").
+        What is still open is not this question: `Testbed/guest/Install-MailSink.ps1` has never
+        run on a guest, and whether Outlook logs in without a stored POP3 password is a guest
+        measurement - `Docs/live-tier-on-the-vm.md` section 2.7. The original item follows.
+
+        **Settle whether smtp4dev serves POP3 at all.** The runbook specifies POP3 on 110 and a
         POP3 dummy account, and `MailSinkSettings.RetrievePort` documents itself as POP3, but
         smtp4dev v3 is usually described as SMTP plus **IMAP**. If it is IMAP-only the sink
         section is wrong in a way that surfaces only as mail sitting in a sink nobody can retrieve
