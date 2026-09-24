@@ -803,87 +803,6 @@ function Invoke-Installer {
     return [pscustomobject]@{ ExitCode = $p.ExitCode; TimedOut = $false }
 }
 
-# The FIRST RUN, in a child job so a modal dialog becomes a reported timeout instead of this
-# script's hang. Everything the job holds is released in its finally; it never quits Outlook.
-$FirstRunJob = {
-    param([long] $StartedTicks, [int] $TimeoutSeconds, [string] $TuningKey, [string] $McpKey, [string] $AddinName)
-    $ErrorActionPreference = 'Stop'
-    $started = New-Object DateTime($StartedTicks, [DateTimeKind]::Utc)
-    $r = [ordered]@{ ComSeconds = $null; MapiInit = $null; TuningAfterSeconds = $null; McpAfterSeconds = $null; Connect = $null; RestartNeeded = $null; AutomationAnswered = $false; Error = $null }
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    $app = $null; $ns = $null; $addins = $null; $addin = $null; $obj = $null
-    function Get-Fresh([string] $key) {
-        $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($key, $false)
-        if ($null -eq $k) { return $false }
-        try {
-            $s = $k.GetValue('LastReconcileUtc') -as [string]
-            if (-not $s) { return $false }
-            $t = [DateTime]::MinValue
-            if (-not [DateTime]::TryParse($s, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$t)) { return $false }
-            return ($t.ToUniversalTime() -ge $started.AddSeconds(-1))
-        }
-        finally { $k.Close() }
-    }
-    try {
-        $app = New-Object -ComObject Outlook.Application
-        $r.ComSeconds = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
-        try { $ns = $app.GetNamespace('MAPI'); $null = $ns.GetDefaultFolder(6); $r.MapiInit = 'ok' }
-        catch { $r.MapiInit = $_.Exception.Message }
-        # The tuning state is what the tests read, so it gets the whole deadline. The registration
-        # reconcile runs on a worker thread and is only reported, so it gets 30 s more at most.
-        $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-        while ([DateTime]::UtcNow -lt $deadline -and $null -eq $r.TuningAfterSeconds) {
-            if (Get-Fresh $TuningKey) { $r.TuningAfterSeconds = [Math]::Round($sw.Elapsed.TotalSeconds, 1) }
-            else { Start-Sleep -Seconds 2 }
-        }
-        $mcpDeadline = [DateTime]::UtcNow.AddSeconds(30)
-        while ([DateTime]::UtcNow -lt $mcpDeadline -and $null -eq $r.McpAfterSeconds) {
-            if (Get-Fresh $McpKey) { $r.McpAfterSeconds = [Math]::Round($sw.Elapsed.TotalSeconds, 1) }
-            else { Start-Sleep -Seconds 2 }
-        }
-        try {
-            $addins = $app.COMAddIns
-            $addin = $addins.Item($AddinName)
-            $r.Connect = [bool]$addin.Connect
-            $obj = $addin.Object
-            if ($null -ne $obj) { $r.RestartNeeded = [bool]$obj.GetRestartNeeded(); $r.AutomationAnswered = $true }
-        }
-        catch { $r.Error = 'COMAddIns: ' + $_.Exception.Message }
-    }
-    catch { $r.Error = $_.Exception.GetType().Name + ': ' + $_.Exception.Message }
-    finally {
-        foreach ($o in @($obj, $addin, $addins, $ns, $app)) {
-            if ($null -ne $o) { try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($o) } catch { } }
-        }
-        [GC]::Collect(); [GC]::WaitForPendingFinalizers()
-    }
-    [pscustomobject]$r
-}
-
-# -Verify -WithOutlook: attach to an Outlook ALREADY RUNNING in this session and ask the same
-# two questions. Never starts one: GetActiveObject finds a running instance or throws.
-$AttachJob = {
-    param([string] $AddinName)
-    $r = [ordered]@{ Connect = $null; RestartNeeded = $null; AutomationAnswered = $false; Error = $null }
-    $app = $null; $addins = $null; $addin = $null; $obj = $null
-    try {
-        $app = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
-        $addins = $app.COMAddIns
-        $addin = $addins.Item($AddinName)
-        $r.Connect = [bool]$addin.Connect
-        $obj = $addin.Object
-        if ($null -ne $obj) { $r.RestartNeeded = [bool]$obj.GetRestartNeeded(); $r.AutomationAnswered = $true }
-    }
-    catch { $r.Error = $_.Exception.GetType().Name + ': ' + $_.Exception.Message }
-    finally {
-        foreach ($o in @($obj, $addin, $addins, $app)) {
-            if ($null -ne $o) { try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($o) } catch { } }
-        }
-        [GC]::Collect(); [GC]::WaitForPendingFinalizers()
-    }
-    [pscustomobject]$r
-}
-
 # =============================================================================================
 # GUARDS
 # =============================================================================================
@@ -1369,6 +1288,91 @@ if (-not ($Execute -or $Verify)) {
 }
 
 Assert-TestbedGuestLocal
+
+# Defined AFTER the guard on purpose: this job opens an Outlook COM session, and check 9 of
+# check-testbed-references.ps1 requires every write to come after the guest guard in file
+# order. It is only ever started on the -Execute path below, so nothing about behaviour moved.
+# The FIRST RUN, in a child job so a modal dialog becomes a reported timeout instead of this
+# script's hang. Everything the job holds is released in its finally; it never quits Outlook.
+$FirstRunJob = {
+    param([long] $StartedTicks, [int] $TimeoutSeconds, [string] $TuningKey, [string] $McpKey, [string] $AddinName)
+    $ErrorActionPreference = 'Stop'
+    $started = New-Object DateTime($StartedTicks, [DateTimeKind]::Utc)
+    $r = [ordered]@{ ComSeconds = $null; MapiInit = $null; TuningAfterSeconds = $null; McpAfterSeconds = $null; Connect = $null; RestartNeeded = $null; AutomationAnswered = $false; Error = $null }
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $app = $null; $ns = $null; $addins = $null; $addin = $null; $obj = $null
+    function Get-Fresh([string] $key) {
+        $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($key, $false)
+        if ($null -eq $k) { return $false }
+        try {
+            $s = $k.GetValue('LastReconcileUtc') -as [string]
+            if (-not $s) { return $false }
+            $t = [DateTime]::MinValue
+            if (-not [DateTime]::TryParse($s, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$t)) { return $false }
+            return ($t.ToUniversalTime() -ge $started.AddSeconds(-1))
+        }
+        finally { $k.Close() }
+    }
+    try {
+        $app = New-Object -ComObject Outlook.Application
+        $r.ComSeconds = [Math]::Round($sw.Elapsed.TotalSeconds, 1)
+        try { $ns = $app.GetNamespace('MAPI'); $null = $ns.GetDefaultFolder(6); $r.MapiInit = 'ok' }
+        catch { $r.MapiInit = $_.Exception.Message }
+        # The tuning state is what the tests read, so it gets the whole deadline. The registration
+        # reconcile runs on a worker thread and is only reported, so it gets 30 s more at most.
+        $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+        while ([DateTime]::UtcNow -lt $deadline -and $null -eq $r.TuningAfterSeconds) {
+            if (Get-Fresh $TuningKey) { $r.TuningAfterSeconds = [Math]::Round($sw.Elapsed.TotalSeconds, 1) }
+            else { Start-Sleep -Seconds 2 }
+        }
+        $mcpDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        while ([DateTime]::UtcNow -lt $mcpDeadline -and $null -eq $r.McpAfterSeconds) {
+            if (Get-Fresh $McpKey) { $r.McpAfterSeconds = [Math]::Round($sw.Elapsed.TotalSeconds, 1) }
+            else { Start-Sleep -Seconds 2 }
+        }
+        try {
+            $addins = $app.COMAddIns
+            $addin = $addins.Item($AddinName)
+            $r.Connect = [bool]$addin.Connect
+            $obj = $addin.Object
+            if ($null -ne $obj) { $r.RestartNeeded = [bool]$obj.GetRestartNeeded(); $r.AutomationAnswered = $true }
+        }
+        catch { $r.Error = 'COMAddIns: ' + $_.Exception.Message }
+    }
+    catch { $r.Error = $_.Exception.GetType().Name + ': ' + $_.Exception.Message }
+    finally {
+        foreach ($o in @($obj, $addin, $addins, $ns, $app)) {
+            if ($null -ne $o) { try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($o) } catch { } }
+        }
+        [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+    }
+    [pscustomobject]$r
+}
+
+# -Verify -WithOutlook: attach to an Outlook ALREADY RUNNING in this session and ask the same
+# two questions. Never starts one: GetActiveObject finds a running instance or throws.
+$AttachJob = {
+    param([string] $AddinName)
+    $r = [ordered]@{ Connect = $null; RestartNeeded = $null; AutomationAnswered = $false; Error = $null }
+    $app = $null; $addins = $null; $addin = $null; $obj = $null
+    try {
+        $app = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
+        $addins = $app.COMAddIns
+        $addin = $addins.Item($AddinName)
+        $r.Connect = [bool]$addin.Connect
+        $obj = $addin.Object
+        if ($null -ne $obj) { $r.RestartNeeded = [bool]$obj.GetRestartNeeded(); $r.AutomationAnswered = $true }
+    }
+    catch { $r.Error = $_.Exception.GetType().Name + ': ' + $_.Exception.Message }
+    finally {
+        foreach ($o in @($obj, $addin, $addins, $app)) {
+            if ($null -ne $o) { try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($o) } catch { } }
+        }
+        [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+    }
+    [pscustomobject]$r
+}
+
 $script:ResolvedOffice = Resolve-OfficeVersion
 Say "Office hive: $script:ResolvedOffice"
 
