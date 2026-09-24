@@ -780,6 +780,13 @@ store is asked exactly as before. What that changes here:
   adds `Junk Email` - or a Sync Issues folder - to a bystander any more. A folder the zero-artifact
   count cannot prove exists on a non-Exchange store fails the count loudly instead of reading as
   empty.
+* So do two checks inside write tools (decision A, direction 1): `update_draft`'s and
+  `discard_draft`'s "the item is in Drafts", and `move_mail`'s "the target is not Deleted Items or
+  the Outbox". Neither creates the folder it compares against, and a check that cannot be made
+  refuses - `drafts_folder_unreadable`, `TargetGuardUnreadable`; the move check used to let the move
+  through. On a guest, `LiveUpdateDiscardTests` now depend on the Drafts entry id designated on the
+  hub's Inbox: if they refuse the hub's own drafts as `not_in_drafts_folder`, the designation is
+  not where MS-OXOSFLD 2.2.3 puts it on this kind of store.
 
 Whether a PST that is not an account's delivery store (the bystander, a corpus) keeps these
 designations where the specification puts them was not measured, and neither was the hub after

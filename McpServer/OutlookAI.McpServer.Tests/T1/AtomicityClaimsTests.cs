@@ -58,6 +58,7 @@ public sealed class AtomicityClaimsTests
     [InlineData("not_a_mail_item")]
     [InlineData("not_an_unsent_draft")]
     [InlineData("not_in_drafts_folder")]
+    [InlineData("drafts_folder_unreadable")]
     [InlineData("compose_surface_unavailable")]
     [InlineData("signature_file_missing")]
     [InlineData("not_created_by_this_server")]
@@ -315,6 +316,41 @@ public sealed class AtomicityClaimsTests
 
         Assert.False(item.Ok);
         Assert.Equal(MutationOutcome.Unchanged, item.Outcome);
+    }
+
+    [Fact]
+    public void AMoveWhoseFolderCheckCouldNotBeMade_IsRefused_AndProvablyMovedNothing()
+    {
+        // Decision A's fail-closed rule: the guard could not establish where Deleted Items or
+        // the Outbox is, so it refused - before Move() - and the reply must say so rather than
+        // send the caller looking for a move that cannot have happened.
+        RecordingSession session = new RecordingSession { MoveRefusal = SpecialFolderGuards.TargetGuardUnreadable };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        MoveItemView item = Assert.Single(service.MoveMail(new[] { ItemId }, "Projects").Items);
+
+        Assert.False(item.Ok);
+        Assert.Equal(MutationOutcome.Unchanged, item.Outcome);
+        Assert.Contains("could not be checked", item.Error!, StringComparison.Ordinal);
+        Assert.DoesNotContain("UNKNOWN", item.Error!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ADraftWhoseDraftsFolderCouldNotBeFound_IsANamedRefusal_ThatClaimsNothingItDidNotCheck()
+    {
+        // The Drafts gate's own unreadable answer. Unnamed, it would fall into the catch-all and
+        // tell the caller the draft MAY have been deleted; named as not_in_drafts_folder, it
+        // would claim something the gate never established.
+        RecordingSession session = new RecordingSession { DiscardRefusal = SpecialFolderGuards.DraftsFolderUnreadable };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        service.DraftRegistry.Register(DraftId);
+        DraftRefusedException refusal = Assert.Throws<DraftRefusedException>(() => service.DiscardDraft(DraftId));
+
+        Assert.Equal("drafts_folder_unreadable", refusal.Reason);
+        Assert.DoesNotContain("UNKNOWN", refusal.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("does not live in a Drafts folder", refusal.Message, StringComparison.Ordinal);
+        Assert.Equal(MutationOutcome.Unchanged, OutlookTools.DraftRefusalOutcome(refusal.Reason));
     }
 
     [Fact]

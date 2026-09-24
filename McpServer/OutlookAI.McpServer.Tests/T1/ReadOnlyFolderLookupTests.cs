@@ -669,6 +669,336 @@ public sealed class ReadOnlyFolderLookupTests
         Assert.Contains("Nothing was moved", text, StringComparison.Ordinal);
     }
 
+    // ------------------------------------------------------------------ the write tools' guards (decision A, direction 1)
+    //
+    // move_mail's "not the Outbox, not Deleted Items or under it" and update_draft's/discard_draft's
+    // "in the Drafts folder" only COMPARE folder identities, so they never need the folder to
+    // exist. They run here unchanged against the same fake stores, and the control at the end of
+    // the section runs the guards as they were against the same shapes.
+
+    [Fact]
+    public void Control_TheOldGuards_OnStoresLackingTheirFolders_CreateThem_AndTheAssertionSeesIt()
+    {
+        // The fake makes every missing folder it is asked for: measured for Drafts on a guest's
+        // data file, and pessimistic for the Outbox, which the same file was measured NOT to get.
+        // Either way, if the old guards did not fail AssertCreatedNothing here, the no-creation
+        // pins on the new ones below would be decoration.
+        FakeStore bare = FakeStore.WithoutSpecialFolders();
+        FakeFolder target = bare.AddPlain("Projects");
+        _ = PreFixMoveGuard(bare, target.EntryId, Chain(target.EntryId));
+        Assert.Equal(new[] { SpecialFolders.OlFolderDeletedItems, SpecialFolders.OlFolderOutbox }, bare.Created);
+        Assert.ThrowsAny<XunitException>(() => AssertCreatedNothing(bare));
+
+        FakeStore dataFile = FakeStore.NonDeliveryPst();
+        FakeFolder folder = dataFile.AddPlain("Projects");
+        _ = PreFixDraftsGate(dataFile, Chain(folder.EntryId));
+        Assert.Equal(new[] { SpecialFolders.OlFolderDrafts }, dataFile.Created);
+        Assert.ThrowsAny<XunitException>(() => AssertCreatedNothing(dataFile));
+    }
+
+    [Fact]
+    public void MoveGuard_OnAStoreWithNeitherFolder_AsksForNeither_AndRefusesNothingOnThatGround()
+    {
+        // Nothing can be moved into a Deleted Items or an Outbox the store does not have.
+        FakeStore bare = FakeStore.WithoutSpecialFolders();
+        FakeFolder target = bare.AddPlain("Projects");
+
+        Assert.Null(SpecialFolderGuards.MoveTargetRefusal(bare, target.EntryId, Chain(target.EntryId)));
+
+        Assert.Empty(bare.GetDefaultFolderCalls);
+        AssertCreatedNothing(bare);
+    }
+
+    [Fact]
+    public void MoveGuard_OnADataFileThatIsNoDeliveryStore_AsksOnlyForTheFolderItHas()
+    {
+        FakeStore dataFile = FakeStore.NonDeliveryPst();
+        FakeFolder target = dataFile.AddPlain("Projects");
+
+        Assert.Null(SpecialFolderGuards.MoveTargetRefusal(dataFile, target.EntryId, Chain(target.EntryId)));
+
+        // Deleted Items is proven by the store's mask and asked for; the Outbox is not there, and is not.
+        Assert.Equal(new[] { SpecialFolders.OlFolderDeletedItems }, dataFile.GetDefaultFolderCalls);
+        AssertCreatedNothing(dataFile);
+    }
+
+    [Fact]
+    public void MoveGuard_StillRefusesTheOutbox_AndDeletedItems_AndEverythingUnderIt()
+    {
+        FakeStore pst = FakeStore.MeasuredTierPst();
+        string outbox = pst.EntryIdOfSpecial(SpecialFolders.OlFolderOutbox)!;
+        string deleted = pst.EntryIdOfSpecial(SpecialFolders.OlFolderDeletedItems)!;
+        FakeFolder underDeleted = pst.AddPlain("Old");
+        FakeFolder plain = pst.AddPlain("Projects");
+
+        Assert.Equal(SpecialFolderGuards.TargetIsOutbox, SpecialFolderGuards.MoveTargetRefusal(pst, outbox, Chain(outbox)));
+        Assert.Equal(SpecialFolderGuards.TargetIsDeletedItems, SpecialFolderGuards.MoveTargetRefusal(pst, deleted, Chain(deleted)));
+        Assert.Equal(
+            SpecialFolderGuards.TargetIsDeletedItems,
+            SpecialFolderGuards.MoveTargetRefusal(pst, underDeleted.EntryId, Chain(underDeleted.EntryId, deleted)));
+        Assert.Null(SpecialFolderGuards.MoveTargetRefusal(pst, plain.EntryId, Chain(plain.EntryId)));
+
+        AssertCreatedNothing(pst);
+    }
+
+    [Theory]
+    [InlineData(PropertyReadStatus.Failed)]
+    [InlineData(PropertyReadStatus.NotFound)]
+    public void MoveGuard_FailsClosed_WhenTheStoreWillNotSayWhichFoldersItHas(PropertyReadStatus mask)
+    {
+        FakeStore pst = FakeStore.MeasuredTierPst();
+        pst.MaskRead = mask;
+        FakeFolder plain = pst.AddPlain("Projects");
+
+        Assert.Equal(
+            SpecialFolderGuards.TargetGuardUnreadable,
+            SpecialFolderGuards.MoveTargetRefusal(pst, plain.EntryId, Chain(plain.EntryId)));
+
+        Assert.Empty(pst.GetDefaultFolderCalls);
+        AssertCreatedNothing(pst);
+    }
+
+    [Fact]
+    public void MoveGuard_FailsClosed_WhenAFolderResolvesButWillNotSayWhoItIs()
+    {
+        FakeStore pst = FakeStore.MeasuredTierPst();
+        pst.EntryIdUnreadable.Add(pst.EntryIdOfSpecial(SpecialFolders.OlFolderOutbox)!);
+        FakeFolder plain = pst.AddPlain("Projects");
+
+        Assert.Equal(
+            SpecialFolderGuards.TargetGuardUnreadable,
+            SpecialFolderGuards.MoveTargetRefusal(pst, plain.EntryId, Chain(plain.EntryId)));
+    }
+
+    [Fact]
+    public void MoveGuard_NamesAProvenRefusal_EvenWhenTheOtherLookupFailed()
+    {
+        // Refused either way; the reason given is the one that is actually known.
+        FakeStore pst = FakeStore.MeasuredTierPst();
+        pst.EntryIdUnreadable.Add(pst.EntryIdOfSpecial(SpecialFolders.OlFolderOutbox)!);
+        string deleted = pst.EntryIdOfSpecial(SpecialFolders.OlFolderDeletedItems)!;
+        FakeFolder underDeleted = pst.AddPlain("Old");
+
+        Assert.Equal(
+            SpecialFolderGuards.TargetIsDeletedItems,
+            SpecialFolderGuards.MoveTargetRefusal(pst, underDeleted.EntryId, Chain(underDeleted.EntryId, deleted)));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void MoveGuard_FailsClosed_OnATargetThatWillNotSayWhoItIs(string? targetEntryId)
+    {
+        FakeStore pst = FakeStore.MeasuredTierPst();
+
+        Assert.Equal(SpecialFolderGuards.TargetGuardUnreadable, SpecialFolderGuards.MoveTargetRefusal(pst, targetEntryId, Chain()));
+    }
+
+    [Fact]
+    public void MoveGuard_OnTheExchangeShape_AsksExactlyWhatTheOldGuardAsked_AndAnswersTheSame()
+    {
+        // "Exchange stays unchanged": the same GetDefaultFolder calls in the same order, no
+        // property reads, and the same verdict for every target the old guard could decide.
+        FakeStore mailbox = FakeStore.ExchangeMailbox();
+        FakeStore twin = FakeStore.ExchangeMailbox();
+        string outbox = mailbox.EntryIdOfSpecial(SpecialFolders.OlFolderOutbox)!;
+        string deleted = mailbox.EntryIdOfSpecial(SpecialFolders.OlFolderDeletedItems)!;
+        string underDeleted = mailbox.AddPlain("Old").EntryId;
+        string plain = mailbox.AddPlain("Projects").EntryId;
+        Assert.Equal(underDeleted, twin.AddPlain("Old").EntryId);
+        Assert.Equal(plain, twin.AddPlain("Projects").EntryId);
+
+        (string Target, string[] Folders, string? Expected)[] cases =
+        {
+            (outbox, new[] { outbox }, SpecialFolderGuards.TargetIsOutbox),
+            (deleted, new[] { deleted }, SpecialFolderGuards.TargetIsDeletedItems),
+            (underDeleted, new[] { underDeleted, deleted }, SpecialFolderGuards.TargetIsDeletedItems),
+            (plain, new[] { plain }, null),
+        };
+        foreach ((string target, string[] chain, string? expected) in cases)
+        {
+            Assert.Equal(expected, SpecialFolderGuards.MoveTargetRefusal(mailbox, target, Chain(chain)));
+            Assert.Equal(expected, PreFixMoveGuard(twin, target, Chain(chain)));
+        }
+
+        Assert.Equal(twin.GetDefaultFolderCalls, mailbox.GetDefaultFolderCalls);
+        Assert.Equal(new[] { 3, 4, 3, 4, 3, 4, 3, 4 }, mailbox.GetDefaultFolderCalls);
+        Assert.Equal(0, mailbox.PropertyReads);
+        AssertCreatedNothing(mailbox);
+    }
+
+    [Fact]
+    public void MoveGuard_OnExchange_ALookupThatFails_NowRefuses_WhereTheOldGuardLetTheMoveThrough()
+    {
+        // The one Exchange difference, and it IS the fail-closed rule: GetDefaultFolder(3)
+        // failing used to read as "no Deleted Items", so a move INTO Deleted Items went ahead.
+        FakeStore mailbox = FakeStore.ExchangeMailbox();
+        FakeStore twin = FakeStore.ExchangeMailbox();
+        mailbox.DefaultFolderCallFails.Add(SpecialFolders.OlFolderDeletedItems);
+        twin.DefaultFolderCallFails.Add(SpecialFolders.OlFolderDeletedItems);
+        string deleted = mailbox.EntryIdOfSpecial(SpecialFolders.OlFolderDeletedItems)!;
+
+        Assert.Null(PreFixMoveGuard(twin, deleted, Chain(deleted)));
+        Assert.Equal(SpecialFolderGuards.TargetGuardUnreadable, SpecialFolderGuards.MoveTargetRefusal(mailbox, deleted, Chain(deleted)));
+        Assert.Equal(twin.GetDefaultFolderCalls, mailbox.GetDefaultFolderCalls);
+    }
+
+    [Fact]
+    public void DraftsGate_OnAStoreWithoutDrafts_IsNotADraft_AndCreatesNothing()
+    {
+        // A store with no Drafts folder holds no draft.
+        FakeStore dataFile = FakeStore.NonDeliveryPst();
+        FakeFolder folder = dataFile.AddPlain("Projects");
+
+        Assert.Equal(SpecialFolderGuards.NotInDraftsFolder, SpecialFolderGuards.DraftsFolderRefusal(dataFile, Chain(folder.EntryId)));
+
+        Assert.DoesNotContain(SpecialFolders.OlFolderDrafts, dataFile.GetDefaultFolderCalls);
+        AssertCreatedNothing(dataFile);
+    }
+
+    [Fact]
+    public void DraftsGate_FindsDraftsThroughTheInboxDesignation_WithoutAskingForIt()
+    {
+        FakeStore pst = FakeStore.MeasuredTierPst();
+        string drafts = pst.EntryIdOfSpecial(SpecialFolders.OlFolderDrafts)!;
+        string inbox = pst.EntryIdOfSpecial(SpecialFolders.OlFolderInbox)!;
+        FakeFolder underDrafts = pst.AddPlain("Held");
+
+        Assert.Null(SpecialFolderGuards.DraftsFolderRefusal(pst, Chain(drafts)));
+        Assert.Null(SpecialFolderGuards.DraftsFolderRefusal(pst, Chain(underDrafts.EntryId, drafts)));
+        Assert.Equal(SpecialFolderGuards.NotInDraftsFolder, SpecialFolderGuards.DraftsFolderRefusal(pst, Chain(inbox)));
+
+        Assert.DoesNotContain(SpecialFolders.OlFolderDrafts, pst.GetDefaultFolderCalls);
+        AssertCreatedNothing(pst);
+    }
+
+    [Theory]
+    [InlineData(PropertyReadStatus.Failed, PropertyReadStatus.Found)]
+    [InlineData(PropertyReadStatus.NotFound, PropertyReadStatus.Found)]
+    [InlineData(PropertyReadStatus.Found, PropertyReadStatus.Failed)]
+    public void DraftsGate_FailsClosed_WhenWhereDraftsIsCannotBeRead(PropertyReadStatus mask, PropertyReadStatus inboxDesignation)
+    {
+        FakeStore pst = FakeStore.MeasuredTierPst();
+        pst.MaskRead = mask;
+        pst.InboxDesignationRead = inboxDesignation;
+        string drafts = pst.EntryIdOfSpecial(SpecialFolders.OlFolderDrafts)!;
+
+        // Even for an item that IS in Drafts: unproven is refused, never assumed.
+        Assert.Equal(SpecialFolderGuards.DraftsFolderUnreadable, SpecialFolderGuards.DraftsFolderRefusal(pst, Chain(drafts)));
+
+        Assert.DoesNotContain(SpecialFolders.OlFolderDrafts, pst.GetDefaultFolderCalls);
+        AssertCreatedNothing(pst);
+    }
+
+    [Fact]
+    public void DraftsGate_AnInboxThatDesignatesNoDrafts_ReadsAsNoDraftsFolder()
+    {
+        // THE ASSUMPTION A GUEST HAS TO CONFIRM. On a store that is not Exchange the gate finds
+        // Drafts where MS-OXOSFLD 2.2.3 puts it for the mailbox owner - designated on the Inbox,
+        // or on the store object. A store whose designation lives anywhere else reads as having
+        // no Drafts folder, and every draft in it is refused as not_in_drafts_folder.
+        FakeStore pst = FakeStore.MeasuredTierPst();
+        pst.InboxDesignationRead = PropertyReadStatus.NotFound;
+        string drafts = pst.EntryIdOfSpecial(SpecialFolders.OlFolderDrafts)!;
+
+        Assert.Equal(SpecialFolderGuards.NotInDraftsFolder, SpecialFolderGuards.DraftsFolderRefusal(pst, Chain(drafts)));
+        AssertCreatedNothing(pst);
+    }
+
+    [Fact]
+    public void DraftsGate_OnTheExchangeShape_AsksExactlyWhatTheOldGateAsked_AndAnswersTheSame()
+    {
+        FakeStore mailbox = FakeStore.ExchangeMailbox();
+        FakeStore twin = FakeStore.ExchangeMailbox();
+        string drafts = mailbox.EntryIdOfSpecial(SpecialFolders.OlFolderDrafts)!;
+        string inbox = mailbox.EntryIdOfSpecial(SpecialFolders.OlFolderInbox)!;
+
+        Assert.Null(SpecialFolderGuards.DraftsFolderRefusal(mailbox, Chain(drafts)));
+        Assert.Null(PreFixDraftsGate(twin, Chain(drafts)));
+        Assert.Equal(SpecialFolderGuards.NotInDraftsFolder, SpecialFolderGuards.DraftsFolderRefusal(mailbox, Chain(inbox)));
+        Assert.Equal(SpecialFolderGuards.NotInDraftsFolder, PreFixDraftsGate(twin, Chain(inbox)));
+
+        Assert.Equal(twin.GetDefaultFolderCalls, mailbox.GetDefaultFolderCalls);
+        Assert.Equal(new[] { 16, 16 }, mailbox.GetDefaultFolderCalls);
+        Assert.Equal(0, mailbox.PropertyReads);
+        AssertCreatedNothing(mailbox);
+    }
+
+    [Fact]
+    public void DraftsGate_OnExchange_ALookupThatFails_IsStillRefused_NowWithTheTrueReason()
+    {
+        // The old gate refused too, but by claiming the item was not in Drafts - which it had
+        // not checked. Same refusal; the reason now says the check could not be made.
+        FakeStore mailbox = FakeStore.ExchangeMailbox();
+        FakeStore twin = FakeStore.ExchangeMailbox();
+        mailbox.DefaultFolderCallFails.Add(SpecialFolders.OlFolderDrafts);
+        twin.DefaultFolderCallFails.Add(SpecialFolders.OlFolderDrafts);
+        string drafts = mailbox.EntryIdOfSpecial(SpecialFolders.OlFolderDrafts)!;
+
+        Assert.Equal(SpecialFolderGuards.NotInDraftsFolder, PreFixDraftsGate(twin, Chain(drafts)));
+        Assert.Equal(SpecialFolderGuards.DraftsFolderUnreadable, SpecialFolderGuards.DraftsFolderRefusal(mailbox, Chain(drafts)));
+    }
+
+    [Theory]
+    [InlineData(SpecialFolderGuards.TargetIsOutbox)]
+    [InlineData(SpecialFolderGuards.TargetIsDeletedItems)]
+    [InlineData(SpecialFolderGuards.TargetGuardUnreadable)]
+    public void EveryMoveGuardRefusal_IsNamed_AndProvablyMovedNothing(string code)
+    {
+        // An unnamed code falls into the catch-all, which tells the caller the move MAY have
+        // happened. Every guard refusal is decided before Move() is called.
+        Assert.Equal(MutationOutcome.Unchanged, MailService.MoveFailureOutcome(code));
+        Assert.DoesNotContain(
+            "UNKNOWN",
+            MailService.DescribeMoveFailure(code, "Projects", null, createFolder: false),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>A folder chain, the item's or target's own folder first: true for any EntryID on it.</summary>
+    private static Func<string, bool> Chain(params string[] entryIds)
+    {
+        return wanted => entryIds.Any(entryId => string.Equals(entryId, wanted, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// move_mail's target guard as it was, transliterated onto <see cref="ISpecialFolderStore"/>
+    /// call for call: <c>GetDefaultFolder(3)</c>, then <c>(4)</c>, a failed lookup read as "no
+    /// such folder" and its check skipped.
+    /// </summary>
+    private static string? PreFixMoveGuard(FakeStore store, string targetEntryId, Func<string, bool> targetIsOrIsUnder)
+    {
+        string? deletedItemsEntryId = PreFixEntryId(store, SpecialFolders.OlFolderDeletedItems);
+        string? outboxEntryId = PreFixEntryId(store, SpecialFolders.OlFolderOutbox);
+        if (outboxEntryId != null && string.Equals(targetEntryId, outboxEntryId, StringComparison.OrdinalIgnoreCase))
+        {
+            return SpecialFolderGuards.TargetIsOutbox;
+        }
+
+        return deletedItemsEntryId != null && targetIsOrIsUnder(deletedItemsEntryId)
+            ? SpecialFolderGuards.TargetIsDeletedItems
+            : null;
+    }
+
+    /// <summary>The update_draft/discard_draft gate as it was: <c>GetDefaultFolder(16)</c>, a failed lookup read as "not in Drafts".</summary>
+    private static string? PreFixDraftsGate(FakeStore store, Func<string, bool> itemFolderIsOrIsUnder)
+    {
+        string? draftsEntryId = PreFixEntryId(store, SpecialFolders.OlFolderDrafts);
+        return draftsEntryId != null && itemFolderIsOrIsUnder(draftsEntryId) ? null : SpecialFolderGuards.NotInDraftsFolder;
+    }
+
+    private static string? PreFixEntryId(FakeStore store, int folderId)
+    {
+        try
+        {
+            object? folder = store.GetDefaultFolder(folderId);
+            return folder == null ? null : store.EntryIdOf(folder);
+        }
+        catch (COMException)
+        {
+            return null;
+        }
+    }
+
     // ------------------------------------------------------------------ the source-level control
 
     /// <summary>
@@ -676,7 +1006,9 @@ public sealed class ReadOnlyFolderLookupTests
     /// not on this list that calls <c>.GetDefaultFolder(</c>, <c>.GetSharedDefaultFolder(</c> or
     /// <c>GetDefaultFolderMayCreate(</c> fails the test - which is what happens if a read-only
     /// path (the sweep, navigation, the read-only archive lookup and its verification, the probes,
-    /// the Outbox count, the default-folder info) is pointed back at <c>GetDefaultFolder</c>.
+    /// the Outbox count, the default-folder info) or one of the write tools' guards (move_mail's
+    /// Deleted Items/Outbox check, the update_draft/discard_draft Drafts gate - off this list since
+    /// decision A) is pointed back at <c>GetDefaultFolder</c>.
     /// </summary>
     private static readonly Dictionary<string, string> ReviewedCreatingLookups = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -698,10 +1030,6 @@ public sealed class ReadOnlyFolderLookupTests
             "WRITE PATH, not changed: relocating a reply/forward into its source store's Drafts; see the Q84 report",
         ["McpServer/OutlookAI.Core/Com/OutlookComSession.cs::TryDiscardDraft"] =
             "WRITE PATH, not changed: naming the Deleted Items a discarded draft went to",
-        ["McpServer/OutlookAI.Core/Com/OutlookComSession.cs::IsInDraftsFolder"] =
-            "WRITE PATH, not changed: the update_draft/discard_draft Drafts gate; see the Q84 report",
-        ["McpServer/OutlookAI.Core/Com/OutlookComSession.cs::TryGetDefaultFolderEntryId"] =
-            "WRITE PATH, not changed: move_mail's Deleted Items/Outbox target guard; see the Q84 report",
     };
 
     [Fact]
@@ -749,6 +1077,20 @@ public sealed class ReadOnlyFolderLookupTests
                 || body.Contains("ResolveDefaultFolder(special", StringComparison.Ordinal)
                 || body.Contains("ArchiveFolderResolution.ResolveReadOnly(", StringComparison.Ordinal),
             member + " no longer reaches the non-creating resolver");
+        Assert.DoesNotContain(".GetDefaultFolder(", body, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("VerifyMoveTarget", "SpecialFolderGuards.MoveTargetRefusal(")]
+    [InlineData("CheckInDraftsFolder", "SpecialFolderGuards.DraftsFolderRefusal(")]
+    public void EveryWriteToolGuard_GoesThroughTheNonCreatingGuard(string member, string guard)
+    {
+        // Decision A, direction 1: the two checks that only compare folder identities left the
+        // reviewed list above. This is the positive half - each reaches its guard, which is
+        // pinned behaviourally in the section on the write tools' guards.
+        string body = MemberBody("McpServer/OutlookAI.Core/Com/OutlookComSession.cs", member);
+
+        Assert.Contains(guard, body, StringComparison.Ordinal);
         Assert.DoesNotContain(".GetDefaultFolder(", body, StringComparison.Ordinal);
     }
 
@@ -1009,6 +1351,12 @@ public sealed class ReadOnlyFolderLookupTests
 
         internal HashSet<int> DesignatedOnStore { get; } = new HashSet<int>();
 
+        /// <summary>Folder ids whose <c>GetDefaultFolder</c> call fails, the way a COM call does.</summary>
+        internal HashSet<int> DefaultFolderCallFails { get; } = new HashSet<int>();
+
+        /// <summary>Entry ids of folders that open but will not say their EntryID.</summary>
+        internal HashSet<string> EntryIdUnreadable { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         internal List<int> GetDefaultFolderCalls { get; } = new List<int>();
 
         internal List<int> Created { get; } = new List<int>();
@@ -1047,6 +1395,14 @@ public sealed class ReadOnlyFolderLookupTests
         {
             FakeStore store = new FakeStore("Outlook Data File", SpecialFolders.OlNotExchange);
             store.AddSpecial(SpecialFolders.OlFolderDeletedItems, "Deleted Items");
+            store.AddPlain("Search Folders");
+            return store;
+        }
+
+        /// <summary>A data file with no special folder at all - not even Deleted Items.</summary>
+        internal static FakeStore WithoutSpecialFolders()
+        {
+            FakeStore store = new FakeStore("Bare Data File", SpecialFolders.OlNotExchange);
             store.AddPlain("Search Folders");
             return store;
         }
@@ -1183,6 +1539,11 @@ public sealed class ReadOnlyFolderLookupTests
         public object? GetDefaultFolder(int olDefaultFolderId)
         {
             GetDefaultFolderCalls.Add(olDefaultFolderId);
+            if (DefaultFolderCallFails.Contains(olDefaultFolderId))
+            {
+                throw new COMException("The operation failed.", unchecked((int)0x80004005));
+            }
+
             if (olDefaultFolderId == ArchiveFolderResolution.OlFolderArchive && ArchiveCallAnswersNull)
             {
                 if (ArchiveCallAddsUnreturnedRootFolder)
@@ -1231,7 +1592,8 @@ public sealed class ReadOnlyFolderLookupTests
 
         public string? EntryIdOf(object folder)
         {
-            return ((FakeFolder)folder).EntryId;
+            string entryId = ((FakeFolder)folder).EntryId;
+            return EntryIdUnreadable.Contains(entryId) ? null : entryId;
         }
 
         public SpecialFolderFacts Describe(object folder)

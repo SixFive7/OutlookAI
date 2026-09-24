@@ -4338,7 +4338,7 @@ namespace OutlookAI.Core.Com
                         return null;
                     }
 
-                    string? guardError = VerifyMoveTarget(ownStore, targetFolder, parentEntryId);
+                    string? guardError = VerifyMoveTarget(ownStore, (object)ns, targetFolder, parentEntryId);
                     if (guardError != null)
                     {
                         capturedError = guardError;
@@ -4557,8 +4557,16 @@ namespace OutlookAI.Core.Com
         /// semantics and the server has no delete surface (S1 v2) - must not be the
         /// Outbox, and must differ from the item's current folder. Content-free error
         /// or null.
+        /// <para>
+        /// Deleted Items and the Outbox are looked up WITHOUT creating either
+        /// (<see cref="SpecialFolderGuards.MoveTargetRefusal"/>, Q84 decision A). This used to
+        /// ask <c>GetDefaultFolder(3)</c> and <c>(4)</c>, which may make the folder on a store
+        /// that lacks it, and it skipped a check whose lookup failed - letting the move through.
+        /// A folder the store does not have cannot be the target; a lookup that cannot be
+        /// completed now refuses the move (<c>TargetGuardUnreadable</c>).
+        /// </para>
         /// </summary>
-        private static string? VerifyMoveTarget(dynamic store, object targetFolderObject, string sourceParentEntryId)
+        private static string? VerifyMoveTarget(dynamic store, object session, object targetFolderObject, string sourceParentEntryId)
         {
             dynamic target = targetFolderObject;
             string targetEntryId = (string)target.EntryID;
@@ -4579,81 +4587,79 @@ namespace OutlookAI.Core.Com
                 return "TargetNotAMailFolder";
             }
 
-            string? deletedItemsEntryId = TryGetDefaultFolderEntryId(store, 3);
-            string? outboxEntryId = TryGetDefaultFolderEntryId(store, 4);
-            if (outboxEntryId != null && string.Equals(targetEntryId, outboxEntryId, StringComparison.OrdinalIgnoreCase))
-            {
-                return "TargetIsOutbox";
-            }
+            object storeObject = store;
+            string? storeId = TryGetString(() => (string?)((dynamic)storeObject).StoreID);
+            ComSpecialFolderStore special = new ComSpecialFolderStore(storeObject, session, storeId);
 
-            if (deletedItemsEntryId != null)
-            {
-                // The target and every ancestor: a subfolder of Deleted Items is still
-                // the trash subtree.
-                object? cursor = null;
-                try
-                {
-                    string cursorEntryId = targetEntryId;
-                    dynamic current = target;
-                    for (int depth = 0; depth < FolderWalkDepthGuard; depth++)
-                    {
-                        if (string.Equals(cursorEntryId, deletedItemsEntryId, StringComparison.OrdinalIgnoreCase))
-                        {
-                            return "TargetIsDeletedItems";
-                        }
-
-                        object? up;
-                        try
-                        {
-                            up = current.Parent;
-                        }
-                        catch (Exception ex) when (IsComCallFailure(ex))
-                        {
-                            break;
-                        }
-
-                        Release(cursor);
-                        cursor = up;
-                        if (cursor == null)
-                        {
-                            break;
-                        }
-
-                        current = cursor;
-                        try
-                        {
-                            cursorEntryId = (string)current.EntryID;
-                        }
-                        catch (Exception ex) when (IsComCallFailure(ex))
-                        {
-                            break; // reached the namespace/store level
-                        }
-                    }
-                }
-                finally
-                {
-                    Release(cursor);
-                }
-            }
-
-            return null;
+            // The target and every ancestor: a subfolder of Deleted Items is still the trash
+            // subtree.
+            return SpecialFolderGuards.MoveTargetRefusal(
+                special,
+                targetEntryId,
+                deletedItemsEntryId => IsOrIsUnder(targetFolderObject, targetEntryId, deletedItemsEntryId));
         }
 
-        private static string? TryGetDefaultFolderEntryId(dynamic store, int olDefaultFolderId)
+        /// <summary>
+        /// STA-side: true when <paramref name="folder"/> itself, or any folder above it, has the
+        /// EntryID <paramref name="wantedEntryId"/> - compared by EntryID, never by name. Walks up
+        /// through <c>Parent</c> at most <see cref="FolderWalkDepthGuard"/> levels and ends at the
+        /// store root, whose parent (the NameSpace) has no EntryID. <paramref name="folderEntryId"/>
+        /// is the start folder's EntryID when the caller already read it, or null to read it here.
+        /// Releases every folder it acquires and never <paramref name="folder"/>, which the caller
+        /// owns.
+        /// </summary>
+        private static bool IsOrIsUnder(object folder, string? folderEntryId, string wantedEntryId)
         {
-            object? folder = null;
+            object? above = null;
             try
             {
-                folder = store.GetDefaultFolder(olDefaultFolderId);
-                return (string)((dynamic)folder!).EntryID;
+                object current = folder;
+                string? currentEntryId = folderEntryId ?? TryReadFolderEntryId(current);
+                for (int depth = 0; depth < FolderWalkDepthGuard && currentEntryId != null; depth++)
+                {
+                    if (string.Equals(currentEntryId, wantedEntryId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+
+                    object? up;
+                    try
+                    {
+                        up = ((dynamic)current).Parent;
+                    }
+                    catch (Exception ex) when (IsComCallFailure(ex))
+                    {
+                        return false;
+                    }
+
+                    Release(above);
+                    above = up;
+                    if (up == null)
+                    {
+                        return false;
+                    }
+
+                    current = up;
+                    currentEntryId = TryReadFolderEntryId(current); // null at the namespace/store level
+                }
+
+                return false;
+            }
+            finally
+            {
+                Release(above);
+            }
+        }
+
+        private static string? TryReadFolderEntryId(object folder)
+        {
+            try
+            {
+                return (string?)((dynamic)folder).EntryID;
             }
             catch (Exception ex) when (IsComCallFailure(ex))
             {
                 return null;
-            }
-            finally
-            {
-                Release(folder);
             }
         }
 
@@ -5044,7 +5050,7 @@ namespace OutlookAI.Core.Com
                         return null;
                     }
 
-                    capturedError = CheckEditableDraft(item!);
+                    capturedError = CheckEditableDraft(item!, (object)ns);
                     if (capturedError != null)
                     {
                         return null;
@@ -5339,7 +5345,7 @@ namespace OutlookAI.Core.Com
                         return null;
                     }
 
-                    capturedError = CheckEditableDraft(item!);
+                    capturedError = CheckEditableDraft(item!, (object)ns);
                     if (capturedError != null)
                     {
                         return null;
@@ -5412,7 +5418,7 @@ namespace OutlookAI.Core.Com
         /// the item must be a MAIL item, must be UNSENT, and must live in a Drafts folder.
         /// Returns a content-free error code, or null when the item may be edited.
         /// </summary>
-        private static string? CheckEditableDraft(object itemObject)
+        private static string? CheckEditableDraft(object itemObject, object session)
         {
             if (!IsMailItem(itemObject))
             {
@@ -5433,16 +5439,23 @@ namespace OutlookAI.Core.Com
                 return "AlreadySent";
             }
 
-            return IsInDraftsFolder(itemObject) ? null : "NotInDraftsFolder";
+            return CheckInDraftsFolder(itemObject, session);
         }
 
         /// <summary>
-        /// True when the item's parent folder IS the store's Drafts folder or sits
-        /// underneath it. Folder identity is compared by EntryID against
-        /// <c>GetDefaultFolder(16)</c>, never by name - Drafts is localized (v3.MD D39's
-        /// localization-proof rule).
+        /// Null when the item's parent folder IS its store's Drafts folder or sits underneath
+        /// it; otherwise the refusal code. Folder identity is compared by EntryID, never by
+        /// name - Drafts is localized (v3.MD D39's localization-proof rule).
+        /// <para>
+        /// Drafts is looked up WITHOUT creating it (<see cref="SpecialFolderGuards.DraftsFolderRefusal"/>,
+        /// Q84 decision A). This used to ask <c>GetDefaultFolder(16)</c>, which makes a Drafts
+        /// folder on a store that lacks one. A store with no Drafts folder holds no draft
+        /// (<c>NotInDraftsFolder</c>); one whose Drafts folder - or the item's own folder or
+        /// store - cannot be read is refused as <c>DraftsFolderUnreadable</c>, where it used to
+        /// be refused with the claim that the item was not in Drafts.
+        /// </para>
         /// </summary>
-        private static bool IsInDraftsFolder(object itemObject)
+        private static string? CheckInDraftsFolder(object itemObject, object session)
         {
             object? folder = null;
             object? store = null;
@@ -5451,75 +5464,28 @@ namespace OutlookAI.Core.Com
                 folder = ((dynamic)itemObject).Parent;
                 if (folder == null)
                 {
-                    return false;
+                    return SpecialFolderGuards.NotInDraftsFolder;
                 }
 
                 store = ((dynamic)folder!).Store;
                 if (store == null)
                 {
-                    return false;
+                    return SpecialFolderGuards.DraftsFolderUnreadable;
                 }
 
-                string? draftsEntryId = null;
-                object? drafts = null;
-                try
-                {
-                    drafts = ((dynamic)store!).GetDefaultFolder(16); // olFolderDrafts
-                    draftsEntryId = TryGetString(() => (string?)((dynamic)drafts!).EntryID);
-                }
-                catch (Exception ex) when (IsComCallFailure(ex))
-                {
-                }
-                finally
-                {
-                    Release(drafts);
-                }
-
-                if (string.IsNullOrEmpty(draftsEntryId))
-                {
-                    return false;
-                }
+                object storeObject = store;
+                object itemFolder = folder;
+                string? storeId = TryGetString(() => (string?)((dynamic)storeObject).StoreID);
+                ComSpecialFolderStore special = new ComSpecialFolderStore(storeObject, session, storeId);
 
                 // Walk up from the item's folder: Drafts itself, or any folder below it.
-                object? current = folder;
-                folder = null; // ownership moves to the walk loop
-                for (int depth = 0; depth < FolderWalkDepthGuard && current != null; depth++)
-                {
-                    string? currentId = TryGetString(() => (string?)((dynamic)current!).EntryID);
-                    if (string.Equals(currentId, draftsEntryId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        Release(current);
-                        return true;
-                    }
-
-                    object? next = null;
-                    try
-                    {
-                        next = ((dynamic)current!).Parent;
-                    }
-                    catch (Exception ex) when (IsComCallFailure(ex))
-                    {
-                    }
-
-                    Release(current);
-                    current = next;
-
-                    // The store root's Parent is the Namespace/store object, which has no
-                    // EntryID - the walk ends there rather than looping.
-                    if (current != null && TryGetString(() => (string?)((dynamic)current!).EntryID) == null)
-                    {
-                        Release(current);
-                        current = null;
-                    }
-                }
-
-                // Depth guard reached with a live reference still held.
-                Release(current);
-                return false;
+                return SpecialFolderGuards.DraftsFolderRefusal(
+                    special,
+                    draftsEntryId => IsOrIsUnder(itemFolder, null, draftsEntryId));
             }
             catch (Exception ex) when (IsComCallFailure(ex))
             {
-                return false;
+                return SpecialFolderGuards.DraftsFolderUnreadable;
             }
             finally
             {
