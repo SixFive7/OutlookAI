@@ -278,6 +278,13 @@ guest.** A send with nothing listening queues in the Outbox, and the tier's Outb
 refuses every later run until that item is removed - through the suite's own helpers, never from a
 shell (`CLAUDE.md`, mailbox-safety rule 1).
 
+**`OutlookAI-Unindexed` reports `SINK-READY` since 2026-09-24**, the first guest to - installed,
+restarted and verified again, starting with the guest (section 2.7). Section 1.4's closing paragraph,
+"nothing here has run on a guest yet", predates that run. And **`SINK-READY` is not the whole of it:**
+Outlook must also be able to LOG IN to the sink, and with no stored POP3 password it does not - it
+prompts before it ever connects (measured, section 2.7). A guest's accounts therefore also need
+`Testbed/guest/New-TierProfile.ps1 -StoreSinkPassword -Execute` before a run that sends.
+
 ---
 
 ## 2. Building the machine from nothing
@@ -902,15 +909,30 @@ for section 2.8b's `identity@vm.invalid`. Get it wrong and nothing fails: the ac
 mailbox for ever, and every arrival wait times out pointing nowhere. `-Verify` prints each account's
 mailbox name so it can be compared.
 
-**THE PASSWORD: SETTLED FOR THE SINK, OPEN FOR OUTLOOK.**
+**THE PASSWORD: SETTLED, BOTH HALVES - MEASURED 2026-09-24 ON `OutlookAI-Unindexed`.**
 
-* **The sink half is settled from source and asserted on the guest.** There is no credential store
-  at all; `-Verify` logs in with `PASS` alone, `PASS ` and `PASS <anything>`, and fails if any of
-  the three is refused.
-* **The Outlook half is OPEN.** The tier `.prf` stores no POP3 password, on purpose. Whether Outlook
-  16.0.17932, holding none, sends an empty `PASS` or raises its "Internet E-mail" logon prompt is
-  documented nowhere this project could find, and it cannot be measured on the maintainer's machine.
-* **How to settle it, with no mail anywhere.** Install the sink with `-LogLevel debug`. Build the
+* **The sink half: it accepts anything, measured.** There is no credential store at all; `-Verify`
+  logged in with `PASS` alone, `PASS ` and `PASS <anything>`, and all three reached TRANSACTION.
+* **The Outlook half: OUTLOOK PROMPTS, AND NEVER CONNECTS.** With the sink up at `-LogLevel debug`,
+  two starts of the tier profile each raised "Internet Email - tier" ("Enter your user name and
+  password for the following server", User Name `tier`, Password empty), and the sink's log shows
+  **no POP3 or SMTP session at all** for the five minutes Outlook ran - only its once-a-minute
+  retention scans. Outlook asks before it connects, so the sink's leniency never comes into play.
+  The dialog does not block COM, but no mail is ever collected, and every arrival wait would time out.
+* **THE FIX, PROVEN: A STORED PASSWORD, WRITTEN BY SCRIPT.** `Testbed/guest/New-TierProfile.ps1
+  -StoreSinkPassword -Execute`, with Outlook closed, seals a password - any value - into every account
+  of the tier profile whose POP3 server is the sink: the community-documented storage below, with the
+  plaintext NUL-terminated. At the next start the sink logged `read CAPA`, `read USER tier`,
+  `read PASS any-value`, `Entering state TRANSACTION mailbox=tier`, `STAT`, `QUIT` and
+  `Processing deletes mailbox=tier`, and no logon dialog appeared. `New-TierProfile.ps1 -Verify` now
+  fails an account that polls the sink without such a password. Run it again once section 2.8b's
+  identity account exists: it covers every sink account in the profile.
+* **READ THE SINK'S LOG KNOWING IT IS BUFFERED.** Inbucket writes `inbucket.log` through a 4 KB
+  buffer - the file grew in exactly 4,096-byte steps and held session lines back for six minutes - and
+  `Install-MailSink.ps1`'s restart kills the process, losing what the buffer held. The first read
+  above, 75 s into the no-password start, showed nothing at all; only the later flush told "no
+  connection" apart from "not written yet". Read it after more has been logged.
+* **How it was settled, with no mail anywhere** - kept as the procedure. Install the sink with `-LogLevel debug`. Build the
   tier profile and start Outlook in session 1 as usual (`Testbed/guest/Register-InteractiveTask.ps1`);
   it connects for its start-up send/receive, and a `Namespace.SendAndReceive` asks again if it does
   not. Then read `C:\OutlookAI-Sink\inbucket.log`:
@@ -919,18 +941,17 @@ mailbox name so it can be compared.
     * the session stops after `USER` - `Client closed connection (state AUTHORIZATION)` - or never
       opens, and a window like "Internet E-mail - tier@vm.invalid" sits in session 1 - **Outlook
       prompts.** Close it; do not type into it, because a typed password is a step no rebuild repeats.
-* **If Outlook prompts, the fix is on the Outlook side and belongs to the tier profile script:**
-  store a password in the account - ANY value, because this sink compares it with nothing. The
-  community-documented storage, never yet written by this project: a `REG_BINARY` value named
-  `POP3 Password` in the account's subkey under
+* **The storage the fix writes** - on the Outlook side, in the tier profile script, because the sink
+  compares the password with nothing. [COMMUNITY: SecurityXploded's Outlook password notes for
+  2002-2013, LaZagne's Outlook module, a 2022 borncity write-up placing it under the 16.0 hive]: a
+  `REG_BINARY` value named `POP3 Password` in the account's subkey under
   `HKCU\Software\Microsoft\Office\16.0\Outlook\Profiles\<profile>\9375CFF0413111d3B88A00104B2A6676\<n>`,
   holding a `0x02` byte followed by a DPAPI blob (current user, no entropy) of the password as
-  UTF-16LE. [COMMUNITY: SecurityXploded's Outlook password notes for 2002-2013, LaZagne's Outlook
-  module, a 2022 borncity write-up placing it under the 16.0 hive.] It is consistent with what this
-  project has MEASURED: the guest's account subkey carries `POP3 Server`, `POP3 User` and `Email` in
-  exactly that naming family (2026-09-15). What is NOT known is the precise byte layout on
-  16.0.17932 - whether the plaintext ends in a NUL. The check is the same measurement: write it with
-  Outlook closed, start Outlook, and the debug log shows `read PASS <that value>`.
+  UTF-16LE. **The open byte-layout question is answered for one layout: the plaintext WITH a
+  terminating NUL** is what produced `read PASS any-value` (a bare plaintext was not tried). On this
+  build the account's other values - `POP3 Server`, `POP3 User`, `Email` - are `REG_SZ`, so there
+  was no binary sibling to copy the shape from. DPAPI seals it to `vmadmin` on this guest, so it is
+  written on the guest and dies with an admin password reset (`Testbed/README.md` section 4).
 
 **Installing it.** `Testbed/MEDIA.md`, "The mail sink", has the staging and copy-in lines. On the
 guest, elevated - PowerShell Direct is fine, nothing here touches COM:
@@ -944,6 +965,12 @@ C:\OutlookAI-Q5\Install-MailSink.ps1 -Verify                            # again,
 Then **reboot the guest and run `-Verify` once more**: it reports how many seconds after boot the
 sink process started, which is the evidence that it starts WITH the guest rather than because the
 installer started it. Checkpoint after that. `-Uninstall -Execute` takes everything back out.
+
+**RUN ON `OutlookAI-Unindexed`, 2026-09-24, and it worked first time.** `-SelfTest` 104 assertions, 0
+failures on the guest's Windows PowerShell 5.1; `-ExpectedSha256 <pin> -LogLevel debug -Execute` over
+PowerShell Direct with Outlook closed: every check passed, `VERDICT: SINK-READY`. After a graceful
+restart (Outlook quit first, then `shutdown /r /t 0`) `-Verify` again: `SINK-READY`, the sink process
+started **7 s after boot**. Checkpoint `CP-08-MAIL-SINK`. `-Uninstall` has not run on a guest.
 
 **What `-Verify` proves** is in the script's own banner, check by check. In short: the task and the
 launcher are what the script writes; the process runs from the install root and owns all three

@@ -1,7 +1,35 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    THIS SCRIPT HAS NEVER RUN ON A GUEST. ITS -SelfTest HAS, ON THE HOST.
+    RUN ON OutlookAI-Unindexed 2026-09-24 (FROM CP-07): SINK-READY ON THE FIRST EXECUTION.
+    ============================================================================================
+
+    -SelfTest: 104 assertions, 0 failures, on the guest's Windows PowerShell 5.1. Then
+    -ExpectedSha256 <the Testbed/MEDIA.md pin> -LogLevel debug -Execute over PowerShell Direct
+    (session 0, elevated), Outlook closed: every check passed first time - the pin, the unpack,
+    ports 25/110/9000 free and outside every reserved range, the launcher byte-identical, the SYSTEM
+    task, all three listeners on 127.0.0.1 only and owned by the sink, all three PASS shapes
+    accepted, the round trip byte-intact through every dot-stuffing case and the base64 part in
+    0.1 s, TOP, isolation, message numbers fixed after DELE, nothing lost to a dropped session, and
+    after a restart through the task nothing deleted came back and no id was reused. VERDICT:
+    SINK-READY. Every [SOURCE] claim below that -Verify checks is therefore MEASURED on this guest.
+
+    After a graceful guest restart - Outlook quit first, then shutdown /r /t 0 - -Verify again:
+    SINK-READY, with the sink process started 7 s after boot. It starts WITH the guest.
+
+    THE OUTLOOK HALF OF THE PASSWORD QUESTION was settled the same day: Outlook PROMPTS, and never
+    connects - Testbed/guest/New-TierProfile.ps1's -StoreSinkPassword is the fix, proven by this
+    sink's own debug log ('read USER tier', 'read PASS any-value', 'Processing deletes mailbox=tier').
+
+    ONE THING TO KNOW ABOUT ITS LOG. Inbucket writes -logfile through a 4 KB buffer: the file grew in
+    exactly 4,096-byte steps and held session lines back for six minutes. Stop-Sink kills the
+    process, so a restart loses whatever the buffer held. Read the log once more has been logged,
+    never straight after the event you are looking for.
+
+    NOT EXERCISED ON A GUEST: -Uninstall.
+
+    ============================================================================================
+    WHAT WAS TRUE BEFORE THAT RUN - kept because it says how each claim was first established.
     ============================================================================================
 
     Written 2026-09-24 by an agent with no guest available and forbidden to run a mail sink on
@@ -18,10 +46,7 @@
         and the file itself (Testbed/MEDIA.md, "The mail sink");
       * every claim below about how Inbucket BEHAVES is marked [SOURCE]: read in its source at
         tag v3.1.1, never observed. -Verify exists to turn each one into [MEASURED] or into a
-        named FAIL on the first guest run.
-
-    Replace this banner with what actually happened the first time -Execute runs on a guest,
-    and say which checks passed.
+        named FAIL on the first guest run - which it did, all of them MEASURED (above).
 
 .SYNOPSIS
     Installs Inbucket as the testbed's loopback mail sink, starts it with the guest, and then

@@ -1,6 +1,38 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
+    2026-09-24 (LATEST): OUTLOOK PROMPTS FOR THE POP3 PASSWORD, SO -StoreSinkPassword STORES ONE
+    ============================================================================================
+
+    THE QUESTION Docs/live-tier-on-the-vm.md section 2.7 left open - does Outlook, holding no POP3
+    password, log in to the sink or prompt? - WAS SETTLED ON OutlookAI-Unindexed WITH THE SINK UP AT
+    -LogLevel debug. IT PROMPTS, AND IT NEVER CONNECTS. Two starts of the tier profile, 17:08 and
+    17:13, each raised "Internet Email - tier" ("Enter your user name and password for the following
+    server", User Name 'tier', Password empty), and the sink's debug log shows NO POP3 or SMTP
+    session at all for the five minutes Outlook ran - only its once-a-minute retention scans. The
+    sink accepting any password, or none, never came into play.
+
+    So -StoreSinkPassword -Execute (Outlook CLOSED) seals a password - any value; the sink compares
+    it with nothing - into every account of the tier profile whose POP3 server is the sink: a
+    REG_BINARY 'POP3 Password' of 0x02 then a DPAPI blob (current user) of the value as UTF-16LE
+    with a terminating NUL - COMMUNITY-documented, see the section above the self-test. PROVEN at
+    the next start: the sink logged 'read CAPA', 'read USER tier', 'read PASS any-value', 'Entering
+    state TRANSACTION mailbox=tier', STAT, QUIT and 'Processing deletes mailbox=tier', and no logon
+    dialog appeared in session 1. -Verify now FAILS an account that polls the sink with no password
+    that opens to that value, and names the command that fixes it.
+
+    ORDER: the account exists only after Outlook's first start imports the .prf, and the write needs
+    Outlook closed - so it comes after the rename, after a graceful quit, before -Verify. It also
+    covers the identity account (Add-IdentityAccount.ps1): run it again once that exists.
+
+    READ THE SINK'S LOG KNOWING THIS: Inbucket writes C:\OutlookAI-Sink\inbucket.log through a 4 KB
+    buffer (measured: the file grew in exactly 4,096-byte steps and held session lines back for six
+    minutes), so a quiet sink can keep the evidence of a login out of the file for a long time, and a
+    killed sink loses it. Read it once more log has accumulated: the first read here, 75 s into the
+    no-password start, showed nothing at all, and only the later flush - retention scans and no
+    session, minute after minute - told "no connection" apart from "not written yet".
+
+    ============================================================================================
     2026-09-24 (LATER): THE SCRIPTS ALONE NOW REBUILD THE TIER PROFILE - AND THE ORDER MATTERS
     ============================================================================================
 
@@ -160,6 +192,8 @@
         .\New-TierProfile.ps1 -Execute        # writes ForcePSTPath, the .prf and the Setup values
         <start Outlook once, in session 1, and let it settle - it imports and mints the store>
         .\Rename-OutlookStore.ps1 -StoreFilePath C:\OutlookAI-Tier\Outlook.pst -DisplayName tier@vm.invalid -Execute
+        <quit Outlook gracefully - Testbed/README.md step 4d>
+        .\New-TierProfile.ps1 -StoreSinkPassword -Execute   # Outlook closed: or it prompts at every start
         .\New-TierProfile.ps1 -Verify         # reads the profile hive and asserts; writes its log, and
                                               # removes ImportPRF if it is still set once Outlook has run
 
@@ -222,6 +256,16 @@
 .PARAMETER ExpectedUser
     The account the guest guard accepts. The default is the guard; see OutlookMapiInterop.ps1.
 
+.PARAMETER StoreSinkPassword
+    Store a POP3 password on every account of -ProfileName whose POP3 server is -SinkHost, so
+    Outlook logs in to the sink instead of prompting (see the first banner section). With -Execute
+    it writes, and refuses while Outlook runs; without, it reports what is stored now. Run it after
+    Outlook's first start has imported the account, and again after Add-IdentityAccount.ps1.
+
+.PARAMETER StoredPop3Value
+    The value -StoreSinkPassword seals. Anything: the sink compares it with nothing, and its debug
+    log prints it - which is how the write is proven.
+
 .PARAMETER Force
     Allow -Execute to proceed when a profile of the target name already exists.
 
@@ -246,6 +290,8 @@ param(
     [string] $TemplatePath,
     [string] $LogPath          = 'C:\OutlookAI-Tier\new-tier-profile.log',
     [string[]] $ExpectedUser   = @('vmadmin'),
+    [string] $StoredPop3Value  = 'any-value',
+    [switch] $StoreSinkPassword,
     [switch] $Execute,
     [switch] $Verify,
     [switch] $Force,
@@ -468,6 +514,97 @@ function Resolve-TierPstLayout {
     return [pscustomobject]@{ Decision = 'Pass'; Message = "one PST in the profile, $DeliveryStorePath, and it is the account's delivery store" }
 }
 
+<#
+    THE STORED POP3 PASSWORD - what -StoreSinkPassword writes, and why it has to exist at all.
+
+    MEASURED 2026-09-24 on OutlookAI-Unindexed, with the Inbucket sink up at debug level: Outlook
+    16.0.17932, holding no POP3 password, raised its "Internet Email - tier" logon dialog ("Enter
+    your user name and password for the following server") at every start of the tier profile and
+    made NO connection at all - not one line in the sink's debug log in 75 s. It prompts before it
+    connects, so the sink accepting any password, or none, never comes into play. On an unattended
+    guest that dialog is not a hang for COM, but no mail is ever collected, and every arrival wait
+    in the live tier times out.
+
+    So the account gets a stored password - ANY value, because the sink compares it with nothing.
+    The storage is COMMUNITY-DOCUMENTED and not Microsoft's: a REG_BINARY named 'POP3 Password' in
+    the account's subkey under the profile's 9375CFF0413111d3B88A00104B2A6676 key, holding one
+    marker byte 0x02 and then a DPAPI blob (CryptProtectData, current user, no entropy) of the
+    password as UTF-16LE [SecurityXploded's Outlook password notes; LaZagne's outlook module, which
+    reads it as data[1:] through CryptUnprotectData and decodes UTF-16; a 2022 borncity write-up
+    placing it under the 16.0 hive]. What no source settles is whether the plaintext carries a
+    terminating NUL; the other string values in this account key are REG_SZ on this build, so
+    there is no binary sibling to copy. The layout below is the one the guest run proved - the
+    sink's debug log shows the exact value arriving as PASS.
+
+    A DPAPI blob is sealed to this user on this machine: it is written ON the guest, as vmadmin,
+    and it dies with an admin password reset (Testbed/README.md section 4).
+#>
+$Pop3PasswordValueName = 'POP3 Password'
+$Pop3PasswordMarker = [byte]0x02
+
+# The plaintext Outlook's POP3 password blob seals: UTF-16LE, NUL-terminated or bare.
+function Get-SinkPasswordPlainBytes {
+    param([Parameter(Mandatory = $true)] [string] $Password, [bool] $Terminated = $true)
+    $text = $Password
+    if ($Terminated) { $text = $Password + [char]0 }
+    return , [System.Text.Encoding]::Unicode.GetBytes($text)
+}
+
+# The registry data: the marker byte, then the DPAPI blob.
+function ConvertTo-Pop3PasswordValue {
+    param([Parameter(Mandatory = $true)] [byte[]] $ProtectedBlob)
+    $out = New-Object byte[] ($ProtectedBlob.Length + 1)
+    $out[0] = $Pop3PasswordMarker
+    [System.Array]::Copy($ProtectedBlob, 0, $out, 1, $ProtectedBlob.Length)
+    return , $out
+}
+
+# The DPAPI blob back out of the registry data; $null when the marker is not there.
+function ConvertFrom-Pop3PasswordValue {
+    param([byte[]] $Value)
+    if ($null -eq $Value -or $Value.Length -lt 2 -or $Value[0] -ne $Pop3PasswordMarker) { return $null }
+    $blob = New-Object byte[] ($Value.Length - 1)
+    [System.Array]::Copy($Value, 1, $blob, 0, $blob.Length)
+    return , $blob
+}
+
+# The mailbox a sink account reads - Inbucket's rule, restated from Install-MailSink.ps1: the local
+# part of the address, lowercased, cut at the first '+'.
+function Get-SinkMailboxName {
+    param([string] $Address)
+    if ([string]::IsNullOrEmpty($Address)) { return $null }
+    $at = $Address.LastIndexOf([char]'@')
+    if ($at -lt 1) { return $null }
+    $name = $Address.Substring(0, $at).ToLowerInvariant()
+    $plus = $name.IndexOf('+')
+    if ($plus -ge 0) { $name = $name.Substring(0, $plus) }
+    return $name
+}
+
+<#
+    Which account-manager entries poll the sink, and what is wrong with each. Pure: the caller
+    reads the registry into one hashtable per entry (Key, Clsid, ServiceName, Pop3Server,
+    Pop3User, Email). An entry polls the sink when it is a mail account whose POP3 server is the
+    sink host. Its POP3 user must be its mailbox name, or it reads an empty mailbox for ever and
+    every arrival wait times out pointing nowhere (Docs/live-tier-on-the-vm.md section 2.7).
+#>
+function Select-SinkAccounts {
+    param([object[]] $Entries, [Parameter(Mandatory = $true)] [string] $SinkHost)
+    $found = @()
+    foreach ($e in @($Entries)) {
+        if ($null -eq $e) { continue }
+        if (-not (Test-IsMailAccountEntry -Clsid ([string]$e.Clsid) -ServiceName ([string]$e.ServiceName))) { continue }
+        if ([string]$e.Pop3Server -ne $SinkHost) { continue }
+        $problem = $null
+        $mailbox = Get-SinkMailboxName -Address ([string]$e.Email)
+        if ([string]::IsNullOrEmpty([string]$e.Pop3User)) { $problem = 'it has no POP3 user name' }
+        elseif ($null -eq $mailbox) { $problem = "its address '$($e.Email)' is not an address" }
+        elseif ([string]$e.Pop3User -cne $mailbox) { $problem = "its POP3 user '$($e.Pop3User)' is not its mailbox name '$mailbox' - it would read an empty mailbox for ever" }
+        $found += [pscustomobject]@{ Key = $e.Key; Email = [string]$e.Email; Pop3User = [string]$e.Pop3User; Problem = $problem }
+    }
+    return , $found
+}
+
 function Invoke-SelfTest {
     $script:SelfTestChecks = 0
     $script:SelfTestFailures = @()
@@ -564,6 +701,28 @@ function Invoke-SelfTest {
     Test-Case 'a delivery store the profile does not reference: Fail' 'Fail' (Resolve-TierPstLayout -ProfilePstPaths @('C:\OutlookAI-Tier\x.pst') -DeliveryStorePath $minted -WorkDir $wd).Decision
     Test-Case 'no readable delivery path: Unknown, never Pass' 'Unknown' (Resolve-TierPstLayout -ProfilePstPaths @($minted) -DeliveryStorePath $null -WorkDir $wd).Decision
     Test-Case 'no PST path read out of the profile: Unknown, never Pass' 'Unknown' (Resolve-TierPstLayout -ProfilePstPaths @() -DeliveryStorePath $minted -WorkDir $wd).Decision
+
+    Write-Host ''
+    Write-Host '== the stored POP3 password: its bytes, and which accounts get one =='
+    Test-Case 'NUL-terminated plaintext is UTF-16LE plus two zero bytes' '97 0 110 0 121 0 0 0' ((Get-SinkPasswordPlainBytes -Password 'any' -Terminated $true) -join ' ')
+    Test-Case 'bare plaintext has no terminator' '97 0 110 0 121 0' ((Get-SinkPasswordPlainBytes -Password 'any' -Terminated $false) -join ' ')
+    $wrapped = ConvertTo-Pop3PasswordValue -ProtectedBlob ([byte[]](1, 2, 3))
+    Test-Case 'the registry value is the 0x02 marker and then the blob' '2 1 2 3' ($wrapped -join ' ')
+    Test-Case 'and the blob comes back out of it' '1 2 3' ((ConvertFrom-Pop3PasswordValue -Value $wrapped) -join ' ')
+    Test-Case 'a value without the marker is not a password blob' '<null>' (ConvertFrom-Pop3PasswordValue -Value ([byte[]](1, 1, 2, 3)))
+    Test-Case 'nothing in, nothing out, no throw' '<null>' (ConvertFrom-Pop3PasswordValue -Value $null)
+    Test-Case "tier@vm.invalid reads mailbox 'tier'" 'tier' (Get-SinkMailboxName -Address 'tier@vm.invalid')
+    Test-Case 'a +tag is cut and case is folded' 'identity' (Get-SinkMailboxName -Address 'Identity+x@vm.invalid')
+    $tierEntry = @{ Key = 'k1'; Clsid = '{ED475411-B0D6-11D2-8C3B-00104B2A6676}'; ServiceName = ''; Pop3Server = '127.0.0.1'; Pop3User = 'tier'; Email = 'tier@vm.invalid' }
+    $abEntry = @{ Key = 'k2'; Clsid = '{ED475414-B0D6-11D2-8C3B-00104B2A6676}'; ServiceName = 'CONTAB'; Pop3Server = ''; Pop3User = ''; Email = '' }
+    $identityEntry = @{ Key = 'k3'; Clsid = '{ED475411-B0D6-11D2-8C3B-00104B2A6676}'; ServiceName = ''; Pop3Server = '127.0.0.1'; Pop3User = 'identity'; Email = 'identity@vm.invalid' }
+    $elsewhere = @{ Key = 'k4'; Clsid = '{ED475411-B0D6-11D2-8C3B-00104B2A6676}'; ServiceName = ''; Pop3Server = 'mail.example.invalid'; Pop3User = 'x'; Email = 'x@example.invalid' }
+    $picked = Select-SinkAccounts -Entries @($tierEntry, $abEntry, $identityEntry, $elsewhere) -SinkHost '127.0.0.1'
+    Test-Case 'the tier and identity accounts poll the sink; the address book and a foreign server do not' 'k1,k3' ((@($picked) | ForEach-Object { $_.Key }) -join ',')
+    Test-Case 'both are in order' '' ((@($picked) | Where-Object { $_.Problem } | ForEach-Object { $_.Key }) -join ',')
+    $wrongUser = @{ Key = 'k5'; Clsid = '{ED475411-B0D6-11D2-8C3B-00104B2A6676}'; ServiceName = ''; Pop3Server = '127.0.0.1'; Pop3User = 'tier@vm.invalid'; Email = 'tier@vm.invalid' }
+    Test-Case 'a POP3 user that is the whole address is named as a problem' $true ([bool](Select-SinkAccounts -Entries @($wrongUser) -SinkHost '127.0.0.1')[0].Problem)
+    Test-Case 'no entries, no accounts, no throw' 0 (Select-SinkAccounts -Entries @() -SinkHost '127.0.0.1').Count
 
     Write-Host ''
     Write-Host "$($script:SelfTestChecks) assertion(s), $($script:SelfTestFailures.Count) failure(s)."
@@ -777,6 +936,11 @@ function Get-AccountValueDump {
         if ($null -eq $props) { continue }
         foreach ($p in $props.PSObject.Properties) {
             if ($p.Name -like 'PS*') { continue }
+            if ($p.Name -eq $Pop3PasswordValueName -and $p.Value -is [byte[]]) {
+                # A DPAPI blob decodes to noise; its size and marker are the evidence.
+                $texts += ("{0}=<0x{1:X2} + a sealed DPAPI blob, {2} byte(s) in all>" -f $p.Name, $p.Value[0], $p.Value.Length)
+                continue
+            }
             $texts += ("{0}={1}" -f $p.Name, (ConvertTo-ReadableText $p.Value))
             # TWO SPELLINGS OF ONE PROPERTY. The account manager on this build names its values by
             # FRIENDLY NAME - 'Delivery Store EntryID', 'POP3 Server', 'POP3 User' - not by the hex
@@ -821,6 +985,108 @@ function Get-ProfilePstPath {
         }
     }
     return , @($paths | Sort-Object -Unique)
+}
+
+# The plaintext layout -StoreSinkPassword seals - the one the guest run proved (the STORED POP3
+# PASSWORD section above the self-test says what that run was).
+$Pop3PasswordTerminated = $true
+
+# One value of an account-manager entry as text. On this build the entries hold REG_SZ ('POP3
+# Server', 'POP3 User', 'Email' - measured 2026-09-24); a REG_BINARY of UTF-16 is decoded too.
+function Read-AccountText {
+    param($Key, [string] $Name)
+    $v = $Key.GetValue($Name, $null)
+    if ($v -is [byte[]]) { return ([System.Text.Encoding]::Unicode.GetString($v)).TrimEnd([char]0) }
+    if ($null -eq $v) { return '' }
+    return [string]$v
+}
+
+# Every entry of a profile's account-manager key, in the shape Select-SinkAccounts reads. Reads only.
+function Get-AccountEntries {
+    param([string] $Profile)
+    $mgrPath = Join-Path (Join-Path $profilesKey $Profile) $acctMgrSubkey
+    if (-not (Test-Path -LiteralPath $mgrPath)) { return , @() }
+    $entries = @()
+    foreach ($k in @(Get-ChildItem -LiteralPath $mgrPath -ErrorAction SilentlyContinue)) {
+        $entries += @{
+            Key         = $k.PSPath
+            Clsid       = Read-AccountText -Key $k -Name 'clsid'
+            ServiceName = Read-AccountText -Key $k -Name 'Service Name'
+            Pop3Server  = Read-AccountText -Key $k -Name 'POP3 Server'
+            Pop3User    = Read-AccountText -Key $k -Name 'POP3 User'
+            Email       = Read-AccountText -Key $k -Name 'Email'
+            Password    = $k.GetValue($Pop3PasswordValueName, $null)
+        }
+    }
+    return , $entries
+}
+
+# Whether a stored 'POP3 Password' opens, as this user, to the value -StoreSinkPassword writes.
+# Returns 'absent', 'unreadable' (no marker, or DPAPI refused it), 'other' or 'ours'.
+function Get-StoredPasswordState {
+    param($Value)
+    if ($null -eq $Value) { return 'absent' }
+    $blob = ConvertFrom-Pop3PasswordValue -Value ([byte[]]$Value)
+    if ($null -eq $blob) { return 'unreadable' }
+    Add-Type -AssemblyName System.Security
+    try { $opened = [System.Security.Cryptography.ProtectedData]::Unprotect($blob, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser) }
+    catch { return 'unreadable' }
+    $wanted = Get-SinkPasswordPlainBytes -Password $StoredPop3Value -Terminated $Pop3PasswordTerminated
+    if (($opened -join ',') -eq ($wanted -join ',')) { return 'ours' }
+    return 'other'
+}
+
+<#
+    -StoreSinkPassword: seal a POP3 password into every account of the tier profile that polls the
+    sink - the tier account, and the identity account once Add-IdentityAccount.ps1 has built it -
+    so Outlook logs in instead of raising its logon dialog. Without -Execute it reports and writes
+    nothing. Outlook must be CLOSED for -Execute: it holds the account settings while it runs.
+#>
+function Invoke-StoreSinkPassword {
+    Say '== Store a POP3 password on every account that polls the sink =='
+    Say ''
+    if ($Execute) {
+        $running = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
+        if ($running.Count -gt 0) {
+            throw ("OUTLOOK.EXE is running (pid " + (($running | ForEach-Object { $_.Id }) -join ', ') +
+                "). Outlook holds its account settings while it runs; write this with it closed. Quit it gracefully - never taskkill it (mailbox-safety rule 7).")
+        }
+    }
+    if ((Get-ProfileNames) -notcontains $ProfileName) {
+        Fail 'the tier profile exists' "No profile named '$ProfileName' - there is no account to store a password on yet."
+        return
+    }
+    $entries = Get-AccountEntries -Profile $ProfileName
+    $accounts = Select-SinkAccounts -Entries $entries -SinkHost $SinkHost
+    if ($accounts.Count -eq 0) {
+        Fail 'an account polls the sink' "No mail account in '$ProfileName' has POP3 server '$SinkHost'."
+        return
+    }
+    Add-Type -AssemblyName System.Security
+    foreach ($a in $accounts) {
+        if ($a.Problem) { Fail "the account '$($a.Email)' can collect its mail" $a.Problem; continue }
+        $entry = $entries | Where-Object { $_.Key -eq $a.Key } | Select-Object -First 1
+        $before = Get-StoredPasswordState -Value $entry.Password
+        if (-not $Execute) {
+            Say ("  would store a POP3 password on '{0}' (POP3 user '{1}') - stored now: {2}" -f $a.Email, $a.Pop3User, $before)
+            continue
+        }
+        $plain = Get-SinkPasswordPlainBytes -Password $StoredPop3Value -Terminated $Pop3PasswordTerminated
+        $sealed = [System.Security.Cryptography.ProtectedData]::Protect($plain, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+        $value = ConvertTo-Pop3PasswordValue -ProtectedBlob $sealed
+        New-ItemProperty -LiteralPath $a.Key -Name $Pop3PasswordValueName -PropertyType Binary -Value $value -Force | Out-Null
+        $after = Get-StoredPasswordState -Value ((Get-Item -LiteralPath $a.Key).GetValue($Pop3PasswordValueName, $null))
+        if ($after -eq 'ours') {
+            Pass "a POP3 password is stored for '$($a.Email)'" ("REG_BINARY '{0}', {1} byte(s): 0x02 + a DPAPI blob that opens, as {2}, to the value this script writes (it was: {3})" -f $Pop3PasswordValueName, $value.Length, $env:USERNAME, $before)
+        }
+        else {
+            Fail "a POP3 password is stored for '$($a.Email)'" "It was written and reads back as '$after'."
+        }
+    }
+    Say ''
+    Say 'THE REGISTRY IS NOT THE PROOF. Start Outlook on the tier profile with the sink at -LogLevel debug:'
+    Say "C:\OutlookAI-Sink\inbucket.log must show 'read USER <user>' and 'read PASS $StoredPop3Value' for each"
+    Say 'account above, and no "Internet Email" logon dialog may appear in session 1.'
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -921,6 +1187,15 @@ function Invoke-Verify {
         default { Say ("  WARN the one PST is the store Outlook minted under ForcePSTPath - not shown: {0}" -f $layout.Message) }
     }
 
+    # -- the stored POP3 password (2026-09-24): without one Outlook prompts before it connects -----
+    foreach ($a in @(Select-SinkAccounts -Entries (Get-AccountEntries -Profile $ProfileName) -SinkHost $SinkHost)) {
+        if ($a.Problem) { Fail "the account '$($a.Email)' can collect its mail" $a.Problem; continue }
+        $entry = Get-AccountEntries -Profile $ProfileName | Where-Object { $_.Key -eq $a.Key } | Select-Object -First 1
+        $state = Get-StoredPasswordState -Value $entry.Password
+        if ($state -eq 'ours') { Pass "'$($a.Email)' has a stored POP3 password" "it opens, as $env:USERNAME, to the value -StoreSinkPassword writes; POP3 user '$($a.Pop3User)' is its mailbox name" }
+        else { Fail "'$($a.Email)' has a stored POP3 password" "it is $state. Without one Outlook raises its logon dialog at every start and never connects to the sink (measured 2026-09-24), so no mail is ever collected. Quit Outlook and run: .\New-TierProfile.ps1 -StoreSinkPassword -Execute" }
+    }
+
     # -- ImportPRF: the one write -Verify makes, and it needs no -Execute on purpose -------------
     # A protection that waits for somebody to remember a flag is the gap this closes. It removes
     # only a value naming THIS profile's .prf, and only once First-Run is back - proof Outlook has
@@ -1016,7 +1291,9 @@ function Show-NextSteps {
     Say '     Expect the POP3 password dialog on screen; it does not block COM.'
     Say "  2. .\Rename-OutlookStore.ps1 -StoreFilePath '$minted' -DisplayName '$StoreDisplayName' -Execute"
     Say "     (Outlook names the store it mints 'Outlook Data File'; the hub has to be named as the address.)"
-    Say '  3. .\New-TierProfile.ps1 -Verify'
+    Say '  3. Quit Outlook gracefully (Testbed/README.md step 4d), then .\New-TierProfile.ps1 -StoreSinkPassword -Execute'
+    Say '     (with no stored password Outlook prompts at every start and never connects to the sink).'
+    Say '  4. .\New-TierProfile.ps1 -Verify'
     Say 'This script does not start Outlook: importing is a startup-time action, and owning'
     Say "Outlook's lifetime from a setup script is how a guest ends up with a zombie OUTLOOK.EXE."
 }
@@ -1183,7 +1460,11 @@ if ($Verify -and $Execute) {
     throw 'Pass -Execute or -Verify, not both: verifying in the same run as writing would assert against a profile Outlook has not read yet, and would pass for the wrong reason.'
 }
 
-if ($Verify) {
+if ($StoreSinkPassword) {
+    if ($Verify) { throw '-StoreSinkPassword takes -Execute or nothing; run -Verify separately.' }
+    Invoke-StoreSinkPassword
+}
+elseif ($Verify) {
     Invoke-Verify
 }
 elseif ($Execute) {
