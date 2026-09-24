@@ -76,29 +76,72 @@
     WINDOWS POWERSHELL 5.1. No ternary, no `??`.
 
     ---------------------------------------------------------------------------------------------
-    IF SOMEBODY WANTS TO REOPEN THE E_NOINTERFACE, here is the state of it, stated as what is
-    known and what is guessed, because the next person will otherwise redo the guessing.
+    IF SOMEBODY WANTS TO REOPEN THE E_NOINTERFACE: IT IS SETTLED. RUN 2026-09-24. REFUTED.
+    THE E_NOINTERFACE WAS THIS PROJECT'S DECLARATION, NOT OFFICE.
 
-    KNOWN: the stub resolves (`DLLPathEx` points at a real msmapi32.dll under the Click-to-Run
-    root\VFS tree), the process is 64-bit and Office is x64, `MAPIInitialize` returns S_OK, and
-    `MAPIAdminProfiles` returns S_OK. The failure is in the CLR's marshalling of the out-parameter.
+    The hypothesis this section carried was that MAPI's own profile-administration object does
+    not answer QueryInterface for its own IID. The experiment below was run, exactly as this
+    section specified it, and the object DOES answer - for the right IID. The IID the deleted
+    [ComImport] declaration carried was not IID_IProfAdmin at all.
 
-    NOT KNOWN, AND NOT GUESSED AT IN CODE: why. The leading hypothesis is that MAPI's own
-    `IProfAdmin` object does not answer `QueryInterface` for `IID_IProfAdmin` - a C++ caller
-    receives the pointer directly from `MAPIAdminProfiles` and never asks, so an incomplete
-    `QueryInterface` there would have gone unnoticed for decades, while a `[ComImport]`
-    out-parameter forces exactly that question. That is a HYPOTHESIS. It has not been tested and
-    nothing here depends on it.
+    THE IIDs, from Microsoft's own headers (github.com/microsoft/MAPIStubLibrary, the MAPI header
+    set Microsoft publishes):
 
-    THE EXPERIMENT THAT WOULD SETTLE IT, ~10 lines, guest-only, writes nothing: declare
-    `MAPIAdminProfiles(uint, out IntPtr)`, call it, and then call `Marshal.QueryInterface` on the
-    returned pointer for `IID_IProfAdmin`. A non-null pointer plus an E_NOINTERFACE from that QI
-    confirms the hypothesis; anything else refutes it. IT HAS NOT BEEN RUN.
+        include/MAPIGuid.h   DEFINE_OLEGUID(IID_IProfAdmin,        0x0002031C, 0, 0);
+        include/MAPIGuid.h   DEFINE_OLEGUID(IID_IMsgServiceAdmin,  0x0002031D, 0, 0);
+        include/MAPIAux.h    DEFINE_OLEGUID(IID_IMsgServiceAdmin2, 0x00020387, 0, 0);
+        include/MAPIAux.h    DEFINE_OLEGUID(IID_IMessageRaw,       0x0002038A, 0, 0);
 
-    AND IF IT IS CONFIRMED, THE FIX IS STILL NOT FREE. It would mean hand-building the vtable
-    calls with `Marshal.GetDelegateForFunctionPointer` - guessing at slot offsets, which is the
-    exact failure mode this rewrite exists to remove, and which fails as an access violation with
-    no error text rather than as an exception. Do not ship one without a guest run behind it.
+    and what the interop deleted at commit 8b610c2 declared (`git show 8b610c2:<this file>`):
+
+        IProfAdmin          [Guid("00020379-0000-0000-C000-000000000046")]   WRONG - is 0002031C
+        IMsgServiceAdmin    [Guid("0002037A-0000-0000-C000-000000000046")]   WRONG - is 0002031D
+        IMsgServiceAdmin2   [Guid("0002038A-0000-0000-C000-000000000046")]   WRONG - is 00020387;
+                                                                             0002038A is IMessageRaw
+
+    None of 00020379 or 0002037A appears in either header. All three were wrong.
+
+    THE MEASUREMENT. Guest OAI-INDEXED, user vmadmin, 64-bit Windows PowerShell 5.1.26100.7920,
+    Office LTSC 2024 (Click-to-Run VersionToReport 16.0.17932.20996), stub routing
+    DLLPathEx = ...\root\VFS\ProgramFilesCommonX64\system\msmapi\1033\msmapi32.dll (exists).
+    DllImport of the stub: MAPIInitialize(IntPtr), MAPIAdminProfiles(uint, out IntPtr),
+    MAPIUninitialize(); then Marshal.QueryInterface on the returned pointer. No method of the
+    object was called, nothing was written, every pointer was released, MAPIUninitialize ran.
+    Run twice - session 0 over PowerShell Direct (MTA, the conditions of the 2026-09-16
+    failure) and session 1 through Register-InteractiveTask.ps1 (STA) - identical results:
+
+        MAPIInitialize(NULL)             hr=0x00000000
+        MAPIAdminProfiles(0, out ptr)    hr=0x00000000  ptr=0x0000021218C08AC0   (session 0)
+                                                        ptr=0x0000021FA9EB1890   (session 1)
+        QI {00020379-...} (the IID the deleted interop declared)
+                                         hr=0x80004002 (E_NOINTERFACE)  ppv=NULL
+        QI {0002031C-...} (IID_IProfAdmin per MAPIGuid.h)
+                                         hr=0x00000000  ppv=the same pointer
+        QI {00000000-...} (IID_IUnknown, control)
+                                         hr=0x00000000  ppv=the same pointer
+        Release(object)                  refcount now 0
+        MAPIUninitialize()               done
+
+    So the 2026-09-16 failure reproduces exactly - E_NOINTERFACE on {00020379-...} - and is
+    fully explained: the CLR QueryInterfaces for the GUID on the [ComImport] declaration, and
+    that GUID named no interface. The object answers IID_IProfAdmin and IUnknown with itself.
+
+    WHAT THIS DOES AND DOES NOT ESTABLISH.
+      * It DOES establish that "IProfAdmin is unreachable from PowerShell on Office LTSC 2024"
+        was never measured: what was measured is that a declaration with the wrong IID fails.
+        The same is true of IMsgServiceAdmin and IMsgServiceAdmin2, whose IIDs were also wrong.
+      * It does NOT establish that the rest of the deleted interop would have worked. No call
+        ever got past the cast, so its vtable slot order, its ANSI marshalling and its SRowSet
+        readers were never executed anywhere. A corrected IID is the first unknown, not the last.
+      * It changes no route in this repository. By decision (Q67, 2026-09-24: knowledge only), no
+        vtable route and no revived interop was built on this result. The .prf / AddStoreEx /
+        registry routes above remain the ones in use, and they are measured.
+      * DELETING A PROFILE, listed above as "NOTHING FREE", has a documented free route after all
+        (IProfAdmin::DeleteProfile, behind the correct IID). It is still unbuilt and unexercised,
+        and nothing currently needs it.
+
+    NOTE FOR WHOEVER EDITS THIS FILE'S TOP BANNER: its "THE CAUSE WAS NOT ESTABLISHED and is not
+    established now" was written before this run and is superseded by this section.
 #>
 
 $ErrorActionPreference = 'Stop'

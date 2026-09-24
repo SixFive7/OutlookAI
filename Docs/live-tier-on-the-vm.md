@@ -325,12 +325,47 @@ is your call; record which.
 **WHAT ACTUALLY MAKES A GUEST UNINDEXED, now that there is one account per guest.** The
 sentence above named a GUI on a machine that is driven headlessly, and that sentence was the
 entire specification of half the testbed. The step is
-**`Testbed/guest/Set-OutlookIndexingDisabled.ps1`**, run on the unindexed guest. It writes two
-layers - the documented Group Policy value `PreventIndexingOutlook` and the `mapi16://{SID}/`
-rule's `Include` flag - and **leaves the indexer running**, because stopping the Windows Search
-service produces a machine with no search rather than a mailbox search has not been told about,
-and the product takes a different, untested code path there. Section 8 item 21 keeps that
-distinction from collapsing.
+**`Testbed/guest/Set-OutlookIndexingDisabled.ps1`**, run on the unindexed guest. It writes
+**one** value - the documented Group Policy `PreventIndexingOutlook` - reports the
+`mapi16://{SID}/` rule **read-only**, and **leaves the indexer running**, because stopping the
+Windows Search service produces a machine with no search rather than a mailbox search has not
+been told about, and the product takes a different, untested code path there. Section 8 item 21
+keeps that distinction from collapsing.
+
+> **MEASURED 2026-09-24 on `OutlookAI-Indexed` - the registry half was exercised, and three things
+> changed.** Full evidence in the script's banner.
+>
+> 1. **An administrator cannot write the crawl-scope rule at all.** The crawl scope manager's
+>    keys (`SystemIndex`, `WorkingSetRules`, each `WorkingSetRules\<n>`, `SearchRoots`,
+>    `DefaultRules`) grant `BUILTIN\Administrators` **ReadKey only**; `SetValue` belongs to
+>    `SYSTEM`, `NT SERVICE\WSearch` and `TrustedInstaller`. The exact write the script made -
+>    `New-ItemProperty -Name Include -PropertyType DWord` on a rule key - failed from an elevated
+>    session with *"System.Security.SecurityException: Requested registry access is not
+>    allowed"* (tried as a no-op on an existing `csc://` rule). **So the script's second layer
+>    could never have worked**, and on the first machine that had a rule, `-Execute` would have
+>    written the policy and then thrown - before the restart and before any verification. It is
+>    now read-only; `-SelfTest` pins that the file writes nothing under those keys.
+> 2. **The "indexed" guest has never been indexed.** No `mapi16` rule in any container, and
+>    `mapiRows=0 mailRows=0` on two readings ten minutes apart, nine days after its 20,000-item
+>    corpus was built. Outlook did not put itself into the crawl scope with its UI open for 10
+>    minutes on the tier profile, 8 minutes on the corpus profile (Explorer fully loaded), or 5
+>    more with the policy set; nor after the community-reported 25H2 key
+>    (`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Search\SetupCompletedSuccessfully = 1`,
+>    absent on the maintainer's workstation too, which has the rule); nor after the documented
+>    *Default indexed paths* policy value was written for `mapi16://{SID}/` and `gpupdate /force`
+>    run. The maintainer's workstation, on the same Windows release, **does** carry the rule.
+>    Why a freshly built guest never gets one is **not established** - section 8 item 22.
+>    `-Verify` used to call this state `SETTLING`, "wait and re-run", which never converges; it now
+>    has its own verdict, **`NOT-IN-SCOPE`**, reported as a failure.
+> 3. **So the 2026-09-16 `UNINDEXED` on the other guest proves less than it read.** It proves that
+>    guest holds no Outlook row. It does not prove the policy excluded anything: its twin shows
+>    the same zero rows with no policy at all. `-Verify` now prints that caveat under `UNINDEXED`
+>    whenever no `mapi16` rule exists.
+>
+> Also measured the same day: `-RebuildCatalog`'s recipe (`SetupCompletedSuccessfully = 0` under
+> `HKLM\SOFTWARE\Microsoft\Windows Search`, then a service restart) **does** trigger a full reset -
+> Windows Search logged 1008 and 1004 *"{Reason: Full Index Reset}"*, and `Windows.db` went from
+> 31.6 MB to 0.6 MB. That step was INFERRED until now.
 
 **Run it BEFORE `Build-Corpus.ps1`, and this is LOAD-BEARING rather than an optimisation.**
 Exclude first and no corpus row is ever crawled, so the "indexed, but not **yet**" state cannot
@@ -344,10 +379,23 @@ arise and does not have to be waited out. `Testbed/README.md` section 1 carries 
 > has not settled yet". Excluding first makes the question not arise. If you ever have to
 > exclude a guest whose corpus is already built, do not trust a settle window - rebuild the
 > catalog, or rebuild the guest.
+>
+> **STILL NOT ESTABLISHED, 2026-09-24 - and now known to be unmeasurable on the guests as they
+> stand.** The experiment was set up on `OutlookAI-Indexed` precisely to answer it: exclude a
+> guest that already holds Outlook rows and see whether they go. It could not run, because that
+> guest holds **no** Outlook rows and never has (the note above). The durability question -
+> does the exclusion survive Outlook? - is unanswered for the same reason: with the policy set,
+> Outlook ran for 5 minutes with its UI up, the guest was restarted, and the policy was still `1`
+> and no rule had appeared - but no rule had appeared **without** the policy either, so that
+> reading distinguishes nothing. Both questions need a machine with Outlook **in** the crawl
+> scope, and neither guest is one (section 8 item 22). Ordering therefore still matters for the
+> day that changes; on today's guests it happens to be moot.
 
 **Three durability risks the script does not defend against**, all established 2026-09-16 and
 none of them a reason to avoid it - they are the reason the Group Policy layer is written *as
-well as* the registry rule:
+well as* the registry rule. **The first two are HISTORY since 2026-09-24**: they are risks to a
+registry-written rule, and the script no longer writes one (an administrator cannot - see the
+note above). They still describe what would undo an exclusion made through Indexing Options:
 
 * **The registry rule can be silently clobbered.** Crawl-scope state lives in a shared memory
   view with the registry as backing store (`ISearchCrawlScopeManager2::GetVersion` "does not
@@ -381,10 +429,12 @@ it.
 a control probe, a scoped-MAPI probe and a scope-free mail probe through the same
 `Search.CollatorDSO` provider the product uses, **twice**, `-SettleMinutes` apart - because a
 machine believed unindexed while it is quietly still indexing produces measurements that look
-fine and mean nothing. It returns four verdicts, and **two of them are not answers**:
-`SETTLING` and `NO-INDEXER` both mean "ask again", not "pass". Reading back the settings that
-were written proves nothing; neither does a single zero. Cross-check with `outlook_health`'s
-`index.perStore[]`, which is the instrument section 1.1 names.
+fine and mean nothing. It returns five verdicts, and **three of them are not answers**:
+`SETTLING` and `NO-INDEXER` both mean "ask again", not "pass", and `NOT-IN-SCOPE` (added
+2026-09-24) means "asking again will not help - Outlook is not in the crawl scope at all".
+Reading back the settings that were written proves nothing; neither does a single zero.
+Cross-check with `outlook_health`'s `index.perStore[]`, which is the instrument section 1.1
+names. `-SelfTest` drives the verdict table with synthetic readings on any machine.
 
 **That verification needs an x64 host** - the `Search.CollatorDSO` provider has no 32-bit
 in-process form, so a 32-bit PowerShell cannot load it. This is a precondition of every index
@@ -644,6 +694,41 @@ passes, the one real objection to smtp4dev - that its POP3 side is much less exe
 SMTP side - is retired.
 
 ### 2.8b The identity account - a BUILD step, not a TODO
+
+> **BUILT BY SCRIPT, 2026-09-24, on `OutlookAI-Indexed` - checkpoint `CP-09-IDENTITY-ACCOUNT`.**
+> `Testbed/guest/Add-IdentityAccount.ps1`, in four phases because they alternate between Outlook
+> closed and Outlook running, and the script never starts or stops Outlook itself:
+>
+> ```
+> .\Add-IdentityAccount.ps1 -Phase Import -Execute          # Outlook CLOSED: .prf + ImportPRF
+> <start Outlook once - it imports the account at start-up and clears ImportPRF itself>
+> .\Add-OutlookPstStore.ps1 -ProfileName OutlookAI-Tier -DisplayName identity@vm.invalid `
+>                           -Path C:\OutlookAI-Tier\identity.pst -Execute      # Outlook RUNNING
+> .\Add-IdentityAccount.ps1 -Phase CaptureStore -Execute    # Outlook RUNNING: read the store's IDs
+> <restart the guest - never taskkill Outlook>
+> .\Add-IdentityAccount.ps1 -Phase Bind -Execute            # Outlook CLOSED: bind the account
+> .\Add-IdentityAccount.ps1 -Phase Verify                   # session 1, COM
+> ```
+>
+> **What it produced, read over COM and again after a guest restart:** two POP3 accounts and two
+> stores - `OutlookAI tier sink` delivering to `tier@vm.invalid` (`C:\OutlookAI-Tier\Outlook.pst`),
+> `OutlookAI identity sink` delivering to its **own** `identity@vm.invalid`
+> (`C:\OutlookAI-Tier\identity.pst`), each Drafts folder resolving, no store shared.
+>
+> **Why four phases and not one `.prf`, measured the same day:** a `.prf` creates the account
+> (`OverwriteProfile=Append`, `Testbed/guest/identity-account.prf`) but Outlook binds it to the
+> profile's **default** store - the tier store; a single `.prf` carrying both accounts got one
+> minted store bound to both. So the identity PST is attached afterwards and the account is
+> re-pointed at it by writing the two registry values in which Outlook itself records the binding
+> (`Delivery Store EntryID`, `Delivery Folder EntryID`), with the exact bytes COM reports for that
+> store. **That write is the one undocumented step** - the object model's `Account.DeliveryStore`
+> is read-only and Microsoft documents only the GUI's *Change Folder*.
+> `Docs/research/profile-automation-research.md` §4 has the full evidence.
+>
+> **Still to do on this machine, and NOT done by that script:** the **signature** below
+> (`Testbed/guest/Set-AccountSignature.ps1`, never executed); the settings-file declaration below;
+> and reading `Account.SmtpAddress` over COM, which the Object Model Guard blocks on these guests
+> (section 8 item 23). The rest of this section is the specification the script was built to.
 
 **Add a SECOND mail account, give it its own delivery PST, and leave that PST out of
 `bystanderStoreDisplayNames`.** That is the whole of the `IdentityAccount` capability: a non-hub
@@ -1286,6 +1371,23 @@ unrecorded or unverified.
    binary EntryID. `Testbed/guest/New-PopAccountPrf.ps1` is the spike that tests the last of those
    and is expected to fail. **So sections 2.8 and 2.8b keep ONE GUI pass per guest** - two accounts
    and their delivery stores - and the mitigation is a checkpoint immediately after it.
+   **CORRECTED 2026-09-24, three times over.** (a) **The closed-negative half is not negative:**
+   both accounts are built by script with no GUI - the tier account by `New-TierProfile.ps1` with
+   `tier-profile-forcepst.prf` (both guests, 2026-09-15/16), the identity account with its own
+   delivery store by `Testbed/guest/Add-IdentityAccount.ps1` (`OutlookAI-Indexed`, one
+   undocumented registry step - section 2.8b and the research doc's §4). There is no GUI pass left
+   in sections 2.8 and 2.8b. (b) **`IProfAdmin` was never "measured broken on this Office build".**
+   The deleted interop declared it with the wrong IID - `00020379` where Microsoft's `MAPIGuid.h`
+   has `IID_IProfAdmin` = `0002031C` - and a `QueryInterface` for the right one succeeds on this
+   build (`Testbed/guest/OutlookMapiInterop.ps1`, REOPEN section). Nothing was rebuilt on MAPI; the
+   routes above stay. (c) **The hazard section 2.5a carries does not occur as described on this
+   build:** Outlook deletes `ImportPRF` after importing and writes `First-Run` back - observed on
+   the tier profile's own nine-day-old import and on four controlled imports on 2026-09-24. What
+   does stay true is that an `OverwriteProfile=Yes` import drops every store the file does not
+   name; a repeated import still costs the corpus, it just has to be repeated by someone.
+   `Add-OutlookPstStore.ps1` has now also run on a guest (2026-09-24, `AddStoreEx` returned
+   promptly, the rename carried) - so of the profile scripts only `New-OutlookProfile.ps1` is
+   still unexecuted as far as this guest's record goes.
 10. The scheduled-task recipe for session 1: task name, principal, working directory, argument
     line, output redirection and exit-code capture. Only "`-LogonType Interactive`" is recorded,
     and an elevated process's stdout cannot reach the caller, so output must go to a file.
@@ -1359,6 +1461,39 @@ unrecorded or unverified.
     measured. **Conflating this with Corpus B is the mistake section 2.4 exists to prevent, and
     leaving it unnamed was a different one.** If it is ever built, it is a *third* guest shape,
     not a setting on the second.
+
+22. **OPEN, and it is the largest gap in the testbed today - `OutlookAI-Indexed` has never been
+    indexed.** Measured 2026-09-24: no `mapi16://{SID}/` rule in `DefaultRules`,
+    `WorkingSetRules` or `SearchRoots`; `mapiRows=0 mailRows=0` on two catalog readings ten minutes
+    apart, nine days after its 20,000-item corpus was built; catalog 31.6 MB. `-Verify` now calls
+    this `NOT-IN-SCOPE`. Outlook did **not** add its scope with its UI open for 10 minutes on the
+    tier profile or 8 on the corpus profile; nor after the community-reported 25H2 key
+    (`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Search\SetupCompletedSuccessfully = 1`, absent
+    on the maintainer's workstation too); nor after the documented *Default indexed paths* policy
+    value was written for `mapi16://{SID}/` and `gpupdate /force` run. A registry-written rule is not
+    an option either: administrators hold **ReadKey only** on the crawl scope manager's keys.
+    The maintainer's workstation, same Windows release, **has** the rule. So **the index half of the
+    live tier cannot run on either guest as built**, and the two guests do not differ in the one
+    property that is supposed to separate them. Routes not tried, each a decision: the documented
+    Crawl Scope Manager API (`ISearchCrawlScopeManager::AddUserScopeRule` + `SaveAll`, which runs
+    inside WSearch and is what Indexing Options calls - hand-declared COM interop from PowerShell
+    5.1), the Indexing Options dialog itself (UIAutomation), a local Group Policy object carrying
+    *Default indexed paths* (registry.pol, not a raw value), or finding what a freshly built machine
+    lacks by comparing with one Outlook did register on.
+23. **OPEN - Outlook's Object Model Guard prompts on the guests, and the live tier reads protected
+    members.** Windows Security Center reports Defender's signatures out of date (dated 2025-09-17,
+    372 days on 2026-09-24; the guests have no network), so Outlook treats every out-of-process COM
+    caller as untrusted and raises *"A program is trying to access email address information stored
+    in Outlook"* - a modal dialog on the guest's desktop that nothing answers. Measured 2026-09-24 on
+    `OutlookAI-Indexed`: `Account.UserName` (not on Microsoft's published list of protected members)
+    raised it and blocked; `Account.SmtpAddress` (on the list) blocked in one run and returned while
+    another run's prompt was already pending; `DisplayName`, `AccountType`, `DeliveryStore` and its
+    folders never did. Microsoft's list also covers `MailItem.Body`, `HTMLBody`, `SenderEmailAddress`,
+    `Recipients`, `PropertyAccessor` and more - members the product reads - so **expect the live tier
+    to stall on a prompt on these guests**. It did not show on 2026-09-15, when the account probe read
+    `SmtpAddress` freely; what changed in between is not established. Options, each a decision: the
+    documented Outlook security policy that auto-approves programmatic access, updated signatures
+    staged offline, or the Trust Center's programmatic-access setting (HKLM, per machine).
 
 ---
 
