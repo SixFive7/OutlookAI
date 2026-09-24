@@ -24,6 +24,11 @@ on:
       - 'Services/PromptDefaults.cs'
       - 'Services/PromptStore.cs'
       - 'Services/PromptLint.cs'
+      # Read by T1 through the live tier's own settings loader (the documented example, the
+      # rendering template and the per-guest values), so a change here can break it too.
+      - 'Testbed/live-test-settings.example.json'
+      - 'Testbed/live-test-settings.template.json'
+      - 'Testbed/testbed.json'
       - '.github/workflows/mcpserver.yml'
   pull_request:
     paths:
@@ -35,6 +40,11 @@ on:
       - 'Services/PromptDefaults.cs'
       - 'Services/PromptStore.cs'
       - 'Services/PromptLint.cs'
+      # Read by T1 through the live tier's own settings loader (the documented example, the
+      # rendering template and the per-guest values), so a change here can break it too.
+      - 'Testbed/live-test-settings.example.json'
+      - 'Testbed/live-test-settings.template.json'
+      - 'Testbed/testbed.json'
       - '.github/workflows/mcpserver.yml'
   workflow_dispatch:
 

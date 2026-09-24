@@ -14,7 +14,7 @@
 
     So this script asks one question of the tree: DOES THE THING THE DOCUMENT NAMES EXIST HERE?
 
-    SEVEN CHECKS.
+    EIGHT CHECKS.
 
     1. NO DANGLING REPOSITORY REFERENCE. Every repository-relative path named in a tracked
        document or testbed script must exist, or be on the declared list below with a reason.
@@ -56,6 +56,21 @@
        anywhere in the tree, because the filled file is the one that carries the credential and it
        belongs in gitignored scratch. Testbed/host/New-AnswerFile.ps1 is what fills the template,
        and it refuses to write its output anywhere but there.
+
+    8. THE LIVE-TEST SETTINGS TEMPLATE HOLDS TOKENS ONLY, AND ITS FIELDS ARE THE EXAMPLE'S. A test
+       guest's gitignored live-test-settings.json is RENDERED, by Testbed/host/New-LiveTestSettings.ps1,
+       from Testbed/live-test-settings.template.json and that guest's section of Testbed/testbed.json.
+       Three committed files describe one shape - the documented example, the template, and the
+       per-guest values - and nothing else ties them together. So this requires the template's
+       field set to equal the example's (_-prefixed notes aside) and every value in it to be the
+       double-brace token spelling its own path, never a value; every guest section of testbed.json
+       to name exactly the template's fields; the renderer's guest destination to sit under the
+       same source root Testbed/host/Publish-LiveTierPayload.ps1 stages the suite into; and no file
+       called live-test-settings.json to be tracked anywhere, since the real one names real stores.
+       It lives here rather than in a T1 test because every one of those files is under Testbed/,
+       and the workflow that runs T1 only triggers on McpServer/ - this script runs on every pull
+       request. T1/LiveTestSettingsTemplateTests covers the other half: that the template still
+       renders into something the live tier's loader accepts.
 
     Run it from anywhere:
         pwsh -File .github/scripts/check-testbed-references.ps1
@@ -502,6 +517,159 @@ if ($answerProblems.Count -gt 0) {
 }
 else {
     Pass 'answer-file template holds placeholders, not values' "$templateRelative checked, no filled answer file tracked"
+}
+
+# ---------------------------------------------------------------------------------------------
+# 8. The live-test settings template holds tokens only, and its fields are the example's.
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+
+$exampleRelative = 'Testbed/live-test-settings.example.json'
+$settingsTemplateRelative = 'Testbed/live-test-settings.template.json'
+$rendererRelative = 'Testbed/host/New-LiveTestSettings.ps1'
+$stagerRelative = 'Testbed/host/Publish-LiveTierPayload.ps1'
+$settingsProblems = @()
+
+# Every field of a settings-shaped object as (Path, Value), notes skipped, one block deep - which is
+# all a settings file has. A value is only ever compared, never printed: if a real store name were
+# ever typed into the template, this output goes into a public build log.
+function Get-SettingsLeaves($node, [string] $prefix) {
+    $leaves = @()
+    foreach ($p in $node.PSObject.Properties) {
+        if ($p.Name.StartsWith('_')) { continue }
+        $path = $p.Name
+        if ($prefix) { $path = $prefix + '.' + $p.Name }
+        if ($p.Value -is [System.Management.Automation.PSCustomObject]) { $leaves += Get-SettingsLeaves $p.Value $path }
+        else { $leaves += [pscustomobject]@{ Path = $path; Value = $p.Value } }
+    }
+    return $leaves
+}
+
+function Read-SettingsJson([string] $relative) {
+    $full = Join-Path $RepoRoot $relative
+    if (-not (Test-Path -LiteralPath $full)) {
+        $script:settingsProblems += "$relative does not exist. Either the rendered-settings route was removed - in which case delete this check and say so - or it moved and this check now proves nothing."
+        return $null
+    }
+    try { return (Get-Content -LiteralPath $full -Raw | ConvertFrom-Json) }
+    catch {
+        $script:settingsProblems += "$relative is not valid JSON ($($_.Exception.Message))."
+        return $null
+    }
+}
+
+$exampleJson = Read-SettingsJson $exampleRelative
+$settingsTemplateJson = Read-SettingsJson $settingsTemplateRelative
+$testbedJson = Read-SettingsJson 'Testbed/testbed.json'
+
+$templateLeaves = @()
+if ($null -ne $exampleJson -and $null -ne $settingsTemplateJson) {
+    $exampleLeaves = @(Get-SettingsLeaves $exampleJson '')
+    $templateLeaves = @(Get-SettingsLeaves $settingsTemplateJson '')
+    $examplePaths = @($exampleLeaves | ForEach-Object { $_.Path })
+    $templatePaths = @($templateLeaves | ForEach-Object { $_.Path })
+
+    $notInTemplate = @($examplePaths | Where-Object { $templatePaths -cnotcontains $_ })
+    $notInExample = @($templatePaths | Where-Object { $examplePaths -cnotcontains $_ })
+    if ($notInTemplate.Count -gt 0) {
+        $settingsProblems += "$settingsTemplateRelative lacks field(s) the example has: $($notInTemplate -join ', '). The two must name the same fields - add the token, and teach $rendererRelative its rule."
+    }
+    if ($notInExample.Count -gt 0) {
+        $settingsProblems += "$settingsTemplateRelative has field(s) the example does not: $($notInExample -join ', '). The example is the documented shape; add the field there first, or take it out of the template."
+    }
+
+    foreach ($leaf in $templateLeaves) {
+        if (-not ($leaf.Value -is [string]) -or $leaf.Value -cne ('{{' + $leaf.Path + '}}')) {
+            # The value is deliberately NOT printed - see Get-SettingsLeaves.
+            $settingsProblems += "$settingsTemplateRelative field '$($leaf.Path)' is not the token for its own path. The template holds tokens and nothing else; its content is not printed here."
+        }
+    }
+    foreach ($p in $settingsTemplateJson.PSObject.Properties) {
+        if ($p.Name.StartsWith('_') -and $p.Value -is [string] -and $p.Value.Contains('{{')) {
+            $settingsProblems += "$settingsTemplateRelative note '$($p.Name)' contains a double brace. A note that spells a token reads as an unreplaced one to anything scanning for them."
+        }
+    }
+}
+
+# The per-guest values must name exactly the template's fields. A block may be null (none on that
+# guest) or a placeholder still waiting to be read off the guest - but never a different shape.
+$guestCount = 0
+if ($null -ne $testbedJson -and $templateLeaves.Count -gt 0) {
+    $section = $testbedJson.PSObject.Properties | Where-Object { $_.Name -ceq 'liveTestSettings' }
+    if (-not $section -or -not ($section.Value -is [System.Management.Automation.PSCustomObject])) {
+        $settingsProblems += "Testbed/testbed.json has no liveTestSettings object, so $rendererRelative has nothing to render from."
+    }
+    else {
+        $topLevel = @($templateLeaves | ForEach-Object { ($_.Path -split '\.')[0] } | Select-Object -Unique)
+        $blocks = @($templateLeaves | Where-Object { $_.Path.Contains('.') } | ForEach-Object { ($_.Path -split '\.')[0] } | Select-Object -Unique)
+        foreach ($guest in $section.Value.PSObject.Properties) {
+            if ($guest.Name.StartsWith('_')) { continue }
+            $guestCount++
+            $where = "Testbed/testbed.json liveTestSettings.$($guest.Name)"
+            if (-not ($guest.Value -is [System.Management.Automation.PSCustomObject])) {
+                $settingsProblems += "$where is not an object."
+                continue
+            }
+            $guestTop = @($guest.Value.PSObject.Properties | Where-Object { -not $_.Name.StartsWith('_') } | ForEach-Object { $_.Name })
+            foreach ($name in @($topLevel | Where-Object { $guestTop -cnotcontains $_ })) { $settingsProblems += "$where lacks '$name'." }
+            foreach ($name in @($guestTop | Where-Object { $topLevel -cnotcontains $_ })) { $settingsProblems += "$where has '$name', which the template does not." }
+
+            foreach ($block in $blocks) {
+                $value = ($guest.Value.PSObject.Properties | Where-Object { $_.Name -ceq $block }).Value
+                if ($null -eq $value) { continue }
+                if ($value -is [string] -and $value.StartsWith('<FILL')) { continue }
+                if (-not ($value -is [System.Management.Automation.PSCustomObject])) {
+                    $settingsProblems += "$where.$block must be an object carrying every field, null, or a placeholder."
+                    continue
+                }
+                $want = @($templateLeaves | Where-Object { $_.Path.StartsWith($block + '.') } | ForEach-Object { $_.Path.Substring($block.Length + 1) })
+                $have = @($value.PSObject.Properties | Where-Object { -not $_.Name.StartsWith('_') } | ForEach-Object { $_.Name })
+                foreach ($name in @($want | Where-Object { $have -cnotcontains $_ })) { $settingsProblems += "$where.$block lacks '$name'." }
+                foreach ($name in @($have | Where-Object { $want -cnotcontains $_ })) { $settingsProblems += "$where.$block has '$name', which the template does not." }
+            }
+        }
+        if ($guestCount -eq 0) {
+            $settingsProblems += "Testbed/testbed.json liveTestSettings names no guest, so this part of the check proves nothing."
+        }
+    }
+}
+
+# Where the rendered file lands on a guest must be where the suite is built there.
+$rendererText = $null
+$stagerText = $null
+foreach ($pair in @(@($rendererRelative, 'renderer'), @($stagerRelative, 'stager'))) {
+    $full = Join-Path $RepoRoot $pair[0]
+    if (-not (Test-Path -LiteralPath $full)) {
+        $settingsProblems += "$($pair[0]) does not exist, so nothing proves where a rendered settings file lands on a guest."
+        continue
+    }
+    if ($pair[1] -eq 'renderer') { $rendererText = Get-Content -LiteralPath $full -Raw }
+    else { $stagerText = Get-Content -LiteralPath $full -Raw }
+}
+if ($null -ne $rendererText -and $null -ne $stagerText) {
+    $rootPattern = '\$(?:script:)?GuestSourceRoot\s*=\s*''([^'']+)'''
+    $rendererRoot = [regex]::Match($rendererText, $rootPattern)
+    $stagerRoot = [regex]::Match($stagerText, $rootPattern)
+    if (-not $rendererRoot.Success -or -not $stagerRoot.Success) {
+        $settingsProblems += "Could not find `$GuestSourceRoot in both $rendererRelative and $stagerRelative - one of them changed shape, and this check no longer proves the rendered file lands where the suite is built."
+    }
+    elseif ($rendererRoot.Groups[1].Value -cne $stagerRoot.Groups[1].Value) {
+        $settingsProblems += "$rendererRelative sends the rendered file under '$($rendererRoot.Groups[1].Value)', but $stagerRelative builds the suite under '$($stagerRoot.Groups[1].Value)'. The tier on the guest would not find its settings."
+    }
+}
+
+# A real settings file names real stores. None may ever be tracked - wherever it was copied to.
+$trackedSettings = @($tracked | Where-Object { [IO.Path]::GetFileName($_).ToLowerInvariant() -eq 'live-test-settings.json' })
+if ($trackedSettings.Count -gt 0) {
+    $settingsProblems += ("A live-test-settings.json is tracked: " + ($trackedSettings -join ', ') +
+        '. That file names real stores. Rendered ones belong in .work/, and the real one only in the gitignored live-fixtures directory.')
+}
+
+if ($settingsProblems.Count -gt 0) {
+    Fail 'live-test settings template holds tokens only, with the example''s fields' (($settingsProblems | Sort-Object -Unique) -join "`n        ")
+}
+else {
+    Pass 'live-test settings template holds tokens only, with the example''s fields' "$($templateLeaves.Count) token(s) matching $exampleRelative, $guestCount guest section(s) in testbed.json of the same shape, the guest root agreeing with the stager, no live-test-settings.json tracked"
 }
 
 # ---------------------------------------------------------------------------------------------

@@ -31,7 +31,8 @@
 
     WHAT IS STILL NOT PROVEN BY THIS SCRIPT, and it is deliberate: that the LIVE TIER passes.
     TEST-READY means `dotnet test` builds, discovers and executes here. The tier needs the
-    per-guest `live-test-settings.json` - which names real stores, so no script can supply it -
+    per-guest `live-test-settings.json` - which names the guest's stores, and which
+    host/New-LiveTestSettings.ps1 renders only once those names have been read off the guest -
     and it must run through guest/Register-InteractiveTask.ps1, because Outlook cannot finish
     starting in session 0 and a tier run over PowerShell Direct hangs rather than failing.
 
