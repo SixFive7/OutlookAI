@@ -284,6 +284,38 @@ Copy-Item -LiteralPath $FirstLogonScriptPath -Destination (Join-Path $staging 'C
 # ---------------------------------------------------------------------------------------------
 # Build the ISO.
 # ---------------------------------------------------------------------------------------------
+
+# A NATIVE PROGRAM WHOSE STDERR IS REDIRECTED RUNS THROUGH HERE (Q78). Under
+# $ErrorActionPreference = 'Stop', Windows PowerShell 5.1 turns the first line a native program
+# writes to a redirected stderr - 2>$null, 2>&1 and *> alike - into a terminating
+# NativeCommandError, so one warning or progress line ends the script before its exit code can be
+# read. PowerShell 7 does not. Measured on the host 2026-09-24. So, here and only here:
+#   * 'Continue' holds in THIS function's scope. The caller's 'Stop' is never changed, so there is
+#     nothing to restore and nothing else is relaxed.
+#   * The try is load-bearing. Without one, 'Continue' also demotes a terminating error inside the
+#     block - the program not being found at all - to a printed message, and the caller goes on to
+#     read a stale $LASTEXITCODE. Inside a try it stops the caller exactly as it always did.
+#     Measured in both shells.
+#   * Stderr lines come back as plain strings in both shells, never as ErrorRecords: 5.1 renders
+#     those with a position block around every line, and an empty one as an exception type name.
+#   * The exit code is left in $LASTEXITCODE, and the caller checks it.
+# Restated in each script that needs it, as this repository restates its shared rules.
+# .github/scripts/check-powershell-51.ps1 fails the build on a redirected native call that does
+# not go through a function like this one.
+function Invoke-NativeCommand {
+    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
+
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $NativeCommand | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
+        }
+    }
+    catch {
+        throw
+    }
+}
+
 function Find-Oscdimg {
     param([string] $Explicit)
 
@@ -324,7 +356,11 @@ function New-IsoWithOscdimg {
     # Long names matter: 'autounattend.xml' does not survive 8.3, and a Setup that cannot see
     # that name behaves exactly as though no answer file were attached.
     $logPath = [System.IO.Path]::ChangeExtension($IsoPath, '.oscdimg.log')
-    & $Exe '-u1' '-udfver102' ('-l' + $Label) $SourceDir $IsoPath *> $logPath
+    # oscdimg prints its progress ("0% complete") on stderr, so under Windows PowerShell 5.1 this
+    # line died on the tool's own first progress report until it went through Invoke-NativeCommand.
+    # Everything it prints still lands in the log, stdout and stderr together, as it did with *>.
+    Invoke-NativeCommand { & $Exe '-u1' '-udfver102' ('-l' + $Label) $SourceDir $IsoPath 2>&1 } |
+        Out-File -LiteralPath $logPath
     if ($LASTEXITCODE -ne 0) {
         throw "oscdimg exited $LASTEXITCODE. Its output is in $logPath."
     }
