@@ -108,39 +108,57 @@ public sealed class SignatureCatalogTests : IDisposable
     // ------------------------------------------------------------------ assignments
 
     [Fact]
-    public void Assignments_ParseStringAndBinaryValues_AndFilterNonMailRows()
+    public void Assignments_ParseStringAndBinaryValues_AndListOnlyMailAccounts()
     {
+        const string pop3 = "{ED475411-B0D6-11D2-8C3B-00104B2A6676}";
+        const string mapiService = "{ED475414-B0D6-11D2-8C3B-00104B2A6676}";
         var rows = new List<IReadOnlyDictionary<string, object?>>
         {
-            // Address book row - no '@', must be filtered.
-            new Dictionary<string, object?> { ["Account Name"] = "Outlook Address Book" },
-            // REG_SZ values.
+            // Address book - not an account, whatever it is called.
             new Dictionary<string, object?>
             {
-                ["Account Name"] = "a@example.com",
+                ["clsid"] = mapiService, ["Service Name"] = "CONTAB", ["Account Name"] = "Outlook Address Book",
+            },
+            // POP3 account, REG_SZ values, renamed by its user: the address is Email, never Account Name.
+            new Dictionary<string, object?>
+            {
+                ["clsid"] = pop3,
+                ["Account Name"] = "Work mail",
+                ["Email"] = "a@example.com",
                 ["New Signature"] = "Sig A",
                 ["Reply-Forward Signature"] = "Sig B",
             },
             // REG_BINARY (UTF-16LE, NUL-terminated) values.
             new Dictionary<string, object?>
             {
-                ["Account Name"] = Encoding.Unicode.GetBytes("b@example.com\0"),
+                ["clsid"] = pop3,
+                ["Email"] = Encoding.Unicode.GetBytes("b@example.com\0"),
                 ["New Signature"] = Encoding.Unicode.GetBytes("Sig C\0"),
             },
-            // Mail account without any signature values: unknown, reported as nulls.
-            new Dictionary<string, object?> { ["Account Name"] = "c@example.com" },
+            // Exchange account, the shape measured on the development host: no Email value, the
+            // Account Name is the address. No signature values: unknown, reported as nulls.
+            new Dictionary<string, object?>
+            {
+                ["clsid"] = mapiService, ["Service Name"] = "MSEMS", ["Account Name"] = "c@example.com",
+            },
+            // A data file NAMED LIKE AN ADDRESS, carrying a signature value - the 2026-09-24 defect.
+            // Not an account: the old rule listed it as d@example.com's assignment.
+            new Dictionary<string, object?>
+            {
+                ["clsid"] = mapiService,
+                ["Service Name"] = "MSUPST MS",
+                ["Account Name"] = "d@example.com",
+                ["New Signature"] = "Stray",
+            },
         };
 
         IReadOnlyList<SignatureAssignment> assignments = SignatureCatalog.ReadAccountAssignments(() => rows);
 
-        Assert.Equal(3, assignments.Count);
-        Assert.Equal("a@example.com", assignments[0].Account);
+        Assert.Equal(new[] { "a@example.com", "b@example.com", "c@example.com" }, assignments.Select(a => a.Account));
         Assert.Equal("Sig A", assignments[0].NewMessageSignature);
         Assert.Equal("Sig B", assignments[0].ReplyForwardSignature);
-        Assert.Equal("b@example.com", assignments[1].Account);
         Assert.Equal("Sig C", assignments[1].NewMessageSignature);
         Assert.Null(assignments[1].ReplyForwardSignature);
-        Assert.Equal("c@example.com", assignments[2].Account);
         Assert.Null(assignments[2].NewMessageSignature);
         Assert.Null(assignments[2].ReplyForwardSignature);
     }
