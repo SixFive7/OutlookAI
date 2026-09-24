@@ -297,11 +297,14 @@ the distinction this file draws everywhere else. They are listed here because th
 preconditions for the same act, and because a reader who stages only the SDK will get the guest
 script's `SDK-ONLY` verdict and should know in advance what it means.
 
-**One thing no script can stage:**
+**One thing the payload cannot carry:**
 `McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json`. It is gitignored
 because it names real stores and this repository is public, so each guest needs its own.
 `Testbed/live-test-settings.example.json` is the committed shape. Without it the tier has no
-write allowlist, which is a refusal rather than a pass — by design.
+write allowlist, which is a refusal rather than a pass — by design. **For a guest it is rendered,
+not written**: `Testbed/host/New-LiveTestSettings.ps1` builds it from the guest's section of
+`Testbed/testbed.json` once that guest's store names have been read off it, and prints the
+`Copy-ToGuest.ps1` line that lands it.
 
 ### Installing it, and where in the build order it goes
 

@@ -50,7 +50,7 @@ testbed before its replacement runs.**
 | 7b | **Decide whether this guest is the indexed one or the unindexed one, and do it BEFORE the corpus exists** | `guest/Set-OutlookIndexingDisabled.ps1` on `OutlookAI-Unindexed`; nothing on `OutlookAI-Indexed`. Order is the whole point: exclude Outlook first and no row is ever crawled, so there is nothing to purge and nothing to wait for | guest |
 | 8 | Build the corpus | `guest/Build-Corpus.ps1` | guest, session 1 |
 | 8b | **Make the guest able to RUN the suite at all** - it has no .NET, no git and no clone. Stage on the host, then install: `host/Publish-LiveTierPayload.ps1` then `guest/Install-DotnetSdk.ps1`. The SDK alone is not enough; the source and an offline NuGet feed travel with it. | host, then guest |
-| 9 | Write the live-test settings file | copy `live-test-settings.example.json` - and read §3b, or the tier refuses to start | host or guest |
+| 9 | Write the live-test settings file | **render it, do not write it by hand**: read the guest's store names over COM into its `liveTestSettings` section of `testbed.json`, then `host/New-LiveTestSettings.ps1 -VMName <guest>`, then the `host/Copy-ToGuest.ps1` line it prints. It refuses while any value is still a placeholder, naming each. Read §3b first, or the tier refuses to start | host, then guest |
 | 10 | Take the measurements | `guest/Invoke-GuestMeasure.ps1`, `guest/Measure-SweepCost.ps1` | guest, session 1 |
 | 11 | Get the results out | `host/Copy-FromGuest.ps1` | host |
 
@@ -449,7 +449,7 @@ it once** - it survives in git history and had to be rotated.
 | What | Where it lives | How to create it |
 | --- | --- | --- |
 | Guest account password (PowerShell Direct, autologon) | `McpServer/OutlookAI.McpServer.Tests/live-fixtures/vm-credentials.json`, gitignored | Set it when you create the account. Set it to **never expire**: a maximum password age silently breaks the tier and recreates this problem. |
-| Live-test machine coordinates (store names, manifest path, sink ports) | `McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json`, gitignored | Copy `Testbed/live-test-settings.example.json` and fill it in. |
+| Live-test machine coordinates (store names, manifest path, sink ports) | `McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json`, gitignored | **On a test guest:** rendered by `host/New-LiveTestSettings.ps1` from `Testbed/live-test-settings.template.json` and the guest's `liveTestSettings` section of `testbed.json` - committable only because a guest's stores are synthetic. **Anywhere else, the maintainer's machine above all:** copy `Testbed/live-test-settings.example.json` and fill it in by hand. The renderer never writes into any `live-fixtures` directory on the host. |
 | Dummy mail account password | wherever the sink is configured; the sink accepts anything | Anything. It is a loopback sink with no authentication. |
 
 `McpServer/**/live-fixtures/` is gitignored, and
@@ -644,8 +644,10 @@ answer per capability, and it now carries the measured-broken marker on the rows
 
 | Path | What it is |
 | --- | --- |
-| `testbed.json` | The parameter set. Corpus quad, expected plan output, build cost, guest layout, and an explicit list of what is still unrecorded. Its `vmName` is the guest this was **measured on**, not a guest to build (§3). |
+| `testbed.json` | The parameter set. Corpus quad, expected plan output, build cost, guest layout, and an explicit list of what is still unrecorded. Its `vmName` is the guest this was **measured on**, not a guest to build (§3). Its `liveTestSettings` section holds each guest's live-test settings values, keyed by VM name - **placeholders until they are read off the guest over COM**, which nobody has done yet. |
 | `live-test-settings.example.json` | Complete example of the gitignored settings file, every field present, placeholders only. |
+| `live-test-settings.template.json` | The same shape as the example, holding **tokens only**: every value is a double-brace token spelling its own JSON path in a guest's `liveTestSettings` section. `.github/scripts/check-testbed-references.ps1` check 8 fails the build if its fields stop matching the example's or a value in it stops being a token, and `T1/LiveTestSettingsTemplateTests` renders it with synthetic values through the live tier's own loader. |
+| `host/New-LiveTestSettings.ps1` | Renders one guest's gitignored `live-test-settings.json` from that template and the guest's section of `testbed.json`, into `.work/`. `-VMName` is mandatory (§4a). **Refuses** while any value is still a placeholder (naming each), anything the tier would refuse at start, and the documented rules the tier does not itself enforce - a bystander must also be in `expectedStoreDisplayNames`, the corpus store must be a bystander, the hub must be shaped as an address. **Never writes into a `live-fixtures` directory on the host**, however the path is spelled - checked first, on the resolved path and again on the path Windows reports - and inside a git working tree only under `.work/`. Prints the `Copy-ToGuest.ps1` line for the guest's destination, and what it could not check: that the guest's tier profile actually mounts every store it names. **Never rendered a real guest's file** - their values are still placeholders; `-SelfTest` is 142 assertions over its decisions, 0 failures, under Windows PowerShell 5.1 and PowerShell 7. |
 | `guest/autounattend.template.xml` | The unattended-install answer file. Locale, disk layout, local account, autologon - and placeholder tokens where the password goes. Contains no credential and must never contain one. |
 | `host/New-AnswerFile.ps1` | Fills that template from the gitignored credential and packages it as a small ISO. Writes into gitignored scratch only, and refuses anywhere else. `-VMName` is mandatory (§4a). |
 | `guest/Complete-FirstLogon.ps1` | The first-logon fix-ups the answer file cannot express: the en-NL language list, the home location, the locales, no sleep, no fast startup. Logs and reads back everything it set. |
@@ -937,7 +939,11 @@ when:
 * a script in this directory fails to parse;
 * something credential-shaped appears in a tracked file under `Testbed/`;
 * the answer-file template stops holding placeholders where the password belongs, or a filled
-  `autounattend.xml` becomes tracked.
+  `autounattend.xml` becomes tracked;
+* the live-test settings template stops holding tokens only, or its fields stop matching
+  `live-test-settings.example.json`'s, or a guest section of `testbed.json` names different ones,
+  or the renderer's guest destination stops agreeing with where `host/Publish-LiveTierPayload.ps1`
+  builds the suite, or any file called `live-test-settings.json` becomes tracked.
 
 The last two are not paranoia. The value they look for has been committed to this repository
 before, and an unattend password is `<Password><Value>...</Value></Password>` - which does not

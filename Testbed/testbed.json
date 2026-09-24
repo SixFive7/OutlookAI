@@ -118,6 +118,51 @@
     "provenance": "Docs/autonomous-session-log.md, 2026-08-24: 'the VM already has TWO Outlook profiles, Outlook and OutlookAITest'. The corpus PST's file name ends '- OutlookAITest.pst', which is Outlook's own naming for the profile that created it."
   },
 
+  "liveTestSettings": {
+    "_what": "The per-guest values for Testbed/live-test-settings.template.json, one section per guest, keyed by VM name. 'pwsh -File Testbed/host/New-LiveTestSettings.ps1 -VMName <name>' renders that guest's gitignored live-test-settings.json from them. Unlike the file it renders, this section IS committed - which is safe only because a test guest's stores are synthetic: created by this directory's own scripts and named after nothing real. NEVER put a store name from a working Outlook profile here. The maintainer's own settings file stays hand-written and gitignored, and the renderer refuses to write anywhere it could live.",
+    "_fill": "Every value that begins '<FILL' is a placeholder, and the renderer REFUSES a guest while any remains, naming each one. They are store names and corpus build parameters that can only be READ OFF THE GUEST - over COM, from the TIER profile the live tier runs under - and nobody has read them yet. Do not type the name you expect to be there; copy the one Outlook reports. Declare only stores that profile mounts: a declared store the running profile does not have is censused, is not found, and refuses the tier. The renderer cannot check that from the host and says so every time it runs.",
+    "_blocks": "corpus and mailSink take either an object carrying every field, or null for 'this guest has none'. Never a partial object: the loader refuses one and so does the renderer. null leaves the block out of the rendered file, which the loader reads as absent. When this guest's corpus is not built, or its tier profile does not mount the corpus store, set corpus to null. When it IS declared, the renderer holds corpusId, seed, anchorUtc and itemCount against corpusIdConvention above - so a corpus that record still calls NOT BUILT has to be recorded there first.",
+    "_decided": "Five values are filled in because they are recorded DECISIONS, not facts to read off a machine. machineProfile is Portable: a guest has no index probe population to offer, and the template is the Portable shape, which carries no probeTerm or subjectOnlyProbe for a Production profile to demand. expectedDelegateStoreDisplayNames is empty: DelegateStore is the one capability no test machine can be given (Docs/live-tier-on-the-vm.md section 5). mailSink is null: the guests get NO sink (section 1.4, decided 2026-09-15), and a sink block pointing at a listener that is not there refuses the whole tier at start. corpus.corpusId is the id corpusIdConvention assigns to this guest, and corpus.windowDays copies Testbed/live-test-settings.example.json. Change any of them only with the decision behind it.",
+
+    "OutlookAI-Indexed": {
+      "machineProfile": "Portable",
+      "testHubStoreDisplayName": "<FILL: the hub's Store.DisplayName - the dummy account's delivery store, named exactly as that account's SMTP address>",
+      "expectedStoreDisplayNames": [ "<FILL: the Store.DisplayName of every store the tier profile mounts and the census must watch - the hub, the bystander, this guest's corpus store and, once it exists, the identity account's store>" ],
+      "expectedDelegateStoreDisplayNames": [],
+      "bystanderStoreDisplayNames": [ "<FILL: the stores no test may write to - the plain bystander and this guest's corpus store. Each must ALSO be in expectedStoreDisplayNames; never the hub, never the identity account's store>" ],
+      "corpus": {
+        "_note": "Corpus A in Docs/live-tier-on-the-vm.md section 1.3. Or null - see _blocks above.",
+        "storeDisplayName": "<FILL: the corpus store's Store.DisplayName in the tier profile>",
+        "manifestPath": "<FILL: where the build wrote the manifest on the guest - by the convention in corpusIdConvention, C:\\OutlookAI-Q5\\corpus-vm-indexed.jsonl>",
+        "corpusId": "vm-indexed",
+        "seed": "<FILL: an integer, from the manifest's header line>",
+        "anchorUtc": "<FILL: yyyy-MM-ddTHH:mm:ssZ, from the manifest's header line>",
+        "itemCount": "<FILL: an integer, from the manifest's header line>",
+        "windowDays": [ 7, 30, 60 ]
+      },
+      "mailSink": null
+    },
+
+    "OutlookAI-Unindexed": {
+      "machineProfile": "Portable",
+      "testHubStoreDisplayName": "<FILL: the hub's Store.DisplayName - the dummy account's delivery store, named exactly as that account's SMTP address>",
+      "expectedStoreDisplayNames": [ "<FILL: the Store.DisplayName of every store the tier profile mounts and the census must watch - the hub, the bystander, this guest's corpus store and, once it exists, the identity account's store>" ],
+      "expectedDelegateStoreDisplayNames": [],
+      "bystanderStoreDisplayNames": [ "<FILL: the stores no test may write to - the plain bystander and this guest's corpus store. Each must ALSO be in expectedStoreDisplayNames; never the hub, never the identity account's store>" ],
+      "corpus": {
+        "_note": "Corpus B in Docs/live-tier-on-the-vm.md section 1.3. Or null - see _blocks above.",
+        "storeDisplayName": "<FILL: the corpus store's Store.DisplayName in the tier profile>",
+        "manifestPath": "<FILL: where the build wrote the manifest on the guest - by the convention in corpusIdConvention, C:\\OutlookAI-Q5\\corpus-vm-unindexed.jsonl>",
+        "corpusId": "vm-unindexed",
+        "seed": "<FILL: an integer, from the manifest's header line>",
+        "anchorUtc": "<FILL: yyyy-MM-ddTHH:mm:ssZ, from the manifest's header line>",
+        "itemCount": "<FILL: an integer, from the manifest's header line>",
+        "windowDays": [ 7, 30, 60 ]
+      },
+      "mailSink": null
+    }
+  },
+
   "unrecorded": [
     "Hyper-V generation, Secure Boot, TPM, vCPU, RAM, disk size, checkpoint type",
     "Windows edition, build, ISO, licensing, computer name, Defender exclusions, power policy",

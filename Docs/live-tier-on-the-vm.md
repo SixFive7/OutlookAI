@@ -749,6 +749,33 @@ population.
 
 ### 2.10 The settings files
 
+> **ON A TEST GUEST, RENDER THIS FILE - DO NOT WRITE IT BY HAND (2026-09-24).**
+> `Testbed/host/New-LiveTestSettings.ps1 -VMName <guest>` builds it on the host from the
+> tokens-only `Testbed/live-test-settings.template.json` and that guest's section of
+> `Testbed/testbed.json` (`liveTestSettings.<VMName>`), writes it into gitignored `.work/`, and
+> prints the `Testbed/host/Copy-ToGuest.ps1` line that lands it at
+> `C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer.Tests\live-fixtures\live-test-settings.json`,
+> which is where the guest builds the suite. It refuses while any value in that section is still a
+> placeholder, naming each; it refuses everything the rules below forbid; and it refuses the
+> documented rules the tier does not enforce itself. The one thing it cannot check from the host is
+> the one that matters most - that the guest's tier profile really mounts every store it names,
+> under exactly those names - which is why those values have to be read off the guest over COM.
+> **Nobody has done that yet, so no guest's file has been rendered.** The renderer **never writes
+> into a `live-fixtures` directory on the host**, however the path is spelled, because that is
+> where the maintainer's own hand-written file lives. Everything below still describes the file,
+> and is still how the maintainer's own is written.
+>
+> **One rule in the table below is stricter than the code, and that is recorded rather than
+> resolved.** It says naming a store in only one of `expectedStoreDisplayNames` and
+> `bystanderStoreDisplayNames` refuses the tier. Read against the code on 2026-09-24, that holds
+> only for a store left OUT of the bystander list, and only when that leaves the count tripwire
+> nothing it could fail on - otherwise such a store is simply inside the identity-draft grant,
+> which is exactly what section 2.8b's identity account is meant to be. A bystander left out of
+> `expectedStoreDisplayNames` is not refused at all: the census adds declared bystanders back in
+> (`T1/TripwireBystanderStoreTests.TheCensusWatchesEveryDeclaredBystanderEvenOneNoOtherListNames`).
+> The renderer refuses that second shape itself. Whether the table or the loader should change is
+> an open question for the maintainer.
+
 Create `McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json`. It is
 gitignored and must stay that way: it names real stores and this repository is public. Without
 it the whole live tier refuses to start.
