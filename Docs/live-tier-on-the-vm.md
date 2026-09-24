@@ -651,17 +651,37 @@ section 1 has the order and the two runs behind it). Three things about it a reb
   restart, start once more, and re-run `-Verify`.
 
 **The hub has no Archive folder until something asks for one** (Q75, measured read-only
-2026-09-24 on the rehearsed tier profile). The product resolves a store's designated Archive folder
+2026-09-24 on the rehearsed tier profile). The product resolved a store's designated Archive folder
 with the undocumented `Store.GetDefaultFolder(39)` (`McpServer/OutlookAI.Core/Com/ArchiveFolderResolution.cs`).
 On the hub PST - which had no `Archive` folder - that call **returned a folder named `Archive` at
 the store's root, which it had just created**, and it passed the product's own verification (same
 store, a mail folder, none of the core defaults). The verification step then also created
 `Junk Email`: its `GetDefaultFolder(23)` is the only call there that names that folder. A second
-resolution returned the same folder and created nothing. So for the one live test that depends on
-it - `LiveMoveArchiveTests.ArchiveResolution_AllFiveStores_ReadOnly` - the answer is that it
-resolves, and that it is **not read-only on a PST**: the first run writes a folder into every
-store it resolves that lacks one. Whether a PST that is not an account's delivery store (the
-bystander, a corpus) behaves the same was not measured.
+resolution returned the same folder and created nothing. The same `GetDefaultFolder(23)` ran in
+every search's freshness sweep, and in the count tripwire's census.
+
+**Fixed the same day (Q84, maintainer decision (c)): a read-only lookup never creates a folder.**
+On a store that is not Exchange, the product and the live tier now look a default folder up
+without asking Outlook for it, and ask only once it is proven to exist (`SpecialFolders.Resolve`:
+the store's `PR_VALID_FOLDER_MASK` for Inbox, Outbox, Sent Items and Deleted Items; the entry ids
+designated on its Inbox for Drafts, Archive, Junk Email and the Sync Issues folders). An Exchange
+store is asked exactly as before. What that changes here:
+
+* `LiveMoveArchiveTests.ArchiveResolution_AllFiveStores_ReadOnly` answers
+  `NoDesignatedArchiveFolder` for a PST without one, and asserts that the store's folder list
+  reads the same after the lookup as before it. It is read-only on a PST now.
+* `archive_mail` is the one path still allowed to create the folder, because it moves mail into
+  it - and it reports that in `createdFolders`. The two archiving tests (the T2 move chain and the
+  T3 stdio test) expect `createdFolders` exactly when the hub had no Archive folder at their start,
+  so on a fresh guest the first of them to run creates it and the second finds it.
+* The census and the artifact sweeps look default folders up the same non-creating way, so neither
+  adds `Junk Email` - or a Sync Issues folder - to a bystander any more. A folder the zero-artifact
+  count cannot prove exists on a non-Exchange store fails the count loudly instead of reading as
+  empty.
+
+Whether a PST that is not an account's delivery store (the bystander, a corpus) keeps these
+designations where the specification puts them was not measured, and neither was the hub after
+Q84: the first guest run after it is where both get measured.
 
 Two things the runs showed about the machine rather than the scripts, recorded here because this
 is where a rebuilder meets them:
