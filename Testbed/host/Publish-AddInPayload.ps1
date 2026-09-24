@@ -263,6 +263,26 @@ $ManifestFileName = 'addin-payload.json'
 
 function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 
+# Every native call whose stderr is redirected goes through this. Under Windows PowerShell 5.1,
+# with $ErrorActionPreference = 'Stop', the FIRST line a native program writes to stderr is a
+# terminating NativeCommandError whether the redirection is 2>$null, 2>&1 or *> - measured
+# 2026-09-24; PowerShell 7 does not do it. 'Continue' holds only inside this function, so the
+# caller's 'Stop' is untouched; callers still judge the call by $LASTEXITCODE. The same helper is
+# restated in the other host scripts, in this repository's "restated locally" style.
+function Invoke-NativeCommand {
+    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
+
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $NativeCommand | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
+        }
+    }
+    catch {
+        throw
+    }
+}
+
 # =============================================================================================
 # PURE DECISIONS. Everything below this line up to the I/O section decides from its arguments
 # alone, so -SelfTest can drive it on any machine.
@@ -809,7 +829,7 @@ function Find-InstalledVstoTargets {
     $found = @()
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (-not (Test-Path -LiteralPath $vswhere)) { return $found }
-    $roots = @(& $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.Office -property installationPath 2>$null)
+    $roots = @(Invoke-NativeCommand { & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.Office -property installationPath 2>$null })
     foreach ($root in $roots) {
         if (-not $root) { continue }
         $dir = Join-Path $root 'MSBuild\Microsoft\VisualStudio'
@@ -836,7 +856,7 @@ workload can build it - the same toolchain .github/workflows/release.yml pins wi
 Testbed/MEDIA.md says what to install. Or pass -MSBuildPath.
 "@
     }
-    $roots = @(& $vswhere -latest -products * -requires Microsoft.VisualStudio.Workload.Office -property installationPath 2>$null)
+    $roots = @(Invoke-NativeCommand { & $vswhere -latest -products * -requires Microsoft.VisualStudio.Workload.Office -property installationPath 2>$null })
     if ($roots.Count -eq 0 -or -not $roots[0]) {
         throw @"
 REFUSING TO BUILD: no Visual Studio on this machine has the Office/SharePoint development workload
@@ -1069,7 +1089,7 @@ if (-not $OutDir) { $OutDir = Join-Path $RepoRoot '.work\testbed-addin-payload' 
 if (-not $VstoRuntimePath) { $VstoRuntimePath = Join-Path $RepoRoot '.work\media\vstor_redist.exe' }
 $OutDir = [System.IO.Path]::GetFullPath($OutDir)
 
-$workTree = (@(& git -C $RepoRoot rev-parse --show-toplevel 2>$null) | Out-String).Trim().Replace('/', '\')
+$workTree = (@(Invoke-NativeCommand { & git -C $RepoRoot rev-parse --show-toplevel 2>$null }) | Out-String).Trim().Replace('/', '\')
 if (Test-IsUnderGitWorkTreeButNotWork -Path $OutDir -WorkTreeRoot $workTree) {
     throw "REFUSING: -OutDir $OutDir is inside the git working tree $workTree but not under .work\. A build tree there is one 'git add .' away from being committed."
 }
@@ -1091,7 +1111,7 @@ Say '== Toolchain =='
 $msbuild = Resolve-MSBuild
 $iscc = Resolve-Iscc
 $vstoTargets = @(Find-InstalledVstoTargets)
-$msbuildVersion = (@(& $msbuild -version -nologo 2>$null) | Select-Object -Last 1)
+$msbuildVersion = (@(Invoke-NativeCommand { & $msbuild -version -nologo 2>$null }) | Select-Object -Last 1)
 Say "  MSBuild  $msbuild ($msbuildVersion)"
 Say "  ISCC     $iscc"
 if ($vstoTargets.Count -gt 0) { Say "  VSTO     $($vstoTargets[0])" }
@@ -1132,7 +1152,7 @@ Say "  signed $($vstoSignature.Status) by $($vstoSignature.SignerCertificate.Sub
 # ---------------------------------------------------------------------------------------------
 Say ''
 Say '== Source, from a commit =='
-$commit = (@(& git -C $RepoRoot rev-parse --verify "$Ref^{commit}" 2>&1) | Out-String).Trim()
+$commit = (@(Invoke-NativeCommand { & git -C $RepoRoot rev-parse --verify "$Ref^{commit}" 2>&1 }) | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or -not (Test-CommitText $commit)) { throw "git could not resolve '$Ref' to a commit in $RepoRoot - $commit" }
 $dirty = @(& git -C $RepoRoot status --porcelain)
 if ($dirty.Count -gt 0) {
