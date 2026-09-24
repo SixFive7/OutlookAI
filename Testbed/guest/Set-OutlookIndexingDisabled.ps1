@@ -1,7 +1,65 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    RUN 2026-09-16 ON `OutlookAI-Unindexed`, AND IT WORKED. VERDICT: UNINDEXED.
+    2026-09-24, ON `OutlookAI-Indexed`: THE REGISTRY HALF WAS EXERCISED, AND IT CANNOT WRITE.
+    IT IS NOW READ-ONLY. AND NEITHER GUEST HAS EVER HAD OUTLOOK IN ITS INDEX.
+    ============================================================================================
+
+    The banner below this one said "the registry half remains UNEXERCISED: it has never had a
+    rule to flip", and the plan was to exercise it on the indexed guest, where Outlook had run for
+    days and a rule should exist. Three measurements, each of which changes something:
+
+    1. THE ADMINISTRATORS GROUP CANNOT WRITE THE CRAWL-SCOPE KEYS AT ALL. Their ACL, read on
+       OAI-INDEXED (Windows 11 25H2, 26200.8037), identical on SystemIndex, WorkingSetRules, a
+       WorkingSetRules\<n> rule, SearchRoots and DefaultRules:
+           BUILTIN\Administrators   ReadKey (+CreateLink)          <- no SetValue, no CreateSubKey
+           NT AUTHORITY\SYSTEM      SetValue, CreateSubKey, ReadKey
+           NT SERVICE\WSearch       FullControl
+           NT SERVICE\TrustedInstaller FullControl
+       The EXACT call this script used to make on a rule - New-ItemProperty -Name Include
+       -PropertyType DWord -Force - was made from an elevated administrator session against
+       WorkingSetRules\19 (csc://{SID}/, Include already 1, so a success would have changed
+       nothing) and failed: "System.Security.SecurityException: Requested registry access is not
+       allowed." Creating a new WorkingSetRules subkey failed the same way.
+       SO THE OLD REGISTRY LAYER COULD NEVER HAVE WORKED, and on any machine that HAD a mapi rule,
+       -Execute would have written the policy, then thrown at the rule - before restarting WSearch
+       and before verifying anything. It never happened only because no guest ever had a rule.
+       The documented writer of these keys is the Crawl Scope Manager API
+       (ISearchCrawlScopeManager::AddUserScopeRule + SaveAll), which runs inside the WSearch
+       service - that is how Indexing Options changes them from an unelevated session.
+       THE FIX, IN THIS FILE: the rule layer is READ-ONLY. It reports what the crawl scope holds
+       and never writes it. The Group Policy value is the only thing this script writes.
+
+    2. THE "INDEXED" GUEST IS NOT INDEXED, AND NEVER WAS. On OAI-INDEXED there is NO mapi16 rule
+       in DefaultRules, WorkingSetRules or SearchRoots, and -Verify read "catalog reachable=True
+       anyRow=1 mapiRows=0 mailRows=0" twice, ten minutes apart, nine days after its 20,000-item
+       corpus was built (catalog: Windows.db 31.6 MB). Outlook did not register its scope when
+       started WITH ITS UI for 10 minutes on the tier profile, nor for 8 minutes on the corpus
+       profile with the Explorer fully loaded ('Outlook Today - Outlook'), nor after the
+       community-reported 25H2 fix (HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Search
+       SetupCompletedSuccessfully = 1 + a WSearch restart - that key is absent on the
+       maintainer's workstation too, which has the rule, so it is not the difference), nor after
+       the documented "Default indexed paths" policy value was written for mapi16://{SID}/ and
+       gpupdate /force was run. The maintainer's workstation, on the same Windows release (25H2,
+       build 26200), has the rule (WorkingSetRules and SearchRoots both carry mapi16://{SID}/).
+       Why a freshly built guest never gets one is NOT established.
+       The old -Verify called that state SETTLING - "wait and re-run". It never converges. It now
+       has its own verdict, NOT-IN-SCOPE, which says so.
+
+    3. THEREFORE THE 2026-09-16 "UNINDEXED" BELOW PROVES LESS THAN IT READ. It proves that
+       OAI-UNINDEXED holds no Outlook row, which is what the degraded tier needs. It does NOT prove
+       that PreventIndexingOutlook excluded anything: its twin shows the same zero rows with no
+       policy at all. The policy layer is UNEXERCISED too, in the only sense that matters - no
+       machine this script has run on had an Outlook row for it to keep out. Whether it removes
+       rows already in the catalog, and whether it survives Outlook, both need a machine with
+       Outlook IN the crawl scope, and neither guest is one. -Verify now prints that caveat under
+       an UNINDEXED verdict whenever no mapi rule exists.
+
+    -SelfTest (pure, no registry, no catalog, any machine) drives the verdict table through
+    synthetic readings, including the two new branches.
+
+    ============================================================================================
+    RUN 2026-09-16 ON `OutlookAI-Unindexed`, AND IT WORKED. VERDICT: UNINDEXED.  (HISTORY)
     ============================================================================================
 
     This banner replaces the "never been executed" one, as that banner asked. What it did, on
@@ -87,18 +145,29 @@
          POLICY > user rules > default rules, and RevertToDefaultScopes is documented not to
          remove policy rules - so a policy exclusion outranks any user rule Outlook re-creates
          on its next start, which is the single biggest risk to layer 2 on its own.
-         TWO CAVEATS, both stated because they are real. It is class="Machine": HKLM, no
+         SINCE 2026-09-24 IT IS THE ONLY THING THIS SCRIPT WRITES (layer 2 cannot be written by
+         an administrator - see the banner).
+         THREE CAVEATS, all stated because they are real. It is class="Machine": HKLM, no
          per-user variant, so it hits EVERY Windows account on the guest - fine here, where
-         there is one. And whether it REMOVES rows already indexed or merely stops adding new
-         ones is not documented anywhere, which is why -RebuildCatalog exists below.
-      2. THE CRAWL-SCOPE RULE (reverse-engineered): the mapi16://{SID}/ rule under the crawl
-         scope manager's WorkingSetRules. MEASURED on the maintainer's workstation - the rule
-         exists, is a USER rule (Default = 0), and carries Include = 1. Setting Include = 0 is
-         the registry form of untickng the account in Indexing Options. Nothing Microsoft
-         publishes describes these keys; they are documented by the Crawl Scope Manager COM API
-         instead, which is why layer 3 exists.
-      3. A SERVICE RESTART (necessary, not sufficient): the gatherer caches its scope, so a raw
-         registry edit is not read until the service restarts. RESTART, never disable.
+         there is one. Whether it REMOVES rows already indexed or merely stops adding new ones is
+         not documented anywhere, which is why -RebuildCatalog exists below. And its effect has
+         NEVER BEEN OBSERVED: no machine this script has run on had an Outlook row for it to keep
+         out (the banner says why), so "durable by construction" is a statement about the
+         documented precedence, not a measurement.
+      2. THE CRAWL-SCOPE RULE - READ-ONLY SINCE 2026-09-24. The mapi16://{SID}/ rule under the
+         crawl scope manager's WorkingSetRules. MEASURED on the maintainer's workstation - the
+         rule exists, is a USER rule (Default = 0), and carries Include = 1. This script used to
+         set Include = 0 on it, as the registry form of unticking the account in Indexing
+         Options. MEASURED 2026-09-24: it cannot. Administrators hold ReadKey only on these keys;
+         SetValue belongs to SYSTEM, NT SERVICE\WSearch and TrustedInstaller, and the exact write
+         this script made fails with a SecurityException from an elevated session (see the
+         banner). So this layer now READS the rule and reports it - present or absent, Include
+         on or off - and writes nothing. The supported writer is the Crawl Scope Manager COM API,
+         which executes inside WSearch; it is unreachable from PowerShell 5.1 without
+         hand-declared vtables, which is why this script does not use it either.
+      3. A SERVICE RESTART (necessary, not sufficient): the gatherer caches its scope, so a
+         changed policy value is not guaranteed to be read until the service restarts. RESTART,
+         never disable.
 
     AND THE PART THAT IS NOT A SETTING AT ALL: PURGING WHAT WAS ALREADY CRAWLED. If Outlook ran
     on this guest before this script did, the catalog already holds rows for the corpus, and
@@ -132,14 +201,24 @@
         reached the catalog at all.
 
     Both probes are taken TWICE, -SettleMinutes apart, because a single reading cannot tell
-    "not indexed" from "not indexed yet". Four verdicts come out, and the third and fourth are
-    the ones that exist to stop a believed-unindexed guest from quietly indexing:
+    "not indexed" from "not indexed yet". Five verdicts come out, and the last three are the
+    ones that exist to stop a believed-unindexed guest from quietly indexing - or a believed-
+    indexed one from never indexing at all:
 
       INDEXED        control yes, mapi yes, mail yes, stable across both readings.
-      UNINDEXED      control yes, mapi no, mail no, on BOTH readings. The wanted state.
+      UNINDEXED      control yes, mapi no, mail no, on BOTH readings, and the policy (or a rule)
+                     says excluded. The wanted state. When no mapi rule exists at all it is
+                     printed with a caveat: the machine holds no Outlook row, but it was never in
+                     the crawl scope, so this proves nothing about the exclusion itself.
       SETTLING       the two readings disagree, or mapi rows are present while the scope says
-                     excluded. Either a crawl is still running or a purge is. NOT an answer -
-                     wait and re-run, and use -RebuildCatalog if it will not converge.
+                     excluded, or no rows yet under a rule that includes Outlook. Either a crawl
+                     is still running or a purge is. NOT an answer - wait and re-run, and use
+                     -RebuildCatalog if it will not converge.
+      NOT-IN-SCOPE   no Outlook row, NOTHING excluding Outlook - and no mapi16 rule of any kind.
+                     The indexer has nothing to crawl and waiting will not change that. Added
+                     2026-09-24: OAI-INDEXED sat in exactly this state for nine days and the old
+                     logic called it SETTLING ("wait and re-run"), which never converges.
+                     Reported as a FAILURE, because on the indexed guest it is one.
       NO-INDEXER     ANY probe failed to reach the catalog, or the service is not running. This
                      is the state
                      that LOOKS like success and is not: it is a machine with no index at all,
@@ -152,9 +231,12 @@
     WHAT IT NEVER DOES. It never starts Outlook, never creates an Outlook COM object, never
     touches MAPI, never reads or writes an Outlook profile registry key, and never touches a
     mail item in any store. It never stops or disables the Windows Search service. Everything it
-    writes is under HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search and the crawl scope
-    manager's own keys, and everything it reads is a registry value, a service state, or a
-    SELECT against the local catalog.
+    writes is ONE policy value under HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search,
+    plus - with -RebuildCatalog only - SetupCompletedSuccessfully under
+    HKLM\SOFTWARE\Microsoft\Windows Search. It does NOT write the crawl scope manager's keys:
+    until 2026-09-24 it tried to, and an administrator is not allowed to (see the banner).
+    Everything it reads is a registry value, a service state, or a SELECT against the local
+    catalog.
 
     THE GUARD, AND IT HAS TWO AXES ON PURPOSE. Same rule and same fail-closed shape as
     Assert-TestbedGuest in Testbed/guest/OutlookMapiInterop.ps1 - restated here rather than
@@ -168,9 +250,9 @@
 
     STARTING STATE IT EXPECTS.
       * A guest checkpoint where Windows is installed and you are logged on as -ExpectedUser.
-      * An ELEVATED session. The policy key and the crawl scope keys are HKLM, and restarting a
-        service needs it; the script asserts elevation rather than failing halfway with an
-        access-denied nobody can interpret.
+      * An ELEVATED session. The policy key is HKLM, and restarting a service needs it; the
+        script asserts elevation rather than failing halfway with an access-denied nobody can
+        interpret. (Elevation is NOT enough for the crawl scope keys - nothing here writes them.)
       * A 64-BIT PowerShell. The Search.CollatorDSO provider needs an x64 host
         (Docs/live-tier-on-the-vm.md section 2.3), so a 32-bit session would report NO-INDEXER
         on a perfectly healthy machine.
@@ -213,12 +295,19 @@
 .PARAMETER LogPath
     Transcript file. Everything printed also lands here.
 
+.PARAMETER SelfTest
+    Pure. Drives the verdict function through synthetic readings and checks every branch -
+    including NOT-IN-SCOPE and the never-in-scope caveat under UNINDEXED - and asserts that this
+    file contains no write to the crawl scope manager's keys. Reads no registry value, opens no
+    catalog, needs no guest, and ignores every other switch. Exit 0 only if every case passes.
+
 .EXAMPLE
     .\Set-OutlookIndexingDisabled.ps1
     .\Set-OutlookIndexingDisabled.ps1 -Execute
     .\Set-OutlookIndexingDisabled.ps1 -Verify
     .\Set-OutlookIndexingDisabled.ps1 -Execute -RebuildCatalog
     .\Set-OutlookIndexingDisabled.ps1 -Enable -Execute
+    .\Set-OutlookIndexingDisabled.ps1 -SelfTest
 #>
 [CmdletBinding()]
 param(
@@ -229,7 +318,8 @@ param(
     [switch]   $Verify,
     [switch]   $RebuildCatalog,
     [int]      $SettleMinutes = 10,
-    [string]   $LogPath = 'C:\OutlookAI-Q5\set-outlook-indexing.log'
+    [string]   $LogPath = 'C:\OutlookAI-Q5\set-outlook-indexing.log',
+    [switch]   $SelfTest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -570,24 +660,28 @@ function Write-PolicyValue {
     Say "  set $SearchPolicyName = $Value"
 }
 
-function Set-MapiScopeRuleInclude {
-    param([int] $Include)
+# READ-ONLY since 2026-09-24. This used to be Set-MapiScopeRuleInclude and wrote Include on the
+# rule. MEASURED on OAI-INDEXED: the crawl scope manager's keys grant BUILTIN\Administrators
+# ReadKey only (SetValue belongs to SYSTEM, NT SERVICE\WSearch and TrustedInstaller), and the
+# exact New-ItemProperty this function made failed from an elevated session with
+# "System.Security.SecurityException: Requested registry access is not allowed". It had never
+# been reached because no guest ever had a mapi rule - so on the first machine that did, -Execute
+# would have written the policy and then thrown here, before the restart and before any check.
+# So it reports, and the policy value is what excludes.
+function Show-MapiScopeRuleState {
+    param([int] $Wanted)
     $rules = @(Get-MapiScopeRules | Where-Object { $_.IsThisUser -and $_.Container -eq 'WorkingSetRules' })
     if ($rules.Count -eq 0) {
-        Say "  no mapi rule for this account under WorkingSetRules - nothing to change"
-        Say "  (that is NOT the same as excluded: a rule Outlook has not created yet is a rule"
-        Say "   Outlook can create on its next start, which is why the policy layer above exists)"
+        Say "  crawl-scope rule: NONE for this account under WorkingSetRules (read-only; nothing to report)"
+        Say "  (absent is NOT the same as excluded: it means Outlook is not in the crawl scope at all."
+        Say "   Neither testbed guest has ever had one - see the banner)"
         return
     }
 
     foreach ($rule in $rules) {
-        if ($rule.Include -eq $Include) {
-            Say ("  already Include = {0} on {1}\{2}" -f $Include, $rule.Container, $rule.KeyName)
-            continue
-        }
-
-        New-ItemProperty -Path $rule.KeyPath -Name 'Include' -PropertyType DWord -Value $Include -Force | Out-Null
-        Say ("  set Include = {0} on {1}\{2}  ({3})" -f $Include, $rule.Container, $rule.KeyName, $rule.Url)
+        $state = 'already what the policy asks for'
+        if ($rule.Include -ne $Wanted) { $state = "DIFFERS from Include=$Wanted - NOT changed: administrators cannot write this key (banner); the policy value decides" }
+        Say ("  crawl-scope rule: {0}\{1} Include={2} ({3})  {4}" -f $rule.Container, $rule.KeyName, $rule.Include, $rule.Url, $state)
     }
 }
 
@@ -625,9 +719,10 @@ function Invoke-CatalogRebuild {
 }
 
 # ---------------------------------------------------------------------------------------------
-# The verdict. Four states, and the two that are NOT answers are named as loudly as the two that
-# are - a guest believed unindexed while it is quietly still crawling produces measurements that
-# look fine and mean nothing.
+# The verdict. Five states, and the three that are NOT the answer somebody wanted are named as
+# loudly as the two that are - a guest believed unindexed while it is quietly still crawling, or
+# believed indexed while nothing will ever crawl it, produces measurements that look fine and
+# mean nothing.
 # ---------------------------------------------------------------------------------------------
 function Get-Verdict {
     param($First, $Second, $Rules, $PolicyValue, $Service)
@@ -661,10 +756,21 @@ function Get-Verdict {
     if ($PolicyValue -eq 1) { $excluded = $true }
     foreach ($r in $Rules) { if ($r.IsThisUser -and $r.Container -eq 'WorkingSetRules' -and $r.Include -eq 0) { $excluded = $true } }
 
+    # Is Outlook IN the crawl scope for THIS account? Only an include rule under WorkingSetRules
+    # says so. A SearchRoots entry alone does not: Microsoft documents that adding a root does
+    # not crawl it until an include rule covers it. No such rule means nothing will be crawled
+    # however long anyone waits.
+    $inScope = $false
+    foreach ($r in $Rules) { if ($r.IsThisUser -and $r.Container -eq 'WorkingSetRules' -and $r.Include -ne 0) { $inScope = $true } }
+
     if (-not $mapiFirst -and -not $mailFirst) {
         if ($excluded) { return 'UNINDEXED' }
-        # No Outlook rows, and nothing says Outlook is excluded. That is a guest that has not
-        # been crawled YET, not one that will not be.
+        # No Outlook rows and nothing excluding Outlook. The old logic called this SETTLING -
+        # "not crawled YET" - unconditionally. That is only true when a rule puts Outlook in the
+        # crawl scope. With no rule of any kind nothing is waiting to be crawled: OAI-INDEXED sat
+        # in exactly this state for nine days (measured 2026-09-24), and "wait and re-run" was
+        # advice that could never converge.
+        if (-not $inScope) { return 'NOT-IN-SCOPE' }
         return 'SETTLING'
     }
 
@@ -677,16 +783,85 @@ function Get-Verdict {
     return 'INDEXED'
 }
 
+# ---------------------------------------------------------------------------------------------
+# -SelfTest. Pure: synthetic readings through Get-Verdict, plus a source check that this file no
+# longer writes the crawl scope manager's keys. No registry, no catalog, no guest.
+# ---------------------------------------------------------------------------------------------
+function Invoke-SelfTest {
+    $script:stFail = 0
+    $script:stPass = 0
+    function New-Probe([bool] $Reached, [int] $Rows) { [pscustomobject]@{ Reached = $Reached; RowCount = $Rows; Error = $null } }
+    function New-Reading([int] $Control = 1, [int] $Mapi = 0, [int] $Mail = 0, [bool] $Reached = $true) {
+        [pscustomobject]@{ TakenAt = Get-Date; Control = (New-Probe $Reached $Control); Mapi = (New-Probe $true $Mapi); Mail = (New-Probe $true $Mail) }
+    }
+    function New-Rule([string] $Container, $Include, [bool] $ThisUser = $true) {
+        [pscustomobject]@{ Container = $Container; KeyPath = 'synthetic'; KeyName = '0'; Url = 'mapi16://{S-1-5-21-0-0-0-1000}/'; IsThisUser = $ThisUser; Include = $Include; Suppress = 0; Default = 0; Policy = 0 }
+    }
+    $ok = [pscustomobject]@{ StartMode = 'automatic'; Status = 'Running'; IndexerRunning = $true }
+    $off = [pscustomobject]@{ StartMode = 'disabled'; Status = 'Stopped'; IndexerRunning = $false }
+    $none = @()
+    $in = @(New-Rule 'WorkingSetRules' 1)
+    $out = @(New-Rule 'WorkingSetRules' 0)
+    $rootOnly = @(New-Rule 'SearchRoots' $null)
+    $otherUser = @(New-Rule 'WorkingSetRules' 1 $false)
+
+    $cases = @(
+        @('no rule, no policy, no rows (OAI-INDEXED as measured 2026-09-24)', (New-Reading), (New-Reading), $none, $null, $ok, 'NOT-IN-SCOPE'),
+        @('no rule, policy=1, no rows (OAI-UNINDEXED as measured 2026-09-16)', (New-Reading), (New-Reading), $none, 1, $ok, 'UNINDEXED'),
+        @('include rule, no policy, no rows yet', (New-Reading), (New-Reading), $in, $null, $ok, 'SETTLING'),
+        @('include rule, no policy, rows on both readings', (New-Reading 1 1 1), (New-Reading 1 1 1), $in, $null, $ok, 'INDEXED'),
+        @('include rule, policy=1, rows still present', (New-Reading 1 1 1), (New-Reading 1 1 1), $in, 1, $ok, 'SETTLING'),
+        @('rule Include=0, no policy, no rows', (New-Reading), (New-Reading), $out, $null, $ok, 'UNINDEXED'),
+        @('search root only, no include rule, no rows', (New-Reading), (New-Reading), $rootOnly, $null, $ok, 'NOT-IN-SCOPE'),
+        @('another account''s include rule only, no rows', (New-Reading), (New-Reading), $otherUser, $null, $ok, 'NOT-IN-SCOPE'),
+        @('readings disagree (crawl moving)', (New-Reading 1 0 0), (New-Reading 1 1 1), $in, $null, $ok, 'SETTLING'),
+        @('a probe did not reach the catalog', (New-Reading 1 0 0 $false), (New-Reading), $none, 1, $ok, 'NO-INDEXER'),
+        @('service disabled', (New-Reading), (New-Reading), $none, 1, $off, 'NO-INDEXER'),
+        @('empty catalog (rebuilding)', (New-Reading 0), (New-Reading 0), $none, 1, $ok, 'SETTLING')
+    )
+    foreach ($c in $cases) {
+        $got = Get-Verdict -First $c[1] -Second $c[2] -Rules $c[3] -PolicyValue $c[4] -Service $c[5]
+        if ($got -eq $c[6]) { $script:stPass++; Write-Host ("  PASS  {0,-13} {1}" -f $got, $c[0]) }
+        else { $script:stFail++; Write-Host ("  FAIL  expected {0}, got {1}: {2}" -f $c[6], $got, $c[0]) }
+    }
+
+    # The invariant the fix exists for: no write cmdlet in this file touches the crawl scope
+    # manager's keys. Comment lines are skipped; everything else is scanned as text.
+    $writers = '(New-ItemProperty|Set-ItemProperty|New-Item\b|Remove-ItemProperty|Remove-Item\b|Rename-ItemProperty)'
+    $targets = '(WorkingSetRules|SearchRoots|DefaultRules|CrawlScopeManager|CsmRoot|\$rule\.KeyPath)'
+    $offending = @()
+    $n = 0
+    foreach ($line in [IO.File]::ReadAllLines($PSCommandPath)) {
+        $n++
+        $t = $line.Trim()
+        if ($t.StartsWith('#') -or $t.StartsWith('Say ') -or $t.StartsWith("'") -or $t.StartsWith('$targets') -or $t.StartsWith('$writers')) { continue }
+        if ($t -match $writers -and $t -match $targets) { $offending += "line ${n}: $t" }
+    }
+    if ($offending.Count -eq 0) { $script:stPass++; Write-Host '  PASS  source       no write cmdlet in this file targets the crawl scope manager''s keys' }
+    else { $script:stFail++; Write-Host '  FAIL  source       a write to the crawl scope keys is back:'; foreach ($o in $offending) { Write-Host "          $o" } }
+
+    if (Get-Command -Name 'Set-MapiScopeRuleInclude' -CommandType Function -ErrorAction SilentlyContinue) { $script:stFail++; Write-Host '  FAIL  source       Set-MapiScopeRuleInclude is defined again' }
+    else { $script:stPass++; Write-Host '  PASS  source       Set-MapiScopeRuleInclude is gone; Show-MapiScopeRuleState replaces it' }
+
+    Write-Host ''
+    Write-Host ("SelfTest: {0} passed, {1} failed." -f $script:stPass, $script:stFail)
+    if ($script:stFail -gt 0) { exit 1 }
+    exit 0
+}
+
 # =============================================================================================
 # Main
 # =============================================================================================
+if ($SelfTest) { Invoke-SelfTest }
+
 Assert-Bitness
 
 if (-not ($Execute -or $Verify -or $Enable)) {
     Say 'DRY RUN. Nothing is written. This is what -Execute would do:'
     Say ''
     Say "  1. $SearchPolicyKey\$SearchPolicyName = 1        [DOC]       policy: prevent indexing Outlook"
-    Say "  2. Include = 0 on the mapi16://{SID}/ rule under WorkingSetRules  [MEASURED]  the Indexing Options tick"
+    Say '  2. READ the mapi16://{SID}/ rule under WorkingSetRules and report it  [MEASURED]  NOT written:'
+    Say '     administrators hold ReadKey only on the crawl scope keys (measured 2026-09-24)'
     Say '  3. restart WSearch (never disable it)                             [INFERRED]  the gatherer caches its scope'
     Say '  4. with -RebuildCatalog: SetupCompletedSuccessfully = 0 + restart [INFERRED]  purge what was already crawled'
     Say ''
@@ -714,12 +889,12 @@ if ($Execute -or $Enable) {
     if ($Enable) {
         Say '== Execute (-Enable): putting Outlook BACK in the index =='
         Write-PolicyValue -Value 0
-        Set-MapiScopeRuleInclude -Include 1
+        Show-MapiScopeRuleState -Wanted 1
     }
     else {
         Say '== Execute: taking Outlook OUT of the index =='
         Write-PolicyValue -Value 1
-        Set-MapiScopeRuleInclude -Include 0
+        Show-MapiScopeRuleState -Wanted 0
     }
 
     if ($RebuildCatalog) { Invoke-CatalogRebuild }
@@ -745,10 +920,14 @@ if ($null -eq $policy) { Say "  policy ${SearchPolicyName}: ABSENT" }
 else { Say "  policy ${SearchPolicyName}: $policy" }
 
 $rules = Get-MapiScopeRules
+$hasIncludeRule = $false
+foreach ($r in $rules) { if ($r.IsThisUser -and $r.Container -eq 'WorkingSetRules') { $hasIncludeRule = $true } }
 if ($rules.Count -eq 0) {
     Say '  crawl scope: NO mapi rule of any kind. Outlook has never registered a scope here, or'
-    Say '               something removed it. Absent is not the same as excluded - Outlook can'
-    Say '               create one on its next start unless the policy above forbids it.'
+    Say '               something removed it. Absent is not the same as excluded: Outlook is'
+    Say '               simply not in the crawl scope. (Measured: none on OAI-UNINDEXED on'
+    Say '               2026-09-16, none on OAI-INDEXED on 2026-09-24 - not even with Outlook''s'
+    Say '               UI open for 10 minutes.)'
 }
 else {
     foreach ($r in $rules) {
@@ -788,6 +967,23 @@ switch ($verdict) {
         Say '  with "unavailable", and index.wSearchStartMode must still say "automatic".'
         Say '  A payload with no index.perStore block at all is the NO-INDEXER state wearing'
         Say '  this one''s clothes.'
+        if (-not $hasIncludeRule) {
+            Say ''
+            Say '  CAVEAT - THIS MACHINE WAS NEVER IN THE CRAWL SCOPE. There is no mapi16 rule for this'
+            Say '  account, so no Outlook row could have been crawled with or without the exclusion.'
+            Say '  This verdict proves the catalog holds no Outlook row. It does NOT prove that the'
+            Say '  policy keeps Outlook out: nothing here was ever trying to get in.'
+        }
+    }
+    'NOT-IN-SCOPE' {
+        Say '  NOT AN ANSWER, AND WAITING WILL NOT MAKE IT ONE. The catalog is alive, holds no'
+        Say '  Outlook row, nothing excludes Outlook - and there is no mapi16 include rule for this'
+        Say '  account, so nothing is queued to be crawled. On OutlookAI-Indexed that is a FAILURE:'
+        Say '  the index tier needs Outlook rows and this machine will never produce them as it is.'
+        Say '  Measured 2026-09-24 on OAI-INDEXED: Outlook did not register the rule in nine days,'
+        Say '  nor with its UI open for 8-10 minutes on either profile. What puts Outlook into the'
+        Say '  crawl scope on such a machine is NOT established; the documented writer is the Crawl'
+        Say '  Scope Manager API (the Indexing Options dialog uses it). This script cannot write it.'
     }
     'INDEXED' {
         Say '  Outlook IS indexed on this guest. Correct for OutlookAI-Indexed; wrong for'
