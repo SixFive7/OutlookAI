@@ -134,13 +134,27 @@ Seven decisions were answered and six are implemented, tested and pushed.
   no network, so `Publish-LiveTierPayload.ps1` stages the source and an offline package feed, and
   `Install-DotnetSdk.ps1` installs the SDK from staged media. Neither has ever run.
 
-**THE THING THAT WAS UNCOVERED, and it is the one to act on first.** `IProfAdmin` does not work on
-Office LTSC 2024. `Invoke-WithProfAdmin`'s first execution anywhere returned `E_NOINTERFACE` on
-`IID_IProfAdmin` (16.0.17932.20884) - `MAPIInitialize` and `MAPIAdminProfiles` both SUCCEEDED, only
-the QueryInterface failed, and **the cause has not been established**. That is not one script's
-problem: `New-OutlookProfile.ps1` and `Add-OutlookPstStore.ps1` are on the same gateway, and they
-are the documented way to create the corpus profile and add its stores. **A from-scratch rebuild
-walks straight into it.**
+**CORRECTED 2026-09-24 - the "IProfAdmin does not work on Office LTSC 2024" finding was WRONG, and
+the fault was ours.** The E_NOINTERFACE was real, but the interop had declared the wrong IID:
+`{00020379-...}`, which is not a MAPI interface at all. Microsoft's `MAPIGuid.h` defines
+`IID_IProfAdmin` as `{0002031C-...}`. Measured on OAI-INDEXED in session 0 and session 1: QI for
+0002031C returns S_OK on the same pointer that E_NOINTERFACEs for 00020379. Two sibling IIDs were
+wrong as well (`IMsgServiceAdmin` declared 0002037A, really 0002031D; `IMsgServiceAdmin2` declared
+0002038A, which is really `IID_IMessageRaw` - the real one is 00020387). So Office was never at
+fault, and a week of documents blamed it. **The replacement routes stand** - registry `DefaultProfile`,
+`/PIM`, `AddStoreEx` + root-folder rename - because they are measured working and simpler. Nothing
+has to be undone; the documents calling the MAPI route "measured broken on this build" have to be
+corrected. **The lesson is the one to keep: a failure in hand-written interop is our declaration
+until proven otherwise.** Take every IID from the SDK header, cite the line, and pin it with a test.
+
+**AND THE "INDEXED" GUEST HAS NEVER BEEN INDEXED (found 2026-09-24).** `OutlookAI-Indexed` has no
+`mapi16` crawl-scope rule anywhere and 0 Outlook rows in the catalog. Outlook ran for minutes on
+both profiles and never added itself, and writing the crawl-scope registry keys directly is refused
+(read-only for Administrators). So **zero** `Requires=SearchIndex` tests can run on either guest
+yet, and the other guest's 2026-09-16 `VERDICT: UNINDEXED` proves only that it holds no Outlook
+rows, not that the exclusion works. The route being built: the documented Crawl Scope Manager API
+(`ISearchCrawlScopeManager::AddUserScopeRule` + `SaveAll`), with every IID and slot taken from
+`SearchAPI.h` - see the correction above for why that matters.
 
 ### THE RECIPE THAT MAKES A CORPUS BUILD WORK, because it cost five failed attempts
 
