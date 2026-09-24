@@ -42,12 +42,55 @@ public sealed class LiveMoveArchiveTests
             .Concat(_fixture.Settings.ExpectedDelegateStoreDisplayNames)
             .ToList();
         Assert.True(stores.Count >= 3, "live settings must name the account stores");
+        IReadOnlyList<ComStoreDetail> details = _fixture.VerifySession.GetStoreDetails();
 
         foreach (string store in stores)
         {
+            ComStoreDetail? detail = details.FirstOrDefault(
+                d => string.Equals(d.DisplayName, store, StringComparison.OrdinalIgnoreCase));
+            Assert.True(detail != null, $"store '{store}' is not in the profile");
+            bool exchange = SpecialFolders.IsExchangeStore(detail!.ExchangeStoreType);
+
+            // Q84: READ-ONLY means it. On a PST the old lookup made an Archive folder (and the
+            // verification a Junk Email folder) in every store that lacked one, so a non-Exchange
+            // store's whole folder list - walked from the root, which creates nothing - must read
+            // the same after the lookup as before it. Exchange stores are not compared: a
+            // delegate store's hierarchy syncs lazily (D42), so two walks of an unchanged store
+            // can differ, and on Exchange the lookup is the unchanged GetDefaultFolder(39).
+            IReadOnlyList<string>? foldersBefore = exchange ? null : FolderPathsOf(store);
             ComArchiveFolderInfo? archive = _fixture.VerifySession.TryResolveArchiveFolder(store, out string? error);
-            Assert.True(archive != null, $"store '{store}': archive resolution failed ({error})");
-            Assert.Equal("outlookDefaultFolder", archive!.Via);
+            if (foldersBefore != null)
+            {
+                AssertFolderListUnchanged(store, foldersBefore, FolderPathsOf(store));
+            }
+
+            if (archive == null)
+            {
+                // Only a non-Exchange store may have no designated Archive folder (Exchange keeps
+                // one as a default folder), and only "none" is an answer: a designation that
+                // could not be READ is the resolver failing on this store type, not a result.
+                Assert.False(exchange, $"store '{store}': archive resolution failed ({error})");
+                Assert.True(
+                    error == ArchiveFolderResolution.NoDesignatedArchiveFolder,
+                    $"store '{store}': archive resolution failed ({error}) - expected either a designated folder "
+                    + "or " + ArchiveFolderResolution.NoDesignatedArchiveFolder);
+                _output.WriteLine($"store='{store}' has no designated Archive folder - reported, nothing created");
+                continue;
+            }
+
+            if (exchange)
+            {
+                // Exactly as before - Q84 leaves Exchange alone: Outlook's own GetDefaultFolder(39).
+                Assert.Equal(ArchiveFolderResolution.ViaOutlookDefaultFolder, archive.Via);
+            }
+            else
+            {
+                // Found from the store's own designation, never by asking Outlook for the folder.
+                Assert.Contains(
+                    archive.Via,
+                    new[] { ArchiveFolderResolution.ViaInboxArchiveProperty, ArchiveFolderResolution.ViaStoreArchiveProperty });
+            }
+
             Assert.False(string.IsNullOrEmpty(archive.Name));
             Assert.False(string.IsNullOrEmpty(archive.StoreRelativePath));
             Assert.DoesNotContain('\\', archive.StoreRelativePath);
@@ -58,6 +101,28 @@ public sealed class LiveMoveArchiveTests
             // with the store audits); they prove localization-proof resolution.
             _output.WriteLine($"store='{store}' archive='{archive.StoreRelativePath}' via={archive.Via}");
         }
+    }
+
+    /// <summary>A store's folder paths, walked from the root - a walk that creates nothing.</summary>
+    private IReadOnlyList<string> FolderPathsOf(string store)
+    {
+        ComFolderPathList paths = _fixture.VerifySession.ListFolderPaths(store, MailService.FolderWalkAbsoluteCap);
+        Assert.False(paths.Incomplete, $"store '{store}': the folder walk was cut short, so an unchanged list would prove nothing");
+        return paths.Paths.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// Content-free on failure: counts, plus the names of folders that APPEARED - which can only
+    /// be folders a lookup made, never mail - and nothing about the rest of the store.
+    /// </summary>
+    private static void AssertFolderListUnchanged(string store, IReadOnlyList<string> before, IReadOnlyList<string> after)
+    {
+        List<string> appeared = after.Except(before, StringComparer.OrdinalIgnoreCase).ToList();
+        int vanished = before.Except(after, StringComparer.OrdinalIgnoreCase).Count();
+        Assert.True(
+            appeared.Count == 0 && vanished == 0,
+            $"store '{store}': the READ-ONLY archive lookup changed the folder list ({before.Count} -> {after.Count}); "
+            + $"appeared: [{string.Join(", ", appeared)}], vanished: {vanished}");
     }
 
     [Fact]
@@ -137,19 +202,43 @@ public sealed class LiveMoveArchiveTests
             Assert.False(trash.Items[0].Ok);
             Assert.Contains("deletion semantics", trash.Items[0].Error, StringComparison.Ordinal);
 
-            // --- archive: lands in the hub's DESIGNATED Archive folder.
-            ComArchiveFolderInfo hubArchive = _fixture.VerifySession.TryResolveArchiveFolder(Hub, out string? resolveError)
-                ?? throw new InvalidOperationException("hub archive resolution failed: " + resolveError);
+            // --- archive: lands in the hub's DESIGNATED Archive folder. Whether the hub HAS one
+            // yet decides what archive_mail must report (Q84): a PST hub - the test guests - has
+            // none until archive_mail creates it, and then createdFolders must say so; a hub that
+            // has one (Exchange, or any later run) reports nothing created. Asked read-only, which
+            // no longer creates it, so the question does not answer itself.
+            ComArchiveFolderInfo? archiveBefore = _fixture.VerifySession.TryResolveArchiveFolder(Hub, out string? beforeError);
+            Assert.True(
+                archiveBefore != null || beforeError == ArchiveFolderResolution.NoDesignatedArchiveFolder,
+                "hub archive lookup failed before archiving: " + beforeError);
             ArchiveMailOutcome archived = Service.ArchiveMail(new[] { currentEntryId });
-            Assert.Equal(1, archived.Archived);
             MoveItemView archivedItem = Assert.Single(archived.Items);
             Assert.True(archivedItem.Ok, archivedItem.Error);
+            Assert.Equal(1, archived.Archived);
+
+            // Resolved AFTER the move: the folder archive_mail used or made, read back independently.
+            ComArchiveFolderInfo hubArchive = _fixture.VerifySession.TryResolveArchiveFolder(Hub, out string? resolveError)
+                ?? throw new InvalidOperationException("hub archive resolution failed after archiving: " + resolveError);
+            if (archiveBefore == null)
+            {
+                string created = Assert.Single(archived.CreatedFolders!);
+                Assert.Equal(MailService.CreatedArchiveFolderLabel(Hub, hubArchive.StoreRelativePath), created, ignoreCase: true);
+                _output.WriteLine($"archive_mail created and reported the hub's Archive folder: {created}");
+            }
+            else
+            {
+                Assert.Null(archived.CreatedFolders);
+                Assert.Equal(archiveBefore.EntryId, hubArchive.EntryId, ignoreCase: true);
+            }
+
             Assert.Equal("Inbox", archivedItem.FromFolder);
             Assert.Equal(hubArchive.StoreRelativePath, archivedItem.ToFolder);
             ArchiveFolderView hubView = Assert.Single(archived.ArchiveFolders!);
             Assert.Equal(Hub, hubView.Store, ignoreCase: true);
             Assert.Equal(hubArchive.StoreRelativePath, hubView.Folder);
-            Assert.Equal("outlookDefaultFolder", hubView.Via);
+
+            // The MOVE path resolves exactly as archive_mail always did, on every store type.
+            Assert.Equal(ArchiveFolderResolution.ViaOutlookDefaultFolder, hubView.Via);
 
             // Independent verify: the item's parent folder IS the designated archive folder.
             ComDraftInfo? inArchive = _fixture.VerifySession.TryGetMailInfo(

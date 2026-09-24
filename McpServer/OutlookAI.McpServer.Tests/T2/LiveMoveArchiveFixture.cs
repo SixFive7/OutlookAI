@@ -28,7 +28,9 @@ public sealed class LiveMoveArchiveFixture : IDisposable
     private readonly Lazy<OutlookComSession> _verifySession;
     private readonly Dictionary<string, int> _baselineCounts;
     private readonly DateTime _baselineUtc;
-    private readonly string _archiveFolderFirstSegment;
+
+    /// <summary>First path segment of the hub's designated Archive folder; null while the hub has none.</summary>
+    private string? _archiveFolderFirstSegment;
 
     public LiveMoveArchiveFixture()
     {
@@ -53,10 +55,19 @@ public sealed class LiveMoveArchiveFixture : IDisposable
         _baselineCounts = CountByFolder(VerifySession.WalkStoreMailItems(Settings.TestHubStoreDisplayName));
         _baselineUtc = DateTime.UtcNow;
 
-        // Resolved once (read-only) for allowlist classification in failure reports.
-        ComArchiveFolderInfo hubArchive = VerifySession.TryResolveArchiveFolder(Settings.TestHubStoreDisplayName, out string? archiveError)
-            ?? throw new InvalidOperationException("Hub archive folder resolution failed - refusing the live tier: " + archiveError);
-        _archiveFolderFirstSegment = hubArchive.StoreRelativePath.Split('\\')[0];
+        // Resolved read-only, for allowlist classification in failure reports - and allowed to find
+        // NOTHING (Q84). A PST hub, which is what every test guest has, has no Archive folder until
+        // archive_mail makes one, and the read-only lookup no longer makes it; asking the old way
+        // did, before this collection's first test ran. So "no designated Archive folder" is an
+        // answer here, not a refusal, and the archiving tests decide what to expect from the
+        // hub's state at THEIR start. Anything else still refuses the collection.
+        ComArchiveFolderInfo? hubArchive = VerifySession.TryResolveArchiveFolder(Settings.TestHubStoreDisplayName, out string? archiveError);
+        if (hubArchive == null && archiveError != ArchiveFolderResolution.NoDesignatedArchiveFolder)
+        {
+            throw new InvalidOperationException("Hub archive folder resolution failed - refusing the live tier: " + archiveError);
+        }
+
+        _archiveFolderFirstSegment = hubArchive?.StoreRelativePath.Split('\\')[0];
     }
 
     public LiveTestSettings Settings { get; }
@@ -249,7 +260,24 @@ public sealed class LiveMoveArchiveFixture : IDisposable
             || string.Equals(first, "Sent Items", StringComparison.OrdinalIgnoreCase)
             || string.Equals(first, "Drafts", StringComparison.OrdinalIgnoreCase)
             || string.Equals(first, "Deleted Items", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(first, _archiveFolderFirstSegment, StringComparison.OrdinalIgnoreCase);
+            || string.Equals(first, ArchiveFolderFirstSegment(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The hub's designated Archive folder's first segment, looked up again (read-only) while it
+    /// is still unknown: a hub that had none when the collection started has one as soon as an
+    /// archiving test ran archive_mail, and a failure report should classify writes into it as
+    /// allowed. Null while the hub still has none.
+    /// </summary>
+    private string? ArchiveFolderFirstSegment()
+    {
+        if (_archiveFolderFirstSegment == null)
+        {
+            ComArchiveFolderInfo? now = VerifySession.TryResolveArchiveFolder(Settings.TestHubStoreDisplayName, out _);
+            _archiveFolderFirstSegment = now?.StoreRelativePath.Split('\\')[0];
+        }
+
+        return _archiveFolderFirstSegment;
     }
 
     private static Dictionary<string, int> CountByFolder(IEnumerable<ComWalkedItem> items)
