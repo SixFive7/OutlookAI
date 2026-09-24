@@ -391,11 +391,34 @@ public sealed class LiveDraftTests
         return LiveInboxArrival.WaitFor(_fixture.VerifySession, Hub, seedSubject, sentUtc);
     }
 
+    /// <summary>
+    /// A store's default folder, which since Q84 is looked up WITHOUT being created: on a PST the
+    /// old lookup made a missing folder instead of reporting it. So the two new answers mean
+    /// different things, and the failure says which - <c>DefaultFolderAbsent</c> is the store's
+    /// own designation saying it has no such folder, <c>DefaultFolderUnreadable</c> is a store
+    /// that would not say, which on a PST points at the Q84 resolver rather than at the store.
+    /// </summary>
     private ComDefaultFolderInfo RequireDefaultFolder(string store, int folderId)
     {
         ComDefaultFolderInfo? info = _fixture.VerifySession.TryGetDefaultFolderInfo(store, folderId, out string? error);
-        Assert.True(info != null, $"default folder {folderId} of '{store}' unavailable: {error}");
+        Assert.True(info != null, $"default folder {folderId} of '{store}' unavailable: {error}" + DescribeDefaultFolderError(error));
         return info!;
+    }
+
+    private static string DescribeDefaultFolderError(string? error)
+    {
+        switch (error)
+        {
+            case "DefaultFolderAbsent":
+                return " - the store's own designation says it has no such folder, and the lookup no longer creates one "
+                    + "(Q84). If Outlook shows the folder, the designation is not where the resolver reads it on this "
+                    + "store type: report it with the store's type.";
+            case "DefaultFolderUnreadable":
+                return " - the store would not say whether it has the folder, so it could not be looked up without "
+                    + "risking its creation (Q84). On a PST that points at the resolver's reads, not at the store.";
+            default:
+                return string.Empty;
+        }
     }
 
     private ComDraftInfo RequireMailInfo(string entryId, string? storeId)

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.CSharp.RuntimeBinder;
+using OutlookAI.Core.Com;
 
 namespace OutlookAI.McpServer.Tests.T2;
 
@@ -297,7 +298,7 @@ public static class LiveOutlookTestMailer
                 {
                     foreach (int folderId in folders)
                     {
-                        deleted += DeleteMatchingInFolder(store, folderId, uniqueMarker);
+                        deleted += DeleteMatchingInFolder((object)ns, store, folderId, uniqueMarker);
                     }
                 }
                 finally
@@ -647,7 +648,7 @@ public static class LiveOutlookTestMailer
                     ?? throw new InvalidOperationException("Store not found for artifact sweep.");
                 foreach (int folderId in folders)
                 {
-                    total += CountMatchingInFolder(store, folderId, subjectFragment);
+                    total += CountMatchingInFolder((object)ns, store, folderId, subjectFragment);
                 }
 
                 return total;
@@ -662,7 +663,15 @@ public static class LiveOutlookTestMailer
         });
     }
 
-    private static int CountMatchingInFolder(dynamic store, int folderId, string subjectFragment)
+    /// <summary>
+    /// One default folder's share of the zero-artifact proof. The folder is looked up WITHOUT
+    /// creating it (Q84, <see cref="ResolveWithoutCreating"/>): a folder the store does not have
+    /// holds no artifact, so it counts 0. A folder whose existence could not be established on a
+    /// non-Exchange store THROWS instead - this count is what proves a run left nothing behind,
+    /// and reading "could not look" as "empty" would let it prove that falsely. An Exchange store
+    /// keeps the old answer for a folder that would not open, 0, exactly as before.
+    /// </summary>
+    private static int CountMatchingInFolder(object session, dynamic store, int folderId, string subjectFragment)
     {
         dynamic? folder = null;
         dynamic? table = null;
@@ -671,14 +680,24 @@ public static class LiveOutlookTestMailer
         string filter = "@SQL=\"urn:schemas:httpmail:subject\" LIKE '%" + subjectFragment + "%'";
         try
         {
-            try
-            {
-                folder = store.GetDefaultFolder(folderId);
-            }
-            catch (COMException)
+            OutlookComSession.DefaultFolderResolution resolution =
+                ResolveWithoutCreating(session, (object)store, folderId, out object? resolved, out bool exchangeStore);
+            if (resolution == OutlookComSession.DefaultFolderResolution.Absent)
             {
                 return 0; // store without that default folder
             }
+
+            if (resolution == OutlookComSession.DefaultFolderResolution.Unreadable)
+            {
+                if (exchangeStore)
+                {
+                    return 0; // as before: an Exchange default folder that would not open counted 0
+                }
+
+                throw new InvalidOperationException(DescribeUnprovenFolder(folderId));
+            }
+
+            folder = resolved!; // set whenever the resolution is Resolved
 
             try
             {
@@ -846,23 +865,32 @@ public static class LiveOutlookTestMailer
                 // rather than fails them. Junk (23) was missing from this list and cost a
                 // false alarm on 2026-08-18: 'Ongewenste e-mail' going 1 -> 0 during a run
                 // is junk expiry, not mail loss.
+                //
+                // Looked up WITHOUT creating them (Q84). This used to ask GetDefaultFolder,
+                // which on a PST lacking the folder MAKES it - measured for Junk Email - so
+                // the census that exists to prove no store changed added a folder to every
+                // bystander PST without one, before its own baseline was taken. A folder the
+                // store does not have, or one that cannot be proven to exist without that
+                // risk, is simply not marked volatile: a change there fails rather than notes.
                 HashSet<string> volatileIds = new(StringComparer.OrdinalIgnoreCase);
                 foreach (int volatileFolderId in new[] { 3, 20, 19, 21, 22, 23 })
                 {
+                    if (ResolveWithoutCreating((object)ns, (object)store, volatileFolderId, out object? volatileFolder, out _)
+                        != OutlookComSession.DefaultFolderResolution.Resolved)
+                    {
+                        continue;
+                    }
+
                     try
                     {
-                        dynamic volatileFolder = store.GetDefaultFolder(volatileFolderId);
-                        try
-                        {
-                            volatileIds.Add((string)volatileFolder.EntryID);
-                        }
-                        finally
-                        {
-                            Release(volatileFolder);
-                        }
+                        volatileIds.Add((string)((dynamic)volatileFolder!).EntryID);
                     }
                     catch (Exception ex) when (ex is COMException or RuntimeBinderException)
                     {
+                    }
+                    finally
+                    {
+                        Release(volatileFolder);
                     }
                 }
 
@@ -1696,21 +1724,28 @@ public static class LiveOutlookTestMailer
         return null;
     }
 
-    private static int DeleteMatchingInFolder(dynamic store, int folderId, string uniqueMarker)
+    /// <summary>
+    /// One default folder's share of a tagged-artifact purge. The folder is looked up WITHOUT
+    /// creating it (Q84, <see cref="ResolveWithoutCreating"/>) - a purge that made a Sync Issues
+    /// folder in a store it was cleaning would be a write nobody asked for. A folder the store
+    /// does not have, or one that could not be proven to exist, is skipped here; the count that
+    /// follows every purge (<see cref="CountMatchingInFolder"/>) is what refuses to call an
+    /// unprovable folder empty.
+    /// </summary>
+    private static int DeleteMatchingInFolder(object session, dynamic store, int folderId, string uniqueMarker)
     {
         dynamic? folder = null;
         dynamic? items = null;
         int deleted = 0;
         try
         {
-            try
-            {
-                folder = store.GetDefaultFolder(folderId);
-            }
-            catch (COMException)
+            if (ResolveWithoutCreating(session, (object)store, folderId, out object? resolved, out _)
+                != OutlookComSession.DefaultFolderResolution.Resolved)
             {
                 return 0;
             }
+
+            folder = resolved!; // set whenever the resolution is Resolved
 
             // Cheap pre-check before the full item walk: the item-by-item pass below is
             // the TESTED delete path (double-match on tag AND marker, per S3) and must
@@ -1798,6 +1833,46 @@ public static class LiveOutlookTestMailer
         {
             Release(table);
         }
+    }
+
+    /// <summary>
+    /// A store's default folder, looked up the way the product's read-only paths look one up
+    /// (Q84): <see cref="SpecialFolders.Resolve"/>, which never creates it. This file used to ask
+    /// <c>Store.GetDefaultFolder</c>, which on a PST that lacks the folder MAKES it - measured on a
+    /// test guest for Junk Email (23) and Archive (39) - so the census and the artifact sweeps could
+    /// add a folder to a store they only meant to read, a bystander included. An Exchange store is
+    /// asked exactly as before; any other store only once the folder is proven to exist.
+    /// </summary>
+    /// <param name="session">The <c>NameSpace</c> the store belongs to.</param>
+    /// <param name="store">The <c>Store</c>.</param>
+    /// <param name="olDefaultFolderId">The <c>OlDefaultFolders</c> value.</param>
+    /// <param name="folder">The folder when resolved (the caller releases it), else null.</param>
+    /// <param name="exchangeStore">True when the store is an Exchange store, whose answers are the old ones.</param>
+    private static OutlookComSession.DefaultFolderResolution ResolveWithoutCreating(
+        object session, object store, int olDefaultFolderId, out object? folder, out bool exchangeStore)
+    {
+        string? storeId;
+        try
+        {
+            storeId = (string?)((dynamic)store).StoreID;
+        }
+        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+        {
+            storeId = null;
+        }
+
+        ComSpecialFolderStore special = new(store, session, storeId);
+        exchangeStore = SpecialFolders.IsExchangeStore(special.ExchangeStoreType);
+        return SpecialFolders.Resolve(special, olDefaultFolderId, out folder, out _);
+    }
+
+    /// <summary>Content-free: names the folder id, never the store's content.</summary>
+    private static string DescribeUnprovenFolder(int olDefaultFolderId)
+    {
+        return "Default folder " + olDefaultFolderId.ToString(CultureInfo.InvariantCulture) + " of the swept store could "
+            + "not be proven to exist without asking Outlook for it, which on this kind of store would CREATE it (Q84). "
+            + "The zero-artifact sweep refuses to call a folder it could not look in empty - the store's PR_VALID_FOLDER_MASK "
+            + "or its Inbox designations did not read here, which is what the Q84 guest verification exists to find.";
     }
 
     private static dynamic CreateOutlookApplication()

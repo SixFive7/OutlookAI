@@ -1,4 +1,6 @@
 using System.Text.Json;
+using OutlookAI.Core.Com;
+using OutlookAI.Core.Services;
 using OutlookAI.McpServer.Tests.T2;
 using Xunit;
 using Xunit.Abstractions;
@@ -122,7 +124,15 @@ public sealed class MoveArchiveLiveMcpToolTests
             Assert.Equal(newEntryId, read.GetProperty("entryId").GetString(), ignoreCase: true);
             _output.WriteLine("hit id survived the move (cache refreshed to newEntryId)");
 
-            // --- archive_mail golden shape (EntryID flow).
+            // --- archive_mail golden shape (EntryID flow). Whether the hub HAS an Archive folder
+            // yet decides the createdFolders half of the shape (Q84): a PST hub - the test guests -
+            // has none until archive_mail makes one, and then the wire must say so; otherwise the
+            // field is absent. Asked read-only first, which no longer creates the folder.
+            ComArchiveFolderInfo? archiveBefore = _fixture.VerifySession.TryResolveArchiveFolder(Hub, out string? beforeError);
+            Assert.True(
+                archiveBefore != null || beforeError == ArchiveFolderResolution.NoDesignatedArchiveFolder,
+                "hub archive lookup failed before archiving: " + beforeError);
+
             JsonElement archive = await client.CallToolAsync("archive_mail", new { ids = new[] { newEntryId } });
             Assert.Equal(1, archive.GetProperty("requested").GetInt32());
             Assert.Equal(1, archive.GetProperty("archived").GetInt32());
@@ -132,6 +142,19 @@ public sealed class MoveArchiveLiveMcpToolTests
             Assert.Equal(Hub, archiveFolder.GetProperty("store").GetString(), ignoreCase: true);
             Assert.False(string.IsNullOrEmpty(archiveFolder.GetProperty("folder").GetString()));
             Assert.Equal("outlookDefaultFolder", archiveFolder.GetProperty("via").GetString());
+            if (archiveBefore == null)
+            {
+                string created = archive.GetProperty("createdFolders").EnumerateArray().Single().GetString()!;
+                Assert.Equal(
+                    MailService.CreatedArchiveFolderLabel(Hub, archiveFolder.GetProperty("folder").GetString()!),
+                    created,
+                    ignoreCase: true);
+                _output.WriteLine($"wire archive_mail created and reported the hub's Archive folder: {created}");
+            }
+            else
+            {
+                Assert.False(archive.TryGetProperty("createdFolders", out _), "nothing was created, so nothing may be reported");
+            }
 
             JsonElement archivedItem = archive.GetProperty("items").EnumerateArray().Single();
             Assert.True(archivedItem.GetProperty("ok").GetBoolean());

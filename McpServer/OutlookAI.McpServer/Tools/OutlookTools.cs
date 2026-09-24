@@ -510,8 +510,10 @@ public static class OutlookTools
         + "and the backup path is returned as backupPath; double-check the name (see list_signatures) before deleting. "
         + "For create/update supply body_text and/or body_html - the missing renditions are derived. Deleting a signature "
         + "also clears per-account default assignments that referenced it. Optional set_default_for records the signature "
-        + "as an account's default (new mail, replies, or both) in the Outlook profile; Outlook picks that up at its next "
-        + "start. Never starts or touches Outlook itself; every operation is audit-logged.")]
+        + "as an account's default (new mail, replies, or both) on the ONE mail account in the Outlook profile whose address "
+        + "is exactly set_default_for.account - refused, with nothing written, when none or several match - and reads it "
+        + "back before reporting it; Outlook picks that up at its next start. Never starts or touches Outlook itself; every "
+        + "operation is audit-logged.")]
     public static async Task<CallToolResult> ManageSignature(
         [Description("'create' | 'update' | 'delete'.")] string action,
         [Description("Signature name (as shown by list_signatures and Outlook's signature pickers).")] string name,

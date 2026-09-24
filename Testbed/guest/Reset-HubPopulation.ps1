@@ -69,12 +69,18 @@
          exit 0, then reads the new manifest's header back and requires the anchor it asked for.
       8. Quits the Outlook it started in step 4 - the only Outlook this script ever quits, under
          mailbox-safety rule 7 (below).
-      9. Makes the TIER profile the default again, starts Outlook on it, and on the indexed guest
-         runs corpus-indexed until the index holds every item of the new population
-         (-IndexWaitSeconds, 900 by default). A run started on a hub the indexer has half taken
-         in measures half a hub.
+      9. Makes the TIER profile the default again, starts Outlook on it NOT ELEVATED - through
+         Start-OutlookUnelevated.ps1, because an elevated Outlook never feeds the Windows Search
+         index (measured on OutlookAI-Indexed, 2026-09-24) and the live run attaches at the user's
+         own integrity level - and on the indexed guest runs corpus-indexed until the index holds
+         every item of the new population (-IndexWaitSeconds, 900 by default). A run started on a
+         hub the indexer has half taken in measures half a hub.
      10. Leaves Outlook running on the tier profile, warm, and prints how long the frontier test
-         can still catch a local-time misreading - the margin left for the run to reach it.
+         can still catch a local-time misreading - the margin left for the run to reach it - with
+         this guest's opt-in value and filter for the run (Testbed/README.md section 4c).
+
+    STAGE BESIDE IT in C:\OutlookAI-Q5: OutlookMapiInterop.ps1 (the guard), Set-DefaultOutlookProfile.ps1
+    and Start-OutlookUnelevated.ps1, which it calls, and Register-InteractiveTask.ps1, which runs it.
 
     Without -Execute: steps 0 to 2 as a report, the population's plan sheet (corpus-plan, pure),
     and the exact corpus-tool command lines -Execute would run. Nothing written, no Outlook.
@@ -897,6 +903,33 @@ function Set-HubDefaultProfile {
     & (Join-Path $PSScriptRoot 'Set-DefaultOutlookProfile.ps1') -Name $Name -Execute -ExpectedUser $ExpectedUser | ForEach-Object { Write-Line ([string]$_) }
 }
 
+<#
+    Starts Outlook on the tier profile NOT ELEVATED, through Start-OutlookUnelevated.ps1 (staged beside
+    this script), and returns @{ Id; Clock } for it. Why not Start-Process: this script runs in
+    Register-InteractiveTask.ps1's task, at RunLevel Highest, and an ELEVATED Outlook never feeds the
+    Windows Search index (measured on OutlookAI-Indexed, 2026-09-24; runbook section 8 item 22) - so on
+    the indexed guest corpus-indexed would wait for a crawl that never comes - and the live run, which
+    attaches at the user's own integrity level, could not attach to it either. The rebuild's OWN
+    Outlook (step 4) stays elevated, on purpose: the corpus tool runs in this task too, and attaches
+    only to an Outlook at its own level.
+#>
+function Start-HubOutlookUnelevated {
+    param([string] $ProfileName, [string] $What)
+    Write-Line ''
+    Write-Line "=== starting Outlook for $What, NOT elevated: Start-OutlookUnelevated.ps1 -Profile $ProfileName"
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    & (Join-Path $PSScriptRoot 'Start-OutlookUnelevated.ps1') -Profile $ProfileName -ExpectedUser $ExpectedUser | ForEach-Object { Write-Line ([string]$_) }
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        throw "Start-OutlookUnelevated.ps1 exited $code - its output above says why. The hub IS rebuilt; the default profile is '$ProfileName'. Start Outlook NOT elevated by hand (that script), then re-run this with -Execute -SkipRebuild."
+    }
+    $pids = Get-OutlookProcessId
+    if ($pids.Count -ne 1) {
+        throw "Start-OutlookUnelevated.ps1 returned, and OUTLOOK.EXE is running as $($pids.Count) process(es) ($($pids -join ', ')). The hub IS rebuilt. " + (Format-RestartAdvice -Then 'run this script with -Execute -SkipRebuild.')
+    }
+    return [pscustomobject]@{ Id = $pids[0]; Clock = $clock }
+}
+
 <# Starts Outlook on the default profile and waits until it has been up $Seconds, alive throughout. #>
 function Start-HubOutlook {
     param([string] $What, [int] $Seconds)
@@ -1123,7 +1156,7 @@ if (-not $Execute) {
         Write-Line ("  - " + ((Get-HubToolArgument -Verb 'corpus-build' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor '<now>' -ManifestPath $plan.ManifestPath) -join ' ') + ' --execute')
         Write-Line '  - quit that Outlook gracefully (mailbox-safety rule 7)'
     }
-    Write-Line "  - make '$TierProfileName' the default profile, start Outlook"
+    Write-Line "  - make '$TierProfileName' the default profile, start Outlook NOT elevated (Start-OutlookUnelevated.ps1)"
     if ($plan.Indexed) { Write-Line ("  - " + ((Get-HubToolArgument -Verb 'corpus-indexed' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor '<the anchor built>' -ManifestPath $plan.ManifestPath -WaitSeconds $IndexWaitSeconds) -join ' ')) }
     Write-Line '  - leave Outlook running, warm, and report the frontier test''s margin'
     return
@@ -1178,7 +1211,7 @@ if ($plan.Rebuild) {
 # 9-10. Back to the tier profile, and the index.
 # ---------------------------------------------------------------------------------------------
 Set-HubDefaultProfile -Name $TierProfileName
-$tierOutlook = Start-HubOutlook -What "the live run, on '$TierProfileName'" -Seconds 0
+$tierOutlook = Start-HubOutlookUnelevated -ProfileName $TierProfileName -What "the live run, on '$TierProfileName'"
 
 if ($plan.Indexed) {
     $indexed = Invoke-HubTool -Arguments (Get-HubToolArgument -Verb 'corpus-indexed' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $anchorBuilt -ManifestPath $plan.ManifestPath -WaitSeconds $IndexWaitSeconds)
@@ -1207,9 +1240,10 @@ elseif ($window.MinutesLeft -le 0) {
     Write-Line "The frontier test's margin ($($window.MarginMinutes) min) is ALREADY SPENT: it would refuse the run as STALE. Run this script again and start the run straight after it."
 }
 else {
-    Write-Line "The frontier test can catch a local-time misreading until $($window.DeadlineUtc.ToString($script:UtcFormat, $script:Invariant)) - $($window.MinutesLeft) min from now ($($window.MarginMinutes) min on this guest's UTC offset of $offset). START THE RUN NOW, in session 1:"
+    Write-Line "The frontier test can catch a local-time misreading until $($window.DeadlineUtc.ToString($script:UtcFormat, $script:Invariant)) - $($window.MinutesLeft) min from now ($($window.MarginMinutes) min on this guest's UTC offset of $offset). START THE RUN NOW, by Testbed/README.md section 4c, with:"
     $filter = 'Category=Live&Requires!=DelegateStore'
     if (-not $plan.Indexed) { $filter = 'Category=Live&Requires!=DelegateStore&Requires!=SearchIndex' }
-    Write-Line "  dotnet test <the suite's .csproj> --filter `"$filter`""
+    Write-Line "  the opt-in   `$env:OUTLOOKAI_LIVE_OPT_IN = '$env:COMPUTERNAME'"
+    Write-Line "  the filter   --filter `"$filter`""
 }
-Write-Line "Outlook is running on '$TierProfileName' and is left running. Log: $LogPath"
+Write-Line "Outlook is running on '$TierProfileName', NOT elevated, and is left running. Log: $LogPath"

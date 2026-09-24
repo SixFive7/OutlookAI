@@ -86,6 +86,13 @@
          pinning, and this is the only compilation that can pin it. Internal, so Core's and this
          assembly's copies of the other linked files cannot collide as CS0436. -->
     <Compile Include="..\..\Services\UpdatePollSchedule.cs" Link="Linked\UpdatePollSchedule.cs" />
+    <!-- The testbed's hand-declared Windows Search Crawl Scope Manager interop. It ships as
+         SOURCE to the guests, where Windows PowerShell 5.1's Add-Type compiles it, so there is
+         no assembly to reference; linking the file is the only way to pin the exact code the
+         guest compiles. T1/SearchCrawlScopeInteropTests checks every IID and every vtable slot
+         by reflection against SearchAPI.h. Public types in their own namespace, compiled nowhere
+         else in this solution, so nothing can collide as CS0436. -->
+    <Compile Include="..\..\Testbed\guest\SearchCrawlScope.cs" Link="Linked\SearchCrawlScope.cs" />
   </ItemGroup>
 
   <ItemGroup>
