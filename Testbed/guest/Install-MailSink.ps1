@@ -1,681 +1,602 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    THIS SCRIPT HAS NEVER BEEN EXECUTED.
+    THIS SCRIPT HAS NEVER RUN ON A GUEST. ITS -SelfTest HAS, ON THE HOST.
     ============================================================================================
 
-    Written by an agent forbidden to run it: the machine it was written on is the maintainer's
-    workstation, with real Outlook and real mail on it, and this script installs a Windows
-    service that listens on the SMTP and POP3 ports. Verified by PARSING only - the same check
-    .github/scripts/check-testbed-references.ps1 applies to every script under Testbed/. Nothing
-    below has run anywhere, and no smtp4dev binary was downloaded, unpacked or started to write
-    it. Replace this banner with what it actually did once it has run on a guest, and say which
-    of the POP3 assertions passed - three of them exist to settle open questions and two of them
-    are expected to FAIL against smtp4dev as shipped. See EXPECTED FAILURES below.
+    Written 2026-09-24 by an agent with no guest available and forbidden to run a mail sink on
+    the machine it worked on - the maintainer's workstation, with real Outlook and real mail on
+    it. So what is established, and how, is exactly this:
+
+      * it PARSES under Windows PowerShell 5.1 and PowerShell 7, and -SelfTest passes under both
+        (the count is in the -SelfTest output). -SelfTest drives every pure decision in this file
+        - the launcher it writes, the mailbox naming rule, dot-stuffing both ways, the probe
+        message and the checks on what comes back, the scheduled-task audit, the install-root
+        refusals - against synthetic inputs, with no socket, no process and no file;
+      * the PACKAGE is real: inbucket_3.1.1_windows_amd64.zip was downloaded on the host and its
+        SHA-256 matched three ways - the maintainers' own checksums file, GitHub's asset digest
+        and the file itself (Testbed/MEDIA.md, "The mail sink");
+      * every claim below about how Inbucket BEHAVES is marked [SOURCE]: read in its source at
+        tag v3.1.1, never observed. -Verify exists to turn each one into [MEASURED] or into a
+        named FAIL on the first guest run.
+
+    Replace this banner with what actually happened the first time -Execute runs on a guest,
+    and say which checks passed.
 
 .SYNOPSIS
-    Installs the loopback mail sink the live tier's dummy account points at, and then PROVES the
-    round trip over raw sockets instead of assuming it.
+    Installs Inbucket as the testbed's loopback mail sink, starts it with the guest, and then
+    PROVES an SMTP-to-POP3 round trip over raw sockets instead of reporting open ports.
 
 .DESCRIPTION
-    RUN ON THE GUEST. Windows PowerShell 5.1 - no ternary, no `??`, no `-p` on mkdir.
+    RUN ON THE GUEST, ELEVATED. Windows PowerShell 5.1 - no ternary, no `??`.
     NEVER run this on the maintainer's workstation. It refuses there; see THE GUARD below.
 
-    WHY A SINK AT ALL. Docs/live-tier-on-the-vm.md section 1.4. The tier profile's POP3 account
-    exists because NewDraft resolves an Account by SMTP address and refuses when none matches.
-    Pointing that account at an unroutable server makes every send QUEUE and never leave, and
-    the Outbox is inside the mandatory zero-artifact sweep - so every run that sent anything
-    would fail its own teardown forever, on residue nothing could remove.
+    WHY A SINK. Docs/live-tier-on-the-vm.md section 1.4. Thirteen live methods put mail on the
+    wire and need it to come back into the hub store's Inbox, and one of them - the product's
+    own two-step `send` - cannot be replaced by seeding at all. The maintainer decided on
+    2026-09-24 that every test moves to the guests without compromise, so the guests need
+    transport, and a guest has no network: the transport has to be a server on 127.0.0.1 that
+    accepts what Outlook submits and hands it straight back over POP3.
 
-    WHY THIS PROVES THE ROUND TRIP RATHER THAN REPORTING TWO OPEN PORTS. The suite's own check
-    is deliberately shallow: McpServer/OutlookAI.McpServer.Tests/T2/LiveMailSink.cs connects a
-    TcpClient to each port and disconnects. It speaks no protocol. ANYTHING THAT BINDS THOSE TWO
-    PORTS PASSES IT - including a sink that accepts mail and cannot hand it back, which is the
-    exact failure that design exists to avoid. The real proof otherwise happens only inside a
-    120-second arrival wait whose failure mode is a silent timeout pointing nowhere useful. So
-    -Verify here speaks SMTP and POP3 itself.
+    WHY INBUCKET, AND NOT THE TWO THAT WERE ON THE TABLE. All three are free, open source and
+    permissively licensed. What separates them is what this testbed actually needs:
 
-    WHICH SINK, AND THE VERSION FLOOR. smtp4dev (rnwood/smtp4dev, BSD-3-Clause). Its POP3 server
-    is REAL but RECENT: it was added by PR #1888 and first appears in a stable release at
-    3.11.0. Two later releases matter and are why the floor here is 3.15.0 rather than 3.11.0 -
-    3.14.0 added the ability to disable POP3/IMAP by a null port, and 3.15.0 added a POP3 NOOP
-    handler (before it, NOOP answers "-ERR Unknown command", and NOOP is what clients use as a
-    session keepalive). Note for anyone reading the issue tracker and concluding otherwise:
-    issue #155, "Support retrieval of messages using POP3", WAS closed as not planned - in 2022.
-    POP3 shipped three years later from an unrelated pull request with no issue behind it. The
-    closure is real and it is not the current state.
+                          Inbucket 3.1.1     Mailpit 1.31.2        smtp4dev 3.15.0
+      POP3 empty PASS     ACCEPTED           refused, and the      refused
+                                             connection closed
+      POP3 without a      yes                no - POP3 is off      yes
+      configured login                       until one is set
+      whose mail a POP3   the mailbox named  EVERY message, to     every message, to
+      login sees          by the USER        every login           every login
+      DELE                at QUIT (RFC 1939) at QUIT (RFC 1939)    immediately, and the
+                                                                   mailbox renumbers
+      maintainer-         yes, goreleaser    no - only GitHub's    no - only GitHub's
+      published hash      checksums.txt      computed digest       computed digest
+      runtime             none (Go)          none (Go)             none (self-contained
+                                                                   .NET, 77 MB zip)
 
-    EXPECTED FAILURES, AND WHY THEY ARE ASSERTIONS RATHER THAN COMMENTS. Two defects were found
-    by reading smtp4dev's POP3 source, not by running it, so this script asserts them rather
-    than assuming either way:
+    Two of those rows decide it. (1) THE PASSWORD. Outlook must never prompt on an unattended
+    guest - a prompt is a hang - and the tier profile's account stores no password. A sink that
+    accepts any PASS, including none, removes the sink half of that problem entirely; the other
+    two require a password that Outlook would then have to hold, and that no free route writes.
+    (2) TWO ACCOUNTS. Docs/live-tier-on-the-vm.md section 2.8b adds an identity account beside
+    the dummy one, both POP3 against this sink. With a catch-all sink whichever account polls
+    first downloads the other's mail - an intermittent misdelivery that reads as "the mail never
+    arrived". Inbucket files each message under the recipient's local part and a POP3 login
+    reads only the mailbox its USER names, so each account sees its own mail and nothing else.
 
-      1. TOP IS ADVERTISED IN CAPA AND NOT IMPLEMENTED. The CAPA handler writes TOP
-         unconditionally; no TOP handler is registered, so it falls through to "-ERR Unknown
-         command". A client that trusts CAPA gets a hard error on a verb the server said it had.
-      2. DELE DELETES IMMEDIATELY AND RENUMBERS MID-SESSION. RFC 1939 requires deletion in the
-         UPDATE state at QUIT, and requires message numbers to be STABLE for the whole session.
-         smtp4dev deletes at once and re-lists the mailbox per command, so after DELE 1 the
-         message that was 2 becomes 1. A client issuing DELE 1; DELE 2 deletes the wrong item.
+    WHAT ONLY A GUEST CAN SETTLE - THE OUTLOOK HALF OF THE PASSWORD. The sink accepts whatever
+    Outlook sends [SOURCE]. Whether Outlook, holding NO stored password, sends an empty PASS or
+    raises its "Internet E-mail" logon prompt instead is not documented anywhere this agent
+    could find, and it cannot be measured on the host. Docs/live-tier-on-the-vm.md section 2.7
+    gives the measurement - it needs no mail, only an Outlook start with this sink at
+    -LogLevel debug - and the fallback if Outlook does prompt.
 
-    Neither is necessarily fatal here - the tier PRF sets LeaveOnServer=0x0, so Outlook should
-    download-and-delete and never need TOP - but "should" is what this script exists to replace.
-    -Verify reports each as a named PASS or FAIL so the answer lands in a log instead of in a
-    180-second timeout six weeks later.
+    WHAT -Verify PROVES, AND WHAT IT DELIBERATELY DOES NOT TOUCH. It speaks SMTP and POP3 itself,
+    and it only ever writes to and deletes from two mailboxes of its OWN - the probe mailbox and
+    its isolation twin - which no Outlook account logs in to. So it can prove the round trip
+    while Outlook is running, and a probe it leaves behind can never be downloaded into a store.
+    The accounts' mailboxes are opened read-only, to REPORT mail waiting for Outlook, and are
+    never emptied: there is exactly one code path here that issues DELE, and it refuses any
+    mailbox that is not a probe mailbox. Checks, each named in the output:
 
-    THE PASSWORD PROBLEM, WHICH IS THE ONE REAL COLLISION AND IS NOT FIXABLE HERE.
-    smtp4dev's POP3 never checks credentials against anything - but its PASS handler refuses
-    when EITHER the username or the password is EMPTY. Meanwhile
-    Testbed/guest/tier-profile-forcepst.prf deliberately carries no password key at all, and
-    New-TierProfile.ps1 prints the account as "no stored password". Those two facts cannot both
-    hold: POP3 has no anonymous mode, and on an unattended guest a credential prompt is a hang
-    rather than a prompt. -Verify establishes the SINK half - it tries an empty PASS first, then
-    any non-empty one, and REPORTS which the sink accepted. The Outlook half needs a guest.
-    The likely shape of the answer is that the password is typed once by hand with "remember
-    password" ticked and preserved by the checkpoint, exactly as the two mail accounts already
-    are; this script does not assume that and does not do it.
+      * the scheduled task that starts the sink with the guest is registered as it must be -
+        SYSTEM, at startup, no time limit (the default kills a task after three days);
+      * the launcher on disk is byte-for-byte what this script would write, so a hand edit is
+        drift rather than configuration;
+      * the sink process is running from the install root, and all three listeners are bound to
+        127.0.0.1 and owned by it;
+      * POP3 accepts an empty PASS, a PASS with nothing after it, and any non-empty PASS;
+      * a message submitted over SMTP comes back over POP3 with its subject, a bare "." line,
+        a leading "." and a leading ".." intact, and a base64 attachment byte-identical;
+      * TOP, which the capability list advertises, actually works;
+      * a message for one mailbox is invisible to another;
+      * message numbers stay fixed after a DELE, and deletes happen at QUIT - so a client that
+        drops the connection mid-session loses nothing;
+      * after a restart through the scheduled task nothing deleted comes back, and message ids
+        are never reused - the file store's ids are timestamps. Skipped while Outlook runs,
+        because a restart under a polling Outlook is exactly the nondeterminism this avoids.
+
+    THE PROBE MESSAGES CARRY THE LIVE-TIER TAG ANYWAY. They go to a mailbox no account reads, so
+    they cannot reach a store. If that ever stopped being true, the subject tag
+    [OutlookAI-McpTest] puts them inside the live tier's mandatory zero-artifact sweep, which
+    matches it ordinally. The corpus tag [OutlookAI-Corpus] is deliberately NOT used and must
+    never be.
+
+    WHY A SCHEDULED TASK AND A LAUNCHER, NOT A SERVICE. inbucket.exe is a plain Go console
+    program that does not speak to the Service Control Manager, so registering it as a service
+    fails with a start timeout. Task Scheduler ships with Windows: the task runs as SYSTEM in
+    session 0 at every boot - before autologon and before Outlook - so nothing draws a window.
+    Inbucket reads its configuration from the ENVIRONMENT and nowhere else [SOURCE], and a
+    scheduled task cannot set environment variables for what it starts, so the task runs a
+    generated run-sink.cmd that sets them and then runs the exe.
 
     WHAT IT NEVER DOES. It never starts Outlook, never creates a COM object, never touches MAPI,
-    never reads or writes an Outlook profile registry key, and never touches a mail item in any
-    store. Everything it does is a service, a directory, a JSON file and some TCP conversations
-    with a listener on 127.0.0.1.
+    never reads or writes an Outlook profile, and never touches a mail item in any store.
+    Everything it does is a directory, a launcher, a scheduled task, a process, and TCP
+    conversations with 127.0.0.1.
 
-    THE GUARD. Same rule and same fail-closed shape as Assert-TestbedGuest in
-    Testbed/guest/OutlookMapiInterop.ps1: the cheapest reliable difference between the
-    maintainer's machine and a guest is WHO IS LOGGED ON, and the guests autologon as vmadmin.
-    It is restated here rather than dot-sourced ON PURPOSE, and the reason is concrete: that
-    file compiles Extended MAPI interop with Add-Type at dot-source time, and its own constraint
-    2 records that re-dot-sourcing it in a live session throws "type already exists". A mail
-    sink installer that dies with a MAPI compile error has failed for a reason that has nothing
-    to do with anything it does. The duplication fails SAFE - if the shared guard is ever
-    widened this copy stays narrow, and the only way past either is to name the account you
-    mean, which is a thing you cannot do by accident.
+    THE GUARD. Two axes, both required, same shape as Testbed/guest/Install-DotnetSdk.ps1:
+    logged on as the guests' autologon account, AND a computer name carrying the prefix
+    Testbed/host/New-AnswerFile.ps1 gives every guest. Restated here rather than dot-sourced
+    from the shared guest layer, which carries an Outlook COM helper a mail sink installer has
+    no business loading. The only way past either axis is to name the value you mean.
 
     STARTING STATE IT EXPECTS.
-      * A guest checkpoint where Windows is installed and you are logged on as -ExpectedUser.
-      * An ELEVATED session. Registering a Windows service needs it, and the script asserts it
-        rather than failing halfway with an access-denied nobody can interpret.
-      * OUTLOOK.EXE not running - see WHY IT REFUSES WHILE OUTLOOK IS RUNNING.
-      * The sink package STAGED at -PackagePath. It is not downloaded here and it is not in this
-        repository - see WHERE THE PACKAGE COMES FROM.
-      * Ports -SmtpPort and -Pop3Port free, and not inside a Windows reserved port range.
-        Hyper-V and WinNAT genuinely reserve ranges on a VM, and a reservation is not the same
-        thing as something listening: netstat shows nothing and the bind fails anyway.
+      * An ELEVATED session on the guest. Registering a SYSTEM task, and stopping and starting
+        it in -Verify, needs it; this asserts it rather than failing halfway.
+      * For -Execute and -Uninstall: OUTLOOK.EXE not running. Swapping the sink out from under
+        a polling Outlook turns a quiet send/receive into an error nobody asked for. It is not
+        killed: mailbox-safety rule 7 forbids that outright.
+      * The package STAGED at -PackagePath - by Testbed/host/Get-MailSinkMedia.ps1 on the host,
+        then Testbed/host/Copy-ToGuest.ps1. It is never downloaded here; the guest has no
+        network.
+      * Its SHA-256 in -ExpectedSha256. There is no default, for the reason Testbed/MEDIA.md
+        gives for the .NET SDK: a number that travels inside the script it checks is a number
+        nobody looks up. The recorded value is in Testbed/MEDIA.md.
+      * Ports -SmtpPort, -Pop3Port and -WebPort free on 127.0.0.1 and outside every Windows
+        reserved TCP range. A reservation is not a listener: netstat shows nothing and the bind
+        fails anyway.
 
-    IDEMPOTENT. Run it twice against the same checkpoint and the second run reports "already"
-    for everything and still runs the full verification. Re-running -Execute over an existing
-    install rewrites the configuration and restarts the service; it does not stack a second
-    service or a second copy of the payload. -Uninstall takes it back to the starting state so a
-    checkpoint can be re-taken.
-
-    WHERE THE PACKAGE COMES FROM, AND WHY THAT IS A DECISION RATHER THAN AN OMISSION. This
-    project's Dependencies rule forbids "anything a rebuilder would have to download and install
-    beyond the media Testbed/MEDIA.md already names as preconditions". A mail sink is exactly
-    such a thing, and MEDIA.md does not currently name one. So this script treats the sink the
-    way MEDIA.md treats the Windows ISO and the Office Deployment Tool: as STAGED MEDIA, taken
-    from -PackagePath, version-pinned and hash-checked, never fetched from the network at
-    install time. That keeps a rebuild reproducible and offline, and it puts the decision where
-    it belongs - in MEDIA.md, with the maintainer, not inside a script.
-
-    DO NOT INSTALL IT WITH winget. Two reasons, and the first one is a correction: the package
-    id is `Rnwood.Smtp4dev`, not `RnwoodLtd.smtp4dev` as Docs/live-tier-on-the-vm.md section 2.7
-    currently says, so that command fails outright. The second is structural - winget installs
-    this package as a PORTABLE under a version-stamped path in %LOCALAPPDATA% and puts a PATH
-    shim in front of it, while service registration bakes the real binary path into the service.
-    A staged zip has neither problem.
-
-    THE APPSETTINGS TRAP, WHICH IS THE SILENT ONE. smtp4dev reads appsettings.json from the
-    install directory AND THEN from {AppData}/smtp4dev/appsettings.json, and the second one
-    WINS. A service registered by --install-service runs as LocalSystem, whose %APPDATA% is
-    C:\Windows\System32\config\systemprofile\AppData\Roaming - so a settings file edited in
-    either the installer's directory or the interactive user's profile can be silently overridden
-    or silently ignored. This script closes that off by appending --nousersettings to the
-    service's binary path and VERIFYING it reads back, and by reporting any LocalSystem-profile
-    overlay it finds. --install-service itself cannot do this: it hardcodes the binPath as
-    `"<exe>" --service` and passes nothing else through.
-
-    WHY IT REFUSES WHILE OUTLOOK IS RUNNING. -Verify submits probe messages and then retrieves
-    and deletes them. A running Outlook polls the same sink on its own schedule, so it can take
-    a probe first - which fails the verification for a reason that is not a sink fault, AND puts
-    the probe into a mailbox. It does NOT kill Outlook: mailbox-safety rule 7 forbids taskkill
-    on OUTLOOK.EXE outright.
-
-    THE PROBE MESSAGES, AND WHY THEY CARRY THE LIVE-TIER TAG. If the script dies between
-    submitting and deleting, a probe sits in the sink and the next Outlook poll lands it in the
-    hub Inbox. Tagging the subject [OutlookAI-McpTest] makes that self-healing: the live tier's
-    mandatory zero-artifact sweep matches that tag ordinally across Inbox, Drafts, Sent Items,
-    Outbox, Deleted Items and the Sync Issues subtree, so a stray probe is removed by a guard
-    that already exists. An untagged stray would be invisible to it and would sit there forever.
-    The corpus tag [OutlookAI-Corpus] is deliberately NOT used and must never be - the two
-    strings are kept apart so an artifact sweep can never select a corpus item.
+    IDEMPOTENT. Re-running -Execute stops the sink, keeps the unpacked payload unless -Force,
+    rewrites the launcher, re-registers the task, starts it and runs the whole verification.
+    -Uninstall -Execute takes it all back out, so a checkpoint can be re-taken.
 
 .PARAMETER PackagePath
-    The staged sink package - Rnwood.Smtp4dev-win-x64-<version>.zip, the SELF-CONTAINED build,
-    which needs no .NET runtime on the guest. Required for -Execute. Never downloaded here.
+    The staged release zip on the guest. Never downloaded here.
 
 .PARAMETER ExpectedSha256
-    Pin the package. When given, the file's hash must match or nothing is unpacked. The default
-    is the SHA-256 the winget manifest publishes for the 3.15.0 win-x64 zip; it has NOT been
-    verified against a downloaded file on this machine, so a mismatch means "check the hash",
-    not "the package is bad". It fails CLOSED, which is the safe direction.
+    The package's SHA-256, from Testbed/MEDIA.md. REQUIRED for -Execute; no default.
 
 .PARAMETER InstallRoot
-    Where the payload is unpacked. The win-x64 zip puts Rnwood.Smtp4dev.exe and appsettings.json
-    at its ROOT, so this is also the directory the settings file is written to. Space-free on
-    purpose: it goes into a service binary path.
+    Where the payload, the launcher, the mail store and the sink's own log live. Space-free on
+    purpose: it goes into a command line and into a setting whose syntax reserves ':' and ','.
 
-.PARAMETER ServiceName
-    The Windows service. smtp4dev registers itself as `Smtp4dev`; changing this only changes
-    what is looked for, not what --install-service creates.
-
-.PARAMETER SinkHost
-    The loopback address both listeners must bind, and the only address they may bind.
+.PARAMETER TaskName
+    The scheduled task that starts the sink at boot.
 
 .PARAMETER SmtpPort
-    Submission port. Must match the live-test settings' mailSink.submitPort and the PRF SMTPPort.
+    Submission port. Must equal the tier profile's SMTPPort and the live-test settings'
+    mailSink.submitPort.
 
 .PARAMETER Pop3Port
-    Retrieval port. Must match mailSink.retrievePort and the PRF POP3Port.
+    Retrieval port. Must equal the tier profile's POP3Port and mailSink.retrievePort.
 
-.PARAMETER ImapPort
-    0 DISABLES IMAP, which is what this machine wants. Note the translation this parameter
-    performs and why it exists: in smtp4dev's own configuration, `null` disables a listener and
-    `0` means AUTO-ASSIGN A FREE PORT - the exact opposite. A 0 written straight through would
-    silently bind IMAP to an unpredictable port.
+.PARAMETER WebPort
+    Inbucket's web UI and REST API. It cannot be switched off, so it is bound to loopback like
+    the rest. No test uses it; it is what a human opens when a round trip fails.
 
-.PARAMETER WebUiUrl
-    The sink's web UI. Loopback only. No test uses it; it is what a human looks at when the
-    round trip fails.
+.PARAMETER LogLevel
+    Inbucket's own log level. `debug` logs every POP3 command line an account sends - including
+    its PASS, which on this sink is not a secret - and is what the first Outlook start should
+    run with, because that line is the evidence for the Outlook half of the password question.
 
 .PARAMETER ProbeAddress
-    The fabricated address -Verify submits to and retrieves as. Use the tier account's address:
-    that is what proves the catch-all covers it.
+    The address -Verify submits to and retrieves as. Its mailbox, and an isolation twin derived
+    from it, are the ONLY mailboxes this script ever deletes from. Refused if it maps to the
+    same mailbox as any -AccountAddress.
 
-.PARAMETER ProbeUser
-    The POP3 username -Verify logs in with. With authentication off, smtp4dev ignores it
-    entirely and always serves the catch-all mailbox - which is the answer to
-    Docs/live-tier-on-the-vm.md section 8 item 3 - but it must still be non-empty.
+.PARAMETER AccountAddress
+    The addresses of the Outlook accounts that poll this sink. Their mailboxes are reported,
+    read-only, and never emptied - and a probe address that would land in one is refused.
 
 .PARAMETER ExpectedUser
-    The Windows account this may run as. The default IS the guard; do not widen it.
+    Accounts this may run as. The default IS the guard; do not widen it.
+
+.PARAMETER ExpectedComputerNamePrefix
+    Computer-name prefix this may run on. New-AnswerFile.ps1 names guests OAI-*.
+
+.PARAMETER LogPath
+    This script's transcript. Outside -InstallRoot, so -Uninstall does not delete its own record
+    and Testbed/host/Copy-FromGuest.ps1 collects it with the other logs.
 
 .PARAMETER Execute
-    Actually install. Without it nothing is written and the plan is printed instead.
+    Install, or with -Uninstall, remove. Without it nothing is read, written or started.
 
 .PARAMETER Verify
-    Run the proof only. Writes nothing but its own log and the probe messages, which it removes.
+    Run the proof only. Writes nothing but its own log and probe messages, which it removes.
 
 .PARAMETER Uninstall
-    Stop and remove the service and delete the install root. Needs -Execute to do anything.
+    Stop the sink, unregister the task, delete the install root. Needs -Execute.
 
 .PARAMETER Force
-    Allow -Execute to replace an existing payload.
+    Let -Execute replace an already unpacked payload.
+
+.PARAMETER SelfTest
+    Exercise every pure decision in this file against synthetic inputs. Touches nothing - no
+    socket, no process, no file, no registry - so it runs anywhere, the host included.
 
 .EXAMPLE
     .\Install-MailSink.ps1
-    .\Install-MailSink.ps1 -PackagePath C:\staging\Rnwood.Smtp4dev-win-x64-3.15.0.zip -Execute
+    .\Install-MailSink.ps1 -ExpectedSha256 <hash from Testbed/MEDIA.md> -Execute
+    .\Install-MailSink.ps1 -ExpectedSha256 <hash> -LogLevel debug -Execute
     .\Install-MailSink.ps1 -Verify
     .\Install-MailSink.ps1 -Uninstall -Execute
+    powershell.exe -NoProfile -File Testbed\guest\Install-MailSink.ps1 -SelfTest
 #>
 [CmdletBinding()]
 param(
-    [string]   $PackagePath,
-    [string]   $ExpectedSha256 = '9ED061316772445D54F09B4BD69B97DC79E830312C8F32A8C1717C24FD7068DC',
-    [string]   $InstallRoot    = 'C:\OutlookAI-Sink',
-    [string]   $ServiceName    = 'Smtp4dev',
-    [string]   $SinkHost       = '127.0.0.1',
-    [int]      $SmtpPort       = 25,
-    [int]      $Pop3Port       = 110,
-    [int]      $ImapPort       = 0,
-    [string]   $WebUiUrl       = 'http://127.0.0.1:5000',
-    [string]   $ProbeAddress   = 'tier@vm.invalid',
-    [string]   $ProbeUser      = 'tier',
-    [string[]] $ExpectedUser   = @('vmadmin'),
-    [string]   $LogPath        = 'C:\OutlookAI-Sink\install-mail-sink.log',
+    [string]   $PackagePath                = 'C:\OutlookAI-Q5\media\inbucket_3.1.1_windows_amd64.zip',
+    [string]   $ExpectedSha256,
+    [string]   $InstallRoot                = 'C:\OutlookAI-Sink',
+    [string]   $TaskName                   = 'OutlookAI-MailSink',
+    [int]      $SmtpPort                   = 25,
+    [int]      $Pop3Port                   = 110,
+    [int]      $WebPort                    = 9000,
+    [ValidateSet('debug', 'info', 'warn', 'error')] [string] $LogLevel = 'info',
+    [string]   $ProbeAddress               = 'outlookai-sink-probe@vm.invalid',
+    [string[]] $AccountAddress             = @('tier@vm.invalid', 'identity@vm.invalid'),
+    [string[]] $ExpectedUser               = @('vmadmin'),
+    [string]   $ExpectedComputerNamePrefix = 'OAI-',
+    [string]   $LogPath                    = 'C:\OutlookAI-Q5\install-mail-sink.log',
     [switch]   $Execute,
     [switch]   $Verify,
     [switch]   $Uninstall,
-    [switch]   $Force
+    [switch]   $Force,
+    [switch]   $SelfTest
 )
 
 $ErrorActionPreference = 'Stop'
+if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
+
+# Captured here: inside a function $PSBoundParameters is that FUNCTION's, not the script's.
+$ScriptBoundParameters = $PSBoundParameters
 
 # ---------------------------------------------------------------------------------------------
-# Constants. Everything this script writes, runs or asserts is named here and nowhere else, so
-# a reader can see the whole blast radius in one place.
+# Constants. Everything this script writes, runs or asserts is named here, so the blast radius
+# is readable without reading the code.
 # ---------------------------------------------------------------------------------------------
 
-# The live tier's artifact tag, matched ORDINALLY by the zero-artifact sweep. See THE PROBE
-# MESSAGES in the banner. It is NOT the corpus tag and must never be.
-$probeSubjectTag = '[OutlookAI-McpTest]'
+# Loopback, and only loopback. Not a parameter: a sink reachable any other way is an open relay
+# on a test VM, and there is no configuration of this testbed that wants one.
+$SinkHost = '127.0.0.1'
 
-# The windowless executable. The Desktop build creates a WINDOW - which this machine must never
-# do - and additionally refuses --install-service, --urls and --basepath, and always picks its
-# own port on localhost. Named here as something to refuse rather than left to chance.
-$serviceExeName   = 'Rnwood.Smtp4dev.exe'
-$forbiddenExeName = 'Rnwood.Smtp4dev.Desktop.exe'
+# The live tier's artifact tag, matched ORDINALLY by the zero-artifact sweep. NOT the corpus tag.
+$ProbeSubjectTag = '[OutlookAI-McpTest]'
 
-# Where the service reads configuration from. See THE APPSETTINGS TRAP in the banner: this is
-# the LOWER-precedence of two files, and --nousersettings is what makes it the only one.
-$settingsFileName = 'appsettings.json'
+# What a POP3 login sends when -Verify wants a non-empty password. Any value works on this sink
+# [SOURCE]; it is a probe of "does the field need to be populated", not a credential.
+$NonEmptyPassValue = 'any-value'
 
-# The overlay that would otherwise win. LocalSystem's roaming profile, not the logged-on user's.
-$localSystemOverlay = 'C:\Windows\System32\config\systemprofile\AppData\Roaming\smtp4dev\appsettings.json'
+$ExeName          = 'inbucket.exe'
+$LauncherName     = 'run-sink.cmd'
+$StoreDirName     = 'store'
+$SinkLogName      = 'inbucket.log'
+$LuaScriptName    = 'inbucket.lua'
+$CmdExe           = Join-Path $env:SystemRoot 'System32\cmd.exe'
 
-# The flag that makes the install-directory settings file authoritative. --install-service
-# cannot pass it, so it is appended to the service binary path afterwards and verified.
-$noUserSettingsFlag = '--nousersettings'
+# Loopback is instant. A connect or a read that is not is one that is not going to finish.
+$SocketTimeoutMs = 10000
 
-# How long any single socket connect or read may take. Loopback: a wait that is not instant is
-# a wait that is not going to end.
-$socketTimeoutMs = 10000
+# The suite's tightest arrival deadline is 120 s and it also has to cover Outlook. A sink that
+# needs more than this on loopback has already failed.
+$RoundTripBudgetSeconds = 30
 
-# How long the whole submit-then-retrieve proof may take. The suite's TIGHTEST arrival deadline
-# is 120 s (T2/LiveFreshModeTests, which is stricter than LiveInboxArrival's 180 s), and that
-# budget also has to cover Outlook. A sink needing more than 30 s on loopback has already failed.
-$roundTripBudgetSeconds = 30
+# How long a start or a stop may take before it is reported as not having happened.
+$ListenerWaitSeconds = 30
+
+# The verdicts. Three, because "not installed" and "installed and wrong" want different fixes.
+$VerdictReady  = 'SINK-READY'
+$VerdictAbsent = 'SINK-ABSENT'
+$VerdictBroken = 'BROKEN'
 
 $script:Failures = @()
-$script:Lines    = @()
-$script:SinkPid  = -1
+$script:SeenIds  = @()
+$script:LogReady = $false
 
-function Say {
-    param([string] $Text)
-    $script:Lines += $Text
-    Write-Host $Text
-}
+# =============================================================================================
+# PURE DECISIONS. Everything below until the socket layer is decided from arguments alone, so
+# -SelfTest can drive it on any machine. No function in this block reads the machine.
+# =============================================================================================
 
-function Pass {
-    param([string] $What, [string] $Detail)
-    $suffix = ''
-    if ($Detail) { $suffix = " - $Detail" }
-    Say ("  OK   {0}{1}" -f $What, $suffix)
-}
+<#
+    Inbucket's mailbox for an address, with MailboxNaming=local [SOURCE: pkg/policy/address.go,
+    parseMailboxName]: the local part, lowercased, cut at the first '+'. A POP3 USER is used
+    VERBATIM as a mailbox name [SOURCE: pkg/server/pop3/handler.go, loadMailbox] - so an
+    account's POP3 user name must be exactly what this returns for its address.
+#>
+function Get-InbucketMailboxName {
+    param([Parameter(Mandatory = $true)] [string] $Address)
 
-function Fail {
-    param([string] $What, [string] $Why)
-    $script:Failures += "$What : $Why"
-    Say ("  FAIL {0} - {1}" -f $What, $Why)
-}
+    $at = $Address.LastIndexOf([char] '@')
+    if ($at -lt 0) { throw "'$Address' is not an address: it has no '@'." }
+    $local = $Address.Substring(0, $at)
+    if ($local.Length -eq 0) { throw "'$Address' has an empty local part." }
 
-function Save-Log {
-    # A dry run creates NOTHING, including its own log directory. A "dry run" that leaves a
-    # directory behind is a dry run whose promise is already false.
-    if (-not ($Execute -or $Verify)) { return }
-
-    $dir = Split-Path -Parent $LogPath
-    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $name = $local.ToLowerInvariant()
+    foreach ($c in $name.ToCharArray()) {
+        $ok = ($c -ge [char]'a' -and $c -le [char]'z') -or ($c -ge [char]'0' -and $c -le [char]'9') -or
+              ("!#$%&'*+-=/?^_``.{|}~".IndexOf($c) -ge 0)
+        if (-not $ok) { throw "'$Address' carries a character Inbucket refuses in a mailbox name: '$c'." }
     }
-    Set-Content -LiteralPath $LogPath -Value $script:Lines -Encoding UTF8
-    Write-Host ''
-    Write-Host "Log: $LogPath"
+    $plus = $name.IndexOf('+')
+    if ($plus -ge 0) { $name = $name.Substring(0, $plus) }
+    if ($name.Length -eq 0) { throw "'$Address' names an empty mailbox once its +tag is removed." }
+    return $name
 }
 
-# ---------------------------------------------------------------------------------------------
-# Guards. First calls in every path that writes, and in -Verify too, because -Verify submits mail.
-# ---------------------------------------------------------------------------------------------
-
-function Assert-TestbedGuestLocal {
-    $who = $env:USERNAME
-    foreach ($candidate in $ExpectedUser) {
-        if ($who -eq $candidate) { return }
-    }
-
-    throw @"
-REFUSING TO RUN. This session is logged on as '$who', which is not one of: $($ExpectedUser -join ', ').
-
-This script registers a Windows SERVICE that listens on the SMTP and POP3 ports, and its
-verification submits mail. On the maintainer's workstation that would put an unauthenticated
-listener on port $SmtpPort of a machine holding real mail.
-
-The testbed guests autologon as 'vmadmin' (Testbed/README.md section 2). If you are building a
-guest whose account has a different name, pass it explicitly:
-
-    -ExpectedUser <that account's username>
-
-Do not 'fix' this by widening the default. The default is the guard.
-"@
+# The second probe-owned mailbox, used to prove one mailbox cannot see another's mail. Never a
+# '+' suffix: the naming rule above would fold that back into the probe mailbox itself.
+function Get-IsolationAddress {
+    param([Parameter(Mandatory = $true)] [string] $Address)
+    $at = $Address.LastIndexOf([char] '@')
+    if ($at -lt 1) { throw "'$Address' is not an address." }
+    return $Address.Substring(0, $at) + '-isolation' + $Address.Substring($at)
 }
 
-function Assert-Elevated {
-    $identity  = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw @"
-REFUSING TO RUN. This session is not elevated, and registering a Windows service needs it.
+# The probe must never share a mailbox with an Outlook account: its messages would then be
+# downloaded into a real store, and its deletes would take an account's mail.
+function Get-ProbeMailboxProblem {
+    param([string] $Probe, [string[]] $Accounts)
 
-Asserted here rather than discovered halfway through: a service install that fails at the
-registration step leaves an unpacked payload, no service, and an access-denied message that reads
-like a packaging fault.
-"@
-    }
-}
-
-function Assert-OutlookNotRunning {
-    $running = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
-    if ($running.Count -gt 0) {
-        throw @"
-REFUSING: OUTLOOK.EXE is running (pid $(($running | ForEach-Object { $_.Id }) -join ', ')).
-
-This script's verification submits probe messages to the sink and then retrieves and deletes
-them. A running Outlook polls the same sink on its own schedule, so it can take a probe first -
-which fails the verification for a reason that is not a sink fault, AND puts the probe into a
-mailbox.
-
-Close Outlook properly and run this again. DO NOT taskkill it - mailbox-safety rule 7 forbids
-that outright.
-"@
-    }
-}
-
-# ---------------------------------------------------------------------------------------------
-# Ports. A reserved range is NOT the same thing as something listening: netstat shows nothing
-# and the bind fails anyway. Hyper-V and WinNAT reserve ranges on a VM as a matter of course,
-# which is exactly the machine this runs on.
-# ---------------------------------------------------------------------------------------------
-
-function Get-ExcludedPortRange {
-    $ranges = @()
     try {
-        $raw = & netsh interface ipv4 show excludedportrange protocol=tcp 2>&1
+        $probeBox = Get-InbucketMailboxName -Address $Probe
+        $isolationBox = Get-InbucketMailboxName -Address (Get-IsolationAddress -Address $Probe)
     }
-    catch {
-        return $null
-    }
-    if ($LASTEXITCODE -ne 0) { return $null }
+    catch { return "The probe address is unusable: $($_.Exception.Message)" }
 
-    foreach ($line in $raw) {
-        $m = [regex]::Match([string] $line, '^\s*(\d+)\s+(\d+)\s*$')
+    foreach ($account in @($Accounts)) {
+        if (-not $account) { continue }
+        $accountBox = $null
+        try { $accountBox = Get-InbucketMailboxName -Address $account }
+        catch { return "The account address is unusable: $($_.Exception.Message)" }
+        if ($accountBox -ceq $probeBox) {
+            return "The probe address '$Probe' lands in mailbox '$probeBox', which is the mailbox of account '$account'. A probe there would be downloaded into that account's store, and its cleanup would delete that account's mail."
+        }
+        if ($accountBox -ceq $isolationBox) {
+            return "The probe's isolation mailbox '$isolationBox' is the mailbox of account '$account'. Choose another -ProbeAddress."
+        }
+    }
+    return $null
+}
+
+# The single gate in front of DELE. Any mailbox that is not probe-owned is refused, whatever
+# called it - an account's mail is never this script's to delete.
+function Assert-ProbeMailboxForDelete {
+    param([string] $Mailbox, [string[]] $ProbeMailboxes)
+    foreach ($p in @($ProbeMailboxes)) {
+        if ($p -and ($Mailbox -ceq $p)) { return }
+    }
+    throw "REFUSING to DELE in mailbox '$Mailbox': only the probe mailboxes ($(@($ProbeMailboxes) -join ', ')) may ever be emptied by this script."
+}
+
+# Inbucket's storage setting is key:value pairs separated by ',' - so a Windows path's ':' is
+# written as '$' and replaced back [SOURCE: pkg/storage/file/fstore.go, getMailPath].
+function ConvertTo-InbucketStoragePath {
+    param([Parameter(Mandatory = $true)] [string] $Path)
+    if ($Path -notmatch '^[A-Za-z]:\\') { throw "'$Path' is not an absolute drive path." }
+    if ($Path.Contains(',') -or $Path.Contains('$')) { throw "'$Path' contains ',' or '$', which Inbucket's storage setting cannot carry." }
+    return $Path.Substring(0, 1) + '$' + $Path.Substring(2)
+}
+
+# What cmd.exe would interpret rather than pass through. A value carrying one of these would be
+# written into the launcher as something other than what it says.
+function Get-CmdUnsafeReason {
+    param([string] $Value)
+    if ($null -eq $Value) { return 'it is null' }
+    foreach ($c in @('%', '^', '&', '|', '<', '>', '"', '!', "`r", "`n")) {
+        if ($Value.Contains($c)) {
+            $shown = $c
+            if ($c -eq "`r") { $shown = 'CR' }
+            if ($c -eq "`n") { $shown = 'LF' }
+            return "it contains '$shown', which cmd.exe interprets"
+        }
+    }
+    return $null
+}
+
+# Refuses install roots whose recursive deletion (by -Uninstall) or whose use in a command line
+# would be dangerous: drive roots, system and profile directories, UNC paths, relative paths.
+function Get-InstallRootProblem {
+    param([string] $Path)
+    if (-not $Path) { return 'it is empty' }
+    if ($Path -notmatch '^[A-Za-z]:\\[^\\]+') { return 'it must be an absolute path at least one directory below a drive root (no UNC, no relative path)' }
+    if ($Path -match '\s') { return 'it contains whitespace, and it goes into a command line' }
+    $trimmed = $Path.TrimEnd('\')
+    $forbidden = @('Windows', 'Program Files', 'Program Files (x86)', 'ProgramData', 'Users', 'System Volume Information')
+    foreach ($f in $forbidden) {
+        $root = $trimmed.Substring(0, 3) + $f
+        if ([string]::Equals($trimmed, $root, [System.StringComparison]::OrdinalIgnoreCase)) { return "it is the system directory '$root'" }
+        if ($trimmed.StartsWith($root + '\', [System.StringComparison]::OrdinalIgnoreCase)) { return "it is inside the system directory '$root'" }
+    }
+    $unsafe = Get-CmdUnsafeReason -Value $Path
+    if ($unsafe) { return $unsafe }
+    return $null
+}
+
+<#
+    The environment the launcher sets, in order, each with the reason it is set. Inbucket is
+    configured through INBUCKET_* variables and nothing else [SOURCE: pkg/config/config.go].
+#>
+function Get-SinkEnvironment {
+    param([string] $Root, [int] $Smtp, [int] $Pop3, [int] $Web, [string] $Level)
+
+    $store = ConvertTo-InbucketStoragePath -Path (Join-Path $Root $StoreDirName)
+    return @(
+        [pscustomobject]@{ Name = 'INBUCKET_LOGLEVEL';                Value = $Level;                 Why = 'debug logs every POP3 command line an account sends, PASS included - the evidence for the Outlook half of the password question.' }
+        [pscustomobject]@{ Name = 'INBUCKET_MAILBOXNAMING';           Value = 'local';                Why = 'A message for NAME@anything is filed under mailbox "name", and POP3 USER name reads exactly that. This is what stops two accounts taking each other''s mail.' }
+        [pscustomobject]@{ Name = 'INBUCKET_SMTP_ADDR';               Value = "${SinkHost}:$Smtp";    Why = 'Submission. Loopback only: any other address is an open relay on a test VM.' }
+        [pscustomobject]@{ Name = 'INBUCKET_POP3_ADDR';               Value = "${SinkHost}:$Pop3";    Why = 'Retrieval. Loopback only.' }
+        [pscustomobject]@{ Name = 'INBUCKET_WEB_ADDR';                Value = "${SinkHost}:$Web";     Why = 'Web UI and REST API. It cannot be switched off, so it is confined to loopback. Nothing under test uses it.' }
+        [pscustomobject]@{ Name = 'INBUCKET_SMTP_TLSENABLED';         Value = 'false';                Why = 'The tier profile sets SMTPUseSSL=0. The default already, written down so it cannot drift.' }
+        [pscustomobject]@{ Name = 'INBUCKET_POP3_TLSENABLED';         Value = 'false';                Why = 'The tier profile sets POP3UseSSL=0; with this false the capability list offers no STLS.' }
+        [pscustomobject]@{ Name = 'INBUCKET_STORAGE_TYPE';            Value = 'file';                 Why = 'Survives a restart, and its message ids are timestamps - the memory store numbers from 1 again after every restart, which would reuse UIDLs.' }
+        [pscustomobject]@{ Name = 'INBUCKET_STORAGE_PARAMS';          Value = "path:$store";          Why = 'Where the file store lives. The $ stands for the drive colon; this setting reserves ":" to separate key from value.' }
+        [pscustomobject]@{ Name = 'INBUCKET_STORAGE_RETENTIONPERIOD'; Value = '24h';                  Why = 'Mail nobody collected is purged after a day, so a failed run cannot leave residue in the sink for good. The default, written down.' }
+        [pscustomobject]@{ Name = 'INBUCKET_STORAGE_MAILBOXMSGCAP';   Value = '500';                  Why = 'Past this the oldest message in a mailbox is dropped silently. The default, written down; a live run sends thirteen.' }
+    )
+}
+
+<#
+    The launcher the scheduled task runs. ASCII, CRLF, no BOM - it is read by cmd.exe. -Verify
+    re-renders it and fails on any difference, so it is a record rather than a starting point.
+#>
+function ConvertTo-LauncherText {
+    param(
+        [Parameter(Mandatory = $true)] [string] $ExePath,
+        [Parameter(Mandatory = $true)] [string] $AppDir,
+        [Parameter(Mandatory = $true)] [string] $SinkLogPath,
+        [Parameter(Mandatory = $true)] $Environment
+    )
+
+    foreach ($pair in @(@('the exe path', $ExePath), @('the app directory', $AppDir), @('the sink log path', $SinkLogPath))) {
+        $why = Get-CmdUnsafeReason -Value $pair[1]
+        if ($why) { throw "Refusing to write a launcher: $($pair[0]) '$($pair[1])' is unusable - $why." }
+    }
+
+    $lines = @(
+        '@echo off'
+        'rem WRITTEN BY Testbed/guest/Install-MailSink.ps1 -Execute. DO NOT EDIT BY HAND.'
+        'rem -Verify re-renders this file and FAILS on any difference, so an edit here is reported'
+        'rem as drift instead of quietly becoming the configuration. Change the script''s'
+        'rem parameters and re-run -Execute.'
+        'rem'
+        'rem Inbucket takes its configuration from the environment and from nowhere else, and a'
+        'rem scheduled task cannot set environment variables for what it starts: hence this file.'
+        'setlocal'
+    )
+    foreach ($e in @($Environment)) {
+        $why = Get-CmdUnsafeReason -Value ([string] $e.Value)
+        if ($why) { throw "Refusing to write a launcher: $($e.Name) is unusable - $why." }
+        $lines += ('set "{0}={1}"' -f $e.Name, $e.Value)
+    }
+    $lines += ('cd /d "{0}"' -f $AppDir)
+    $lines += ('"{0}" -logfile "{1}"' -f $ExePath, $SinkLogPath)
+
+    return (($lines -join "`r`n") + "`r`n")
+}
+
+<#
+    The folder inside the release zip that holds inbucket.exe. The goreleaser zip puts everything
+    under one versioned folder; this reads it from the entries rather than trusting a file name,
+    and refuses anything it cannot place exactly.
+#>
+function Get-ZipAppFolder {
+    param([string[]] $EntryNames)
+
+    $hits = @()
+    foreach ($raw in @($EntryNames)) {
+        if (-not $raw) { continue }
+        $name = $raw.Replace('\', '/')
+        $leaf = ($name -split '/')[-1]
+        if ([string]::Equals($leaf, $ExeName, [System.StringComparison]::OrdinalIgnoreCase)) { $hits += $name }
+    }
+    if ($hits.Count -eq 0) { throw "The package holds no $ExeName. It is not the Inbucket Windows release." }
+    if ($hits.Count -gt 1) { throw "The package holds $($hits.Count) copies of ${ExeName}: $($hits -join ', '). Refusing to guess which one runs." }
+
+    $parts = $hits[0] -split '/'
+    if ($parts.Count -eq 1) { return '' }
+    if ($parts.Count -eq 2) { return $parts[0] }
+    throw "$ExeName sits $($parts.Count - 1) folders deep in the package ($($hits[0])). The release puts it one folder deep; this is not that package."
+}
+
+function Get-VersionFromFolderName {
+    param([string] $FolderName)
+    $m = [regex]::Match([string] $FolderName, '^inbucket_(\d+\.\d+\.\d+)_windows_amd64$')
+    if ($m.Success) { return $m.Groups[1].Value }
+    return $null
+}
+
+function Get-Sha256Problem {
+    param([string] $Expected, [string] $Actual)
+    if ([string]::IsNullOrWhiteSpace($Expected)) {
+        return '-ExpectedSha256 was not supplied. It is mandatory and has no default: take it from Testbed/MEDIA.md.'
+    }
+    $want = $Expected.Trim().Replace('-', '').ToUpperInvariant()
+    if ($want -notmatch '^[0-9A-F]{64}$') { return "-ExpectedSha256 '$Expected' is not a SHA-256 (64 hex digits)." }
+    $have = ([string] $Actual).Trim().ToUpperInvariant()
+    if ($want -cne $have) { return "the package does not match its pin.`n  expected  $want`n  actual    $have" }
+    return $null
+}
+
+# netsh's reserved-range table. A line is "start end", optionally followed by '*' for a range an
+# administrator reserved.
+#
+# A NOTE ON EVERY FUNCTION HERE THAT RETURNS A LIST: it returns the items, never `,$list`, and
+# every caller wraps the call in @(). Returning `,$list` hands the caller ONE object that is the
+# list, and a caller that then writes @(...) around it gets a one-element list whose element is
+# the list - so an empty result counts as 1. This file does it one way, everywhere.
+function Get-ExcludedPortRangeFromText {
+    param([string[]] $Lines)
+    foreach ($line in @($Lines)) {
+        $m = [regex]::Match([string] $line, '^\s*(\d+)\s+(\d+)(\s+\*)?\s*$')
         if ($m.Success) {
-            $ranges += [pscustomobject]@{
-                Start = [int] $m.Groups[1].Value
-                End   = [int] $m.Groups[2].Value
-            }
+            [pscustomobject]@{ Start = [int] $m.Groups[1].Value; End = [int] $m.Groups[2].Value }
         }
     }
-    return ,$ranges
 }
 
-<#
-    What is listening on a port, and ON WHICH ADDRESS. The address is the point: loopback
-    traffic is not filtered, so a listener that needs an inbound firewall rule is a listener
-    bound to 0.0.0.0 - which on a test VM is an open relay.
-#>
-function Get-ListeningEndpoint {
-    param([int] $Port)
-
-    $conn = @()
-    try {
-        $conn = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop |
-                ForEach-Object {
-                    [pscustomobject]@{
-                        LocalAddress  = [string] $_.LocalAddress
-                        OwningProcess = [int] $_.OwningProcess
-                    }
-                })
+function Test-PortInRange {
+    param([int] $Port, $Ranges)
+    foreach ($r in @($Ranges)) {
+        if ($null -eq $r) { continue }
+        if ($Port -ge $r.Start -and $Port -le $r.End) { return $true }
     }
-    catch {
-        # Fall back to netstat. Get-NetTCPConnection needs the NetTCPIP module, and a guest that
-        # has lost it should produce a diagnosis rather than a missing-cmdlet error.
-        $raw = & netstat -ano -p tcp 2>$null
-        foreach ($line in $raw) {
-            $m = [regex]::Match([string] $line, '^\s*TCP\s+(\S+):(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$')
-            if ($m.Success -and [int] $m.Groups[2].Value -eq $Port) {
-                $conn += [pscustomobject]@{
-                    LocalAddress  = $m.Groups[1].Value
-                    OwningProcess = [int] $m.Groups[3].Value
-                }
-            }
-        }
-    }
-
-    if ($conn.Count -eq 0) { return $null }
-
-    $name = '(exited)'
-    try { $name = (Get-Process -Id $conn[0].OwningProcess -ErrorAction Stop).ProcessName } catch { }
-
-    return [pscustomobject]@{
-        LocalAddress  = [string] $conn[0].LocalAddress
-        OwningProcess = [int] $conn[0].OwningProcess
-        ProcessName   = $name
-        AllAddresses  = @($conn | ForEach-Object { [string] $_.LocalAddress })
-    }
+    return $false
 }
 
-function Test-PortUsable {
-    param([int] $Port, [string] $What, $Ranges)
-
-    if ($null -eq $Ranges) {
-        Say "  NOTE $What port $Port - the reserved-range list could not be read; a bind failure here would look like a packaging fault."
-    }
-    else {
-        foreach ($r in $Ranges) {
-            if ($Port -ge $r.Start -and $Port -le $r.End) {
-                Fail "$What port $Port is usable" (
-                    "It is inside the Windows reserved TCP range $($r.Start)-$($r.End). Nothing is listening there and " +
-                    'a bind will still fail. Pick another port and carry it in BOTH the live-test settings mailSink ' +
-                    'block and the tier PRF - nothing needs the well-known numbers.')
-                return $false
-            }
-        }
-    }
-
-    $listener = Get-ListeningEndpoint -Port $Port
-    if ($null -ne $listener -and $listener.OwningProcess -ne $script:SinkPid) {
-        Fail "$What port $Port is free" (
-            "Something is already listening on $($listener.LocalAddress):$Port (pid $($listener.OwningProcess), " +
-            "$($listener.ProcessName)). Stop it or choose another port.")
-        return $false
-    }
-
-    return $true
-}
-
-# ---------------------------------------------------------------------------------------------
-# Configuration. Every key below is a REAL smtp4dev ServerOptions key; none is invented. The
-# nesting under "ServerOptions" is load-bearing - a key written at the root is read by nothing
-# and reported by nothing.
-# ---------------------------------------------------------------------------------------------
-
-function New-SinkSetting {
-    # PowerShell 5.1 has no ternary. An ordered hashtable keeps the generated file readable and
-    # diffable, which matters because the whole point is that a human can check it.
-    $imap = $null
-    if ($ImapPort -gt 0) { $imap = $ImapPort }
-
-    $options = [ordered]@{
-        # Web UI. Loopback only; nothing under test uses it.
-        Urls                         = $WebUiUrl
-
-        # SMTP. Not nullable in smtp4dev - submission cannot be switched off, which is fine.
-        Port                         = $SmtpPort
-
-        # POP3. null disables; a NUMBER is what enables it. See the -ImapPort help for why 0 is
-        # translated rather than written through.
-        Pop3Port                     = $Pop3Port
-        ImapPort                     = $imap
-
-        # LOOPBACK ONLY, AND THIS DEFAULTS THE OTHER WAY. smtp4dev ships with
-        # AllowRemoteConnections = true, i.e. bound to every interface. On a test VM that is an
-        # open relay. It is set false here and the binding is asserted afterwards, because a
-        # setting that did not take looks exactly like a setting that did.
-        AllowRemoteConnections       = $false
-        DisableIPv6                  = $false
-
-        # No TLS anywhere. The tier PRF sets POP3UseSSL=0 and SMTPUseSSL=0, so a sink offering
-        # STARTTLS is a sink Outlook may try to negotiate with and fail. Note that POP3 has its
-        # own key: Pop3TlsMode is INDEPENDENT of TlsMode, and setting only the latter leaves POP3
-        # advertising STLS.
-        TlsMode                      = 'None'
-        Pop3TlsMode                  = 'None'
-        SecureConnectionRequired     = $false
-
-        # Authentication. False here means SMTP takes anything, and means POP3 always serves the
-        # catch-all mailbox and IGNORES the username. It does NOT mean POP3 will accept an empty
-        # password - see THE PASSWORD PROBLEM in the banner.
-        AuthenticationRequired       = $false
-        SmtpAllowAnyCredentials      = $true
-
-        # Empty on purpose. A catch-all mailbox with Recipients="*" is created automatically as
-        # the last mailbox, so there is nothing to provision per address and nothing to
-        # re-provision after a checkpoint restore. Declaring one here would only give it a
-        # different name to get wrong.
-        Users                        = @()
-        Mailboxes                    = @()
-
-        # A file database at a path this script chose, rather than the relative default. The
-        # alternative is "" for in-memory, which would also work and would drop everything on a
-        # restart - rejected because it makes the restart assertion below vacuous, and because a
-        # deterministic path is what a checkpoint captures.
-        Database                     = (Join-Path $InstallRoot 'sink.db')
-
-        # Retention. smtp4dev prunes silently at its default of 100 per mailbox. The tier deletes
-        # every message it retrieves (the PRF sets LeaveOnServer=0x0), so this is headroom rather
-        # than a working limit - but a silent prune is worth not having.
-        NumberOfMessagesToKeep       = 500
-    }
-
-    return [ordered]@{ ServerOptions = $options }
-}
-
-# ---------------------------------------------------------------------------------------------
-# The socket layer. Raw SMTP and POP3, because the whole point of -Verify is to speak the
-# protocols the suite's own probe does not.
-# ---------------------------------------------------------------------------------------------
-
-<#
-    Connects with a REAL timeout. TcpClient.Connect() blocks for the OS connect timeout, and a
-    setup script that hangs is worse than one that fails.
-#>
-function Connect-SinkSocket {
-    param([string] $HostName, [int] $Port)
-
-    $client = New-Object System.Net.Sockets.TcpClient
-    try {
-        $iar = $client.BeginConnect($HostName, $Port, $null, $null)
-        if (-not $iar.AsyncWaitHandle.WaitOne($socketTimeoutMs)) {
-            $client.Close()
-            throw "Nothing answered ${HostName}:${Port} within $socketTimeoutMs ms."
-        }
-        $client.EndConnect($iar)
-    }
-    catch {
-        $client.Close()
-        throw
-    }
-
-    $client.ReceiveTimeout = $socketTimeoutMs
-    $client.SendTimeout    = $socketTimeoutMs
-
-    $stream = $client.GetStream()
-    $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::ASCII)
-    $writer = New-Object System.IO.StreamWriter($stream, [System.Text.Encoding]::ASCII)
-    $writer.NewLine   = "`r`n"
-    $writer.AutoFlush = $true
-
-    return [pscustomobject]@{ Client = $client; Reader = $reader; Writer = $writer }
-}
-
-function Close-SinkSocket {
-    param($Socket)
-    if ($null -eq $Socket) { return }
-    try { $Socket.Writer.Dispose() } catch { }
-    try { $Socket.Reader.Dispose() } catch { }
-    try { $Socket.Client.Close() }   catch { }
-}
-
-<#
-    One SMTP reply, which may be several lines. A continuation line has '-' in column 4; the
-    final one has a space. The whole thing is returned so a failure can quote what the server
-    actually said rather than just its code.
-#>
-function Read-SmtpReply {
-    param($Socket)
-
-    $lines = @()
-    while ($true) {
-        $line = $Socket.Reader.ReadLine()
-        if ($null -eq $line) { throw 'The SMTP server closed the connection mid-reply.' }
-        $lines += $line
-        if ($line.Length -lt 4 -or $line[3] -ne '-') { break }
-    }
-
-    $last = $lines[$lines.Count - 1]
+# One SMTP reply from its lines. A continuation line has '-' in column 4; the last has a space.
+function ConvertFrom-SmtpReplyLines {
+    param([string[]] $Lines)
+    $all = @($Lines)
     $code = 0
-    if ($last.Length -ge 3) { [void][int]::TryParse($last.Substring(0, 3), [ref] $code) }
-
-    return [pscustomobject]@{ Code = $code; Text = ($lines -join ' | ') }
-}
-
-function Invoke-SmtpCommand {
-    param($Socket, [string] $Command, [int] $ExpectCode)
-
-    $Socket.Writer.WriteLine($Command)
-    $reply = Read-SmtpReply -Socket $Socket
-    if ($reply.Code -ne $ExpectCode) {
-        throw "SMTP '$Command' expected $ExpectCode, got $($reply.Code): $($reply.Text)"
+    if ($all.Count -gt 0) {
+        $last = [string] $all[$all.Count - 1]
+        if ($last.Length -ge 3) { [void][int]::TryParse($last.Substring(0, 3), [ref] $code) }
     }
-    return $reply
+    return [pscustomobject]@{ Code = $code; Text = ($all -join ' | '); LineCount = $all.Count }
 }
 
-function Read-Pop3Reply {
-    param($Socket)
-
-    $line = $Socket.Reader.ReadLine()
-    if ($null -eq $line) { throw 'The POP3 server closed the connection mid-reply.' }
-    return [pscustomobject]@{ Ok = $line.StartsWith('+OK'); Text = $line }
-}
-
-function Invoke-Pop3Command {
-    param($Socket, [string] $Command, [switch] $AllowError)
-
-    $Socket.Writer.WriteLine($Command)
-    $reply = Read-Pop3Reply -Socket $Socket
-    if (-not $reply.Ok -and -not $AllowError) {
-        # Never echo a PASS argument: this log is read out loud and pasted into issues.
-        $shown = $Command -replace '^(PASS)\s.*$', '$1 <not shown>'
-        throw "POP3 '$shown' failed: $($reply.Text)"
+# RFC 5321 section 4.5.2 on the way out: a line beginning with '.' gets one more.
+function ConvertTo-DotStuffedLines {
+    param([string[]] $Lines)
+    foreach ($line in @($Lines)) {
+        if ($line.StartsWith('.')) { '.' + $line } else { $line }
     }
-    return $reply
+}
+
+# RFC 1939 section 3 on the way back: stop at a line that is exactly '.', drop one leading '.'
+# from every other line that has one. Reports whether the terminator was actually seen - a
+# response that simply stops is a truncation, not an empty body.
+function ConvertFrom-DotStuffedLines {
+    param([string[]] $Lines)
+    $out = @()
+    $terminated = $false
+    foreach ($line in @($Lines)) {
+        if ($line -ceq '.') { $terminated = $true; break }
+        if ($line.StartsWith('.')) { $out += $line.Substring(1) } else { $out += $line }
+    }
+    return [pscustomobject]@{ Lines = $out; Terminated = $terminated }
+}
+
+function ConvertFrom-Pop3Stat {
+    param([string] $Line)
+    $m = [regex]::Match([string] $Line, '^\+OK\s+(\d+)\s+(\d+)')
+    if (-not $m.Success) { return $null }
+    return [pscustomobject]@{ Count = [int] $m.Groups[1].Value; Octets = [long] $m.Groups[2].Value }
+}
+
+function ConvertFrom-Pop3Uidl {
+    param([string] $Line)
+    $m = [regex]::Match([string] $Line, '^\+OK\s+(\d+)\s+(\S+)\s*$')
+    if (-not $m.Success) { return $null }
+    return [pscustomobject]@{ Number = [int] $m.Groups[1].Value; Id = $m.Groups[2].Value }
 }
 
 <#
-    A POP3 multi-line response, UNSTUFFED. RFC 1939 section 3: the body ends at a line containing
-    only '.', and any body line that began with '.' was sent with an extra one prepended. Getting
-    this wrong in the CLIENT would make a correctly-behaving server look broken, which is the
-    opposite of what this script is for - so it is done explicitly, and whether the SERVER did
-    its half is one of the assertions below.
+    The probe message. Deliberately awkward in the ways a POP3 path gets wrong, because a probe
+    that only proves "hello world survives" proves nothing about Outlook's mail. The Date header
+    is formatted with the invariant culture: the guests run nl-NL formats on purpose.
 #>
-function Read-Pop3MultiLine {
-    param($Socket)
-
-    $lines = @()
-    while ($true) {
-        $line = $Socket.Reader.ReadLine()
-        if ($null -eq $line) { throw 'The POP3 server closed the connection inside a multi-line response.' }
-        if ($line -eq '.') { break }
-        if ($line.StartsWith('.')) { $line = $line.Substring(1) }
-        $lines += $line
-    }
-    return ,$lines
-}
-
-# ---------------------------------------------------------------------------------------------
-# The probe message. Deliberately awkward in the ways a POP3 implementation gets wrong, because
-# a probe that only proves "hello world survives" proves nothing about Outlook's mail.
-# ---------------------------------------------------------------------------------------------
-
 function New-ProbeMessage {
-    param([string] $Address, [string] $Marker)
+    param([string] $Address, [string] $Marker, [datetime] $DateUtc)
 
-    $subject  = "$probeSubjectTag sink probe $Marker"
-    $date     = (Get-Date).ToUniversalTime().ToString(
-        'ddd, dd MMM yyyy HH:mm:ss +0000', [Globalization.CultureInfo]::InvariantCulture)
+    $subject = "$ProbeSubjectTag sink probe $Marker"
+    $date = $DateUtc.ToString('ddd, dd MMM yyyy HH:mm:ss +0000', [System.Globalization.CultureInfo]::InvariantCulture)
     $boundary = "sinkprobe$Marker"
-
-    # Base64 computed at run time so the literal and the assertion cannot drift apart.
-    $attachmentB64 = [Convert]::ToBase64String(
-        [System.Text.Encoding]::ASCII.GetBytes('OutlookAI sink probe attachment'))
+    $attachmentB64 = [Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes("OutlookAI sink probe attachment $Marker"))
 
     $lines = @(
         "From: <$Address>"
@@ -689,10 +610,9 @@ function New-ProbeMessage {
         "--$boundary"
         'Content-Type: text/plain; charset=us-ascii'
         ''
-        # (1) A line that is EXACTLY a period. Un-stuffed by a broken server this terminates the
-        #     DATA block early, and the message is truncated silently and only sometimes.
+        # (1) EXACTLY a period. Un-stuffed by a broken path this ends the message early.
         '.'
-        # (2) A line that BEGINS with a period - the classic dot-stuffing bug.
+        # (2) One leading period - the classic dot-stuffing bug.
         '.leading period must survive'
         # (3) Two leading periods, which must come back as two.
         '..two leading periods must survive'
@@ -713,46 +633,476 @@ function New-ProbeMessage {
         Marker        = $Marker
         Lines         = $lines
         AttachmentB64 = $attachmentB64
+        DateHeader    = "Date: $date"
     }
 }
 
+# What is wrong with a retrieved probe, as a list. Empty means it came back intact.
+function Get-ProbeBodyProblems {
+    param($Message, [string[]] $Retrieved)
+
+    $problems = @()
+    $body = @($Retrieved)
+    if (@($body | Where-Object { $_ -ceq ('Subject: ' + $Message.Subject) }).Count -ne 1) {
+        $problems += 'the subject header did not come back exactly once'
+    }
+    $bare   = @($body | Where-Object { $_ -ceq '.' }).Count
+    $single = @($body | Where-Object { $_ -ceq '.leading period must survive' }).Count
+    $double = @($body | Where-Object { $_ -ceq '..two leading periods must survive' }).Count
+    if ($bare -ne 1 -or $single -ne 1 -or $double -ne 1) {
+        $problems += "dot-stuffing did not survive: bare-period lines=$bare, single-leading=$single, double-leading=$double (each must be 1)"
+    }
+    if (@($body | Where-Object { $_ -ceq ('marker ' + $Message.Marker) }).Count -ne 1) {
+        $problems += 'the marker line after the dotted lines is missing - the body was cut short'
+    }
+    if (@($body | Where-Object { $_ -ceq $Message.AttachmentB64 }).Count -ne 1) {
+        $problems += 'the base64 attachment part did not come back byte-identical'
+    }
+    return $problems
+}
+
 <#
-    Submits one probe over SMTP, dot-stuffing on the way out. Throws on any unexpected reply: a
-    partial submission is not a state worth continuing from.
+    The scheduled task, audited from a snapshot so the rules can be tested without Task
+    Scheduler. Each rule is one a default gets wrong: a task with the default time limit is
+    KILLED after three days, a task registered for a user only runs while that user is logged
+    on (and then draws a console window), and a logon trigger is not a boot trigger.
+#>
+function Get-TaskDefinitionProblems {
+    param($Snapshot, [string] $LauncherPath)
+
+    $problems = @()
+    if ($null -eq $Snapshot -or -not $Snapshot.Exists) { return 'the scheduled task does not exist' }
+    if (-not $Snapshot.Enabled) { $problems += 'the task is disabled, so the sink will not start with the guest' }
+
+    $triggers = @($Snapshot.TriggerKinds)
+    if ($triggers.Count -ne 1 -or $triggers[0] -cne 'MSFT_TaskBootTrigger') {
+        $problems += "the task must have exactly one trigger, at startup; it has: $($triggers -join ', ')"
+    }
+
+    $system = @('SYSTEM', 'S-1-5-18', 'NT AUTHORITY\SYSTEM')
+    $userOk = $false
+    foreach ($s in $system) {
+        if ([string]::Equals([string] $Snapshot.UserId, $s, [System.StringComparison]::OrdinalIgnoreCase)) { $userOk = $true }
+    }
+    if (-not $userOk) { $problems += "the task runs as '$($Snapshot.UserId)', not SYSTEM - it would start only with that user's logon, and draw a console window when it did" }
+
+    $actionCount = [int] $Snapshot.ActionCount
+    if ($actionCount -ne 1) { $problems += "the task must have exactly one action; it has $actionCount" }
+    $exe = [string] $Snapshot.Execute
+    if (-not $exe.EndsWith('\cmd.exe', [System.StringComparison]::OrdinalIgnoreCase)) { $problems += "the task runs '$exe', not cmd.exe" }
+    $actionArguments = [string] $Snapshot.Arguments
+    if ($LauncherPath -and ($actionArguments.IndexOf($LauncherPath, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
+        $problems += "the task's arguments '$actionArguments' do not name the launcher $LauncherPath"
+    }
+
+    $limit = [string] $Snapshot.ExecutionTimeLimit
+    if ($limit -and $limit -cne 'PT0S') {
+        $problems += "the task has an execution time limit of $limit. Task Scheduler's default is three days (PT72H), after which it KILLS the sink; it must be PT0S"
+    }
+    if ([string] $Snapshot.MultipleInstances -cne 'IgnoreNew') {
+        $problems += "MultipleInstances is '$($Snapshot.MultipleInstances)'; it must be IgnoreNew, or a second start races the first for the ports"
+    }
+    return $problems
+}
+
+<#
+    -f formats in the CURRENT culture, and the guests run nl-NL formats on purpose
+    (Testbed/MEDIA.md, "The host configuration the guests match") - so 1.5 prints as "1,5" and
+    1234 as "1.234". Every number or date this script prints goes through here instead, so a
+    guest's log reads the same as the host's and as the documentation.
+#>
+function Format-Invariant {
+    param([string] $Format, [object[]] $Values)
+    return [string]::Format([System.Globalization.CultureInfo]::InvariantCulture, $Format, $Values)
+}
+
+# =============================================================================================
+# LOGGING AND GUARDS.
+# =============================================================================================
+
+function Say {
+    param([string] $Text)
+    Write-Host $Text
+    if (-not $script:LogReady) { return }
+    try { Add-Content -LiteralPath $LogPath -Value $Text -Encoding UTF8 } catch { }
+}
+
+function Pass {
+    param([string] $What, [string] $Detail)
+    $suffix = ''
+    if ($Detail) { $suffix = " - $Detail" }
+    Say ("  OK   {0}{1}" -f $What, $suffix)
+}
+
+function Fail {
+    param([string] $What, [string] $Why)
+    $script:Failures += "$What : $Why"
+    Say ("  FAIL {0} - {1}" -f $What, $Why)
+}
+
+function Note {
+    param([string] $Text)
+    Say ("  NOTE $Text")
+}
+
+function Open-Log {
+    $dir = Split-Path -Parent $LogPath
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $script:LogReady = $true
+    $given = @()
+    foreach ($k in $ScriptBoundParameters.Keys) { $given += ('-' + $k) }
+    Say ''
+    Say (Format-Invariant 'Install-MailSink.ps1 - {0:yyyy-MM-dd HH:mm:ss} - {1} on {2} as {3}' @((Get-Date), ($given -join ' '), $env:COMPUTERNAME, $env:USERNAME))
+}
+
+function Assert-TestbedGuestLocal {
+    $who = $env:USERNAME
+    $userOk = $false
+    foreach ($candidate in $ExpectedUser) { if ($who -eq $candidate) { $userOk = $true } }
+    $machine = $env:COMPUTERNAME
+    $machineOk = [bool] ($ExpectedComputerNamePrefix -and $machine -and
+        $machine.StartsWith($ExpectedComputerNamePrefix, [System.StringComparison]::OrdinalIgnoreCase))
+    if ($userOk -and $machineOk) { return }
+
+    throw @"
+REFUSING TO RUN.
+
+  logged on as : '$who'          (allowed: $($ExpectedUser -join ', '))
+  computer name: '$machine'      (must start with: '$ExpectedComputerNamePrefix')
+
+This script registers a SYSTEM task that listens on the SMTP and POP3 ports and submits mail to
+it. On the maintainer's workstation that would put an unauthenticated listener on port $SmtpPort
+of a machine holding real mail. The testbed guests autologon as 'vmadmin' and are named 'OAI-*'
+by Testbed/host/New-AnswerFile.ps1. If you built a guest differently, say so:
+
+    -ExpectedUser <username> -ExpectedComputerNamePrefix <prefix>
+
+Do not 'fix' this by widening either default. The defaults are the guard.
+"@
+}
+
+function Assert-Elevated {
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+    if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'REFUSING TO RUN: this session is not elevated. A SYSTEM task can only be registered, started and stopped by an administrator; asserted here rather than failing halfway with an access-denied that reads like a packaging fault.'
+    }
+}
+
+function Test-OutlookRunning {
+    return (@(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue).Count -gt 0)
+}
+
+function Assert-OutlookNotRunning {
+    $running = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
+    if ($running.Count -eq 0) { return }
+    throw @"
+REFUSING: OUTLOOK.EXE is running (pid $(($running | ForEach-Object { $_.Id }) -join ', ')).
+
+Installing or removing the sink stops and starts its listeners, and a polling Outlook that finds
+them gone turns a quiet send/receive into an error. Close Outlook properly and run this again.
+DO NOT taskkill it - mailbox-safety rule 7 forbids that outright. (-Verify alone may run while
+Outlook is open: it only uses mailboxes no account reads, and it skips its restart step.)
+"@
+}
+
+# =============================================================================================
+# READING THE MACHINE. Read-only.
+# =============================================================================================
+
+<#
+    Runs a native program and hands back its stdout lines, its stderr lines and its exit code.
+
+    WHY THIS EXISTS, MEASURED ON THIS PROJECT'S HOST 2026-09-24: under Windows PowerShell 5.1 with
+    $ErrorActionPreference = 'Stop', the FIRST line a native program writes to stderr becomes a
+    terminating NativeCommandError - for 2>$null, 2>&1 and *> alike. PowerShell 7 does not do
+    that, which is how it goes unnoticed on a workstation and then kills a guest run, where 5.1 is
+    the only PowerShell there is. So every native call in this file comes through here: it runs
+    under 'Continue', separates the ErrorRecords that stderr lines arrive as from the strings that
+    stdout lines arrive as, and is judged by the exit code - never by whether PowerShell complained.
+#>
+function Invoke-NativeLines {
+    param([Parameter(Mandatory = $true)] [string] $FilePath, [string[]] $Arguments = @())
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $raw = @()
+    $code = $null
+    try {
+        $raw = @(& $FilePath @Arguments 2>&1)
+        $code = $LASTEXITCODE
+    }
+    catch {
+        return [pscustomobject]@{ ExitCode = -1; Lines = @(); ErrorLines = @([string] $_.Exception.Message) }
+    }
+    finally {
+        $ErrorActionPreference = $saved
+    }
+    $out = @()
+    $err = @()
+    foreach ($item in $raw) {
+        if ($item -is [System.Management.Automation.ErrorRecord]) { $err += $item.ToString() }
+        else { $out += [string] $item }
+    }
+    return [pscustomobject]@{ ExitCode = $code; Lines = $out; ErrorLines = $err }
+}
+
+# Readable = $false is "could not ask", which must not collapse into "nothing is reserved".
+function Get-ExcludedPortRange {
+    $r = Invoke-NativeLines -FilePath 'netsh.exe' -Arguments @('interface', 'ipv4', 'show', 'excludedportrange', 'protocol=tcp')
+    if ($r.ExitCode -ne 0) { return [pscustomobject]@{ Readable = $false; Ranges = @() } }
+    return [pscustomobject]@{ Readable = $true; Ranges = @(Get-ExcludedPortRangeFromText -Lines $r.Lines) }
+}
+
+# What is listening on a port and on which addresses. The address is the point: a listener that
+# is not on 127.0.0.1 is reachable from the host.
+function Get-ListeningEndpoint {
+    param([int] $Port)
+
+    $conn = @()
+    if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+        $conn = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue |
+                ForEach-Object { [pscustomobject]@{ LocalAddress = [string] $_.LocalAddress; OwningProcess = [int] $_.OwningProcess } })
+    }
+    else {
+        foreach ($line in @((Invoke-NativeLines -FilePath 'netstat.exe' -Arguments @('-ano', '-p', 'tcp')).Lines)) {
+            $m = [regex]::Match([string] $line, '^\s*TCP\s+(\S+):(\d+)\s+\S+\s+LISTENING\s+(\d+)\s*$')
+            if ($m.Success -and [int] $m.Groups[2].Value -eq $Port) {
+                $conn += [pscustomobject]@{ LocalAddress = $m.Groups[1].Value; OwningProcess = [int] $m.Groups[3].Value }
+            }
+        }
+    }
+    if ($conn.Count -eq 0) { return $null }
+
+    $name = '(exited)'
+    try { $name = (Get-Process -Id $conn[0].OwningProcess -ErrorAction Stop).ProcessName } catch { }
+    return [pscustomobject]@{
+        OwningProcess = [int] $conn[0].OwningProcess
+        ProcessName   = $name
+        AllAddresses  = @($conn | ForEach-Object { $_.LocalAddress })
+        Pids          = @($conn | ForEach-Object { $_.OwningProcess } | Sort-Object -Unique)
+    }
+}
+
+function Get-SinkLayout {
+    # Exactly one inbucket.exe, one folder below the install root - where -Execute unpacks it.
+    $root = $InstallRoot.TrimEnd('\')
+    $exes = @()
+    if (Test-Path -LiteralPath $root) {
+        foreach ($dir in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
+            $candidate = Join-Path $dir.FullName $ExeName
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { $exes += $candidate }
+        }
+    }
+    $exe = $null
+    $appDir = $null
+    if ($exes.Count -eq 1) {
+        $exe = $exes[0]
+        $appDir = Split-Path -Parent $exe
+    }
+    return [pscustomobject]@{
+        Root         = $root
+        Exe          = $exe
+        AppDir       = $appDir
+        ExeCount     = $exes.Count
+        Launcher     = Join-Path $root $LauncherName
+        Store        = Join-Path $root $StoreDirName
+        SinkLog      = Join-Path $root $SinkLogName
+    }
+}
+
+# The sink's processes: inbucket.exe running from -ExePath exactly - or, with -AnyUnderRoot, from
+# anywhere under the install root. Stopping must use the second: an earlier install may have
+# unpacked a different version into a different folder, and its process holds the ports all the
+# same. Nothing outside the install root is ever matched, whatever it is called.
+function Get-SinkProcess {
+    param([string] $ExePath, [switch] $AnyUnderRoot)
+    $rootPrefix = $InstallRoot.TrimEnd('\') + '\'
+    return @(Get-CimInstance -ClassName Win32_Process -Filter "Name='$ExeName'" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $path = [string] $_.ExecutablePath
+                if (-not $path) { $false }
+                elseif ($AnyUnderRoot) { $path.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) }
+                else { [bool] $ExePath -and [string]::Equals($path, $ExePath, [System.StringComparison]::OrdinalIgnoreCase) }
+            })
+}
+
+function Get-TaskSnapshot {
+    $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($null -eq $t) { return [pscustomobject]@{ Exists = $false } }
+    $actions = @($t.Actions)
+    $first = $null
+    if ($actions.Count -gt 0) { $first = $actions[0] }
+    return [pscustomobject]@{
+        Exists             = $true
+        State              = [string] $t.State
+        Enabled            = [bool] $t.Settings.Enabled
+        TriggerKinds       = @($t.Triggers | ForEach-Object { $_.CimClass.CimClassName })
+        UserId             = [string] $t.Principal.UserId
+        ActionCount        = $actions.Count
+        Execute            = [string] $(if ($first) { $first.Execute } else { '' })
+        Arguments          = [string] $(if ($first) { $first.Arguments } else { '' })
+        ExecutionTimeLimit = [string] $t.Settings.ExecutionTimeLimit
+        MultipleInstances  = [string] $t.Settings.MultipleInstances
+    }
+}
+
+# =============================================================================================
+# STARTING AND STOPPING. Through the scheduled task, because that is how the guest starts it.
+# =============================================================================================
+
+function Wait-SinkListeners {
+    param([string] $ExePath)
+    $deadline = (Get-Date).AddSeconds($ListenerWaitSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $procs = @(Get-SinkProcess -ExePath $ExePath)
+        if ($procs.Count -gt 0) {
+            $pids = @($procs | ForEach-Object { [int] $_.ProcessId })
+            $all = $true
+            foreach ($port in @($SmtpPort, $Pop3Port, $WebPort)) {
+                $ep = Get-ListeningEndpoint -Port $port
+                if ($null -eq $ep -or -not ($pids -contains $ep.OwningProcess)) { $all = $false }
+            }
+            if ($all) { return $true }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
+function Stop-Sink {
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($null -ne $task) { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue }
+
+    # Ending the task ends cmd.exe; whether Windows also ends the child it started is not
+    # something to rely on. Our own exe, from under the install root, and nothing else.
+    foreach ($p in @(Get-SinkProcess -AnyUnderRoot)) {
+        Stop-Process -Id ([int] $p.ProcessId) -Force -ErrorAction SilentlyContinue
+    }
+
+    $deadline = (Get-Date).AddSeconds($ListenerWaitSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $busy = $false
+        if (@(Get-SinkProcess -AnyUnderRoot).Count -gt 0) { $busy = $true }
+        $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        if ($null -ne $task -and [string] $task.State -eq 'Running') { $busy = $true }
+        if (-not $busy) { return $true }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
+function Start-Sink {
+    param([string] $ExePath)
+    Start-ScheduledTask -TaskName $TaskName
+    return (Wait-SinkListeners -ExePath $ExePath)
+}
+
+# =============================================================================================
+# THE SOCKET LAYER. Raw SMTP and POP3, because the point of -Verify is to speak the protocols
+# rather than to find two open ports.
+# =============================================================================================
+
+function Connect-SinkSocket {
+    param([int] $Port)
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $iar = $client.BeginConnect($SinkHost, $Port, $null, $null)
+        if (-not $iar.AsyncWaitHandle.WaitOne($SocketTimeoutMs)) {
+            throw "Nothing answered ${SinkHost}:$Port within $SocketTimeoutMs ms."
+        }
+        $client.EndConnect($iar)
+    }
+    catch {
+        $client.Close()
+        throw
+    }
+    $client.ReceiveTimeout = $SocketTimeoutMs
+    $client.SendTimeout = $SocketTimeoutMs
+
+    # Latin-1 maps every byte to one char and back, so nothing is lost or invented in transit.
+    $encoding = [System.Text.Encoding]::GetEncoding(28591)
+    $stream = $client.GetStream()
+    $reader = New-Object System.IO.StreamReader($stream, $encoding)
+    $writer = New-Object System.IO.StreamWriter($stream, $encoding)
+    $writer.NewLine = "`r`n"
+    $writer.AutoFlush = $true
+    return [pscustomobject]@{ Client = $client; Reader = $reader; Writer = $writer }
+}
+
+function Close-SinkSocket {
+    param($Socket)
+    if ($null -eq $Socket) { return }
+    try { $Socket.Writer.Dispose() } catch { }
+    try { $Socket.Reader.Dispose() } catch { }
+    try { $Socket.Client.Close() } catch { }
+}
+
+function Read-SmtpReply {
+    param($Socket)
+    $lines = @()
+    for ($i = 0; $i -lt 50; $i++) {
+        $line = $Socket.Reader.ReadLine()
+        if ($null -eq $line) { throw 'The SMTP server closed the connection mid-reply.' }
+        $lines += $line
+        if ($line.Length -lt 4 -or $line[3] -ne '-') { break }
+    }
+    return (ConvertFrom-SmtpReplyLines -Lines $lines)
+}
+
+function Invoke-SmtpCommand {
+    param($Socket, [string] $Command, [int] $ExpectCode)
+    $Socket.Writer.WriteLine($Command)
+    $reply = Read-SmtpReply -Socket $Socket
+    if ($reply.Code -ne $ExpectCode) { throw "SMTP '$Command' expected $ExpectCode, got $($reply.Code): $($reply.Text)" }
+    return $reply
+}
+
+function Read-Pop3Reply {
+    param($Socket)
+    $line = $Socket.Reader.ReadLine()
+    if ($null -eq $line) { throw 'The POP3 server closed the connection mid-reply.' }
+    return [pscustomobject]@{ Ok = $line.StartsWith('+OK'); Text = $line }
+}
+
+function Invoke-Pop3Command {
+    param($Socket, [string] $Command, [switch] $AllowError)
+    $Socket.Writer.WriteLine($Command)
+    $reply = Read-Pop3Reply -Socket $Socket
+    if (-not $reply.Ok -and -not $AllowError) { throw "POP3 '$Command' failed: $($reply.Text)" }
+    return $reply
+}
+
+function Read-Pop3MultiLine {
+    param($Socket)
+    $raw = @()
+    for ($i = 0; $i -lt 100000; $i++) {
+        $line = $Socket.Reader.ReadLine()
+        if ($null -eq $line) { break }
+        $raw += $line
+        if ($line -ceq '.') { break }
+    }
+    $decoded = ConvertFrom-DotStuffedLines -Lines $raw
+    if (-not $decoded.Terminated) { throw 'The POP3 server ended a multi-line response without its terminating ".".' }
+    return $decoded.Lines
+}
+
+<#
+    Submits one probe, dot-stuffing on the way out. Throws on any unexpected reply: a partial
+    submission is not a state worth continuing from.
 #>
 function Submit-ProbeMessage {
     param([string] $Address, $Message)
-
     $socket = $null
     try {
-        $socket = Connect-SinkSocket -HostName $SinkHost -Port $SmtpPort
-
+        $socket = Connect-SinkSocket -Port $SmtpPort
         $greeting = Read-SmtpReply -Socket $socket
-        if ($greeting.Code -ne 220) { throw "SMTP greeting was not 220: $($greeting.Text)" }
-
-        $socket.Writer.WriteLine('EHLO localhost')
-        $ehlo = Read-SmtpReply -Socket $socket
-        if ($ehlo.Code -ne 250) {
-            Say "  NOTE EHLO was refused ($($ehlo.Code)); falling back to HELO."
-            [void](Invoke-SmtpCommand -Socket $socket -Command 'HELO localhost' -ExpectCode 250)
-        }
-
+        if ($greeting.Code -ne 220) { throw "The SMTP greeting was not 220: $($greeting.Text)" }
+        [void](Invoke-SmtpCommand -Socket $socket -Command 'EHLO sink-probe.vm.invalid' -ExpectCode 250)
         [void](Invoke-SmtpCommand -Socket $socket -Command "MAIL FROM:<$Address>" -ExpectCode 250)
-        [void](Invoke-SmtpCommand -Socket $socket -Command "RCPT TO:<$Address>"   -ExpectCode 250)
-        [void](Invoke-SmtpCommand -Socket $socket -Command 'DATA'                 -ExpectCode 354)
-
-        foreach ($line in $Message.Lines) {
-            $out = $line
-            if ($out.StartsWith('.')) { $out = '.' + $out }
-            $socket.Writer.WriteLine($out)
-        }
-        $socket.Writer.WriteLine('.')
-
-        $accepted = Read-SmtpReply -Socket $socket
-        if ($accepted.Code -ne 250) {
-            throw "The sink refused the message at end-of-DATA: $($accepted.Text)"
-        }
-
+        [void](Invoke-SmtpCommand -Socket $socket -Command "RCPT TO:<$Address>" -ExpectCode 250)
+        [void](Invoke-SmtpCommand -Socket $socket -Command 'DATA' -ExpectCode 354)
+        foreach ($line in (ConvertTo-DotStuffedLines -Lines $Message.Lines)) { $socket.Writer.WriteLine($line) }
+        $accepted = Invoke-SmtpCommand -Socket $socket -Command '.' -ExpectCode 250
         $socket.Writer.WriteLine('QUIT')
         return $accepted.Text
     }
@@ -762,165 +1112,125 @@ function Submit-ProbeMessage {
 }
 
 <#
-    Logs in and returns the open socket plus WHICH credential shape worked. The order is the
-    point: the tier PRF stores no password, so an empty PASS is the shape Outlook is nearest to,
-    and if the sink demands more than that it is a finding rather than a detail.
-
-    smtp4dev's PASS handler refuses when either field is empty and otherwise checks nothing, so
-    the expected outcome here is that the empty attempt FAILS and the non-empty one succeeds.
-    That is reported rather than hidden, because it is half the answer to a question the runbook
-    has open.
+    Opens a POP3 session on one mailbox with one of three password shapes. None, Empty and
+    NonEmpty are the three things a client with no stored password might plausibly send: the
+    bare command, the command with an empty argument, or whatever it holds.
 #>
-function Connect-Pop3Authenticated {
-    $socket = Connect-SinkSocket -HostName $SinkHost -Port $Pop3Port
-
-    $greeting = Read-Pop3Reply -Socket $socket
-    if (-not $greeting.Ok) {
-        Close-SinkSocket -Socket $socket
-        throw "POP3 greeting was not +OK: $($greeting.Text)"
-    }
-
-    $user = Invoke-Pop3Command -Socket $socket -Command "USER $ProbeUser" -AllowError
-    if (-not $user.Ok) {
-        Close-SinkSocket -Socket $socket
-        throw ("The sink rejected USER '$ProbeUser': $($user.Text). With authentication off it should accept any " +
-            'non-empty username and serve the catch-all mailbox regardless.')
-    }
-
-    # Shape 1: an EMPTY PASS - what an account with nothing stored is nearest to.
-    $empty = Invoke-Pop3Command -Socket $socket -Command 'PASS ' -AllowError
-    if ($empty.Ok) {
-        return [pscustomobject]@{ Socket = $socket; Credential = 'empty PASS' }
-    }
-
-    # A server that refused PASS may or may not still be in AUTHORIZATION state. Reconnecting is
-    # the only shape correct against both, and costs one loopback connect.
-    Close-SinkSocket -Socket $socket
-    $socket = Connect-SinkSocket -HostName $SinkHost -Port $Pop3Port
-    [void](Read-Pop3Reply -Socket $socket)
-    [void](Invoke-Pop3Command -Socket $socket -Command "USER $ProbeUser")
-
-    # Shape 2: any non-empty value. Not a credential - smtp4dev checks nothing - it is the probe
-    # for "does this server need the field populated at all".
-    $any = Invoke-Pop3Command -Socket $socket -Command "PASS $ProbeUser" -AllowError
-    if ($any.Ok) {
-        return [pscustomobject]@{ Socket = $socket; Credential = 'any non-empty PASS' }
-    }
-
-    Close-SinkSocket -Socket $socket
-    throw @"
-The sink accepted USER '$ProbeUser' and refused BOTH an empty PASS and a non-empty one.
-
-That is decisive and it is bad news: POP3 has no anonymous mode, Testbed/guest/tier-profile-forcepst.prf
-deliberately carries no password key, and on an unattended guest a credential prompt is a hang
-rather than a prompt. Either the sink is configured to require real credentials - check
-AuthenticationRequired in $InstallRoot\$settingsFileName - or this is not the sink this script
-was written for.
-"@
-}
-
-# ---------------------------------------------------------------------------------------------
-# Verification. Every check has a name; failures are COLLECTED rather than thrown, so one run
-# reports all the faults instead of the first one.
-# ---------------------------------------------------------------------------------------------
-
-function Test-ListenerBinding {
-    param([int] $Port, [string] $What)
-
-    $endpoint = Get-ListeningEndpoint -Port $Port
-    if ($null -eq $endpoint) {
-        Fail "$What listener is up" (
-            "Nothing is listening on port $Port. The service can be Running and misconfigured at the same time - " +
-            "check $InstallRoot\$settingsFileName, and remember that a settings file in a profile's " +
-            'smtp4dev directory overrides it unless the service runs with ' + $noUserSettingsFlag + '.')
-        return
-    }
-
-    Pass "$What listener is up" "$($endpoint.LocalAddress):$Port (pid $($endpoint.OwningProcess), $($endpoint.ProcessName))"
-
-    $wide = @($endpoint.AllAddresses | Where-Object { $_ -eq '0.0.0.0' -or $_ -eq '::' -or $_ -eq '[::]' })
-    if ($wide.Count -gt 0) {
-        Fail "$What listener is loopback-only" (
-            "It is bound to $($wide -join ', '), not $SinkHost. smtp4dev ships with AllowRemoteConnections = TRUE, so " +
-            'this is what an unconfigured install looks like, and on a test VM it is an open relay reachable from the ' +
-            'host. Set AllowRemoteConnections false and restart. Do NOT "fix" it by adding a firewall rule.')
-    }
-    else {
-        Pass "$What listener is loopback-only" ($endpoint.AllAddresses -join ', ')
-    }
-}
-
-function Test-NoInboundFirewallRule {
-    # Not a fault on its own - a rule may predate this script - but a rule naming the sink is
-    # evidence somebody worked around a 0.0.0.0 bind instead of fixing it.
+function Open-Pop3Session {
+    param([string] $Mailbox, [ValidateSet('None', 'Empty', 'NonEmpty')] [string] $PassShape = 'Empty')
+    $socket = Connect-SinkSocket -Port $Pop3Port
     try {
-        $rules = @(Get-NetFirewallRule -Direction Inbound -Enabled True -ErrorAction Stop |
-                Where-Object { $_.DisplayName -like "*$ServiceName*" -or $_.DisplayName -like '*mtp4dev*' })
+        $greeting = Read-Pop3Reply -Socket $socket
+        if (-not $greeting.Ok) { throw "The POP3 greeting was not +OK: $($greeting.Text)" }
+        [void](Invoke-Pop3Command -Socket $socket -Command "USER $Mailbox")
+        $command = 'PASS '
+        if ($PassShape -eq 'None') { $command = 'PASS' }
+        if ($PassShape -eq 'NonEmpty') { $command = "PASS $NonEmptyPassValue" }
+        $pass = Invoke-Pop3Command -Socket $socket -Command $command -AllowError
+        if (-not $pass.Ok) { throw "USER $Mailbox then '$command' was refused: $($pass.Text)" }
     }
     catch {
-        Say '  NOTE the inbound firewall rules could not be read; a rule created for the sink would not be reported.'
-        return
+        Close-SinkSocket -Socket $socket
+        throw
     }
+    return [pscustomobject]@{ Socket = $socket; Mailbox = $Mailbox }
+}
 
-    if ($rules.Count -eq 0) {
-        Pass 'no inbound firewall rule for the sink' 'none found, which is correct - loopback traffic is not filtered'
+function Close-Pop3Session {
+    param($Session, [switch] $WithoutQuit)
+    if ($null -eq $Session) { return }
+    if (-not $WithoutQuit) {
+        try { [void](Invoke-Pop3Command -Socket $Session.Socket -Command 'QUIT' -AllowError) } catch { }
     }
-    else {
-        Fail 'no inbound firewall rule for the sink' (
-            'These inbound rules name it: ' + (($rules | ForEach-Object { $_.DisplayName }) -join ', ') +
-            '. A sink that needs one is bound to the wrong address; remove the rule and fix the binding.')
+    Close-SinkSocket -Socket $Session.Socket
+}
+
+function Get-Pop3StatOf {
+    param($Session)
+    $reply = Invoke-Pop3Command -Socket $Session.Socket -Command 'STAT'
+    $stat = ConvertFrom-Pop3Stat -Line $reply.Text
+    if ($null -eq $stat) { throw "Could not read the STAT reply: $($reply.Text)" }
+    return $stat
+}
+
+function Get-Pop3UidOf {
+    param($Session, [int] $Number)
+    $reply = Invoke-Pop3Command -Socket $Session.Socket -Command "UIDL $Number" -AllowError
+    return (ConvertFrom-Pop3Uidl -Line $reply.Text)
+}
+
+# THE ONLY DELE IN THIS FILE. See Assert-ProbeMailboxForDelete.
+function Remove-Pop3Message {
+    param($Session, [int] $Number, [string[]] $ProbeMailboxes)
+    Assert-ProbeMailboxForDelete -Mailbox $Session.Mailbox -ProbeMailboxes $ProbeMailboxes
+    return (Invoke-Pop3Command -Socket $Session.Socket -Command "DELE $Number" -AllowError)
+}
+
+# Empties a probe mailbox and reports how much it held. A non-zero count is residue from an
+# earlier run that died mid-proof - reported, because it says something went wrong once.
+function Clear-ProbeMailbox {
+    param([string] $Mailbox, [string[]] $ProbeMailboxes)
+    $session = Open-Pop3Session -Mailbox $Mailbox
+    try {
+        $stat = Get-Pop3StatOf -Session $session
+        for ($n = 1; $n -le $stat.Count; $n++) {
+            $del = Remove-Pop3Message -Session $session -Number $n -ProbeMailboxes $ProbeMailboxes
+            if (-not $del.Ok) { throw "DELE $n in '$Mailbox' was refused: $($del.Text)" }
+        }
+        [void](Invoke-Pop3Command -Socket $session.Socket -Command 'QUIT')
+        return $stat.Count
+    }
+    finally {
+        Close-SinkSocket -Socket $session.Socket
     }
 }
 
-<#
-    CAPA against reality. smtp4dev writes TOP into its capability list unconditionally and
-    registers no TOP handler, so this is expected to FAIL - and it is asserted rather than
-    assumed because "expected" is exactly the word this script exists to remove. A client that
-    trusts CAPA and issues TOP gets "-ERR Unknown command" on a verb the server advertised.
-#>
-function Test-Pop3Capabilities {
-    param($Socket)
+function Get-MailboxCount {
+    param([string] $Mailbox)
+    $session = Open-Pop3Session -Mailbox $Mailbox
+    try { return (Get-Pop3StatOf -Session $session).Count }
+    finally { Close-Pop3Session -Session $session }
+}
 
-    $capa = Invoke-Pop3Command -Socket $Socket -Command 'CAPA' -AllowError
-    if (-not $capa.Ok) {
-        Say '  NOTE CAPA is not supported; capability claims cannot be checked against behaviour.'
-        return
-    }
+# =============================================================================================
+# THE PROOFS. Each check has a name, and failures are COLLECTED rather than thrown, so one run
+# reports every fault instead of the first.
+# =============================================================================================
 
-    $caps = Read-Pop3MultiLine -Socket $Socket
-    Say "  ...  CAPA advertises: $($caps -join ', ')"
+function New-ProbeMarker {
+    return [Guid]::NewGuid().ToString('N').Substring(0, 12)
+}
 
-    $advertisesTop = @($caps | Where-Object { $_ -match '^TOP\b' }).Count -gt 0
-    if (-not $advertisesTop) {
-        Pass 'CAPA does not over-claim TOP' 'TOP is not advertised, so no client will try it'
-        return
-    }
-
-    $top = Invoke-Pop3Command -Socket $Socket -Command 'TOP 1 0' -AllowError
-    if ($top.Ok) {
-        [void](Read-Pop3MultiLine -Socket $Socket)
-        Pass 'advertised TOP actually works' 'CAPA and behaviour agree'
-    }
-    else {
-        Fail 'advertised TOP actually works' (
-            "CAPA advertises TOP and 'TOP 1 0' answered '$($top.Text)'. This is a known smtp4dev defect, not a " +
-            'configuration fault: the capability list is written unconditionally and no TOP handler is registered. ' +
-            'It matters only if Outlook uses TOP - which it should not here, because the tier PRF sets ' +
-            'LeaveOnServer=0x0 so mail is downloaded and deleted. If a guest ever shows Outlook failing to fetch, ' +
-            'this is the first thing to suspect.')
+function Test-LoginShapes {
+    param([string] $Mailbox)
+    Say ''
+    Say "POP3 logins with no stored password - mailbox '$Mailbox':"
+    foreach ($shape in @('Empty', 'None', 'NonEmpty')) {
+        $label = @{ Empty = "'PASS ' (an empty argument)"; None = "'PASS' (no argument at all)"; NonEmpty = "'PASS <any value>'" }[$shape]
+        $session = $null
+        try {
+            $session = Open-Pop3Session -Mailbox $Mailbox -PassShape $shape
+            [void](Get-Pop3StatOf -Session $session)
+            Pass "POP3 accepts $label" 'and the session reaches TRANSACTION'
+        }
+        catch {
+            Fail "POP3 accepts $label" ($_.Exception.Message + ' - the tier account stores no password, so a sink that refuses this makes Outlook prompt, and on an unattended guest a prompt is a hang.')
+        }
+        finally {
+            Close-Pop3Session -Session $session
+        }
     }
 }
 
 function Invoke-RoundTripProof {
-    $marker  = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $message = New-ProbeMessage -Address $ProbeAddress -Marker $marker
-    $started = Get-Date
-
+    param([string] $Address, [string] $Mailbox, [string[]] $ProbeMailboxes)
     Say ''
-    Say "Round trip: submitting to $SinkHost`:$SmtpPort and retrieving from $SinkHost`:$Pop3Port."
+    Say "Round trip: SMTP ${SinkHost}:$SmtpPort -> mailbox '$Mailbox' -> POP3 ${SinkHost}:$Pop3Port."
 
+    $message = New-ProbeMessage -Address $Address -Marker (New-ProbeMarker) -DateUtc ((Get-Date).ToUniversalTime())
+    $started = Get-Date
     try {
-        $accepted = Submit-ProbeMessage -Address $ProbeAddress -Message $message
+        $accepted = Submit-ProbeMessage -Address $Address -Message $message
         Pass 'the sink accepts a loopback submission' $accepted
     }
     catch {
@@ -930,372 +1240,294 @@ function Invoke-RoundTripProof {
 
     $session = $null
     try {
-        $session = Connect-Pop3Authenticated
-        Pass 'POP3 lets the tier account in' "logged in as '$ProbeUser' with $($session.Credential)"
-        if ($session.Credential -ne 'empty PASS') {
-            Say "  NOTE the sink REQUIRED a non-empty password. The tier PRF stores none, so Outlook will prompt"
-            Say '       unless one is entered by hand once and remembered. That is a real step, not a detail -'
-            Say '       on an unattended guest a credential prompt is a hang. See section 8 item 3 of the runbook.'
+        $session = Open-Pop3Session -Mailbox $Mailbox
+        $stat = Get-Pop3StatOf -Session $session
+        if ($stat.Count -ne 1) {
+            Fail 'STAT reports exactly the submitted message' "STAT says $($stat.Count) message(s); the mailbox was emptied first, so it must be 1. Zero means the submission was accepted and dropped."
+            return
         }
+        Pass 'STAT reports exactly the submitted message' "1 message, $($stat.Octets) octets announced"
+
+        $capa = Invoke-Pop3Command -Socket $session.Socket -Command 'CAPA' -AllowError
+        if ($capa.Ok) {
+            $caps = @(Read-Pop3MultiLine -Socket $session.Socket)
+            Say "  ...  CAPA advertises: $($caps -join ', ')"
+            if (@($caps | Where-Object { $_ -match '^STLS\b' }).Count -gt 0) {
+                Fail 'CAPA offers no STLS' 'The tier profile sets POP3UseSSL=0; a sink that offers STLS is one Outlook may try to negotiate with.'
+            }
+            else { Pass 'CAPA offers no STLS' 'plain POP3, as the tier profile expects' }
+        }
+        else { Note "CAPA is not supported ($($capa.Text)); nothing advertised can be checked against behaviour." }
+
+        $uid = Get-Pop3UidOf -Session $session -Number 1
+        if ($null -eq $uid) { Fail 'UIDL answers for the message' 'UIDL 1 did not return an id. Outlook keys its already-seen state on UIDL.' }
+        else {
+            Pass 'UIDL answers for the message' $uid.Id
+            $script:SeenIds += $uid.Id
+        }
+
+        $top = Invoke-Pop3Command -Socket $session.Socket -Command 'TOP 1 0' -AllowError
+        if ($top.Ok) {
+            $head = @(Read-Pop3MultiLine -Socket $session.Socket)
+            $hasSubject = @($head | Where-Object { $_ -ceq ('Subject: ' + $message.Subject) }).Count -eq 1
+            $hasBody = @($head | Where-Object { $_ -ceq ('marker ' + $message.Marker) }).Count -gt 0
+            if ($hasSubject -and -not $hasBody) { Pass 'TOP 1 0 returns the headers and no body' "$($head.Count) line(s)" }
+            else { Fail 'TOP 1 0 returns the headers and no body' "subject present=$hasSubject, body present=$hasBody" }
+        }
+        else { Fail 'TOP 1 0 returns the headers and no body' "TOP was refused: $($top.Text). CAPA advertises it, so a client that trusts CAPA would hit this." }
+
+        [void](Invoke-Pop3Command -Socket $session.Socket -Command 'RETR 1')
+        $body = @(Read-Pop3MultiLine -Socket $session.Socket)
+        $problems = @(Get-ProbeBodyProblems -Message $message -Retrieved $body)
+        if ($problems.Count -eq 0) {
+            Pass 'RETR returns the message intact' "$($body.Count) line(s): subject, a bare '.', '.x', '..x' and the base64 part all unchanged"
+        }
+        else {
+            Fail 'RETR returns the message intact' (($problems -join '; ') + '. This truncates or alters mail silently, which is the worst failure shape a test sink can have.')
+        }
+
+        $del = Remove-Pop3Message -Session $session -Number 1 -ProbeMailboxes $ProbeMailboxes
+        if (-not $del.Ok) { Fail 'DELE is accepted' $del.Text }
+        [void](Invoke-Pop3Command -Socket $session.Socket -Command 'QUIT')
     }
     catch {
-        Fail 'POP3 lets the tier account in' $_.Exception.Message
+        Fail 'the round trip completes' $_.Exception.Message
         return
     }
-
-    $socket = $session.Socket
-    try {
-        Test-Pop3Capabilities -Socket $socket
-
-        $stat = Invoke-Pop3Command -Socket $socket -Command 'STAT'
-        $m = [regex]::Match($stat.Text, '^\+OK\s+(\d+)\s+(\d+)')
-        if (-not $m.Success) {
-            Fail 'STAT reports the submitted message' "Could not parse the STAT reply: $($stat.Text)"
-            return
-        }
-
-        $count  = [int] $m.Groups[1].Value
-        $octets = [int] $m.Groups[2].Value
-        if ($count -ne 1) {
-            Fail 'STAT reports the submitted message' (
-                "STAT says $count message(s), expected exactly 1. More than one means a previous run left residue in " +
-                'the sink; zero means the submission was accepted and dropped, which is the failure this whole script ' +
-                'exists to catch.')
-            # Drain before leaving. Returning here with mail still in the sink is how this run's
-            # probe ends up in the hub Inbox at the next poll - which is the one side effect this
-            # script must never leave behind.
-            Clear-SinkMailbox -Socket $socket
-            return
-        }
-        if ($octets -le 0) {
-            Fail 'STAT reports a non-zero octet count' "STAT says $octets octets for 1 message."
-        }
-        else {
-            # Deliberately a lower-bound check, not equality: smtp4dev announces the STORED byte
-            # length and then transmits added stuffing dots, so the announced count is smaller
-            # than what arrives. RFC 1939 wants it exact; most clients read to the terminator and
-            # never notice. Asserting equality here would fail on a sink that works.
-            Pass 'STAT reports a non-zero octet count' "1 message, $octets octets announced"
-        }
-
-        $uidl = Invoke-Pop3Command -Socket $socket -Command 'UIDL 1' -AllowError
-        if ($uidl.Ok -and $uidl.Text -match '^\+OK\s+1\s+(\S+)') {
-            Pass 'UIDL answers for the message' $Matches[1]
-        }
-        else {
-            Fail 'UIDL answers for the message' (
-                "UIDL 1 returned '$($uidl.Text)'. Outlook keys its already-seen state on UIDL; without it, whether " +
-                'mail re-downloads is undefined.')
-        }
-
-        $null = Invoke-Pop3Command -Socket $socket -Command 'RETR 1'
-        $body = Read-Pop3MultiLine -Socket $socket
-        $text = $body -join "`n"
-
-        if ($text.Contains($message.Subject)) {
-            Pass 'RETR returns the message with its subject intact' "$($body.Count) line(s)"
-        }
-        else {
-            Fail 'RETR returns the message with its subject intact' (
-                "The retrieved message does not contain the submitted subject. $($body.Count) line(s) came back.")
-        }
-
-        $bare   = @($body | Where-Object { $_ -eq '.' }).Count
-        $single = @($body | Where-Object { $_ -eq '.leading period must survive' }).Count
-        $double = @($body | Where-Object { $_ -eq '..two leading periods must survive' }).Count
-
-        if ($bare -eq 1 -and $single -eq 1 -and $double -eq 1) {
-            Pass 'dot-stuffing survives the round trip' 'a bare period, one leading period and two all came back unchanged'
-        }
-        else {
-            Fail 'dot-stuffing survives the round trip' (
-                "bare-period lines=$bare (expected 1), single-leading=$single (expected 1), double-leading=$double " +
-                '(expected 1). This truncates mail silently and intermittently, which is the single worst failure ' +
-                'shape available to a test sink.')
-        }
-
-        if ($text.Contains($message.AttachmentB64)) {
-            Pass 'the base64 attachment part survives' 'byte-identical'
-        }
-        else {
-            Fail 'the base64 attachment part survives' (
-                'The base64 part did not come back intact. The live tier sends mail with attachments; a sink that ' +
-                'rewrites MIME is a sink whose failures land in the attachment tests.')
-        }
-
-        [void](Invoke-Pop3Command -Socket $socket -Command 'DELE 1')
-        [void](Invoke-Pop3Command -Socket $socket -Command 'QUIT' -AllowError)
-    }
     finally {
-        Close-SinkSocket -Socket $socket
+        Close-SinkSocket -Socket $session.Socket
     }
 
     try {
-        $after = Connect-Pop3Authenticated
-        try {
-            $stat2 = Invoke-Pop3Command -Socket $after.Socket -Command 'STAT'
-            if ($stat2.Text -match '^\+OK\s+0\s') {
-                Pass 'DELE is honoured' 'the mailbox is empty on reconnect'
-            }
-            else {
-                Fail 'DELE is honoured' (
-                    "STAT still reports '$($stat2.Text)' after DELE and QUIT. The tier PRF sets LeaveOnServer=0x0 and " +
-                    'relies on the sink draining; a sink that ignores DELE re-delivers the same mail forever and leaves ' +
-                    "this run's probe behind.")
-            }
-            [void](Invoke-Pop3Command -Socket $after.Socket -Command 'QUIT' -AllowError)
-        }
-        finally {
-            Close-SinkSocket -Socket $after.Socket
-        }
+        $after = Get-MailboxCount -Mailbox $Mailbox
+        if ($after -eq 0) { Pass 'DELE is honoured at QUIT' 'the mailbox is empty on reconnect' }
+        else { Fail 'DELE is honoured at QUIT' "STAT still says $after after DELE and QUIT. The tier profile leaves nothing on the server and relies on the sink draining; one that ignores DELE re-delivers the same mail for ever." }
     }
-    catch {
-        Fail 'DELE is honoured' $_.Exception.Message
-    }
+    catch { Fail 'DELE is honoured at QUIT' $_.Exception.Message }
 
     $elapsed = ((Get-Date) - $started).TotalSeconds
-    if ($elapsed -le $roundTripBudgetSeconds) {
-        Pass 'the round trip fits the budget' ("{0:N1} s, budget {1} s" -f $elapsed, $roundTripBudgetSeconds)
-    }
-    else {
-        Fail 'the round trip fits the budget' (
-            ("{0:N1} s against a {1} s budget. The suite's tightest arrival deadline is 120 s " -f $elapsed, $roundTripBudgetSeconds) +
-            '(T2/LiveFreshModeTests) and that has to cover Outlook as well as the sink.')
-    }
+    if ($elapsed -le $RoundTripBudgetSeconds) { Pass 'the round trip fits its budget' (Format-Invariant '{0:N1} s of {1} s' @($elapsed, $RoundTripBudgetSeconds)) }
+    else { Fail 'the round trip fits its budget' (Format-Invariant '{0:N1} s against {1} s. The suite''s tightest arrival deadline is 120 s and has to cover Outlook too.' @($elapsed, $RoundTripBudgetSeconds)) }
 }
 
-<#
-    Two messages, one DELE, and the question RFC 1939 section 5 settles: are message numbers
-    STABLE for the whole session? smtp4dev deletes immediately rather than at QUIT and re-lists
-    the mailbox on every command, so the message that was 2 is expected to become 1 - which means
-    a client issuing DELE 1 then DELE 2 deletes the wrong item and leaves the right one.
-
-    This matters here because more than one seeded mail can be in the sink at once, and because
-    the failure is silent: the wrong mail is deleted, the arrival wait matches a stale subject,
-    and nothing anywhere says a number moved. It is asserted so the answer lands in a log.
-
-    It drains the mailbox to zero whatever it finds, because a probe left behind is a probe that
-    turns up in the hub Inbox later.
-#>
-function Invoke-OrdinalStabilityProof {
+function Invoke-IsolationProof {
+    param([string] $Address, [string] $Mailbox, [string] $OtherMailbox, [string[]] $ProbeMailboxes)
     Say ''
-    Say 'Ordinal stability: two messages, one DELE, does the survivor keep its number?'
-
-    $markerA = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-    $markerB = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-
+    Say "Isolation: mail for '$Mailbox' must be invisible to '$OtherMailbox'."
     try {
-        [void](Submit-ProbeMessage -Address $ProbeAddress -Message (New-ProbeMessage -Address $ProbeAddress -Marker $markerA))
-        [void](Submit-ProbeMessage -Address $ProbeAddress -Message (New-ProbeMessage -Address $ProbeAddress -Marker $markerB))
-    }
-    catch {
-        Fail 'two messages can be submitted back to back' $_.Exception.Message
-        return
-    }
-
-    $session = $null
-    try {
-        $session = Connect-Pop3Authenticated
-    }
-    catch {
-        Fail 'ordinal stability can be measured' $_.Exception.Message
-        return
-    }
-
-    $socket = $session.Socket
-    try {
-        $stat = Invoke-Pop3Command -Socket $socket -Command 'STAT'
-        if ($stat.Text -notmatch '^\+OK\s+2\s') {
-            Fail 'both messages are held' "STAT reports '$($stat.Text)', expected 2 messages."
-            Clear-SinkMailbox -Socket $socket
-            return
-        }
-        Pass 'both messages are held' '2 messages'
-
-        $u1 = Invoke-Pop3Command -Socket $socket -Command 'UIDL 1' -AllowError
-        $u2 = Invoke-Pop3Command -Socket $socket -Command 'UIDL 2' -AllowError
-        if (-not ($u1.Ok -and $u2.Ok)) {
-            Fail 'ordinal stability can be measured' "UIDL 1 => '$($u1.Text)', UIDL 2 => '$($u2.Text)'."
-            Clear-SinkMailbox -Socket $socket
-            return
-        }
-        $uid2 = ($u2.Text -split '\s+')[2]
-
-        [void](Invoke-Pop3Command -Socket $socket -Command 'DELE 1')
-
-        # RFC 1939: after DELE 1 the survivor is STILL message 2, and message 1 answers -ERR.
-        $afterAt2 = Invoke-Pop3Command -Socket $socket -Command 'UIDL 2' -AllowError
-        $afterAt1 = Invoke-Pop3Command -Socket $socket -Command 'UIDL 1' -AllowError
-
-        if ($afterAt2.Ok -and ($afterAt2.Text -split '\s+')[2] -eq $uid2) {
-            Pass 'message numbers are stable within a session' 'the survivor is still message 2, as RFC 1939 requires'
-        }
-        elseif ($afterAt1.Ok -and ($afterAt1.Text -split '\s+')[2] -eq $uid2) {
-            Fail 'message numbers are stable within a session' (
-                'After DELE 1 the surviving message has become message 1. RFC 1939 section 5 requires numbers to stay ' +
-                'fixed for the whole session, and smtp4dev deletes immediately and re-lists per command instead of ' +
-                'deferring to QUIT. CONSEQUENCE: a client that issues DELE 1 then DELE 2 deletes the wrong item and ' +
-                'leaves the right one. It bites only when more than one message is in the sink at once - which happens ' +
-                'whenever two seeded tests overlap or a previous run left residue. Keep Outlook fetching one message ' +
-                'at a time, or accept the risk knowingly.')
+        [void](Submit-ProbeMessage -Address $Address -Message (New-ProbeMessage -Address $Address -Marker (New-ProbeMarker) -DateUtc ((Get-Date).ToUniversalTime())))
+        $mine = Get-MailboxCount -Mailbox $Mailbox
+        $theirs = Get-MailboxCount -Mailbox $OtherMailbox
+        if ($mine -eq 1 -and $theirs -eq 0) {
+            Pass 'a message is visible only to its own mailbox' "'$Mailbox' holds 1, '$OtherMailbox' holds 0"
         }
         else {
-            Fail 'message numbers are stable within a session' (
-                "After DELE 1, UIDL 1 => '$($afterAt1.Text)' and UIDL 2 => '$($afterAt2.Text)'. Neither matches the " +
-                'survivor recorded before the delete, so this sink does something a third way.')
+            Fail 'a message is visible only to its own mailbox' ("'$Mailbox' holds $mine (expected 1), '$OtherMailbox' holds $theirs (expected 0). " +
+                'A sink that shows every login every message lets the dummy and identity accounts take each other''s mail, whichever polls first.')
         }
-
-        Clear-SinkMailbox -Socket $socket
-        [void](Invoke-Pop3Command -Socket $socket -Command 'QUIT' -AllowError)
     }
+    catch { Fail 'a message is visible only to its own mailbox' $_.Exception.Message }
     finally {
-        Close-SinkSocket -Socket $socket
-    }
-
-    # Whatever happened above, the sink MUST be empty now: a probe left behind turns up in the
-    # hub Inbox at the next poll.
-    try {
-        $final = Connect-Pop3Authenticated
-        try {
-            $stat = Invoke-Pop3Command -Socket $final.Socket -Command 'STAT'
-            if ($stat.Text -match '^\+OK\s+0\s') {
-                Pass 'the sink is drained afterwards' 'no probe left behind'
-            }
-            else {
-                Fail 'the sink is drained afterwards' (
-                    "STAT reports '$($stat.Text)'. Probe messages are still in the sink and will arrive in the hub " +
-                    'Inbox at the next poll. They carry the ' + $probeSubjectTag + ' tag, so the live tier''s ' +
-                    'zero-artifact sweep will remove them - but remove them yourself rather than relying on that.')
-            }
-            [void](Invoke-Pop3Command -Socket $final.Socket -Command 'QUIT' -AllowError)
-        }
-        finally {
-            Close-SinkSocket -Socket $final.Socket
-        }
-    }
-    catch {
-        Fail 'the sink is drained afterwards' $_.Exception.Message
+        try { [void](Clear-ProbeMailbox -Mailbox $Mailbox -ProbeMailboxes $ProbeMailboxes) } catch { Fail 'the probe mailbox drains after the isolation proof' $_.Exception.Message }
     }
 }
 
 <#
-    Deletes everything the mailbox currently holds, re-reading STAT after each delete rather than
-    counting down from the first answer. That is deliberate: this runs against a server whose
-    numbering may shift under it, so the only safe loop is "ask, delete number 1, ask again".
+    RFC 1939 section 5: message numbers are fixed for the whole session and deletes happen at
+    QUIT. The failure it rules out is silent - a sink that renumbers after DELE makes a client's
+    "DELE 1; DELE 2" delete the wrong message.
 #>
-function Clear-SinkMailbox {
-    param($Socket)
-
-    for ($i = 0; $i -lt 50; $i++) {
-        $stat = Invoke-Pop3Command -Socket $Socket -Command 'STAT' -AllowError
-        if (-not $stat.Ok) { return }
-        if ($stat.Text -match '^\+OK\s+0\s') { return }
-        $del = Invoke-Pop3Command -Socket $Socket -Command 'DELE 1' -AllowError
-        if (-not $del.Ok) { return }
-    }
-}
-
-function Test-ServiceSurvivesRestart {
+function Invoke-OrdinalStabilityProof {
+    param([string] $Address, [string] $Mailbox, [string[]] $ProbeMailboxes)
     Say ''
-    Say "Restarting $ServiceName to prove nothing is re-served afterwards."
-
+    Say 'Ordinal stability: two messages, DELE 1 - does the survivor keep its number?'
+    $session = $null
     try {
-        Restart-Service -Name $ServiceName -Force -ErrorAction Stop
-        Start-Sleep -Seconds 3
-    }
-    catch {
-        Fail 'the service restarts cleanly' $_.Exception.Message
-        return
-    }
+        foreach ($i in 1..2) {
+            [void](Submit-ProbeMessage -Address $Address -Message (New-ProbeMessage -Address $Address -Marker (New-ProbeMarker) -DateUtc ((Get-Date).ToUniversalTime())))
+        }
+        $session = Open-Pop3Session -Mailbox $Mailbox
+        $stat = Get-Pop3StatOf -Session $session
+        if ($stat.Count -ne 2) {
+            Fail 'both messages are held' "STAT says $($stat.Count); expected 2."
+            return
+        }
+        $u2 = Get-Pop3UidOf -Session $session -Number 2
+        if ($null -eq $u2) { Fail 'ordinal stability can be measured' 'UIDL 2 returned no id.'; return }
+        $script:SeenIds += $u2.Id
+        $u1 = Get-Pop3UidOf -Session $session -Number 1
+        if ($null -ne $u1) { $script:SeenIds += $u1.Id }
 
-    $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    $status = 'absent'
-    if ($null -ne $svc) { $status = [string] $svc.Status }
-    if ($status -ne 'Running') {
-        Fail 'the service restarts cleanly' "After a restart the service status is '$status'."
-        return
-    }
-    Pass 'the service restarts cleanly' 'Running'
+        $del = Remove-Pop3Message -Session $session -Number 1 -ProbeMailboxes $ProbeMailboxes
+        if (-not $del.Ok) { Fail 'ordinal stability can be measured' "DELE 1 was refused: $($del.Text)"; return }
 
-    try {
-        $session = Connect-Pop3Authenticated
+        $after2 = Get-Pop3UidOf -Session $session -Number 2
+        $after1 = Get-Pop3UidOf -Session $session -Number 1
+        if ($null -ne $after2 -and $after2.Id -ceq $u2.Id -and $null -eq $after1) {
+            Pass 'message numbers stay fixed after a DELE' 'the survivor is still message 2 and message 1 answers -ERR, as RFC 1939 requires'
+        }
+        elseif ($null -ne $after1 -and $after1.Id -ceq $u2.Id) {
+            Fail 'message numbers stay fixed after a DELE' 'After DELE 1 the survivor became message 1: this sink renumbers mid-session, so a client issuing DELE 1; DELE 2 deletes the wrong message.'
+        }
+        else {
+            Fail 'message numbers stay fixed after a DELE' "After DELE 1: UIDL 1 -> $(if ($after1) { $after1.Id } else { '-ERR' }), UIDL 2 -> $(if ($after2) { $after2.Id } else { '-ERR' }); expected -ERR and $($u2.Id)."
+        }
+
+        $stat = Get-Pop3StatOf -Session $session
+        if ($stat.Count -eq 1) { Pass 'STAT stops counting a message marked for deletion' '1 left' }
+        else { Fail 'STAT stops counting a message marked for deletion' "STAT says $($stat.Count); expected 1." }
+
+        $del = Remove-Pop3Message -Session $session -Number 2 -ProbeMailboxes $ProbeMailboxes
+        if (-not $del.Ok) { Fail 'the survivor can be deleted by its original number' $del.Text }
+        [void](Invoke-Pop3Command -Socket $session.Socket -Command 'QUIT')
+    }
+    catch { Fail 'ordinal stability can be measured' $_.Exception.Message }
+    finally {
+        if ($session) { Close-SinkSocket -Socket $session.Socket }
         try {
-            $stat = Invoke-Pop3Command -Socket $session.Socket -Command 'STAT'
-            if ($stat.Text -match '^\+OK\s+0\s') {
-                Pass 'nothing is re-served after a restart' 'the mailbox is still empty'
-            }
+            $left = Get-MailboxCount -Mailbox $Mailbox
+            if ($left -eq 0) { Pass 'the probe mailbox is empty afterwards' 'both deletes landed at QUIT' }
             else {
-                Fail 'nothing is re-served after a restart' (
-                    "STAT reports '$($stat.Text)' after a service restart. A sink that resurrects deleted mail on " +
-                    'restart re-delivers every past seed into the hub Inbox, and every arrival assertion then matches ' +
-                    'the wrong item.')
+                Fail 'the probe mailbox is empty afterwards' "$left message(s) remain; draining them."
+                [void](Clear-ProbeMailbox -Mailbox $Mailbox -ProbeMailboxes $ProbeMailboxes)
             }
-            [void](Invoke-Pop3Command -Socket $session.Socket -Command 'QUIT' -AllowError)
         }
-        finally {
-            Close-SinkSocket -Socket $session.Socket
-        }
-    }
-    catch {
-        Fail 'nothing is re-served after a restart' $_.Exception.Message
+        catch { Fail 'the probe mailbox is empty afterwards' $_.Exception.Message }
     }
 }
 
-function Test-SettingsArePrecedent {
-    # The silent one. See THE APPSETTINGS TRAP in the banner.
-    $binPath = $null
+# A session that dies after DELE and before QUIT must lose nothing: the delete belongs to the
+# UPDATE state, which only QUIT reaches. This is what makes an interrupted fetch re-fetchable
+# rather than lost.
+function Invoke-AbortSemanticsProof {
+    param([string] $Address, [string] $Mailbox, [string[]] $ProbeMailboxes)
+    Say ''
+    Say 'Abort semantics: DELE, then drop the connection without QUIT.'
     try {
-        $binPath = (Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop).PathName
+        [void](Submit-ProbeMessage -Address $Address -Message (New-ProbeMessage -Address $Address -Marker (New-ProbeMarker) -DateUtc ((Get-Date).ToUniversalTime())))
+        $session = Open-Pop3Session -Mailbox $Mailbox
+        $uid = Get-Pop3UidOf -Session $session -Number 1
+        if ($uid) { $script:SeenIds += $uid.Id }
+        [void](Remove-Pop3Message -Session $session -Number 1 -ProbeMailboxes $ProbeMailboxes)
+        Close-Pop3Session -Session $session -WithoutQuit
+        Start-Sleep -Milliseconds 500
+        $count = Get-MailboxCount -Mailbox $Mailbox
+        if ($count -eq 1) { Pass 'a DELE without QUIT deletes nothing' 'the message is still there after the dropped session' }
+        else { Fail 'a DELE without QUIT deletes nothing' "The mailbox holds $count; expected 1. A sink that deletes before QUIT loses mail whenever a fetch is interrupted." }
     }
-    catch {
-        Say '  NOTE the service binary path could not be read; whether the install-directory settings file wins is unknown.'
+    catch { Fail 'a DELE without QUIT deletes nothing' $_.Exception.Message }
+    finally {
+        try { [void](Clear-ProbeMailbox -Mailbox $Mailbox -ProbeMailboxes $ProbeMailboxes) } catch { Fail 'the probe mailbox drains after the abort proof' $_.Exception.Message }
+    }
+}
+
+# Read-only. Mail waiting in an account's mailbox is mail Outlook has not collected yet; outside
+# a run that is an earlier run's undelivered residue. It is reported and NEVER deleted here.
+function Show-AccountMailboxes {
+    Say ''
+    Say 'Account mailboxes (read-only - opened, counted, closed; never emptied):'
+    foreach ($address in @($AccountAddress)) {
+        if (-not $address) { continue }
+        try {
+            $box = Get-InbucketMailboxName -Address $address
+            $count = Get-MailboxCount -Mailbox $box
+            $tail = 'nothing waiting'
+            if ($count -gt 0) { $tail = "$count message(s) waiting for Outlook - if no run is in progress, that is an earlier run's undelivered mail" }
+            Say ("  ...  {0,-24} mailbox '{1}': {2}" -f $address, $box, $tail)
+        }
+        catch { Note "could not read the mailbox for ${address}: $($_.Exception.Message)" }
+    }
+    Say '       An account''s POP3 user name must be exactly its mailbox name above - lowercase, no'
+    Say '       domain, no +tag. The sink uses the USER verbatim as the mailbox to open.'
+}
+
+function Invoke-RestartProof {
+    param($Layout, [string] $Address, [string] $Mailbox, [string[]] $ProbeMailboxes)
+    Say ''
+    Say "Restart through the scheduled task '$TaskName'."
+    if (Test-OutlookRunning) {
+        Note 'SKIPPED: Outlook is running, and restarting the sink under a polling Outlook is the nondeterminism this avoids. Close Outlook and re-run -Verify to prove the restart.'
         return
     }
 
-    if ($binPath -and $binPath.Contains($noUserSettingsFlag)) {
-        Pass 'the install-directory settings file is authoritative' "the service runs with $noUserSettingsFlag"
+    if (-not (Stop-Sink)) {
+        Fail 'the sink stops' "It was still running $ListenerWaitSeconds s after the task was ended and its process stopped."
+        return
     }
-    else {
-        Fail 'the install-directory settings file is authoritative' (
-            "The service binary path is '$binPath' and does not carry $noUserSettingsFlag. smtp4dev layers a settings " +
-            'file from the running account''s roaming profile ON TOP of the install-directory one, and the service ' +
-            'account is not the logged-on user - so a configuration edited here can be silently overridden or ' +
-            'silently ignored. Re-run with -Execute -Force, which sets it.')
+    if (-not (Start-Sink -ExePath $Layout.Exe)) {
+        Fail 'the sink starts through its scheduled task' "Its three listeners were not all up $ListenerWaitSeconds s after Start-ScheduledTask. Read $($Layout.SinkLog)."
+        return
     }
+    Pass 'the sink starts through its scheduled task' "listening on $SmtpPort, $Pop3Port and $WebPort again"
 
-    if (Test-Path -LiteralPath $localSystemOverlay) {
-        Say "  NOTE an overlay settings file exists at $localSystemOverlay."
-        Say "       With $noUserSettingsFlag it is ignored; without it, it WINS over $InstallRoot\$settingsFileName."
+    try {
+        $count = Get-MailboxCount -Mailbox $Mailbox
+        if ($count -eq 0) { Pass 'nothing deleted comes back after a restart' 'the probe mailbox is still empty' }
+        else { Fail 'nothing deleted comes back after a restart' "The probe mailbox holds $count after a restart. A sink that resurrects deleted mail re-delivers every past message into the hub Inbox." }
+
+        [void](Submit-ProbeMessage -Address $Address -Message (New-ProbeMessage -Address $Address -Marker (New-ProbeMarker) -DateUtc ((Get-Date).ToUniversalTime())))
+        $session = Open-Pop3Session -Mailbox $Mailbox
+        try { $uid = Get-Pop3UidOf -Session $session -Number 1 }
+        finally { Close-Pop3Session -Session $session }
+        if ($null -eq $uid) { Fail 'message ids are not reused across a restart' 'UIDL 1 returned no id after the restart.' }
+        elseif ($script:SeenIds -contains $uid.Id) {
+            Fail 'message ids are not reused across a restart' "The first message after the restart got id '$($uid.Id)', already issued before it. Outlook keys its seen-state on UIDL; a reused id can make it skip new mail."
+        }
+        else { Pass 'message ids are not reused across a restart' "'$($uid.Id)' is new; $(@($script:SeenIds).Count) id(s) were issued before the restart" }
+    }
+    catch { Fail 'the sink works after a restart' $_.Exception.Message }
+    finally {
+        try { [void](Clear-ProbeMailbox -Mailbox $Mailbox -ProbeMailboxes $ProbeMailboxes) } catch { Fail 'the probe mailbox drains after the restart proof' $_.Exception.Message }
     }
 }
 
-# ---------------------------------------------------------------------------------------------
-# Modes.
-# ---------------------------------------------------------------------------------------------
+# =============================================================================================
+# MODES.
+# =============================================================================================
 
 function Show-Plan {
-    $packageText = '<not given - -Execute needs -PackagePath>'
-    if ($PackagePath) { $packageText = $PackagePath }
-    $pinText = '<unpinned>'
-    if ($ExpectedSha256) { $pinText = $ExpectedSha256 }
-    $imapText = 'disabled (written as a null port, NOT as 0 - 0 means auto-assign)'
-    if ($ImapPort -gt 0) { $imapText = "$SinkHost`:$ImapPort" }
+    $root = $InstallRoot.TrimEnd('\')
+    $environment = @(Get-SinkEnvironment -Root $root -Smtp $SmtpPort -Pop3 $Pop3Port -Web $WebPort -Level $LogLevel)
+    $pin = '<REQUIRED: -ExpectedSha256, recorded in Testbed/MEDIA.md>'
+    if ($ExpectedSha256) { $pin = $ExpectedSha256 }
 
-    Say 'PLAN (nothing below has been done - this is a dry run).'
+    Say 'PLAN. Dry run: nothing has been read, written or started.'
     Say ''
-    Say "  package             : $packageText"
-    Say "  pinned to sha256    : $pinText"
-    Say "  install root        : $InstallRoot"
-    Say "  service             : $ServiceName  (registered with $noUserSettingsFlag)"
-    Say "  submission          : $SinkHost`:$SmtpPort   (no auth, no TLS)"
-    Say "  retrieval           : $SinkHost`:$Pop3Port   (POP3, no TLS)"
-    Say "  IMAP                : $imapText"
-    Say "  web UI              : $WebUiUrl"
-    Say "  probe address       : $ProbeAddress  (POP3 user '$ProbeUser')"
+    Say "  package           : $PackagePath"
+    Say "  pinned sha256     : $pin"
+    Say "  install root      : $root   (payload one folder down, as the release zip lays it out)"
+    Say "  launcher          : $(Join-Path $root $LauncherName)"
+    Say "  scheduled task    : $TaskName   SYSTEM, at startup, no time limit, runs the launcher via cmd.exe"
+    Say "  submission        : ${SinkHost}:$SmtpPort   SMTP, no TLS; AUTH optional and never checked"
+    Say "  retrieval         : ${SinkHost}:$Pop3Port   POP3, no TLS; any password, including none"
+    Say "  web UI            : ${SinkHost}:$WebPort   cannot be switched off, so loopback only"
+    Say "  sink log          : $(Join-Path $root $SinkLogName)   (level $LogLevel)"
+    Say "  this script's log : $LogPath"
+    Say ''
+    Say '  Mailboxes. A message for NAME@anything is filed under mailbox "name"; POP3 USER name reads it.'
+    foreach ($a in @($AccountAddress)) {
+        $box = '<unusable address>'
+        try { $box = Get-InbucketMailboxName -Address $a } catch { }
+        Say ("    account  {0,-32} -> '{1}'   read-only here, never emptied" -f $a, $box)
+    }
+    $isolation = Get-IsolationAddress -Address $ProbeAddress
+    foreach ($a in @($ProbeAddress, $isolation)) {
+        $box = '<unusable address>'
+        try { $box = Get-InbucketMailboxName -Address $a } catch { }
+        Say ("    probe    {0,-32} -> '{1}'   the only mailboxes -Verify deletes from" -f $a, $box)
+    }
+    $problem = Get-ProbeMailboxProblem -Probe $ProbeAddress -Accounts $AccountAddress
+    if ($problem) { Say "    REFUSED: $problem" }
+    Say ''
+    Say '  Environment the launcher sets, and why:'
+    foreach ($e in $environment) {
+        Say ("    {0}={1}" -f $e.Name, $e.Value)
+        Say ("        {0}" -f $e.Why)
+    }
     Say ''
     Say '  Three places must agree on the ports, or the tier fails in a way nothing diagnoses:'
-    Say "    - the live-test settings mailSink block (submitPort $SmtpPort, retrievePort $Pop3Port)"
-    Say '    - Testbed/guest/tier-profile-forcepst.prf SMTPPort / POP3Port'
+    Say "    - the live-test settings mailSink block   (submitPort $SmtpPort, retrievePort $Pop3Port)"
+    Say "    - the tier profile's POP3Port / SMTPPort  (Testbed/guest/New-TierProfile.ps1)"
     Say '    - this script'
 }
 
@@ -1303,311 +1535,539 @@ function Invoke-Execute {
     Assert-TestbedGuestLocal
     Assert-Elevated
     Assert-OutlookNotRunning
+    Open-Log
+    Say '== Execute =='
 
-    if (-not $PackagePath) {
-        throw '-Execute needs -PackagePath. This script never downloads anything; see WHERE THE PACKAGE COMES FROM in the banner.'
-    }
+    $rootProblem = Get-InstallRootProblem -Path $InstallRoot
+    if ($rootProblem) { throw "REFUSING: -InstallRoot '$InstallRoot' is unusable - $rootProblem." }
+    $probeProblem = Get-ProbeMailboxProblem -Probe $ProbeAddress -Accounts $AccountAddress
+    if ($probeProblem) { throw "REFUSING: $probeProblem" }
+
+    # -- the package and its pin ------------------------------------------------------------
     if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
-        throw "The staged package '$PackagePath' does not exist. Stage it first and record it in Testbed/MEDIA.md."
+        throw "REFUSING: no package at $PackagePath. It is STAGED MEDIA: Testbed/host/Get-MailSinkMedia.ps1 stages it on the host and prints the Copy-ToGuest.ps1 line that lands it here. It is never downloaded on the guest."
     }
+    $actual = (Get-FileHash -LiteralPath $PackagePath -Algorithm SHA256).Hash
+    $hashProblem = Get-Sha256Problem -Expected $ExpectedSha256 -Actual $actual
+    if ($hashProblem) { throw "REFUSING: $hashProblem`nA mismatch means 'check the hash', not necessarily 'the file is bad' - confirm which release you staged against Testbed/MEDIA.md." }
+    Pass 'the package matches its pin' $actual
 
-    # -- the pin ------------------------------------------------------------------------------
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($PackagePath)
+    try { $entries = @($zip.Entries | ForEach-Object { $_.FullName }) }
+    finally { $zip.Dispose() }
+    $appFolder = Get-ZipAppFolder -EntryNames $entries
+    if (-not $appFolder) { throw "REFUSING: $ExeName is at the root of the package, not in a versioned folder. That is not the release zip this script and Testbed/MEDIA.md describe." }
+    Pass 'the package holds one inbucket.exe, one folder deep' "$appFolder ($($entries.Count) entries)"
+    $version = Get-VersionFromFolderName -FolderName $appFolder
+    if ($version) { Say "  version from the package layout: $version" }
 
-    $actualHash = (Get-FileHash -LiteralPath $PackagePath -Algorithm SHA256).Hash
-    if ($ExpectedSha256) {
-        if ($actualHash -ne $ExpectedSha256.Trim().ToUpperInvariant()) {
-            throw @"
-REFUSING: the staged package does not match the pin.
+    $root = $InstallRoot.TrimEnd('\')
+    $appDir = Join-Path $root $appFolder
+    $exe = Join-Path $appDir $ExeName
 
-  expected  $($ExpectedSha256.Trim().ToUpperInvariant())
-  actual    $actualHash
-
-An unpinned sink that silently changes behaviour in an update is the same class of problem as an
-Office auto-update invalidating a checkpoint. Re-stage the pinned version, or change the pin
-deliberately and record it in Testbed/MEDIA.md.
-
-NOTE: this script's DEFAULT pin is the hash the winget manifest publishes for the 3.15.0 win-x64
-zip. It has never been checked against a downloaded file, so if you are staging that exact
-release and see this message, verify the hash before assuming the package is wrong.
-"@
-        }
-        Pass 'the package matches its pin' $actualHash
-    }
-    else {
-        Say "  NOTE the package is UNPINNED. Its sha256 is $actualHash - record it and pass -ExpectedSha256 next time."
-    }
-
-    # -- ports, before anything is written ----------------------------------------------------
-
-    $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    if ($null -ne $existing -and $existing.Status -eq 'Running') {
-        # The idempotent path: this install's own listeners must not be reported as somebody
-        # else's.
-        $ep = Get-ListeningEndpoint -Port $SmtpPort
-        if ($null -ne $ep) { $script:SinkPid = $ep.OwningProcess }
-    }
-
-    $ranges  = Get-ExcludedPortRange
+    # -- ports, before anything is stopped or written ----------------------------------------
+    # An earlier install's own listeners are not "somebody else's": exempt every sink process
+    # under the install root, whatever version folder it runs from.
+    $running = @(Get-SinkProcess -AnyUnderRoot | ForEach-Object { [int] $_.ProcessId })
+    $reserved = Get-ExcludedPortRange
+    if (-not $reserved.Readable) { Note 'the reserved-port list could not be read; a bind failure would look like a packaging fault.' }
     $portsOk = $true
-    if (-not (Test-PortUsable -Port $SmtpPort -What 'submission' -Ranges $ranges)) { $portsOk = $false }
-    if (-not (Test-PortUsable -Port $Pop3Port -What 'retrieval'  -Ranges $ranges)) { $portsOk = $false }
-    if (-not $portsOk) {
-        throw 'Refusing to install: the ports above cannot be used. Nothing has been written.'
-    }
-    Pass 'both ports are usable' "$SmtpPort and $Pop3Port, outside every reserved range and free"
-
-    if ($null -ne $existing) {
-        Say "  NOTE $ServiceName already exists (status $($existing.Status)). Reconfiguring it in place."
-        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-    }
-
-    # -- unpack -------------------------------------------------------------------------------
-
-    if (-not (Test-Path -LiteralPath $InstallRoot)) {
-        New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
-        Say "Created $InstallRoot"
-    }
-
-    $exePath = Join-Path $InstallRoot $serviceExeName
-    if ($Force -or (-not (Test-Path -LiteralPath $exePath))) {
-        # Expand-Archive ships with PowerShell 5.1 (Microsoft.PowerShell.Archive).
-        Expand-Archive -LiteralPath $PackagePath -DestinationPath $InstallRoot -Force
-        Say "Unpacked $PackagePath into $InstallRoot"
-    }
-    else {
-        Say "$serviceExeName is already present; leaving the payload alone (pass -Force to replace it)."
-    }
-
-    if (-not (Test-Path -LiteralPath $exePath)) {
-        throw @"
-REFUSING: '$serviceExeName' is not in $InstallRoot after unpacking.
-
-The win-x64 zip puts that executable and appsettings.json at its ROOT, so either this is a
-different package - the Desktop zip, the noruntime zip, or another project entirely - or it
-unpacks into a subdirectory. This script does not guess: point -InstallRoot at the directory that
-actually holds the executable, or stage the right package.
-"@
-    }
-    Pass 'the windowless executable is present' $exePath
-
-    if (Test-Path -LiteralPath (Join-Path $InstallRoot $forbiddenExeName)) {
-        Say "  NOTE $forbiddenExeName is also present. It creates a WINDOW, refuses --install-service, and always"
-        Say '       chooses its own port. It must never be the executable registered as the service.'
-    }
-
-    # -- configure ----------------------------------------------------------------------------
-
-    $settingsPath = Join-Path $InstallRoot $settingsFileName
-    $json = New-SinkSetting | ConvertTo-Json -Depth 10
-
-    # UTF-8 WITHOUT A BOM, and written through .NET rather than Set-Content. Windows PowerShell
-    # 5.1's `-Encoding UTF8` emits a byte-order mark, and a BOM in front of a JSON document is a
-    # coin-flip: some readers skip it and some report "'0xEF' is an invalid start of a value".
-    # This file is read by another program, not by this script, so the coin is not ours to flip -
-    # and the failure would arrive as a service that will not start, with nothing naming the
-    # cause. The repository's other scripts use Set-Content for their LOGS, which is fine.
-    [System.IO.File]::WriteAllText($settingsPath, $json, (New-Object System.Text.UTF8Encoding($false)))
-    Say "Wrote $settingsPath"
-
-    $readBack = Get-Content -LiteralPath $settingsPath -Raw
-    if ($readBack.Trim() -ne $json.Trim()) {
-        throw 'The configuration read back differently from what was written. Refusing to continue.'
-    }
-    Pass 'the configuration reads back byte-identical' $settingsPath
-
-    # -- register, then make the install-directory settings authoritative ----------------------
-
-    if ($null -eq (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
-        & $exePath --install-service 2>&1 | ForEach-Object { Say "    $_" }
-        if ($LASTEXITCODE -ne 0) {
-            throw "Registering the service failed (exit $LASTEXITCODE). Nothing was started."
+    foreach ($pair in @(@('submission', $SmtpPort), @('retrieval', $Pop3Port), @('web UI', $WebPort))) {
+        if ($reserved.Readable -and (Test-PortInRange -Port $pair[1] -Ranges $reserved.Ranges)) {
+            Fail "$($pair[0]) port $($pair[1]) is usable" 'It is inside a Windows reserved TCP range: nothing listens there and the bind fails anyway. Choose another port and carry it into the tier profile and the settings mailSink block too.'
+            $portsOk = $false
+            continue
         }
-        Say "Registered service $ServiceName"
-    }
-    else {
-        Say "Service $ServiceName already registered"
-    }
-
-    # --install-service hardcodes the binary path as `"<exe>" --service` and passes nothing else
-    # through, so the flag that closes the settings-overlay trap has to be added afterwards.
-    #
-    # WHY THIS WRITES ImagePath RATHER THAN CALLING sc.exe. The value contains embedded double
-    # quotes around the executable path, and Windows PowerShell 5.1 mangles quotes when it hands
-    # an argument to a native executable - so `sc.exe config <name> binPath= "<value>"` can
-    # silently register a DIFFERENT path from the one intended, which produces a service that
-    # fails to start for a reason nothing in the output explains. ImagePath under the service key
-    # IS the storage sc.exe writes, the write is exact, and it is read back below through
-    # Win32_Service.PathName - the same property -Verify asserts on - so the loop is closed by
-    # measurement rather than by trusting either tool.
-    $serviceKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
-    $binPath = (Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop).PathName
-    if (-not $binPath.Contains($noUserSettingsFlag)) {
-        $newBinPath = "$binPath $noUserSettingsFlag"
-        Set-ItemProperty -LiteralPath $serviceKey -Name 'ImagePath' -Value $newBinPath -ErrorAction Stop
-        Say "Set the service binary path to: $newBinPath"
-
-        $confirmed = (Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop).PathName
-        if ($confirmed -ne $newBinPath) {
-            throw @"
-REFUSING: the service binary path did not read back as written.
-
-  wrote  $newBinPath
-  read   $confirmed
-
-Without $noUserSettingsFlag the service layers a settings file from its own account's roaming
-profile over the one this script just wrote, so the configuration would be silently ignored.
-"@
+        $ep = Get-ListeningEndpoint -Port $pair[1]
+        if ($null -ne $ep -and -not ($running -contains $ep.OwningProcess)) {
+            Fail "$($pair[0]) port $($pair[1]) is free" "pid $($ep.OwningProcess) ($($ep.ProcessName)) already listens on $($ep.AllAddresses -join ', ')."
+            $portsOk = $false
         }
-        Pass 'the service binary path reads back as written' $confirmed
     }
-    else {
-        Say "The service binary path already carries $noUserSettingsFlag"
+    if (-not $portsOk) { throw 'REFUSING to install: the ports above cannot be used. Nothing has been written.' }
+    Pass 'all three ports are usable' "$SmtpPort, $Pop3Port and $WebPort - free, and outside every reserved range"
+
+    # -- stop whatever is there ---------------------------------------------------------------
+    if ($null -ne (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) -or $running.Count -gt 0) {
+        Say "  an earlier install is present; stopping it to reconfigure in place"
+        if (-not (Stop-Sink)) { throw "The existing sink did not stop within $ListenerWaitSeconds s." }
     }
 
-    Start-Service -Name $ServiceName -ErrorAction Stop
-    # A service can report Running before its listeners are bound. A short settle is cheaper than
-    # a spurious failure in the verification that follows.
-    Start-Sleep -Seconds 3
-
-    $svc = Get-Service -Name $ServiceName -ErrorAction Stop
-    if ($svc.Status -ne 'Running') {
-        throw "Service $ServiceName is '$($svc.Status)' after Start-Service."
+    # -- unpack ------------------------------------------------------------------------------
+    if (-not (Test-Path -LiteralPath $root)) { New-Item -ItemType Directory -Path $root -Force | Out-Null; Say "  created $root" }
+    if ($Force -or -not (Test-Path -LiteralPath $exe)) {
+        Expand-Archive -LiteralPath $PackagePath -DestinationPath $root -Force
+        Get-ChildItem -LiteralPath $appDir -Recurse -File | Unblock-File
+        Say "  unpacked into $appDir"
     }
-    Pass 'the service is running' $ServiceName
+    else { Say "  $exe is already present; leaving the payload alone (-Force replaces it)" }
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "REFUSING: $exe is not there after unpacking." }
+    Pass 'the payload is in place' ("$exe, sha256 " + (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash)
 
-    Invoke-Verify -SkipGuards
+    $lua = Join-Path $appDir $LuaScriptName
+    if (Test-Path -LiteralPath $lua) { throw "REFUSING: $lua exists. Inbucket runs a Lua script of that name from its working directory on every message, and nothing in this testbed puts one there." }
+
+    $store = Join-Path $root $StoreDirName
+    if (-not (Test-Path -LiteralPath $store)) { New-Item -ItemType Directory -Path $store -Force | Out-Null; Say "  created $store" }
+
+    # -- the launcher ------------------------------------------------------------------------
+    $layout = Get-SinkLayout
+    if ($layout.ExeCount -ne 1) { throw "REFUSING: $($layout.ExeCount) copies of $ExeName sit one folder below $root. Remove the stale one (or -Uninstall -Execute first) so there is no doubt which one runs." }
+    $environment = @(Get-SinkEnvironment -Root $root -Smtp $SmtpPort -Pop3 $Pop3Port -Web $WebPort -Level $LogLevel)
+    $launcherText = ConvertTo-LauncherText -ExePath $layout.Exe -AppDir $layout.AppDir -SinkLogPath $layout.SinkLog -Environment $environment
+    [System.IO.File]::WriteAllText($layout.Launcher, $launcherText, (New-Object System.Text.ASCIIEncoding))
+    if ([System.IO.File]::ReadAllText($layout.Launcher) -cne $launcherText) { throw 'The launcher read back differently from what was written. Refusing to continue.' }
+    Pass 'the launcher reads back byte-identical' $layout.Launcher
+
+    # -- the scheduled task ------------------------------------------------------------------
+    $action = New-ScheduledTaskAction -Execute $CmdExe -Argument ('/d /c "{0}"' -f $layout.Launcher) -WorkingDirectory $layout.AppDir
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -Priority 4
+    [void](Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force `
+        -Description 'Loopback SMTP + POP3 mail sink (Inbucket) for the OutlookAI live test tier. Written by Testbed/guest/Install-MailSink.ps1.')
+    $taskProblems = @(Get-TaskDefinitionProblems -Snapshot (Get-TaskSnapshot) -LauncherPath $layout.Launcher)
+    if ($taskProblems.Count -gt 0) { throw ("The task read back wrong: " + ($taskProblems -join '; ')) }
+    Pass 'the scheduled task reads back as registered' "$TaskName - SYSTEM, at startup, no time limit"
+
+    if (-not (Start-Sink -ExePath $layout.Exe)) {
+        throw "The sink did not bring up all three listeners within $ListenerWaitSeconds s of Start-ScheduledTask. Read $($layout.SinkLog) - Inbucket logs its startup there, including a failed bind."
+    }
+    Pass 'the sink is running' "started through the task; listening on $SmtpPort, $Pop3Port and $WebPort"
+
+    return (Invoke-Verify -SkipGuards)
 }
 
 function Invoke-Verify {
     param([switch] $SkipGuards)
-
     if (-not $SkipGuards) {
         Assert-TestbedGuestLocal
-        Assert-OutlookNotRunning
+        Assert-Elevated
+        Open-Log
     }
-
     Say ''
-    Say 'VERIFY.'
+    Say '== Verify =='
 
-    $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    if ($null -eq $svc) {
-        Fail 'the service exists' "No service named '$ServiceName'. Run with -Execute first."
-        return
+    $probeProblem = Get-ProbeMailboxProblem -Probe $ProbeAddress -Accounts $AccountAddress
+    if ($probeProblem) { throw "REFUSING: $probeProblem" }
+    $probeBox = Get-InbucketMailboxName -Address $ProbeAddress
+    $isolationAddress = Get-IsolationAddress -Address $ProbeAddress
+    $isolationBox = Get-InbucketMailboxName -Address $isolationAddress
+    $probeBoxes = @($probeBox, $isolationBox)
+
+    # -- what is installed -------------------------------------------------------------------
+    $layout = Get-SinkLayout
+    $snapshot = Get-TaskSnapshot
+    if ($layout.ExeCount -eq 0 -and -not $snapshot.Exists) {
+        Say "  no $ExeName under $($layout.Root) and no task '$TaskName'."
+        return $VerdictAbsent
     }
-    if ($svc.Status -ne 'Running') {
-        Fail 'the service is running' "Status is '$($svc.Status)'."
-        return
+    if ($layout.ExeCount -ne 1) {
+        Fail "exactly one $ExeName is installed" "$($layout.ExeCount) found one folder below $($layout.Root)."
+        return $VerdictBroken
     }
-    Pass 'the service is running' $ServiceName
+    Pass "exactly one $ExeName is installed" $layout.Exe
 
-    Test-SettingsArePrecedent
-    Test-ListenerBinding -Port $SmtpPort -What 'submission'
-    Test-ListenerBinding -Port $Pop3Port -What 'retrieval'
-
-    if ($ImapPort -le 0) {
-        $imap = Get-ListeningEndpoint -Port 143
-        if ($null -eq $imap) {
-            Pass 'IMAP is off' 'nothing is listening on 143'
+    try {
+        $versionRun = Invoke-NativeLines -FilePath $layout.Exe -Arguments @('-version')
+        $versionOut = [string] ((@($versionRun.Lines) + @($versionRun.ErrorLines)) -join ' ')
+        $expectedVersion = Get-VersionFromFolderName -FolderName (Split-Path -Leaf $layout.AppDir)
+        if ($expectedVersion -and $versionOut -notmatch [regex]::Escape($expectedVersion)) {
+            $m = [regex]::Match($versionOut, '\d+\.\d+\.\d+')
+            if ($m.Success) { Fail 'the exe reports the version its folder names' "folder says $expectedVersion, the exe says '$versionOut'" }
+            else { Note "the exe reports version '$versionOut'; its folder names $expectedVersion" }
         }
-        else {
-            Fail 'IMAP is off' (
-                "Something is listening on 143 ($($imap.LocalAddress), pid $($imap.OwningProcess)). smtp4dev enables " +
-                'IMAP by DEFAULT and only a null port disables it - a 0 means auto-assign. Nothing here retrieves over ' +
-                'IMAP, and IMAP would not work for this suite anyway: an IMAP account gets its own store and cannot ' +
-                'deliver into the hub PST.')
+        else { Pass 'the exe reports the version its folder names' $versionOut.Trim() }
+    }
+    catch { Note "'$ExeName -version' could not be run: $($_.Exception.Message)" }
+
+    $taskProblems = @(Get-TaskDefinitionProblems -Snapshot $snapshot -LauncherPath $layout.Launcher)
+    if ($taskProblems.Count -eq 0) { Pass 'the scheduled task starts the sink with the guest' "$TaskName - SYSTEM, at startup, no time limit, state $($snapshot.State)" }
+    else { foreach ($p in $taskProblems) { Fail 'the scheduled task starts the sink with the guest' $p } }
+
+    $environment = @(Get-SinkEnvironment -Root $layout.Root -Smtp $SmtpPort -Pop3 $Pop3Port -Web $WebPort -Level $LogLevel)
+    $wanted = ConvertTo-LauncherText -ExePath $layout.Exe -AppDir $layout.AppDir -SinkLogPath $layout.SinkLog -Environment $environment
+    if (-not (Test-Path -LiteralPath $layout.Launcher)) { Fail 'the launcher is what this script writes' "$($layout.Launcher) does not exist." }
+    elseif ([System.IO.File]::ReadAllText($layout.Launcher) -cne $wanted) {
+        Fail 'the launcher is what this script writes' "$($layout.Launcher) differs from what these parameters render (-LogLevel $LogLevel, ports $SmtpPort/$Pop3Port/$WebPort). Re-run -Execute with the parameters you mean; do not edit the file."
+    }
+    else { Pass 'the launcher is what this script writes' $layout.Launcher }
+
+    if (Test-Path -LiteralPath (Join-Path $layout.AppDir $LuaScriptName)) {
+        Fail 'no Lua script sits in the working directory' "$LuaScriptName would run on every message. Nothing in this testbed puts one there."
+    }
+    else { Pass 'no Lua script sits in the working directory' 'the Lua extension is inert' }
+
+    # -- the running process and its listeners --------------------------------------------------
+    $procs = @(Get-SinkProcess -ExePath $layout.Exe)
+    if ($procs.Count -ne 1) {
+        Fail 'the sink process is running' "$($procs.Count) $ExeName process(es) from $($layout.Exe). Start-ScheduledTask '$TaskName', or read $($layout.SinkLog)."
+        return $VerdictBroken
+    }
+    $proc = $procs[0]
+    $boot = (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
+    $sinceBoot = ($proc.CreationDate - $boot).TotalSeconds
+    Pass 'the sink process is running' (Format-Invariant 'pid {0}, started {1:yyyy-MM-dd HH:mm:ss}, {2:N0} s after boot' @($proc.ProcessId, $proc.CreationDate, $sinceBoot))
+    if ($sinceBoot -gt 300) { Note 'it was started after boot (by -Execute or a restart). A reboot followed by -Verify is what proves it starts WITH the guest.' }
+
+    foreach ($pair in @(@('submission', $SmtpPort), @('retrieval', $Pop3Port), @('web UI', $WebPort))) {
+        $ep = Get-ListeningEndpoint -Port $pair[1]
+        if ($null -eq $ep) { Fail "the $($pair[0]) listener is up" "nothing listens on port $($pair[1])."; continue }
+        if (-not ($ep.Pids -contains [int] $proc.ProcessId) -or $ep.Pids.Count -ne 1) {
+            Fail "the $($pair[0]) listener is the sink's" "port $($pair[1]) is held by pid(s) $($ep.Pids -join ', '), not by the sink (pid $($proc.ProcessId))."
+            continue
         }
+        $wide = @($ep.AllAddresses | Where-Object { $_ -cne $SinkHost })
+        if ($wide.Count -gt 0) { Fail "the $($pair[0]) listener is loopback-only" "it is also bound to $($wide -join ', '): an open relay on a test VM. Do NOT answer that with a firewall rule." }
+        else { Pass "the $($pair[0]) listener is loopback-only" "${SinkHost}:$($pair[1]), pid $($proc.ProcessId)" }
     }
 
-    Test-NoInboundFirewallRule
-    Invoke-RoundTripProof
-    Invoke-OrdinalStabilityProof
-    Test-ServiceSurvivesRestart
+    try {
+        $rules = @(Get-NetFirewallApplicationFilter -ErrorAction Stop |
+                Where-Object { $_.Program -and [string]::Equals([string] $_.Program, $layout.Exe, [System.StringComparison]::OrdinalIgnoreCase) })
+        if ($rules.Count -eq 0) { Pass 'no firewall rule names the sink' 'none needed: loopback traffic is not filtered' }
+        else { Fail 'no firewall rule names the sink' "$($rules.Count) rule(s) name $($layout.Exe). A loopback listener needs none; a rule is evidence somebody worked around a wide bind." }
+    }
+    catch { Note "the firewall rules could not be read ($($_.Exception.Message)); a rule for the sink would not be reported." }
+
+    # -- the protocol proofs ------------------------------------------------------------------
+    Say ''
+    Say "Probe mailboxes: '$probeBox' and '$isolationBox' - the only mailboxes this script empties."
+    foreach ($box in $probeBoxes) {
+        try {
+            $residue = Clear-ProbeMailbox -Mailbox $box -ProbeMailboxes $probeBoxes
+            if ($residue -gt 0) { Note "'$box' held $residue message(s) from an earlier run that died mid-proof; removed." }
+        }
+        catch { Fail "the probe mailbox '$box' can be emptied" $_.Exception.Message }
+    }
+
+    Test-LoginShapes -Mailbox $probeBox
+    Invoke-RoundTripProof -Address $ProbeAddress -Mailbox $probeBox -ProbeMailboxes $probeBoxes
+    Invoke-IsolationProof -Address $ProbeAddress -Mailbox $probeBox -OtherMailbox $isolationBox -ProbeMailboxes $probeBoxes
+    Invoke-OrdinalStabilityProof -Address $ProbeAddress -Mailbox $probeBox -ProbeMailboxes $probeBoxes
+    Invoke-AbortSemanticsProof -Address $ProbeAddress -Mailbox $probeBox -ProbeMailboxes $probeBoxes
+    Show-AccountMailboxes
+    Invoke-RestartProof -Layout $layout -Address $ProbeAddress -Mailbox $probeBox -ProbeMailboxes $probeBoxes
+
+    if ($script:Failures.Count -gt 0) { return $VerdictBroken }
+    return $VerdictReady
 }
 
 function Invoke-Uninstall {
     Assert-TestbedGuestLocal
     Assert-Elevated
+    Assert-OutlookNotRunning
+    Open-Log
+    Say '== Uninstall =='
 
-    if ($null -ne (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
-        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-        $exePath = Join-Path $InstallRoot $serviceExeName
-        if (Test-Path -LiteralPath $exePath) {
-            & $exePath --uninstall-service 2>&1 | ForEach-Object { Say "    $_" }
-        }
-        else {
-            & sc.exe delete $ServiceName 2>&1 | ForEach-Object { Say "    $_" }
-        }
-        Say "Removed service $ServiceName"
-    }
-    else {
-        Say "Service $ServiceName already absent"
+    $rootProblem = Get-InstallRootProblem -Path $InstallRoot
+    if ($rootProblem) { throw "REFUSING: -InstallRoot '$InstallRoot' is unusable - $rootProblem." }
+    $layout = Get-SinkLayout
+
+    if (Test-Path -LiteralPath $layout.Root) {
+        $looksLikeOurs = (Test-Path -LiteralPath $layout.Launcher) -or ($layout.ExeCount -gt 0)
+        if (-not $looksLikeOurs) { throw "REFUSING to delete $($layout.Root): it holds neither $LauncherName nor an $ExeName, so it does not look like a sink this script installed." }
     }
 
-    if (Test-Path -LiteralPath $InstallRoot) {
-        Remove-Item -LiteralPath $InstallRoot -Recurse -Force
-        Say "Removed $InstallRoot"
+    [void](Stop-Sink)
+    if ($null -ne (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        Say "  unregistered task $TaskName"
     }
-    else {
-        Say "$InstallRoot already absent"
-    }
+    else { Say "  task $TaskName already absent" }
 
-    if ($null -ne (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
-        Fail 'the service is gone' "'$ServiceName' still exists after the uninstall."
+    if (Test-Path -LiteralPath $layout.Root) {
+        Remove-Item -LiteralPath $layout.Root -Recurse -Force
+        Say "  removed $($layout.Root)"
     }
-    else {
-        Pass 'the service is gone' $ServiceName
+    else { Say "  $($layout.Root) already absent" }
+
+    if ($null -ne (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) { Fail 'the task is gone' "'$TaskName' still exists." }
+    else { Pass 'the task is gone' $TaskName }
+    if (Test-Path -LiteralPath $layout.Root) { Fail 'the install root is gone' "$($layout.Root) still exists." }
+    else { Pass 'the install root is gone' $layout.Root }
+    foreach ($port in @($SmtpPort, $Pop3Port, $WebPort)) {
+        $ep = Get-ListeningEndpoint -Port $port
+        if ($null -ne $ep -and $ep.ProcessName -eq 'inbucket') { Fail "nothing of the sink listens on $port" "pid $($ep.OwningProcess) still does." }
     }
 }
 
-# ---------------------------------------------------------------------------------------------
-# Entry point.
-# ---------------------------------------------------------------------------------------------
+# =============================================================================================
+# SELF-TEST. Pure: no socket, no process, no file, no registry.
+# =============================================================================================
 
-Say "Install-MailSink.ps1 - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-Say ''
+function Invoke-SelfTest {
+    $script:StChecks = 0
+    $script:StFailures = @()
 
-if ($Verify -and $Execute) {
-    throw 'Pass -Execute or -Verify, not both: -Execute runs the full verification when it finishes.'
+    function Show-Value($v) {
+        if ($null -eq $v) { return '<null>' }
+        if ($v -is [array]) { return ('[' + ((@($v) | ForEach-Object { Show-Value $_ }) -join '|') + ']') }
+        return [string] $v
+    }
+    function Test-Case([string] $What, $Expected, $Actual) {
+        $script:StChecks++
+        $e = Show-Value $Expected
+        $a = Show-Value $Actual
+        if ($e -cne $a) { $script:StFailures += "$What : expected $e, got $a" }
+    }
+    function Test-Throws([string] $What, [scriptblock] $Block, [string] $Fragment) {
+        $script:StChecks++
+        $threw = $false
+        $message = ''
+        try { & $Block | Out-Null } catch { $threw = $true; $message = $_.Exception.Message }
+        if (-not $threw) { $script:StFailures += "$What : expected a refusal, got none" }
+        elseif ($Fragment -and -not $message.Contains($Fragment)) { $script:StFailures += "$What : refused, but the message lacks '$Fragment': $message" }
+    }
+
+    # --- mailbox naming, mirroring Inbucket's parseMailboxName --------------------------------
+    Test-Case 'a plain address names its local part'            'tier'                  (Get-InbucketMailboxName 'tier@vm.invalid')
+    Test-Case 'mailbox names are lowercased'                    'tier'                  (Get-InbucketMailboxName 'Tier@VM.Invalid')
+    Test-Case 'a +tag is cut off'                               'tier'                  (Get-InbucketMailboxName 'tier+extra@vm.invalid')
+    Test-Case 'the identity account gets its own mailbox'       'identity'              (Get-InbucketMailboxName 'identity@vm.invalid')
+    Test-Case 'the probe mailbox'                               'outlookai-sink-probe'  (Get-InbucketMailboxName 'outlookai-sink-probe@vm.invalid')
+    Test-Throws 'an address with no @ is refused'               { Get-InbucketMailboxName 'no-at-sign' } "no '@'"
+    Test-Throws 'a space in the local part is refused'          { Get-InbucketMailboxName 'bad space@vm.invalid' } 'character'
+    Test-Throws 'an empty local part is refused'                { Get-InbucketMailboxName '@vm.invalid' } 'empty local part'
+    Test-Throws 'a local part that is only a +tag is refused'   { Get-InbucketMailboxName '+x@vm.invalid' } 'empty mailbox'
+
+    # --- the probe never shares a mailbox with an account ------------------------------------
+    Test-Case 'the isolation twin'                              'outlookai-sink-probe-isolation@vm.invalid' (Get-IsolationAddress 'outlookai-sink-probe@vm.invalid')
+    Test-Case 'the defaults are disjoint'                       '<null>'                (Get-ProbeMailboxProblem -Probe 'outlookai-sink-probe@vm.invalid' -Accounts @('tier@vm.invalid', 'identity@vm.invalid'))
+    $clash = Get-ProbeMailboxProblem -Probe 'tier@elsewhere.invalid' -Accounts @('tier@vm.invalid')
+    Test-Case 'a probe in an account mailbox is refused'        $true                   ([bool] $clash -and $clash.Contains("mailbox 'tier'"))
+    Test-Case 'a probe that folds into an account after the naming rules is refused' $true ([bool] (Get-ProbeMailboxProblem -Probe 'TIER+probe@vm.invalid' -Accounts @('tier@vm.invalid')))
+    Test-Case 'an isolation twin that is an account is refused' $true                   ([bool] (Get-ProbeMailboxProblem -Probe 'x@vm.invalid' -Accounts @('x-isolation@vm.invalid')))
+    Test-Throws 'DELE in an account mailbox is refused'         { Assert-ProbeMailboxForDelete -Mailbox 'tier' -ProbeMailboxes @('outlookai-sink-probe', 'outlookai-sink-probe-isolation') } 'REFUSING to DELE'
+    Test-Throws 'DELE matches mailbox names ordinally'          { Assert-ProbeMailboxForDelete -Mailbox 'Outlookai-Sink-Probe' -ProbeMailboxes @('outlookai-sink-probe') } 'REFUSING to DELE'
+    $allowed = $true
+    try { Assert-ProbeMailboxForDelete -Mailbox 'outlookai-sink-probe' -ProbeMailboxes @('outlookai-sink-probe', 'outlookai-sink-probe-isolation') } catch { $allowed = $false }
+    Test-Case 'DELE in a probe mailbox is allowed'              $true                   $allowed
+
+    # --- the storage path and cmd safety -------------------------------------------------------
+    Test-Case 'the drive colon becomes $'                       'C$\OutlookAI-Sink\store' (ConvertTo-InbucketStoragePath 'C:\OutlookAI-Sink\store')
+    Test-Throws 'a comma is refused'                            { ConvertTo-InbucketStoragePath 'C:\a,b' } "','"
+    Test-Throws 'a relative path is refused'                    { ConvertTo-InbucketStoragePath 'relative\store' } 'absolute'
+    Test-Throws 'a $ in the path is refused'                    { ConvertTo-InbucketStoragePath 'C:\x$y' } "','"
+    Test-Case 'an ordinary path is cmd-safe'                    '<null>'                (Get-CmdUnsafeReason 'C:\OutlookAI-Sink\run-sink.cmd')
+    Test-Case 'a % is not'                                      $true                   ([bool] (Get-CmdUnsafeReason 'a%b'))
+    Test-Case 'an & is not'                                     $true                   ([bool] (Get-CmdUnsafeReason 'a&b'))
+    Test-Case 'a double quote is not'                           $true                   ([bool] (Get-CmdUnsafeReason 'a"b'))
+    Test-Case 'a line break is not'                             $true                   ([bool] (Get-CmdUnsafeReason "a`r`nb"))
+
+    # --- install-root refusals, because -Uninstall deletes it recursively ------------------------
+    Test-Case 'the default install root is fine'                '<null>'                (Get-InstallRootProblem 'C:\OutlookAI-Sink')
+    Test-Case 'a drive root is refused'                         $true                   ([bool] (Get-InstallRootProblem 'C:\'))
+    Test-Case 'the Windows directory is refused'                $true                   ([bool] (Get-InstallRootProblem 'C:\Windows'))
+    Test-Case 'a directory inside Program Files is refused'     $true                   ([bool] (Get-InstallRootProblem 'C:\Program Files\Sink'))
+    Test-Case 'the Users directory is refused'                  $true                   ([bool] (Get-InstallRootProblem 'C:\Users'))
+    Test-Case 'a relative path is refused'                      $true                   ([bool] (Get-InstallRootProblem 'OutlookAI-Sink'))
+    Test-Case 'a UNC path is refused'                           $true                   ([bool] (Get-InstallRootProblem '\\server\share\sink'))
+    Test-Case 'whitespace is refused'                           $true                   ([bool] (Get-InstallRootProblem 'C:\Outlook Sink'))
+
+    # --- the environment and the launcher ------------------------------------------------------
+    $envList = @(Get-SinkEnvironment -Root 'C:\OutlookAI-Sink' -Smtp 25 -Pop3 110 -Web 9000 -Level 'info')
+    $byName = @{}
+    foreach ($e in $envList) { $byName[$e.Name] = $e.Value }
+    Test-Case 'the environment, in order' 'INBUCKET_LOGLEVEL,INBUCKET_MAILBOXNAMING,INBUCKET_SMTP_ADDR,INBUCKET_POP3_ADDR,INBUCKET_WEB_ADDR,INBUCKET_SMTP_TLSENABLED,INBUCKET_POP3_TLSENABLED,INBUCKET_STORAGE_TYPE,INBUCKET_STORAGE_PARAMS,INBUCKET_STORAGE_RETENTIONPERIOD,INBUCKET_STORAGE_MAILBOXMSGCAP' (($envList | ForEach-Object { $_.Name }) -join ',')
+    Test-Case 'every setting says why'                          $envList.Count          (@($envList | Where-Object { $_.Why -and $_.Why.Length -gt 20 }).Count)
+    Test-Case 'SMTP binds loopback'                             '127.0.0.1:25'          $byName['INBUCKET_SMTP_ADDR']
+    Test-Case 'POP3 binds loopback'                             '127.0.0.1:110'         $byName['INBUCKET_POP3_ADDR']
+    Test-Case 'the web UI binds loopback'                       '127.0.0.1:9000'        $byName['INBUCKET_WEB_ADDR']
+    Test-Case 'mailboxes are named by local part'               'local'                 $byName['INBUCKET_MAILBOXNAMING']
+    Test-Case 'the store is on disk'                            'file'                  $byName['INBUCKET_STORAGE_TYPE']
+    Test-Case 'the store path is written in the $ syntax'       'path:C$\OutlookAI-Sink\store' $byName['INBUCKET_STORAGE_PARAMS']
+    Test-Case 'TLS is off on both protocols'                    'false|false'           ($byName['INBUCKET_SMTP_TLSENABLED'] + '|' + $byName['INBUCKET_POP3_TLSENABLED'])
+
+    $exe = 'C:\OutlookAI-Sink\inbucket_3.1.1_windows_amd64\inbucket.exe'
+    $appDir = 'C:\OutlookAI-Sink\inbucket_3.1.1_windows_amd64'
+    $launcher = ConvertTo-LauncherText -ExePath $exe -AppDir $appDir -SinkLogPath 'C:\OutlookAI-Sink\inbucket.log' -Environment $envList
+    $lfCount = ([regex]::Matches($launcher, "`n")).Count
+    $crlfCount = ([regex]::Matches($launcher, "`r`n")).Count
+    Test-Case 'the launcher ends every line with CRLF'          $lfCount                $crlfCount
+    Test-Case 'the launcher is ASCII'                           $true                   ($launcher -cmatch '^[\x00-\x7F]*$')
+    Test-Case 'the launcher sets each variable exactly once'    $envList.Count          (@($envList | Where-Object { ([regex]::Matches($launcher, [regex]::Escape(('set "{0}={1}"' -f $_.Name, $_.Value)))).Count -eq 1 }).Count)
+    $launcherLines = @($launcher.TrimEnd("`r", "`n") -split "`r`n")
+    Test-Case 'the launcher runs the exe last, logging to a file' ('"' + $exe + '" -logfile "C:\OutlookAI-Sink\inbucket.log"') $launcherLines[-1]
+    Test-Case 'and changes into its folder first'               ('cd /d "' + $appDir + '"') $launcherLines[-2]
+    $other = ConvertTo-LauncherText -ExePath $exe -AppDir $appDir -SinkLogPath 'C:\OutlookAI-Sink\inbucket.log' -Environment (Get-SinkEnvironment -Root 'C:\OutlookAI-Sink' -Smtp 25 -Pop3 110 -Web 9000 -Level 'debug')
+    Test-Case 'a different log level renders a different launcher, so drift is visible' $true ($other -cne $launcher)
+    Test-Throws 'an exe path cmd would interpret is refused'    { ConvertTo-LauncherText -ExePath 'C:\a%b\inbucket.exe' -AppDir 'C:\a' -SinkLogPath 'C:\a\l.log' -Environment $envList } 'Refusing to write a launcher'
+    Test-Throws 'a setting cmd would interpret is refused'      { ConvertTo-LauncherText -ExePath $exe -AppDir $appDir -SinkLogPath 'C:\l.log' -Environment @([pscustomobject]@{ Name = 'X'; Value = 'a&b' }) } 'X is unusable'
+
+    # --- the package layout ------------------------------------------------------------------
+    $entries = @('inbucket_3.1.1_windows_amd64/LICENSE', 'inbucket_3.1.1_windows_amd64/ui/dist/index.html', 'inbucket_3.1.1_windows_amd64/inbucket.exe')
+    Test-Case 'the release zip holds the exe one folder deep'   'inbucket_3.1.1_windows_amd64' (Get-ZipAppFolder $entries)
+    Test-Case 'an exe at the root is reported as such'          ''                      (Get-ZipAppFolder @('inbucket.exe', 'LICENSE'))
+    Test-Case 'backslash separators are understood'             'inbucket_3.1.1_windows_amd64' (Get-ZipAppFolder @('inbucket_3.1.1_windows_amd64\inbucket.exe'))
+    Test-Case 'the exe name is matched case-insensitively'      'x'                     (Get-ZipAppFolder @('x/Inbucket.EXE'))
+    Test-Throws 'a package with no exe is refused'              { Get-ZipAppFolder @('README.md') } 'holds no'
+    Test-Throws 'a package with two exes is refused'            { Get-ZipAppFolder @('a/inbucket.exe', 'b/inbucket.exe') } 'Refusing to guess'
+    Test-Throws 'an exe buried deeper is refused'               { Get-ZipAppFolder @('a/b/inbucket.exe') } 'folders deep'
+    Test-Case 'the version is read off the folder name'         '3.1.1'                 (Get-VersionFromFolderName 'inbucket_3.1.1_windows_amd64')
+    Test-Case 'and nothing is invented for another name'        '<null>'                (Get-VersionFromFolderName 'something-else')
+
+    # --- the hash --------------------------------------------------------------------------------
+    $good = '232fb49c92f88505be1feceb4be90b70ca59bb7853216dee7c8b2814c85235d0'
+    Test-Case 'a matching hash in either case passes'           '<null>'                (Get-Sha256Problem -Expected $good -Actual $good.ToUpperInvariant())
+    Test-Case 'surrounding whitespace is ignored'               '<null>'                (Get-Sha256Problem -Expected (" $good ") -Actual $good)
+    Test-Case 'a missing hash is refused, not defaulted'        $true                   ((Get-Sha256Problem -Expected '' -Actual $good).Contains('mandatory'))
+    Test-Case 'something that is not a SHA-256 is refused'      $true                   ((Get-Sha256Problem -Expected 'abc' -Actual $good).Contains('not a SHA-256'))
+    $mismatch = Get-Sha256Problem -Expected $good -Actual ('0' * 64)
+    Test-Case 'a mismatch names both values'                    $true                   ($mismatch.Contains($good.ToUpperInvariant()) -and $mismatch.Contains('0' * 64))
+
+    # --- reserved port ranges ----------------------------------------------------------------------
+    $netsh = @('', 'Protocol tcp Port Exclusion Ranges', '', 'Start Port    End Port', '----------    --------', '      5357        5357', '     50000       50059     *', '     49709       49808', '', '* - Administered port exclusions.')
+    $ranges = @(Get-ExcludedPortRangeFromText -Lines $netsh)
+    Test-Case 'three reserved ranges are read, the administered one included' 3 $ranges.Count
+    Test-Case 'with their bounds'                               '5357-5357|50000-50059|49709-49808' (($ranges | ForEach-Object { '{0}-{1}' -f $_.Start, $_.End }) -join '|')
+    Test-Case 'a port inside one is caught'                     $true                   (Test-PortInRange -Port 50010 -Ranges $ranges)
+    Test-Case 'the SMTP port is not'                            $false                  (Test-PortInRange -Port 25 -Ranges $ranges)
+    Test-Case 'an empty table has no ranges'                    0                       @(Get-ExcludedPortRangeFromText -Lines @()).Count
+
+    # --- SMTP replies and dot-stuffing -------------------------------------------------------------
+    Test-Case 'a one-line reply'                                220                     (ConvertFrom-SmtpReplyLines @('220 inbucket Inbucket SMTP ready')).Code
+    $multi = ConvertFrom-SmtpReplyLines @('250-inbucket Hello', '250-8BITMIME', '250 SIZE 10240000')
+    Test-Case 'a multi-line reply takes its code from the last line' '250|3'           ('{0}|{1}' -f $multi.Code, $multi.LineCount)
+    Test-Case 'garbage has no code'                             0                       (ConvertFrom-SmtpReplyLines @('xyz')).Code
+    $plain = @('.', '.a', '..b', 'c', '')
+    $stuffed = @(ConvertTo-DotStuffedLines $plain)
+    Test-Case 'every leading period gains one on the way out'   @('..', '..a', '...b', 'c', '') $stuffed
+    Test-Case 'a single line comes back as one line'            @('..x')               @(ConvertTo-DotStuffedLines @('.x'))
+    $decoded = ConvertFrom-DotStuffedLines (@($stuffed) + @('.'))
+    Test-Case 'and loses exactly one on the way back'           $plain                  $decoded.Lines
+    Test-Case 'the terminator is recognised'                    $true                   $decoded.Terminated
+    Test-Case 'a response that just stops is not terminated'    $false                  (ConvertFrom-DotStuffedLines @('a', 'b')).Terminated
+
+    # --- POP3 status lines -----------------------------------------------------------------------
+    $stat = ConvertFrom-Pop3Stat '+OK 2 320'
+    Test-Case 'STAT is read'                                    '2|320'                 ('{0}|{1}' -f $stat.Count, $stat.Octets)
+    Test-Case 'an empty mailbox is read'                        0                       (ConvertFrom-Pop3Stat '+OK 0 0').Count
+    Test-Case 'an -ERR is not a STAT'                           '<null>'                (ConvertFrom-Pop3Stat '-ERR STAT command must have no arguments')
+    $uid = ConvertFrom-Pop3Uidl '+OK 1 20260924T150405-0000'
+    Test-Case 'a UIDL line is read'                             '1|20260924T150405-0000' ('{0}|{1}' -f $uid.Number, $uid.Id)
+    Test-Case 'a deleted message has no UIDL'                   '<null>'                (ConvertFrom-Pop3Uidl '-ERR You deleted message 1')
+
+    # --- the probe message, built under the guests' own formats culture ---------------------------
+    $saved = [System.Threading.Thread]::CurrentThread.CurrentCulture
+    try {
+        [System.Threading.Thread]::CurrentThread.CurrentCulture = New-Object System.Globalization.CultureInfo('nl-NL')
+        $probe = New-ProbeMessage -Address 'outlookai-sink-probe@vm.invalid' -Marker 'abc123def456' -DateUtc (New-Object DateTime(2026, 9, 24, 13, 5, 9, [DateTimeKind]::Utc))
+    }
+    finally { [System.Threading.Thread]::CurrentThread.CurrentCulture = $saved }
+    Test-Case 'the Date header is RFC 5322 whatever the culture' 'Date: Thu, 24 Sep 2026 13:05:09 +0000' $probe.DateHeader
+    $saved = [System.Threading.Thread]::CurrentThread.CurrentCulture
+    try {
+        [System.Threading.Thread]::CurrentThread.CurrentCulture = New-Object System.Globalization.CultureInfo('nl-NL')
+        $printed = Format-Invariant '{0:N1} s, {1:N0} s after boot' @(1.5, 1234)
+    }
+    finally { [System.Threading.Thread]::CurrentThread.CurrentCulture = $saved }
+    Test-Case 'printed numbers ignore the guests'' nl-NL formats' '1.5 s, 1,234 s after boot' $printed
+    Test-Case 'the subject starts with the live-tier tag'       $true                   $probe.Subject.StartsWith('[OutlookAI-McpTest] ', [System.StringComparison]::Ordinal)
+    Test-Case 'and never carries the corpus tag'                $false                  $probe.Subject.Contains('OutlookAI-Corpus')
+    Test-Case 'the body has one bare period'                    1                       @($probe.Lines | Where-Object { $_ -ceq '.' }).Count
+    Test-Case 'an intact retrieval has no problems'             0                       @(Get-ProbeBodyProblems -Message $probe -Retrieved $probe.Lines).Count
+    $cut = @($probe.Lines[0..10])
+    Test-Case 'a body cut at the bare period is caught'         $true                   (@(Get-ProbeBodyProblems -Message $probe -Retrieved $cut).Count -ge 2)
+    $unstuffedWrong = @($probe.Lines | ForEach-Object { if ($_ -ceq '.leading period must survive') { '..leading period must survive' } else { $_ } })
+    Test-Case 'a path that did not unstuff is caught'           $true                   (((Get-ProbeBodyProblems -Message $probe -Retrieved $unstuffedWrong) -join ' ').Contains('dot-stuffing'))
+    $noAttachment = @($probe.Lines | Where-Object { $_ -cne $probe.AttachmentB64 })
+    Test-Case 'a lost attachment is caught'                     $true                   (((Get-ProbeBodyProblems -Message $probe -Retrieved $noAttachment) -join ' ').Contains('attachment'))
+    $noSubject = @($probe.Lines | Where-Object { -not $_.StartsWith('Subject:') })
+    Test-Case 'a lost subject is caught'                        $true                   (((Get-ProbeBodyProblems -Message $probe -Retrieved $noSubject) -join ' ').Contains('subject'))
+
+    # --- the scheduled-task audit ------------------------------------------------------------------
+    $launcherPath = 'C:\OutlookAI-Sink\run-sink.cmd'
+    $goodTask = [pscustomobject]@{
+        Exists = $true; State = 'Running'; Enabled = $true; TriggerKinds = @('MSFT_TaskBootTrigger'); UserId = 'SYSTEM'
+        ActionCount = 1; Execute = 'C:\WINDOWS\System32\cmd.exe'; Arguments = '/d /c "C:\OutlookAI-Sink\run-sink.cmd"'
+        ExecutionTimeLimit = 'PT0S'; MultipleInstances = 'IgnoreNew'
+    }
+    function Copy-Task($t, [hashtable] $changes) {
+        $c = $t.PSObject.Copy()
+        foreach ($k in $changes.Keys) { $c.$k = $changes[$k] }
+        return $c
+    }
+    Test-Case 'a correct task has no problems'                  0                       @(Get-TaskDefinitionProblems -Snapshot $goodTask -LauncherPath $launcherPath).Count
+    Test-Case 'the SID spelling of SYSTEM is accepted'          0                       @(Get-TaskDefinitionProblems -Snapshot (Copy-Task $goodTask @{ UserId = 'S-1-5-18' }) -LauncherPath $launcherPath).Count
+    Test-Case 'a missing task is reported'                      'the scheduled task does not exist' ((Get-TaskDefinitionProblems -Snapshot ([pscustomobject]@{ Exists = $false }) -LauncherPath $launcherPath) -join '')
+    Test-Case 'the three-day default time limit is caught'      $true                   (((Get-TaskDefinitionProblems -Snapshot (Copy-Task $goodTask @{ ExecutionTimeLimit = 'PT72H' }) -LauncherPath $launcherPath) -join ' ').Contains('three days'))
+    Test-Case 'a task for a user is caught'                     $true                   (((Get-TaskDefinitionProblems -Snapshot (Copy-Task $goodTask @{ UserId = 'vmadmin' }) -LauncherPath $launcherPath) -join ' ').Contains('not SYSTEM'))
+    Test-Case 'a logon trigger is caught'                       $true                   (((Get-TaskDefinitionProblems -Snapshot (Copy-Task $goodTask @{ TriggerKinds = @('MSFT_TaskLogonTrigger') }) -LauncherPath $launcherPath) -join ' ').Contains('at startup'))
+    Test-Case 'a second trigger is caught'                      $true                   (@(Get-TaskDefinitionProblems -Snapshot (Copy-Task $goodTask @{ TriggerKinds = @('MSFT_TaskBootTrigger', 'MSFT_TaskLogonTrigger') }) -LauncherPath $launcherPath).Count -ge 1)
+    Test-Case 'a task running another launcher is caught'       $true                   (((Get-TaskDefinitionProblems -Snapshot (Copy-Task $goodTask @{ Arguments = '/d /c "C:\elsewhere\run.cmd"' }) -LauncherPath $launcherPath) -join ' ').Contains('do not name the launcher'))
+    Test-Case 'a disabled task is caught'                       $true                   (((Get-TaskDefinitionProblems -Snapshot (Copy-Task $goodTask @{ Enabled = $false }) -LauncherPath $launcherPath) -join ' ').Contains('disabled'))
+    Test-Case 'two actions are caught'                          $true                   (((Get-TaskDefinitionProblems -Snapshot (Copy-Task $goodTask @{ ActionCount = 2 }) -LauncherPath $launcherPath) -join ' ').Contains('exactly one action'))
+    Test-Case 'parallel instances are caught'                   $true                   (((Get-TaskDefinitionProblems -Snapshot (Copy-Task $goodTask @{ MultipleInstances = 'Parallel' }) -LauncherPath $launcherPath) -join ' ').Contains('IgnoreNew'))
+
+    Write-Host ''
+    Write-Host ("SELF-TEST: {0} assertion(s), {1} failure(s)." -f $script:StChecks, $script:StFailures.Count)
+    foreach ($f in $script:StFailures) { Write-Host "  FAIL $f" }
+    Write-Host ''
+    Write-Host 'What -SelfTest cannot prove, and only a guest run can:'
+    Write-Host '  - that Inbucket 3.1.1 behaves as its source reads: an empty PASS accepted, DELE at QUIT,'
+    Write-Host '    numbers fixed after DELE, TOP working, mailboxes isolated, ids never reused (-Verify);'
+    Write-Host '  - that the scheduled task starts it at boot as SYSTEM with no window (reboot, then -Verify);'
+    Write-Host '  - whether Outlook, holding no stored password, logs in or prompts (Docs/live-tier-on-the-vm.md 2.7).'
+    return $script:StFailures.Count
 }
-if ($Uninstall -and $Verify) {
-    throw 'Pass -Uninstall or -Verify, not both.'
+
+# =============================================================================================
+# ENTRY POINT.
+# =============================================================================================
+
+if ($SelfTest) {
+    # The last thing Invoke-SelfTest emits is its failure count; taking [-1] keeps a stray
+    # emission elsewhere from turning the count into a list that compares wrongly.
+    $failed = [int] (@(Invoke-SelfTest)[-1])
+    if ($failed -gt 0) { exit 1 }
+    exit 0
 }
 
+if ($Verify -and $Execute) { throw 'Pass -Execute or -Verify, not both: -Execute runs the whole verification when it finishes.' }
+if ($Uninstall -and $Verify) { throw 'Pass -Uninstall or -Verify, not both.' }
+
+$verdict = $null
 if ($Uninstall) {
     if (-not $Execute) {
-        Say 'PLAN: stop and remove the service, then delete the install root.'
-        Say ''
-        Say "  service      : $ServiceName"
+        Say 'PLAN: stop the sink, unregister its task, delete the install root. Dry run: nothing done.'
+        Say "  task         : $TaskName"
         Say "  install root : $InstallRoot"
-        Say ''
-        Say 'Dry run. Nothing removed. Re-run with -Uninstall -Execute.'
+        Say 'Re-run with -Uninstall -Execute.'
+        exit 0
     }
-    else {
-        Invoke-Uninstall
-    }
+    Invoke-Uninstall
 }
 elseif ($Verify) {
-    Invoke-Verify
+    $verdict = Invoke-Verify
 }
 elseif ($Execute) {
-    Invoke-Execute
+    $verdict = Invoke-Execute
 }
 else {
     Show-Plan
     Say ''
-    Say 'Dry run. Nothing written. Re-run with -PackagePath <zip> -Execute.'
+    Say 'Dry run. Re-run with -ExpectedSha256 <hash from Testbed/MEDIA.md> -Execute.'
+    exit 0
 }
 
 Say ''
 if ($script:Failures.Count -gt 0) {
     Say ("{0} check(s) FAILED:" -f $script:Failures.Count)
     foreach ($f in $script:Failures) { Say "  - $f" }
-    Save-Log
-    exit 1
 }
+if ($verdict) {
+    Say "VERDICT: $verdict"
+    switch ($verdict) {
+        $VerdictReady  { Say '  The sink answers SMTP and POP3 on loopback and hands back exactly what it was given. Whether Outlook logs in to it without a stored password is a separate question - Docs/live-tier-on-the-vm.md section 2.7.' }
+        $VerdictAbsent { Say '  Nothing is installed. Run with -ExpectedSha256 <hash> -Execute.' }
+        $VerdictBroken { Say "  Something that should work does not. The FAIL lines say which; the sink's own log is $(Join-Path $InstallRoot.TrimEnd('\') $SinkLogName)." }
+    }
+}
+if ($script:LogReady) { Write-Host ''; Write-Host "Log: $LogPath" }
 
-if ($Verify -or $Execute) {
-    Say 'All checks passed.'
-}
-Save-Log
+if ($script:Failures.Count -gt 0) { exit 1 }
+if ($verdict -eq $VerdictAbsent) { exit 3 }
 exit 0

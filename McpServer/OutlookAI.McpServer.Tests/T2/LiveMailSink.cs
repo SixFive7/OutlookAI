@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Sockets;
+using System.Text;
 using OutlookAI.Core.Com;
 
 namespace OutlookAI.McpServer.Tests.T2;
@@ -66,17 +67,31 @@ public sealed class MailSinkSettings
 /// the store is recreated, STAT octet counts - all produce INTERMITTENT wrong answers against
 /// Outlook, which is the fussiest POP3 client there is. This suite's whole design is the
 /// elimination of intermittent artifacts; writing a new source of them to serve it would be
-/// a bad trade. A maintained, permissively licensed component that already does exactly this
-/// is used instead, it is not a dependency of the product or of the build, and the runbook
-/// says which one and how to install it. See <c>Docs/live-tier-on-the-vm.md</c>.
+/// a bad trade. On the test guests the sink is <b>Inbucket 3.1.1</b> (MIT), chosen 2026-09-24
+/// because its POP3 accepts a login with no password and shows each login only its own
+/// mailbox. It is media, not a dependency of the product or of the build:
+/// <c>Testbed/MEDIA.md</c> records it and <c>Testbed/guest/Install-MailSink.ps1</c> installs it
+/// and proves a full SMTP-to-POP3 round trip. See <c>Docs/live-tier-on-the-vm.md</c> section 2.7.
 /// </para>
 /// <para>
-/// <b>What is checked here.</b> Two things, both cheap and both decisive. The listeners
+/// <b>What is checked here.</b> Three things, all cheap and all decisive. The listeners
 /// answer a TCP connect - a sink that is not running is the single likeliest cause of a
 /// send-path failure, and it is indistinguishable from a code fault once the mail is in the
-/// Outbox. And the Outbox is EMPTY before anything runs - because if delivery is not really
-/// happening, that is where the evidence accumulates, and starting a run on top of it means
-/// the teardown sweep will blame this run for the last one's residue.
+/// Outbox. Each listener then GREETS in the protocol its port is declared for - an SMTP
+/// <c>220</c> on submission, a POP3 <c>+OK</c> on retrieval - because anything that binds a
+/// port passes a connect, including some other program, or the two halves configured the wrong
+/// way round, and both of those fail later as a two-minute arrival timeout that names nothing.
+/// And the Outbox is EMPTY before anything runs - because if delivery is not really happening,
+/// that is where the evidence accumulates, and starting a run on top of it means the teardown
+/// sweep will blame this run for the last one's residue.
+/// </para>
+/// <para>
+/// <b>What is deliberately NOT checked here: a round trip.</b> Proving that the sink hands back
+/// what it was given means submitting a message, and this suite cannot see which sink it is
+/// talking to or how its mailboxes are arranged - on a sink that shows every login every
+/// message, a probe would be downloaded into the hub store by the next send/receive. So the
+/// suite asks only questions with no side effects, and the round trip is proved where the sink's
+/// arrangement is known: by the installer's <c>-Verify</c>, into mailboxes no account reads.
 /// </para>
 /// </summary>
 public static class LiveMailSink
@@ -127,8 +142,159 @@ public static class LiveMailSink
                 throw new InvalidOperationException(message);
             }
 
+            (bool speaking, string greetings) = ProbeGreetings(sink);
+            Console.WriteLine("[sink] " + greetings);
+            if (!speaking)
+            {
+                throw new InvalidOperationException(greetings);
+            }
+
             _checked = true;
         }
+    }
+
+    /// <summary>
+    /// Reads each listener's greeting and checks it is the protocol that port is declared for:
+    /// an SMTP <c>220</c> on submission, a POP3 <c>+OK</c> on retrieval. Nothing is submitted
+    /// and nothing is logged in to - each side is sent <c>QUIT</c> straight after its greeting -
+    /// so this has no side effect on any sink, whatever its mailboxes look like.
+    /// <para>
+    /// Separate from <see cref="Probe"/>, which only connects: a connect is what anything that
+    /// binds the port passes, including another program or the two halves swapped. BOTH halves
+    /// are read even when the first is wrong, for the reason <see cref="Probe"/> gives.
+    /// </para>
+    /// </summary>
+    internal static (bool Ready, string Message) ProbeGreetings(MailSinkSettings sink)
+    {
+        ArgumentNullException.ThrowIfNull(sink);
+        string? submit = ProbeGreeting(
+            sink.SubmitHost, sink.SubmitPort, sink.ConnectTimeoutMs, "submission", "an SMTP greeting (220)", IsSmtpGreeting);
+        string? retrieve = ProbeGreeting(
+            sink.RetrieveHost, sink.RetrievePort, sink.ConnectTimeoutMs, "retrieval", "a POP3 greeting (+OK)", IsPop3Greeting);
+        if (submit == null && retrieve == null)
+        {
+            return (true, string.Format(
+                CultureInfo.InvariantCulture,
+                "submission {0}:{1} greets as SMTP and retrieval {2}:{3} as POP3.",
+                sink.SubmitHost,
+                sink.SubmitPort,
+                sink.RetrieveHost,
+                sink.RetrievePort));
+        }
+
+        return (false,
+            "The local mail sink's ports answer, but not with the protocols the 'mailSink' block declares, so "
+            + "a send would reach the wrong program or none and sit in the Outbox."
+            + (submit ?? string.Empty) + (retrieve ?? string.Empty)
+            + " Check what holds those ports and that submitPort and retrievePort are not swapped; on a test "
+            + "guest, Testbed/guest/Install-MailSink.ps1 -Verify says which. See the mail-sink section of "
+            + "Docs/live-tier-on-the-vm.md.");
+    }
+
+    /// <summary>An SMTP greeting is a 220 reply; a multi-line one ends on its <c>220 </c> line.</summary>
+    internal static bool IsSmtpGreeting(IReadOnlyList<string> lines)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        return lines.Count > 0
+            && lines[^1].StartsWith("220", StringComparison.Ordinal)
+            && (lines[^1].Length == 3 || lines[^1][3] == ' ');
+    }
+
+    /// <summary>A POP3 greeting is a single <c>+OK</c> line (RFC 1939 section 4).</summary>
+    internal static bool IsPop3Greeting(IReadOnlyList<string> lines)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        return lines.Count == 1 && lines[0].StartsWith("+OK", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Connects, reads the greeting - following an SMTP continuation (<c>220-</c>) to its last
+    /// line - says <c>QUIT</c>, and returns null when the greeting is the expected one, or a
+    /// sentence naming what arrived instead. Never throws: the caller reports both halves.
+    /// </summary>
+    private static string? ProbeGreeting(
+        string host, int port, int timeoutMs, string half, string expected, Func<IReadOnlyList<string>, bool> accept)
+    {
+        try
+        {
+            using var client = new TcpClient();
+            if (!client.ConnectAsync(host, port).Wait(timeoutMs))
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture, " The {0} port {1}:{2} did not accept a connection within {3} ms.", half, host, port, timeoutMs);
+            }
+
+            client.ReceiveTimeout = timeoutMs;
+            client.SendTimeout = timeoutMs;
+            using NetworkStream stream = client.GetStream();
+            using var reader = new StreamReader(stream, Encoding.Latin1);
+            using var writer = new StreamWriter(stream, Encoding.Latin1) { NewLine = "\r\n", AutoFlush = true };
+
+            var lines = new List<string>();
+            for (int i = 0; i < 10; i++)
+            {
+                string? line = reader.ReadLine();
+                if (line == null)
+                {
+                    break;
+                }
+
+                lines.Add(line);
+                bool smtpContinuation = line.Length > 3 && line[3] == '-' && char.IsAsciiDigit(line[0]);
+                if (!smtpContinuation)
+                {
+                    break;
+                }
+            }
+
+            if (accept(lines))
+            {
+                // Polite, so the sink's own log records a clean close rather than a dropped
+                // client. Best-effort: the verdict is already made.
+                try
+                {
+                    writer.WriteLine("QUIT");
+                    _ = reader.ReadLine();
+                }
+                catch (IOException)
+                {
+                }
+
+                return null;
+            }
+
+            string first = lines.Count == 0 ? "nothing at all" : "'" + Printable(lines[0]) + "'";
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                " The {0} port {1}:{2} answered {3} where {4} was expected.",
+                half,
+                host,
+                port,
+                first,
+                expected);
+        }
+        catch (Exception ex) when (ex is SocketException or AggregateException or ObjectDisposedException or IOException)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                " Reading the {0} greeting from {1}:{2} failed: {3}.",
+                half,
+                host,
+                port,
+                ex.GetBaseException().Message);
+        }
+    }
+
+    /// <summary>At most 80 characters, control characters shown as '?', for a message a human reads.</summary>
+    private static string Printable(string line)
+    {
+        var chars = new StringBuilder();
+        foreach (char c in line.Length > 80 ? line[..80] : line)
+        {
+            chars.Append(char.IsControl(c) ? '?' : c);
+        }
+
+        return chars.ToString();
     }
 
     /// <summary>
