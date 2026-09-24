@@ -161,6 +161,19 @@ public sealed class LiveTestSettings
     public MailSinkSettings? MailSink { get; set; }
 
     /// <summary>
+    /// OPTIONAL path of the manifest of the hub's generated POPULATION, on a test guest whose hub
+    /// holds one (<c>corpus-build --population hub</c>). Its header records the anchor the hub was
+    /// last rebuilt against, and <c>LiveIndexSearchTests.Staleness_SelfReportsPlausibleFrontier</c>
+    /// reads it: that test can catch a local-time misreading of the index frontier only while the
+    /// hub's newest item is younger than the machine's UTC offset, so a guest that declares a hub
+    /// population and runs the tier on a stale one FAILS that test with the remedy, instead of
+    /// passing it having proved nothing. The per-run rebuild that keeps it fresh is
+    /// <c>Testbed/guest/Reset-HubPopulation.ps1</c> (decided 2026-09-24). Absent - the maintainer's
+    /// own machine, whose hub is real mail - leaves the test as it was.
+    /// </summary>
+    public string? HubPopulationManifestPath { get; set; }
+
+    /// <summary>
     /// How the settings file is read.
     /// <para>
     /// <b><see cref="JsonStringEnumConverter"/> is load-bearing, not tidiness.</b> Without it
@@ -267,6 +280,17 @@ public sealed class LiveTestSettings
         }
 
         ValidateIndexedStores(settings);
+
+        // Present-but-blank is the one shape refused here: it reads as a declared hub population and
+        // would make the frontier test look for a manifest nobody named. Whether the file is THERE is
+        // the frontier test's question - it reads it, and fails with the remedy if it cannot.
+        if (settings.HubPopulationManifestPath != null && string.IsNullOrWhiteSpace(settings.HubPopulationManifestPath))
+        {
+            throw new InvalidOperationException(
+                "Live-test settings name a blank 'hubPopulationManifestPath'. Give the path of the hub population's "
+                + "manifest (corpus-<id>.jsonl, written by corpus-build --population hub), or leave the key out on a "
+                + "machine whose hub holds no generated population.");
+        }
 
         if (settings.MachineProfile != LiveMachineProfile.Production)
         {
@@ -543,6 +567,13 @@ public sealed class LivePhase1Fixture : IDisposable
             () => Session.WalkStoreMailItems(Settings.TestHubStoreDisplayName),
             LazyThreadSafetyMode.ExecutionAndPublication);
     }
+
+    /// <summary>
+    /// The index scope of the indexed store every LATENCY bound in the index tier is timed on - the
+    /// largest (<see cref="LiveLatencyTarget"/>). Decided 2026-09-24: timed on the first indexed store,
+    /// which on a guest is the few-dozen-item hub, a two-second bound is met by construction.
+    /// </summary>
+    public StoreScopeInfo LargestIndexedScope => GetScope(LiveLatencyTarget.Measure(Settings).Largest);
 
     public LiveTestSettings Settings { get; }
 

@@ -352,6 +352,43 @@ public sealed class CorpusProbeResidueCensusTests
         Assert.False(CorpusSafety.MayDelete("P-ONE", "Quarterly numbers", allowlist, CorpusId));
     }
 
+    /// <summary>
+    /// The CROSS-STORE sweep (<see cref="ComCorpusMailbox.SweepProbeResidueOutsideTarget"/>), added after
+    /// OAI-UNINDEXED 2026-09-24: twelve probe items of four probe sessions sat in Corpus B's Drafts - the
+    /// profile's default store, named on no allowlist - because a failed rung's item was filed there on its
+    /// first save and deleted, if at all, in the target. The sweep reads every OTHER store's Drafts and
+    /// Deleted Items, and selects with the same predicate as the in-store purge - so in a store holding a
+    /// whole measurement corpus, only the probe items of THIS corpus id are ever addressed.
+    /// </summary>
+    [Fact]
+    public void TheCrossStoreSweep_ReadsOnlyDraftsAndDeletedItems_AndSelectsOnlyThisCorpussProbeItems()
+    {
+        Assert.Equal(new[] { DraftsFolderId, DeletedItemsFolderId }, ComCorpusMailbox.CrossStoreResidueFolderIds);
+
+        // Corpus B's Drafts on the guest, as the sweep would scan it for a POPULATION's corpus id: its own
+        // corpus items are another corpus id's and never reach a row (the scan keeps only subjects that
+        // parse as the id it was given); the population's three stranded probe items do.
+        const string population = "hub-unindexed";
+        Assert.False(CorpusPlan.TryParseOrdinal(Plan().Describe(1).Subject, population, out _));
+        Assert.Equal(CorpusSubjectKind.Current, CorpusPlan.ClassifySubject(
+            CorpusPlan.SubjectTag + CorpusPlan.CorpusTagOpen + population + "#"
+                + CorpusPlan.ProbeOrdinal.ToString("D7", System.Globalization.CultureInfo.InvariantCulture) + "] placement InPlaceOnly",
+            population, out int probeOrdinal));
+        Assert.Equal(CorpusPlan.ProbeOrdinal, probeOrdinal);
+
+        var drafts = new List<ComCorpusMailbox.ScanRow>
+        {
+            new(CorpusPlan.ProbeOrdinal, "S-1", DraftsFolderId),
+            new(CorpusPlan.ProbeOrdinal, "S-2", DraftsFolderId),
+            new(CorpusPlan.ProbeOrdinal, "S-3", DraftsFolderId),
+
+            // A population ITEM that somehow sat there is not the sweep's business: it is not a probe item.
+            new(7, "S-ITEM", DraftsFolderId),
+        };
+
+        Assert.Equal(new[] { "S-1", "S-2", "S-3" }, ComCorpusMailbox.SelectProbeResidue(drafts).Select(r => r.EntryId));
+    }
+
     /// <summary>Exactly what <c>ComCorpusMailbox.ProbeSubject</c> builds.</summary>
     private static string ProbeSubject(string what)
         => CorpusPlan.SubjectTag + CorpusPlan.CorpusTagOpen + CorpusId + "#"

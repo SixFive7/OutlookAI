@@ -110,7 +110,11 @@
         unindexed guest carrying neither and no indexed store; one spelling per store across every
         list; a sink on loopback only; the manifest named corpus-<corpusId>.jsonl; and corpusId,
         seed, anchor and item count agreeing with testbed.json's corpusIdConvention - including the
-        indexed guest's minimum corpus size.
+        indexed guest's minimum corpus size. And, since the per-run hub rebuild (2026-09-24), the
+        hub population's manifest named on every guest - hubPopulationManifestPath, an absolute
+        path ending corpus-<id>.jsonl for the id corpusIdConvention.populations gives that guest's
+        hub, and never the corpus's own manifest: Testbed/guest/Reset-HubPopulation.ps1 rebuilds
+        the hub from it, and the frontier test refuses a hub nobody rebuilt by it.
 
     WHAT IT CANNOT CHECK, and it prints this on every render: whether the guest's TIER profile
     actually mounts every declared store under exactly those names. A declared store the running
@@ -196,9 +200,9 @@ $script:GuestSettingsRelative = 'McpServer\OutlookAI.McpServer.Tests\live-fixtur
 # What the rules below know about. The template must name exactly these; -SelfTest asserts it and
 # a render refuses a template that has drifted, because a field nobody wrote a rule for is a field
 # nobody checked.
-$script:TopLevelFields = @('machineProfile', 'testHubStoreDisplayName', 'expectedStoreDisplayNames',
-    'indexedStoreDisplayNames', 'expectedDelegateStoreDisplayNames', 'bystanderStoreDisplayNames', 'probeTerm',
-    'subjectOnlyProbe', 'corpus', 'mailSink')
+$script:TopLevelFields = @('machineProfile', 'testHubStoreDisplayName', 'hubPopulationManifestPath',
+    'expectedStoreDisplayNames', 'indexedStoreDisplayNames', 'expectedDelegateStoreDisplayNames',
+    'bystanderStoreDisplayNames', 'probeTerm', 'subjectOnlyProbe', 'corpus', 'mailSink')
 $script:BlockFields = @{
     subjectOnlyProbe = @('storeDisplayName', 'folderPath', 'subjectTerm', 'senderFragment')
     corpus           = @('storeDisplayName', 'manifestPath', 'corpusId', 'seed', 'anchorUtc', 'itemCount', 'windowDays')
@@ -746,13 +750,14 @@ function ConvertFrom-AnchorText {
 <#
     Every rule a rendered settings file must satisfy, applied to the PARSED ARTEFACT rather than to
     the values that went into it - what is checked is what will be read. $Assigned is testbed.json's
-    corpusIdConvention.assigned.
+    corpusIdConvention.assigned, and $Populations its corpusIdConvention.populations.assigned.
 #>
 function Add-SettingsProblems {
     param(
         $Settings,
         [string] $VMName,
         $Assigned,
+        $Populations,
         [System.Collections.Generic.List[string]] $Problems
     )
 
@@ -794,6 +799,43 @@ function Add-SettingsProblems {
             $Problems.Add("testHubStoreDisplayName: '$($hubValue.Value)' is not shaped like an SMTP address. It doubles as one - tests call NewDraft(Hub, Hub, ...) and FindAccountBySmtp(Hub) - so the hub store must be named exactly as its account's address (Docs/live-tier-on-the-vm.md section 2.6).")
         }
         else { $hub = $hubValue.Value }
+    }
+
+    # hubPopulationManifestPath - the manifest of the population generated into the hub. On a test
+    # guest the hub is rebuilt before every run from it (Testbed/guest/Reset-HubPopulation.ps1), and
+    # the frontier test reads it to refuse a hub nobody rebuilt - so it is required, and named by the
+    # id corpusIdConvention.populations assigns this guest's hub, as every manifest is named by its id.
+    $hubPopulations = @(@($Populations) | Where-Object {
+            (Test-IsJsonObject $_) -and $_.guest -is [string] -and $_.guest -ceq $VMName -and
+            $_.population -is [string] -and $_.population -ceq 'hub' })
+    $hubPopulationId = $null
+    if ($hubPopulations.Count -ne 1) {
+        $Problems.Add("corpusIdConvention.populations.assigned in testbed.json has $($hubPopulations.Count) hub entries for guest '$VMName', where exactly one is needed - it is the id the hub population is built and rebuilt under, and so the name of the manifest hubPopulationManifestPath must point at.")
+    }
+    elseif (-not ($hubPopulations[0].corpusId -is [string]) -or $hubPopulations[0].corpusId -cnotmatch '^[A-Za-z0-9_-]+$') {
+        $Problems.Add("corpusIdConvention.populations.assigned's hub entry for '$VMName' carries no usable corpusId - ASCII letters, digits, '-' or '_'.")
+    }
+    else { $hubPopulationId = [string]$hubPopulations[0].corpusId }
+
+    $hubManifest = Get-FieldValue $Settings 'hubPopulationManifestPath'
+    if (-not $hubManifest.Present) {
+        $Problems.Add("hubPopulationManifestPath: missing. On a test guest it names the hub population's manifest: Testbed/guest/Reset-HubPopulation.ps1 rebuilds the hub from it before every run, and LiveIndexSearchTests.Staleness_SelfReportsPlausibleFrontier reads it to refuse a hub nobody rebuilt (Docs/live-tier-on-the-vm.md section 3b). Left out, that test cannot tell a stale hub from a fresh one.")
+    }
+    elseif (-not ($hubManifest.Value -is [string]) -or $hubManifest.Value -cnotmatch '^[A-Za-z]:\\') {
+        $Problems.Add('hubPopulationManifestPath: must be an absolute path on the guest, like C:\OutlookAI-Q5\corpus-<the hub population''s id>.jsonl.')
+    }
+    elseif ($null -ne $hubPopulationId) {
+        $hubLeaf = $hubManifest.Value.Substring($hubManifest.Value.LastIndexOf('\') + 1)
+        if (-not [string]::Equals($hubLeaf, "corpus-$hubPopulationId.jsonl", [System.StringComparison]::OrdinalIgnoreCase)) {
+            $Problems.Add("hubPopulationManifestPath: the file must be named corpus-$hubPopulationId.jsonl - the id corpusIdConvention.populations assigns this guest's hub - not '$hubLeaf'. The manifest is the only thing that can tear the population down, and Reset-HubPopulation.ps1 reads the population's id off that name.")
+        }
+        $corpusPeekForManifest = Get-FieldValue $Settings 'corpus'
+        if ($corpusPeekForManifest.Present -and (Test-IsJsonObject $corpusPeekForManifest.Value)) {
+            $corpusManifestPeek = (Get-FieldValue $corpusPeekForManifest.Value 'manifestPath').Value
+            if ($corpusManifestPeek -is [string] -and [string]::Equals($corpusManifestPeek, $hubManifest.Value, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $Problems.Add('hubPopulationManifestPath: is the same file as corpus.manifestPath. The hub population and the measurement corpus are two corpora, each with its own manifest; one file cannot be the teardown allowlist of both.')
+            }
+        }
     }
 
     $expected = Get-StoreNameList -Settings $Settings -Field 'expectedStoreDisplayNames' -Problems $Problems
@@ -1449,6 +1491,7 @@ function Invoke-SelfTest {
   "_note": "comment keys are ignored at every level",
   "machineProfile": "Portable",
   "testHubStoreDisplayName": "hub@render.invalid",
+  "hubPopulationManifestPath": "C:\\OutlookAI-Q5\\corpus-hub-synthetic.jsonl",
   "expectedStoreDisplayNames": [ "hub@render.invalid", "Synthetic Corpus", "bystander@render.invalid", "identity@render.invalid" ],
   "indexedStoreDisplayNames": [ "hub@render.invalid", "bystander@render.invalid", "Synthetic Corpus" ],
   "expectedDelegateStoreDisplayNames": [],
@@ -1480,8 +1523,10 @@ function Invoke-SelfTest {
   }
 }
 '@
-    $conventionText = '{ "assigned": [ { "corpusId": "vm-synthetic", "guest": "OutlookAI-Synthetic", "indexed": true, "seed": 4242, "anchor": "2026-08-01", "itemCount": 1000, "minimumItemCount": 1000 }, { "corpusId": "vm-other", "guest": "OutlookAI-Other", "indexed": false, "seed": null, "anchor": null, "itemCount": null }, { "corpusId": "vm-unknown", "guest": "OutlookAI-Unknown", "seed": null, "anchor": null, "itemCount": null } ] }'
-    $assigned = (ConvertFrom-JsonText -Text $conventionText -What 'the synthetic convention').assigned
+    $conventionText = '{ "assigned": [ { "corpusId": "vm-synthetic", "guest": "OutlookAI-Synthetic", "indexed": true, "seed": 4242, "anchor": "2026-08-01", "itemCount": 1000, "minimumItemCount": 1000 }, { "corpusId": "vm-other", "guest": "OutlookAI-Other", "indexed": false, "seed": null, "anchor": null, "itemCount": null }, { "corpusId": "vm-unknown", "guest": "OutlookAI-Unknown", "seed": null, "anchor": null, "itemCount": null } ], "populations": { "assigned": [ { "corpusId": "hub-synthetic", "guest": "OutlookAI-Synthetic", "population": "hub", "seed": 8181 }, { "corpusId": "bystander-synthetic", "guest": "OutlookAI-Synthetic", "population": "bystander", "seed": 8282 }, { "corpusId": "hub-other", "guest": "OutlookAI-Other", "population": "hub", "seed": 8181 }, { "corpusId": "hub-unknown", "guest": "OutlookAI-Unknown", "population": "hub", "seed": 8181 }, { "corpusId": "hub-twice-a", "guest": "OutlookAI-Twice", "population": "hub", "seed": 1 }, { "corpusId": "hub-twice-b", "guest": "OutlookAI-Twice", "population": "hub", "seed": 2 } ] } }'
+    $convention = ConvertFrom-JsonText -Text $conventionText -What 'the synthetic convention'
+    $assigned = $convention.assigned
+    $populations = $convention.populations.assigned
 
     function New-Guest { return (ConvertFrom-JsonText -Text $guestText -What 'the synthetic guest') }
 
@@ -1594,7 +1639,7 @@ function Invoke-SelfTest {
     $shape = Get-TemplateFields -Template $template
     Test-Case 'every value in it is the token for its own path' '' ($shape.Problems -join ' | ')
     Test-Case 'it names exactly the fields this script has rules for' '' ((Get-TemplateDriftProblems -Fields $shape.Fields) -join ' | ')
-    Test-Case 'in order' 'machineProfile,testHubStoreDisplayName,expectedStoreDisplayNames,indexedStoreDisplayNames,expectedDelegateStoreDisplayNames,bystanderStoreDisplayNames,probeTerm,subjectOnlyProbe.storeDisplayName,subjectOnlyProbe.folderPath,subjectOnlyProbe.subjectTerm,subjectOnlyProbe.senderFragment,corpus.storeDisplayName,corpus.manifestPath,corpus.corpusId,corpus.seed,corpus.anchorUtc,corpus.itemCount,corpus.windowDays,mailSink.submitHost,mailSink.submitPort,mailSink.retrieveHost,mailSink.retrievePort,mailSink.connectTimeoutMs' ((@($shape.Fields | ForEach-Object { $_.Path })) -join ',')
+    Test-Case 'in order' 'machineProfile,testHubStoreDisplayName,hubPopulationManifestPath,expectedStoreDisplayNames,indexedStoreDisplayNames,expectedDelegateStoreDisplayNames,bystanderStoreDisplayNames,probeTerm,subjectOnlyProbe.storeDisplayName,subjectOnlyProbe.folderPath,subjectOnlyProbe.subjectTerm,subjectOnlyProbe.senderFragment,corpus.storeDisplayName,corpus.manifestPath,corpus.corpusId,corpus.seed,corpus.anchorUtc,corpus.itemCount,corpus.windowDays,mailSink.submitHost,mailSink.submitPort,mailSink.retrieveHost,mailSink.retrievePort,mailSink.connectTimeoutMs' ((@($shape.Fields | ForEach-Object { $_.Path })) -join ',')
 
     $bad = ConvertFrom-JsonText -Text '{ "machineProfile": "Portable", "corpus": { "seed": "{{corpus.itemCount}}", "deep": { "x": "{{corpus.deep.x}}" } } }' -What 'a bad template'
     $badShape = Get-TemplateFields -Template $bad
@@ -1609,7 +1654,7 @@ function Invoke-SelfTest {
     $resolved = Resolve-GuestValues -Fields $shape.Fields -Guest (New-Guest) -Where 'the synthetic guest'
     Test-Case 'a complete guest has no problems' '' ($resolved.Problems -join ' | ')
     Test-Case 'and no block left out' 0 $resolved.Omitted.Count
-    Test-Case 'and every field has a value' 23 $resolved.ByPath.Count
+    Test-Case 'and every field has a value' 24 $resolved.ByPath.Count
 
     $guest = New-Guest
     $guest.testHubStoreDisplayName = '<FILL: from the guest>'
@@ -1710,6 +1755,7 @@ function Invoke-SelfTest {
     $parsed = ConvertFrom-JsonText -Text $text -What 'the rendered text'
     Test-Case 'it parses' $true (Test-IsJsonObject $parsed)
     Test-Case 'the hub arrives' 'hub@render.invalid' $parsed.testHubStoreDisplayName
+    Test-Case 'and its population''s manifest' 'C:\OutlookAI-Q5\corpus-hub-synthetic.jsonl' $parsed.hubPopulationManifestPath
     Test-Case 'the store list arrives whole, in order' 'hub@render.invalid|Synthetic Corpus|bystander@render.invalid|identity@render.invalid' ($parsed.expectedStoreDisplayNames -join '|')
     Test-Case 'the indexed list arrives whole, in order' 'hub@render.invalid|bystander@render.invalid|Synthetic Corpus' ($parsed.indexedStoreDisplayNames -join '|')
     Test-Case 'the probe term and the subject-only probe arrive' 'invoice|bulletin|noticebot' ('{0}|{1}|{2}' -f $parsed.probeTerm, $parsed.subjectOnlyProbe.subjectTerm, $parsed.subjectOnlyProbe.senderFragment)
@@ -1719,7 +1765,7 @@ function Invoke-SelfTest {
     Test-Case 'the sink arrives' '127.0.0.1:2525' ('{0}:{1}' -f $parsed.mailSink.submitHost, $parsed.mailSink.submitPort)
     Test-Case 'the provenance note says where it came from' $true ($parsed._rendered.Contains('liveTestSettings.OutlookAI-Synthetic'))
     $problems = New-Object System.Collections.Generic.List[string]
-    Add-SettingsProblems -Settings $parsed -VMName $vm -Assigned $assigned -Problems $problems
+    Add-SettingsProblems -Settings $parsed -VMName $vm -Assigned $assigned -Populations $populations -Problems $problems
     Test-Case 'and it breaks no rule' '' ($problems -join ' | ')
     Test-Case 'the identity grant is the one store left out of the bystanders' 'identity@render.invalid' ((Get-IdentityGrant -Settings $parsed) -join ',')
 
@@ -1734,7 +1780,7 @@ function Invoke-SelfTest {
     Test-Case 'a block declared null is absent from the file, not null in it' 'False|False' ('{0}|{1}' -f ($null -ne (Get-ExactProperty $parsed 'corpus')), ($null -ne (Get-ExactProperty $parsed 'mailSink')))
     Test-Case 'and a note says why the sink is absent' $true ($null -ne (Get-ExactProperty $parsed '_mailSink'))
     $problems = New-Object System.Collections.Generic.List[string]
-    Add-SettingsProblems -Settings $parsed -VMName $vm -Assigned $assigned -Problems $problems
+    Add-SettingsProblems -Settings $parsed -VMName $vm -Assigned $assigned -Populations $populations -Problems $problems
     Test-Case 'a guest with neither block breaks no rule' '' ($problems -join ' | ')
 
     # The unindexed guest's shape: nothing indexed, no probe term, no subject-only probe - rendered,
@@ -1744,6 +1790,7 @@ function Invoke-SelfTest {
     $guest.indexedStoreDisplayNames = @()
     $guest.probeTerm = ''
     $guest.subjectOnlyProbe = $null
+    $guest.hubPopulationManifestPath = 'C:\OutlookAI-Q5\corpus-hub-other.jsonl'
     $resolved = Resolve-GuestValues -Fields $shape.Fields -Guest $guest -Where 'the synthetic guest'
     $text = (ConvertTo-JsonLiteral -Value (New-RenderedDocument -Fields $shape.Fields -Resolved $resolved -VMName 'OutlookAI-Other' -Provenance 'a self-test' -RenderedAtUtc ([datetime]::UtcNow))) + "`n"
     $parsed = ConvertFrom-JsonText -Text $text -What 'the rendered text'
@@ -1751,7 +1798,7 @@ function Invoke-SelfTest {
     Test-Case 'and a note says why' $true ($null -ne (Get-ExactProperty $parsed '_subjectOnlyProbe'))
     Test-Case 'and its indexed list is an empty LIST' $true ($parsed.indexedStoreDisplayNames -is [System.Array])
     $problems = New-Object System.Collections.Generic.List[string]
-    Add-SettingsProblems -Settings $parsed -VMName 'OutlookAI-Other' -Assigned $assigned -Problems $problems
+    Add-SettingsProblems -Settings $parsed -VMName 'OutlookAI-Other' -Assigned $assigned -Populations $populations -Problems $problems
     Test-Case 'the unindexed guest''s shape breaks no rule' '' ($problems -join ' | ')
 
     # ---------------------------------------------------------------------------------------
@@ -1762,7 +1809,7 @@ function Invoke-SelfTest {
         $settings = New-Guest
         & $Change $settings
         $found = New-Object System.Collections.Generic.List[string]
-        Add-SettingsProblems -Settings $settings -VMName $ForVm -Assigned $assigned -Problems $found
+        Add-SettingsProblems -Settings $settings -VMName $ForVm -Assigned $assigned -Populations $populations -Problems $found
         return , $found.ToArray()
     }
 
@@ -1834,6 +1881,19 @@ function Invoke-SelfTest {
     Test-HasProblem 'a subject-only probe written as null is refused - absent means left out' (Get-RuleProblems { param($s) $s.subjectOnlyProbe = $null }) 'never written as null'
     Test-HasProblem 'a corpus below the recorded minimum size is refused' (Get-RuleProblems { param($s) $s.corpus.itemCount = 999 }) 'below the 1000 corpusIdConvention requires'
 
+    # The hub population's manifest - what the per-run rebuild reads, and what the frontier test
+    # refuses a stale hub by.
+    Test-HasProblem 'a guest without the hub population manifest is refused' (Get-RuleProblems { param($s) $s.PSObject.Properties.Remove('hubPopulationManifestPath') }) 'hubPopulationManifestPath: missing'
+    Test-HasProblem 'and the refusal names the script that rebuilds the hub' (Get-RuleProblems { param($s) $s.PSObject.Properties.Remove('hubPopulationManifestPath') }) 'Reset-HubPopulation.ps1'
+    Test-HasProblem 'a relative hub manifest path is refused' (Get-RuleProblems { param($s) $s.hubPopulationManifestPath = 'corpus-hub-synthetic.jsonl' }) 'hubPopulationManifestPath: must be an absolute path'
+    Test-HasProblem 'a blank one is refused' (Get-RuleProblems { param($s) $s.hubPopulationManifestPath = '' }) 'hubPopulationManifestPath: must be an absolute path'
+    Test-HasProblem 'a hub manifest not named after the hub population''s id is refused' (Get-RuleProblems { param($s) $s.hubPopulationManifestPath = 'C:\OutlookAI-Q5\corpus-hub-other.jsonl' }) 'must be named corpus-hub-synthetic.jsonl'
+    Test-HasProblem 'nor after the bystander''s, the other population on the same guest' (Get-RuleProblems { param($s) $s.hubPopulationManifestPath = 'C:\OutlookAI-Q5\corpus-bystander-synthetic.jsonl' }) 'must be named corpus-hub-synthetic.jsonl'
+    Test-Case 'the same name in another case is the same file, and accepted' '' ((Get-RuleProblems { param($s) $s.hubPopulationManifestPath = 'C:\OutlookAI-Q5\CORPUS-HUB-SYNTHETIC.jsonl' }) -join ' | ')
+    Test-HasProblem 'the hub manifest and the corpus manifest being one file is refused' (Get-RuleProblems { param($s) $s.corpus.manifestPath = 'C:\OutlookAI-Q5\corpus-hub-synthetic.jsonl' }) 'is the same file as corpus.manifestPath'
+    Test-HasProblem 'a guest the record gives no hub population is refused' (Get-RuleProblems -ForVm 'OutlookAI-Nobody' { param($s) }) 'has 0 hub entries for guest'
+    Test-HasProblem 'and one it gives two is refused' (Get-RuleProblems -ForVm 'OutlookAI-Twice' { param($s) }) 'has 2 hub entries for guest'
+
     # ---------------------------------------------------------------------------------------
     Write-Host ''
     Write-Host '== the line that copies it into the guest =='
@@ -1847,6 +1907,7 @@ function Invoke-SelfTest {
     Write-Host '  * that the guest''s TIER profile mounts every declared store, under exactly those names'
     Write-Host '  * that the hub is an account''s delivery store and that account''s SmtpAddress is the hub''s name'
     Write-Host '  * that the corpus manifest is where the settings say, and the corpus still fresh'
+    Write-Host '  * that the hub population manifest is where the settings say, and the hub rebuilt for the run'
     Write-Host '  * Copy-ToGuest.ps1 landing the file, and the live tier loading it and starting'
     Write-Host '  * SUBST and mapped drives resolving through GetFinalPathNameByHandle - documented, not exercised'
 
@@ -1930,13 +1991,19 @@ if ($leftover.Count -gt 0) {
 }
 $parsed = ConvertFrom-JsonText -Text $text -What 'The rendered file'
 $assigned = $null
+$populations = $null
 $convention = Get-ExactProperty $testbed 'corpusIdConvention'
 if ($null -ne $convention) {
     $assignedProperty = Get-ExactProperty $convention.Value 'assigned'
     if ($null -ne $assignedProperty) { $assigned = $assignedProperty.Value }
+    $populationsProperty = Get-ExactProperty $convention.Value 'populations'
+    if ($null -ne $populationsProperty -and (Test-IsJsonObject $populationsProperty.Value)) {
+        $populationsAssigned = Get-ExactProperty $populationsProperty.Value 'assigned'
+        if ($null -ne $populationsAssigned) { $populations = $populationsAssigned.Value }
+    }
 }
 $problems = New-Object System.Collections.Generic.List[string]
-Add-SettingsProblems -Settings $parsed -VMName $VMName -Assigned $assigned -Problems $problems
+Add-SettingsProblems -Settings $parsed -VMName $VMName -Assigned $assigned -Populations $populations -Problems $problems
 if ($problems.Count -gt 0) {
     $message = "REFUSING to write live-test settings for '$VMName': the rendered file breaks $($problems.Count) rule(s) the live tier or its documentation sets:`n  - " +
         ($problems -join "`n  - ") + "`nCorrect the liveTestSettings.$VMName section of $valuesShown. Nothing was written."
@@ -1965,6 +2032,7 @@ Write-Host ("  file        {0}" -f $outFull)
 Write-Host ("  sha256      {0}" -f $hash)
 Write-Host ("  profile     {0}" -f $parsed.machineProfile)
 Write-Host ("  hub         {0}   - the one store the suite may write to" -f $hub)
+Write-Host ("  hub pop.    {0}   - rebuilt before every run by Testbed/guest/Reset-HubPopulation.ps1" -f $parsed.hubPopulationManifestPath)
 Write-Host ("  watched     {0} store(s): {1}" -f @($parsed.expectedStoreDisplayNames).Count, (@($parsed.expectedStoreDisplayNames) -join ', '))
 $indexedList = @($parsed.indexedStoreDisplayNames)
 if ($indexedList.Count -gt 0) {
@@ -1997,6 +2065,8 @@ Write-Host '    (a declared store the running profile does not mount is censused
 Write-Host '  * that the hub is an account''s delivery store, and that account''s SmtpAddress is the hub''s name'
 Write-Host '  * that the hub and bystander POPULATIONS are built and censused (Docs/live-tier-on-the-vm.md section 3b) -'
 Write-Host '    every hub test, and the probe values above, read them'
+Write-Host ("  * that {0} exists on the guest and the hub was rebuilt for THIS run -" -f $parsed.hubPopulationManifestPath)
+Write-Host '    Testbed/guest/Reset-HubPopulation.ps1 -Execute, first in every run; the frontier test fails on a stale hub'
 if ($null -ne (Get-ExactProperty $parsed 'corpus')) {
     Write-Host ("  * that {0} exists on the guest, and the corpus is still fresh - the tier checks both at start" -f $parsed.corpus.manifestPath)
 }

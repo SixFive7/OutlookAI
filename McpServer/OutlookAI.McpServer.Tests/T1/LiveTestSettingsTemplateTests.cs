@@ -65,7 +65,10 @@ public sealed class LiveTestSettingsTemplateTests
     private const string NoFailableStore = "NO STORE THIS CENSUS WATCHES CAN PRODUCE A FAILURE";
 
     /// <summary>How many token fields the template carries: the renderer's self-test and check 8 count the same.</summary>
-    private const int TemplateFieldCount = 23;
+    private const int TemplateFieldCount = 24;
+
+    /// <summary>The synthetic guest's hub population manifest - named after a synthetic population id.</summary>
+    private const string HubManifest = @"C:\OutlookAI-Q5\corpus-hub-synthetic.jsonl";
 
     private readonly ITestOutputHelper _output;
 
@@ -110,6 +113,7 @@ public sealed class LiveTestSettingsTemplateTests
               "_note": "comment keys are not settings",
               "machineProfile": "Portable",
               "testHubStoreDisplayName": "hub@render.invalid",
+              "hubPopulationManifestPath": "C:\\OutlookAI-Q5\\corpus-hub-synthetic.jsonl",
               "expectedStoreDisplayNames": [ "hub@render.invalid", "Synthetic Corpus", "bystander@render.invalid", "identity@render.invalid" ],
               "indexedStoreDisplayNames": [ "hub@render.invalid", "bystander@render.invalid", "Synthetic Corpus" ],
               "expectedDelegateStoreDisplayNames": [],
@@ -261,6 +265,7 @@ public sealed class LiveTestSettingsTemplateTests
         }
 
         Assert.Equal(TemplateFieldCount, fields.Count);
+        Assert.Contains("hubPopulationManifestPath", fields);
         Assert.Contains("indexedStoreDisplayNames", fields);
         Assert.Contains("probeTerm", fields);
         Assert.Contains("subjectOnlyProbe.senderFragment", fields);
@@ -273,6 +278,7 @@ public sealed class LiveTestSettingsTemplateTests
 
         Assert.Equal(LiveMachineProfile.Portable, settings.MachineProfile);
         Assert.Equal(Hub, settings.TestHubStoreDisplayName);
+        Assert.Equal(HubManifest, settings.HubPopulationManifestPath);
         Assert.Equal(new[] { Hub, CorpusStore, Bystander, Identity }, settings.ExpectedStoreDisplayNames);
         Assert.Equal(new[] { Hub, Bystander, CorpusStore }, settings.IndexedStoreDisplayNames);
         Assert.Equal(new[] { Hub, Bystander, CorpusStore }, settings.RequireIndexedStores());
@@ -441,6 +447,60 @@ public sealed class LiveTestSettingsTemplateTests
 
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => Load(values));
         Assert.Contains("partially filled 'mailSink' block", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ABlankHubPopulationManifest_IsRefusedByTheLoader_AndAnAbsentOneIsTheMaintainersShape()
+    {
+        // Blank is a mistake - it would make the frontier test look for a manifest nobody named. Absent
+        // is a machine whose hub holds no generated population, which is the maintainer's own; the
+        // frontier test then says what it could not prove rather than reading anything.
+        JsonObject values = SyntheticValues();
+        values["hubPopulationManifestPath"] = " ";
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => Load(values));
+        Assert.Contains("blank 'hubPopulationManifestPath'", ex.Message, StringComparison.Ordinal);
+
+        JsonObject rendered = JsonNode.Parse(Render(TemplateText(), SyntheticValues()))!.AsObject();
+        Assert.True(rendered.Remove("hubPopulationManifestPath"));
+        LiveTestSettings settings = LiveTestSettings.Parse(rendered.ToJsonString());
+        Assert.Null(settings.HubPopulationManifestPath);
+        Assert.True(Admit(settings).Usable);
+    }
+
+    [Fact]
+    public void EveryCommittedGuest_NamesItsOwnHubPopulationsManifest()
+    {
+        // The per-run hub rebuild (Testbed/guest/Reset-HubPopulation.ps1) reads the population id off
+        // the manifest's name, and the frontier test reads the manifest to refuse a stale hub. Both
+        // depend on this path naming THIS guest's hub population - held against the ids
+        // corpusIdConvention.populations assigns, so the two records cannot part.
+        string path = Path.Combine(RepoRoot(), "Testbed", "testbed.json");
+        JsonArray populations = JsonNode.Parse(File.ReadAllText(path))!["corpusIdConvention"]!["populations"]!["assigned"]!.AsArray();
+
+        int guests = 0;
+        foreach (KeyValuePair<string, JsonNode?> section in Guests())
+        {
+            if (section.Key.StartsWith('_'))
+            {
+                continue;
+            }
+
+            guests++;
+            JsonNode hub = Assert.Single(
+                populations,
+                p => p?["guest"]?.GetValue<string>() == section.Key && p?["population"]?.GetValue<string>() == "hub")!;
+            string manifest = section.Value!["hubPopulationManifestPath"]!.GetValue<string>();
+            Assert.Equal(@"C:\OutlookAI-Q5\corpus-" + hub["corpusId"]!.GetValue<string>() + ".jsonl", manifest);
+            Assert.NotEqual(manifest, section.Value!["corpus"]?["manifestPath"]?.GetValue<string>());
+        }
+
+        Assert.Equal(2, guests);
+
+        // And the documented example models the indexed guest's.
+        JsonObject example = JsonNode.Parse(File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "live-test-settings.example.json")))!.AsObject();
+        Assert.Equal(
+            Guests()["OutlookAI-Indexed"]!["hubPopulationManifestPath"]!.GetValue<string>(),
+            example["hubPopulationManifestPath"]!.GetValue<string>());
     }
 
     [Fact]

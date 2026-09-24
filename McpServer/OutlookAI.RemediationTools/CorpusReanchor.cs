@@ -246,13 +246,21 @@ public static class CorpusReanchor
         int undated = 0;
         for (int ordinal = 1; ordinal <= itemCount; ordinal++)
         {
+            // A population's UNDATED items have no instant to move and must never be given one:
+            // an appointment or a draft carrying a delivery time is exactly the item they exist
+            // not to be. Not a work item, and not "already correct" either - there is nothing here.
+            CorpusItemSpec spec = plan.Describe(ordinal);
+            if (spec.IsUndated)
+            {
+                continue;
+            }
+
             if (!manifest.Items.TryGetValue(ordinal, out CorpusManifestItem? recorded))
             {
                 unrecorded++;
                 continue;
             }
 
-            CorpusItemSpec spec = plan.Describe(ordinal);
             DateTime wantReceived = spec.ReceivedUtc + shift;
             DateTime wantSent = spec.SentUtc + shift;
             DateTime? has = CorpusManifest.ParseUtc(recorded.ReceivedUtc);
