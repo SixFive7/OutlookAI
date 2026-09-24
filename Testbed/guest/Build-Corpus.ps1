@@ -157,6 +157,22 @@
     refusal text against synthetic facts. It reads no registry, lists no processes, runs no tool
     and needs no Outlook, so it is safe anywhere - the maintainer's workstation included.
 
+    THE GUEST GUARD, SINCE 2026-09-24. Until then this script never asked which machine it was
+    on. The workstation was covered, but not by a guard: the maintainer's profile holds several
+    mail accounts, the preflight refuses a default profile holding any, and the tool's own store
+    guard refuses again with no override - but -SkipPreflight removes the first of those two. It now
+    dot-sources OutlookMapiInterop.ps1 and calls Assert-TestbedGuest, the guard every other
+    writing script here uses, BEFORE ANYTHING TOUCHES THE MACHINE: before the log is rewritten,
+    before the expectation sheet launches the tool, before the preflight reads the profile
+    registry, and before the dry run - which vets the store over COM. Only -SelfTest runs ahead
+    of it, because -SelfTest touches nothing. STAGE OutlookMapiInterop.ps1 BESIDE THIS SCRIPT
+    (Testbed/README.md section 1, step 4a); copied alone it now fails loudly on the dot-source,
+    which is the intended failure. Proven on the maintainer's workstation the same day, under
+    Windows PowerShell 5.1: the dry run, -Execute and -SkipPreflight -Execute each stopped at
+    "REFUSING TO RUN. This session is logged on as ..." with zero calls reaching a tripwire that
+    stood in for every write command and New-Object, and the Outlook profile keys unchanged. On
+    a guest, for vmadmin, the guard returns without a word; that half has not been run since.
+
 .PARAMETER Store
     Store display name. `Outlook Data File` is what the measured corpus lives in; the
     three-store layout in Docs/live-tier-on-the-vm.md calls it `Corpus A`.
@@ -182,6 +198,9 @@
 .PARAMETER Execute
     Without it: plan and a dry-run build, and NEITHER probe runs (both create items).
 
+.PARAMETER ExpectedUser
+    The account the guest guard accepts. The default is the guard; see OutlookMapiInterop.ps1.
+
 .EXAMPLE
     .\Build-Corpus.ps1 -SelfTest
     .\Build-Corpus.ps1
@@ -205,6 +224,7 @@ param(
     [int]    $ProgressEvery = 250,
     [int]    $WarmupSeconds = 180,
     [string] $OfficeVersion,
+    [string[]] $ExpectedUser = @('vmadmin'),
     [switch] $SkipProbe,
     [switch] $SkipPreflight,
     [switch] $SelfTest,
@@ -736,6 +756,7 @@ function Invoke-SelfTest {
     Write-Host "$($script:SelfTestChecks) assertion(s), $($script:SelfTestFailures.Count) failure(s)."
     Write-Host ''
     Write-Host 'NOT COVERED HERE. These need a guest:'
+    Write-Host '  * the guest guard (Assert-TestbedGuest), which runs only once this self-test has exited'
     Write-Host '  * reading the hive, DefaultProfile, the Profiles subkeys and the account subkeys'
     Write-Host '  * reading ImportPRF and First-Run/FirstRun out of the Setup key'
     Write-Host '  * reading OUTLOOK.EXE out of the process list, with its start time and command line'
@@ -754,6 +775,12 @@ if ($SelfTest) { exit (Invoke-SelfTest) }
 # =============================================================================================
 # EVERYTHING BELOW TOUCHES THE MACHINE.
 # =============================================================================================
+
+# THE GUARD, FIRST - before the tools check, the log, the expectation sheet, the preflight and the
+# dry run, which vets the store over COM. On the maintainer's workstation the profile every one
+# of those reads or drives is a real one. See THE GUEST GUARD in the banner.
+. "$PSScriptRoot\OutlookMapiInterop.ps1"
+Assert-TestbedGuest -ExpectedUser $ExpectedUser
 
 if (-not (Test-Path -LiteralPath $ToolsExe)) {
     throw @"
@@ -974,7 +1001,9 @@ function Get-CorpusPreflightFact {
 
 Remove-Item -LiteralPath $LogPath -Force -ErrorAction SilentlyContinue
 
-# --- 0. the expectation sheet. Pure: no Outlook, runnable anywhere, including the host. -------
+# --- 0. the expectation sheet. Pure: no Outlook. The tool's corpus-plan verb runs anywhere,
+#        the host included - run it there directly, because this script's guard refuses the
+#        host before any step. ------------------------------------------------------------------
 # Save this. Every measurement taken later is a ratio against one of these numbers, and computing
 # them afterwards from the store is both slower and less trustworthy than reading them off the
 # plan that produced it.

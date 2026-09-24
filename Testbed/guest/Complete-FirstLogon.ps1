@@ -47,6 +47,37 @@
     A REBOOT IS REQUIRED before the system locale and the language list are fully in effect.
     This script does not reboot: the caller is mid-OOBE and Windows is about to do it anyway.
 
+    THE GUEST GUARD, SINCE 2026-09-24 - and the one thing here that DOES stop everything. Until
+    then this rewrote the language list, locales, home location, power policy and screen saver of
+    whatever machine ran it. It now refuses unless BOTH hold: the session is logged on as
+    -ExpectedUser (vmadmin) AND the computer name starts with -ExpectedComputerNamePrefix (OAI-).
+    Those defaults are the answer file's own convention, not a guess: autounattend.template.xml
+    creates the account from the guest credential, whose account is vmadmin (Testbed/README.md
+    section 2), and Testbed/host/New-AnswerFile.ps1 names the computer by replacing 'OutlookAI-'
+    with 'OAI-' in the VM name. And they are measured at the very moment this runs: the first
+    logon of OutlookAI-Unindexed's unattended install, 2026-09-15, logged
+    "Complete-FirstLogon.ps1 on OAI-UNINDEXED as vmadmin" - this script's own header line, built
+    from the two variables the guard reads.
+
+    RESTATED, NOT DOT-SOURCED. Every other writing script here dot-sources Assert-TestbedGuest from
+    OutlookMapiInterop.ps1, but this one travels ALONE: New-AnswerFile.ps1 puts it on the answer
+    volume beside autounattend.xml and nothing else, and FirstLogonCommands runs it from there. So
+    the guard is written out below, the same two-axis shape as Set-OutlookIndexingDisabled.ps1's.
+
+    IT RUNS BEFORE THE LOG IS OPENED, so a refusal writes nothing at all - and on a guest, a
+    first-logon.log that is ABSENT is how a refusal shows. (If the script is not found, the
+    answer file's own command writes a log saying so, so "no log" means found and refused - or,
+    less likely, died before its first line.) Run it by hand to read which. A guest built
+    outside the convention - New-AnswerFile.ps1 -ComputerName without the OAI- prefix, a VM name
+    that does not start 'OutlookAI-', or a credential for another account - refuses at first
+    logon by design; pass -ExpectedUser and -ExpectedComputerNamePrefix and run it by hand.
+    Proven on the maintainer's workstation the same day, under Windows PowerShell 5.1, with no
+    arguments (as FirstLogonCommands runs it) and with -SkipPower: "REFUSING TO RUN.", zero calls
+    reaching a tripwire that stood in for every write command, the native powercfg.exe and
+    New-Object, and every setting it names read back unchanged. Passing, and then running to
+    DONE, at a real first logon is not yet proven: that takes a fresh unattended install from an
+    answer volume built after this change.
+
 .PARAMETER LogPath
     Where the transcript of what was set goes. Under C:\Windows\Setup by default, beside the
     other setup artefacts, so it survives and is easy to find.
@@ -69,6 +100,15 @@
 .PARAMETER SkipPower
     Leave the power policy and fast startup alone. For re-running the locale half only.
 
+.PARAMETER ExpectedUser
+    Accounts this script is allowed to run as. The answer file's account is vmadmin. The default
+    IS the guard; do not widen it.
+
+.PARAMETER ExpectedComputerNamePrefix
+    Computer-name prefix this script is allowed to run on. Testbed/host/New-AnswerFile.ps1
+    derives a guest's name by replacing 'OutlookAI-' with 'OAI-'. Pass your own if you named a
+    guest something else; do not widen it to an empty string - that refuses, never matches all.
+
 .EXAMPLE
     .\Complete-FirstLogon.ps1
     .\Complete-FirstLogon.ps1 -SkipPower -LogPath C:\Temp\relocale.log
@@ -81,10 +121,52 @@ param(
     [int]      $GeoId = 176,
     [string]   $SystemLocaleName = 'en-US',
     [string]   $UserLocaleName = 'nl-NL',
-    [switch]   $SkipPower
+    [switch]   $SkipPower,
+    [string[]] $ExpectedUser = @('vmadmin'),
+    [string]   $ExpectedComputerNamePrefix = 'OAI-'
 )
 
 $ErrorActionPreference = 'Continue'
+
+# ---------------------------------------------------------------------------------------------
+# THE GUARD. FIRST, before the log is opened and before any step - and unlike every step below,
+# a refusal stops everything. Restated rather than dot-sourced: the answer volume carries this
+# file alone. See THE GUEST GUARD in the banner.
+# ---------------------------------------------------------------------------------------------
+function Test-GuestIdentity {
+    param([string] $UserName, [string] $ComputerName, [string[]] $Users, [string] $Prefix)
+    $userOk = $false
+    foreach ($u in $Users) { if ($UserName -eq $u) { $userOk = $true } }
+    $machineOk = [bool]($Prefix -and $ComputerName -and $ComputerName.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase))
+    return ($userOk -and $machineOk)
+}
+
+function Assert-TestbedGuestLocal {
+    if (Test-GuestIdentity -UserName $env:USERNAME -ComputerName $env:COMPUTERNAME -Users $ExpectedUser -Prefix $ExpectedComputerNamePrefix) { return }
+    throw @"
+REFUSING TO RUN.
+
+  logged on as : '$env:USERNAME'          (allowed: $($ExpectedUser -join ', '))
+  computer name: '$env:COMPUTERNAME'      (must start with: '$ExpectedComputerNamePrefix')
+
+This script rewrites the language list, the system and user locales, the home location, the
+power policy, fast startup and the screen saver of the machine it runs on. On the maintainer's
+workstation that is a working machine's regional and power settings, changed without a word.
+
+It is meant to run once, unattended, at a test guest's first logon, from the answer volume
+Testbed/host/New-AnswerFile.ps1 builds. That answer file creates the account from the guest
+credential - 'vmadmin' (Testbed/README.md section 2) - and names the computer by replacing
+'OutlookAI-' with 'OAI-' in the VM name, so a guest built from it matches both axes. If you built
+a guest outside that convention, say so and run this by hand:
+
+    -ExpectedUser <username> -ExpectedComputerNamePrefix <prefix>
+
+Nothing has been written - not even the log, which is opened only once this check has passed.
+Do not 'fix' this by widening either default. The defaults are the guard.
+"@
+}
+
+Assert-TestbedGuestLocal
 
 $script:Failed = 0
 $script:Ran = 0

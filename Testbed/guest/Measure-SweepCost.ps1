@@ -19,6 +19,16 @@
     Send. If you extend it, keep that true - mailbox mutation from ad-hoc shell code is the thing
     that once destroyed real mail on this project.
 
+    READ-ONLY IS NOT THE SAME AS SAFE ON THE WRONG MACHINE, SO SINCE 2026-09-24 IT IS GUARDED.
+    Binding Outlook on the maintainer's workstation opens the real profile, delegate mailboxes and
+    all, whether or not anything is then written. It now dot-sources OutlookMapiInterop.ps1 and
+    calls Assert-TestbedGuest - the guard every writing script here uses - before anything else:
+    before -OutFile is deleted and rewritten, and before COM. STAGE OutlookMapiInterop.ps1 BESIDE
+    IT. Proven on the maintainer's workstation the same day, under Windows PowerShell 5.1: with
+    and without -OpenItems it stopped at "REFUSING TO RUN. This session is logged on as ..." with
+    zero calls reaching a tripwire that stood in for every write command and New-Object, and no
+    -OutFile written. That proves the refusal only; on a guest it is still never executed.
+
     WHY IT EXISTS AT ALL. The server reports one clock for the whole sweep (sweep.elapsedMs) and
     no per-folder or per-item timing. The sweep budget is per-item cost x items x folders x
     stores and nothing else, so the per-item cost is the single most useful number in the
@@ -61,10 +71,17 @@ param(
     [int]    $Cap = 200,
     [switch] $OpenItems,
     [int]    $Repeat = 3,
-    [string] $OutFile = 'C:\OutlookAI-Q5\sweep-cost.txt'
+    [string] $OutFile = 'C:\OutlookAI-Q5\sweep-cost.txt',
+    # The account the guest guard accepts. The default is the guard; see OutlookMapiInterop.ps1.
+    [string[]] $ExpectedUser = @('vmadmin')
 )
 
 $ErrorActionPreference = 'Stop'
+
+# THE GUARD, FIRST - before -OutFile is touched and before COM. Read-only is not enough on the
+# wrong machine: binding Outlook on the workstation opens the real profile. See the banner.
+. "$PSScriptRoot\OutlookMapiInterop.ps1"
+Assert-TestbedGuest -ExpectedUser $ExpectedUser
 
 # Folder ids the shipped sweep covers. Drafts is deliberately absent: the sweep does not cover
 # it, which is why a corpus accidentally filed as drafts measured as an empty store.
