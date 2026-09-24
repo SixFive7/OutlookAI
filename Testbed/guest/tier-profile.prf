@@ -1,15 +1,27 @@
 ;=============================================================================================
-; TEMPLATE. THIS FILE HAS NEVER BEEN IMPORTED BY OUTLOOK.
+; RETIRED 2026-09-24. NOT A ROUTE: New-TierProfile.ps1 REFUSES THIS FILE. KEPT AS EVIDENCE.
 ;=============================================================================================
 ;
-; Outlook Profile (PRF) for the testbed TIER profile: one Unicode PST service plus one POP3
-; account pointed at a loopback mail sink. Testbed/guest/New-TierProfile.ps1 renders it - it
-; substitutes the {{...}} tokens and rewrites the result as ASCII with CRLF line endings, so
-; whatever this file's line endings are in git does not matter.
+; USE tier-profile-forcepst.prf. This file names a PST service and points [General]
+; DefaultStore at it, and that shape was MEASURED on 2026-09-15 on OutlookAI-Indexed - its
+; banner used to say it had never been imported, and it had: the import worked, the store came
+; out named exactly as Name= below said ('@' included, read back over COM), and the POP3
+; account's DeliveryStore came back NULL. DefaultStore binds the PROFILE's default store, not
+; the ACCOUNT's delivery store, and NewDraft needs the latter. The fix was to delete the PST
+; service and DefaultStore and let Outlook mint the store (commit 25f0b7d).
+;
+; WHY IT IS KEPT RATHER THAN DELETED. Three things outside the tier build cite it: the
+; measurement above is the evidence that a .prf's [ServiceN] Name= carries an exact display name,
+; '@' included (Testbed/README.md section 6 item 10, Docs/live-tier-on-the-vm.md section 8,
+; Docs/research/profile-automation-research.md), and New-OutlookProfile.ps1 builds its PST
+; service blocks from this file's [Service1] - a use that is RIGHT for a profile with no account
+; to bind. Deleting it would leave those pointing at nothing. Keeping it is safe because
+; New-TierProfile.ps1 no longer defaults to it and refuses any template carrying a PST service or
+; DefaultStore, before it writes anything.
 ;
 ; DO NOT IMPORT THIS FILE DIRECTLY. The tokens below are not valid PRF values.
 ;
-; WHY EVERY LINE IS HERE is recorded in .work/pop3-account-routes.md section A.2, with a source
+; WHY EVERY LINE IS HERE is recorded in Docs/research/pop3-account-routes.md section A.2, with a source
 ; for each key. The short version:
 ;   - Sections 1-5 are the customisation. Section 5's key spellings are Microsoft's own literal
 ;     POP3 block from the Office 2007 Resource Kit; do not "tidy" them.
@@ -22,8 +34,8 @@
 ;     Microsoft spells it False once, in passing; the community spells it No. Which one 16.x
 ;     honours is UNTESTED - if a run leaves a backup profile, try the other spelling.
 ;   - DefaultStore names a SERVICE, not a store path. Whether Outlook 16.x still applies it to
-;     a POP3 account's delivery store is THE open question for this route; New-TierProfile.ps1
-;     verifies it rather than assuming it.
+;     a POP3 account's delivery store WAS the open question for this route. ANSWERED, NO - see
+;     the banner above.
 
 ; **************************************************************
 ; Section 1 - Profile Defaults

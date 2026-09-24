@@ -10,6 +10,11 @@ Evidence labels: **[MS-DOC]** Microsoft documentation · **[COMMUNITY]** third-p
 path and line · **[MEASURED]** run during this research on the workstation, touching nothing
 Office-related.
 
+**Answers measured later, on a guest, are added in place and marked [GUEST-MEASURED, date]**,
+beside the text they answer, which is kept as written: this is a record of what was known on
+2026-09-15, and the gap between that and what a guest later showed is part of the record. The
+guest is Office LTSC 2024, 16.0.17932.
+
 ---
 
 ## 0. The verdict, before the detail
@@ -570,6 +575,12 @@ about the Exchange/Autodiscover problem. **That ambiguity is the go/no-go.**
 
 Shipped as `Testbed/guest/tier-profile.prf`. ASCII, no BOM, CRLF. Provenance per key:
 
+> **[GUEST-MEASURED, 2026-09-15; retired 2026-09-24]** This file, as described here, imports and
+> leaves the account unbound (A.8 item 2). The route that works is the same file minus its PST
+> service and `DefaultStore` - `Testbed/guest/tier-profile-forcepst.prf` - and the provenance below
+> applies to it key for key, less those two. `Testbed/guest/New-TierProfile.ps1` now defaults to the
+> forcepst file and refuses this one.
+
 * **Section 1** — `Custom=1`, `ProfileName`, `DefaultProfile`, `OverwriteProfile`,
   `ModifyDefaultProfileIfPresent`, `DefaultStore` are all annotated in Microsoft's first-party
   whitepaper *"Outlook Deployment Options: Customizing a PRF File"* [MS-DOC]
@@ -655,6 +666,14 @@ is placed in the \Program Files\Microsoft Office\ folder. **The registry is upda
   source, Microsoft or community.** Every source frames `FirstRun`/`First-Run` as the one-shot
   gate, which implies `ImportPRF` persists and is simply not re-evaluated [INFERRED]. Treat it as
   persistent and delete it yourself if you want one-shot semantics.
+  **[GUEST-MEASURED, 2026-09-24] It IS consumed - the inference above was wrong. Outlook removes
+  `ImportPRF` within about 5 s of the start that imports the file:** sampled every 5 s through a
+  plain first start, a `/PIM` first start and a tier-profile import, it was gone at the first
+  sample each time, with the new profile already listed; and the tier profile imported on
+  2026-09-15 had lost it within three minutes, with nothing in the repository or its scratch ever
+  removing it. The advice to delete it yourself is kept anyway, as a guard rather than a need:
+  both profile scripts' `-Verify` remove a lingering value that names their own `.prf` once the
+  import has run, and `Testbed/guest/Build-Corpus.ps1` refuses to build while one is set.
 * `/importprf` *"Starts Outlook and opens/imports the defined MAPI profile"*; `/promptimportprf` is
   *"Same as /importprf except a prompt appears and the user can cancel"* [MS-DOC]
   <https://support.microsoft.com/en-us/office/command-line-switches-for-microsoft-office-products-079164cd-4ef5-4178-b235-441737deb3a6>.
@@ -746,6 +765,18 @@ POP3 account, the fallback is to drop `[Service1]`/`DefaultStore` from the PRF, 
 to a known directory, let Outlook mint its own PST there, and have the harness discover it by
 account rather than by path. **That converts an "unfixable hole" into a naming convention.**
 
+> **[GUEST-MEASURED, 2026-09-15 and 2026-09-24] `DefaultStore` did NOT bind it, and this fallback
+> is the route.** With a PST service and `DefaultStore=Service1` the import worked and
+> `Account.DeliveryStore` came back NULL (`Testbed/guest/tier-profile.prf`, now retired). With
+> neither, and `ForcePSTPath` set, Outlook minted `C:\OutlookAI-Tier\Outlook.pst` and bound the
+> account to it - a store Outlook mints is a store Outlook binds. That is
+> `Testbed/guest/tier-profile-forcepst.prf`, and since 2026-09-24 `Testbed/guest/New-TierProfile.ps1`
+> defaults to it and writes `ForcePSTPath` itself; before that, only hand-run scratch scripts had
+> set it. Two refinements this section could not have predicted: the binding happens at the start
+> that first reaches the account - on a guest where the import was not Outlook's first start, the
+> account stayed unbound until the next one - and the minted store is named `Outlook Data File`,
+> so it is renamed afterwards (root-folder rename; `Store.DisplayName` follows).
+
 ### A.6 Prerequisites and silent-failure traps
 
 1. **Directories must pre-exist.** *"The directories in the path to the personal folders must
@@ -791,15 +822,30 @@ Key path, value name, `REG_SZ` and the PRF path are [MS-DOC] (whitepaper, at `11
 Microsoft's weaker form is "delete `FirstRun` … or set its value to 0". `ForcePSTPath` is
 [COMMUNITY].
 
+> **[GUEST-MEASURED, 2026-09-24] `ForcePSTPath` is not optional - it is half of the route that
+> works** (A.5), and `Testbed/guest/New-TierProfile.ps1 -Execute` now writes it, as
+> `REG_EXPAND_SZ`, with `New-ItemProperty` on the existing key, and reads it back. Two things to
+> know when writing it by any other means: do not create the key with `New-Item -Force` - on an
+> existing key that deletes every value under it, measured on a scratch key, and the hand-run
+> scripts that first set this value did exactly that to the Outlook key; and it is per-user and
+> outlives the import, so every PST Outlook later mints by default - a `/PIM` profile's store, for
+> one - lands in the same directory.
+
 ### A.8 What could not be established without a machine
 
 1. **Whether Outlook 16.x processes sections 3/5/7 (internet accounts) at all.** Every literal POP3
    PRF Microsoft ever published is 2000/2002/2003/2007-era. Against this sits the OCT 2016 sentence
    *"provided that the profile defines only MAPI services"*. **This is the go/no-go test.**
+   **[GUEST-MEASURED, 2026-09-15] YES** - a genuine POP3 account (`CLSID_OlkPOP3Account`), with
+   the sink's host, user and address from section 5.
 2. **Whether `DefaultStore=Service1` binds the POP3 account's `PROP_ACCT_DELIVERY_STORE`,** or
    whether 16.x mints its own PST regardless.
+   **[GUEST-MEASURED, 2026-09-15] It does NOT bind it** (`DeliveryStore` NULL). With no PST service
+   and no `DefaultStore`, 16.x mints its own PST under `ForcePSTPath` and binds that - see A.5.
 3. **Whether `BackupProfile` is honoured on 16.x, and whether the spelling is `No` or `False`.**
 4. **Whether the `ImportPRF` value is consumed after a successful import.**
+   **[GUEST-MEASURED, 2026-09-24] YES - Outlook removes it within about 5 s** of the start that
+   imports the file; see A.3.
 5. **Whether `ImportPRF` produces *zero* UI on a never-run 16.x profile.**
 6. **Whether `POP3UseSSL=0` / `SMTPUseSSL=0` actually yields plain-text SMTP to `127.0.0.1:25`.**
    Modern Outlook exposes an *encryption method* enum (None/SSL/TLS/Auto); the PRF has only a
@@ -809,6 +855,10 @@ Microsoft's weaker form is "delete `FirstRun` … or set its value to 0". `Force
 8. **Whether `%VAR%` expands in a `REG_SZ` `ImportPRF`.**
 9. **Whether a PRF-created POP3 account appears as an `Account` in the object model with a usable
    `DeliveryStore`** — i.e. whether the harness can even see it.
+   **[GUEST-MEASURED, 2026-09-15 and 2026-09-24] YES, by the A.5 route** - `Accounts.Count` 1,
+   `AccountType` 2, `DeliveryStore` the minted PST, its Drafts folder resolving - **once Outlook
+   has reached the account at a start**: imported at a machine's first Outlook start it was bound
+   in that start; imported at a later one it was NULL until the next start.
 
 **The single experiment that settles 1, 2 and 6 at once** is what `New-TierProfile.ps1 -Execute`
 does and then verifies: import, then dump the profile hive under

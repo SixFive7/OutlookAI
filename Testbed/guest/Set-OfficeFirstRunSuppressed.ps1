@@ -3,6 +3,21 @@
     Suppresses the Office first-run dialogs, so a scripted guest build is not stopped by one.
     ============================================================================================
 
+    RUN, AND WHAT IT DOES NOT COVER (2026-09-24, OAI-UNINDEXED, from a fresh CP-02, twice). As
+    vmadmin in session 1 the guard passed and -Execute wrote all 13 values, creating six of the
+    seven keys they live in, then -Verify read every one back. At Outlook's FIRST start after it,
+    with every visible top-level window enumerated, the only dialog was the POP3 password prompt:
+    the privacy consent screen this was written for did not appear. But the SECOND start
+    of Outlook on the machine - whichever profile it opens - shows Office's one-time "Check out
+    our new look" dialog (window class NUIDialog), which nothing here suppresses, and no registry
+    value recording it was found. COM worked with it on screen. It matters anyway: when that second
+    start was the tier profile's import, the POP3 account came up unbound until the next start -
+    see New-TierProfile.ps1, and Testbed/README.md section 1 for the order that avoids it.
+
+    It was not new on the guests: .work\run-forcepst.ps1 and .work\guest2-chain.ps1 ran it with
+    -Execute on 2026-09-15, and then ran `New-Item -Force` on the Outlook key, which deleted the
+    three values it had just written there - CP-05 lacks exactly those three.
+
     RUN ON THE GUEST, in the interactive session, as the account Outlook will run as. Windows
     PowerShell 5.1 - no ternary, no `??`.
 
@@ -25,6 +40,14 @@
     settings in particular are a deliberate choice this project has made for a machine with no
     user and no network, and are not a recommendation for anyone else.
 
+    "DO NOT RUN IT ON A WORKSTATION" WAS A SENTENCE, NOT A CHECK, UNTIL 2026-09-24. -Execute wrote
+    thirteen values - five of them Office privacy POLICY keys - on whatever machine it was started
+    on. It now dot-sources OutlookMapiInterop.ps1 and calls Assert-TestbedGuest, the guard every
+    other writing script here uses, before anything else runs - the dry run and -Verify included.
+    STAGE OutlookMapiInterop.ps1 BESIDE IT. Proven on the maintainer's workstation the same day
+    with -Execute: "REFUSING TO RUN. This session is logged on as ...", and all seven keys it names
+    read back unchanged - every value, and each key's own last-write time.
+
 .PARAMETER OfficeVersion
     Office hive version. 16.0 covers Outlook 2016 through 2024 and Microsoft 365.
 
@@ -34,6 +57,9 @@
 .PARAMETER Verify
     Read every value back and report. Safe at any time; writes nothing.
 
+.PARAMETER ExpectedUser
+    The account the guest guard accepts. The default is the guard; see OutlookMapiInterop.ps1.
+
 .EXAMPLE
     .\Set-OfficeFirstRunSuppressed.ps1
     .\Set-OfficeFirstRunSuppressed.ps1 -Execute
@@ -42,11 +68,16 @@
 [CmdletBinding()]
 param(
     [string] $OfficeVersion = '16.0',
+    [string[]] $ExpectedUser = @('vmadmin'),
     [switch] $Execute,
     [switch] $Verify
 )
 
 $ErrorActionPreference = 'Stop'
+
+# THE GUARD, FIRST - before the plan is printed and before -Verify reads a value. See the banner.
+. "$PSScriptRoot\OutlookMapiInterop.ps1"
+Assert-TestbedGuest -ExpectedUser $ExpectedUser
 
 function Say($m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 

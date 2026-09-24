@@ -42,9 +42,14 @@ testbed before its replacement runs.**
 | 1 | Build the answer volume | `host/New-AnswerFile.ps1` | host |
 | 2 | Create the guest, attach both ISOs, boot it | `host/New-TestbedVm.ps1` | host |
 | 3 | Windows installs itself - edition, disk, account, autologon, locale, power | nobody: the answer file | guest, unattended |
-| 4 | Install Office, the accounts and the profiles | Office and the Windows accounts by hand - `Docs/live-tier-on-the-vm.md` §2.2-2.4, with `.work/office-odt/Testbed.xml` (`MEDIA.md`). **The corpus profile and its PSTs are scripted - §4b**: `guest/New-OutlookProfile.ps1 -Preflight`, then `-Execute`, then start Outlook once by hand, then `-Verify` | guest |
-| 4b | **Clear `ImportPRF`, before anything fills a store** | `guest/New-OutlookProfile.ps1 -ClearImportPrf -Execute`. Not optional and not tidying: Outlook reads that value at EVERY start and the `.prf` carries `OverwriteProfile=Yes`, so if Outlook does not clear it itself - **which nobody has verified** - every later start rebuilds the profile and **detaches whatever store the corpus went into**. §4b-i | guest |
-| 5 | Give yourself a way to reach session 1 | `guest/Register-InteractiveTask.ps1` | guest, once |
+| 4 | Install Office - **and do not start Outlook** | By hand - `Docs/live-tier-on-the-vm.md` §2.2-2.4 (§2.4, a second Windows account, is no longer needed), with `.work/office-odt/Testbed.xml` (`MEDIA.md`). Checkpoint here (`CP-02-OFFICE-INSTALLED`). Outlook's first start is spent on step 4c, deliberately | guest |
+| 4a | **Reach session 1, and stage the guest scripts** | `host/Copy-ToGuest.ps1 -VMName <guest> -RepoRoot <the main checkout, where the credential is> -Path <scripts> -Destination C:\OutlookAI-Q5` - every guest script the steps below run, **plus `guest/OutlookMapiInterop.ps1` and `guest/Register-InteractiveTask.ps1`**: every writing script dot-sources the first for its `vmadmin` guard and fails loudly without it, and everything that touches Outlook runs in session 1 through the second. There was no step for this; it used to sit at 5, after steps that already needed it | host, then guest |
+| 4b | Suppress Office's first-run dialogs | `guest/Set-OfficeFirstRunSuppressed.ps1 -Execute`, then `-Verify`. It also creates the `...\Office\16.0\Outlook` key that step 4c's preflight requires. It does not cover the one-time "Check out our new look" dialog at Outlook's **second** start - COM works with it on screen | guest, session 1 |
+| 4c | **The tier profile - at Outlook's FIRST start** | `guest/New-TierProfile.ps1 -Execute` (the forcepst template is the default, and it writes `ForcePSTPath`), then **start `OUTLOOK.EXE` once, in session 1**, and let it settle (~90 s: it imports, mints `C:\OutlookAI-Tier\Outlook.pst` and binds the account to it; the POP3 password dialog appears and does not block COM), then `guest/Rename-OutlookStore.ps1 -StoreFilePath C:\OutlookAI-Tier\Outlook.pst -DisplayName tier@vm.invalid -Execute`, then `New-TierProfile.ps1 -Verify`. Why first: the paragraph under this table | guest, session 1 |
+| 4d | Restart the guest | `shutdown /r` from session 0 - never taskkill `OUTLOOK.EXE`. Step 4e's `/PIM` needs a fresh start, and step 4f refuses while Outlook runs | guest |
+| 4e | The corpus profile, with no account | Start **`OUTLOOK.EXE /PIM CorpusProfile`** in session 1 (its store, `Outlook Data File`, is minted in `C:\OutlookAI-Tier` - `ForcePSTPath` is per-user and outlives step 4c), create the directory for any named PST by hand (`Add-OutlookPstStore.ps1` refuses a missing one), `guest/Add-OutlookPstStore.ps1 -ProfileName CorpusProfile -DisplayName <name> -Path <pst> -Execute` per store, then `guest/New-OutlookProfile.ps1 -Name CorpusProfile -Store <name>=<pst> -Verify -WithOutlook`. **Not** `New-OutlookProfile.ps1 -Execute`: an account-less profile imported from a `.prf` stops on "Email Account Setup" at every start (§4b) | guest, session 1 |
+| 4f | Restart, then make the corpus profile the default | `guest/Set-DefaultOutlookProfile.ps1 -Name CorpusProfile -Execute`. The tier import made `OutlookAI-Tier` the default and `/PIM` does not change it, and `guest/Build-Corpus.ps1` refuses unless the default profile has no mail account. **Step 9 and every live run need the default switched back to `OutlookAI-Tier` the same way** | guest |
+| 5 | ~~Clear `ImportPRF`~~ - **automatic now; nothing to run** | Outlook removes `ImportPRF` itself within ~5 s of the start that imports it (measured 2026-09-24, three times, §4b-i). The protection no longer depends on anyone remembering a step: each `-Verify` removes a lingering value that names its own `.prf` once the import has run, and `guest/Build-Corpus.ps1` refuses to build while one is set, `-SkipPreflight` or not | - |
 | 5b | **Put the add-in on the guest - BOTH guests - built from a named commit.** Two live tests read state only the add-in writes on its first run, and one of them runs on the unindexed guest too. Build and stage on the host with `host/Publish-AddInPayload.ps1`, copy `AddIn.zip` and the staged `vstor_redist.exe` in, then run `guest/Install-OutlookAIAddIn.ps1 -Execute` **through the interactive task** - it installs the VSTO runtime and the product's own installer silently, writes the VSTO trust entry the trust prompt would have written, starts Outlook once, and verifies the exact registry state the tests read. Outlook must be closed when it starts, and may still be running headless when it ends - restart the guest before 7b, which refuses while Outlook is up. Do it BEFORE 7b, so the index exclusion is certified with the add-in already present; on a guest already past 7b, re-run `guest/Set-OutlookIndexingDisabled.ps1 -Verify` afterwards. `Docs/live-tier-on-the-vm.md` §2.3 | host, then guest, session 1 |
 | 6 | Build the server and the tools, and copy them in | `host/Publish-GuestPayload.ps1` | host |
 | 7 | Install the mail sink, the dummy account and the identity account | **Sink first**, so Outlook's first send/receive finds it: `host/Get-MailSinkMedia.ps1 -Execute` stages the pinned Inbucket release on the host (`MEDIA.md`, "The mail sink"), `host/Copy-ToGuest.ps1` carries it in, then `guest/Install-MailSink.ps1 -ExpectedSha256 <hash> -Execute` registers it to start with the guest and ends by proving an SMTP-to-POP3 round trip - `SINK-READY`. Reboot and `-Verify` once more. Accounts: `guest/New-TierProfile.ps1`. **The POP3 password: the sink accepts none and any; whether Outlook connects without a stored one is NOT yet measured** - run the first Outlook start with the sink at `-LogLevel debug` and read its log, runbook §2.7. The signature has a script | guest |
@@ -57,6 +62,29 @@ testbed before its replacement runs.**
 
 Every script takes `-WhatIf`-style caution seriously: the ones that write take an explicit
 `-Execute`, and print what they would do without it.
+
+**Why the tier profile comes first - both orders were run from `CP-02`, 2026-09-24, on
+`OAI-UNINDEXED`.** Until then this table put the corpus profile first; the guests were in fact
+built tier-first, and only one of the two orders works as written:
+
+- **Tier first (steps 4b-4f as above): every step passed as written.** The import at Outlook's
+  first-ever start bound the account in that same start - COM read `DeliveryStore` as the minted
+  `C:\OutlookAI-Tier\Outlook.pst`, Drafts resolving - and every `-Verify` passed, the corpus
+  profile's included, with its `-Store` naming only the store it was asked to add.
+- **Corpus first: three things went wrong, none of them loudly until a `-Verify` ran.** (1) `/PIM`
+  on a machine with no profile at all also made an empty profile called `Outlook` - and made
+  *that* the default. It cannot be scripted away: deleting a profile has no free route. (2) The
+  corpus profile's `/PIM` store landed in `Documents\Outlook Files`, and
+  `New-OutlookProfile.ps1 -Verify` failed on it as a stray unless its `-Store` named that store
+  too. (3) The tier import happened at Outlook's **second** start - the one that shows the
+  one-time "Check out our new look" dialog - and the POP3 account came up **unbound** (`DeliveryStore`
+  NULL, `New-TierProfile.ps1 -Verify` failing on it). It bound at the next start, with nothing
+  else changed. Whether the dialog is the cause is inferred from one run of each order; that the
+  binding waits for a later start is measured.
+
+**If a rebuild cannot give the tier import Outlook's first start** - a guest where Outlook has
+already run - restart after the import, start Outlook once more, and re-run
+`New-TierProfile.ps1 -Verify`: it fails, by name, until the account is bound.
 
 ---
 
@@ -549,7 +577,7 @@ have been run and which have been reasoned.
 
 | What | How | Where |
 | --- | --- | --- |
-| Profile with **no mail accounts** - the corpus profile, which `corpus-build` requires | A **`.prf` import**: write the file, point `ImportPRF` at it, start Outlook once. [MEASURED] as a mechanism - it is what `guest/New-TierProfile.ps1` does on both guests. [INFERRED] for the account-less part: the file names no account, and whether an empty `[Internet Account List]` really yields `Accounts.Count = 0` has not been run. **Fallback if it does not:** `outlook.exe /PIM <name>` is measured to produce `accounts=0` on this build and is how both guests' corpus profiles were actually made - it just cannot name a store. ~~`IProfAdmin::CreateProfile`~~ is measured broken here | `guest/New-OutlookProfile.ps1` |
+| Profile with **no mail accounts** - the corpus profile, which `corpus-build` requires | **`outlook.exe /PIM <name>`, then `guest/Add-OutlookPstStore.ps1` per named store** - the unattended route, [MEASURED] end to end on 2026-09-24 from `CP-02` (`accounts=0`, no dialog, every store under its exact name) and how both guests' corpus profiles were made. `/PIM` names its own store `Outlook Data File` and does **not** change the default profile; run it after the tier profile exists, or on a machine with no profile it also makes - and defaults to - an empty profile called `Outlook` (§1). The **`.prf` import** (`guest/New-OutlookProfile.ps1 -Execute`) is NOT the unattended route: [MEASURED] 2026-09-24 it imports within 5 s and makes the profile and its PSTs, and the account-less profile it makes then stops on "Email Account Setup" at every start, so `-Execute` refuses without `-AcceptAccountWizard`. ~~`IProfAdmin::CreateProfile`~~ is measured broken here | `guest/Add-OutlookPstStore.ps1` |
 | **PST with an exact display name**, `@` included | Two routes, both off MAPI. **At profile creation:** the same `.prf`'s `[ServiceN] Name=`, which maps to `PT_UNICODE,0x3001` - `PR_DISPLAY_NAME_W`. [MEASURED]: `Store.DisplayName` read back over COM as exactly `tier@vm.invalid`. **Into a profile that already exists:** `NameSpace.AddStoreEx` [MS-DOC] then a **root-folder rename** [MEASURED, `guest/Rename-OutlookStore.ps1`]. [INFERRED] only for more than one PST in one `.prf` - `UniqueService=No` is the documented key that permits it, and it has not been run with two. ~~`IMsgServiceAdmin::ConfigureMsgService`~~ is behind the broken gateway | `guest/Add-OutlookPstStore.ps1` |
 | **Default-profile switch**, no prompt | **`HKCU\...\Outlook\DefaultProfile` (REG_SZ) + `PickLogonProfile`** - NOT `IProfAdmin::SetDefaultProfile`, which is measured broken here (2026-09-16: `E_NOINTERFACE` on `IID_IProfAdmin`, Office LTSC 2024 16.0.17932.20884). The registry value is measured WORKING on the same guest the same day | `guest/Set-DefaultOutlookProfile.ps1` |
 | The identity account's **signature** | the shipped `manage_signature` tool | `guest/Set-AccountSignature.ps1` |
@@ -604,7 +632,19 @@ is logged on as `vmadmin`, the guests' autologon account (§2). It is not silenc
 the only way past it is `-ExpectedUser <name>`, which is a thing nobody does by accident. The
 second Windows account of `Docs/live-tier-on-the-vm.md` §2.4 will need exactly that.
 
-### 4b-i. `ImportPRF` can rebuild the profile at every Outlook start, and that would detach the corpus
+**Until 2026-09-24, "every one of them" was not true.** `guest/Rename-OutlookStore.ps1` - whose
+banner claimed an identity check it did not have - `guest/Set-AccountWizardClassic.ps1` and
+`guest/Set-OfficeFirstRunSuppressed.ps1` wrote with no guard at all; run on the maintainer's
+workstation, the first renames a real mailbox's store. All three now call it before anything
+else, and on the workstation each refused with every registry key it names unchanged, last-write
+time included, and no Outlook COM object requested. **`.github/scripts/check-testbed-references.ps1`
+check 9** now fails the build when a guest script that writes does not call the guard, or calls it
+after its first write. Four writers outside that change are still unguarded and are declared in
+the check by name, each with its reason: `guest/Build-Corpus.ps1`, `guest/Complete-FirstLogon.ps1`,
+`guest/Measure-SweepCost.ps1` and `guest/Register-InteractiveTask.ps1`. The list can only shrink:
+an entry that stops being true fails the check.
+
+### 4b-i. `ImportPRF` could rebuild the profile at every Outlook start - Outlook clears it, and it is cleared anyway
 
 **Read this before building a corpus on a profile made by `New-OutlookProfile.ps1`.** It is a
 data-shaped hazard on a machine whose entire purpose is a 20,000-item corpus that takes about
@@ -615,22 +655,28 @@ start**, and the `.prf` this project writes carries `OverwriteProfile=Yes` - whi
 a rebuild, because it is what makes a repeat import converge instead of producing a
 `Backup Of <name>` profile.
 
-**WHETHER OUTLOOK CLEARS THE VALUE AFTER PROCESSING IT IS UNKNOWN.** Nothing in this repository has
-ever checked, on any build. `guest/New-TierProfile.ps1` did not look, and neither did anything
-else. This is an unverified gap, not a residual risk somebody has sized.
+**WHETHER OUTLOOK CLEARS THE VALUE AFTER PROCESSING IT: MEASURED - IT DOES, WITHIN ~5 s.** On
+`OAI-UNINDEXED`, 2026-09-24, Office 16.0.17932: sampled every 5 s through a plain first start and
+through a `/PIM` first start (`guest/New-OutlookProfile.ps1` imports), and again through the tier
+import of the §1 rehearsal (`guest/New-TierProfile.ps1`), the value was gone at the first sample
+each time, with the new profile already listed. The tier profile built on 2026-09-15 had already
+answered it after the fact: set at 19:54:37, imported at 19:54:43, absent ever since, while
+nothing in the repository or the scratch that drove that guest removes it. This used to read
+"unknown - nothing in this repository has ever checked".
 
-**If it does not clear it**, then every subsequent Outlook start re-imports the file and REBUILDS
-the profile from it. The `.pst` files are not deleted - nothing here deletes a data file - but a
-store that was attached after the import, or filled after it, **stops being part of the profile**.
-On the corpus guest that reads as a corpus that has vanished, and the repair is a rebuild.
+**What it would have cost if it had not**, which is why it is still guarded: every later Outlook
+start would re-import the file and REBUILD the profile from it (`OverwriteProfile=Yes`). No
+`.pst` would be deleted - nothing here deletes a data file - but a store attached or filled after
+the import would **stop being part of the profile**; on the corpus guest, a corpus that has
+apparently vanished, and a rebuild.
 
-**The remedy is one command, and it belongs in the build sequence rather than in a footnote:**
-
-    .\New-OutlookProfile.ps1 -ClearImportPrf -Execute
-
-Run it after `-Verify` and **before** `guest/Build-Corpus.ps1`. `-Verify` also reads the value back
-and warns, by name, when it is still set - so a run that forgets this says so rather than leaving
-it to be discovered later.
+**Cleared anyway, with nothing to remember** (the maintainer's call: do not make the protection
+depend on the answer, or on a flag). `New-OutlookProfile.ps1 -Verify` and `New-TierProfile.ps1
+-Verify` each remove a lingering `ImportPRF` that names their own `.prf` - only once First-Run is
+back, because removing it before Outlook has read it cancels the import - and
+`guest/Build-Corpus.ps1` refuses to build while one is set, `-SkipPreflight` or not. The old
+manual step, `.\New-OutlookProfile.ps1 -ClearImportPrf -Execute`, still exists and is no longer
+part of the build (§1 step 5).
 
 ### 4b-ii. Where the evidence is
 
@@ -663,9 +709,9 @@ answer per capability, and it now carries the measured-broken marker on the rows
 | `guest/Add-OutlookPstStore.ps1` | Adds a PST to the profile Outlook is running, with an **exact** display name: `NameSpace.AddStoreEx` and then a rename of the store's root folder. Needs Outlook **running**, works on the profile Outlook has open and refuses if that is not the one named, matches stores on `FilePath`. `-NameProbe` is **gone** (§6 item 10 answered it). **RUN 2026-09-24 from CP-05, every path, unchanged: it works** - `AddStoreEx` returned at once (no spin), `Store.DisplayName` followed the rename, `@` included; a re-run is a no-op, a new name renames without a second attach, a taken name and the wrong profile are refused before anything runs; and into a fresh `/PIM` profile it made the corpus-profile shape `guest/New-OutlookProfile.ps1` now points at. `-SelfTest`: 39 assertions, 0 failures. |
 | `guest/Set-DefaultOutlookProfile.ps1` | Switches the default profile and switches the profile prompt off, through the HKCU `DefaultProfile` and `PickLogonProfile` values (the `IProfAdmin` route is measured broken, see the interop row). Closes §6 item 5. **RUN 2026-09-24 from CP-05 and it works end to end**: a profile that does not exist is refused with the key's own last-write time unchanged, a running Outlook is refused, both values read back, and after a restart Outlook opened the named profile with no prompt - confirmed over COM. One output fix: an `Office\8.0\Outlook` key holding only `First-Run` was offered as "`-OfficeVersion 8.0`". `-SelfTest`: 64 assertions. Matters more than it looks: the corpus tool LOGS ON with the default profile and does not attach to whatever Outlook is running, so the wrong default makes a corpus build refuse. |
 | `guest/Dump-UiaTree.ps1` | **Read-only.** Dumps the UIAutomation tree of an open dialog and prints a VERDICT: whether Outlook's account wizard is a classic Win32 property sheet (addressable by locale-invariant numeric `AutomationId`) or Office's own DirectUI chrome (no stable ids - dead for a PowerShell client). Two minutes, and it decides the whole GUI-automation route. **Never executed.** |
-| `guest/Rename-OutlookStore.ps1` | Renames a store to an exact display name, which the tier profile needs because Outlook names the store it mints 'Outlook Data File' and section 2.6 requires the hub store to be named as an SMTP address. **MEASURED WORKING 2026-09-15** - and it settles a question no documentation could: `Store.DisplayName` is read-only, but it DOES follow a rename of the store's root folder, `@` and all, without breaking the account's delivery-store binding. |
-| `guest/tier-profile-forcepst.prf` | **The one that works.** A PRF with no PST service and no `DefaultStore`, used with `ForcePSTPath`, so Outlook mints the POP3 account's delivery store itself - a store Outlook mints is a store Outlook binds, and binding is the step a text file cannot perform. Measured 2026-09-15: `SmtpAddress`, `DeliveryStore` and its Drafts folder all resolve. Prefer this over `tier-profile.prf`, which leaves `DeliveryStore` NULL. |
-| `guest/Set-OfficeFirstRunSuppressed.ps1` | Suppresses Office's own first-run dialogs and pins CLASSIC Outlook. `ImportPRF` silences the profile wizard and nothing else - a guest with a perfect profile still came up on "Your privacy matters", and a dialog on an unattended guest is a hang, not a prompt. Ends by saying registry values prove nothing and to start Outlook and look. **Never executed.** |
+| `guest/Rename-OutlookStore.ps1` | Renames a store to an exact display name, which the tier profile needs because Outlook names the store it mints 'Outlook Data File' and section 2.6 requires the hub store to be named as an SMTP address. **MEASURED WORKING 2026-09-15** - and it settles a question no documentation could: `Store.DisplayName` is read-only, but it DOES follow a rename of the store's root folder, `@` and all, without breaking the account's delivery-store binding. **Guarded since 2026-09-24** - its banner claimed an identity check it did not have, so on the workstation it would have renamed a real store; it now calls the `vmadmin` guard first and needs `guest/OutlookMapiInterop.ps1` staged beside it. Refused on the workstation with no COM object requested; renamed the minted store as vmadmin in both §1 rehearsals, and is a no-op when run twice. |
+| `guest/tier-profile-forcepst.prf` | **The one that works, and `New-TierProfile.ps1`'s default since 2026-09-24.** A PRF with no PST service and no `DefaultStore`: Outlook mints the POP3 account's delivery store itself under `ForcePSTPath` - which `New-TierProfile.ps1 -Execute` now writes - and a store Outlook mints is a store Outlook binds, the step a text file cannot perform. Imported on both guests 2026-09-15/16, and from `CP-02` twice on 2026-09-24 by the scripts alone: `DeliveryStore` and its Drafts folder resolve (§1 says which order binds at the first start). Its banner used to say it had never been imported. |
+| `guest/Set-OfficeFirstRunSuppressed.ps1` | Suppresses Office's own first-run dialogs and pins CLASSIC Outlook. `ImportPRF` silences the profile wizard and nothing else - a guest with a perfect profile still came up on "Your privacy matters", and a dialog on an unattended guest is a hang, not a prompt. **Run 2026-09-24 from `CP-02`, twice: all 13 values written and read back; at Outlook's first start after it (every visible window enumerated, in one of the two runs) the only dialog was the POP3 password prompt.** It does not cover the one-time "Check out our new look" dialog at the **second** start (§1). Guarded since 2026-09-24 (it had written Office policy values on any machine). It had also run before, from hand-run scratch that then deleted the three values it writes inside the Outlook key - `CP-05` lacks exactly those (`guest/New-TierProfile.ps1` banner). |
 | `guest/New-PopAccountPrf.ps1` | A **spike**, not a route: the one free candidate for creating a POP3 account, plus the read-back that says how far it got. Expected to fail; §4b says why. **Never executed.** |
 | `guest/Set-AccountSignature.ps1` | Gives the identity account its signature, by driving the shipped `manage_signature` tool rather than improvising. Runs **after** the accounts exist. **Never executed.** |
 | `guest/Install-MailSink.ps1` | Installs **Inbucket 3.1.1** as the loopback sink the POP3 accounts point at, from a **staged** package - never a download - pinned by a mandatory, undefaulted SHA-256. A SYSTEM scheduled task starts it at boot through a generated launcher, because Inbucket takes its configuration from the environment only and is not a Windows service. `-Verify` **proves the round trip over raw sockets** rather than reporting open ports: an empty POP3 password accepted, a submitted message returned byte-intact through every dot-stuffing case and a base64 attachment, `TOP` working, one mailbox blind to another's mail, numbers fixed after `DELE`, deletes only at `QUIT`, nothing resurrected and no id reused after a restart. It writes to and deletes from two probe mailboxes of its own only - no account reads them - and opens the accounts' mailboxes read-only. Touches no Outlook, no MAPI and no mail item. **Never run on a guest**; `-SelfTest` passes under 5.1 and 7, and every writing mode refuses on the maintainer's machine, measured. Replaces the smtp4dev version, which never ran either. |
@@ -680,9 +726,9 @@ answer per capability, and it now carries the measured-broken marker on the rows
 | `guest/Install-OutlookAIAddIn.ps1` | Puts that payload on a guest and **proves the exact registry state the live tests read**, not that an installer exited 0. Run through `guest/Register-InteractiveTask.ps1`; it refuses session 0, a running Outlook, an unelevated or 32-bit shell, and any machine that is not a guest. Installs the VSTO runtime from staged media (a silent `Installer.iss` skips it), runs the product's installer `/VERYSILENT`, writes the VSTO inclusion-list entry the trust prompt would have written (key path and value names from Microsoft's Japan Office support blog, format from the entry of that shape on the host, comparison rule from the runtime's own IL), sets `VSTO_LOGALERTS=1`, starts Outlook once over COM in a watchdogged child job, and requires `HKCU\Software\OutlookAI\Tuning` to have been written AFTER that start - and the add-in to answer a call into it. Mirrors `HealthReporting.ReadTuningState` down to value types (a REG_QWORD 1 is NOT managed), snapshots the index exclusion before and after, and compares the add-in's contract files with the suite's. Four verdicts; only `ADDIN-READY` exits 0. **Never executed on a guest.** `-SelfTest` 115 assertions, 0 failures, under 5.1 and 7 - 30 of them read the source it mirrors - and each of six rules broken on purpose was caught. |
 | `guest/Invoke-GuestMeasure.ps1` | The measurement driver, recovered from the guest. Produced the numbers now in `Docs/magic-numbers.md`. |
 | `guest/Measure-SweepCost.ps1` | Per-folder / per-item sweep cost, out of band. **Reconstructed, never executed** - see its banner. |
-| `guest/tier-profile.prf` | The tier profile as an Outlook .prf: one Unicode PST plus one POP3 account on the loopback sink. A template with `{{...}}` tokens - `New-TierProfile.ps1` renders it. **Never imported by Outlook.** |
-| `guest/New-TierProfile.ps1` | Creates the tier profile by importing that .prf, then reads the profile hive back and asserts whether Outlook honoured it. Modes: dry run, `-Execute`, `-Verify`, and (2026-09-24) `-SelfTest`. **RUN ON BOTH GUESTS 2026-09-15/16 AND IT WORKS** - first attempt on the second guest, from the committed scripts. Its `-Verify` had a bug worth knowing about: it read the legacy Windows Messaging Subsystem hive and so reported a WORKING route dead five times while its own dump contradicted it. Fixed. **2026-09-24:** the profile it built answered the `ImportPRF` question after the fact - set 19:54:37, gone ever since, Outlook removed it (§4b-i); `-Verify` now removes a lingering one naming the tier `.prf`, but only once the import has run; it carries the `vmadmin` guard it lacked (it writes the Setup key) and so needs `guest/OutlookMapiInterop.ps1` staged beside it; and its account check counts **mail** accounts, not every entry, and no longer fails the working `ForcePSTPath` route for having no `tier.pst`. `-SelfTest`: 13 assertions. See its banner and §5c. |
-| `guest/Set-AccountWizardClassic.ps1` | Restores Outlook's classic account wizard and stops AutoDiscover reaching the network. Prerequisite for the UI Automation route. **Never executed.** |
+| `guest/tier-profile.prf` | **RETIRED 2026-09-24 - not a route; `New-TierProfile.ps1` refuses it, and any template carrying a PST service or `DefaultStore`, before writing anything.** One named Unicode PST plus one POP3 account, with `[General] DefaultStore` pointing at the PST. It WAS imported - on `OutlookAI-Indexed`, 2026-09-15 - and left the account's `DeliveryStore` NULL: `DefaultStore` binds the profile's default store, not the account's. Kept as evidence rather than deleted: it is what showed a `.prf`'s `[ServiceN] Name=` carries an exact display name, `@` included (§6 item 10), and `New-OutlookProfile.ps1` builds its PST service blocks from it. |
+| `guest/New-TierProfile.ps1` | Creates the tier profile by importing that .prf, then reads the profile hive back and asserts whether Outlook honoured it. Modes: dry run, `-Execute`, `-Verify`, and (2026-09-24) `-SelfTest`. **RUN ON BOTH GUESTS 2026-09-15/16 AND IT WORKS** - first attempt on the second guest, from the committed scripts. Its `-Verify` had a bug worth knowing about: it read the legacy Windows Messaging Subsystem hive and so reported a WORKING route dead five times while its own dump contradicted it. Fixed. **2026-09-24:** the profile it built answered the `ImportPRF` question after the fact - set 19:54:37, gone ever since, Outlook removed it (§4b-i); `-Verify` now removes a lingering one naming the tier `.prf`, but only once the import has run; it carries the `vmadmin` guard it lacked (it writes the Setup key) and so needs `guest/OutlookMapiInterop.ps1` staged beside it; and its account check counts **mail** accounts, not every entry, and no longer fails the working `ForcePSTPath` route for having no `tier.pst`. **Later on 2026-09-24 it became the whole route rather than half of it:** the forcepst template is the default, `-Execute` writes `ForcePSTPath` (REG_EXPAND_SZ, read back) - which nothing under `Testbed/` set before; hand-run scratch did, and wiped part of the Outlook key doing it - a template naming a PST service or `DefaultStore` is refused before any write, and `-Verify` checks that the delivery store, read out of the account's own EntryID, is the one PST in the profile, under `ForcePSTPath`. Proven from `CP-02` in both orders, by the scripts alone (§1: tier first binds at the first start; corpus first left the account unbound until the next one, and `-Verify` said so). `-SelfTest`: 43 assertions. See its banner and §5c. |
+| `guest/Set-AccountWizardClassic.ps1` | Restores Outlook's classic account wizard and stops AutoDiscover reaching the network. Prerequisite for the UI Automation route. **Guarded since 2026-09-24** (it wrote 18 HKCU values, half under Policies, on any machine). **The registry half ran on a guest the same day** - 18 values written and read back, idempotent, reverted - but **whether Outlook then shows the classic wizard is still unverified**: nobody has opened the Mail applet afterwards. |
 
 ---
 
@@ -697,9 +743,11 @@ that a guest can settle them in one checkpoint cycle each.
 
 **ONE OF THEM RAN, AND IT WORKED - so this section is no longer three unrun experiments.**
 `New-TierProfile.ps1` built the tier profile on BOTH guests (2026-09-15/16), first attempt on the
-second guest from the committed scripts, untouched by hand. `Set-AccountWizardClassic.ps1` and
-`Dump-UiaTree.ps1` have still never run, each carries a banner saying so, and each verifies its own
-result and exits non-zero rather than reporting a success it did not check.
+second guest from the committed scripts, untouched by hand - and since 2026-09-24 it needs no
+hand-run step at all (§1 step 4c). `Set-AccountWizardClassic.ps1` has run only its registry half
+(2026-09-24: written, read back, reverted); whether the classic wizard then appears is still
+unlooked-at. `Dump-UiaTree.ps1` has never run. Each carries a banner saying which, and each
+verifies its own result and exits non-zero rather than reporting a success it did not check.
 
 **Of the two questions that decided this, one is answered:**
 
@@ -954,3 +1002,11 @@ when:
 The last two are not paranoia. The value they look for has been committed to this repository
 before, and an unattend password is `<Password><Value>...</Value></Password>` - which does not
 read as an assignment, so the credential-shaped check would walk straight past it.
+
+**And one about the scripts themselves (check 9, 2026-09-24).** It fails when a script under
+`guest/` that writes - the registry, the mailbox through any Outlook COM session, a scheduled task,
+a service, a locale or power setting, or a process launch - does not call the `vmadmin` guard, or
+calls it only after its first write. It was written the day three such scripts were found, one of
+them renaming stores behind a banner that claimed an identity check it did not have. The four
+writers it found unguarded outside that change are declared in the check by name, each with its
+reason, and that list can only shrink (§4b).

@@ -1,29 +1,42 @@
 ;=============================================================================================
-; TEMPLATE. THIS FILE HAS NEVER BEEN IMPORTED BY OUTLOOK.
+; THE TIER PROFILE'S TEMPLATE - THE ONE THAT WORKS, AND New-TierProfile.ps1's DEFAULT.
 ;=============================================================================================
 ;
-; Outlook Profile (PRF) for the testbed TIER profile: one Unicode PST service plus one POP3
-; account pointed at a loopback mail sink. Testbed/guest/New-TierProfile.ps1 renders it - it
-; substitutes the {{...}} tokens and rewrites the result as ASCII with CRLF line endings, so
-; whatever this file's line endings are in git does not matter.
+; IMPORTED ON BOTH GUESTS (OutlookAI-Indexed and OutlookAI-Unindexed, 2026-09-15/16), and it
+; produces what the live tier needs: one POP3 account pointed at a loopback mail sink, with its
+; DeliveryStore BOUND and that store's Drafts folder resolving over COM. Until 2026-09-24 this
+; banner still said "never imported" and New-TierProfile.ps1 still defaulted to tier-profile.prf,
+; so the working build could only be reproduced by knowing to pass -TemplatePath.
+;
+; WHAT MAKES IT WORK is what it LEAVES OUT: there is NO PST service and NO [General] DefaultStore.
+; Outlook therefore mints the account's own delivery store - and a store Outlook mints is a store
+; Outlook binds, which is the one step a text file cannot perform (PROP_ACCT_DELIVERY_STORE is a
+; binary EntryID). WHERE it mints is ForcePSTPath, a REG_EXPAND_SZ under
+; HKCU\Software\Microsoft\Office\16.0\Outlook that New-TierProfile.ps1 -Execute now writes
+; (-WorkDir, C:\OutlookAI-Tier by default); Outlook names the minted store 'Outlook Data File',
+; and Rename-OutlookStore.ps1 then names it as the account's address. Do NOT add a PST service or
+; DefaultStore back: that is tier-profile.prf, it left DeliveryStore NULL when it was measured,
+; and New-TierProfile.ps1 refuses a template of that shape.
+;
+; Testbed/guest/New-TierProfile.ps1 renders this file - it substitutes the {{...}} tokens and
+; rewrites the result as ASCII with CRLF line endings, so whatever this file's line endings are
+; in git does not matter.
 ;
 ; DO NOT IMPORT THIS FILE DIRECTLY. The tokens below are not valid PRF values.
 ;
-; WHY EVERY LINE IS HERE is recorded in .work/pop3-account-routes.md section A.2, with a source
-; for each key. The short version:
+; WHY EVERY LINE IS HERE is recorded in Docs/research/pop3-account-routes.md section A.2, with a
+; source for each key. The short version:
 ;   - Sections 1-5 are the customisation. Section 5's key spellings are Microsoft's own literal
 ;     POP3 block from the Office 2007 Resource Kit; do not "tidy" them.
 ;   - Sections 6 and 7 are the property mappings and are shipped VERBATIM from OCT-generated
 ;     output. Microsoft: "You typically do not modify existing entries in Sections 6 and 7."
 ;     A property with no mapping in section 7 is written NOWHERE, silently.
 ;   - There is deliberately NO password key. No published POP3 [AccountN] block has one, which
-;     is exactly what this profile wants.
+;     is exactly what this profile wants - and why every start of the profile raises the POP3
+;     password dialog on the guests (it does not block COM).
 ;   - BackupProfile=No is what stops a repeat import creating a "Backup Of <name>" profile.
 ;     Microsoft spells it False once, in passing; the community spells it No. Which one 16.x
 ;     honours is UNTESTED - if a run leaves a backup profile, try the other spelling.
-;   - DefaultStore names a SERVICE, not a store path. Whether Outlook 16.x still applies it to
-;     a POP3 account's delivery store is THE open question for this route; New-TierProfile.ps1
-;     verifies it rather than assuming it.
 
 ; **************************************************************
 ; Section 1 - Profile Defaults
