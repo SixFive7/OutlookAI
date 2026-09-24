@@ -123,8 +123,8 @@ Everything below describes that final shape.
 
 | Store | Named | Watched | Indexed list | What is in it |
 | --- | --- | --- | --- | --- |
-| Hub | as its account's address, e.g. `tier@vm.invalid` | yes | **first**, on the indexed guest | the **hub population** (56 items, section 3b) plus whatever a run is writing |
-| Bystander | as an address, e.g. `bystander@vm.invalid` | yes, and a **declared bystander** | **second**, on the indexed guest | the **bystander population** (300 items, section 3b) - never written by a test |
+| Hub | as its account's address, e.g. `tier@vm.invalid` | yes | **first**, on the indexed guest | the **hub population** (68 items since generator v2 - 56 dated, 12 undated; section 3b) plus whatever a run is writing |
+| Bystander | as an address, e.g. `bystander@vm.invalid` | yes, and a **declared bystander** | **second**, on the indexed guest | the **bystander population** (342 items - 300 dated, 42 undated; section 3b) - never written by a test. It has **no Inbox and no Sent Items**, on purpose (below) |
 | Corpus A / Corpus B | anything - `Corpus A` in the examples | yes, and a **declared bystander** | **last**, on the indexed guest | the measurement corpus: at least **160,000** items on the indexed guest (`minimumItemCount` in `Testbed/testbed.json`); no minimum is recorded for the unindexed guest's |
 
 These three are the floor, and the shape of the committed example (section 2.8b says why the table
@@ -184,11 +184,24 @@ a few hundred items rather than none, because an empty store exercises the item-
 over nothing. A corpus is the wrong shape for that: the identity budget is 500 items per folder and
 3,000 per store, and a corpus is over both in every populated folder, so it falls back to bare counts.
 
-**It is populated by the generator** (`corpus-build --population bystander`, section 3b) - 300 tagged
-items in four folders, every one inside the identity budget, two of them subfolders of the Inbox. The
+**It is populated by the generator** (`corpus-build --population bystander`, section 3b) - 300 dated
+items in four mail folders, every one inside the identity budget, two of them subfolders of the one
+the "Inbox" items go into, plus, since generator v2, 42 undated appointments, contacts and tasks. The
 earlier objection that "the generator tags everything it creates, and the bystander's whole job is to
 be untouched" does not hold: the tag is the CORPUS tag, which no artifact sweep can select, and no test
 writes to the store either way.
+
+**And it keeps the shape it was chosen for: no arrival folders.** The bystander is also the
+absent-arrival-folders store (Q5): a PST attached with `AddStoreEx` has Deleted Items and none of
+Inbox, Sent Items, Drafts, Junk Email, Calendar, Contacts or Tasks - measured on `OutlookAI-Unindexed`,
+2026-09-24 - and nothing is to give it any. The generator used to ask Outlook for them anyway: it
+CREATED Drafts and Junk Email in it, and for its Inbox got the PST's hidden root, where 172 items then
+sat out of sight (section 4.1, step 6). Since generator v2 no lookup creates a folder, and a folder the
+store lacks is replaced by a visible **stand-in** under the store's root - `OutlookAI-Corpus-Folder-6`
+for the Inbox items and its two subfolders, `-5` for Sent Items, `-9`/`-10`/`-13` (typed Calendar,
+Contacts and Tasks folders) for the undated kinds - recorded in the manifest, so teardown removes it.
+None is a default folder, so the store still has no arrival folders. Whether any TEST needed the
+bystander's Inbox was checked, test by test, before deciding to keep this shape: section 3b.
 
 #### What each list refuses, and what it does not (corrected 2026-09-24, Q77)
 
@@ -944,10 +957,19 @@ Naming matters more than it looks:
 * **The dummy account's delivery store must be a separate throwaway PST**, not a corpus store.
   An account delivering into the corpus store can flip that store's `IsDataFileStore`, and
   `CorpusSafety` reads that property as one of four independent facts it requires before it
-  will write anything. In the TIER profile, that is. Whether the same PST attached to the
-  account-less corpus profile reads `IsDataFileStore = true` there - it has no account delivering
-  into it in that profile - is what the hub population's first build establishes (section 3b); the
-  code says it should, and nothing has run it.
+  will write anything. In the TIER profile, that is. **Attached to the account-less corpus profile
+  the same PST passes - ANSWERED on `OutlookAI-Unindexed`, 2026-09-24** (section 4.1, step 6): the
+  hub, the bystander and the identity store were each "accepted as a corpus target (bound profile:
+  'CorpusProfile')", `profile accounts: 0`, `delivering into this store: 0`.
+* **A PST attached with `AddStoreEx` has almost no default folders, and nothing may ask Outlook for
+  one.** Measured the same day: the bystander held Deleted Items and nothing else - no Inbox, no Sent
+  Items, no Drafts, no Junk Email - and `Store.GetDefaultFolder` then CREATED Drafts and Junk Email in
+  it and, for the Inbox, handed back the PST's hidden non-IPM root. Only a store Outlook mints as a
+  profile's default (the hub, `C:\OutlookAI-Tier\Outlook.pst`) has the full set. The generator no
+  longer asks: it finds a default folder only through the store's own designations (the product's
+  non-creating `SpecialFolders.Resolve`), and gives a store that lacks one a visible stand-in
+  (section 3b). For the bystander that absence is its point (section 1.3); for the identity store it
+  is a defect with a decision attached (section 3b, "The identity store has no Inbox").
 * **The bystander is named as an `.invalid` address too**, e.g. `bystander@vm.invalid`, and so is the
   identity store. Section 1.3 says why: the product finds a small store in the index only through
   mail addressed to it, and only for a name shaped like an address. Only the corpus - big enough to
@@ -962,7 +984,8 @@ Naming matters more than it looks:
 
 **Populate the hub and the bystander with the generator**, not by hand: `corpus-build --population
 hub` and `--population bystander` build a small, tagged, deterministic population into each (section
-3b). The identity store gets `--population identity` once section 2.8b has built it.
+3b). The identity store gets `--population identity` once section 2.8b has built it - and, since
+2026-09-24, once it has a real Inbox (section 3b).
 
 ### 2.7 The mail sink - Inbucket 3.1.1
 
@@ -1281,11 +1304,13 @@ That makes the machine **four stores**: hub, corpus, bystander, identity. The tr
 is still a separate store and still the only one the guard can decide on - the identity store is
 written to, so it can never do that job.
 
-In section 2.10's settings file the delta is one name, in one list:
+In section 2.10's settings file the delta is one name, in one list - the watched one. The identity
+store is in neither the indexed list nor the bystander list:
 
 ```
-"expectedStoreDisplayNames":  [ "test@vm.invalid", "Corpus A", "OutlookAI Bystander", "identity@vm.invalid" ],
-"bystanderStoreDisplayNames": [ "OutlookAI Bystander", "Corpus A" ],
+"expectedStoreDisplayNames":  [ "test@vm.invalid", "bystander@vm.invalid", "Corpus A", "identity@vm.invalid" ],
+"indexedStoreDisplayNames":   [ "test@vm.invalid", "bystander@vm.invalid", "Corpus A" ],
+"bystanderStoreDisplayNames": [ "bystander@vm.invalid", "Corpus A" ],
 ```
 
 **The example in 2.10 is deliberately left at the three-store floor, and so is section 1.3's
@@ -1345,6 +1370,24 @@ census that found every ordinal exactly once, in the folder the plan names. With
 default and Outlook closed it refused with both reasons and wrote nothing; with `ImportPRF` set it
 gave the third.
 
+**On the indexed guest the corpus is at least 160,000 items - decided 2026-09-24 (question E,
+option (a), keeping the proposed minimum).** `Testbed/testbed.json` records it as
+`corpusIdConvention.minimumItemCount`, and `Testbed/host/New-LiveTestSettings.ps1` refuses to render
+that guest's settings while the recorded corpus is smaller. Build it with `--count 160000`: at the
+recorded 24.8 items/s that is about 1 h 50 min, plus the indexer's crawl. The reason is the same
+day's question B, option (c): every index-tier latency bound is now timed against the LARGEST
+indexed store (`T2/LiveLatencyTarget`, pinned by `T1/LatencyTargetTests`), which on a guest is this
+corpus - and against a 20,000-item store an idle VM meets a 2-second bound by construction, where
+the maintainer's profile, which the bound was set against, holds about 160,000.
+
+**Attach the corpus store to the tier profile while it is still EMPTY - decided the same day
+(question C, option (a)).** It is built in the account-less profile and read by the tier in the
+tier profile, so it is mounted in both, exactly as a population's store is (section 2.6's
+addition, section 3b's order): create it in the corpus profile, attach it to the tier profile by
+path with `Testbed/guest/Add-OutlookPstStore.ps1` - names byte-identical - and only THEN build.
+Never the other way round: a store that already holds 160,000 items is not attached by script,
+whatever made them.
+
 Repeat for Corpus B under the other Windows account, with **a different `--corpus-id` and a
 different manifest path**. Whether the two corpora should share a seed and anchor is not
 settled; sharing them makes the two stores directly comparable, which is probably what you
@@ -1386,7 +1429,9 @@ population.
 > documented rules the tier does not enforce itself. The one thing it cannot check from the host is
 > the one that matters most - that the guest's tier profile really mounts every store it names,
 > under exactly those names - which is why those values have to be read off the guest over COM.
-> **Nobody has done that yet, so no guest's file has been rendered.** The renderer **never writes
+> **That was done for `OutlookAI-Unindexed` on 2026-09-24 (section 4.1, step 8), and only there.**
+> Since the same day a guest's section must also name its hub population's manifest,
+> `hubPopulationManifestPath` - the renderer refuses one that does not. The renderer **never writes
 > into a `live-fixtures` directory on the host**, however the path is spelled, because that is
 > where the maintainer's own hand-written file lives. Everything below still describes the file,
 > and is still how the maintainer's own is written.
@@ -1416,6 +1461,7 @@ it the whole live tier refuses to start.
 {
   "machineProfile": "Portable",
   "testHubStoreDisplayName": "test@vm.invalid",
+  "hubPopulationManifestPath": "C:\\OutlookAI-Q5\\corpus-hub-indexed.jsonl",
   "expectedStoreDisplayNames": [ "test@vm.invalid", "bystander@vm.invalid", "Corpus A" ],
   "indexedStoreDisplayNames": [ "test@vm.invalid", "bystander@vm.invalid", "Corpus A" ],
   "bystanderStoreDisplayNames": [ "bystander@vm.invalid", "Corpus A" ],
@@ -1449,6 +1495,7 @@ it the whole live tier refuses to start.
 | --- | --- | --- |
 | `machineProfile` | `Production` or `Portable`. Absent means `Production`, so an older settings file keeps the validation it was written under. Accepted as a string or a number. | no |
 | `testHubStoreDisplayName` | Display name of the store the suite may write to, exactly as Outlook shows it. Doubles as an SMTP address. | **yes** |
+| `hubPopulationManifestPath` | **A test guest's field (2026-09-24).** The absolute path of the hub population's manifest, `corpus-<id>.jsonl` for the hub id `Testbed/testbed.json` assigns the guest. `Testbed/guest/Reset-HubPopulation.ps1` rebuilds the hub from it before every run, and `LiveIndexSearchTests.Staleness_SelfReportsPlausibleFrontier` reads its anchor and FAILS on a hub too old to catch a local-time frontier with, naming that script. Blank is refused; absent - the maintainer's machine, whose hub is real mail - leaves the test as it was. The renderer requires it on every guest. | on a test guest |
 | `expectedStoreDisplayNames` | The **WATCHED** list: every store the tier profile mounts. The count tripwire censuses it (with the bystander and delegate lists unioned in); the identity-draft grant, `list_accounts` exactness, `outlook_health`'s reachability check and the archive-resolution test read it. Include the hub. | **yes** |
 | `indexedStoreDisplayNames` | The **INDEXED** list: the stores the index-tier tests measure, in order - the hub first, the bystander second, the corpus last (section 1.3 says why the order is read). Every entry must be watched; never a delegate mailbox; must include the hub unless empty. **Absent means "the same as the watched list"**, which is what every file written before the split meant. Empty only on a `Portable` machine, and there every index test refuses rather than iterate nothing. | no |
 | `bystanderStoreDisplayNames` | Stores the write allowlist must **refuse**. Declaring a store here is sufficient to have it censused - the census adds declared bystanders back in - so leaving one out of `expectedStoreDisplayNames` does not refuse the tier; name it there too all the same, because `outlook_health` and `list_accounts` read only that list, and the renderer holds a test guest to it. Both corpus stores belong here, and so does the bystander. Never the hub. | no |
@@ -1565,10 +1612,13 @@ given machine. It prints the retirement notice as well.
 
 ## 3b. Keeping the fixture populations usable
 
-**Added 2026-09-24 for Q70. NOTHING IN THIS SECTION HAS RUN ON A GUEST.** The generator half is
-built and pinned on the host - `T1/CorpusPopulationTests`, 50 cases, no Outlook - and every step
-below that opens a store is guest-only and unmeasured. The first build of each population is what
-answers the questions at the end of this section.
+**Added 2026-09-24 for Q70; generator v2 the same evening. v1 RAN ON A GUEST ONCE AND WAS NOT CLEAN;
+v2 HAS NOT RUN ON ONE.** `OutlookAI-Unindexed` built all three populations with v1 (section 4.1, step
+6): every build exited 1, and the four defects it found are what v2 fixes - "What v2 changed", below.
+The generator half is pinned on the host - `T1/CorpusPopulationTests` (77 cases), `T1/CorpusDefaultFolderTests`
+(16), the placement cases of `T1/CorpusGeneratorTests` and `T1/CorpusProbeResidueCensusTests`, no
+Outlook - and every step below that opens a store is guest-only. The guest is rolled back to before
+step 6 and the populations rebuilt with v2; "What only a guest can answer" lists what that settles.
 
 **What a population is.** A small, curated, deterministic set of items the corpus generator builds
 into a store the measurement corpus cannot serve: `corpus-build --population hub|bystander|identity`.
@@ -1581,9 +1631,22 @@ to or sent from the store's owner, which is what lets the index find a small sto
 
 | Population | Built into | Items | What it carries, and for whom |
 | --- | --- | --- | --- |
-| `hub` | the hub, `testHubStoreDisplayName` | 56 | Four conversations of four, alternating Inbox and Sent Items, whose newest member is the newest item in the store - one minute before the anchor. Sixteen received and six sent singles; six items in `Inbox/OutlookAI-Corpus-Folder-Projects`. Eleven attachments - PNG, `.ics`, `.eml` and text, and one mail carrying three - with the probe term `invoice` in one text attachment and in its parent's body. Read and unread mail. And the SF-6 subject-only population: twelve items in `Inbox/OutlookAI-Corpus-Folder-Notices`, all from `Noticebot Relay <noticebot@alerts.invalid>` and nobody else, `bulletin` in every subject and in no body. For the tests that read, page, cap or walk the hub; the index tests that read the first indexed store; SF-6; the attachment-kind recall; the conversation walk; the staleness frontier. |
-| `bystander` | the plain bystander | 300 | Six conversations of three; 160 received and 50 sent singles spread over two years, one in eight received with an attachment; two populated subfolders of the Inbox, `-Projects` (40) and `-Suppliers` (32). Every folder inside the census identity budget. For the count tripwire's item-by-item path and the exclude-subfolders measurement. |
-| `identity` | the identity account's delivery store (section 2.8b) | 8 | Five received, three sent, all to or from its owner - so the index knows the store exists and `outlook_health` does not report it missing. |
+| `hub` | the hub, `testHubStoreDisplayName` | 68 | Four conversations of four, alternating Inbox and Sent Items, whose newest member is the newest item in the store - one minute before the anchor. Sixteen received and six sent singles; six items in `Inbox/OutlookAI-Corpus-Folder-Projects`. Eleven attachments - PNG, `.ics`, `.eml` and text, and one mail carrying three - with the probe term `invoice` in one text attachment and in its parent's body. Read and unread mail. The SF-6 subject-only population: twelve items in `Inbox/OutlookAI-Corpus-Folder-Notices`, all from `Noticebot Relay <noticebot@alerts.invalid>` and nobody else, `bulletin` in every subject and in no body. And, since v2, **twelve UNDATED items** - four appointments in the Calendar, four contacts, four tasks, none with a delivery time. For the tests that read, page, cap or walk the hub; the index tests that read the first indexed store; SF-6; the attachment-kind recall; the conversation walk; the staleness frontier; the order-key collation. |
+| `bystander` | the plain bystander | 342 | Six conversations of three; 160 received and 50 sent singles spread over two years, one in eight received with an attachment; two populated subfolders, `-Projects` (40) and `-Suppliers` (32), of the folder its received mail is filed in. Every folder inside the census identity budget. And, since v2, **42 undated items**, fourteen each of appointments, contacts and tasks - the volume the order-key refetch needs (below). It has no Inbox, Sent Items, Calendar, Contacts or Tasks and gets none: each of those folders is a visible **stand-in** under the store root (`OutlookAI-Corpus-Folder-6`, `-5`, `-9`, `-10`, `-13`). For the count tripwire's item-by-item path and the exclude-subfolders measurement. |
+| `identity` | the identity account's delivery store (section 2.8b) | 8 | Five received, three sent, all to or from its owner - so the index knows the store exists and `outlook_health` does not report it missing. **Waits on the store's Inbox** - below. |
+
+**The undated items (decided 2026-09-24, question A, option (a)).** The index tier sorts by
+`System.Message.DateReceived DESC`, and a store-scoped search admits every item class since gap B3, so
+where the provider sorts a row with NO received date decides whether such rows crowd mail out of a
+`TOP n` - which is what the three `LiveOrderKeyCollationTests` measure, and on a store of dated mail
+only they measured nothing (`no-undated-rows-in-sample`). Every one of them uses a kind filter that
+admits every class, so appointments, contacts and tasks are what they read. **The decision named
+unsent drafts too, and there are none - a deviation, with its reason:** measured on
+`OutlookAI-Unindexed` the same day, a new unsent mail item's first save is filed in the profile's
+DEFAULT store's Drafts, whichever store's folder created it, and a population is never built into the
+default store - so a draft could only be made in one by writing into another store first, which is
+the defect below. The undated kinds are never unsent, and the undated probe checks, per kind, that its
+save stayed in the target store before any is built.
 
 **It costs nothing to look at one.** `corpus-plan` is pure - no Outlook, runnable on the host - and
 for a hub population it also prints the values a settings file must carry:
@@ -1600,10 +1663,11 @@ refused rather than building part of one.
 
 **The ids and seeds are assigned**, in `Testbed/testbed.json` under
 `corpusIdConvention.populations` - `hub-indexed` 8181, `bystander-indexed` 8282, `identity-indexed`
-8383, and `hub-unindexed` / `bystander-unindexed` on the other guest - for the same reason the corpus
-ids are (section 2.9): the manifest is `corpus-<id>.jsonl`, every guest's manifest lands in one pull
-directory, and a manifest is the only allowlist teardown will delete from. **The anchor is not
-fixed**, and for the hub that is the point; see below.
+8383, and `hub-unindexed` / `bystander-unindexed` / `identity-unindexed` with the same seeds on the
+other guest - for the same reason the corpus ids are (section 2.9): the manifest is
+`corpus-<id>.jsonl`, every guest's manifest lands in one pull directory, and a manifest is the only
+allowlist teardown will delete from. **The anchor is not fixed**, and for the hub that is the point;
+see below.
 
 ### Building them the first time
 
@@ -1612,15 +1676,16 @@ read in the tier one - and attached to its second profile **while it is still em
 the addition written out there). So the order is:
 
 1. **In the tier profile**, after sections 2.5 and 2.8: the hub exists, minted by
-   `New-TierProfile.ps1` (by default `C:\OutlookAI-Tier\tier.pst`) and named by
-   `Rename-OutlookStore.ps1`. Create the bystander here too, new and empty, with
-   `Add-OutlookPstStore.ps1`. Once section 2.8b has minted the identity account's store, it is here
+   `New-TierProfile.ps1` as the profile's DEFAULT store (`C:\OutlookAI-Tier\Outlook.pst` on both
+   guests - measured) and named by `Rename-OutlookStore.ps1`; it is the only population store with
+   every default folder. Create the bystander here too, new and empty, with
+   `Add-OutlookPstStore.ps1`. Once section 2.8b has attached the identity account's store, it is here
    as well.
 2. **Switch the default to the corpus profile** (`Set-DefaultOutlookProfile.ps1`) and restart
    Outlook - gracefully, under mailbox-safety rule 7.
 3. **Attach each of those stores to the corpus profile by its path, before anything is in it**:
    `Add-OutlookPstStore.ps1 -ProfileName <corpus profile> -DisplayName tier@vm.invalid -Path
-   C:\OutlookAI-Tier\tier.pst -Execute`, and the same for the bystander and the identity store. The
+   C:\OutlookAI-Tier\Outlook.pst -Execute`, and the same for the bystander and the identity store. The
    name must come back byte-identical to the one the tier profile shows; the script checks.
 4. **Build each population there**, as for a corpus: `corpus-probe`, then `corpus-build` dry, then
    `corpus-build --execute`, which runs its own census. For the hub:
@@ -1632,15 +1697,30 @@ the addition written out there). So the order is:
      --manifest C:\OutlookAI-Q5\corpus-hub-indexed.jsonl --execute
    ```
 
-   Before letting it proceed, read its own output: the store and profile lines accepted, `profile
-   accounts: 0`, both corpus probes verified, and **`== enrichment probe ==` reporting sender,
-   recipients, attachment and conversation index all written**. That third probe is new: a
-   population is built only where one throwaway item proved every write it depends on, with no
-   override. After the build, the census reads every item back - sender, recipients, attachments,
-   conversation - and fails the build on any difference.
+   Before letting it proceed, read its own output, which since v2 says more than it used to:
+   * the store and profile lines accepted, `profile accounts: 0`;
+   * `Cross-store residue sweep (before the probes)` - and again after them - naming any store other
+     than the target in which it found this corpus's probe items. It should find none;
+   * `== placement probe ==`: `target store: NOT the profile's default store` for every population
+     store (in the corpus profile the default is the corpus PST), `target folder:` the store's own
+     Inbox for the hub or a STAND-IN for a store without one, then one line per rung - only
+     `InPlaceReceived` and `PostAsNote` on a non-default store - with `visible=True` and
+     `store=target`. A rung whose first save landed in another store says `store=OTHER` and is
+     unusable, whatever else it achieved;
+   * the date probe verified;
+   * **`== enrichment probe ==` reporting sender, recipients, attachment and conversation index all
+     written** - and the recipient it checks is now the store's OWNER, the one v1 left unresolved;
+   * `== undated probe ==` (hub and bystander): each kind `inFolder=True`, `undated=True`,
+     `inTargetStore=True`.
+
+   A population is built only where one throwaway item proved every write it depends on, with no
+   override. After the build, the census reads every item back - sender, recipients (the owner
+   included), attachments, conversation, and each undated item's class and missing delivery time -
+   and fails the build on any difference.
 5. **Switch the default back to the tier profile**, restart Outlook, and on the indexed guest let
-   the indexer settle. `outlook_health`'s `index.perStore[]` must then list every store in
-   `indexedStoreDisplayNames` with rows.
+   the indexer settle: `corpus-indexed` (the command `Testbed/guest/Reset-HubPopulation.ps1` runs)
+   waits until the index holds every item of a population. `outlook_health`'s `index.perStore[]`
+   must then list every store in `indexedStoreDisplayNames` with rows.
 
 The hub's build prints the `probeTerm` and `subjectOnlyProbe` values for the settings file; three of
 the four `subjectOnlyProbe` fields are generator constants that `Testbed/testbed.json` already
@@ -1655,63 +1735,152 @@ hour or two in the future - the guest's UTC offset - and fails it. So the hub po
 against **the moment the run starts**, which is why its anchor is not recorded in
 `Testbed/testbed.json`: the manifest header records it, and the next rebuild reads it from there.
 
-The rebuild is the same switch as above, and it tears down with the anchor the manifest records -
-the anchor is part of the shape key, so a teardown given today's anchor is refused as a different
-population:
+**The rebuild is a script step, not a paragraph - decided 2026-09-24 (question D, option (a)), the
+pattern chosen for `ImportPRF`.** `Testbed/guest/Reset-HubPopulation.ps1 -Execute`, through
+`Register-InteractiveTask.ps1 -TimeoutSeconds 3600`, right after a guest restart (section 4 has the
+line). It reads everything from the guest's own live-test settings - the hub, the manifest
+(`hubPopulationManifestPath`, whose file name is the population id) and whether the hub is indexed -
+and the seed and the old anchor from the manifest's header, and then:
 
-```
-:: in the corpus profile
-dotnet run --project <as above> -- corpus-teardown --population hub \
-  --store tier@vm.invalid --allow-store tier@vm.invalid \
-  --corpus-id hub-indexed --seed 8181 --anchor <the anchor the manifest header records> \
-  --manifest C:\OutlookAI-Q5\corpus-hub-indexed.jsonl --execute
-dotnet run --project <as above> -- corpus-build --population hub ... --anchor <now> --execute
-:: then back to the tier profile, let the index take the 56 items, and start the run
-```
+1. refuses a Production profile, a manifest of any other population or store, a running Outlook (it
+   quits none it did not start) and a pending `ImportPRF` (it starts Outlook twice);
+2. makes the account-less profile the default, starts Outlook and waits 180 s;
+3. `corpus-teardown --execute` by the anchor the manifest records - the anchor is part of the shape
+   key, so a teardown given today's would be refused as another population - and requires 0 left;
+4. moves the torn-down manifest to `hub-history\<id>.<anchor>.jsonl` beside it, a name
+   `Copy-FromGuest.ps1` never mistakes for a live manifest;
+5. `corpus-build --execute` against now, to the second: every probe, the build, its census and its
+   read-back, exit 0 required - then reads the new header back and requires that anchor;
+6. quits the Outlook it started, under mailbox-safety rule 7 - attached through the Running Object
+   Table, every Outbox proven empty by its store's folder mask, no item window open, and OUTLOOK.EXE
+   the one process it started; a quit that does not complete (a modal dialog swallows `Quit()`,
+   measured) stops with "restart the guest, then `-SkipRebuild`";
+7. makes the tier profile the default again, starts Outlook on it NOT ELEVATED
+   (`Start-OutlookUnelevated.ps1` - an elevated Outlook never feeds the index, section 8 item 22,
+   and the run attaches at the user's own level), and on the indexed guest runs `corpus-indexed`
+   until the index holds every item of the new population;
+8. prints the newest item's instant, the minutes the frontier test has left, and this guest's
+   opt-in value and `dotnet test` filter for the run (`Testbed/README.md` section 4c).
 
-Teardown removes the population's items AND the two folders it created, and drains Deleted Items
-behind itself: a delete in a PST is a soft one that re-issues the EntryID, so teardown re-scans and
-deletes again, still by both keys. **The frontier test has to run within the guest's UTC offset of
-the build, less its own five-minute tolerance** - under 55 minutes in winter and 115 in summer on a
-`W. Europe` guest, counting the indexer's crawl and everything the run does before it gets there - or
-it is back to proving what it proved before.
+Its own Outlook, the one the build runs against in step 2, stays elevated: the corpus tool runs in
+the same elevated task and attaches only to an Outlook at its own integrity level.
+
+Teardown removes the population's items AND the folders it created, and drains Deleted Items behind
+itself: a delete in a PST is a soft one that re-issues the EntryID, so teardown re-scans and deletes
+again, still by both keys. **The frontier test has to run within the guest's UTC offset of the build,
+less its own five-minute tolerance** - under 55 minutes in winter and 115 in summer on a `W. Europe`
+guest, counting the indexer's crawl and everything the run does before it gets there. It no longer
+depends on anyone remembering: the frontier test reads the manifest and FAILS, naming the script, on a
+hub too old to catch a local-time frontier with.
+
+`-SelfTest` covers every decision above (78 assertions, Windows PowerShell 5.1 and 7), and the guest
+guard refuses the script on the workstation. **Nothing below its guard has run on a guest.**
 
 The bystander and identity populations have no such clock: no test reads their dates, so they are
 built once and left alone. A checkpoint restored from before they were built needs them built again.
 
+### What v2 changed, after v1's first guest build
+
+`OutlookAI-Unindexed`, 2026-09-24 (section 4.1, step 6): every v1 build exited 1. v2 answers each
+fault, host-side, and each answer is a probe or a check that fails the build rather than a hope:
+
+| v1 fault, measured | v2 |
+| --- | --- |
+| Every RECEIVED item carried one unresolved To row with an EMPTY address: the owner was added as `tier@vm.invalid <tier@vm.invalid>`, which Outlook's resolver refuses. The enrichment probe passed, because its item was addressed to correspondents only | A recipient whose name IS an address is added as the bare address (`CorpusCorrespondent.ToRecipientSpec`), and the enrichment probe's To row is now the store's OWNER - the case that failed |
+| A PST attached with `AddStoreEx` has no Inbox and no Sent Items; `GetDefaultFolder(6)` returned its hidden root, the bystander's 172 and the identity store's 5 "Inbox" items went there, and the placement probe printed `target= landedIn=` and said VERIFIED | Every default folder is found without a creating lookup (`SpecialFolders.Resolve` and the Calendar/Contacts/Tasks designations), and returned only when it is a NAMED folder under the store's root (`CorpusFolderVisibility`). A store without one gets a visible stand-in under its root, recorded in the manifest. The placement probe refuses an invisible target |
+| Failed probe rungs stranded 12 items in Corpus B's Drafts - the corpus profile's DEFAULT store, on no allowlist - because an unsent mail item's first save goes to the default store's Drafts, and the delete looked in the target | A store that is not the profile's default is probed only with the two rungs whose item is never unsent: `InPlaceReceived` (the flags written before the first save) and `PostAsNote` (a post, created in the sent state, converted to a note). Every first save's store is read before anything else, and an item that landed elsewhere is deleted THERE; every other store's Drafts and Deleted Items are swept of this corpus's probe items before the probes, after them, and after teardown, by the two-key rule - `ComCorpusMailbox.SweepProbeResidueOutsideTarget` |
+| `GetDefaultFolder` created Drafts and Junk Email in the bystander during its build | No lookup creates a folder: the scans, the probes and the build all go through the non-creating resolver |
+
+**The Drafts-then-Move rungs are not probed on a non-default store either, and that is measured, not
+assumed.** The third stranded item of each session was the date probe's `ObjectModel` item, created
+in the TARGET store's own Drafts for `DraftsThenMoveWithSentFlag`: it failed before its move and was
+found in Corpus B's Drafts. So even a Drafts-created item's first save lands in the default store, and
+every item those rungs built in v1 passed through Corpus B on its way.
+
+**If neither rung stays in the target store, the build refuses - there is no override.** The
+directions then, for the maintainer: (a) build each population with its store as the profile's
+DEFAULT store - a throwaway account-less profile per store, created with `/PIM`, which cannot be
+deleted without the GUI; (b) accept a transient write into the default store for the Drafts-then-Move
+rungs, with the transit check and the cross-store sweep behind it - which the maintainer's rule "a
+probe must never write outside its target store" forbids as written; (c) Extended MAPI's
+`IMessage` creation in the target folder, which the Dependencies rule allows but the repository chose
+not to rebuild on (Q67, knowledge only). Recommended: (a).
+
+### The bystander keeps its shape - checked test by test
+
+The bystander's role is the count tripwire's watched store AND the absent-arrival-folders shape
+(section 1.3), so before deciding to keep it without an Inbox, every test that reads it was checked:
+
+* **`LiveFolderScopeTests.PrimaryStore_ExcludeSubfolders_NarrowsExactly_AndCostsNothing`** takes the
+  first non-hub entry of the indexed list - the bystander, by design - and walks its folder tree for
+  ANY mail folder of 5 to 20,000 items with populated children. It never asks for an Inbox. v1's
+  "Inbox" and its two subfolders were under the hidden root, so it could not have found them; v2's
+  stand-in `OutlookAI-Corpus-Folder-6` holds 172 items with `-Projects` (40) and `-Suppliers` (32)
+  under it - exactly the shape it needs. **Kept on the bystander; the test is unchanged.** Moving it to
+  the hub would mean choosing a different store than the one the test is written to measure.
+* **The count tripwire** censuses every mail folder of the store, stand-ins included; it needs items
+  inside the identity budget, not an Inbox.
+* **`LiveOrderKeyCollationTests`** read the bystander's undated rows through a store-scoped index
+  query; no folder is named.
+
+No test needed the bystander's Inbox, so none was moved and none was weakened.
+
+### The identity store has no Inbox - OPEN, for the maintainer
+
+**The question.** The identity account delivers into the identity PST (section 2.8b), and a delivery
+store needs a real, designated Inbox - one the store's own folder mask and receive folder name, that
+Outlook's tree shows, that `SpecialFolders.Resolve` finds. `identity.pst` is attached by `AddStoreEx`
+and has none, so both guests bound the account to its hidden root (section 4.1, defect 4), and v1
+built the identity population's received items there too. `Add-IdentityAccount.ps1 -Phase CaptureStore`
+now refuses such a store, so the identity account - and the identity population, whose received items
+belong in that Inbox - wait on this decision.
+
+| Direction | How | For | Against |
+| --- | --- | --- | --- |
+| **(a) Mint it as a default store, then attach it** | `OUTLOOK.EXE /PIM <scratch profile>` mints a PST under `ForcePSTPath` as that profile's DEFAULT store, with every default folder - the mechanism that gave the hub its full set, measured on both guests. Rename it (`Rename-OutlookStore.ps1`), then attach it to the tier profile (`Add-OutlookPstStore.ps1`) and run CaptureStore / Bind / Verify, which now pass on a designated Inbox | Outlook's own folders, designations and receive folder; only existing, measured scripts; nothing undocumented beyond the Bind that already runs | One scratch profile left on the guest (a profile has no free delete route, section 1); the minted file name must be read off the guest; whether the designations survive the attach as a secondary store is the measurement |
+| (b) Outlook's own "Change Folder" | Account Settings > Change Folder > New Folder, the only route Microsoft documents | Documented | GUI only: UIAutomation that `Dump-UiaTree.ps1` has not even classified; and whether it DESIGNATES the folder, or only binds it, is unknown |
+| (c) Extended MAPI | Create the folder, `IMsgStore::SetReceiveFolder`, the IPM designations and the folder mask through `mapi32.dll` from `Add-Type` | Permitted by the Dependencies rule; complete control | The interop this repository deleted (the `IProfAdmin` IIDs were wrong, Q67 knowledge only); writes store internals nothing else writes; the most code to get wrong |
+| (d) A plain folder named Inbox | `Folders.Add("Inbox", 6)` under the IPM root, and bind the account to it | Cheap, scriptable, visible | NOT designated: the store still has no Inbox to the mask, `SpecialFolders.Resolve` or the product's sweep; it fixes the symptom the tests never read and leaves the defect |
+| (e) Let POP3 delivery make one | Bind the account to the store with an empty `Delivery Folder EntryID` and see what the first send/receive does | Nothing to write if it works | Unknown; the plausible outcome is delivery falling back to the default store's Inbox - the tier's - which is exactly what the identity account must not share |
+
+**Recommended: (a)**, measured before anything is written into `Add-IdentityAccount.ps1`. The
+measurement, from a checkpoint before the identity account (`CP-09-ADDIN-READY` on
+`OutlookAI-Unindexed`), every step in session 1 and every Outlook close a graceful quit: list
+`C:\OutlookAI-Tier\*.pst`; `OUTLOOK.EXE /PIM IdentityMint`, wait 90 s, list again - the new file is
+the minted store; read over COM that store's `PR_VALID_FOLDER_MASK` (Inbox bit set?) and, only if it
+is, its Inbox's name and parent chain; quit; confirm the default profile is still `OutlookAI-Tier`;
+then section 2.8b's sequence with `-PstPath` and `Add-OutlookPstStore.ps1 -Path` naming the minted
+file (renamed to `identity@vm.invalid` first), where `-Phase CaptureStore` must now PASS - and read
+the mask and the Inbox again from the tier profile, which is the question (a) turns on. Nothing has
+run.
+
 ### What only a guest can answer
 
-These are INFERRED from the code, and each is settled by the first build of the population it names:
+**Answered by v1's build on `OutlookAI-Unindexed`, 2026-09-24:** the store guard accepts the hub, the
+bystander and the identity store in the account-less profile; sender, correspondent recipients,
+attachment and conversation index all land; the store computes one conversation id per conversation;
+and the four faults above. **Still open, each settled by the first v2 build or run:**
 
-1. **Does the hub, mounted in the account-less profile, pass the store guard?** `IsDataFileStore`
-   should read true there - nothing delivers into it in that profile - and the other three facts do
-   not depend on the profile. If it reads false, the hub population cannot be built by this route,
-   and the answer is to report it, not to relax the guard.
-2. **Does every enrichment write land?** The sender goes on through `PropertyAccessor`
-   (`PR_SENDER_*` and `PR_SENT_REPRESENTING_*`), recipients through `Recipients.Add` and `Resolve`,
-   attachments by value from a temporary file, and the conversation through `PR_CONVERSATION_INDEX`
-   and `PR_CONVERSATION_TOPIC`. The enrichment probe refuses the build if any does not.
-3. **Does the index carry what the tests read?** `FromAddress`/`FromName`, `ToAddress`, one
-   attachment row per attachment, and a `ConversationID` shared by each conversation's members.
-4. **Does a store mounted in two profiles give the index two scopes?** The per-store scope URL is
+1. **Does `InPlaceReceived` or `PostAsNote` keep its first save in a store that is not the profile's
+   default, parent it in the target folder, and show it in that folder's table?** The placement probe
+   prints both; if neither, the build refuses - the directions are above.
+2. **Does the owner, added as a bare address, resolve?** The enrichment probe checks exactly that.
+3. **Do an appointment, a contact and a task, saved into a non-default store's (stand-in) Calendar,
+   Contacts and Tasks, stay there?** The undated probe's `inTargetStore` column.
+4. **Does the index carry what the tests read** - `FromAddress`/`FromName`, `ToAddress` (the owner's
+   now), one attachment row per attachment, a `ConversationID` shared by each conversation's members,
+   and the undated rows with NO `System.Message.DateReceived`? The indexed guest only.
+5. **Does a store mounted in two profiles give the index two scopes?** The per-store scope URL is
    `mapi16://{SID}/StoreDisplayName($Hash)/`. Corpus A has always been in the same position, so the
    answer - whatever it is - is not new to the populations.
-5. **How long does the indexer take over a fresh hub?** It bounds how soon after the rebuild the run
+6. **How long does the indexer take over a fresh hub?** It bounds how soon after the rebuild the run
    can start, and so how much of the UTC-offset margin is left for the run itself.
-
-**What a population does not carry, and what that costs - OPEN, for the maintainer.** Every
-population item is a dated `IPM.Note` with a plain-text body: no appointment, contact or task, no
-unsent item, no HTML. So on a guest the index holds **no undated rows** - bar whatever drafts other
-tests happen to have left in the hub at that moment, which is nothing to measure against - and the three
-`LiveOrderKeyCollationTests` - which exist because rows with no `System.Message.DateReceived` share
-the `ORDER BY ... DESC` cut with mail - run, pass, and say nothing about undated rows:
-`NullCollation_UnderDateReceivedDescending_IsMeasured` reports `no-undated-rows-in-sample` instead
-of the provider's NULL collation, `OrderKeyFloorPredicate_IsAccepted_AndAdmitsOnlyDatedRows` excludes
-undated rows from a sample that has none, and
-`WidenedSearch_NeverReturnsFewerRowsThanTheOldMailKindShape` compares two shapes that return the
-same rows. Before the populations they could not run at all; now they run weak. Giving the hub a few
-undated items of other classes would make them real, and is a change to what a population is - so it
-is recorded here rather than made quietly.
+7. **Does teardown leave the emptied subfolders behind in the hub's Deleted Items?** It removes a
+   created folder with `Folder.Delete()`, which in a PST is very likely a move into Deleted Items like
+   an item's - so every rebuild may add two empty `OutlookAI-Corpus-Folder-*` folders there. Look after
+   the first `Reset-HubPopulation.ps1` run; not measured, not changed.
+8. **A probe that makes a stand-in and a build that then refuses** leave that stand-in, empty, in the
+   target store; the next build adopts it by name and records it. Inferred from the code.
 
 ---
 
@@ -1725,6 +1894,29 @@ dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj
 That filter IS the VM bucket, spelled out: everything live except the tests naming a capability
 this machine cannot be given. There is no separate "which bucket" trait to keep in step with it -
 see section 5.
+
+**On a test guest, every run starts with the hub rebuild - a script step, decided 2026-09-24
+(question D, option (a)).** Restart the guest, then in session 1:
+
+```
+.\Register-InteractiveTask.ps1 -TimeoutSeconds 3600 -Script "& 'C:\OutlookAI-Q5\Reset-HubPopulation.ps1' -Execute"
+```
+
+`Testbed/guest/Reset-HubPopulation.ps1` tears the hub population down by the anchor its manifest
+records, builds it again against now, switches back to the tier profile, and on the indexed guest
+waits until the index holds all of it (section 3b has the steps and every refusal). It ends by
+printing how many minutes `LiveIndexSearchTests.Staleness_SelfReportsPlausibleFrontier` has left -
+the guest's UTC offset less five minutes from the newest item, 55 in a W. Europe winter - and this
+guest's filter. **Start the run inside that margin.** The frontier test reads the manifest named by
+`hubPopulationManifestPath` and FAILS on a hub nobody rebuilt, naming the script: skipping the step
+is a red run, not a quietly weaker one. The maintainer's own machine has no such field and no such
+step.
+
+**On `OutlookAI-Unindexed` the filter also deselects the index tier:**
+`Category=Live&Requires!=DelegateStore&Requires!=SearchIndex`. That guest has no index by design
+(section 1.1a), so every test carrying `Requires=SearchIndex` would refuse there, not measure. The
+rebuild script prints the right filter for the guest it runs on, from whether the hub is in
+`indexedStoreDisplayNames`.
 
 **Do NOT narrow this filter to quieten a machine that lacks a capability - and specifically, do
 not add `&Requires!=IdentityAccount`.** Two tests carry that trait,
@@ -2166,11 +2358,21 @@ unrecorded or unverified.
 
 **Known gaps in what the corpus contains**
 
-17. The generator writes `IPM.Note` with a subject, a body, a read state, message flags and two
-    date properties. **No senders, no recipients, no attachments, no HTML, no categories, no
-    flags, no subfolders, no other message classes.** A test needing any of those is in the VM
-    bucket and will still fail here - because of the corpus, not because of the machine, and
-    nothing in the traits says so. Widening the generator is queued work.
+17. **NARROWED 2026-09-24 - the measurement CORPUS is unchanged; the fixture POPULATIONS carry the
+    rest.** The corpus still writes `IPM.Note` with a subject, a body, a read state, message flags
+    and two date properties, and nothing else, on purpose: its shape key is what every published
+    measurement rests on. What tests need beyond that is built into the hub, the bystander and the
+    identity store as generated populations (section 3b): senders and recipients - the store's
+    owner a resolved recipient of every received item since generator v2 - attachments of four
+    kinds, conversations, created subfolders, and, since v2, UNDATED items of other classes
+    (appointments, contacts and tasks; hub 12, bystander 42) for the three
+    `LiveOrderKeyCollationTests`. **Still in neither: HTML bodies, categories, follow-up flags, and
+    unsent drafts** - the last deliberately: a new unsent mail item's first save lands in the
+    profile's DEFAULT store's Drafts (measured on `OutlookAI-Unindexed`, 2026-09-24), and a
+    population is never built into the default store. A test needing one of those is in the VM
+    bucket and still fails here - because of what the generator builds, not because of the machine,
+    and nothing in the traits says so. **None of the v2 populations has been built on a guest yet**
+    (section 4.1 step 6 is v1's build, which was not clean).
 
 **Open behaviour**
 

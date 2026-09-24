@@ -249,12 +249,16 @@ public static class ComCorpusMailbox
     /// </para>
     /// </summary>
     private static int PurgeProbeResidue(
-        dynamic store, dynamic ns, string storeId, string corpusId, ComStaCheckpoint checkpoint)
+        dynamic store, dynamic ns, string storeId, string corpusId, ComStaCheckpoint checkpoint,
+        IReadOnlyList<int>? extraFolderIds = null)
     {
         // Never the build's manifest: a purge looks at the store's own default folders, and
         // handing it a manifest would widen it to builder-created folders for no gain - a
         // probe item is only ever created in the Inbox or in Drafts, and only ever soft-deleted
-        // into Deleted Items, all three of which are in ScanFolderIds.
+        // into Deleted Items, all three of which are in ScanFolderIds. The one exception is the
+        // UNDATED probe, whose throwaway items are created in the Calendar, Contacts and Tasks -
+        // or in the stand-in for one the store lacks: it passes those folders in, and the scan
+        // walks each one and its stand-in, so a probe item it failed to delete is found where it is.
         CorpusManifest? noManifest = null;
         int deleted = 0;
         for (int pass = 0; pass < ProbeResiduePasses; pass++)
@@ -264,7 +268,8 @@ public static class ComCorpusMailbox
                 break;
             }
 
-            ScanResult scan = ScanStore(store, noManifest, corpusId, checkpoint, population: null, walkCreatedFolders: false);
+            ScanResult scan = ScanStore(
+                store, noManifest, corpusId, checkpoint, population: null, walkCreatedFolders: false, extraFolderIds: extraFolderIds);
             IReadOnlyList<ScanRow> residue = SelectProbeResidue(scan.Items);
             if (residue.Count == 0)
             {
@@ -282,6 +287,143 @@ public static class ComCorpusMailbox
         }
 
         return deleted;
+    }
+
+    /// <summary>
+    /// The folders <see cref="SweepProbeResidueOutsideTarget"/> reads in every store but the target:
+    /// Drafts, where an unsent item's first save lands - the DEFAULT store's, whichever store created
+    /// it - and Deleted Items, where deleting one puts it. Deleted Items LAST, as in every scan here.
+    /// </summary>
+    public static IReadOnlyList<int> CrossStoreResidueFolderIds { get; } = new[] { DraftsFolderId, CorpusPlan.DeletedItemsFolderId };
+
+    /// <summary>What the cross-store residue sweep found in one store that is NOT the target.</summary>
+    /// <param name="Store">The store's display name.</param>
+    /// <param name="Found">Probe items of this corpus it found there.</param>
+    /// <param name="Deleted">How many of them it deleted, by the two-key rule.</param>
+    public sealed record ResidueSweep(string Store, int Found, int Deleted);
+
+    /// <summary>
+    /// Removes this corpus's PROBE items from every store of the profile EXCEPT the target - the
+    /// cleanup that sweeps every store a run may have touched. Returns one line per store it found
+    /// anything in.
+    /// <para>
+    /// <b>Why it exists, measured on OAI-UNINDEXED 2026-09-24.</b> Outlook files a new unsent item's
+    /// first save in the profile's DEFAULT store's Drafts, whichever store's folder created it. Every
+    /// probe rung that failed between that save and its move left its item THERE - three per probe
+    /// session, twelve in all, in Corpus B's Drafts, a store no allowlist named - and the probes'
+    /// own purge looked only in the target. The probes no longer run a rung that files through
+    /// another store, and each deletes its item wherever it landed; this is the sweep behind them,
+    /// and the one that clears what older builds of this tool left.
+    /// </para>
+    /// <para>
+    /// <b>Scope, and why that is not a licence.</b> It reads each store's Drafts and Deleted Items -
+    /// where a stranded probe item lands, and where deleting it puts it - found without creating
+    /// either, and it selects ONLY items whose subject parses as this corpus's reserved PROBE
+    /// ordinal (<see cref="IsProbeResidue"/>). Each is deleted by <see cref="DeleteOne"/>, which
+    /// re-reads the subject and re-applies <see cref="CorpusSafety.MayDelete"/> against the ids this
+    /// very scan found: two keys, the same as every delete here. A store's corpus items, and
+    /// anything that is not a probe item, are never touched.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<ResidueSweep> SweepProbeResidueOutsideTarget(string storeDisplayName, string corpusId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
+        return RunSta<IReadOnlyList<ResidueSweep>>(
+            "corpus cross-store residue sweep",
+            TimeSpan.FromMinutes(10),
+            checkpoint =>
+            {
+                dynamic app = CreateOutlookApplication();
+                dynamic? ns = null;
+                dynamic? stores = null;
+                var results = new List<ResidueSweep>();
+                try
+                {
+                    ns = BindNamespace(app, checkpoint);
+                    stores = ns.Stores;
+                    int storeCount = (int)stores.Count;
+                    for (int i = 1; i <= storeCount && checkpoint.Step("residue sweep store"); i++)
+                    {
+                        dynamic? other = null;
+                        try
+                        {
+                            other = stores[i];
+                            string? name = TryRead<string>(() => (string)other!.DisplayName);
+                            string? otherId = TryRead<string>(() => (string)other!.StoreID);
+                            if (name == null || otherId == null
+                                || string.Equals(name, storeDisplayName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+
+                            int found = 0;
+                            int deleted = 0;
+                            for (int pass = 0; pass < ProbeResiduePasses; pass++)
+                            {
+                                var rows = new List<ScanRow>();
+                                int legacy = 0;
+                                foreach (int folderId in CrossStoreResidueFolderIds)
+                                {
+                                    dynamic? folder = null;
+                                    try
+                                    {
+                                        folder = ResolveVisibleDefaultFolder((object)other!, folderId, out _, out _);
+                                        if (folder != null)
+                                        {
+                                            CollectCorpusItems(folder!, folderId, corpusId, rows, ref legacy, checkpoint);
+                                        }
+                                    }
+                                    catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                                    {
+                                        // A folder that will not open is reported by what the sweep did not find.
+                                    }
+                                    finally
+                                    {
+                                        Release(folder);
+                                    }
+                                }
+
+                                IReadOnlyList<ScanRow> residue = SelectProbeResidue(rows);
+                                if (residue.Count == 0)
+                                {
+                                    break;
+                                }
+
+                                if (pass == 0)
+                                {
+                                    found = residue.Count;
+                                }
+
+                                HashSet<string> allowlist = CorpusSafety.BuildEntryIdAllowlist(residue.Select(r => r.EntryId));
+                                foreach (ScanRow row in checkpoint.Steps(residue, "residue sweep delete"))
+                                {
+                                    if (DeleteOne(ns!, otherId, row.EntryId, allowlist, corpusId) == DeleteVerdict.Deleted && pass == 0)
+                                    {
+                                        deleted++;
+                                    }
+                                }
+                            }
+
+                            if (found > 0)
+                            {
+                                results.Add(new ResidueSweep(name, found, deleted));
+                            }
+                        }
+                        finally
+                        {
+                            Release(other);
+                        }
+                    }
+
+                    return (IReadOnlyList<ResidueSweep>)results;
+                }
+                finally
+                {
+                    Release(stores);
+                    Release(ns);
+                    Release(app);
+                }
+            });
     }
 
     /// <summary>
@@ -418,23 +560,31 @@ public static class ComCorpusMailbox
     }
 
     /// <summary>
-    /// Walks <see cref="CorpusPlacement.Ladder"/> against the store's Inbox, one throwaway
-    /// item per rung, and reports where each one actually ended up. Every probe item is
-    /// deleted before this returns, by the same two-key rule as the teardown - and then
-    /// PURGED by <see cref="PurgeProbeResidue"/>, because that delete is a soft one and
-    /// leaves the item in Deleted Items. The purge also runs once before the first rung, so a
-    /// store carrying residue from an older build is cleaned by the next probe that touches it.
+    /// Walks the store's ladder (<see cref="CorpusPlacement.LadderFor"/>) against its Inbox, one
+    /// throwaway item per rung, and reports where each one actually ended up - its folder, its
+    /// folder's table, and first of all its STORE. Every probe item is deleted before this returns,
+    /// by the same two-key rule as the teardown and in whichever store it landed - and then PURGED by
+    /// <see cref="PurgeProbeResidue"/>, because that delete is a soft one and leaves the item in
+    /// Deleted Items. The purge also runs once before the first rung, so a store carrying residue from
+    /// an older build is cleaned by the next probe that touches it.
     /// <para>
-    /// The Inbox is the right folder to probe: it is the folder a PST always has, and it is
-    /// where the plan puts most of the corpus. A rung that can place an item in the Inbox
-    /// can place one in Sent Items or Junk Email, because the obstacle is the item's unsent
-    /// state and not the destination.
+    /// The Inbox is the right folder to probe - it is where the plan puts most of the items - but only
+    /// a VISIBLE one, found without a creating lookup. A store with none (the bystander, a PST attached
+    /// with <c>AddStoreEx</c>) is probed in the stand-in the build will then adopt. It used to take
+    /// <c>GetDefaultFolder(olFolderInbox)</c> on trust, got the bystander's invisible root, and printed
+    /// <c>target= landedIn=</c> beside VERIFIED (OAI-UNINDEXED, 2026-09-24).
+    /// </para>
+    /// <para>
+    /// A store that is not the profile's default is probed with <see cref="CorpusPlacement.NonDefaultStoreLadder"/>
+    /// alone: every other rung files its item in the DEFAULT store's Drafts on the first save, and
+    /// probing them would itself write outside the target (twelve probe items were stranded in Corpus
+    /// B's Drafts that way).
     /// </para>
     /// </summary>
-    public static IReadOnlyList<CorpusPlacementProbe> ProbePlacement(string storeDisplayName, string corpusId)
+    public static CorpusPlacementSurvey ProbePlacement(string storeDisplayName, string corpusId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
-        return RunSta<IReadOnlyList<CorpusPlacementProbe>>(
+        return RunSta<CorpusPlacementSurvey>(
             "corpus placement probe",
             TimeSpan.FromMinutes(10),
             checkpoint =>
@@ -453,9 +603,14 @@ public static class ComCorpusMailbox
                     store = FindStore(stores, storeDisplayName)
                         ?? throw new InvalidOperationException("Store not found for the placement probe.");
                     string storeId = (string)store.StoreID;
-                    target = store.GetDefaultFolder(6);
-                    drafts = store.GetDefaultFolder(DraftsFolderId);
-                    string targetName = (string)target!.Name;
+                    bool isDefault = IsDefaultStore(ns!, storeId);
+                    target = ResolveTargetFolder((object)store, 6, create: true, out bool standIn, out _)
+                        ?? throw new InvalidOperationException(
+                            "The store cannot say whether it has an Inbox - the folder mask would not read - so there is no "
+                            + "folder the placement probe can safely target.");
+                    bool targetVisible = IsVisibleFolder((object)store, (object)target!);
+                    drafts = isDefault ? ResolveVisibleDefaultFolder((object)store, DraftsFolderId, out _, out _) : null;
+                    string targetName = TryRead<string>(() => (string)target!.Name) ?? string.Empty;
                     string targetFolderId = (string)target!.EntryID;
 
                     // Before the first rung: whatever an earlier run, or an earlier build of
@@ -466,17 +621,25 @@ public static class ComCorpusMailbox
                     // throwaway item and deletes it in its own finally, so stopping between
                     // rungs leaves nothing behind, and stopping inside one would leave an item
                     // no manifest records.
-                    foreach (CorpusPlacementMethod method in checkpoint.Steps(CorpusPlacement.Ladder, "placement rung"))
+                    foreach (CorpusPlacementMethod method in checkpoint.Steps(CorpusPlacement.LadderFor(isDefault), "placement rung"))
                     {
+                        if (CorpusPlacement.CreatesInDrafts(method) && drafts == null)
+                        {
+                            probes.Add(new CorpusPlacementProbe(
+                                method, targetName, false, false, false, null,
+                                "the store has no visible Drafts folder to create the item in", true, false, targetVisible));
+                            continue;
+                        }
+
                         probes.Add(RunOnePlacementProbe(
-                            ns!, target!, drafts!, storeId, targetFolderId, targetName, corpusId, method, checkpoint));
+                            ns!, target!, drafts, storeId, targetFolderId, targetName, corpusId, method, checkpoint, targetVisible));
 
                         // And after each rung's own delete, because that delete was a SOFT one
                         // and the item is now sitting in Deleted Items under a new id.
                         PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint);
                     }
 
-                    return (IReadOnlyList<CorpusPlacementProbe>)probes;
+                    return new CorpusPlacementSurvey(isDefault, targetName, standIn, probes);
                 }
                 finally
                 {
@@ -493,32 +656,45 @@ public static class ComCorpusMailbox
     private static CorpusPlacementProbe RunOnePlacementProbe(
         dynamic ns,
         dynamic target,
-        dynamic drafts,
+        dynamic? drafts,
         string storeId,
         string targetFolderId,
         string targetFolderName,
         string corpusId,
         CorpusPlacementMethod method,
-        ComStaCheckpoint checkpoint)
+        ComStaCheckpoint checkpoint,
+        bool targetVisible)
     {
         dynamic? items = null;
         dynamic? mail = null;
         string? entryId = null;
+        string deleteFrom = storeId;
         try
         {
-            dynamic source = CorpusPlacement.CreatesInDrafts(method) ? drafts : target;
+            dynamic source = CorpusPlacement.CreatesInDrafts(method) ? drafts! : target;
             items = source.Items;
-            mail = items.Add(0);
-            mail.Subject = ProbeSubject(corpusId, "placement " + method);
-            mail.Body = "placement probe";
-            mail.Save();
 
-            // CAPTURED THE INSTANT THE ITEM IS COMMITTED, and re-captured after the move
-            // below. The id used to be read only after ApplyMessageFlags and Move, both of
+            // CAPTURED THE INSTANT THE ITEM IS COMMITTED (CommitNewItem), and re-captured after the
+            // move below. The id used to be read only after ApplyMessageFlags and Move, both of
             // which can throw - and a committed item whose id nothing holds is an item the
-            // finally block cannot delete and nothing can ever address. TryRead rather than a
-            // cast, because a failure here must not mask the real error that follows.
-            entryId = TryRead<string>(() => (string)mail!.EntryID);
+            // finally block cannot delete and nothing can ever address.
+            //
+            // And WHERE it was committed. Outlook files a new unsent item's first save in the profile's
+            // DEFAULT store's Drafts, whichever store's folder created it (OAI-UNINDEXED, 2026-09-24),
+            // so the item's own store is read before anything else: a save outside the target is a
+            // write no allowlist named, and the rung is unusable however the rest of it goes. The
+            // finally deletes the item where it IS - the old code addressed the target store only, and
+            // twelve probe items stayed in Corpus B's Drafts.
+            mail = CommitNewItem(
+                (object)ns, (object)items!, method, ProbeSubject(corpusId, "placement " + method), "placement probe",
+                isRead: true, compose: null, storeId, out entryId, out string? savedStoreId);
+            if (savedStoreId != null && !string.Equals(savedStoreId, storeId, StringComparison.OrdinalIgnoreCase))
+            {
+                deleteFrom = savedStoreId;
+                return new CorpusPlacementProbe(
+                    method, targetFolderName, false, false, false, null,
+                    "its first save landed in another store", true, WroteOutsideTargetStore: true, TargetVisible: targetVisible);
+            }
 
             ApplyMessageFlags(mail!, isRead: true, clearUnsent: CorpusPlacement.WritesSentFlag(method));
 
@@ -562,7 +738,7 @@ public static class ComCorpusMailbox
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
                 return new CorpusPlacementProbe(
-                    method, targetFolderName, false, false, sentFlag, null, ex.Message, true);
+                    method, targetFolderName, false, false, sentFlag, null, ex.Message, true, false, targetVisible);
             }
             finally
             {
@@ -585,12 +761,14 @@ public static class ComCorpusMailbox
                 sentFlag,
                 parentName,
                 null,
-                lookup != TableLookup.Inconclusive);
+                lookup != TableLookup.Inconclusive,
+                false,
+                targetVisible);
         }
         catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
         {
             return new CorpusPlacementProbe(
-                method, targetFolderName, false, false, false, null, ex.Message, true);
+                method, targetFolderName, false, false, false, null, ex.Message, true, false, targetVisible);
         }
         finally
         {
@@ -598,8 +776,24 @@ public static class ComCorpusMailbox
             Release(items);
             if (entryId != null)
             {
-                DeleteOne(ns, storeId, entryId, CorpusSafety.BuildEntryIdAllowlist(new[] { entryId }), corpusId);
+                DeleteOne(ns, deleteFrom, entryId, CorpusSafety.BuildEntryIdAllowlist(new[] { entryId }), corpusId);
             }
+        }
+    }
+
+    /// <summary>Whether the store is the profile's DEFAULT store - the one an unsent item's first save lands in.</summary>
+    private static bool IsDefaultStore(dynamic ns, string storeId)
+    {
+        dynamic? defaultStore = null;
+        try
+        {
+            defaultStore = TryRead<object>(() => (object)ns.DefaultStore);
+            string? defaultId = defaultStore == null ? null : TryRead<string>(() => (string)((dynamic)defaultStore).StoreID);
+            return defaultId != null && string.Equals(defaultId, storeId, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Release(defaultStore);
         }
     }
 
@@ -619,7 +813,12 @@ public static class ComCorpusMailbox
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
         CorpusCorrespondent from = CorpusPopulation.Correspondents[0];
-        CorpusCorrespondent to = CorpusPopulation.Correspondents[1];
+
+        // TO THE OWNER, the way every received item of a population is addressed - and the one
+        // recipient Outlook refused to resolve on OAI-UNINDEXED, 2026-09-24, while this probe, addressed
+        // only to correspondents, reported the recipients written.
+        CorpusMailboxOwner owner = CorpusMailboxOwner.ForStore(storeDisplayName);
+        CorpusCorrespondent to = new(owner.Name, owner.Address);
         CorpusCorrespondent cc = CorpusPopulation.Correspondents[2];
         var planned = new CorpusItemEnrichment(
             from,
@@ -643,6 +842,7 @@ public static class ComCorpusMailbox
                 dynamic? items = null;
                 dynamic? mail = null;
                 string? entryId = null;
+                string? deleteFrom = null;
                 string directory = NewAttachmentDirectory(corpusId);
                 List<string> files = new();
                 try
@@ -652,18 +852,32 @@ public static class ComCorpusMailbox
                     store = FindStore(stores, storeDisplayName)
                         ?? throw new InvalidOperationException("Store not found for the enrichment probe.");
                     string storeId = (string)store.StoreID;
-                    target = store.GetDefaultFolder(6);
-                    drafts = store.GetDefaultFolder(DraftsFolderId);
+                    deleteFrom = storeId;
+                    target = ResolveTargetFolder((object)store, 6, create: true, out _, out _)
+                        ?? throw new InvalidOperationException("The store cannot say whether it has an Inbox; nothing to probe in.");
+                    drafts = CorpusPlacement.CreatesInDrafts(placement)
+                        ? ResolveVisibleDefaultFolder((object)store, DraftsFolderId, out _, out _)
+                            ?? throw new InvalidOperationException("The placement rung creates in Drafts and the store has no visible Drafts folder.")
+                        : null;
                     PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint);
 
                     items = (CorpusPlacement.CreatesInDrafts(placement) ? drafts : target)!.Items;
-                    mail = items!.Add(0);
-                    mail!.Subject = ProbeSubject(corpusId, "enrichment");
-                    mail.Body = "enrichment probe";
-                    AddRecipients(mail, planned);
-                    files = AddAttachments(mail, planned, directory);
-                    mail.Save();
-                    entryId = TryRead<string>(() => (string)mail!.EntryID);
+                    mail = CommitNewItem(
+                        (object)ns!, (object)items!, placement, ProbeSubject(corpusId, "enrichment"), "enrichment probe",
+                        isRead: true,
+                        compose: m =>
+                        {
+                            AddRecipients(m, planned);
+                            files = AddAttachments(m, planned, directory);
+                        },
+                        storeId, out entryId, out string? savedStoreId);
+                    if (savedStoreId != null && !string.Equals(savedStoreId, storeId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        deleteFrom = savedStoreId;
+                        return new CorpusEnrichmentProbe(false, false, false, false, null,
+                            "the probe item's first save landed in another store - a write no allowlist named");
+                    }
+
                     ApplyEnrichmentProperties(mail, planned);
                     ApplyMessageFlags(mail, isRead: true, clearUnsent: CorpusPlacement.WritesSentFlag(placement));
                     if (CorpusPlacement.RequiresMove(placement))
@@ -707,9 +921,9 @@ public static class ComCorpusMailbox
                     if (store != null && ns != null)
                     {
                         string? storeId = TryRead<string>(() => (string)store!.StoreID);
-                        if (entryId != null && storeId != null)
+                        if (entryId != null && (deleteFrom ?? storeId) != null)
                         {
-                            DeleteOne(ns, storeId, entryId, CorpusSafety.BuildEntryIdAllowlist(new[] { entryId }), corpusId);
+                            DeleteOne(ns, (deleteFrom ?? storeId)!, entryId, CorpusSafety.BuildEntryIdAllowlist(new[] { entryId }), corpusId);
                         }
 
                         if (storeId != null)
@@ -731,11 +945,14 @@ public static class ComCorpusMailbox
     /// <summary>
     /// READ-ONLY: opens every item the manifest records and reads back what a population wrote -
     /// sender, recipients, attachment names, conversation index and the conversation id the store
-    /// computed from it. What <see cref="CorpusEnrichmentCheck.Compare"/> judges.
+    /// computed from it; and for an UNDATED item, its message class, whether it carries a delivery
+    /// time and its flags. What <see cref="CorpusEnrichmentCheck.Compare"/> judges.
     /// </summary>
-    public static IReadOnlyList<CorpusEnrichmentObservation> ReadEnrichment(string storeDisplayName, CorpusManifest manifest)
+    public static IReadOnlyList<CorpusEnrichmentObservation> ReadEnrichment(
+        string storeDisplayName, CorpusManifest manifest, CorpusPlan plan)
     {
         ArgumentNullException.ThrowIfNull(manifest);
+        ArgumentNullException.ThrowIfNull(plan);
         return RunSta<IReadOnlyList<CorpusEnrichmentObservation>>(
             "corpus enrichment read-back",
             null,
@@ -756,7 +973,14 @@ public static class ComCorpusMailbox
                     foreach (CorpusManifestItem item in checkpoint.Steps(
                         manifest.Items.Values.OrderBy(i => i.Ordinal).ToList(), "enrichment read-back"))
                     {
-                        observations.Add(ReadOneEnrichment(ns!, storeId, item.EntryId, item.Ordinal));
+                        // A contact has no Recipients and a task no SenderEmailAddress: the mail
+                        // read-back would record every one of them as a failed read. An undated
+                        // item is read for what it is judged on instead.
+                        bool undated = item.Ordinal >= 1 && item.Ordinal <= (plan.FixedItemCount ?? 0)
+                            && plan.Describe(item.Ordinal).IsUndated;
+                        observations.Add(undated
+                            ? ReadOneUndated(ns!, storeId, item.EntryId, item.Ordinal)
+                            : ReadOneEnrichment(ns!, storeId, item.EntryId, item.Ordinal));
                     }
 
                     return (IReadOnlyList<CorpusEnrichmentObservation>)observations;
@@ -858,6 +1082,258 @@ public static class ComCorpusMailbox
             Release(accessor);
             Release(attachments);
             Release(recipients);
+            Release(item);
+        }
+    }
+
+    /// <summary>
+    /// Creates one UNDATED item of <paramref name="spec"/>'s kind in the folder whose Items collection
+    /// is <paramref name="items"/>, saves it, and returns its EntryID and the StoreID of the store the
+    /// save actually put it in - which the caller holds against the target. Shared by the build and the
+    /// undated probe, so the probe proves exactly the write path the build then uses.
+    /// <para>
+    /// What it deliberately does NOT do is the point: no date is written, nothing is moved, no
+    /// recipient is added and nothing is sent. An appointment gets no attendees (so it is never a
+    /// meeting request) and no reminder; a task no due date and no reminder; a contact no e-mail
+    /// address.
+    /// </para>
+    /// </summary>
+    private static (string EntryId, string? SavedStoreId) CreateUndatedItem(
+        dynamic items, CorpusItemSpec spec, string body, CorpusUndatedDetail detail)
+    {
+        dynamic? item = null;
+        try
+        {
+            item = items.Add(CorpusItemKinds.OlItemTypeOf(spec.Kind));
+            switch (spec.Kind)
+            {
+                case CorpusItemKind.Appointment:
+                    item!.Subject = spec.Subject;
+                    item.Body = body;
+                    item.ReminderSet = false;
+                    DateTime start = DateTime.SpecifyKind(detail.AppointmentStartUtc!.Value, DateTimeKind.Utc);
+                    item.StartUTC = start;
+                    item.EndUTC = start.AddMinutes(detail.AppointmentMinutes!.Value);
+                    break;
+                case CorpusItemKind.Contact:
+                    // The name first, the subject after it: whichever of the two Outlook keeps as
+                    // PR_SUBJECT, both carry the tag.
+                    item!.FullName = detail.ContactFullName;
+                    item.Subject = spec.Subject;
+                    item.Body = body;
+                    break;
+                case CorpusItemKind.Task:
+                    item!.Subject = spec.Subject;
+                    item.Body = body;
+                    item.ReminderSet = false;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(spec), "Only an undated kind is created here.");
+            }
+
+            item.Save();
+            return ((string)item.EntryID, SavedItemStoreId(item));
+        }
+        finally
+        {
+            Release(item);
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="item"/> carries PR_MESSAGE_DELIVERY_TIME: true when it can be read,
+    /// false when the store says it does not exist (MAPI_E_NOT_FOUND), and null for any other
+    /// failure - "could not ask" is never reported as "absent", because "absent" is the answer an
+    /// undated item is built to give.
+    /// </summary>
+    private static bool? ReadDeliveryTimePresence(dynamic item)
+    {
+        dynamic? accessor = null;
+        try
+        {
+            accessor = item.PropertyAccessor;
+            _ = accessor!.GetProperty(PrMessageDeliveryTime);
+            return true;
+        }
+        catch (COMException ex) when (IsPropertyNotFound(ex))
+        {
+            return false;
+        }
+        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+        {
+            return null;
+        }
+        finally
+        {
+            Release(accessor);
+        }
+    }
+
+    /// <summary>MAPI_E_NOT_FOUND, the PropertyAccessor's "no such property on this item".</summary>
+    private static bool IsPropertyNotFound(COMException ex)
+        => ex.HResult == unchecked((int)0x8004010F);
+
+    /// <summary>
+    /// For each of <paramref name="kinds"/>: creates ONE throwaway undated item where the build will
+    /// file that kind - its default folder, proven present and visible without a creating lookup, or
+    /// else the stand-in <see cref="ResolveTargetFolder"/> makes and the build then adopts - with
+    /// <see cref="CreateUndatedItem"/>, the build's own write path; checks the save stayed in the
+    /// target store, re-opens it by EntryID and reads back where it is, its subject tag, its message
+    /// class and whether it carries a delivery time. Deletes it by the two-key rule - in whichever
+    /// store it landed - and purges the soft-delete residue from Deleted Items AND from the kind's own
+    /// folder, like every other probe. A store that cannot say whether it has the folder is reported
+    /// unreachable, which refuses the build.
+    /// </summary>
+    public static IReadOnlyList<CorpusUndatedProbe> ProbeUndated(
+        string storeDisplayName, string corpusId, IReadOnlyList<CorpusItemKind> kinds)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
+        ArgumentNullException.ThrowIfNull(kinds);
+        return RunSta<IReadOnlyList<CorpusUndatedProbe>>(
+            "corpus undated probe",
+            TimeSpan.FromMinutes(10),
+            checkpoint =>
+            {
+                dynamic app = CreateOutlookApplication();
+                dynamic? ns = null;
+                dynamic? stores = null;
+                dynamic? store = null;
+                var probes = new List<CorpusUndatedProbe>();
+                try
+                {
+                    ns = BindNamespace(app, checkpoint);
+                    stores = ns.Stores;
+                    store = FindStore(stores, storeDisplayName)
+                        ?? throw new InvalidOperationException("Store not found for the undated probe.");
+                    string storeId = (string)store.StoreID;
+                    int[] folderIds = kinds.Select(CorpusItemKinds.FolderIdOf).ToArray();
+                    PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint, folderIds);
+
+                    foreach (CorpusItemKind kind in checkpoint.Steps(kinds, "undated probe"))
+                    {
+                        probes.Add(RunOneUndatedProbe(store!, ns!, storeId, corpusId, kind));
+                        PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint, folderIds);
+                    }
+
+                    return (IReadOnlyList<CorpusUndatedProbe>)probes;
+                }
+                finally
+                {
+                    Release(store);
+                    Release(stores);
+                    Release(ns);
+                    Release(app);
+                }
+            });
+    }
+
+    private static CorpusUndatedProbe RunOneUndatedProbe(dynamic store, dynamic ns, string storeId, string corpusId, CorpusItemKind kind)
+    {
+        int folderId = CorpusItemKinds.FolderIdOf(kind);
+        dynamic? folder = null;
+        dynamic? items = null;
+        dynamic? item = null;
+        dynamic? parent = null;
+        string? entryId = null;
+        string deleteFrom = storeId;
+        try
+        {
+            string? folderEntryId;
+            try
+            {
+                // Where the build will file this kind: the default folder when the store has a visible
+                // one, proven present without a creating lookup, else the stand-in the build adopts.
+                folder = ResolveTargetFolder((object)store, folderId, create: true, out _, out _);
+                if (folder == null)
+                {
+                    return new CorpusUndatedProbe(kind, false, false, false, false, false, true,
+                        "cannot tell whether the store has this kind's default folder - its designation would not read");
+                }
+
+                items = folder!.Items;
+                folderEntryId = (string)folder.EntryID;
+            }
+            catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+            {
+                return new CorpusUndatedProbe(kind, false, false, false, false, false, true, ex.Message);
+            }
+
+            string subject = ProbeSubject(corpusId, "undated " + kind.ToString().ToLowerInvariant());
+            var spec = new CorpusItemSpec(
+                CorpusPlan.ProbeOrdinal, folderId, subject, 13, CorpusItemSpec.UndatedInstant, CorpusItemSpec.UndatedInstant,
+                true, "probe", "undated-probe", kind);
+            var detail = new CorpusUndatedDetail(
+                kind,
+                kind == CorpusItemKind.Appointment ? new DateTime(2026, 1, 1, 9, 0, 0, DateTimeKind.Utc) : null,
+                kind == CorpusItemKind.Appointment ? 30 : null,
+                kind == CorpusItemKind.Contact ? subject : null);
+            // (object): a dynamic argument would make the call - and so its tuple - dynamic.
+            (string createdId, string? savedStoreId) = CreateUndatedItem((object)items!, spec, "undated probe", detail);
+            entryId = createdId;
+            if (savedStoreId != null && !string.Equals(savedStoreId, storeId, StringComparison.OrdinalIgnoreCase))
+            {
+                // Saved into ANOTHER store: deleted there, in the finally, and the kind is refused.
+                deleteFrom = savedStoreId;
+                return new CorpusUndatedProbe(kind, true, false, false, false, false, false, null);
+            }
+
+            item = ns.GetItemFromID(entryId, storeId);
+            parent = TryRead<object>(() => (object)item!.Parent);
+            string? parentId = parent == null ? null : TryRead<string>(() => (string)parent!.EntryID);
+            bool inFolder = parentId != null && string.Equals(parentId, folderEntryId, StringComparison.OrdinalIgnoreCase);
+            string? readSubject = TryRead<string>(() => (string)item!.Subject);
+            bool tagParses = CorpusPlan.TryParseOrdinal(readSubject, corpusId, out int parsed) && parsed == CorpusPlan.ProbeOrdinal;
+            bool? dated = ReadDeliveryTimePresence(item!);
+            string? messageClass = TryRead<string>(() => (string)item!.MessageClass);
+            bool classMatches = CorpusMessageFlags.ClassMatches(messageClass, CorpusItemKinds.MessageClassOf(kind));
+            return new CorpusUndatedProbe(kind, true, inFolder, tagParses, dated == false, classMatches, true, null);
+        }
+        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+        {
+            return new CorpusUndatedProbe(kind, folder != null, false, false, false, false, true, ex.Message);
+        }
+        finally
+        {
+            Release(parent);
+            Release(item);
+            Release(items);
+            Release(folder);
+            if (entryId != null)
+            {
+                DeleteOne(ns, deleteFrom, entryId, CorpusSafety.BuildEntryIdAllowlist(new[] { entryId }), corpusId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// READ-ONLY: what an UNDATED item carries - its message class and whether it has a delivery
+    /// time. What <see cref="CorpusEnrichmentCheck.Compare"/> judges an undated ordinal on.
+    /// </summary>
+    private static CorpusEnrichmentObservation ReadOneUndated(dynamic ns, string storeId, string entryId, int ordinal)
+    {
+        dynamic? item = null;
+        try
+        {
+            try
+            {
+                item = ns.GetItemFromID(entryId, storeId);
+            }
+            catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+            {
+                return new CorpusEnrichmentObservation(ordinal, null, null, null, null, null, null, ex.Message);
+            }
+
+            string? messageClass = TryRead<string>(() => (string)item!.MessageClass);
+            bool? dated = ReadDeliveryTimePresence(item!);
+            return new CorpusEnrichmentObservation(
+                ordinal, null, null, null, null, null, null, null, messageClass, dated);
+        }
+        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+        {
+            return new CorpusEnrichmentObservation(ordinal, null, null, null, null, null, null, ex.Message);
+        }
+        finally
+        {
             Release(item);
         }
     }
@@ -996,8 +1472,16 @@ public static class ComCorpusMailbox
                     store = FindStore(stores, storeDisplayName)
                         ?? throw new InvalidOperationException("Store not found for the date probe.");
                     string storeId = (string)store.StoreID;
-                    folder = store.GetDefaultFolder(6); // Inbox - always present in a PST
-                    drafts = store.GetDefaultFolder(DraftsFolderId);
+
+                    // The folder the placement probe targeted: the store's visible Inbox, or its stand-in.
+                    // NOT "always present in a PST", as this line once said: a PST attached with AddStoreEx
+                    // has none, and GetDefaultFolder handed back its invisible root (OAI-UNINDEXED, 2026-09-24).
+                    folder = ResolveTargetFolder((object)store, 6, create: true, out _, out _)
+                        ?? throw new InvalidOperationException("The store cannot say whether it has an Inbox; nothing to probe in.");
+                    drafts = CorpusPlacement.CreatesInDrafts(placement)
+                        ? ResolveVisibleDefaultFolder((object)store, DraftsFolderId, out _, out _)
+                            ?? throw new InvalidOperationException("The placement rung creates in Drafts and the store has no visible Drafts folder.")
+                        : null;
 
                     // Same as the placement probe: once before the first rung, to heal residue
                     // this run did not create, and once after every throwaway item's own soft
@@ -1007,7 +1491,7 @@ public static class ComCorpusMailbox
                     foreach (CorpusDateWriteMethod method in checkpoint.Steps(CorpusDateFidelity.Ladder, "date rung"))
                     {
                         CorpusDateProbe first = RunOneProbe(
-                            ns!, folder!, drafts!, storeId, corpusId, method, placement, requested, requested,
+                            ns!, folder!, drafts, storeId, corpusId, method, placement, requested, requested,
                             checkpoint);
                         PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint);
                         CorpusDateOffsetVerdict verdict =
@@ -1021,7 +1505,7 @@ public static class ComCorpusMailbox
                         DateTime compensated = CorpusDateFidelity.CompensatedWriteValue(
                             requested, verdict, localOffset, first.ReadBackReceivedUtc!.Value);
                         probes.Add(RunOneProbe(
-                            ns!, folder!, drafts!, storeId, corpusId, method, placement, requested, compensated,
+                            ns!, folder!, drafts, storeId, corpusId, method, placement, requested, compensated,
                             checkpoint));
                         PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint);
                     }
@@ -1108,8 +1592,10 @@ public static class ComCorpusMailbox
                         ?? throw new InvalidOperationException("Store not found for the corpus build.");
                     // Read before the first item is created: a store that cannot answer
                     // this is a store nothing should be written into, and finding that out
-                    // after 40 000 items would be finding it out too late.
-                    _ = (string)store.StoreID;
+                    // after 40 000 items would be finding it out too late. It is also what every
+                    // item's first save is checked against: a save Outlook files in another store
+                    // is a write no allowlist named, and it stops the build.
+                    string targetStoreId = (string)store.StoreID;
 
                     if (CorpusPlacement.CreatesInDrafts(placement))
                     {
@@ -1126,6 +1612,52 @@ public static class ComCorpusMailbox
                     foreach (int ordinal in checkpoint.Steps(todo, "build item"))
                     {
                         CorpusItemSpec spec = plan.Describe(ordinal);
+                        if (spec.IsUndated)
+                        {
+                            // A fixture population's UNDATED item: created in its kind's own default
+                            // folder and left there - no placement rung, no move, and above all no
+                            // date write, because carrying no delivery time is what it is for.
+                            try
+                            {
+                                if (!folderItems.TryGetValue(spec.FolderId, out dynamic? undatedItems))
+                                {
+                                    // The store's own default folder, proven present and visible
+                                    // without a creating lookup, or a recorded stand-in when the
+                                    // store has none (ResolveFolder).
+                                    if (!folders.TryGetValue(spec.FolderId, out dynamic? undatedFolder))
+                                    {
+                                        undatedFolder = ResolveFolder(store!, spec.FolderId, manifest, recordFolder);
+                                        folders[spec.FolderId] = undatedFolder!;
+                                    }
+
+                                    undatedItems = undatedFolder!.Items;
+                                    folderItems[spec.FolderId] = undatedItems!;
+                                }
+
+                                (string undatedId, string? undatedStoreId) =
+                                    CreateUndatedItem((object)undatedItems!, spec, plan.BuildBody(spec), plan.UndatedDetail(ordinal)!);
+                                RequireSavedInTarget(ns!, undatedId, undatedStoreId, targetStoreId, ordinal, plan.Options.CorpusId);
+                                var undatedLine = new CorpusManifestItem(ordinal, undatedId, spec.FolderId, spec.BodyBytes, null);
+                                manifest.Add(undatedLine);
+                                record(undatedLine);
+                                created++;
+                                bytes += spec.BodyBytes;
+                            }
+                            catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                            {
+                                failed++;
+                                firstError ??= ex.Message;
+                            }
+
+                            if ((created + failed) % progressEvery == 0)
+                            {
+                                progress(new BuildProgress(
+                                    created, skipped, failed, todo.Count - created - failed, bytes, elapsed.Elapsed));
+                            }
+
+                            continue;
+                        }
+
                         if (!folderItems.TryGetValue(spec.FolderId, out dynamic? items))
                         {
                             dynamic resolved = ResolveFolder(store!, spec.FolderId, manifest, recordFolder, plan.Population);
@@ -1142,23 +1674,39 @@ public static class ComCorpusMailbox
                             // any move, so the item that arrives in the target folder is
                             // already in its final state and is not re-filed as a draft on
                             // the way in.
-                            mail = (CorpusPlacement.CreatesInDrafts(placement) ? draftsItems! : items!).Add(0);
-                            mail.Subject = spec.Subject;
-                            mail.Body = plan.BuildBody(spec);
-
+                            //
                             // A population item's recipients and attachments go on BEFORE the
-                            // first save, the way a person composes one; its sender and
-                            // conversation are properties written after it, and saved by the flag
-                            // write below. A measurement-corpus item has none of them.
+                            // first save, the way a person composes one - after the conversion,
+                            // for a post (CommitNewItem); its sender and conversation are properties
+                            // written after it, and saved by the flag write below. A
+                            // measurement-corpus item has none of them. InPlaceReceived makes the
+                            // item NOT unsent before it is ever saved, which is what is meant to keep
+                            // Outlook from filing it in the default store's Drafts.
                             CorpusItemEnrichment? enrichment = plan.Enrich(ordinal);
+                            Action<dynamic>? compose = null;
                             if (enrichment != null)
                             {
-                                AddRecipients(mail!, enrichment);
                                 attachmentDirectory ??= NewAttachmentDirectory(plan.Options.CorpusId);
-                                attachmentFiles = AddAttachments(mail!, enrichment, attachmentDirectory);
+                                string directory = attachmentDirectory;
+                                compose = m =>
+                                {
+                                    AddRecipients(m, enrichment);
+                                    attachmentFiles = AddAttachments(m, enrichment, directory);
+                                };
                             }
 
-                            mail.Save();
+                            mail = CommitNewItem(
+                                (object)ns!,
+                                (object)(CorpusPlacement.CreatesInDrafts(placement) ? draftsItems! : items!),
+                                placement,
+                                spec.Subject,
+                                plan.BuildBody(spec),
+                                spec.IsRead,
+                                compose,
+                                targetStoreId,
+                                out string? committedId,
+                                out string? savedStoreId);
+                            RequireSavedInTarget(ns!, committedId, savedStoreId, targetStoreId, ordinal, plan.Options.CorpusId);
                             if (enrichment != null)
                             {
                                 ApplyEnrichmentProperties(mail!, enrichment);
@@ -1418,8 +1966,12 @@ public static class ComCorpusMailbox
     /// scan comes back empty or <see cref="TeardownMaxPasses"/> is spent.
     /// </para>
     /// </summary>
-    public static TeardownOutcome Teardown(string storeDisplayName, string corpusId, CorpusManifest manifest)
+    public static TeardownOutcome Teardown(
+        string storeDisplayName, string corpusId, CorpusManifest manifest, CorpusPopulation? population = null)
     {
+        // The population decides only which folders the scans below walk: a population's UNDATED
+        // items live in the Calendar, Contacts and Tasks, which the measurement corpus's scan never
+        // looks at - and a teardown that cannot see them cannot finish removing them.
         ArgumentNullException.ThrowIfNull(manifest);
         HashSet<string> manifestIds = CorpusSafety.BuildEntryIdAllowlist(manifest.EntryIds);
 
@@ -1452,7 +2004,7 @@ public static class ComCorpusMailbox
                     // proceeding would walk the whole manifest, refuse 20 000 times, and
                     // report it as "refused by rule" - a number that also means "the ids were
                     // wrong". One count and one sentence instead.
-                    ScanResult preflight = ScanStore(store!, manifest, corpusId, checkpoint);
+                    ScanResult preflight = ScanStore(store!, manifest, corpusId, checkpoint, population);
                     if (preflight.LegacyTagged > 0)
                     {
                         return new TeardownOutcome(
@@ -1484,7 +2036,7 @@ public static class ComCorpusMailbox
                             break;
                         }
 
-                        IReadOnlyList<ScanRow> found = ScanStore(store!, manifest, corpusId, checkpoint).Items;
+                        IReadOnlyList<ScanRow> found = ScanStore(store!, manifest, corpusId, checkpoint, population).Items;
                         if (found.Count == 0)
                         {
                             break;
@@ -1506,7 +2058,7 @@ public static class ComCorpusMailbox
                     }
 
                     foldersRemoved = RemoveCreatedFolders(ns!, storeId, manifest, checkpoint);
-                    remaining = ScanStore(store!, manifest, corpusId, checkpoint).Items.Count;
+                    remaining = ScanStore(store!, manifest, corpusId, checkpoint, population).Items.Count;
                 }
                 finally
                 {
@@ -1601,28 +2153,70 @@ public static class ComCorpusMailbox
         }
     }
 
+    /// <summary>
+    /// The default folders a scan walks: <see cref="ScanFolderIds"/>, plus - for a population that
+    /// carries UNDATED items, or a probe that makes one - the Calendar, Contacts and Tasks those items
+    /// live in, with Deleted Items still LAST. Never the extra folders for the measurement corpus: a
+    /// corpus store has no business being asked about a Calendar. And EVERY folder is looked up
+    /// through <see cref="CorpusDefaultFolders.Resolve"/>, never <c>GetDefaultFolder</c>: on a PST the
+    /// latter CREATES a default folder the store lacks (measured for Archive and Junk Email,
+    /// 2026-09-24, and for Drafts and Junk Email in the bystander the same day; Q84's decision (c) is
+    /// that a read-only lookup never does).
+    /// Pure, so T1 pins the order.
+    /// </summary>
+    public static IReadOnlyList<int> ScanFolderIdsFor(IEnumerable<int>? extraFolderIds)
+    {
+        var ids = ScanFolderIds.Where(id => id != CorpusPlan.DeletedItemsFolderId).ToList();
+        foreach (int extra in extraFolderIds ?? Enumerable.Empty<int>())
+        {
+            if (!ids.Contains(extra) && extra != CorpusPlan.DeletedItemsFolderId)
+            {
+                ids.Add(extra);
+            }
+        }
+
+        ids.Add(CorpusPlan.DeletedItemsFolderId);
+        return ids;
+    }
+
     private static ScanResult ScanStore(
         dynamic store,
         CorpusManifest? manifest,
         string corpusId,
         ComStaCheckpoint checkpoint,
         CorpusPopulation? population = null,
-        bool walkCreatedFolders = true)
+        bool walkCreatedFolders = true,
+        IReadOnlyList<int>? extraFolderIds = null)
     {
         var rows = new List<ScanRow>();
         var createdFolders = new List<CorpusManifestFolder>();
         var walkedFolderIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int legacyTagged = 0;
-        foreach (int folderId in checkpoint.Steps(ScanFolderIds, "scan folder"))
+        List<int> undated = (population?.UndatedFolderIds ?? Array.Empty<int>())
+            .Concat(extraFolderIds ?? Array.Empty<int>())
+            .Distinct()
+            .ToList();
+        IReadOnlyList<int> scanIds = ScanFolderIdsFor(undated);
+        foreach (int folderId in checkpoint.Steps(scanIds, "scan folder"))
         {
             dynamic? folder = null;
             try
             {
+                // Proven present AND visible first, and never asked for by the lookup that would make
+                // one (Q84 (c); OAI-UNINDEXED 2026-09-24 measured GetDefaultFolder creating Drafts and
+                // Junk Email in the bystander during a scan). Absent, unreadable or invisible, it is
+                // skipped here; the stand-in the build files that folder's items in when the store has
+                // no such folder is walked below, by name.
                 try
                 {
-                    folder = store.GetDefaultFolder(folderId);
+                    folder = ResolveVisibleDefaultFolder((object)store, folderId, out _, out _);
                 }
                 catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    continue;
+                }
+
+                if (folder == null)
                 {
                     continue;
                 }
@@ -1635,10 +2229,21 @@ public static class ComCorpusMailbox
             }
         }
 
+        // The STAND-INS - the root children the build files a folder's items in when the store has no
+        // such default folder, or only an invisible one - walked by name, so a scan that walks no other
+        // created folder (the probe-residue purge) still finds a probe item left in one. Recorded as
+        // walked, so neither loop below walks one twice.
+        CollectStandIns((object)store, scanIds, corpusId, rows, createdFolders, walkedFolderIds, ref legacyTagged, checkpoint);
+
         foreach (CorpusManifestFolder created in checkpoint.Steps(
             manifest?.Folders ?? (IReadOnlyList<CorpusManifestFolder>)Array.Empty<CorpusManifestFolder>(),
             "scan created folder"))
         {
+            if (walkedFolderIds.Contains(created.EntryId))
+            {
+                continue;
+            }
+
             dynamic? folder = null;
             try
             {
@@ -1694,9 +2299,16 @@ public static class ComCorpusMailbox
         ref int legacyTagged,
         ComStaCheckpoint checkpoint)
     {
-        var parents = new List<(int? ParentId, string What)> { (null, "store root") };
-        parents.AddRange(CreatedFolderParentIds.Select(id => ((int?)id, "default folder " + id.ToString(System.Globalization.CultureInfo.InvariantCulture))));
-        foreach ((int? parentId, string _) in checkpoint.Steps(parents, "scan created-folder parent"))
+        // The root, and each parent a population's subfolders hang under - the default folder when the
+        // store has a visible one, its stand-in otherwise - found without creating anything.
+        var parents = new List<(int? ParentId, bool StandIn)> { (null, false) };
+        foreach (int id in CreatedFolderParentIds)
+        {
+            parents.Add((id, false));
+            parents.Add((id, true));
+        }
+
+        foreach ((int? parentId, bool standIn) in checkpoint.Steps(parents, "scan created-folder parent"))
         {
             dynamic? parent = null;
             dynamic? children = null;
@@ -1704,7 +2316,30 @@ public static class ComCorpusMailbox
             {
                 try
                 {
-                    parent = parentId == null ? store.GetRootFolder() : store.GetDefaultFolder(parentId.Value);
+                    if (parentId == null)
+                    {
+                        parent = store.GetRootFolder();
+                    }
+                    else if (!standIn)
+                    {
+                        parent = ResolveVisibleDefaultFolder((object)store, parentId.Value, out _, out _);
+                    }
+                    else
+                    {
+                        parent = ResolveTargetFolder((object)store, parentId.Value, create: false, out bool isStandIn, out _);
+                        if (parent != null && !isStandIn)
+                        {
+                            // The default folder itself, already walked as the non-stand-in entry.
+                            Release(parent);
+                            parent = null;
+                        }
+                    }
+
+                    if (parent == null)
+                    {
+                        continue;
+                    }
+
                     children = parent!.Folders;
                 }
                 catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
@@ -1748,6 +2383,409 @@ public static class ComCorpusMailbox
                 Release(children);
                 Release(parent);
             }
+        }
+    }
+
+    /// <summary>
+    /// The store's default folder <paramref name="folderId"/> - looked up WITHOUT EVER CREATING IT
+    /// (<see cref="CorpusDefaultFolders.Resolve"/>, over the product's <see cref="SpecialFolders"/>) and
+    /// returned only when a person can SEE it (<see cref="IsVisibleFolder"/>). Null otherwise:
+    /// <paramref name="resolution"/> says whether the store has no such folder, could not say, or - with
+    /// <paramref name="invisible"/> - named one that is not in the visible tree, which on a PST attached
+    /// with <c>AddStoreEx</c> is what the Inbox resolves to (its nameless non-IPM root; OAI-UNINDEXED,
+    /// 2026-09-24). The caller releases what it gets.
+    /// </summary>
+    private static dynamic? ResolveVisibleDefaultFolder(
+        object storeObject, int folderId, out OutlookComSession.DefaultFolderResolution resolution, out bool invisible)
+    {
+        dynamic store = storeObject;
+        invisible = false;
+        dynamic? session = null;
+        try
+        {
+            session = store.Session;
+            string? storeId = TryRead<string>(() => (string)store.StoreID);
+            var special = new ComSpecialFolderStore(storeObject, (object)session!, storeId);
+            resolution = CorpusDefaultFolders.Resolve(special, folderId, out object? folder);
+            if (resolution != OutlookComSession.DefaultFolderResolution.Resolved)
+            {
+                return null;
+            }
+
+            if (!IsVisibleFolder(storeObject, folder!))
+            {
+                invisible = true;
+                Release(folder);
+                return null;
+            }
+
+            return folder;
+        }
+        finally
+        {
+            Release(session);
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="folderObject"/> is a named folder under the store's root folder - the
+    /// facts <see cref="CorpusFolderVisibility.IsVisible"/> decides on, collected by walking
+    /// <c>Folder.Parent</c> up until the root folder, or anything that is not a folder, is reached.
+    /// READ-ONLY.
+    /// </summary>
+    private static bool IsVisibleFolder(object storeObject, object folderObject)
+    {
+        dynamic store = storeObject;
+        dynamic folder = folderObject;
+        string? rootId = null;
+        dynamic? root = null;
+        try
+        {
+            root = store.GetRootFolder();
+            rootId = TryRead<string>(() => (string)root!.EntryID);
+        }
+        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+        {
+            rootId = null;
+        }
+        finally
+        {
+            Release(root);
+        }
+
+        string? name = TryRead<string>(() => (string)folder.Name);
+        var ancestors = new List<string?>();
+        object? parent = TryRead<object>(() => (object)folder.Parent);
+        try
+        {
+            for (int depth = 0; depth < 32 && parent != null; depth++)
+            {
+                object current = parent;
+                string? id = TryRead<string>(() => (string)((dynamic)current).EntryID);
+                ancestors.Add(id);
+                if (id == null || string.Equals(id, rootId, StringComparison.OrdinalIgnoreCase))
+                {
+                    break;
+                }
+
+                parent = TryRead<object>(() => (object)((dynamic)current).Parent);
+                Release(current);
+            }
+        }
+        finally
+        {
+            Release(parent);
+        }
+
+        return CorpusFolderVisibility.IsVisible(name, ancestors, rootId);
+    }
+
+    /// <summary>
+    /// The folder a build files default folder <paramref name="folderId"/>'s items in, and never by a
+    /// lookup that creates one: the store's own default folder when it is present AND visible
+    /// (<see cref="ResolveVisibleDefaultFolder"/>); else the root child named
+    /// <see cref="CorpusFolderIds.StandInName"/> for it; else - only when <paramref name="create"/> - a
+    /// new such stand-in: a Calendar, Contacts or Tasks folder for an undated kind, a mail folder for
+    /// the rest. Null when the store cannot say whether it has the default folder, or has neither and
+    /// nothing was to be created. <paramref name="isStandIn"/> says which was returned; the caller
+    /// releases it.
+    /// <para>
+    /// This is how a store keeps its own shape. The bystander, a PST attached with <c>AddStoreEx</c>,
+    /// has no Inbox, Sent Items, Drafts, Junk Email, Calendar, Contacts or Tasks - it is the testbed's
+    /// absent-arrival-folders store - and <c>Store.GetDefaultFolder</c> would have created some of them
+    /// and handed back its invisible root for another (OAI-UNINDEXED, 2026-09-24). A stand-in is made in
+    /// the open instead, visible, named with <see cref="CorpusManifest.CreatedFolderPrefix"/> - which
+    /// nothing but this builder writes - and recorded in the manifest by the build so teardown removes
+    /// it. The probes make the same stand-in when they need a target, and the build adopts it by name.
+    /// </para>
+    /// </summary>
+    private static dynamic? ResolveTargetFolder(
+        object storeObject,
+        int folderId,
+        bool create,
+        out bool isStandIn,
+        out OutlookComSession.DefaultFolderResolution resolution)
+    {
+        dynamic store = storeObject;
+        isStandIn = false;
+        dynamic? folder = ResolveVisibleDefaultFolder(storeObject, folderId, out resolution, out bool invisible);
+        if (folder != null)
+        {
+            return folder;
+        }
+
+        if (resolution == OutlookComSession.DefaultFolderResolution.Unreadable)
+        {
+            return null;
+        }
+
+        // Absent, or present and invisible: either way the build files in a stand-in, never there.
+        _ = invisible;
+        isStandIn = true;
+        string name = CorpusFolderIds.StandInName(folderId);
+        dynamic? root = null;
+        dynamic? children = null;
+        try
+        {
+            root = store.GetRootFolder();
+            children = root!.Folders;
+            int count = (int)children!.Count;
+            for (int i = 1; i <= count; i++)
+            {
+                dynamic child = children[i];
+                if (string.Equals(TryRead<string>(() => (string)child.Name), name, StringComparison.Ordinal))
+                {
+                    return child;
+                }
+
+                Release(child);
+            }
+
+            if (!create)
+            {
+                return null;
+            }
+
+            // Folders.Add with the kind's own OlDefaultFolders value - 9, 10 or 13 - makes the stand-in
+            // a Calendar, Contacts or Tasks folder; every other stand-in is a plain mail folder.
+            return CorpusItemKinds.UndatedKindOfFolder(folderId) != null
+                ? children.Add(name, folderId)
+                : children.Add(name);
+        }
+        finally
+        {
+            Release(children);
+            Release(root);
+        }
+    }
+
+    /// <summary>
+    /// Stops a build whose item's first save landed in ANOTHER store - after deleting that item where
+    /// it landed, by the two-key rule. A probe that verified the placement rung makes this unreachable;
+    /// it is here because "unreachable" is what the old code believed about the default store's Drafts
+    /// (OAI-UNINDEXED, 2026-09-24: twelve probe items stranded there). A store id that will not read
+    /// is not treated as a move - the census would find the item missing from its folder and fail.
+    /// </summary>
+    private static void RequireSavedInTarget(
+        dynamic ns, string? entryId, string? savedStoreId, string targetStoreId, int ordinal, string corpusId)
+    {
+        if (savedStoreId == null || string.Equals(savedStoreId, targetStoreId, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (entryId != null)
+        {
+            DeleteOne(ns, savedStoreId, entryId, CorpusSafety.BuildEntryIdAllowlist(new[] { entryId }), corpusId);
+        }
+
+        throw new InvalidOperationException(
+            "REFUSING to go on building: item " + ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + " was saved into ANOTHER store than the target - a write no allowlist named. It has been deleted from "
+            + "there by the two-key rule. The placement and undated probes check exactly this on a throwaway item, so a "
+            + "build should never get here; run corpus-probe and read its store column.");
+    }
+
+    /// <summary>
+    /// Writes PR_MESSAGE_FLAGS on an item that has NEVER been saved: MSGFLAG_UNSENT and MSGFLAG_SUBMIT
+    /// cleared, MSGFLAG_READ as asked - read-modify-write, like <see cref="ApplyMessageFlags"/>, but with
+    /// no save. MAPI lets MSGFLAG_UNSENT change only before a message's first save, which is why this
+    /// runs there; an item that is not unsent is one Outlook has no reason to file as a draft in the
+    /// default store (<see cref="CorpusPlacementMethod.InPlaceReceived"/>).
+    /// </summary>
+    private static void WriteFlagsBeforeFirstSave(dynamic mail, bool isRead)
+    {
+        dynamic? accessor = null;
+        try
+        {
+            accessor = mail.PropertyAccessor;
+            int current = TryReadStruct(() => (int)accessor!.GetProperty(PrMessageFlags)) ?? MsgFlagUnsent;
+            int wanted = current & ~MsgFlagSubmit & ~MsgFlagUnsent;
+            wanted = isRead ? (wanted | MsgFlagRead) : (wanted & ~MsgFlagRead);
+            accessor!.SetProperty(PrMessageFlags, wanted);
+        }
+        finally
+        {
+            Release(accessor);
+        }
+    }
+
+    /// <summary><c>OlItemType.olPostItem</c>.</summary>
+    private const int OlPostItem = 6;
+
+    /// <summary>
+    /// Creates ONE dated item in the folder whose <c>Items</c> collection is <paramref name="itemsObject"/>,
+    /// the way <paramref name="placement"/> makes one, and commits it with its first save - returning the
+    /// handle every later write goes through, a mail item whatever the rung. <paramref name="compose"/>
+    /// adds a population item's recipients and attachments: before the first save for a mail rung, the
+    /// way a person composes; after the conversion for <see cref="CorpusPlacementMethod.PostAsNote"/>,
+    /// which has no recipients until it is a mail item. The later flag write's save commits them.
+    /// <para>
+    /// <paramref name="entryId"/> is read the instant the item is committed and
+    /// <paramref name="savedStoreId"/> - the store it was committed IN - straight after, before anything
+    /// that could throw: an item whose id nothing holds cannot be deleted, and an item Outlook filed in
+    /// another store (every unsent mail item on a non-default store, OAI-UNINDEXED 2026-09-24) must be
+    /// deleted THERE. When the first save landed outside <paramref name="targetStoreId"/> the post is not
+    /// converted: the caller refuses the rung, or the build, and deletes it where it is.
+    /// </para>
+    /// </summary>
+    private static dynamic CommitNewItem(
+        object nsObject,
+        object itemsObject,
+        CorpusPlacementMethod placement,
+        string subject,
+        string body,
+        bool isRead,
+        Action<dynamic>? compose,
+        string targetStoreId,
+        out string? entryId,
+        out string? savedStoreId)
+    {
+        dynamic ns = nsObject;
+        dynamic items = itemsObject;
+        entryId = null;
+        savedStoreId = null;
+        dynamic? handle = null;
+        try
+        {
+            if (!CorpusPlacement.CreatesAsPost(placement))
+            {
+                handle = items.Add(0);
+                handle.Subject = subject;
+                handle.Body = body;
+                compose?.Invoke(handle);
+                if (CorpusPlacement.WritesFlagsBeforeSave(placement))
+                {
+                    WriteFlagsBeforeFirstSave(handle, isRead);
+                }
+
+                handle.Save();
+                entryId = TryRead<string>(() => (string)handle.EntryID);
+                savedStoreId = SavedItemStoreId(handle);
+                return handle;
+            }
+
+            handle = items.Add(OlPostItem);
+            handle.Subject = subject;
+            handle.Body = body;
+            handle.Save();
+            entryId = TryRead<string>(() => (string)handle.EntryID);
+            savedStoreId = SavedItemStoreId(handle);
+            if (entryId == null
+                || (savedStoreId != null && !string.Equals(savedStoreId, targetStoreId, StringComparison.OrdinalIgnoreCase)))
+            {
+                return handle;
+            }
+
+            // The conversion, then a fresh handle: the one held is a PostItem, and it is re-opened by
+            // EntryID so what comes back is whatever the store now says the item is - a MailItem.
+            handle.MessageClass = "IPM.Note";
+            handle.Save();
+            Release(handle);
+            handle = null;
+            handle = ns.GetItemFromID(entryId, targetStoreId);
+            compose?.Invoke(handle);
+            return handle;
+        }
+        catch
+        {
+            // The caller holds nothing yet, so the handle is released here; entryId and savedStoreId
+            // are already the caller's (out), which is what lets its finally delete a committed item.
+            Release(handle);
+            throw;
+        }
+    }
+
+    /// <summary>The StoreID of the store a saved item actually sits in - its parent folder's - or null when that will not read.</summary>
+    private static string? SavedItemStoreId(dynamic item)
+    {
+        dynamic? parent = null;
+        try
+        {
+            parent = TryRead<object>(() => (object)item.Parent);
+            return parent == null ? null : TryRead<string>(() => (string)((dynamic)parent).StoreID);
+        }
+        finally
+        {
+            Release(parent);
+        }
+    }
+
+    /// <summary>
+    /// Walks the stand-in of each default folder in <paramref name="folderIds"/> - the root child named
+    /// <see cref="CorpusFolderIds.StandInName"/> - that has not been walked already, collects its
+    /// corpus items under that folder id, and reports the folder. READ-ONLY: it lists the root's
+    /// children and asks for no folder by id.
+    /// </summary>
+    private static void CollectStandIns(
+        object storeObject,
+        IReadOnlyList<int> folderIds,
+        string corpusId,
+        List<ScanRow> rows,
+        List<CorpusManifestFolder> createdFolders,
+        HashSet<string> walkedFolderIds,
+        ref int legacyTagged,
+        ComStaCheckpoint checkpoint)
+    {
+        if (folderIds.Count == 0)
+        {
+            return;
+        }
+
+        var wanted = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (int id in folderIds)
+        {
+            wanted[CorpusFolderIds.StandInName(id)] = id;
+        }
+
+        dynamic store = storeObject;
+        dynamic? root = null;
+        dynamic? children = null;
+        try
+        {
+            try
+            {
+                root = store.GetRootFolder();
+                children = root!.Folders;
+            }
+            catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+            {
+                return;
+            }
+
+            int count = TryReadStruct(() => (int)children!.Count) ?? 0;
+            for (int i = 1; i <= count && checkpoint.Step("scan stand-in"); i++)
+            {
+                dynamic? child = null;
+                try
+                {
+                    child = children![i];
+                    string? name = TryRead<string>(() => (string)child!.Name);
+                    string? entryId = TryRead<string>(() => (string)child!.EntryID);
+                    if (name == null || entryId == null || walkedFolderIds.Contains(entryId)
+                        || !wanted.TryGetValue(name, out int folderId))
+                    {
+                        continue;
+                    }
+
+                    CollectCorpusItems(child!, folderId, corpusId, rows, ref legacyTagged, checkpoint);
+                    walkedFolderIds.Add(entryId);
+                    createdFolders.Add(new CorpusManifestFolder(entryId, name, folderId));
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    // A child that cannot be opened is reported by its absence, like any folder.
+                }
+                finally
+                {
+                    Release(child);
+                }
+            }
+        }
+        finally
+        {
+            Release(children);
+            Release(root);
         }
     }
 
@@ -1861,10 +2899,17 @@ public static class ComCorpusMailbox
     }
 
     /// <summary>
-    /// The store's default folder for <paramref name="folderId"/>, or - when the store has
-    /// no such default folder, which is the normal case for Junk Email in a PST - a folder
-    /// under the store root created for the purpose and recorded in the manifest so the
-    /// teardown can remove it.
+    /// The folder a build files default folder <paramref name="folderId"/>'s items in: the stand-in
+    /// the manifest already records for it; else what <see cref="ResolveTargetFolder"/> finds or makes -
+    /// the store's own default folder when it is present and VISIBLE, or a stand-in under the store
+    /// root, recorded in the manifest BEFORE any item is filed into it so the teardown can remove it.
+    /// A population's subfolder is <see cref="ResolvePopulationFolder"/>'s.
+    /// <para>
+    /// It used to ask <c>Store.GetDefaultFolder</c> and trust the answer, and on a PST attached with
+    /// <c>AddStoreEx</c> the answer for the Inbox was the PST's invisible root (OAI-UNINDEXED,
+    /// 2026-09-24). Throws when the store cannot say whether it has the folder: what cannot be proven
+    /// absent is not assumed absent.
+    /// </para>
     /// </summary>
     private static dynamic ResolveFolder(
         dynamic store,
@@ -1879,16 +2924,6 @@ public static class ComCorpusMailbox
             return ResolvePopulationFolder(store, subfolder, manifest, recordFolder, population!);
         }
 
-        try
-        {
-            return store.GetDefaultFolder(folderId);
-        }
-        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
-        {
-            // Fall through to the substitute folder.
-        }
-
-        string name = CorpusFolderIds.StandInName(folderId);
         foreach (CorpusManifestFolder known in manifest.Folders)
         {
             if (known.FolderId == folderId)
@@ -1899,25 +2934,28 @@ public static class ComCorpusMailbox
                 }
                 catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
                 {
-                    break; // recorded folder is gone - make a fresh one
+                    break; // recorded stand-in is gone - find or make a fresh one
                 }
             }
         }
 
-        dynamic? root = null;
-        try
+        dynamic? folder = ResolveTargetFolder((object)store, folderId, create: true, out bool isStandIn, out _);
+        if (folder == null)
         {
-            root = store.GetRootFolder();
-            dynamic created = root.Folders.Add(name);
-            var record = new CorpusManifestFolder((string)created.EntryID, name, folderId);
+            throw new InvalidOperationException(
+                "REFUSING to build: the store cannot say whether it has its default folder "
+                + folderId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + " (its designation would not read), so neither that folder nor a stand-in can be chosen safely.");
+        }
+
+        if (isStandIn)
+        {
+            var record = new CorpusManifestFolder((string)folder.EntryID, CorpusFolderIds.StandInName(folderId), folderId);
             manifest.Add(record);
             recordFolder(record);
-            return created;
         }
-        finally
-        {
-            Release(root);
-        }
+
+        return folder;
     }
 
     /// <summary>
@@ -1990,10 +3028,14 @@ public static class ComCorpusMailbox
     }
 
     /// <summary>
-    /// Adds the planned To/Cc rows to an item that has not been saved yet, each as a
-    /// <c>Name &lt;address&gt;</c> spec resolved to a one-off entry. The addresses are all under
-    /// <c>.invalid</c>, and the profile a population is built in has no mail account, so nothing
-    /// here can send - a resolved recipient is only what makes the index record the address.
+    /// Adds the planned To/Cc rows to an item before its first save - or, for a post converted to a
+    /// note (<see cref="CorpusPlacementMethod.PostAsNote"/>), straight after the conversion - each as
+    /// <see cref="CorpusCorrespondent.ToRecipientSpec"/> resolved to a one-off entry - the bare
+    /// address for the store's owner, whose name IS an address and whose <c>Name &lt;address&gt;</c>
+    /// spec Outlook refused to resolve on OAI-UNINDEXED, 2026-09-24. The addresses are all under
+    /// <c>.invalid</c>, and the profile a population is built in has no mail account, so nothing here
+    /// can send - a resolved recipient is only what makes the index record the address. Whether each
+    /// row resolved is judged by the read-back, which compares the addresses the rows carry.
     /// </summary>
     private static void AddRecipients(dynamic mail, CorpusItemEnrichment enrichment)
     {
@@ -2006,7 +3048,7 @@ public static class ComCorpusMailbox
                 dynamic? recipient = null;
                 try
                 {
-                    recipient = recipients!.Add(planned.Person.ToAddressSpec());
+                    recipient = recipients!.Add(planned.Person.ToRecipientSpec());
                     recipient!.Type = planned.Kind == CorpusRecipientKind.To ? 1 : 2;
                     _ = recipient.Resolve();
                 }
@@ -2192,7 +3234,7 @@ public static class ComCorpusMailbox
     private static CorpusDateProbe RunOneProbe(
         dynamic ns,
         dynamic folder,
-        dynamic drafts,
+        dynamic? drafts,
         string storeId,
         string corpusId,
         CorpusDateWriteMethod method,
@@ -2204,6 +3246,7 @@ public static class ComCorpusMailbox
         dynamic? items = null;
         dynamic? mail = null;
         string? entryId = null;
+        string deleteFrom = storeId;
         try
         {
             // Built with the SAME placement the build will use, and that is not a detail.
@@ -2214,17 +3257,26 @@ public static class ComCorpusMailbox
             // folder". The two failures were indistinguishable in the output, and the date
             // verdict taken from that run cannot be trusted. Placement is settled first now,
             // and the date probe inherits it.
-            dynamic source = CorpusPlacement.CreatesInDrafts(placement) ? drafts : folder;
+            dynamic source = CorpusPlacement.CreatesInDrafts(placement) ? drafts! : folder;
             items = source.Items;
-            mail = items.Add(0);
-            mail.Subject = ProbeSubject(corpusId, "date " + method);
-            mail.Body = "date fidelity probe";
-            mail.Save();
 
             // Captured the instant the item is committed - see RunOnePlacementProbe for why.
             // ApplyMessageFlags, ApplyDates and Move all sit between here and the re-capture
             // below, and all three can throw.
-            entryId = TryRead<string>(() => (string)mail!.EntryID);
+            //
+            // And where: a save outside the target store is deleted THERE (see RunOnePlacementProbe).
+            // It was this rung's ObjectModel run that left the third stranded item per probe session in
+            // Corpus B's Drafts - the date write threw between the save and the move, and the delete
+            // looked for the item in the target store.
+            mail = CommitNewItem(
+                (object)ns, (object)items!, placement, ProbeSubject(corpusId, "date " + method), "date fidelity probe",
+                isRead: true, compose: null, storeId, out entryId, out string? savedStoreId);
+            if (savedStoreId != null && !string.Equals(savedStoreId, storeId, StringComparison.OrdinalIgnoreCase))
+            {
+                deleteFrom = savedStoreId;
+                return new CorpusDateProbe(method, requestedUtc, writeUtc, null, false, false,
+                    "its first save landed in another store - a write no allowlist named");
+            }
 
             ApplyMessageFlags(mail!, isRead: true, clearUnsent: CorpusPlacement.WritesSentFlag(placement));
 
@@ -2301,7 +3353,7 @@ public static class ComCorpusMailbox
             if (entryId != null)
             {
                 HashSet<string> allowlist = CorpusSafety.BuildEntryIdAllowlist(new[] { entryId });
-                DeleteOne(ns, storeId, entryId, allowlist, corpusId);
+                DeleteOne(ns, deleteFrom, entryId, allowlist, corpusId);
             }
         }
     }

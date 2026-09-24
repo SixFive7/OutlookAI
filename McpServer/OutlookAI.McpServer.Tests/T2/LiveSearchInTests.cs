@@ -151,16 +151,23 @@ public sealed class LiveSearchInTests
     {
         IndexSearchService index = IndexSearchService.CreateDefault(out _);
         string probeScope = ResolveProbeFolderScope(index);
-        StoreScopeInfo probeStore = ResolveStoreScope(index, Probe.StoreDisplayName);
+
+        // The STORE-scoped shape is timed on the LARGEST indexed store (decided 2026-09-24;
+        // T1/LatencyTargetTests holds it there). It used to be the probe's own store - on a guest the
+        // few-dozen-item hub, where a two-second bound is met by construction. The FOLDER-scoped shape
+        // stays on the probe folder: it is the one folder whose subject-only population it measures.
+        (IReadOnlyList<LiveStoreSize> sizes, string largest) = LiveLatencyTarget.Measure(_fixture.Settings);
+        _output.WriteLine(LiveLatencyTarget.Describe(sizes, largest));
+        StoreScopeInfo timedStore = ResolveStoreScope(index, largest);
 
         // Agent-sized shape: what MailService actually emits for a default search
         // (top 25 over-fetched by one, ORDER BY DateReceived DESC).
         (long subjectMs, long bodyMs, long pairMs) folder = MeasureShapes(index, probeScope, Probe.SubjectTerm);
-        (long subjectMs, long bodyMs, long pairMs) store = MeasureShapes(index, probeStore.StorePrefix, _fixture.Settings.ProbeTerm);
+        (long subjectMs, long bodyMs, long pairMs) store = MeasureShapes(index, timedStore.StorePrefix, _fixture.Settings.ProbeTerm);
         (long subjectMs, long bodyMs, long pairMs) allStores = MeasureShapes(index, null, _fixture.Settings.ProbeTerm);
 
         _output.WriteLine($"folder-scoped  subject={folder.subjectMs} body={folder.bodyMs} orPair={folder.pairMs} ms");
-        _output.WriteLine($"store-scoped   subject={store.subjectMs} body={store.bodyMs} orPair={store.pairMs} ms");
+        _output.WriteLine($"largest store  subject={store.subjectMs} body={store.bodyMs} orPair={store.pairMs} ms");
         _output.WriteLine($"all stores     subject={allStores.subjectMs} body={allStores.bodyMs} orPair={allStores.pairMs} ms");
 
         foreach ((long subjectMs, long bodyMs, long pairMs) measured in new[] { folder, store, allStores })
@@ -367,10 +374,17 @@ public sealed class LiveSearchInTests
         SearchIn ownScope = subjectSide ? SearchIn.SubjectOnly : SearchIn.BodyOnly;
         SearchIn otherScope = subjectSide ? SearchIn.BodyOnly : SearchIn.SubjectOnly;
 
+        // Confirmed over EVERY message row, not mail only - because that is what the tool tier the
+        // term is then asserted on returns (gap B3 admits every item class). The hub holds undated
+        // appointments, contacts and tasks since 2026-09-24, and what the index files under
+        // System.Search.Contents for those is not something this test gets to assume: a corpus tag
+        // word confirmed "subject-only" over mail alone could sit in a contact's contents and make
+        // the tool tier's body scope find it. Confirmation over a superset can only pick a term the
+        // tool tier also separates.
         foreach (string candidate in candidates)
         {
-            int inOwnField = CountRows(index, hub.StorePrefix, new[] { candidate }, ownScope, null, KindFilter.MailKindOnly);
-            int inOtherField = CountRows(index, hub.StorePrefix, new[] { candidate }, otherScope, null, KindFilter.MailKindOnly);
+            int inOwnField = CountRows(index, hub.StorePrefix, new[] { candidate }, ownScope, null, KindFilter.MessagesOnly);
+            int inOtherField = CountRows(index, hub.StorePrefix, new[] { candidate }, otherScope, null, KindFilter.MessagesOnly);
             if (inOwnField > 0 && inOtherField == 0)
             {
                 _output.WriteLine($"index-confirmed {(subjectSide ? "subject" : "body")}-only term: own={inOwnField} other={inOtherField}");

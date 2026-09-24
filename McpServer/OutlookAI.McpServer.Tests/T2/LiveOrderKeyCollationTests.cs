@@ -59,6 +59,7 @@ public sealed class LiveOrderKeyCollationTests
     {
         IIndexClient client = IndexClientFactory.CreateAuto(out string report);
         _output.WriteLine(report);
+        var measured = new List<string>();
 
         foreach (string storeName in Indexed)
         {
@@ -102,7 +103,51 @@ public sealed class LiveOrderKeyCollationTests
             _output.WriteLine(
                 $"store={storeName} rows={rows.Count} undated={undated} firstUndated={firstUndated} "
                 + $"lastDated={lastDated} verdict={verdict}");
+            if (undated > 0 && lastDated >= 0)
+            {
+                measured.Add(storeName);
+            }
         }
+
+        // A sample with no undated row - or with nothing BUT undated rows - has no NULL collation to
+        // report, and "no-undated-rows-in-sample" is not a measurement. That was every store on a test
+        // guest until the fixture populations carried undated items (2026-09-24); saying so out loud
+        // keeps it from quietly becoming true again.
+        LivePopulationCoverage.Require(
+            _fixture.Settings,
+            measured,
+            "an indexed store whose sampled rows include both dated rows and rows with no System.Message.DateReceived",
+            "the NULL-collation measurement",
+            UndatedRemedy,
+            _output.WriteLine);
+    }
+
+    /// <summary>What every order-key test prints when there was nothing undated to measure.</summary>
+    private const string UndatedRemedy =
+        "On a test guest the hub and bystander populations carry undated appointments, contacts and tasks "
+        + "(corpus-build --population hub|bystander, generator v2; Docs/live-tier-on-the-vm.md section 3b) - rebuild "
+        + "them, and wait for corpus-indexed to report them indexed, before the run.";
+
+    /// <summary>How many rows of <paramref name="scope"/>'s widest sample carry no received date - the order-key tests' population.</summary>
+    private static int CountUndatedRows(IIndexClient client, string scope)
+    {
+        IndexQuery query = new()
+        {
+            Scope = scope,
+            Kinds = KindFilter.MessagesAndAttachments,
+            Top = ProbeTop,
+        };
+
+        int undated = 0;
+        foreach (IReadOnlyDictionary<string, object?> row in client.ExecuteRows(WsSqlBuilder.Build(query, ProbeTop), ProbeTop))
+        {
+            if (!IndexRowMapper.Map(row).DateReceivedUtc.HasValue)
+            {
+                undated++;
+            }
+        }
+
+        return undated;
     }
 
     /// <summary>
@@ -117,10 +162,19 @@ public sealed class LiveOrderKeyCollationTests
     public void OrderKeyFloorPredicate_IsAccepted_AndAdmitsOnlyDatedRows()
     {
         IIndexClient client = IndexClientFactory.CreateAuto(out _);
+        var excludedSomething = new List<string>();
 
         foreach (string storeName in Indexed)
         {
             StoreScopeInfo scope = _fixture.GetScope(storeName);
+
+            // What the floor has to exclude: the undated rows the SAME statement returns without it.
+            // With none, "undated = 0" below is true of the store rather than of the predicate.
+            int withoutFloor = CountUndatedRows(client, scope.StorePrefix);
+            if (withoutFloor > 0)
+            {
+                excludedSomething.Add(storeName);
+            }
             IndexQuery query = new()
             {
                 Scope = scope.StorePrefix,
@@ -140,10 +194,18 @@ public sealed class LiveOrderKeyCollationTests
                 }
             }
 
-            _output.WriteLine($"store={storeName} rows={rows.Count} undated={undated}");
+            _output.WriteLine($"store={storeName} rows={rows.Count} undated={undated} undatedWithoutTheFloor={withoutFloor}");
             Assert.True(rows.Count > 0, $"store {storeName}: the floor predicate returned no rows at all");
             Assert.Equal(0, undated);
         }
+
+        LivePopulationCoverage.Require(
+            _fixture.Settings,
+            excludedSomething,
+            "an indexed store whose unfloored statement returns rows with no System.Message.DateReceived",
+            "the proof that the order-key floor predicate excludes undated rows",
+            UndatedRemedy,
+            _output.WriteLine);
     }
 
     /// <summary>
@@ -155,9 +217,17 @@ public sealed class LiveOrderKeyCollationTests
     [Trait("Requires", "SearchIndex")]
     public void WidenedSearch_NeverReturnsFewerRowsThanTheOldMailKindShape()
     {
+        IIndexClient client = IndexClientFactory.CreateAuto(out _);
+        var contested = new List<string>();
+
         foreach (string storeName in Indexed)
         {
             StoreScopeInfo scope = _fixture.GetScope(storeName);
+            int undatedRows = CountUndatedRows(client, scope.StorePrefix);
+            if (undatedRows > 0)
+            {
+                contested.Add(storeName);
+            }
 
             IndexSearchResult widened = _fixture.Service.Search(new IndexQuery
             {
@@ -173,14 +243,34 @@ public sealed class LiveOrderKeyCollationTests
                 Top = 25,
             });
 
+            int widenedDated = widened.Hits.Count(h => h.DateReceivedUtc.HasValue);
+            int mailKindDated = mailKindOnly.Hits.Count(h => h.DateReceivedUtc.HasValue);
             _output.WriteLine(
-                $"store={storeName} widened={widened.Hits.Count} mailKindOnly={mailKindOnly.Hits.Count} "
+                $"store={storeName} widened={widened.Hits.Count} (dated {widenedDated}) "
+                + $"mailKindOnly={mailKindOnly.Hits.Count} (dated {mailKindDated}) undatedInScope={undatedRows} "
                 + $"widenedScanned={widened.RowsScanned} widenedMs={widened.ElapsedMilliseconds} "
                 + $"mailKindMs={mailKindOnly.ElapsedMilliseconds}");
 
             Assert.True(
                 widened.Hits.Count >= mailKindOnly.Hits.Count,
                 $"store {storeName}: widening COST rows ({widened.Hits.Count} < {mailKindOnly.Hits.Count})");
+
+            // The guarantee in the words IndexOrderGuard states it: an undated row can never reduce
+            // the number of DATED rows a search returns. The count above cannot see that - since gap B3
+            // an appointment IS a hit, so a page of appointments counts the same as a page of mail - and
+            // this can. Added 2026-09-24, with the undated items that make it testable on a guest.
+            Assert.True(
+                widenedDated >= mailKindDated,
+                $"store {storeName}: widening COST DATED rows ({widenedDated} < {mailKindDated}) - rows with no "
+                + "received date took slots dated mail should have had");
         }
+
+        LivePopulationCoverage.Require(
+            _fixture.Settings,
+            contested,
+            "an indexed store holding rows with no System.Message.DateReceived for the widened shape to rank",
+            "the proof that undated rows cannot displace dated mail from a widened search",
+            UndatedRemedy,
+            _output.WriteLine);
     }
 }

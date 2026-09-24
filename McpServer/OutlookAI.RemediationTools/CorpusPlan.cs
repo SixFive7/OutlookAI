@@ -162,16 +162,123 @@ public sealed record CorpusPlanOptions(string CorpusId, long Seed, DateTime Anch
     }
 }
 
+/// <summary>
+/// What KIND of Outlook item a planned item is. Everything the measurement corpus builds is
+/// <see cref="Mail"/>; the other kinds exist only in a fixture population, and every one of them
+/// is UNDATED - it carries no <c>PR_MESSAGE_DELIVERY_TIME</c>, so the index gives it no
+/// <c>System.Message.DateReceived</c>.
+/// <para>
+/// <b>Why undated items are built at all (decided 2026-09-24, Q70 follow-up (a)).</b> The index
+/// tier sorts by <c>System.Message.DateReceived DESC</c>, and since gap B3 a store-scoped search
+/// admits every item class - so where the Windows Search provider sorts a row with NO received
+/// date decides whether such rows can crowd real mail out of a <c>TOP n</c>.
+/// <c>LiveOrderKeyCollationTests</c> exist to measure exactly that, and on a store holding
+/// nothing but dated mail they measured nothing. These kinds are what they measure.
+/// </para>
+/// </summary>
+public enum CorpusItemKind
+{
+    /// <summary>Dated mail, placed in its folder with the verified placement rung and dated with the verified date rung.</summary>
+    Mail = 0,
+
+    // 1 was an UNSENT DRAFT, and it is gone on purpose. Outlook files a new unsent item in the
+    // profile's DEFAULT store's Drafts on its first save, whichever store's folder created it -
+    // measured on OAI-UNINDEXED 2026-09-24, where every probe rung that failed between that save and
+    // its move left its item in Corpus B's Drafts, a store no allowlist named. A population is never
+    // built into the default store, so a draft could only be made in one by writing into another
+    // store first; the undated rows the order-key tests need come from the three kinds below, none of
+    // which is ever unsent - and the undated probe proves, per kind, that its save stays in the target
+    // store before any is built. Do not bring it back without a way to make a draft in place.
+
+    /// <summary>A plain appointment in the Calendar - no attendees, so never a meeting and never sent; no reminder.</summary>
+    Appointment = 2,
+
+    /// <summary>A contact in Contacts, with no e-mail address.</summary>
+    Contact = 3,
+
+    /// <summary>A task in Tasks, with no due date and no reminder.</summary>
+    Task = 4,
+}
+
+/// <summary>The fixed Outlook facts about each <see cref="CorpusItemKind"/>. Pure.</summary>
+public static class CorpusItemKinds
+{
+    /// <summary>Outlook default-folder id for the Calendar.</summary>
+    public const int CalendarFolderId = 9;
+
+    /// <summary>Outlook default-folder id for Contacts.</summary>
+    public const int ContactsFolderId = 10;
+
+    /// <summary>Outlook default-folder id for Tasks.</summary>
+    public const int TasksFolderId = 13;
+
+    /// <summary>Outlook default-folder id for Drafts - not an undated kind's home; see <see cref="CorpusItemKind"/>.</summary>
+    public const int DraftsFolderId = 16;
+
+    /// <summary>The undated kinds, in the order a build and a probe take them.</summary>
+    public static IReadOnlyList<CorpusItemKind> Undated { get; } = new[]
+    {
+        CorpusItemKind.Appointment, CorpusItemKind.Contact, CorpusItemKind.Task,
+    };
+
+    /// <summary>Whether items of this kind are undated.</summary>
+    public static bool IsUndated(CorpusItemKind kind) => kind != CorpusItemKind.Mail;
+
+    /// <summary>The default folder an undated kind lives in. Mail has no single folder and is refused.</summary>
+    public static int FolderIdOf(CorpusItemKind kind) => kind switch
+    {
+        CorpusItemKind.Appointment => CalendarFolderId,
+        CorpusItemKind.Contact => ContactsFolderId,
+        CorpusItemKind.Task => TasksFolderId,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), "Mail is placed by the plan, not by its kind."),
+    };
+
+    /// <summary>The OlItemType <c>Items.Add</c> is given for this kind.</summary>
+    public static int OlItemTypeOf(CorpusItemKind kind) => kind switch
+    {
+        CorpusItemKind.Mail => 0,
+        CorpusItemKind.Appointment => 1,
+        CorpusItemKind.Contact => 2,
+        CorpusItemKind.Task => 3,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
+    /// <summary>The message class an item of this kind must read back with.</summary>
+    public static string MessageClassOf(CorpusItemKind kind) => kind switch
+    {
+        CorpusItemKind.Mail => "IPM.Note",
+        CorpusItemKind.Appointment => "IPM.Appointment",
+        CorpusItemKind.Contact => "IPM.Contact",
+        CorpusItemKind.Task => "IPM.Task",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
+    /// <summary>The kind whose home is default folder <paramref name="folderId"/>, or null.</summary>
+    public static CorpusItemKind? UndatedKindOfFolder(int folderId) => folderId switch
+    {
+        CalendarFolderId => CorpusItemKind.Appointment,
+        ContactsFolderId => CorpusItemKind.Contact,
+        TasksFolderId => CorpusItemKind.Task,
+        _ => null,
+    };
+}
+
 /// <summary>One item the corpus is supposed to contain. Pure data - no COM, no I/O.</summary>
 /// <param name="Ordinal">1-based position in the corpus; encoded in the subject.</param>
 /// <param name="FolderId">Outlook default-folder id the item belongs in.</param>
 /// <param name="Subject">Carries both subject tags and the ordinal.</param>
 /// <param name="BodyBytes">Exact length of the body <see cref="CorpusPlan.BuildBody"/> produces.</param>
-/// <param name="ReceivedUtc">Intended PR_MESSAGE_DELIVERY_TIME.</param>
-/// <param name="SentUtc">Intended PR_CLIENT_SUBMIT_TIME; never later than the received instant.</param>
+/// <param name="ReceivedUtc">
+/// Intended PR_MESSAGE_DELIVERY_TIME. For an UNDATED item (<see cref="IsUndated"/>) there is no such
+/// instant and this is <see cref="UndatedInstant"/>: <see cref="DateTime.MinValue"/>, chosen so that a
+/// consumer that forgets to skip undated items fails loudly or counts them OUT of every window, never
+/// silently in.
+/// </param>
+/// <param name="SentUtc">Intended PR_CLIENT_SUBMIT_TIME; never later than the received instant. <see cref="UndatedInstant"/> for an undated item.</param>
 /// <param name="IsRead">Intended read state.</param>
 /// <param name="SizeClass">Which size class produced the body length.</param>
-/// <param name="DateBand">Which age band produced the received instant.</param>
+/// <param name="DateBand">Which age band produced the received instant; "undated" for an undated item.</param>
+/// <param name="Kind">What kind of Outlook item it is. <see cref="CorpusItemKind.Mail"/> for every measurement-corpus item.</param>
 public sealed record CorpusItemSpec(
     int Ordinal,
     int FolderId,
@@ -181,7 +288,15 @@ public sealed record CorpusItemSpec(
     DateTime SentUtc,
     bool IsRead,
     string SizeClass,
-    string DateBand);
+    string DateBand,
+    CorpusItemKind Kind = CorpusItemKind.Mail)
+{
+    /// <summary>The placeholder an undated item carries in both date fields.</summary>
+    public static DateTime UndatedInstant { get; } = DateTime.SpecifyKind(DateTime.MinValue, DateTimeKind.Utc);
+
+    /// <summary>Whether the item has no received date at all - every kind but mail.</summary>
+    public bool IsUndated => CorpusItemKinds.IsUndated(Kind);
+}
 
 /// <summary>
 /// Which corpus generation a subject belongs to. Three values, not two: "an item of an older
@@ -392,6 +507,12 @@ public sealed class CorpusPlan
     public CorpusItemEnrichment? Enrich(int ordinal) => _population?.Enrich(ordinal);
 
     /// <summary>
+    /// What an UNDATED population item carries beyond subject and body - an appointment's hour, a
+    /// contact's name - or null for every dated item and for every measurement-corpus item.
+    /// </summary>
+    public CorpusUndatedDetail? UndatedDetail(int ordinal) => _population?.UndatedDetail(ordinal);
+
+    /// <summary>
     /// A readable name for a folder id: a population's own subfolder as its store-relative path,
     /// an Outlook default folder by its English name, anything else by number.
     /// </summary>
@@ -402,6 +523,9 @@ public sealed class CorpusPlan
             4 => "Outbox",
             5 => "Sent Items",
             6 => "Inbox",
+            CorpusItemKinds.CalendarFolderId => "Calendar",
+            CorpusItemKinds.ContactsFolderId => "Contacts",
+            CorpusItemKinds.TasksFolderId => "Tasks",
             16 => "Drafts",
             23 => "Junk Email",
             0 => "created folder",
@@ -650,6 +774,7 @@ public sealed class CorpusPlan
         long hugeBodies = 0;
         long bodyCapTrippers = 0;
         int unread = 0;
+        int undated = 0;
         DateTime oldest = DateTime.MaxValue;
         DateTime newest = DateTime.MinValue;
 
@@ -665,6 +790,15 @@ public sealed class CorpusPlan
             bySizeClass[spec.SizeClass] = bySizeClass.TryGetValue(spec.SizeClass, out int s) ? s + 1 : 1;
             byDateBand[spec.DateBand] = byDateBand.TryGetValue(spec.DateBand, out int d) ? d + 1 : 1;
             totalBodyBytes += spec.BodyBytes;
+
+            // An undated item has no received instant to range, window or read, by definition -
+            // it is counted, and every date statistic below is about the dated items alone.
+            if (spec.IsUndated)
+            {
+                undated++;
+                continue;
+            }
+
             if (spec.BodyBytes >= LargeBodyBytes)
             {
                 largeBodies++;
@@ -706,7 +840,10 @@ public sealed class CorpusPlan
 
         return new CorpusPlanReport(
             from, to, byFolder, bySizeClass, byDateBand, withinDays,
-            totalBodyBytes, largeBodies, hugeBodies, bodyCapTrippers, oldest, newest, unread);
+            totalBodyBytes, largeBodies, hugeBodies, bodyCapTrippers, oldest, newest, unread)
+        {
+            UndatedItems = undated,
+        };
     }
 
     /// <summary>Outlook default-folder id for Sent Items - its dates behave differently.</summary>
@@ -876,6 +1013,13 @@ public sealed record CorpusPlanReport(
 {
     /// <summary>Number of items covered.</summary>
     public int ItemCount => ToOrdinal - FromOrdinal + 1;
+
+    /// <summary>
+    /// Items with no received date (<see cref="CorpusItemSpec.IsUndated"/>) - only ever a fixture
+    /// population's. They are in the folder, size and body counts, and in NONE of the date
+    /// statistics: the received range, the windows and the unread count are the dated items'.
+    /// </summary>
+    public int UndatedItems { get; init; }
 
     /// <summary>Mean body length in bytes.</summary>
     public long MeanBodyBytes => ItemCount == 0 ? 0 : TotalBodyBytes / ItemCount;

@@ -141,7 +141,16 @@ public static class CorpusFreshness
         var live = new int[marks.Count];
         for (int ordinal = 1; ordinal <= itemCount; ordinal++)
         {
-            DateTime intended = plan.Describe(ordinal).ReceivedUtc;
+            // An undated item is in no window, at the anchor or now - it has no received instant.
+            // Skipped explicitly rather than left to its placeholder, which is out of every
+            // window too, because an explicit rule is the one a reader can check.
+            CorpusItemSpec spec = plan.Describe(ordinal);
+            if (spec.IsUndated)
+            {
+                continue;
+            }
+
+            DateTime intended = spec.ReceivedUtc;
             DateTime actual = intended + appliedShift;
             for (int i = 0; i < marks.Count; i++)
             {
