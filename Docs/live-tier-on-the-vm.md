@@ -291,10 +291,86 @@ redoing the step above it.
   bakes a path into its own tree where its own build just put the exe. The staged
   `C:\OutlookAI-Q5\server\` payload stays what it is, and the two no longer have to be the same
   path.
-* Install the add-in and let it run once. Tests carrying `Requires=AddInRegistry` read tuning
-  state the add-in writes on first run; without it they have nothing to read.
+* **The add-in, on BOTH guests, built from a named commit - a scripted build step since
+  2026-09-24** (`Testbed/README.md` section 1, step 5b). This line used to say "install the add-in
+  and let it run once", and the script-built guests never had it: nothing in the build installed it.
 
-**Checkpoint `CP-03-OUTLOOKAI-INSTALLED`, then `CP-05-ADDIN-TRUSTED`.**
+**Which tests need it, and exactly what they read.** Two, both through
+`McpServer/OutlookAI.Core/Services/HealthReporting.cs` (`ReadTuningState`), over
+`HKCU\Software\OutlookAI\Tuning`, with the value names of `Services/AddInServerContract.cs`:
+
+| Test | Declares | Asserts | Reads |
+| --- | --- | --- | --- |
+| `T3/Phase7LiveMcpToolShapeTests.Health_OverStdio_OnThisMachine_HasOutlookVersionAndTuning` | `AddInRegistry` | `tuning.managed` is true | `Initialized`, a nonzero **REG_DWORD** |
+| `T2/LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail` | `SearchIndex`, `MultipleStores` - **not** `AddInRegistry`, which it needs | `Tuning.Managed`, `Tuning.Enabled`, `Tuning.LastReconcileUtc` not null | `Initialized` and `Enabled` as nonzero **REG_DWORD**s, `LastReconcileUtc` as a **REG_SZ** |
+
+**The type matters as much as the value**: `HealthReporting`'s `AsBool` accepts a boxed `int` and
+nothing else, so a REG_QWORD 1 reads as not-managed. The third test that declares `AddInRegistry`,
+`T2/LiveUiSearchBackendTests.FlippingUserHiveValue_DrivesAdviceAndHealthField_BothStates`, writes the
+value it tests itself and does not need the add-in. **Both guests need it** because the Phase-7 test
+declares nothing that keeps it off the unindexed one - and there it asserts
+`index.wSearchStartMode == "automatic"`, which `Testbed/guest/Set-OutlookIndexingDisabled.ps1`
+deliberately keeps true.
+
+**Why a build from a commit, not a released installer.** The add-in and the server agree about those
+values through one file compiled into both. The suite on a guest is built from a named commit
+(`Testbed/host/Publish-LiveTierPayload.ps1`); pairing it with the last release's add-in would test a
+contract nobody changed together. So `Testbed/host/Publish-AddInPayload.ps1` builds the add-in from a
+commit too, and records the hashes of the two contract files; the guest compares them with the
+suite's and reports a mismatch as `BROKEN`. A pinned release installer remains the fallback for a rebuilder with
+no Visual Studio - it is what users get, and it is exactly the drift this avoids.
+
+**A plain build of the add-in REGISTERS it on the machine that builds it**, and on the maintainer's
+workstation that repoints his own Outlook at a build output. Read in the VSTO build targets: every
+build runs `RegisterOfficeAddin`, which rewrites `HKCU\Software\Microsoft\Office\Outlook\Addins\OutlookAI`,
+and `SetInclusionListEntry`, which writes a VSTO trust entry. The workstation already carries such
+trust entries for builds made under this repository's agent worktrees. The host script builds with
+three guards - the registration target off the chain, the writing tasks replaced by logging
+stand-ins, and a before/after snapshot of the host that fails on any trace - and three runs left the
+workstation identical. Its banner is the record.
+
+**On the guest, `Testbed/guest/Install-OutlookAIAddIn.ps1 -Execute`, through the interactive task**:
+
+1. **The VSTO runtime** from staged media (`Testbed/MEDIA.md`), because `Installer.iss` installs
+   prerequisites only when it is NOT silent - and an unattended guest can only run it silently.
+2. **The product's own installer**, `/VERYSILENT`: per-user, `|vstolocal` registration, the
+   slow-add-in exemption, the signing certificate into the user's TrustedPublisher store - exactly
+   what a user gets.
+3. **Trust, written rather than clicked.** A self-signed certificate in TrustedPublisher does not
+   retire the ClickOnce trust prompt, and on an unattended guest a prompt is a hang - the hand-built
+   guest's `CP-05-ADDIN-TRUSTED` was somebody clicking through it. The script writes the inclusion
+   entry the prompt itself writes: `HKCU\Software\Microsoft\VSTO\Security\Inclusion\<guid>` with
+   `Url` and `PublicKey`. Microsoft Learn says accepting the prompt creates an entry holding a URL
+   and a public key, and Microsoft's Japan Office support blog gives its registry path and value
+   names; the maintainer's workstation holds an entry of exactly that shape for this installer's own
+   install path; and the runtime's own IL stores and compares entries that way - by URI, and by key
+   blob. The key is read out of the installed deployment manifest and must match the installed
+   certificate and the payload.
+4. **`VSTO_LOGALERTS=1`**, so a load failure writes `<app>\OutlookAI.vsto.log` instead of
+   vanishing.
+5. **Outlook started once**, over COM, headless, in a watchdogged child job - never quit, never
+   killed.
+6. **Proof, not exit codes**: `LastReconcileUtc` written AFTER that start, `Initialized` and
+   `Enabled` of the right type, `LoadBehavior` still 3, nothing in Outlook's disabled list, the
+   add-in connected and answering a call into it, no Claude Code registration question pending (it
+   would surface as a modal dialog mid-tier), and the installed build the payload's.
+
+**It does not disturb the index exclusion or the corpora.** The add-in's tuning service
+(`Services/OutlookTuningService.cs`) writes only under HKCU - Outlook's Search key (four search-box
+preferences), the Cached Mode user and policy keys (Exchange sync settings), and the PST key (a
+larger file-size cap). `Set-OutlookIndexingDisabled.ps1` writes only HKLM - the Windows Search
+`PreventIndexingOutlook` policy and the crawl-scope rule. The two sets are disjoint, none of the four
+search values decides whether a store is indexed, and nothing in the add-in's startup path touches
+an item or a store. That is read from both sources; the guest script also snapshots the exclusion
+state before and after its Outlook start and says if anything moved. **Order it before step 7b** so
+7b's own `-Verify` certifies the exclusion with the add-in present; on a guest already past 7b, re-run
+`Set-OutlookIndexingDisabled.ps1 -Verify` after it.
+
+**Never executed on a guest yet.** Everything above that says "measured" was measured on the host.
+
+**Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Execute` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
+is no longer a separate manual step - the trust entry is part of the scripted install - and the name
+survives only as the hand-built guest's history.
 
 ### 2.4 The two Windows accounts - NOT NEEDED, skip to 2.5
 

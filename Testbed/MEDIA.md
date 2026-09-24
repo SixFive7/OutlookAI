@@ -16,6 +16,7 @@ been unrebuildable. Hence the rule at the bottom of this file.
 | Windows | A Windows 11 x64 image | **STAGED 2026-08-24**: `.work/media/Win11_25H2_EnglishInternational_x64_v2.iso` (7.9 GB, gitignored). Consumer multi-edition, volume label `CCCOMA_X64FRE_EN-GB_DV9`, so it carries Pro. |
 | Office | Office Deployment Tool + a configuration | **STAGED**: `.work/office-odt/` (gitignored), holding `setup.exe` and `VoIPFabric.xml`. A testbed-specific `Testbed.xml` sits beside them — see below. |
 | .NET SDK | The .NET 10 SDK, **win-x64**, as the `.exe` installer | **STAGED 2026-09-17**: `.work/media/dotnet-sdk-10.0.401-win-x64.exe` (215,437,248 bytes, gitignored), SHA-512 **matched against Microsoft's published hash**. It is what lets a guest run `dotnet test` at all — see "The .NET SDK" below for the version, the source and the hash. |
+| VSTO runtime | `vstor_redist.exe` 10.0.60917.00, the Visual Studio 2010 Tools for Office runtime redistributable — **the same file every release compiles into its installer** | **Declared 2026-09-24; its home is `.work/media/vstor_redist.exe`.** On this machine an identical copy (same SHA-256, Microsoft-signed) sits at `Redist/vstor_redist.exe`, where a local release build expects it, and that is what the first host builds used. See "The add-in" below. |
 
 ### Windows — staged, and it is NOT the edition the old guest ran
 
@@ -331,6 +332,80 @@ are a real change to the machine, and the whole point of the checkpoint discipli
 
 **Neither script has ever been run.** Both carry the banner saying so. Replace those banners with
 what actually happened the first time either of them runs on a guest.
+
+## The add-in — one piece of media, and the toolchain the host builds it with
+
+**Two live tests read state only the OutlookAI add-in writes, the first time it runs inside
+Outlook**, and the script-built guests had no add-in, so both failed there rather than skipping.
+The fix is a build step (`Testbed/README.md` section 1, step 5b): `Testbed/host/Publish-AddInPayload.ps1`
+builds the add-in from a named commit and packages it with the product's own installer, and
+`Testbed/guest/Install-OutlookAIAddIn.ps1` installs it, trusts it and proves the state the tests
+read. The installer it produces is an **artefact** - a script regenerates it from this repository.
+What it needs that no script can produce is below.
+
+### Media: the VSTO runtime redistributable
+
+| | Value |
+| --- | --- |
+| Product | Visual Studio 2010 Tools for Office Runtime, redistributable |
+| File | `vstor_redist.exe`, version **10.0.60917.00**, **41,828,424 bytes** |
+| SHA-256 | `CFE1A40BBE4A50022DB2164ABDB0154984E2CECB761A23CDC81CB5754F6E0A18` |
+| Where it comes from | `https://download.microsoft.com/download/5/d/2/5d24f8f8-efbb-4b63-aa33-3785e3104713/vstor_redist.exe` - the versioned Download Center path `.github/workflows/release.yml` fetches, never the `aka.ms` alias that once started serving a web page |
+| Hash provenance | **The same pin `release.yml` enforces**, comparing it against Microsoft's download on every release. Verified again on this host 2026-09-24: hash and length match, Authenticode `Valid`, signed by Microsoft Corporation |
+| Staged at | `.work/media/vstor_redist.exe` on the host - beside the SDK. **On this host an identical copy sits at `Redist/vstor_redist.exe`**, where a local release build expects it; the first builds used that one with `-VstoRuntimePath` |
+| Guest path | `C:\OutlookAI-Q5\media\vstor_redist.exe` |
+| Installed with | `Testbed/guest/Install-OutlookAIAddIn.ps1 -Execute`, which runs it `/q /norestart` - `Installer.iss`'s own switches |
+
+**This is not a new dependency - the product already ships it.** Every release compiles it into its
+installer, and the testbed needs the file on disk for two reasons of its own:
+
+* **The host needs it to compile the installer.** `Installer.iss` names `Redist\vstor_redist.exe`
+  with no `skipifsourcedoesntexist`, deliberately, so a missing file breaks the compile.
+* **The guest needs it installed separately**, because `Installer.iss` installs prerequisites only
+  `if not WizardSilent` - and a silent install is the only kind an unattended guest can run.
+
+**Its hash has a default in the guest script, unlike the SDK's**, and the difference is the one
+drawn under "The hash WAS deliberately blank" above: that hash had been compared against nothing,
+while this one is compared against Microsoft's own download by every release run.
+
+**Whether Office already brings a VSTO runtime is NOT established for these guests.** Microsoft
+documents that Office 2013 and later install the runtime's loader and its .NET 4 extensions when
+.NET 4 is present, but not which version or whether they register `VSTO Runtime Setup\v4R` - the key
+`Installer.iss` checks. So the guest script installs the pinned file unless `v4R` already reports
+10.0.60917 or newer, which makes both guests converge on one runtime whatever Office brought.
+
+### The host's toolchain for it — not media, but a precondition of the build
+
+| | On this host (measured 2026-09-24) | Why |
+| --- | --- | --- |
+| Visual Studio with the **Office/SharePoint development workload** (`Microsoft.VisualStudio.Workload.Office`) | Visual Studio 2026 Community 18.10, MSBuild 18.10.1.42706; the VSTO targets at `MSBuild\Microsoft\VisualStudio\v18.0\OfficeTools` | The only thing that carries the VSTO build targets. `release.yml` pins the `windows-2022` image because the hosted VS 2026 image dropped them; a VS 2026 **with the workload installed** builds the add-in - measured, three times |
+| **Inno Setup 6** (`ISCC.exe`) | per-user, `%LOCALAPPDATA%\Programs\Inno Setup 6` | Compiles `Installer.iss` - the product's own installer, what `release.yml` builds every release with |
+| A signing certificate | **none needed** | The build signs with a throwaway self-signed key made for that build and deleted, private key included, before the script ends. No secret is involved |
+
+Both tools are the project's existing release toolchain, not testbed additions: a machine without
+them cannot produce a release either. They are named here so a rebuilder knows before starting.
+
+**The build must never register the add-in on the host, and a plain one does.** The VSTO build
+targets write `HKCU\Software\Microsoft\Office\Outlook\Addins\OutlookAI` to point at the build output
+and a VSTO trust entry beside it - on the maintainer's workstation, that repoints his own Outlook.
+`Testbed/host/Publish-AddInPayload.ps1` builds with three guards against it and fails if the host
+changed; its banner says what they are and what three runs measured.
+
+### Installing it
+
+    pwsh -File Testbed/host/Publish-AddInPayload.ps1
+    pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\testbed-addin-payload\AddIn.zip -Destination C:\OutlookAI-Q5\AddIn.zip
+    pwsh -File Testbed/host/Copy-ToGuest.ps1 -VMName <guest> -Path .work\media\vstor_redist.exe -Destination C:\OutlookAI-Q5\media\vstor_redist.exe
+
+then on the guest - the unpacking over PowerShell Direct, the install **through the interactive
+task**, because it starts Outlook:
+
+    Expand-Archive C:\OutlookAI-Q5\AddIn.zip -DestinationPath C:\OutlookAI-Q5\addin -Force
+    .\Register-InteractiveTask.ps1 -Script "& 'C:\OutlookAI-Q5\src\Testbed\guest\Install-OutlookAIAddIn.ps1' -Execute"
+
+**Both guests.** The Phase-7 health test declares only `Requires=AddInRegistry`, so it runs on the
+unindexed guest too. **Take the checkpoint after `ADDIN-READY`**, not before: an installed runtime,
+an installed add-in and a trust entry are a real change to the machine.
 
 ## The licence clocks, and the corrections worth reading
 
