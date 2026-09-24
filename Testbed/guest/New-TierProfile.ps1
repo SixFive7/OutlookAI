@@ -24,6 +24,46 @@
     text file cannot perform - name the store in the file and `Account.DeliveryStore` comes back
     NULL, after which `NewDraft` fails.
 
+    ============================================================================================
+    2026-09-24: IMPORTPRF IS MEASURED, AND -VERIFY NOW REMOVES IT; AND THIS SCRIPT HAS A GUARD
+    ============================================================================================
+
+    WHETHER OUTLOOK CLEARS ImportPRF WAS THE OPEN QUESTION, and the tier profile this script built
+    on OAI-UNINDEXED answered it before anyone asked: -Execute set ImportPRF at 2026-09-15
+    19:54:37 (its log says so), Outlook imported at 19:54:43, and ImportPRF was ABSENT the next
+    time anybody looked - with First-Run present, and the Setup key last written at 19:57:59,
+    three minutes after that start. Nothing in this repository or the scratch that drove that guest
+    ever removes the value, so Outlook did. A deliberate measurement on 2026-09-24 (a New-OutlookProfile
+    .ps1 import, sampled every 5 s) saw it go within 5 s of the start that imported it. CLEARED.
+
+    -Verify NOW REMOVES IT ANYWAY (the maintainer's call, Q66 option 2: clear it regardless of
+    the answer, and do not make the protection depend on anyone remembering a flag). It removes
+    only a value naming THIS profile's .prf, and only once First-Run is back - evidence Outlook has
+    run since -Execute deleted it - because removing it any earlier cancels the import itself. On
+    the measured path it finds nothing to remove and says so. Resolve-ImportPrfClearance decides;
+    -SelfTest walks every branch; the reasoning is in New-OutlookProfile.ps1 beside its twin.
+
+    THE GUARD. This was the one script in this directory that writes the Outlook Setup key and
+    never asked which machine it was on - and -Execute makes the next Outlook start build, and
+    DEFAULT to, a profile. It now dot-sources OutlookMapiInterop.ps1 and calls
+    Assert-TestbedGuest before anything touches the machine. STAGE OutlookMapiInterop.ps1 BESIDE
+    IT: a from-scratch chain that copies only this script and its template now fails loudly on
+    the dot-source, which is the intended failure. Proven both ways the same day: as vmadmin on
+    the guest it passes; the dry run on the maintainer's workstation stops at "REFUSING TO RUN.
+    This session is logged on as ..." and creates nothing.
+
+    -VERIFY, RUN AGAINST THE WORKING TIER PROFILE (CP-05), FAILED IT FOUR WAYS THAT WERE ALL WRONG,
+    and all four are fixed. (1) "the account manager holds at least one account" passed on ANY
+    entry, and that key also lists the profile's data file and address book - it now counts MAIL
+    accounts (Test-IsMailAccountEntry): 1, 'OutlookAI tier sink'. (2) "the account has a delivery
+    store" looked only for a value named 00180102, and this build names it 'Delivery Store
+    EntryID' - the dump directly underneath showed it bound to C:\OutlookAI-Tier\Outlook.pst.
+    (3) "a POP3 port property exists" FAILED on no port value, and the working account stores none
+    for either default port (110, 25): it now warns for a default port and fails only for a
+    non-default one that did not land. (4) "the named PST exists" demanded tier.pst, which the
+    ForcePSTPath route - the one that works - never creates: it is now not applicable when the
+    imported .prf names no PST service.
+
 .SYNOPSIS
     Creates the testbed TIER profile - one Unicode PST plus one POP3 account on a loopback mail
     sink - by importing a .prf file, and then PROVES whether Outlook honoured it.
@@ -66,7 +106,8 @@
         .\New-TierProfile.ps1                 # dry run: prints the plan and changes nothing
         .\New-TierProfile.ps1 -Execute        # writes the .prf and the registry values
         <start Outlook once, let it settle, close it>
-        .\New-TierProfile.ps1 -Verify         # reads the profile hive and asserts; writes only its log
+        .\New-TierProfile.ps1 -Verify         # reads the profile hive and asserts; writes its log, and
+                                              # removes ImportPRF if it is still set once Outlook has run
 
     STARTING STATE IT EXPECTS. A guest checkpoint where Office is installed and the tier profile
     does not exist yet. -Execute asserts that state rather than assuming it: it refuses if
@@ -78,8 +119,10 @@
     backup profile appears, try BackupProfile=False in the template.
 
     WHAT IT NEVER DOES: create a COM object, open a store, read or write a mail item, or touch
-    any profile other than the one named. It writes exactly four registry values, in two keys,
-    both under HKCU, and it names every one of them before it writes it.
+    any profile other than the one named. Its registry writes are all under HKCU\...\Outlook\Setup
+    and each is named before it is made: -Execute sets ImportPRF and deletes First-Run and FirstRun
+    (creating the Setup key if it is missing); -Verify may remove ImportPRF again, and only in the
+    one case Resolve-ImportPrfClearance calls Clear.
 
 .PARAMETER ProfileName
     The MAPI profile to create. Also the name asserted to be the ONLY profile of that name
@@ -102,7 +145,15 @@
 
 .PARAMETER Verify
     Read the profile hive and assert the import worked. Touches no profile, no store and no mail
-    item; the only thing it writes is its own log at -LogPath. Safe to run repeatedly.
+    item. It writes its own log at -LogPath and, with no -Execute needed, removes ImportPRF when it
+    still names the tier .prf after Outlook has run (see the 2026-09-24 banner section). Safe to run
+    repeatedly.
+
+.PARAMETER SelfTest
+    Run the ImportPRF decision tests and exit. Touches nothing - no registry, no files, no guard.
+
+.PARAMETER ExpectedUser
+    The account the guest guard accepts. The default is the guard; see OutlookMapiInterop.ps1.
 
 .PARAMETER Force
     Allow -Execute to proceed when a profile of the target name already exists.
@@ -127,12 +178,159 @@ param(
     [string] $OfficeVersion    = '16.0',
     [string] $TemplatePath,
     [string] $LogPath          = 'C:\OutlookAI-Tier\new-tier-profile.log',
+    [string[]] $ExpectedUser   = @('vmadmin'),
     [switch] $Execute,
     [switch] $Verify,
-    [switch] $Force
+    [switch] $Force,
+    [switch] $SelfTest
 )
 
 $ErrorActionPreference = 'Stop'
+
+# =============================================================================================
+# PURE DECISIONS - the ImportPRF clearance -Verify performs. No registry, no files, no output, so
+# -SelfTest can walk every branch on any machine. COPIED from New-OutlookProfile.ps1 rather than
+# shared, like the hive rule in the sibling scripts: this file dot-sources nothing before its
+# guard, and the two copies are asserted by the same cases.
+# =============================================================================================
+
+<#
+    The ProfileName= a .prf carries, from its [General] section. $null when there is none.
+#>
+function Get-PrfProfileName {
+    param([string] $Text)
+
+    if ([string]::IsNullOrEmpty($Text)) { return $null }
+    $section = ''
+    foreach ($raw in ($Text -split "`r?`n")) {
+        $line = $raw.Trim()
+        if ($line.StartsWith(';')) { continue }
+        if ($line.StartsWith('[') -and $line.EndsWith(']')) {
+            $section = $line.Substring(1, $line.Length - 2).Trim()
+            continue
+        }
+        if ($section -eq 'General' -and $line.StartsWith('ProfileName=', [System.StringComparison]::OrdinalIgnoreCase)) {
+            $value = $line.Substring('ProfileName='.Length).Trim()
+            if ($value.Length -gt 0) { return $value }
+            return $null
+        }
+    }
+    return $null
+}
+
+<#
+    What -Verify does about ImportPRF. The reasoning is in New-OutlookProfile.ps1, beside the
+    function of the same name; in one line: remove it only when it names THIS profile's .prf and
+    Outlook has demonstrably started since -Execute (First-Run is back), because removing it any
+    earlier cancels the import itself.
+
+    Decision: NotSet | Clear | KeepPending | KeepFailed | KeepOther.
+#>
+function Resolve-ImportPrfClearance {
+    param(
+        [string] $ImportPrfValue,
+        [string] $PrfProfileName,
+        [Parameter(Mandatory = $true)] [string] $ProfileName,
+        [bool] $ProfileExists,
+        [bool] $FirstRunPresent
+    )
+
+    if ([string]::IsNullOrEmpty($ImportPrfValue)) {
+        return [pscustomobject]@{ Decision = 'NotSet'; Message = 'ImportPRF is not set, so no Outlook start can re-import. (Outlook removes it itself once it has imported the file - measured on this build.)' }
+    }
+    if ([string]::IsNullOrEmpty($PrfProfileName) -or $PrfProfileName -ne $ProfileName) {
+        $whose = 'a file whose profile name could not be read'
+        if (-not [string]::IsNullOrEmpty($PrfProfileName)) { $whose = "the .prf for profile '$PrfProfileName'" }
+        return [pscustomobject]@{ Decision = 'KeepOther'; Message = "ImportPRF is set to '$ImportPrfValue' - $whose, not '$ProfileName'. Left alone: another import may still be pending, and removing the value would cancel it without a word. Build-Corpus.ps1 refuses to build while ImportPRF is set. To remove it anyway: .\New-OutlookProfile.ps1 -ClearImportPrf -Execute" }
+    }
+    if (-not $FirstRunPresent) {
+        return [pscustomobject]@{ Decision = 'KeepPending'; Message = "ImportPRF still names the tier .prf and neither First-Run nor FirstRun is back, so Outlook has NOT started since -Execute - the import has not happened yet. Removing the value now would cancel it, so it is left in place. Start Outlook once, let it settle, and run -Verify again." }
+    }
+    if (-not $ProfileExists) {
+        return [pscustomobject]@{ Decision = 'KeepFailed'; Message = "ImportPRF still names the tier .prf, Outlook HAS started since -Execute (First-Run is back), and there is no profile named '$ProfileName': the import did not take. Left in place as evidence; while First-Run exists Outlook does not act on it." }
+    }
+    return [pscustomobject]@{ Decision = 'Clear'; Message = 'ImportPRF still names the tier .prf after the import has run. Removing it: left in place, it is a rebuild waiting for the next start that finds First-Run gone.' }
+}
+
+<#
+    Whether one entry of the account-manager key is a MAIL account. The same rule, from the same
+    measurement, as New-OutlookProfile.ps1 and Build-Corpus.ps1: only a {ED475414-...} wrapper
+    around a data file or an address book is excluded.
+#>
+function Test-IsMailAccountEntry {
+    param([string] $Clsid, [string] $ServiceName)
+
+    if ($Clsid -eq '{ED475414-B0D6-11D2-8C3B-00104B2A6676}' -and @('MSUPST MS', 'MSPST MS', 'CONTAB', 'EMABLT', 'MSPST AB') -contains $ServiceName) { return $false }
+    return $true
+}
+
+function Invoke-SelfTest {
+    $script:SelfTestChecks = 0
+    $script:SelfTestFailures = @()
+
+    function Test-Case {
+        param([string] $What, $Expected, $Actual)
+        $script:SelfTestChecks++
+        $e = "$Expected"; if ($null -eq $Expected) { $e = '<null>' }
+        $a = "$Actual"; if ($null -eq $Actual) { $a = '<null>' }
+        if ($e -ceq $a) { Write-Host ("  OK   {0}" -f $What) }
+        else {
+            $script:SelfTestFailures += "$What : expected $e, got $a"
+            Write-Host ("  FAIL {0} - expected {1}, got {2}" -f $What, $e, $a)
+        }
+    }
+
+    Write-Host 'New-TierProfile self-test. Nothing is read, nothing is written, nothing is started.'
+    Write-Host ''
+    Write-Host '== which profile a .prf names =='
+    Test-Case 'the [General] ProfileName is read' 'OutlookAI-Tier' (Get-PrfProfileName -Text "; c`r`n[General]`r`nCustom=1`r`nProfileName=OutlookAI-Tier`r`nDefaultProfile=Yes`r`n")
+    Test-Case 'a template token is returned as written, never guessed at' '{{PROFILE_NAME}}' (Get-PrfProfileName -Text "[General]`r`nProfileName={{PROFILE_NAME}}`r`n")
+    Test-Case 'outside [General] it does not count' '<null>' (Get-PrfProfileName -Text "[Account1]`r`nProfileName=x`r`n")
+    Test-Case 'nothing in, nothing out, no throw' '<null>' (Get-PrfProfileName -Text $null)
+
+    Write-Host ''
+    Write-Host '== what -Verify does about ImportPRF =='
+    $prf = 'C:\OutlookAI-Tier\tier-profile.prf'
+    Test-Case 'absent: NotSet' 'NotSet' (Resolve-ImportPrfClearance -ImportPrfValue '' -PrfProfileName $null -ProfileName 'OutlookAI-Tier' -ProfileExists $true -FirstRunPresent $true).Decision
+    Test-Case 'ours, imported, Outlook ran since: Clear' 'Clear' (Resolve-ImportPrfClearance -ImportPrfValue $prf -PrfProfileName 'OutlookAI-Tier' -ProfileName 'OutlookAI-Tier' -ProfileExists $true -FirstRunPresent $true).Decision
+    Test-Case 'ours, Outlook NOT started since -Execute: KeepPending, even with the profile there (-Force rebuild)' 'KeepPending' (Resolve-ImportPrfClearance -ImportPrfValue $prf -PrfProfileName 'OutlookAI-Tier' -ProfileName 'OutlookAI-Tier' -ProfileExists $true -FirstRunPresent $false).Decision
+    Test-Case 'ours, Outlook ran, no profile: KeepFailed' 'KeepFailed' (Resolve-ImportPrfClearance -ImportPrfValue $prf -PrfProfileName 'OutlookAI-Tier' -ProfileName 'OutlookAI-Tier' -ProfileExists $false -FirstRunPresent $true).Decision
+    Test-Case "the corpus profile's .prf is never the tier script's to cancel" 'KeepOther' (Resolve-ImportPrfClearance -ImportPrfValue 'C:\OutlookAI-Profiles\CorpusProfile.prf' -PrfProfileName 'CorpusProfile' -ProfileName 'OutlookAI-Tier' -ProfileExists $true -FirstRunPresent $true).Decision
+    Test-Case 'nor is a file whose profile cannot be read' 'KeepOther' (Resolve-ImportPrfClearance -ImportPrfValue 'C:\gone.prf' -PrfProfileName $null -ProfileName 'OutlookAI-Tier' -ProfileExists $true -FirstRunPresent $true).Decision
+
+    Write-Host ''
+    Write-Host '== which account-manager entries are MAIL accounts (the tier profile, as measured) =='
+    Test-Case "its POP3 account 'OutlookAI tier sink' ({ED475411-...}) is one" $true (Test-IsMailAccountEntry -Clsid '{ED475411-B0D6-11D2-8C3B-00104B2A6676}' -ServiceName '')
+    Test-Case "its 'Outlook Address Book' wrapper (CONTAB) is not" $false (Test-IsMailAccountEntry -Clsid '{ED475414-B0D6-11D2-8C3B-00104B2A6676}' -ServiceName 'CONTAB')
+    Test-Case "its 'Outlook Data File' wrapper (MSUPST MS) is not" $false (Test-IsMailAccountEntry -Clsid '{ED475414-B0D6-11D2-8C3B-00104B2A6676}' -ServiceName 'MSUPST MS')
+
+    Write-Host ''
+    Write-Host "$($script:SelfTestChecks) assertion(s), $($script:SelfTestFailures.Count) failure(s)."
+    Write-Host ''
+    Write-Host 'NOT COVERED HERE. Guest-only: the guard, every registry read and write, the .prf render and'
+    Write-Host 'read-back, whether Outlook honours the file, and the ImportPRF removal -Verify makes.'
+    if ($script:SelfTestFailures.Count -gt 0) {
+        Write-Host ''
+        foreach ($failure in $script:SelfTestFailures) { Write-Host "  $failure" }
+        return 1
+    }
+    return 0
+}
+
+if ($SelfTest) { exit (Invoke-SelfTest) }
+
+# =============================================================================================
+# EVERYTHING BELOW TOUCHES THE MACHINE. Guest only.
+# =============================================================================================
+
+# THE GUARD, added 2026-09-24. This script writes the Outlook Setup key and makes the next Outlook
+# start build (and, with DefaultProfile=Yes in the template, DEFAULT to) a profile - and until
+# now it was the one script in this directory that writes the Outlook Setup key and never asked
+# which machine it was on. Asserted before ANYTHING, including the dry run: on the maintainer's
+# workstation even -Verify reads a real profile hive and would print its account values into a
+# log.
+. "$PSScriptRoot\OutlookMapiInterop.ps1"
+Assert-TestbedGuest -ExpectedUser $ExpectedUser
 
 # ---------------------------------------------------------------------------------------------
 # Paths and constants. Every registry path this script touches is named here and nowhere else,
@@ -251,6 +449,7 @@ function Get-AccountValueDump {
 
     $result = New-Object psobject -Property @{
         AccountKeys        = @()
+        MailAccountNames   = @()
         Text               = ''
         HasDeliveryStore   = $false
         DeliveryStoreBytes = 0
@@ -259,6 +458,16 @@ function Get-AccountValueDump {
     $mgrPath = Join-Path (Join-Path $profilesKey $Profile) $acctMgrSubkey
     if (-not (Test-Path -LiteralPath $mgrPath)) {
         return $result
+    }
+
+    # MAIL accounts among the direct entries - Outlook lists the profile's data files and address
+    # book here too (Test-IsMailAccountEntry), so "any subkey at all" passed on a profile whose
+    # account had never landed. Measured 2026-09-24: this profile holds its POP3 account
+    # ({ED475411-...}) plus two such wrappers.
+    foreach ($entry in @(Get-ChildItem -LiteralPath $mgrPath -ErrorAction SilentlyContinue)) {
+        if (Test-IsMailAccountEntry -Clsid ([string] $entry.GetValue('clsid', '')) -ServiceName ([string] $entry.GetValue('Service Name', ''))) {
+            $result.MailAccountNames += [string] $entry.GetValue('Account Name', $entry.PSChildName)
+        }
     }
 
     $texts = @()
@@ -271,7 +480,12 @@ function Get-AccountValueDump {
         foreach ($p in $props.PSObject.Properties) {
             if ($p.Name -like 'PS*') { continue }
             $texts += ("{0}={1}" -f $p.Name, (ConvertTo-ReadableText $p.Value))
-            if ($p.Name -eq $deliveryStoreValueName) {
+            # TWO SPELLINGS OF ONE PROPERTY. The account manager on this build names its values by
+            # FRIENDLY NAME - 'Delivery Store EntryID', 'POP3 Server', 'POP3 User' - not by the hex
+            # property tag this was written against, so the 00180102 test alone FAILED the working
+            # tier profile on 2026-09-24 while its own dump, below it, showed the delivery store
+            # bound to C:\OutlookAI-Tier\Outlook.pst. Either spelling counts.
+            if ($p.Name -eq $deliveryStoreValueName -or $p.Name -eq 'Delivery Store EntryID') {
                 $result.HasDeliveryStore = $true
                 if ($p.Value -is [array]) { $result.DeliveryStoreBytes = $p.Value.Count }
             }
@@ -312,8 +526,8 @@ function Invoke-Verify {
     }
 
     $dump = Get-AccountValueDump -Profile $ProfileName
-    if ($dump.AccountKeys.Count -gt 0) {
-        Pass 'the account manager holds at least one account' ("{0} subkey(s)" -f $dump.AccountKeys.Count)
+    if ($dump.MailAccountNames.Count -gt 0) {
+        Pass 'the account manager holds at least one account' ("{0} mail account(s): {1} ({2} entries in all - the rest are data-file and address-book wrappers)" -f $dump.MailAccountNames.Count, (($dump.MailAccountNames | ForEach-Object { "'$_'" }) -join ', '), $dump.AccountKeys.Count)
     }
     else {
         Fail 'the account manager holds at least one account' "Nothing under $acctMgrSubkey. THIS IS THE ANSWER TO THE OPEN QUESTION: Outlook 16.x did not process the .prf's internet-account sections (3, 5, 7). The PST half may still have worked - check the profile above. Route A is dead on this build; see .work/pop3-account-routes.md section A.8 item 1."
@@ -326,24 +540,44 @@ function Invoke-Verify {
         Fail 'the POP3 host reached the profile' "'$SinkHost' appears in no account value. The account subkeys exist but the section-5 values did not land - which points at a section-7 mapping problem rather than at the import as a whole."
     }
 
-    # 0x0104 is PROP_ACCT_POP3_PORT. Its presence is what says section 5 reached the account at
-    # all; the VALUE is in the dump at the bottom, because a port stored as a DWORD is not text
-    # and pretending to match it as text would be a check that passes for the wrong reason.
-    if ($dump.Text -match '(?m)^[0-9a-fA-F]{4}0104=') {
-        Pass 'a POP3 port property exists' 'tag 0x0104 - read its value in the dump below'
+    # 0x0104 is PROP_ACCT_POP3_PORT. The VALUE is in the dump at the bottom, because a port stored
+    # as a DWORD is not text and pretending to match it as text would be a check that passes for
+    # the wrong reason. MEASURED 2026-09-24 on the working tier profile: the account holds NO port
+    # value under either spelling - nor an SMTP one - with both ports at their defaults (110, 25),
+    # while its host, user and delivery store all landed. So an absent port is the shape of a
+    # default port, and it is a WARN, not a FAIL; a port the template set away from its default
+    # and that did not land would be the thing to chase, and the warning says so.
+    if ($dump.Text -match '(?m)^([0-9a-fA-F]{4}0104|POP3 Port)=') {
+        Pass 'a POP3 port property exists' 'read its value in the dump below'
+    }
+    elseif ($Pop3Port -eq 110) {
+        Say "  WARN a POP3 port property exists - none stored, and -Pop3Port is the default 110: measured on the working tier profile, Outlook stores no port (POP3 or SMTP) at its default. Only a NON-default port that is missing here would mean section 5's port did not land."
     }
     else {
-        Fail 'a POP3 port property exists' "No value named ...0104 under the account. Section 5's port did not land. Outlook may have defaulted to 110 anyway; read the dump before concluding it is broken."
+        Fail 'a POP3 port property exists' "No port value under the account, and -Pop3Port is $Pop3Port, not the default 110. Section 5's port did not land - read the dump before concluding more than that."
     }
 
     if ($dump.HasDeliveryStore) {
-        Pass 'the account has a delivery store' ("{0} = {1} byte(s) - read the log to see WHICH store" -f $deliveryStoreValueName, $dump.DeliveryStoreBytes)
+        Pass 'the account has a delivery store' ("{0} byte(s) - read the log to see WHICH store" -f $dump.DeliveryStoreBytes)
     }
     else {
         Fail 'the account has a delivery store' "No $deliveryStoreValueName value. [General] DefaultStore=Service1 did not bind a per-account delivery store. The fallback is section A.5 of .work/pop3-account-routes.md: drop DefaultStore, set ForcePSTPath, and discover the minted .pst by account instead of by path."
     }
 
-    if (Test-Path -LiteralPath $pstPath) {
+    # WHICH ROUTE WAS IMPORTED decides whether there is a named PST to find at all. The route that
+    # WORKS on both guests - tier-profile-forcepst.prf - names NO PST service and lets Outlook mint
+    # the store under ForcePSTPath, so tier.pst never exists there and this check used to FAIL on
+    # the one working build (found 2026-09-24, OAI-UNINDEXED: the store is C:\OutlookAI-Tier\
+    # Outlook.pst). A PathToPersonalFolders= line that is a path, not a section-6 PT_ mapping, is
+    # what a named-PST .prf carries; the rendered file is read rather than the template guessed at.
+    $namesPst = $false
+    if (Test-Path -LiteralPath $prfPath) {
+        $namesPst = @(Get-Content -LiteralPath $prfPath | Where-Object { $_ -match '^\s*PathToPersonalFolders=(?!PT_)\S' }).Count -gt 0
+    }
+    if (-not $namesPst -and (Test-Path -LiteralPath $prfPath)) {
+        Say "  --   the named PST exists - not applicable: $prfPath names no PST service (the ForcePSTPath route), so Outlook minted the store and the delivery-store check above is the one that says the PST half worked."
+    }
+    elseif (Test-Path -LiteralPath $pstPath) {
         Pass 'the named PST exists' $pstPath
     }
     else {
@@ -361,6 +595,41 @@ function Invoke-Verify {
     }
     else {
         Fail 'Outlook minted no PST of its own' ("Found in $strayDir : " + ($stray -join ', ') + ". This is the documented Outlook 2010+ behaviour - a POP3 account gets its own data file unless told otherwise - and it means DefaultStore did not take. Not necessarily fatal: see the ForcePSTPath fallback in section A.5.")
+    }
+
+    # -- ImportPRF: the one write -Verify makes, and it needs no -Execute on purpose -------------
+    # A protection that waits for somebody to remember a flag is the gap this closes. It removes
+    # only a value naming THIS profile's .prf, and only once First-Run is back - proof Outlook has
+    # started since -Execute, which deleted it - because removing it any earlier cancels the import.
+    $setupItem = Get-Item -LiteralPath $setupKey -ErrorAction SilentlyContinue
+    $importNow = $null
+    $firstRunPresent = $false
+    if ($null -ne $setupItem) {
+        $importNow = $setupItem.GetValue('ImportPRF', $null)
+        $firstRunPresent = ($null -ne $setupItem.GetValue('First-Run', $null)) -or ($null -ne $setupItem.GetValue('FirstRun', $null))
+    }
+    $prfProfileName = $null
+    if (-not [string]::IsNullOrEmpty($importNow)) {
+        try { $prfProfileName = Get-PrfProfileName -Text ([System.IO.File]::ReadAllText($importNow)) } catch { $prfProfileName = $null }
+    }
+    $clearance = Resolve-ImportPrfClearance -ImportPrfValue $importNow -PrfProfileName $prfProfileName `
+        -ProfileName $ProfileName -ProfileExists ($profiles -contains $ProfileName) -FirstRunPresent $firstRunPresent
+    Say ("  ImportPRF now: {0}; First-Run back: {1}; decision: {2}" -f $(if ([string]::IsNullOrEmpty($importNow)) { '<not set>' } else { "'$importNow'" }), $firstRunPresent, $clearance.Decision)
+
+    switch ($clearance.Decision) {
+        'NotSet' { Pass 'ImportPRF is no longer set' 'no Outlook start can re-import the tier profile' }
+        'Clear' {
+            Remove-ItemProperty -LiteralPath $setupKey -Name 'ImportPRF' -Force
+            $readBack = (Get-ItemProperty -LiteralPath $setupKey -Name 'ImportPRF' -ErrorAction SilentlyContinue).ImportPRF
+            if ([string]::IsNullOrEmpty($readBack)) {
+                Pass 'ImportPRF is no longer set' 'it was still set after the import had run, so -Verify removed it and read the removal back'
+            }
+            else {
+                Fail 'ImportPRF is no longer set' "It was removed and still reads '$readBack'. Do not start Outlook until that is resolved: the template carries OverwriteProfile=Yes, so a start that honours it rebuilds the tier profile."
+            }
+        }
+        'KeepPending' { Fail 'ImportPRF is no longer set' $clearance.Message }
+        default { Say ("  WARN ImportPRF is no longer set - {0}" -f $clearance.Message) }
     }
 
     Say ''

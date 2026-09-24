@@ -1,6 +1,64 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
+    RUN ON OAI-UNINDEXED 2026-09-24, FROM CP-05. THE IMPORT WORKS. THE ACCOUNT-LESS PROFILE IT
+    MAKES DOES NOT OPEN UNATTENDED - SO -Execute NOW REFUSES WITHOUT -AcceptAccountWizard.
+    ============================================================================================
+
+    What the first guest runs of this form of the script did, each from a fresh restore of
+    CP-05-CORPUS-B-CLEAN-UNINDEXED, in session 1, Office LTSC 2024 16.0.17932:
+
+      -Preflight    the hive, the Setup key, the two profiles, ImportPRF <not set>, First-Run
+                    PRESENT, "OUTLOOK.EXE running YES - -Execute will refuse". Nothing written.
+      -Execute      wrote C:\OutlookAI-Profiles\ProbeProfile.prf and read it back byte-identical,
+                    set ImportPRF, deleted First-Run. Nothing else.
+      first start   within 5 s: ImportPRF GONE, ProbeProfile created AND made the default (the
+                    .prf's DefaultProfile=Yes), each PST created at its path, 271,360 bytes. Then
+                    Outlook stopped on "Email Account Setup" behind its "Opening - Outlook" splash
+                    and was still there 300 s later. First-Run was not written back - not then,
+                    not at the shutdown.
+      -Verify       DIED on its first line - see THE BUG. Fixed and re-run: profile present, no
+                    backup profile, 0 mail accounts, every PST present, nothing minted, ImportPRF
+                    gone.
+      COM           "You are not connected" when a bind started Outlook, and
+                    CO_E_SERVER_EXEC_FAILURE when one tried to attach while the dialog was up.
+
+    THE TWO INFERENCES THE OLD BANNER NAMED, SETTLED:
+      1. "An empty [Internet Account List] yields a profile with ZERO accounts" - TRUE as far as
+         it goes (no mail account anywhere in the registry) and REFUTED as the thing it was for:
+         a usable corpus profile. Outlook treats an account-less profile it has never opened as a
+         first run and stops on "Email Account Setup" at EVERY start - with First-Run absent, and
+         again with the exact First-Run bytes put back (so First-Run is not the gate) - and
+         `OUTLOOK.EXE /PIM <the imported name>` raises "The profile name you entered already
+         exists" instead. The fallback this banner named is therefore the route, and it was run
+         end to end the same day: OUTLOOK.EXE /PIM <name>, then Add-OutlookPstStore.ps1 per store.
+      2. "[Service List] may name Unicode Personal Folders more than once" - CONFIRMED at file and
+         registry level: a two-store .prf created both PSTs, in the same second, with
+         'Probe Store' and 'probe-two@vm.invalid' each on its own service section. Store
+         .DisplayName could not be read over COM, for the reason in (1).
+
+    THE BUG, because it is a class of bug, not a typo. At script scope `foreach ($store in
+    $requested)` IS the -Store parameter - PowerShell names are case-insensitive - and -Store is
+    typed [string[]], so every store object assigned to it was converted to a string array, whose
+    .Path is $null: "Cannot bind argument to parameter 'LiteralPath' because it is null". -SelfTest
+    now reads this file's own syntax tree and fails on any script-scope foreach whose variable is a
+    parameter's name; pointed at the committed file, it names both loops.
+
+    ALSO FOUND BY THE RUN, AND FIXED: the stray-PST scan looked only in Documents\Outlook Files,
+    and these guests set ForcePSTPath (C:\OutlookAI-Tier), so a store Outlook minted there would
+    have passed; the mail-account count counted every entry of the account-manager key, which
+    Outlook also fills with the profile's data files and address book; -Store's help said
+    "Repeatable" of a parameter PowerShell refuses twice; and the note under the chosen hive
+    offered "-OfficeVersion 8.0" because HKCU\...\Office\8.0\Outlook holds one value, First-Run.
+
+    IMPORTPRF (Q66), MEASURED: Outlook REMOVES it within 5 s of the start that imports it -
+    sampled every 5 s through a plain first start and a /PIM first start, and seen after the fact
+    on the tier profile New-TierProfile.ps1 built on 2026-09-15. It does not linger, so no later
+    start re-imports. It is cleared anyway - -Verify removes it if it ever does linger, never
+    before the import (Resolve-ImportPrfClearance); Build-Corpus.ps1 refuses to build while it is
+    set; -ClearImportPrf -Execute still removes it by hand.
+
+    ============================================================================================
     THE MAPI ROUTE IS DEAD ON THIS BUILD. THIS SCRIPT IMPORTS A .prf INSTEAD.
     ============================================================================================
 
@@ -48,11 +106,12 @@
     in Rename-OutlookStore.ps1 ('Outlook Data File' -> 'tier@vm.invalid', measured 2026-09-15).
     The probe is gone; see that script's banner.
 
-    WHAT IS STILL INFERENCE, STATED SO NOBODY READS THIS AS ALL-MEASURED. The .prf that was
-    measured carried ONE PST service and ONE POP3 account. This script emits a .prf with N PST
-    services and NO account sections at all, which is a strict SUBSET of the measured file plus a
-    repetition of its one service block. Two things about it are therefore INFERRED rather than
-    measured, and `-Verify` asserts both rather than assuming them:
+    WHAT WAS STILL INFERENCE UNTIL 2026-09-24 - both now settled by the guest run; see the top of
+    this banner. Kept as written, because the reasoning is what the measurement was aimed at. The
+    .prf that was measured carried ONE PST service and ONE POP3 account. This script emits a .prf
+    with N PST services and NO account sections at all, which is a strict SUBSET of the measured
+    file plus a repetition of its one service block. Two things about it were therefore INFERRED
+    rather than measured, and `-Verify` asserts both rather than assuming them:
 
       1. that a .prf whose `[Internet Account List]` is empty produces a profile with ZERO mail
          accounts. Corroboration, and it is decent: on that same guest a profile that had a PST
@@ -82,28 +141,38 @@
     its own measured recipe; this script is the CORPUS half.
 
     ============================================================================================
-    THE SHAPE OF A RUN, AND WHY IT IS THREE STEPS RATHER THAN ONE
+    THE SHAPE OF A RUN - and, for an unattended account-less profile, THE OTHER ROUTE
     ============================================================================================
 
-        .\New-OutlookProfile.ps1 -Preflight                      # read-only; run this first
-        .\New-OutlookProfile.ps1 -Name CorpusProfile -Store ... -Execute
-        <start Outlook once, let it settle, close it>            # YOURS. See below.
-        .\New-OutlookProfile.ps1 -Name CorpusProfile -Store ... -Verify
-        .\New-OutlookProfile.ps1 -ClearImportPrf -Execute        # see 'THE RE-IMPORT TRAP'
+    UNATTENDED, which is what a corpus guest needs, this script's -Execute is NOT the route (see
+    the top of this banner). The route, measured end to end on OAI-UNINDEXED 2026-09-24:
 
-    THE MIDDLE STEP IS DELIBERATELY NOT AUTOMATED, and New-TierProfile.ps1 says the same thing
-    for the same reason: importing is a startup-time action, and a script that starts Outlook then
-    owns Outlook's lifetime - which this project handles carefully and never from ad-hoc code
+        <start OUTLOOK.EXE /PIM CorpusProfile once>                # opens it, no dialog
+        .\Add-OutlookPstStore.ps1 -ProfileName CorpusProfile -DisplayName ... -Path ... -Execute
+        .\New-OutlookProfile.ps1 -Name CorpusProfile -Store ... -Verify -WithOutlook
+        <restart the guest - Set-DefaultOutlookProfile.ps1 refuses while Outlook runs>
+        .\Set-DefaultOutlookProfile.ps1 -Name CorpusProfile -Execute   # /PIM does NOT make it default
+
+    WITH A HUMAN at the guest's console for the one dialog, the .prf route still works:
+
+        .\New-OutlookProfile.ps1 -Preflight                      # read-only; run this first
+        .\New-OutlookProfile.ps1 -Name CorpusProfile -Store ... -AcceptAccountWizard -Execute
+        <start Outlook once: the import is done in 5 s, then get it past 'Email Account Setup'>
+        .\New-OutlookProfile.ps1 -Name CorpusProfile -Store ... -Verify
+
+    STARTING OUTLOOK IS DELIBERATELY NOT AUTOMATED HERE, and New-TierProfile.ps1 says the same
+    thing for the same reason: importing is a startup-time action, and a script that starts Outlook
+    then owns Outlook's lifetime - which this project handles carefully and never from ad-hoc code
     (never taskkill; release COM references BEFORE any quit). A setup script that starts Outlook
     is how a guest ends up with a zombie OUTLOOK.EXE.
 
-    THE RE-IMPORT TRAP, and it is the one thing in here that could cost a corpus. `ImportPRF` is
-    read at every Outlook start, and this .prf carries `OverwriteProfile=Yes`. WHETHER OUTLOOK
-    CLEARS THE VALUE AFTER PROCESSING IT HAS NOT BEEN ESTABLISHED ON THIS BUILD - New-TierProfile
-    .ps1 never checked, and neither has anything else. If it does NOT clear it, then every later
-    Outlook start re-imports and REBUILDS the profile, which would detach a corpus store that had
-    since been filled. `-Verify` reads the value back and says loudly if it is still there;
-    `-ClearImportPrf -Execute` removes it. Do that before building a corpus, not after.
+    THE RE-IMPORT TRAP, MEASURED AND CLOSED. `ImportPRF` is read at startup and this .prf carries
+    `OverwriteProfile=Yes`, so a value left behind would REBUILD the profile at a later start and
+    detach a corpus store filled since. Outlook does not leave it behind: it removes the value
+    within 5 s of the start that imports it (sampled every 5 s, twice, 2026-09-24). It is cleared
+    anyway, without a flag to remember: -Verify removes a lingering one once the import has run
+    (never before - that would cancel the import), and Build-Corpus.ps1 refuses to build while one
+    is set. `-ClearImportPrf -Execute` remains the unconditional manual remedy.
 
     ============================================================================================
     THE WALL, stated here so nobody goes looking for the missing half
@@ -156,9 +225,21 @@
     Profile name to create. Also the name -Verify asserts against.
 
 .PARAMETER Store
-    Repeatable. 'DisplayName=C:\path\to.pst'. The display name is what Outlook shows and what the
-    tests match on; the path is where the file goes and MUST be absolute. Omit entirely for a
-    store-less profile - which is legal and is almost certainly not what you want; see -Verify.
+    One or more 'DisplayName=C:\path\to.pst', as ONE comma-separated list:
+        -Store 'Corpus A=C:\p\a.pst','test@vm.invalid=C:\p\hub.pst'
+    NOT -Store ... -Store ...: PowerShell refuses a parameter named twice. The display name is
+    what Outlook shows and what the tests match on; the path is where the file goes and MUST be
+    absolute. Omit entirely for a store-less profile - which is legal and is almost certainly not
+    what you want; see -Verify.
+
+.PARAMETER AcceptAccountWizard
+    -Execute REFUSES without it, since 2026-09-24. Every profile this script builds has no mail
+    account, and on Office LTSC 2024 16.0.17932 such a profile, imported from a .prf, stops on
+    Outlook's 'Email Account Setup' dialog at EVERY start - measured with First-Run absent and
+    with it put back - so it cannot be opened unattended and COM reads "You are not connected".
+    Pass this only if a human will get Outlook past that dialog in the guest's console. For an
+    unattended account-less profile use the measured route instead: OUTLOOK.EXE /PIM <name>, then
+    Add-OutlookPstStore.ps1 once per named store. See the banner.
 
 .PARAMETER MakeDefault
     Write DefaultProfile=Yes into the .prf, so the imported profile becomes the default. It does
@@ -176,14 +257,22 @@
 
 .PARAMETER Verify
     After Outlook has been started once: read the profile hive back and assert that the import
-    did what the .prf said. Registry and filesystem only; add -WithOutlook for the COM half.
+    did what the .prf said - or, for a profile made with /PIM plus Add-OutlookPstStore.ps1, that
+    the profile holds what -Store names. Registry and filesystem; add -WithOutlook for the COM
+    half. It makes ONE write, with no -Execute needed: it removes ImportPRF when the value still
+    names this profile's .prf after the import has run (Resolve-ImportPrfClearance) - never before,
+    because that would cancel the import.
 
 .PARAMETER WithOutlook
     With -Verify: also bind Outlook and read Session.Stores and Accounts.Count. That is the only
-    check that answers 'what will the tests see'. It requires the profile to be the DEFAULT one.
+    check that answers 'what will the tests see'. It reads the profile Outlook is RUNNING - the
+    default one, unless a /PIM start opened another - and it is skipped, with the reason, while the
+    import is still pending or while Outlook has never finished opening the profile.
 
 .PARAMETER ClearImportPrf
-    Remove the ImportPRF value so the next Outlook start does not re-import. Needs -Execute.
+    Remove the ImportPRF value unconditionally, whoever wrote it. Needs -Execute. Normally never
+    needed: Outlook removes the value itself within 5 s of the start that imports it (measured
+    2026-09-24), and -Verify removes one that lingers.
 
 .PARAMETER SelfTest
     Run the decision tests and exit. Touches nothing: no registry, no files, no processes.
@@ -212,6 +301,7 @@ param(
     [string[]] $Store = @(),
 
     [Parameter(ParameterSetName = 'Build')] [switch] $MakeDefault,
+    [Parameter(ParameterSetName = 'Build')] [switch] $AcceptAccountWizard,
     [Parameter(ParameterSetName = 'Build')] [string] $PrfPath,
 
     [Parameter(Mandatory = $true, ParameterSetName = 'Verify')] [switch] $Verify,
@@ -358,6 +448,35 @@ supports, so nothing here will choose it for you. If it is the one Outlook reall
     }
 
     return [pscustomobject]@{ Chosen = $null; RealHives = $real; Problem = $problem }
+}
+
+<#
+    The line(s) printed under the chosen hive when other Outlook-shaped keys exist. Pure; the same
+    function as Set-DefaultOutlookProfile.ps1's, for the same measured reason: on OAI-UNINDEXED,
+    HKCU\Software\Microsoft\Office\8.0\Outlook holds one value (First-Run) and nothing else, and the
+    old note offered "-OfficeVersion 8.0" as the fix. An unsupported major is named, never offered.
+#>
+function Format-OtherHiveNote {
+    param([string] $ChosenVersion, [object[]] $RealHives)
+
+    $supported = @()
+    $unsupported = @()
+    if ($null -ne $RealHives) {
+        foreach ($hive in $RealHives) {
+            if ($null -eq $hive -or $hive.Version -eq $ChosenVersion) { continue }
+            if ($script:SupportedOfficeVersions -contains $hive.Version) { $supported += $hive.Version }
+            else { $unsupported += $hive.Version }
+        }
+    }
+
+    $lines = @()
+    if ($supported.Count -gt 0) {
+        $lines += "other supported Outlook hive(s) here: $($supported -join ', ') - use -OfficeVersion if this one is wrong"
+    }
+    if ($unsupported.Count -gt 0) {
+        $lines += "also an Outlook-shaped key under unsupported major(s) $($unsupported -join ', ') - never chosen, and not a fix for anything"
+    }
+    return , $lines
 }
 
 <#
@@ -721,6 +840,165 @@ function New-ProfilePrfText {
 }
 
 <#
+    Whether one entry of a profile's account-manager key is a MAIL account. Pure; the same rule as
+    Build-Corpus.ps1's, from the same measurement (OAI-UNINDEXED, 2026-09-24): Outlook lists every
+    MAPI service there, wrapping data files and address books under one CLSID - the account-less
+    CorpusProfile holds {ED475414-...} 'Outlook Data File' (MSUPST MS) and {ED475414-...} 'Outlook
+    Address Book' (CONTAB) with COM Accounts.Count 0, and the tier profile's POP3 account is
+    {ED475411-...}. Only a wrapper around a data file or an address book is excluded; anything
+    else - an Exchange wrapper (MSEMS), a service nobody named, an unreadable clsid - counts.
+#>
+function Test-IsMailAccountEntry {
+    param([string] $Clsid, [string] $ServiceName)
+
+    if ($Clsid -eq '{ED475414-B0D6-11D2-8C3B-00104B2A6676}' -and @('MSUPST MS', 'MSPST MS', 'CONTAB', 'EMABLT', 'MSPST AB') -contains $ServiceName) { return $false }
+    return $true
+}
+
+<#
+    Where -Execute writes the .prf when -PrfPath is not given. One function, because -Verify has to
+    find the same file again - it dates the import by it - and two spellings of one rule drift.
+#>
+function Get-DefaultPrfPath {
+    param([Parameter(Mandatory = $true)] [string] $ProfileName)
+    $safeName = ($ProfileName -replace '[^A-Za-z0-9._-]', '-')
+    return "C:\OutlookAI-Profiles\$safeName.prf"
+}
+
+<#
+    Which of these .pst files count as minted by Outlook rather than asked for. Pure.
+
+    $Files are objects with Name, FullName and CreationTime. A file the .prf NAMES never counts.
+    With $Since - the time the .prf was written - only a file created at or after it counts,
+    which is what lets a directory holding other profiles' stores be judged at all. Without it,
+    every file that is not named counts, which is the old rule and right only for a directory
+    nothing else writes to.
+#>
+function Select-StrayPst {
+    param([object[]] $Files, [string[]] $ExpectedPaths, $Since)
+
+    $expected = @()
+    if ($null -ne $ExpectedPaths) { $expected = @($ExpectedPaths) }
+    $strays = @()
+    if ($null -eq $Files) { return , $strays }
+    foreach ($file in $Files) {
+        if ($null -eq $file) { continue }
+        if ($expected -contains $file.FullName) { continue }
+        if ($null -ne $Since -and $file.CreationTime -lt $Since) { continue }
+        $strays += $file.Name
+    }
+    return , $strays
+}
+
+<#
+    The ProfileName= a .prf carries, read from its text. Pure, so -SelfTest walks it.
+
+    Only the [General] section counts - it is where Outlook reads the name - and the first
+    ProfileName= there wins. $null when there is none: a file that names no profile is not one
+    this script wrote, and nothing is decided on its behalf.
+#>
+function Get-PrfProfileName {
+    param([string] $Text)
+
+    if ([string]::IsNullOrEmpty($Text)) { return $null }
+    $section = ''
+    foreach ($raw in ($Text -split "`r?`n")) {
+        $line = $raw.Trim()
+        if ($line.StartsWith(';')) { continue }
+        if ($line.StartsWith('[') -and $line.EndsWith(']')) {
+            $section = $line.Substring(1, $line.Length - 2).Trim()
+            continue
+        }
+        if ($section -eq 'General' -and $line.StartsWith('ProfileName=', [System.StringComparison]::OrdinalIgnoreCase)) {
+            $value = $line.Substring('ProfileName='.Length).Trim()
+            if ($value.Length -gt 0) { return $value }
+            return $null
+        }
+    }
+    return $null
+}
+
+<#
+    What -Verify does about ImportPRF. Pure: the machine half gathers five facts and acts on the
+    answer, so every branch is walked by -SelfTest.
+
+    WHY -VERIFY CLEARS IT, AND WHY IT CANNOT CLEAR IT ANY EARLIER. Outlook reads ImportPRF at
+    startup and this script's .prf carries OverwriteProfile=Yes, so an ImportPRF left behind is a
+    rebuild waiting for a start - and a rebuild is what would detach a corpus store filled since.
+    Removing it closes that. But removing it BEFORE Outlook has read it cancels the import itself,
+    silently: the profile is never built.
+
+    WHAT TELLS THE TWO APART, and it is two measured facts, not one. (1) Outlook REMOVES ImportPRF
+    itself within 5 s of the start that imports it (OAI-UNINDEXED, 2026-09-24, sampled every 5 s) -
+    so a value still set means no start has acted on it. (2) Outlook ignores ImportPRF while
+    First-Run or FirstRun exists (documented), -Execute deletes both, and Outlook writes First-Run
+    back only once a start has COMPLETED its first run: during the tier profile's first session,
+    yes; during a start that stopped on the account wizard, not in 300 s and not at shutdown. So
+    "still set, First-Run absent" is an import still to come - leave it - and "still set, First-Run
+    present" is a value Outlook will not act on until something removes First-Run again - a latent
+    rebuild, and the only state this ever removes.
+
+    Decision is one of:
+      NotSet       ImportPRF is absent. Nothing can re-import.
+      Clear        it names THIS profile's .prf, the profile exists, and First-Run is back: the
+                   import has had its start, and all that is left is a re-import. REMOVE IT.
+      KeepPending  it names this profile's .prf and neither First-Run nor FirstRun is there:
+                   Outlook has not started since -Execute, so the import has not happened and
+                   removing the value would cancel it. -Verify ran too early.
+      KeepFailed   it names this profile's .prf, Outlook HAS started since (First-Run is back),
+                   and the profile is not there: the import did not take. Left as evidence -
+                   Outlook ignores it while First-Run exists.
+      KeepOther    it names another profile's .prf, or a file whose profile name cannot be read:
+                   ANOTHER import may be pending, and removing the value would cancel that one.
+                   Left alone. Build-Corpus.ps1 refuses while ImportPRF is set, so a corpus is not
+                   built underneath it either way.
+#>
+function Resolve-ImportPrfClearance {
+    param(
+        [string] $ImportPrfValue,
+        [string] $PrfProfileName,
+        [Parameter(Mandatory = $true)] [string] $ProfileName,
+        [bool] $ProfileExists,
+        [bool] $FirstRunPresent
+    )
+
+    if ([string]::IsNullOrEmpty($ImportPrfValue)) {
+        return [pscustomobject]@{
+            Decision = 'NotSet'
+            Message  = 'ImportPRF is not set, so no Outlook start can re-import. (Outlook removes it itself once it has imported the file - measured on this build; see the banner.)'
+        }
+    }
+
+    if ([string]::IsNullOrEmpty($PrfProfileName) -or $PrfProfileName -ne $ProfileName) {
+        $whose = "a file whose profile name could not be read"
+        if (-not [string]::IsNullOrEmpty($PrfProfileName)) { $whose = "the .prf for profile '$PrfProfileName'" }
+        return [pscustomobject]@{
+            Decision = 'KeepOther'
+            Message  = "ImportPRF is set to '$ImportPrfValue' - $whose, not '$ProfileName'. Left alone: another import may still be pending, and removing the value would cancel it without a word. Build-Corpus.ps1 refuses to build while ImportPRF is set. To remove it anyway: .\New-OutlookProfile.ps1 -ClearImportPrf -Execute"
+        }
+    }
+
+    if (-not $FirstRunPresent) {
+        return [pscustomobject]@{
+            Decision = 'KeepPending'
+            Message  = "ImportPRF still names this profile's .prf and neither First-Run nor FirstRun is back, so Outlook has NOT started since -Execute - the import has not happened yet. Removing the value now would cancel it, so it is left in place. Start Outlook once, let it settle, and run -Verify again."
+        }
+    }
+
+    if (-not $ProfileExists) {
+        return [pscustomobject]@{
+            Decision = 'KeepFailed'
+            Message  = "ImportPRF still names this profile's .prf, Outlook HAS started since -Execute (First-Run is back), and there is no profile named '$ProfileName': the import did not take. Left in place as evidence; while First-Run exists Outlook does not act on it."
+        }
+    }
+
+    return [pscustomobject]@{
+        Decision = 'Clear'
+        Message  = "ImportPRF still names this profile's .prf after the import has run. Removing it: left in place, it is a rebuild waiting for the next start that finds First-Run gone - and a rebuild detaches whatever was attached or filled since."
+    }
+}
+
+<#
     The verify verdict, decided against what was read back rather than against what was asked for.
 
     Returns Checks - each { Level = 'pass'|'fail'|'warn'; What; Detail } - plus the two counts.
@@ -730,6 +1008,15 @@ function New-ProfilePrfText {
     $AccountSubKeyCount is $null when the read FAILED, which is deliberately not the same as zero:
     a preflight that refuses a legitimate build on a registry read it could not make would be
     worse than no preflight, so an unreadable count is a warning and the COM count is what decides.
+
+    $ImportPrf is Resolve-ImportPrfClearance's answer, carrying Cleared = $true when the machine
+    half then removed the value and read the removal back. $null is treated as NotSet.
+
+    $ManagerEntryCount is EVERY entry of the account-manager key, wrappers included - $null when it
+    could not be read, and omitted by callers that do not know it. Zero is the shape of a profile
+    Outlook has never finished opening: measured 2026-09-24, a profile fresh from this script's
+    .prf holds that key EMPTY and stops on "Email Account Setup" at every start, while the
+    account-less CorpusProfile (made with /PIM, opened many times) holds two entries.
 #>
 function Test-ProfileOutcome {
     param(
@@ -739,7 +1026,8 @@ function Test-ProfileOutcome {
         [object[]] $Stores,
         [string[]] $PstPathsPresent,
         [string[]] $StrayPstNames,
-        [string] $ImportPrfValue
+        $ImportPrf,
+        $ManagerEntryCount = 'not-read'
     )
 
     $names = @()
@@ -766,6 +1054,22 @@ function Test-ProfileOutcome {
         }
     }
 
+    if (($names -contains $ProfileName) -and ($ManagerEntryCount -isnot [string])) {
+        if ($null -eq $ManagerEntryCount) {
+            $checks += [pscustomobject]@{ Level = 'warn'; What = 'Outlook has opened this profile'; Detail = "The account-manager key ($script:AccountManagerSubKeyName) could not be read, so this says nothing either way." }
+        }
+        elseif ([int] $ManagerEntryCount -gt 0) {
+            $checks += [pscustomobject]@{ Level = 'pass'; What = 'Outlook has opened this profile'; Detail = "$ManagerEntryCount entr$(if ([int] $ManagerEntryCount -eq 1) { 'y' } else { 'ies' }) under $script:AccountManagerSubKeyName - Outlook writes them when it first opens a profile" }
+        }
+        else {
+            $checks += [pscustomobject]@{
+                Level  = 'fail'
+                What   = 'Outlook has opened this profile'
+                Detail = "Its account-manager key ($script:AccountManagerSubKeyName) is EMPTY - the shape of a profile Outlook has never finished opening. Measured on this build 2026-09-24: an account-less profile imported from this script's .prf stops on Outlook's 'Email Account Setup' dialog at every start (First-Run absent, and First-Run put back), and COM then reads 'You are not connected'. It needs a human at the console once, or rebuild it unattended: OUTLOOK.EXE /PIM <name>, then Add-OutlookPstStore.ps1 per store."
+            }
+        }
+    }
+
     $backups = @($names | Where-Object { $_ -like 'Backup Of*' })
     if ($backups.Count -eq 0) {
         $checks += [pscustomobject]@{ Level = 'pass'; What = 'no backup profile was created'; Detail = 'BackupProfile=No held' }
@@ -786,13 +1090,13 @@ function Test-ProfileOutcome {
         }
     }
     elseif ([int] $AccountSubKeyCount -eq 0) {
-        $checks += [pscustomobject]@{ Level = 'pass'; What = 'the profile has no mail accounts'; Detail = "0 subkeys under $script:AccountManagerSubKeyName" }
+        $checks += [pscustomobject]@{ Level = 'pass'; What = 'the profile has no mail accounts'; Detail = "0 mail accounts under $script:AccountManagerSubKeyName (the data files and address books Outlook also lists there are not accounts)" }
     }
     else {
         $checks += [pscustomobject]@{
             Level  = 'fail'
             What   = 'the profile has no mail accounts'
-            Detail = "$AccountSubKeyCount subkey(s) under $script:AccountManagerSubKeyName. corpus-build will REFUSE this profile and there is no override. The .prf named no account, so something else put one here - or the empty [Internet Account List] is not enough on this build, which is the inference this script's banner flags. The measured fallback is 'outlook.exe /PIM <name>', which produces accounts=0 on this Office build."
+            Detail = "$AccountSubKeyCount mail account(s) under $script:AccountManagerSubKeyName. corpus-build will REFUSE this profile and there is no override. The .prf named no account, so something else put one here - or the empty [Internet Account List] is not enough on this build, which is the inference this script's banner flags. The measured fallback is 'outlook.exe /PIM <name>', which produces accounts=0 on this Office build."
         }
     }
 
@@ -817,24 +1121,39 @@ function Test-ProfileOutcome {
     }
 
     if ($stray.Count -eq 0) {
-        $checks += [pscustomobject]@{ Level = 'pass'; What = 'Outlook minted no PST of its own'; Detail = 'Documents\Outlook Files is empty of .pst' }
+        # The detail names no directory on purpose: which ones were judged depends on whether the
+        # .prf is there to date a file by, and the 'stray scan' line -Verify prints just above says
+        # which. A fixed list here claimed ForcePSTPath on a /PIM profile, where it is not judged.
+        $checks += [pscustomobject]@{ Level = 'pass'; What = 'Outlook minted no PST of its own'; Detail = 'no .pst that nobody asked for, in the places the stray scan above names' }
     }
     else {
         $checks += [pscustomobject]@{
             Level  = 'fail'
             What   = 'Outlook minted no PST of its own'
-            Detail = "Found in Documents\Outlook Files: $($stray -join ', '). DefaultStore=Service1 did not take. A store nobody named is a store the tests cannot census, and expectedStoreDisplayNames will refuse the tier over it."
+            Detail = "Found: $($stray -join ', '). DefaultStore=Service1 did not take. A store nobody named is a store the tests cannot census, and expectedStoreDisplayNames will refuse the tier over it."
         }
     }
 
-    if ([string]::IsNullOrEmpty($ImportPrfValue)) {
-        $checks += [pscustomobject]@{ Level = 'pass'; What = 'ImportPRF is no longer set'; Detail = 'the next Outlook start will not re-import' }
-    }
-    else {
-        $checks += [pscustomobject]@{
-            Level  = 'warn'
-            What   = 'ImportPRF is no longer set'
-            Detail = "It still reads '$ImportPrfValue'. Whether Outlook clears it after processing has NOT been established on this build. If it does not, every later Outlook start re-imports - and this .prf carries OverwriteProfile=Yes, so it would REBUILD the profile and detach a store that had since been filled. Clear it: New-OutlookProfile.ps1 -ClearImportPrf -Execute"
+    $importDecision = 'NotSet'
+    if ($null -ne $ImportPrf) { $importDecision = $ImportPrf.Decision }
+    $importCleared = ($null -ne $ImportPrf -and $ImportPrf.PSObject.Properties.Name -contains 'Cleared' -and $ImportPrf.Cleared -eq $true)
+    switch ($importDecision) {
+        'NotSet' {
+            $checks += [pscustomobject]@{ Level = 'pass'; What = 'ImportPRF is no longer set'; Detail = 'no Outlook start can re-import this profile' }
+        }
+        'Clear' {
+            if ($importCleared) {
+                $checks += [pscustomobject]@{ Level = 'pass'; What = 'ImportPRF is no longer set'; Detail = 'it was still set after the import had run, so -Verify removed it and read the removal back. No Outlook start can re-import this profile now.' }
+            }
+            else {
+                $checks += [pscustomobject]@{ Level = 'fail'; What = 'ImportPRF is no longer set'; Detail = "It is still set after the import has run, and it was NOT removed. $($ImportPrf.Message)" }
+            }
+        }
+        'KeepPending' {
+            $checks += [pscustomobject]@{ Level = 'fail'; What = 'ImportPRF is no longer set'; Detail = $ImportPrf.Message }
+        }
+        default {
+            $checks += [pscustomobject]@{ Level = 'warn'; What = 'ImportPRF is no longer set'; Detail = $ImportPrf.Message }
         }
     }
 
@@ -968,6 +1287,19 @@ function Invoke-SelfTest {
     Test-Case 'and says why that key is not real' $true ($pick.Problem -like '*silent no-op*')
 
     Write-Host ''
+    Write-Host '== the note under the chosen hive =='
+
+    $stray8 = New-HiveCandidate -Version '8.0' -ValueNames @('First-Run')
+    $pick = Select-OutlookHive -Candidates @($real16, $stray8)
+    Test-Case 'the measured 8.0 First-Run shell does not displace 16.0' '16.0' $pick.Chosen.Version
+    $note = Format-OtherHiveNote -ChosenVersion $pick.Chosen.Version -RealHives $pick.RealHives
+    Test-Case 'it is named as unsupported' $true ($note[0].Contains('unsupported major(s) 8.0 - never chosen'))
+    Test-Case 'and -OfficeVersion is not offered for it' $false ($note[0].Contains('-OfficeVersion'))
+    $note = Format-OtherHiveNote -ChosenVersion '16.0' -RealHives @($real16, $real15)
+    Test-Case 'a second supported hive keeps the -OfficeVersion hint' $true ($note[0].Contains('use -OfficeVersion'))
+    Test-Case 'nothing else, nothing printed' 0 (Format-OtherHiveNote -ChosenVersion '16.0' -RealHives @($real16)).Count
+
+    Write-Host ''
     Write-Host '== what may be written into a .prf at all =='
 
     Test-Case 'an ordinary value is fine' '<null>' (Test-PrfValueSafe -Value 'CorpusProfile' -What 'x')
@@ -1093,66 +1425,212 @@ function Invoke-SelfTest {
 
     $good = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
         -ProfileNames @('Outlook', 'CorpusProfile') -AccountSubKeyCount 0 -Stores $oneStore `
-        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrfValue ''
+        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrf $null
     Test-Case 'a clean import has no failures' 0 $good.FailureCount
     Test-Case 'and no warnings either' 0 $good.WarningCount
     Test-Case 'the profile check passes' 'pass' (Get-CheckLevel $good 'the profile exists')
     Test-Case 'the account check passes' 'pass' (Get-CheckLevel $good 'the profile has no mail accounts')
     Test-Case "the store's PST check passes" 'pass' (Get-CheckLevel $good "the PST for 'Corpus A' exists")
+    Test-Case 'no stray PST passes' 'pass' (Get-CheckLevel $good 'Outlook minted no PST of its own')
+    Test-Case 'and claims no directory it may not have judged (a /PIM profile: ForcePSTPath is not)' $false ((Get-CheckDetail $good 'Outlook minted no PST of its own') -like '*ForcePSTPath*')
 
     $bad = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
         -ProfileNames @('Outlook') -AccountSubKeyCount 0 -Stores $oneStore `
-        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrfValue ''
+        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrf $null
     Test-Case 'a missing profile FAILS' 'fail' (Get-CheckLevel $bad 'the profile exists')
     Test-Case 'and names what is there instead' $true ((Get-CheckDetail $bad 'the profile exists') -like '*Profiles present: Outlook*')
 
     $bad = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
         -ProfileNames @('CorpusProfile', 'Backup Of CorpusProfile') -AccountSubKeyCount 0 -Stores $oneStore `
-        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrfValue ''
+        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrf $null
     Test-Case 'a Backup Of profile FAILS' 'fail' (Get-CheckLevel $bad 'no backup profile was created')
     Test-Case 'and names the other spelling to try' $true ((Get-CheckDetail $bad 'no backup profile was created') -like '*try the other spelling*')
 
     $bad = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
         -ProfileNames @('CorpusProfile') -AccountSubKeyCount 1 -Stores $oneStore `
-        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrfValue ''
+        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrf $null
     Test-Case 'an account on the corpus profile FAILS' 'fail' (Get-CheckLevel $bad 'the profile has no mail accounts')
     Test-Case 'and names the measured fallback' $true ((Get-CheckDetail $bad 'the profile has no mail accounts') -like '*/PIM*')
 
     $unknown = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
         -ProfileNames @('CorpusProfile') -AccountSubKeyCount $null -Stores $oneStore `
-        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrfValue ''
+        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrf $null
     Test-Case 'an unreadable account count WARNS rather than failing' 'warn' (Get-CheckLevel $unknown 'the profile has no mail accounts')
     Test-Case 'and no failure is recorded for it' 0 $unknown.FailureCount
 
     $bad = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
         -ProfileNames @('CorpusProfile') -AccountSubKeyCount 0 -Stores $oneStore `
-        -PstPathsPresent @() -StrayPstNames @() -ImportPrfValue ''
+        -PstPathsPresent @() -StrayPstNames @() -ImportPrf $null
     Test-Case 'a PST that was never created FAILS' 'fail' (Get-CheckLevel $bad "the PST for 'Corpus A' exists")
 
     $bad = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
         -ProfileNames @('CorpusProfile') -AccountSubKeyCount 0 -Stores $oneStore `
-        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @('corpus-a(1).pst') -ImportPrfValue ''
+        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @('corpus-a(1).pst') -ImportPrf $null
     Test-Case 'a store Outlook minted itself FAILS' 'fail' (Get-CheckLevel $bad 'Outlook minted no PST of its own')
     Test-Case 'and says what it costs' $true ((Get-CheckDetail $bad 'Outlook minted no PST of its own') -like '*expectedStoreDisplayNames*')
 
-    $warned = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
+    Write-Host ''
+    Write-Host '== which account-manager entries are MAIL accounts (measured shapes) =='
+
+    $wrapper = '{ED475414-B0D6-11D2-8C3B-00104B2A6676}'
+    Test-Case 'a data-file wrapper (MSUPST MS) is not an account' $false (Test-IsMailAccountEntry -Clsid $wrapper -ServiceName 'MSUPST MS')
+    Test-Case 'an address-book wrapper (CONTAB) is not an account' $false (Test-IsMailAccountEntry -Clsid $wrapper -ServiceName 'CONTAB')
+    Test-Case 'a POP3 account ({ED475411-...}) is one' $true (Test-IsMailAccountEntry -Clsid '{ED475411-B0D6-11D2-8C3B-00104B2A6676}' -ServiceName '')
+    Test-Case 'an Exchange wrapper (MSEMS) is one' $true (Test-IsMailAccountEntry -Clsid $wrapper -ServiceName 'MSEMS')
+    Test-Case 'an unknown wrapper is one - fail closed' $true (Test-IsMailAccountEntry -Clsid $wrapper -ServiceName 'NEWTHING')
+
+    Write-Host ''
+    Write-Host '== which .pst files count as minted, not asked for =='
+
+    $since = [datetime]'2026-09-24 13:08:38'
+    $files = @(
+        [pscustomobject]@{ Name = 'probe.pst'; FullName = 'C:\OutlookAI-Q5\pst\probe.pst'; CreationTime = [datetime]'2026-09-24 13:08:45' },
+        [pscustomobject]@{ Name = 'Outlook Data File - CorpusProfile.pst'; FullName = 'C:\OutlookAI-Tier\Outlook Data File - CorpusProfile.pst'; CreationTime = [datetime]'2026-09-16 00:14:41' },
+        [pscustomobject]@{ Name = 'Outlook Data File - ProbeProfile.pst'; FullName = 'C:\OutlookAI-Tier\Outlook Data File - ProbeProfile.pst'; CreationTime = [datetime]'2026-09-24 13:09:02' })
+    $strays = Select-StrayPst -Files $files -ExpectedPaths @('C:\OutlookAI-Q5\pst\probe.pst') -Since $since
+    Test-Case "a store the .prf named is never a stray" $false ($strays -contains 'probe.pst')
+    Test-Case "another profile's older store in ForcePSTPath is not one" $false ($strays -contains 'Outlook Data File - CorpusProfile.pst')
+    Test-Case 'a store minted after the .prf IS one' $true ($strays -contains 'Outlook Data File - ProbeProfile.pst')
+    Test-Case 'and it is the only one' 1 $strays.Count
+    Test-Case 'the named-path match is case-insensitive' 0 (Select-StrayPst -Files @($files[0]) -ExpectedPaths @('C:\OUTLOOKAI-Q5\PST\PROBE.PST') -Since $null).Count
+    Test-Case 'with no date, every unnamed file counts (the old rule)' 2 (Select-StrayPst -Files $files -ExpectedPaths @('C:\OutlookAI-Q5\pst\probe.pst') -Since $null).Count
+    Test-Case 'nothing in, nothing out, no throw' 0 (Select-StrayPst -Files $null -ExpectedPaths $null -Since $null).Count
+    Test-Case 'the default .prf path is derived from the name, one way' 'C:\OutlookAI-Profiles\Probe-Profile.prf' (Get-DefaultPrfPath -ProfileName 'Probe Profile')
+
+    Write-Host ''
+    Write-Host '== which profile a .prf names =='
+
+    $prfText = New-ProfilePrfText -ProfileName 'CorpusProfile' -Stores $oneStore -MakeDefault $true
+    Test-Case 'the name this script writes is read back' 'CorpusProfile' (Get-PrfProfileName -Text $prfText)
+    Test-Case 'an empty text names nothing' '<null>' (Get-PrfProfileName -Text '')
+    Test-Case 'a null text names nothing, and does not throw' '<null>' (Get-PrfProfileName -Text $null)
+    Test-Case 'a ProfileName outside [General] does not count' '<null>' (Get-PrfProfileName -Text "[Service1]`r`nProfileName=Elsewhere`r`n")
+    Test-Case 'a commented-out one does not count' 'Real' (Get-PrfProfileName -Text "[General]`r`n;ProfileName=Old`r`nProfileName=Real`r`n")
+    Test-Case 'an empty ProfileName= names nothing' '<null>' (Get-PrfProfileName -Text "[General]`r`nProfileName=`r`n")
+    Test-Case 'LF-only line endings are read too' 'LfProfile' (Get-PrfProfileName -Text "[General]`nCustom=1`nProfileName=LfProfile`n")
+
+    Write-Host ''
+    Write-Host '== what -Verify does about ImportPRF =='
+
+    $prf = 'C:\OutlookAI-Profiles\CorpusProfile.prf'
+    $clear = Resolve-ImportPrfClearance -ImportPrfValue '' -PrfProfileName $null -ProfileName 'CorpusProfile' -ProfileExists $true -FirstRunPresent $true
+    Test-Case 'absent is NotSet' 'NotSet' $clear.Decision
+    $clear = Resolve-ImportPrfClearance -ImportPrfValue $null -PrfProfileName $null -ProfileName 'CorpusProfile' -ProfileExists $false -FirstRunPresent $false
+    Test-Case 'null is NotSet too, whatever else is true' 'NotSet' $clear.Decision
+
+    $clear = Resolve-ImportPrfClearance -ImportPrfValue $prf -PrfProfileName 'CorpusProfile' -ProfileName 'CorpusProfile' -ProfileExists $true -FirstRunPresent $true
+    Test-Case 'ours, imported, Outlook has run since: CLEAR' 'Clear' $clear.Decision
+    $clear = Resolve-ImportPrfClearance -ImportPrfValue $prf -PrfProfileName 'corpusprofile' -ProfileName 'CorpusProfile' -ProfileExists $true -FirstRunPresent $true
+    Test-Case 'the name matches case-insensitively, as registry key names do' 'Clear' $clear.Decision
+
+    $clear = Resolve-ImportPrfClearance -ImportPrfValue $prf -PrfProfileName 'CorpusProfile' -ProfileName 'CorpusProfile' -ProfileExists $true -FirstRunPresent $false
+    Test-Case 'Outlook has NOT started since -Execute: KEEP, even though the profile exists (a rebuild is pending)' 'KeepPending' $clear.Decision
+    Test-Case 'and says removing it would cancel the import' $true ($clear.Message -like '*would cancel it*')
+    $clear = Resolve-ImportPrfClearance -ImportPrfValue $prf -PrfProfileName 'CorpusProfile' -ProfileName 'CorpusProfile' -ProfileExists $false -FirstRunPresent $false
+    Test-Case 'not started and no profile yet is the same KEEP' 'KeepPending' $clear.Decision
+
+    $clear = Resolve-ImportPrfClearance -ImportPrfValue $prf -PrfProfileName 'CorpusProfile' -ProfileName 'CorpusProfile' -ProfileExists $false -FirstRunPresent $true
+    Test-Case 'Outlook ran and made no profile: KEEP as evidence' 'KeepFailed' $clear.Decision
+
+    $clear = Resolve-ImportPrfClearance -ImportPrfValue 'C:\OutlookAI-Tier\tier-profile.prf' -PrfProfileName 'OutlookAI-Tier' -ProfileName 'CorpusProfile' -ProfileExists $true -FirstRunPresent $true
+    Test-Case "another profile's pending import is never cancelled" 'KeepOther' $clear.Decision
+    Test-Case 'and it names whose it is' $true ($clear.Message -like "*the .prf for profile 'OutlookAI-Tier'*")
+    Test-Case 'and the manual command, for someone who means it' $true ($clear.Message -like '*-ClearImportPrf -Execute*')
+    $clear = Resolve-ImportPrfClearance -ImportPrfValue 'C:\gone.prf' -PrfProfileName $null -ProfileName 'CorpusProfile' -ProfileExists $true -FirstRunPresent $true
+    Test-Case 'a file whose profile cannot be read is not assumed to be ours' 'KeepOther' $clear.Decision
+
+    Write-Host ''
+    Write-Host '== has Outlook ever finished opening the profile (the account-manager key) =='
+
+    $opened = Test-ProfileOutcome -ProfileName 'CorpusProfile' -ProfileNames @('CorpusProfile') -AccountSubKeyCount 0 `
+        -Stores $oneStore -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrf $null -ManagerEntryCount 2
+    Test-Case "two entries (CorpusProfile's measured shape: its data file and its address book) PASS" 'pass' (Get-CheckLevel $opened 'Outlook has opened this profile')
+    $fresh = Test-ProfileOutcome -ProfileName 'CorpusProfile' -ProfileNames @('CorpusProfile') -AccountSubKeyCount 0 `
+        -Stores $oneStore -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrf $null -ManagerEntryCount 0
+    Test-Case "an EMPTY key (a fresh .prf import's measured shape) FAILS" 'fail' (Get-CheckLevel $fresh 'Outlook has opened this profile')
+    Test-Case 'and names the dialog it stops on' $true ((Get-CheckDetail $fresh 'Outlook has opened this profile').Contains('Email Account Setup'))
+    Test-Case 'and the unattended route' $true ((Get-CheckDetail $fresh 'Outlook has opened this profile').Contains('/PIM'))
+    $unread = Test-ProfileOutcome -ProfileName 'CorpusProfile' -ProfileNames @('CorpusProfile') -AccountSubKeyCount 0 `
+        -Stores $oneStore -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrf $null -ManagerEntryCount $null
+    Test-Case 'an unreadable key WARNS' 'warn' (Get-CheckLevel $unread 'Outlook has opened this profile')
+    $absent = Test-ProfileOutcome -ProfileName 'CorpusProfile' -ProfileNames @('Other') -AccountSubKeyCount $null `
+        -Stores $oneStore -PstPathsPresent @() -StrayPstNames @() -ImportPrf $null -ManagerEntryCount 0
+    Test-Case 'no such profile: the check is not made at all (the profile check already fails)' '<no such check>' (Get-CheckLevel $absent 'Outlook has opened this profile')
+    Test-Case 'a caller that does not pass it gets no such check' '<no such check>' (Get-CheckLevel $good 'Outlook has opened this profile')
+
+    Write-Host ''
+    Write-Host '== ImportPRF in the verify verdict =='
+
+    $good = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
         -ProfileNames @('CorpusProfile') -AccountSubKeyCount 0 -Stores $oneStore `
-        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() -ImportPrfValue 'C:\OutlookAI-Profiles\CorpusProfile.prf'
-    Test-Case 'a lingering ImportPRF WARNS' 'warn' (Get-CheckLevel $warned 'ImportPRF is no longer set')
-    Test-Case 'and says it would rebuild the profile' $true ((Get-CheckDetail $warned 'ImportPRF is no longer set') -like '*REBUILD the profile*')
-    Test-Case 'and gives the command that clears it' $true ((Get-CheckDetail $warned 'ImportPRF is no longer set') -like '*-ClearImportPrf -Execute*')
-    Test-Case 'but it is not a failure' 0 $warned.FailureCount
+        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() `
+        -ImportPrf ([pscustomobject]@{ Decision = 'NotSet'; Message = 'x' })
+    Test-Case 'NotSet passes' 'pass' (Get-CheckLevel $good 'ImportPRF is no longer set')
+
+    $cleared = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
+        -ProfileNames @('CorpusProfile') -AccountSubKeyCount 0 -Stores $oneStore `
+        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() `
+        -ImportPrf ([pscustomobject]@{ Decision = 'Clear'; Message = 'x'; Cleared = $true })
+    Test-Case 'a Clear that was carried out passes' 'pass' (Get-CheckLevel $cleared 'ImportPRF is no longer set')
+    Test-Case 'and says -Verify removed it' $true ((Get-CheckDetail $cleared 'ImportPRF is no longer set') -like '*-Verify removed it*')
+    Test-Case 'with no failures at all' 0 $cleared.FailureCount
+
+    $notDone = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
+        -ProfileNames @('CorpusProfile') -AccountSubKeyCount 0 -Stores $oneStore `
+        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() `
+        -ImportPrf ([pscustomobject]@{ Decision = 'Clear'; Message = 'x' })
+    Test-Case 'a Clear that was NOT carried out FAILS' 'fail' (Get-CheckLevel $notDone 'ImportPRF is no longer set')
+
+    $pending = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
+        -ProfileNames @('CorpusProfile') -AccountSubKeyCount 0 -Stores $oneStore `
+        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() `
+        -ImportPrf (Resolve-ImportPrfClearance -ImportPrfValue $prf -PrfProfileName 'CorpusProfile' -ProfileName 'CorpusProfile' -ProfileExists $true -FirstRunPresent $false)
+    Test-Case 'an import that has not happened yet FAILS the verify - it verified a profile Outlook has not rebuilt' 'fail' (Get-CheckLevel $pending 'ImportPRF is no longer set')
+
+    $other = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
+        -ProfileNames @('CorpusProfile') -AccountSubKeyCount 0 -Stores $oneStore `
+        -PstPathsPresent @('C:\OutlookAI-Q5\pst\corpus-a.pst') -StrayPstNames @() `
+        -ImportPrf (Resolve-ImportPrfClearance -ImportPrfValue 'C:\x.prf' -PrfProfileName 'Other' -ProfileName 'CorpusProfile' -ProfileExists $true -FirstRunPresent $true)
+    Test-Case "another profile's ImportPRF WARNS" 'warn' (Get-CheckLevel $other 'ImportPRF is no longer set')
+    Test-Case 'and is not this profile''s failure' 0 $other.FailureCount
 
     $bare = Test-ProfileOutcome -ProfileName 'BareProfile' `
         -ProfileNames @('BareProfile') -AccountSubKeyCount 0 -Stores @() `
-        -PstPathsPresent @() -StrayPstNames @() -ImportPrfValue ''
+        -PstPathsPresent @() -StrayPstNames @() -ImportPrf $null
     Test-Case 'a store-less profile WARNS about having nowhere to deliver' 'warn' (Get-CheckLevel $bare 'the profile has at least one store')
     Test-Case 'and is not otherwise a failure' 0 $bare.FailureCount
 
     $nulls = Test-ProfileOutcome -ProfileName 'CorpusProfile' `
         -ProfileNames $null -AccountSubKeyCount 0 -Stores $null `
-        -PstPathsPresent $null -StrayPstNames $null -ImportPrfValue $null
+        -PstPathsPresent $null -StrayPstNames $null -ImportPrf $null
     Test-Case 'nulls throughout do not throw' 'fail' (Get-CheckLevel $nulls 'the profile exists')
+    Test-Case 'and a null ImportPRF answer reads as NotSet' 'pass' (Get-CheckLevel $nulls 'ImportPRF is no longer set')
+
+    Write-Host ''
+    Write-Host '== this file, read as source: no loop variable may reuse a parameter name =='
+
+    # THE BUG THE FIRST GUEST RUN FOUND, 2026-09-24. `foreach ($store in $requested)` at script
+    # scope assigned every store object to the -Store PARAMETER - PowerShell names are
+    # case-insensitive, and that variable is typed [string[]] - so each object became a string
+    # array whose .Path is $null, and -Verify died on its first Test-Path. Nothing about the
+    # decision functions could have caught it, so this reads the script's own syntax tree: every
+    # foreach outside a function, whose variable is a parameter's name, is a failure. It parses
+    # this file; it reads nothing else.
+    $selfAst = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref] $null, [ref] $null)
+    $paramNames = @($selfAst.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath.ToLowerInvariant() })
+    $shadowing = @()
+    foreach ($loop in $selfAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.ForEachStatementAst] }, $true)) {
+        $inFunction = $false
+        for ($parent = $loop.Parent; $null -ne $parent; $parent = $parent.Parent) {
+            if ($parent -is [System.Management.Automation.Language.FunctionDefinitionAst]) { $inFunction = $true; break }
+        }
+        $loopName = $loop.Variable.VariablePath.UserPath
+        if (-not $inFunction -and $paramNames -contains $loopName.ToLowerInvariant()) {
+            $shadowing += "line $($loop.Extent.StartLineNumber): `$$loopName"
+        }
+    }
+    Test-Case 'the parameters were found at all (so the next line proves something)' $true ($paramNames -contains 'store')
+    Test-Case 'no script-scope foreach assigns to a parameter' '' ($shadowing -join '; ')
 
     Write-Host ''
     Write-Host "$($script:SelfTestChecks) assertion(s), $($script:SelfTestFailures.Count) failure(s)."
@@ -1164,7 +1642,9 @@ function Invoke-SelfTest {
     Write-Host '  * WHETHER OUTLOOK ACCEPTS A .prf WITH AN EMPTY [Internet Account List] and produces'
     Write-Host '    a profile with zero accounts - the central inference of this rewrite'
     Write-Host '  * WHETHER [Service List] MAY NAME Unicode Personal Folders MORE THAN ONCE'
-    Write-Host '  * whether Outlook clears ImportPRF after processing it'
+    Write-Host '  * whether Outlook clears ImportPRF after processing it, and writes First-Run back'
+    Write-Host '    when it starts - the two facts -Verify''s ImportPRF decision leans on'
+    Write-Host '  * the ImportPRF removal -Verify makes, and its read-back'
     Write-Host '  * the two guards (Assert-TestbedGuest, Assert-OutlookNotRunning)'
     Write-Host '  * every COM read in -WithOutlook, and what Outlook actually shows'
 
@@ -1229,8 +1709,15 @@ function Get-OutlookProfileName {
 }
 
 <#
-    How many accounts a profile's account-manager key holds. $null when the key or the profile is
-    not there to read - which is NOT the same as zero, and Test-ProfileOutcome treats it differently.
+    How many MAIL accounts a profile's account-manager key holds. $null when the key or the profile
+    is not there to read - which is NOT the same as zero, and Test-ProfileOutcome treats it
+    differently.
+
+    MAIL accounts, not entries - see Test-IsMailAccountEntry. The first version counted subkeys,
+    and on OAI-UNINDEXED 2026-09-24 that key turned out to list every MAPI service once Outlook
+    has opened the profile: the account-less CorpusProfile holds two entries (its data file and
+    its address book) while COM reports Accounts.Count 0. A freshly imported profile Outlook has
+    not yet opened holds the key with nothing in it at all.
 #>
 function Get-ProfileAccountCount {
     param([string] $ProfilesKeyPath, [string] $ProfileName)
@@ -1238,26 +1725,52 @@ function Get-ProfileAccountCount {
     $managerPath = "$ProfilesKeyPath\$ProfileName\$script:AccountManagerSubKeyName"
     if (-not (Test-Path -LiteralPath "$ProfilesKeyPath\$ProfileName")) { return $null }
 
-    # The profile exists and the manager key does not: that IS zero accounts, and it is the shape
-    # measured on this project's guest for a profile with a PST store and no internet account.
+    # The profile exists and the manager key does not: that IS zero accounts.
     if (-not (Test-Path -LiteralPath $managerPath)) { return 0 }
 
     $children = $null
     try { $children = @(Get-ChildItem -LiteralPath $managerPath -ErrorAction Stop) }
     catch { return $null }
-    return $children.Count
+    $mail = 0
+    foreach ($child in $children) {
+        if (Test-IsMailAccountEntry -Clsid ([string] $child.GetValue('clsid', '')) -ServiceName ([string] $child.GetValue('Service Name', ''))) { $mail++ }
+    }
+    return $mail
 }
 
 <#
     Any .pst Outlook minted for itself, which is the documented Outlook 2010+ behaviour this .prf
-    is trying to avoid. Names only - the directory is the user's own.
+    is trying to avoid. Names only - the directories are the user's own.
+
+    TWO DIRECTORIES, NOT ONE, since 2026-09-24. Outlook mints into Documents\Outlook Files by
+    default - and into ForcePSTPath when that is set, which the tier build DOES set on these guests
+    (C:\OutlookAI-Tier). The first version looked only at the default, so on the one kind of
+    machine this runs on a minted store would have passed. ForcePSTPath also holds OTHER
+    profiles' stores, so only a file created after the .prf was written counts there, and never
+    one the .prf names - Select-StrayPst decides that, and -SelfTest walks it.
 #>
 function Get-StrayPstName {
-    $strayDir = Join-Path $env:USERPROFILE 'Documents\Outlook Files'
-    if (-not (Test-Path -LiteralPath $strayDir)) { return , @() }
-    $names = @(Get-ChildItem -LiteralPath $strayDir -Filter '*.pst' -File -ErrorAction SilentlyContinue |
-            ForEach-Object { $_.Name })
-    return , $names
+    param([string[]] $ExpectedPaths, $Since, [string] $ForcePstPath)
+
+    $files = @()
+    $defaultDir = Join-Path $env:USERPROFILE 'Documents\Outlook Files'
+    if (Test-Path -LiteralPath $defaultDir) {
+        # The default directory is judged as before - every .pst in it - unless the .prf's time is
+        # known, and then by the same rule as ForcePSTPath.
+        $files += @(Get-ChildItem -LiteralPath $defaultDir -Filter '*.pst' -File -ErrorAction SilentlyContinue)
+    }
+    $strays = Select-StrayPst -Files $files -ExpectedPaths $ExpectedPaths -Since $Since
+
+    if (-not [string]::IsNullOrWhiteSpace($ForcePstPath) -and $null -ne $Since) {
+        $forced = [Environment]::ExpandEnvironmentVariables($ForcePstPath)
+        if (Test-Path -LiteralPath $forced) {
+            $inForced = @(Get-ChildItem -LiteralPath $forced -Filter '*.pst' -File -ErrorAction SilentlyContinue)
+            foreach ($name in (Select-StrayPst -Files $inForced -ExpectedPaths $ExpectedPaths -Since $Since)) {
+                $strays += "$name (in ForcePSTPath $forced)"
+            }
+        }
+    }
+    return , $strays
 }
 
 $selection = Select-OutlookHive -Candidates (Get-OutlookHiveCandidate) -RequestedVersion $OfficeVersion
@@ -1268,12 +1781,8 @@ $profilesKeyPath = "$($root.Path)\Profiles"
 $setupKeyPath = "$($root.Path)\Setup"
 
 Write-Host "outlook hive : $($root.Path)   (Office $($root.Version); $($root.ValueNames.Count) value(s), $($root.SubKeyNames.Count) subkey(s))"
-if ($selection.RealHives.Count -gt 1) {
-    $others = @()
-    foreach ($hive in $selection.RealHives) {
-        if ($hive.Version -ne $root.Version) { $others += $hive.Version }
-    }
-    Write-Host "               other real Outlook hive(s) here: $($others -join ', ') - use -OfficeVersion if this one is wrong"
+foreach ($line in (Format-OtherHiveNote -ChosenVersion $root.Version -RealHives $selection.RealHives)) {
+    Write-Host "               $line"
 }
 
 $currentImportPrf = (Get-ItemProperty -Path $setupKeyPath -Name 'ImportPRF' -ErrorAction SilentlyContinue).ImportPRF
@@ -1363,15 +1872,82 @@ if ($Verify) {
     Write-Host "VERIFY - did Outlook honour the .prf for '$Name'?"
     Write-Host ''
 
+    # THE LOOP VARIABLE IS NOT $store, AND THAT IS THE FIX FOR THIS SCRIPT'S FIRST GUEST RUN.
+    # PowerShell variable names are case-insensitive, so at script scope `foreach ($store ...)` IS
+    # the -Store PARAMETER - typed [string[]] - and every store object assigned to it was converted
+    # to a string array, whose .Path is $null. -Verify died on its first line, 2026-09-24:
+    # "Cannot bind argument to parameter 'LiteralPath' because it is null." -SelfTest now fails on
+    # any script-scope foreach whose variable is a parameter's name.
     $present = @()
-    foreach ($store in $requested) {
-        if (Test-Path -LiteralPath $store.Path) { $present += $store.Path }
+    foreach ($requestedStore in $requested) {
+        if (Test-Path -LiteralPath $requestedStore.Path) { $present += $requestedStore.Path }
+    }
+
+    # ImportPRF FIRST, because what it says decides whether anything below is worth believing:
+    # an import that has not happened yet leaves an old profile (or none) for the checks to read.
+    $firstRunPresent = $false
+    foreach ($valueName in @('First-Run', 'FirstRun')) {
+        if ($null -ne (Get-ItemProperty -Path $setupKeyPath -Name $valueName -ErrorAction SilentlyContinue).$valueName) { $firstRunPresent = $true }
+    }
+    $prfProfileName = $null
+    if (-not [string]::IsNullOrEmpty($currentImportPrf)) {
+        try { $prfProfileName = Get-PrfProfileName -Text ([System.IO.File]::ReadAllText($currentImportPrf)) }
+        catch { $prfProfileName = $null }
+    }
+    $importPrf = Resolve-ImportPrfClearance -ImportPrfValue $currentImportPrf -PrfProfileName $prfProfileName `
+        -ProfileName $Name -ProfileExists ($existingProfiles -contains $Name) -FirstRunPresent $firstRunPresent
+
+    Write-Host ("  ImportPRF      : {0}" -f $(if ([string]::IsNullOrEmpty($currentImportPrf)) { '<not set>' } else { "'$currentImportPrf' (names profile '$prfProfileName')" }))
+    Write-Host ("  First-Run back : {0}   (-Execute deletes it; Outlook writes it back once a start completes its first run)" -f $firstRunPresent)
+    Write-Host ("  decision       : {0}" -f $importPrf.Decision)
+
+    if ($importPrf.Decision -eq 'Clear') {
+        # The ONE write -Verify makes, and it needs no -Execute on purpose: a protection that waits
+        # for somebody to remember a flag is the gap this closes. It removes only a value that names
+        # THIS profile's .prf, only after Outlook has demonstrably started since -Execute.
+        Write-Host "  removing       : $setupKeyPath\ImportPRF"
+        Remove-ItemProperty -LiteralPath $setupKeyPath -Name 'ImportPRF' -Force
+        $readBack = (Get-ItemProperty -Path $setupKeyPath -Name 'ImportPRF' -ErrorAction SilentlyContinue).ImportPRF
+        if (-not [string]::IsNullOrEmpty($readBack)) {
+            throw "ImportPRF was removed and still reads '$readBack'. Do not start Outlook until that is resolved - this .prf carries OverwriteProfile=Yes, so a start that honours it rebuilds '$Name'."
+        }
+        $importPrf | Add-Member -NotePropertyName Cleared -NotePropertyValue $true
+        Write-Host '  removed, and read back absent.'
+    }
+    Write-Host ''
+
+    # The stray scan is dated by the .prf -Execute wrote: a store created before it cannot be one
+    # this import minted. Without the file, the old every-file rule applies to the default
+    # directory only - see Get-StrayPstName.
+    $prfSince = $null
+    $defaultPrf = Get-DefaultPrfPath -ProfileName $Name
+    if (Test-Path -LiteralPath $defaultPrf) { $prfSince = (Get-Item -LiteralPath $defaultPrf).LastWriteTime }
+    $forcePstPath = (Get-ItemProperty -Path $root.Path -Name 'ForcePSTPath' -ErrorAction SilentlyContinue).ForcePSTPath
+    $expectedPaths = @($requested | ForEach-Object { $_.Path })
+    $strays = Get-StrayPstName -ExpectedPaths $expectedPaths -Since $prfSince -ForcePstPath $forcePstPath
+    if ($null -ne $prfSince) {
+        Write-Host ("  stray scan     : Documents\Outlook Files{0}; only files created after {1} ({2})" -f $(if ($forcePstPath) { " and ForcePSTPath '$forcePstPath'" } else { '' }), $defaultPrf, $prfSince)
+    }
+    else {
+        Write-Host ("  stray scan     : Documents\Outlook Files only, every .pst in it - there is no {0} to date a stray by{1}" -f $defaultPrf, $(if ($forcePstPath) { ", so ForcePSTPath '$forcePstPath', which holds other profiles' stores, is not judged" } else { '' }))
+    }
+    Write-Host ''
+
+    # Every entry of the account-manager key, wrappers included: zero is a profile Outlook has never
+    # finished opening (see Test-ProfileOutcome), and it decides whether -WithOutlook can bind.
+    $managerEntries = $null
+    $managerPath = "$profilesKeyPath\$Name\$script:AccountManagerSubKeyName"
+    if (Test-Path -LiteralPath "$profilesKeyPath\$Name") {
+        if (Test-Path -LiteralPath $managerPath) {
+            try { $managerEntries = @(Get-ChildItem -LiteralPath $managerPath -ErrorAction Stop).Count } catch { $managerEntries = $null }
+        }
+        else { $managerEntries = 0 }
     }
 
     $outcome = Test-ProfileOutcome -ProfileName $Name -ProfileNames $existingProfiles `
         -AccountSubKeyCount (Get-ProfileAccountCount -ProfilesKeyPath $profilesKeyPath -ProfileName $Name) `
-        -Stores $requested -PstPathsPresent $present -StrayPstNames (Get-StrayPstName) `
-        -ImportPrfValue $currentImportPrf
+        -Stores $requested -PstPathsPresent $present -StrayPstNames $strays `
+        -ImportPrf $importPrf -ManagerEntryCount $managerEntries
 
     foreach ($check in $outcome.Checks) {
         $marker = 'OK  '
@@ -1380,11 +1956,24 @@ if ($Verify) {
         Write-Host ("  {0} {1} - {2}" -f $marker, $check.What, $check.Detail)
     }
 
-    if ($WithOutlook) {
+    if ($WithOutlook -and $importPrf.Decision -eq 'KeepPending') {
         Write-Host ''
-        Write-Host 'Reading it back over COM. This binds Outlook - starting one if none is up - and'
-        Write-Host 'operates on the DEFAULT profile, because NameSpace.Logon can raise the profile'
-        Write-Host 'picker even when a default is set, and a dialog on an unattended guest is a hang.'
+        Write-Host 'SKIPPED -WithOutlook: the import has not happened yet, and binding now would START Outlook'
+        Write-Host 'and perform it inside a verifier - so this run would be reading back the start it caused.'
+        Write-Host 'Start Outlook once, let it settle, restart the guest, then run -Verify -WithOutlook again.'
+    }
+    elseif ($WithOutlook -and $null -ne $managerEntries -and $managerEntries -eq 0) {
+        Write-Host ''
+        Write-Host 'SKIPPED -WithOutlook: Outlook has never finished opening this profile (see the FAIL above), and'
+        Write-Host 'on this build binding one then fails with "You are not connected" - measured 2026-09-24, after'
+        Write-Host 'Outlook had stopped on "Email Account Setup". The bind would prove nothing but that.'
+    }
+    elseif ($WithOutlook) {
+        Write-Host ''
+        Write-Host 'Reading it back over COM. This binds Outlook - starting one if none is up - and reads'
+        Write-Host 'the profile it is RUNNING: the default, unless a /PIM start opened another. It never'
+        Write-Host 'calls NameSpace.Logon, which can raise the profile picker even when a default is set,'
+        Write-Host 'and a dialog on an unattended guest is a hang.'
 
         Invoke-WithOutlookSession -Body {
             param($ns)
@@ -1411,12 +2000,12 @@ if ($Verify) {
             Write-Host "  Accounts.Count     : $accountCount"
 
             $missing = @()
-            foreach ($store in $requested) {
+            foreach ($wanted in $requested) {
                 $found = $false
                 foreach ($actual in $seen) {
-                    if ($actual.DisplayName -ceq $store.DisplayName) { $found = $true }
+                    if ($actual.DisplayName -ceq $wanted.DisplayName) { $found = $true }
                 }
-                if (-not $found) { $missing += $store.DisplayName }
+                if (-not $found) { $missing += $wanted.DisplayName }
             }
             if ($missing.Count -gt 0) {
                 Write-Host ''
@@ -1459,8 +2048,7 @@ $unsafeName = Test-PrfValueSafe -Value $Name -What "profile name '$Name'"
 if ($null -ne $unsafeName) { throw $unsafeName }
 
 if ([string]::IsNullOrWhiteSpace($PrfPath)) {
-    $safeName = ($Name -replace '[^A-Za-z0-9._-]', '-')
-    $PrfPath = "C:\OutlookAI-Profiles\$safeName.prf"
+    $PrfPath = Get-DefaultPrfPath -ProfileName $Name
 }
 $PrfPath = [System.IO.Path]::GetFullPath($PrfPath)
 if ($PrfPath -match '\s') {
@@ -1494,12 +2082,46 @@ if ($existingProfiles -contains $Name) {
     Write-Host '      on disk. Deleting a profile has no scripted route at all; see OutlookMapiInterop.ps1.'
 }
 
+Write-Host ''
+Write-Host 'READ THIS BEFORE -Execute. Every profile this script builds has NO mail account, and on this'
+Write-Host 'Office build (LTSC 2024 16.0.17932) such a profile, imported from a .prf, stops on Outlook''s'
+Write-Host '"Email Account Setup" dialog at EVERY start - measured 2026-09-24 with First-Run absent and with'
+Write-Host 'it put back - so it cannot be opened unattended, and COM reads "You are not connected".'
+Write-Host '-Execute therefore refuses unless -AcceptAccountWizard says a human will get past that dialog.'
+Write-Host 'The UNATTENDED route to an account-less profile is: OUTLOOK.EXE /PIM <name>, then'
+Write-Host 'Add-OutlookPstStore.ps1 once per named store.'
+
 if (-not $Execute) {
     Write-Host ''
     Write-Host 'Dry run. Nothing written. Re-run with -Execute.'
     Write-Host 'Run -Preflight first if you have not: it is the cheapest way to see whether this guest is'
     Write-Host 'in the state the import needs.'
     return
+}
+
+# THE REFUSAL THE FIRST GUEST RUN EARNED. Before anything is written: ImportPRF, the .prf, First-Run.
+# A profile that stops on a dialog at every start is worse than no profile - with -MakeDefault it
+# also becomes the default, and then EVERY unattended Outlook start on the guest hangs, the corpus
+# build included.
+if (-not $AcceptAccountWizard) {
+    throw @"
+REFUSING: this would build an account-less profile from a .prf, and on this Office build such a
+profile cannot be opened unattended.
+
+Measured on OAI-UNINDEXED 2026-09-24, from CP-05: the import itself works - ImportPRF is consumed
+within 5 s of the start, the profile appears, each PST is created at its path with its name on its
+service - and then Outlook stops on its "Email Account Setup" dialog, at that start and at every
+later one. Putting First-Run back did not change it. COM reads "You are not connected".
+
+Nothing has been written. Two ways on:
+  * UNATTENDED (what both guests' corpus profiles actually are): start OUTLOOK.EXE /PIM $Name once -
+    measured to make an account-less profile with no dialog - then, with that Outlook running,
+        .\Add-OutlookPstStore.ps1 -ProfileName $Name -DisplayName '<name>' -Path '<pst>' -Execute
+    once per store. /PIM does NOT make it the default: afterwards restart the guest (Outlook must be
+    closed for it) and run .\Set-DefaultOutlookProfile.ps1 -Name $Name -Execute.
+  * WITH A HUMAN at the guest's console to get Outlook past the dialog once: re-run with
+    -AcceptAccountWizard.
+"@
 }
 
 Assert-OutlookNotRunning
@@ -1551,13 +2173,17 @@ foreach ($valueName in @('First-Run', 'FirstRun')) {
 }
 
 Write-Host ''
-Write-Host 'Done. NEXT, AND IT IS YOURS: start Outlook once, let it finish starting, then close it.'
+Write-Host 'Done. NEXT, AND IT IS YOURS: start Outlook once. It imports within seconds - ImportPRF is gone'
+Write-Host 'within 5 s of the start, measured - and then stops on "Email Account Setup", because this profile'
+Write-Host 'has no mail account (you passed -AcceptAccountWizard: a human gets it past that). On a guest,'
+Write-Host 'close Outlook by restarting the guest - never taskkill.'
 Write-Host 'This script does not start Outlook - importing is a startup-time action, and a setup script'
 Write-Host 'that owns Outlook''s lifetime is how a guest ends up with a zombie OUTLOOK.EXE.'
 Write-Host ''
 Write-Host 'Then, in order:'
 Write-Host ("  .\New-OutlookProfile.ps1 -Name {0}{1} -Verify" -f $Name, $(if ($requested.Count -gt 0) { ' -Store ...' } else { '' }))
-Write-Host '  .\New-OutlookProfile.ps1 -ClearImportPrf -Execute   - so the next start does not re-import'
+Write-Host '      asserts the import, and removes ImportPRF if it is still set once Outlook has started -'
+Write-Host '      no flag needed. Run it BEFORE starting Outlook and it refuses to call the import done.'
 Write-Host ("  .\Set-DefaultOutlookProfile.ps1 -Name {0} -Execute   - and switch the profile prompt OFF" -f $Name)
 Write-Host '  .\Add-OutlookPstStore.ps1                          - any further stores, without a re-import'
 Write-Host ''

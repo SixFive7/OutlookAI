@@ -401,51 +401,75 @@ Set Outlook to "always use this profile" and switch by changing that setting, no
 a prompting profile cannot be driven over COM. The Mail control panel works and was the assumed
 route.
 
-**Both halves are scripted, and the first attempt at both was built on a call that does not work
-here.** `Testbed/guest/New-OutlookProfile.ps1` creates a profile - including the account-less one
-section 1.2 requires - and `Testbed/guest/Set-DefaultOutlookProfile.ps1` switches the default and
-turns the prompt off. Both originally went through Extended MAPI's `IProfAdmin`, and on
-2026-09-16 that route was **measured broken** on Office LTSC 2024 16.0.17932.20884:
-`E_NOINTERFACE` on `IID_IProfAdmin`, with `MAPIInitialize` and `MAPIAdminProfiles` both
-succeeding and only the QueryInterface failing. Cause not established.
+**All of it is scripted, and all of it has now run on a guest.** The first attempt at the scripts
+went through Extended MAPI's `IProfAdmin`, which is **measured broken** on Office LTSC 2024
+16.0.17932.20884 (2026-09-16: `E_NOINTERFACE` on `IID_IProfAdmin`, with `MAPIInitialize` and
+`MAPIAdminProfiles` both succeeding; cause not established). The rewrites then ran on
+`OAI-UNINDEXED` on **2026-09-24**, each from a fresh restore of `CP-05-CORPUS-B-CLEAN-UNINDEXED`:
 
-**What they do now:**
+| Step | Route | What the guest run showed |
+| --- | --- | --- |
+| Switch the default, prompt off | `Testbed/guest/Set-DefaultOutlookProfile.ps1` - the HKCU `DefaultProfile` and `PickLogonProfile` values | **Works end to end.** Both values written and read back; a profile that does not exist is refused with the key's own last-write time unchanged; a running Outlook is refused. After a restart Outlook opened the named profile with no prompt, and COM agreed: `CurrentProfileName`, `Accounts.Count`, the store names. |
+| An account-less profile | `outlook.exe /PIM <name>` | **The route, and measured again.** Opens the new profile with no dialog at all ("Outlook Today", on a guest whose default stayed `CorpusProfile` - `/PIM` does **not** change the default). It names its one store `Outlook Data File`; both guests' `CorpusProfile` were made this way. |
+| A named PST into an existing profile | `Testbed/guest/Add-OutlookPstStore.ps1` - `NameSpace.AddStoreEx`, then a root-folder rename (section 2.6) | **Works, every path, unchanged.** `AddStoreEx` returned at once (the spin it warns about did not happen); `Store.DisplayName` followed the rename, `@` included; a re-run is a no-op, a new name renames without a second attach, a taken name or the wrong profile is refused before anything runs. |
+| An account-less profile from a `.prf` | `Testbed/guest/New-OutlookProfile.ps1` | **The import works; the profile it makes does not open unattended.** Outlook consumes `ImportPRF` within 5 s, creates the profile and every named PST - two in one `.prf` - and then stops on its **"Email Account Setup"** dialog, at that start and every later one, with First-Run absent and again with it put back. COM reads "You are not connected". `-Execute` now **refuses** unless `-AcceptAccountWizard`, and names the `/PIM` route. |
 
-* the profile comes from a **`.prf` import** - write the file, point `ImportPRF` at it, start
-  Outlook once. Same mechanism as `Testbed/guest/New-TierProfile.ps1`, which is measured working
-  on both guests. **Then clear `ImportPRF`** - see section 2.5a, which is not optional;
-* the default switch writes the documented `HKCU\...\Outlook\DefaultProfile` REG_SZ, measured
-  working on the same guest the same day;
-* a PST going into a profile that already exists uses `NameSpace.AddStoreEx` plus a root-folder
-  rename (section 2.6), which is how the name is made exact.
+So **the corpus profile is `/PIM` plus `Add-OutlookPstStore.ps1`**, then - after a guest restart,
+because it refuses while Outlook runs - `Set-DefaultOutlookProfile.ps1` to make it the default. That
+is also exactly how both guests' corpus profiles already exist.
 
-`Testbed/README.md` section 4b is the summary and marks which parts are measured and which are
-inferred; `Docs/research/profile-automation-research.md` is the evidence with every claim labelled
-by source. Run `New-OutlookProfile.ps1 -Preflight` first - it reads only, makes no COM call and no
-MAPI call, and needs no checkpoint.
+Two things the runs showed about the machine rather than the scripts, recorded here because this
+is where a rebuilder meets them:
 
-### 2.5a `ImportPRF` is read at EVERY Outlook start, and that can cost you the corpus
+* **Every start of the tier profile raises the POP3 logon dialog** ("Internet Email - tier", "Enter
+  your user name and password for the following server"): the account points at 127.0.0.1:110 and
+  stores no password. It did **not** block COM - the read above ran with it on screen.
+* **Reading an e-mail address over COM can raise Outlook's object-model guard** - "A program is
+  trying to access email address information stored in Outlook", Allow / Deny - and that prompt
+  **blocks the call that raised it** until a human answers. It happened on 2026-09-24 when a probe
+  read `Account.SmtpAddress`; the same read did not prompt on 2026-09-15. **`CP-05`'s saved memory
+  already carries one**: the checkpoint's Outlook (running since 2026-09-16 02:11:41) shows that
+  prompt the moment the checkpoint is restored, before any COM call. Defender's signatures on this
+  guest are 372 days old (last updated 2025-09-17 - it has no network), and an out-of-date antivirus
+  is Microsoft's documented trigger for the guard; that it is the trigger HERE was not proven.
+  **Anything that reads addresses on these guests should expect it - the live tier does.**
 
-**This is a data-shaped hazard, not housekeeping.** The `.prf` written by
-`New-OutlookProfile.ps1` carries `OverwriteProfile=Yes` - correct for a rebuild, because it is
-what makes a repeat import converge instead of leaving a `Backup Of <name>` profile behind.
-Outlook reads `ImportPRF` (under `HKCU\...\Outlook\Setup`) **every time it starts**.
+`Testbed/README.md` section 4b is the summary; `Docs/research/profile-automation-research.md` is the
+evidence with every claim labelled by source. Run `New-OutlookProfile.ps1 -Preflight` first - it
+reads only, makes no COM call and no MAPI call, and needs no checkpoint.
 
-**WHETHER OUTLOOK CLEARS THAT VALUE ONCE IT HAS PROCESSED IT IS UNKNOWN.** Nothing in this
-repository has ever checked, on any build - `New-TierProfile.ps1` did not look either. Treat it
-as unverified rather than as a risk somebody has already sized.
+### 2.5a `ImportPRF`: Outlook clears it itself - measured - and it is cleared anyway
 
-**If it does not clear it,** every later Outlook start re-imports the file and rebuilds the
-profile from it. No `.pst` is deleted - nothing here deletes a data file - but a store attached or
-filled after the import **stops being part of the profile**. On the corpus guest that presents as
-a corpus that has disappeared, and the repair is a ~13-minute rebuild of 20,000 items.
+**The worry.** The profile scripts build profiles by pointing `ImportPRF` (under
+`HKCU\...\Outlook\Setup`) at a `.prf` that carries `OverwriteProfile=Yes`. If Outlook read that
+value at every start and never removed it, every later start would rebuild the profile from the
+file, and a store attached or filled since - the corpus - would stop being part of it: no `.pst`
+deleted, a corpus that has apparently vanished, and a ~13-minute rebuild of 20,000 items.
 
-**The remedy, after `-Verify` and before `Testbed/guest/Build-Corpus.ps1`:**
+**MEASURED 2026-09-24 on `OAI-UNINDEXED`: Outlook REMOVES `ImportPRF` within 5 s of the start that
+imports it.** Sampled every 5 s through a plain first start and through a `/PIM` first start - gone
+at the first sample both times, with the new profile already listed. And the tier profile had
+already answered it after the fact: `New-TierProfile.ps1 -Execute` set the value at 2026-09-15
+19:54:37 (its own log), Outlook imported at 19:54:43, and the value has been absent ever since, with
+First-Run present and the `Setup` key last written at 19:57:59, three minutes after that start - while
+nothing in the repository, or in the scratch that drove the guest, ever removes it. **CLEARED.** So
+on the normal path no later start re-imports.
 
-    .\New-OutlookProfile.ps1 -ClearImportPrf -Execute
+**It is cleared anyway** - the maintainer's choice: remove it regardless of the answer, and do not
+make the protection depend on anyone remembering a flag. Three places, none of them a flag:
 
-`-Verify` reads the value back and warns by name when it is still set, so a run that forgets this
-says so at the time rather than leaving it to be found later.
+* **`-Verify` removes it.** `New-OutlookProfile.ps1 -Verify` and `New-TierProfile.ps1 -Verify` take
+  out a lingering `ImportPRF` that names their own `.prf` - but only once First-Run is back, because
+  removing it before Outlook has read it cancels the import itself. Run `-Verify` too early and it
+  FAILS, says the import has not happened yet, and leaves the value exactly where it was (measured).
+* **`Testbed/guest/Build-Corpus.ps1` refuses while it is set** - a third preflight precondition,
+  fail-closed (an unreadable value refuses too, because nothing downstream ever re-checks it), and
+  **not** skipped by `-SkipPreflight`. The corpus is precisely what a rebuild would detach.
+* `New-OutlookProfile.ps1 -ClearImportPrf -Execute` still removes it by hand, unconditionally.
+
+The reasoning lives beside the code that acts on it: `Resolve-ImportPrfClearance` in
+`Testbed/guest/New-OutlookProfile.ps1` and `Test-CorpusImportPrfGuard` in
+`Testbed/guest/Build-Corpus.ps1`, each walked by its script's `-SelfTest`.
 
 **Turn AutoArchive OFF, on every store, in both profiles.** It is a client-side actor that
 moves items out of a PST on a schedule, and to a before/after census that is **indistinguishable
@@ -718,6 +742,20 @@ Before letting a build proceed, confirm in its own output that the store line an
 line both say accepted, that `profile accounts: 0`, and that the placement probe and the date
 probe each named a **verified** rung. A build that had to be talked past either of those guards
 is a build whose measurements mean something other than what they say.
+
+**On a guest, `Testbed/guest/Build-Corpus.ps1` runs all of this and refuses first** unless three
+preconditions hold: the default profile has no **mail** account, Outlook is already running and
+warm (180 s), and `ImportPRF` is not set (section 2.5a - fail-closed, and `-SkipPreflight` does not
+skip it). Its preflight first met a guest on OAI-UNINDEXED on 2026-09-24, from CP-05, and refused
+the correct setup: it counted every entry under the profile's account-manager key, and Outlook
+lists the profile's data file and address book there too, so the account-less corpus profile
+read as "2 account entries". It now counts mail accounts only. With that fixed, and
+`CorpusProfile` default with Outlook up 208 s, it ran the whole of the above against that guest's
+existing corpus and exited 0: both probes verified (`DraftsThenMoveWithSentFlag`,
+`PropertyAccessorDates`), `Build finished: created 0, already present 20,000, failed 0`, and a
+census that found every ordinal exactly once, in the folder the plan names. With the tier profile
+default and Outlook closed it refused with both reasons and wrote nothing; with `ImportPRF` set it
+gave the third.
 
 Repeat for Corpus B under the other Windows account, with **a different `--corpus-id` and a
 different manifest path**. Whether the two corpora should share a seed and anchor is not
