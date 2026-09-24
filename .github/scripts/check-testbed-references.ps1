@@ -82,9 +82,10 @@
        its banner claimed an identity check it did not have. So this parses every script under
        Testbed/guest/, finds its first write to the registry, the mailbox (any Outlook COM
        session), a scheduled task, a service, a locale or power setting, or a process launch, and
-       requires the guard to come first. The writers it found unguarded on that day and that the
-       same change did not own are declared by name with a reason, and the list is a ratchet: an
-       entry that stops being true fails the check until it is deleted.
+       requires the guard to come first. The four writers it found unguarded on that day and that
+       the same change did not own were declared by name with a reason, then guarded the same day,
+       so the declared list is empty; it stays a ratchet - an entry that stops being true fails
+       the check until it is deleted.
 
     Run it from anywhere:
         pwsh -File .github/scripts/check-testbed-references.ps1
@@ -783,11 +784,11 @@ $script:Checks++
 # server and is not seen at all (that script is guarded anyway); Invoke-GuestMeasure.ps1 starts
 # the MCP server that way and calls read-only tools through it, so it passes as a non-writer.
 #
-# KNOWN GAPS ARE DECLARED, NOT HIDDEN. $guardExemptions lists the writers this check found
-# unguarded on the day it was written, each with its reason. It is a RATCHET: an entry whose
-# script gains the guard, stops writing or disappears FAILS the check until the entry is deleted,
-# so the list can only shrink. A new unguarded writer cannot join it quietly - adding one is a
-# visible edit to this file.
+# KNOWN GAPS ARE DECLARED, NOT HIDDEN. $guardExemptions listed the writers this check found
+# unguarded on the day it was written, each with its reason - four of them, all guarded the same
+# day, so it is empty now. It is a RATCHET: an entry whose script gains the guard, stops writing
+# or disappears FAILS the check until the entry is deleted, so the list can only shrink. A new
+# unguarded writer cannot join it quietly - adding one is a visible edit to this file.
 
 $guardWriteCommands = @{
     'New-ItemProperty' = 'a registry write'; 'Set-ItemProperty' = 'a registry write'
@@ -813,24 +814,13 @@ $guardItemCommands = @('New-Item', 'Remove-Item', 'Set-Item', 'Rename-Item', 'Mo
 $guardRegistryMembers = @('SetValue', 'DeleteValue', 'CreateSubKey', 'DeleteSubKey', 'DeleteSubKeyTree')
 $guardNames = @('Assert-TestbedGuest', 'Assert-TestbedGuestLocal')
 
-$guardExemptions = @(
-    @{
-        Path = 'Testbed/guest/Build-Corpus.ps1'
-        Why  = 'Writes 20,000 items into a store through the corpus tool''s --execute, and never asks which machine it is on. The workstation is covered twice, but not by this guard: its own preflight refuses a default profile holding any mail account, and the tool''s CorpusSafety refuses again with no override - the maintainer''s profile has several. -SkipPreflight removes the first layer. Outside the change that added this check; give it the guard and delete this entry.'
-    }
-    @{
-        Path = 'Testbed/guest/Complete-FirstLogon.ps1'
-        Why  = 'Rewrites the language list, locales, home location, power and screen-saver settings of whatever machine runs it. It runs once, unattended, from the answer volume that Testbed/host/New-AnswerFile.ps1 builds - which carries this file ALONE, so the shared guard cannot be dot-sourced there. It needs a restated guard (Assert-TestbedGuestLocal on the user AND the OAI- computer-name prefix, as Set-OutlookIndexingDisabled.ps1 has), and that change belongs to whoever next rebuilds the answer volume, because it has to be proven on a fresh install.'
-    }
-    @{
-        Path = 'Testbed/guest/Measure-SweepCost.ps1'
-        Why  = 'Binds Outlook over COM and walks a store''s folders. Its banner says read-only by construction and never executed - so on the workstation it would open the real mailbox rather than change it, which is still what the guard exists to prevent. Guard it before its first run.'
-    }
-    @{
-        Path = 'Testbed/guest/Register-InteractiveTask.ps1'
-        Why  = 'Registers and unregisters a scheduled task that runs arbitrary script text in the interactive session as the current user. It is the transport every session-1 step in this directory rides, always invoked over PowerShell Direct as vmadmin; on the workstation it would install a task running as the maintainer. The fix is one guard call - Testbed/README.md section 1 already stages OutlookMapiInterop.ps1 beside it - but it changes the one route everything else depends on, so it waits for a change that is proven on a guest the same day.'
-    }
-)
+# EMPTY SINCE 2026-09-24, the same day it was written: its four entries - Build-Corpus.ps1,
+# Complete-FirstLogon.ps1, Measure-SweepCost.ps1 and Register-InteractiveTask.ps1 - were given
+# the guard (Complete-FirstLogon.ps1 a restated one, because it travels alone on the answer
+# volume), each refusal proven on the maintainer's workstation. It stays, empty, so that the
+# next exemption is a visible edit with a reason rather than a quiet one; the ratchet below still
+# fails on any entry that stops being true.
+$guardExemptions = @()
 
 # Walks an AST in source order, expanding calls into the same file's functions where they happen,
 # and records the FIRST guard, the FIRST write and the FIRST dot-source of OutlookMapiInterop.ps1,
@@ -1007,7 +997,9 @@ if ($guardProblems.Count -gt 0) {
     Fail 'every guest script that writes calls the guest guard first' (($guardProblems | Sort-Object -Unique) -join "`n        ")
 }
 else {
-    Pass 'every guest script that writes calls the guest guard first' ("$($guardedWriters.Count) writer(s) guarded before their first write ($($guardedWriters -join ', ')); $($nonWriters.Count) with no write this check recognises ($($nonWriters -join ', ')); $($declaredGaps.Count) KNOWN UNGUARDED writer(s), each declared with its reason in `$guardExemptions: $($declaredGaps -join ', ')")
+    $gapText = 'no declared exemption - every writer is guarded'
+    if ($declaredGaps.Count -gt 0) { $gapText = "$($declaredGaps.Count) KNOWN UNGUARDED writer(s), each declared with its reason in `$guardExemptions: $($declaredGaps -join ', ')" }
+    Pass 'every guest script that writes calls the guest guard first' ("$($guardedWriters.Count) writer(s) guarded before their first write ($($guardedWriters -join ', ')); $($nonWriters.Count) with no write this check recognises ($($nonWriters -join ', ')); $gapText")
 }
 
 # ---------------------------------------------------------------------------------------------

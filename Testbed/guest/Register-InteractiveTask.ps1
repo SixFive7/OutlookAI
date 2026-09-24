@@ -42,6 +42,21 @@
     guest's console. Nothing in the testbed should - the MCP server and the tools are console
     apps started with CreateNoWindow - but if you see a flash on the guest, this is where to look.
 
+    THE GUEST GUARD, SINCE 2026-09-24. This registers a scheduled task that runs whatever script
+    text it is handed, elevated, in the logged-on user's session - on the maintainer's workstation
+    that is a task running as the maintainer. It now dot-sources OutlookMapiInterop.ps1 and calls
+    Assert-TestbedGuest before anything else: before the job directory is created, before cmd.ps1
+    is written, and before any task is unregistered, registered or started. For the account it is
+    always run as - vmadmin, over PowerShell Direct - the guard returns without a word and every
+    line after it is the same as before. STAGE OutlookMapiInterop.ps1 BESIDE IT, as
+    Testbed/README.md section 1 step 4a already does; copied alone it now fails loudly on the
+    dot-source. The guard checks who REGISTERS the task, here; -UserId, who the task runs AS, is
+    unchanged, and the work handed over carries its own guard when it is a guest script. Proven
+    on the maintainer's workstation the same day, under Windows PowerShell 5.1, with -Script and
+    with -ScriptPath: "REFUSING TO RUN. This session is logged on as ...", zero calls reaching a
+    tripwire that stood in for every write command, no job directory and no task. The vmadmin
+    half is not yet run on a guest.
+
 .PARAMETER ScriptPath
     A .ps1 on the guest to run in session 1.
 
@@ -59,6 +74,10 @@
     How long to wait for exit.txt. Generous by default: a corpus build is ~13 minutes and a
     600 s exhaustive scan is a legal outcome, not a hang.
 
+.PARAMETER ExpectedUser
+    The account the guest guard accepts - who may REGISTER the task, not who it runs as (that is
+    -UserId). The default is the guard; see OutlookMapiInterop.ps1.
+
 .EXAMPLE
     .\Register-InteractiveTask.ps1 -ScriptPath C:\OutlookAI-Q5\guest-measure.ps1
     .\Register-InteractiveTask.ps1 -Script "& 'C:\OutlookAI-Q5\tools\OutlookAI.RemediationTools.exe' corpus-census --store 'Outlook Data File' --allow-store 'Outlook Data File' --corpus-id vm2 --seed 7777 --anchor 2026-08-19 --count 20000"
@@ -71,10 +90,16 @@ param(
     [string] $JobRoot = 'C:\OutlookAI-Q5\jobs',
     [string] $UserId,
     [int]    $TimeoutSeconds = 2400,
+    [string[]] $ExpectedUser = @('vmadmin'),
     [switch] $KeepJob
 )
 
 $ErrorActionPreference = 'Stop'
+
+# THE GUARD, FIRST - before the job directory, cmd.ps1 and the scheduled task. For vmadmin on a
+# guest it returns without a word and nothing below it changes. See the banner.
+. "$PSScriptRoot\OutlookMapiInterop.ps1"
+Assert-TestbedGuest -ExpectedUser $ExpectedUser
 
 if (-not $UserId) { $UserId = "$env:USERDOMAIN\$env:USERNAME" }
 

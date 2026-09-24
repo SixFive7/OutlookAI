@@ -58,8 +58,26 @@
     is deliberate and it is the only honest option here: the alternative Windows offers is a
     base64 encoding with a documented salt suffix, which is obfuscation rather than encryption
     and would be untested code standing between a rebuild and a working guest. Treat the ISO as
-    a secret, keep it in scratch, and delete it once the guest is built. The script says so on
-    the way out.
+    a secret and keep it in scratch.
+
+    WHAT DELETES IT, AND WHY NOT BY HAND (2026-09-24). Testbed/host/New-TestbedVm.ps1
+    -CompleteInstall does, once Windows setup has consumed it: it waits for the guest's first
+    logon, ejects both discs, takes CP-01-WIN-CLEAN with no disc in it, and only then deletes
+    this ISO - and only while no VM and no checkpoint on the host references it. The order is the
+    point. A checkpoint taken with the disc attached references this file for as long as the
+    checkpoint exists, and a restore of it needs the file back. Both guests built on 2026-09-15
+    are in exactly that state, so their two ISOs stay until those guests are replaced.
+
+    IT REFUSES TO REPLACE AN ISO THAT IS ALREADY THERE, unless -Replace says so. On the route
+    above, a finished build leaves no ISO behind, so one that is still there belongs either to a
+    build that never finished or to a guest whose checkpoints still reference it - and replacing
+    it deletes the old file first, so a build that then failed would leave those checkpoints
+    pointing at nothing. Pass -Replace once nothing references it, or build the new volume
+    somewhere else with -OutDir and leave the old one alone. Proven on the maintainer's
+    workstation the same day, against a stand-in file: it refused with zero calls reaching a
+    tripwire that stood in for every write command, so before it created its output directory -
+    which comes before the credential is read - and the directory read back unchanged. The
+    -Replace path itself has not been run since: running it builds a real ISO with the password.
 
 .PARAMETER RepoRoot
     Repository root. Defaults to two levels above this script. Used to find the credential and
@@ -117,6 +135,10 @@
 .PARAMETER KeepStaging
     Leave the staging directory in place. It holds the same credential the ISO does.
 
+.PARAMETER Replace
+    Replace an answer ISO that is already at the output path. Without it the script refuses,
+    before it reads the credential or writes anything - see IT REFUSES TO REPLACE above.
+
 .EXAMPLE
     pwsh -File Testbed/host/New-AnswerFile.ps1 -VMName OutlookAI-Indexed
 
@@ -135,7 +157,8 @@ param(
     [string] $VolumeLabel = 'UNATTEND',
     [ValidateSet('Auto', 'Oscdimg', 'Imapi')] [string] $IsoBuilder = 'Auto',
     [string] $OscdimgPath,
-    [switch] $KeepStaging
+    [switch] $KeepStaging,
+    [switch] $Replace
 )
 # Defaults that need $PSScriptRoot are set HERE, not in param(). Windows PowerShell 5.1 leaves
 # $PSScriptRoot empty while param() defaults are evaluated under -File, so a default built from
@@ -196,6 +219,28 @@ Refusing to write inside the repository outside gitignored scratch.
     asked for : $outFull
     allowed   : $scratchFull\... (gitignored), or any path outside $repoFull
 The output holds the guest password in clear text.
+"@
+}
+
+# AN ISO ALREADY THERE IS NOT REPLACED UNLESS -Replace SAYS SO - and this is asked before the
+# credential is read or anything is written. See IT REFUSES TO REPLACE in the banner.
+$existingIso = Join-Path $outFull ($VMName + '-unattend.iso')
+if ((Test-Path -LiteralPath $existingIso) -and -not $Replace) {
+    throw @"
+Refusing to replace the answer ISO that is already at:
+    $existingIso
+
+A finished build leaves no answer ISO behind - Testbed/host/New-TestbedVm.ps1 -CompleteInstall
+deletes it - so this one belongs to a build that never finished, or to a guest whose checkpoints
+still reference it. Both guests built on 2026-09-15 are the second kind: their CP-01-WIN-CLEAN
+was taken with this disc attached. Replacing it deletes it first, and a build that then failed
+would leave those checkpoints pointing at nothing.
+
+  * Once no VM and no checkpoint references it - the guest it belongs to has been deleted -
+    run this again with -Replace.
+  * To keep it, build the new volume elsewhere: -OutDir .work\testbed-answer\<a new directory>.
+
+The credential has not been read, and nothing has been written.
 "@
 }
 
@@ -528,8 +573,11 @@ Write-Host ("  edition        {0}" -f $ImageName)
 Write-Host ("  template       {0}" -f $TemplatePath)
 if ($KeepStaging) { Write-Host ("  staging kept   {0}" -f $staging) }
 Write-Host ''
-Write-Host 'THIS ISO CONTAINS THE GUEST PASSWORD IN CLEAR TEXT. It is in gitignored scratch;'
-Write-Host 'do not copy it anywhere tracked, and delete it once the guest is built.'
+Write-Host 'THIS ISO CONTAINS THE GUEST PASSWORD IN CLEAR TEXT. It is in gitignored scratch; do not'
+Write-Host 'copy it anywhere tracked. Do not delete it by hand either: the second command below deletes'
+Write-Host 'it once Windows setup has consumed it - after ejecting it and taking the first checkpoint'
+Write-Host 'without it, because a checkpoint taken with the disc attached needs the file to restore.'
 Write-Host ''
 Write-Host 'Next:'
 Write-Host ("  pwsh -File Testbed/host/New-TestbedVm.ps1 -Name {0} -IsoPath <windows.iso> -AnswerIsoPath {1} -Execute -Start" -f $VMName, $isoPath)
+Write-Host ("  pwsh -File Testbed/host/New-TestbedVm.ps1 -Name {0} -CompleteInstall -Execute" -f $VMName)
