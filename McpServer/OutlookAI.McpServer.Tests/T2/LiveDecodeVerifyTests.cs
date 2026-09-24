@@ -39,6 +39,12 @@ public sealed class LiveDecodeVerifyTests
         _output = output;
     }
 
+    /// <summary>
+    /// The stores the index tier measures - the settings' INDEXED list, never the watched one, and
+    /// refused rather than empty (see <see cref="LiveTestSettings.RequireIndexedStores"/>).
+    /// </summary>
+    private List<string> Indexed => _fixture.Settings.RequireIndexedStores().ToList();
+
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]
@@ -141,7 +147,7 @@ public sealed class LiveDecodeVerifyTests
         // hits legitimately carry the owner store's UID (logged + recorded in v3.MD 0.8).
         Assert.Equal(0, uidMismatchNonDelegate);
 
-        foreach (string store in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string store in Indexed)
         {
             Assert.True(perStoreCounts.ContainsKey(store), $"no samples came from store {store}");
         }
@@ -156,7 +162,7 @@ public sealed class LiveDecodeVerifyTests
         // the 24-byte decoded id is NOT openable on cached Exchange stores.
         IndexHit? hit = _fixture.Service.Search(new IndexQuery
         {
-            Scope = _fixture.GetScope(_fixture.Settings.ExpectedStoreDisplayNames[0]).StorePrefix,
+            Scope = _fixture.GetScope(Indexed[0]).StorePrefix,
             Kinds = KindFilter.MailKindOnly,
             Top = 1,
         }).Hits.FirstOrDefault();
@@ -178,7 +184,7 @@ public sealed class LiveDecodeVerifyTests
     {
         // Real attachment-content entries (kind=document under a mapi store scope).
         List<IndexHit> attachmentHits = new();
-        foreach (string storeName in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string storeName in Indexed)
         {
             StoreScopeInfo scope = _fixture.GetScope(storeName);
             IndexSearchResult result = _fixture.Service.Search(new IndexQuery
@@ -282,7 +288,7 @@ public sealed class LiveDecodeVerifyTests
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         const int perStore = 9;
 
-        foreach (string storeName in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string storeName in Indexed)
         {
             StoreScopeInfo scope = _fixture.GetScope(storeName);
             IndexSearchResult result = _fixture.Service.Search(new IndexQuery

@@ -10,6 +10,11 @@
       * -SelfTest under Windows PowerShell 5.1 and under PowerShell 7: 142 assertions, 0 failures
         on both. It was also run with its live-fixtures rule deliberately broken, and all 15
         assertions about that rule failed - so they are not decorative.
+      * 2026-09-24, after the watched/indexed list split and the probe fields: -SelfTest 168
+        assertions, 0 failures under both editions, and a synthetic INDEXED-guest render from a
+        filled copy of testbed.json in .work/ under both, identical apart from the render time -
+        which is also the first run of the git provenance calls under 5.1 with their stderr
+        guarded (see Get-GitProvenance).
       * A full render from a SYNTHETIC values file in .work/, under both editions: written, read
         back and parsed again. The two files were byte-identical apart from the render time.
       * The refusal this script exists for. -OutPath was pointed at the main checkout's REAL
@@ -88,19 +93,24 @@
       * a rendered file with a token left in it, or that does not parse as JSON.
       * everything the live tier itself refuses before it touches a mailbox, checked here so it
         fails in seconds on the host instead of at the top of a guest run: no hub, no store to
-        watch, a machineProfile other than Portable (a Production profile must also carry
-        probeTerm and subjectOnlyProbe, which this Portable-shaped template has no field for),
-        a partial corpus or mailSink block, a delegate store inside the identity-draft grant,
-        the hub declared a bystander, and a configuration that leaves the count tripwire no store
-        it could fail on.
-      * and the documented rules the tier does NOT itself enforce, because a rendered file should
-        not lean on that: every bystander ALSO named in expectedStoreDisplayNames (the double
-        declaration of Docs/live-tier-on-the-vm.md section 1.3 - the tier censuses a bystander
-        missing from that list anyway, and does not refuse it); the corpus store declared a
-        bystander; the hub shaped as an SMTP address, because tests hand it to NewDraft as one;
-        one spelling per store across every list; a sink on loopback only; the manifest named
-        corpus-<corpusId>.jsonl; and corpusId, seed, anchor and item count agreeing with
-        testbed.json's corpusIdConvention.
+        watch, a machineProfile other than Portable (a test guest is Portable by decision - see
+        testbed.json's _decided), a partial subjectOnlyProbe, corpus or mailSink block, a delegate
+        store inside the identity-draft grant, the hub declared a bystander, a configuration that
+        leaves the count tripwire no store it could fail on, and an INDEXED list that names a store
+        the census does not watch, a delegate mailbox, or leaves out the hub.
+      * and the rules a TEST GUEST's file keeps that the tier does not enforce, because a rendered
+        file should not lean on the tier's leniency: every bystander ALSO named in
+        expectedStoreDisplayNames - the tier censuses a bystander missing from that list anyway,
+        and does not refuse it (Docs/live-tier-on-the-vm.md section 2.10, corrected 2026-09-24 on
+        Q77), but outlook_health's reachability check and list_accounts read only that list; the
+        corpus store declared a bystander; the hub shaped as an SMTP address, because tests hand
+        it to NewDraft as one; every store named as an address ending in .invalid; the indexed
+        list ordered hub first and corpus last, with every entry but the corpus named as an
+        address; an indexed guest carrying a probe term and a subject-only probe in the hub, and an
+        unindexed guest carrying neither and no indexed store; one spelling per store across every
+        list; a sink on loopback only; the manifest named corpus-<corpusId>.jsonl; and corpusId,
+        seed, anchor and item count agreeing with testbed.json's corpusIdConvention - including the
+        indexed guest's minimum corpus size.
 
     WHAT IT CANNOT CHECK, and it prints this on every render: whether the guest's TIER profile
     actually mounts every declared store under exactly those names. A declared store the running
@@ -187,11 +197,16 @@ $script:GuestSettingsRelative = 'McpServer\OutlookAI.McpServer.Tests\live-fixtur
 # a render refuses a template that has drifted, because a field nobody wrote a rule for is a field
 # nobody checked.
 $script:TopLevelFields = @('machineProfile', 'testHubStoreDisplayName', 'expectedStoreDisplayNames',
-    'expectedDelegateStoreDisplayNames', 'bystanderStoreDisplayNames', 'corpus', 'mailSink')
+    'indexedStoreDisplayNames', 'expectedDelegateStoreDisplayNames', 'bystanderStoreDisplayNames', 'probeTerm',
+    'subjectOnlyProbe', 'corpus', 'mailSink')
 $script:BlockFields = @{
-    corpus   = @('storeDisplayName', 'manifestPath', 'corpusId', 'seed', 'anchorUtc', 'itemCount', 'windowDays')
-    mailSink = @('submitHost', 'submitPort', 'retrieveHost', 'retrievePort', 'connectTimeoutMs')
+    subjectOnlyProbe = @('storeDisplayName', 'folderPath', 'subjectTerm', 'senderFragment')
+    corpus           = @('storeDisplayName', 'manifestPath', 'corpusId', 'seed', 'anchorUtc', 'itemCount', 'windowDays')
+    mailSink         = @('submitHost', 'submitPort', 'retrieveHost', 'retrievePort', 'connectTimeoutMs')
 }
+
+# A store name shaped like an SMTP address. Matched with -cmatch against a literal pattern, never -like.
+$script:AddressPattern = '^[^@\s]+@[^@\s]+\.[^@\s]+$'
 
 # MailSinkSettings says "Loopback, always", and Docs/live-tier-on-the-vm.md section 2.7 says why: a
 # listener that needs anything else is a listener bound to 0.0.0.0, which on a test VM is an open relay.
@@ -641,6 +656,9 @@ function New-RenderedDocument {
     $document = [ordered]@{}
     $document['_rendered'] = "Rendered for guest '$VMName' by Testbed/host/New-LiveTestSettings.ps1 from $TemplateShown and the liveTestSettings.$VMName section of $ValuesShown at $stamp, from $Provenance. Do not edit it where it lands: correct the values and render again, or the next render silently undoes the edit."
     $document['_what'] = "The live tier's machine-local settings for this guest: the one store it may write to, the stores it must never touch, and what the count tripwire watches. Gitignored where it lands, like every live-test-settings.json. Every field is described in Docs/live-tier-on-the-vm.md section 2.10."
+    if ($Resolved.Omitted -contains 'subjectOnlyProbe') {
+        $document['_subjectOnlyProbe'] = 'Absent: testbed.json declares no subject-only probe population for this guest - it has no search index, and every test reading one measures the index.'
+    }
     if ($Resolved.Omitted -contains 'corpus') {
         $document['_corpus'] = 'Absent: testbed.json declares no corpus for this guest, so the tier skips the corpus freshness check.'
     }
@@ -757,7 +775,7 @@ function Add-SettingsProblems {
     }
     elseif ($machineProfile.Value -is [string] -and $machineProfile.Value -ceq 'Portable') { }
     elseif ($machineProfile.Value -is [string] -and $machineProfile.Value -ceq 'Production') {
-        $Problems.Add("machineProfile: 'Production' needs probeTerm and a complete subjectOnlyProbe block, and this template is the Portable shape - like Testbed/live-test-settings.example.json it has no field for either, so the loader would refuse the file. A test guest is Portable.")
+        $Problems.Add("machineProfile: 'Production' is the maintainer's own machine, whose missing populations REFUSE a run. A test guest is Portable - recorded as a decision in testbed.json's _decided - so a population it lacks is announced as PROVED NOTHING instead, and its probe values come from the generator rather than from real mail.")
     }
     else {
         $Problems.Add("machineProfile: must be the string 'Portable' (or 'Production', which this template cannot carry). Spell it exactly.")
@@ -779,8 +797,32 @@ function Add-SettingsProblems {
     }
 
     $expected = Get-StoreNameList -Settings $Settings -Field 'expectedStoreDisplayNames' -Problems $Problems
+    $indexed = Get-StoreNameList -Settings $Settings -Field 'indexedStoreDisplayNames' -AllowEmpty -Problems $Problems
     $delegates = Get-StoreNameList -Settings $Settings -Field 'expectedDelegateStoreDisplayNames' -AllowEmpty -Problems $Problems
     $bystanders = Get-StoreNameList -Settings $Settings -Field 'bystanderStoreDisplayNames' -AllowEmpty -Problems $Problems
+
+    # The guest's own record in corpusIdConvention.assigned - which corpus id it may use, and whether
+    # it is the INDEXED guest. Looked up once: the indexed-list rules and the corpus rules both read it.
+    $mine = @(@($Assigned) | Where-Object { (Test-IsJsonObject $_) -and $_.guest -is [string] -and $_.guest -ceq $VMName })
+    $entry = $null
+    $guestIndexed = $null
+    if ($mine.Count -ne 1) {
+        $Problems.Add("corpusIdConvention.assigned in testbed.json has $($mine.Count) entries for guest '$VMName', where exactly one is needed - it is the record that says which corpus id this guest may use and whether it is the indexed guest.")
+    }
+    else {
+        $entry = $mine[0]
+        $indexedProperty = Get-ExactProperty $entry 'indexed'
+        if ($null -ne $indexedProperty -and $indexedProperty.Value -is [bool]) { $guestIndexed = [bool]$indexedProperty.Value }
+        else { $Problems.Add("corpusIdConvention.assigned's entry for '$VMName' carries no true/false 'indexed', so nothing says whether this guest's index is on - and the indexed list, the probe term and the subject-only probe all depend on it.") }
+    }
+
+    # The corpus store's name, peeked at here: the indexed list's ORDER is stated against it.
+    $corpusName = $null
+    $corpusPeek = Get-FieldValue $Settings 'corpus'
+    if ($corpusPeek.Present -and (Test-IsJsonObject $corpusPeek.Value)) {
+        $peeked = (Get-FieldValue $corpusPeek.Value 'storeDisplayName').Value
+        if ($peeked -is [string]) { $corpusName = $peeked }
+    }
 
     if ($null -ne $hub -and $expected.Count -gt 0 -and -not (Test-NameIn $hub $expected)) {
         $Problems.Add("expectedStoreDisplayNames: does not name the hub '$hub'. It is the list the census walks, and the remediation console requires the hub in it.")
@@ -801,7 +843,7 @@ function Add-SettingsProblems {
             continue
         }
         if (-not (Test-NameIn $store $expected)) {
-            $Problems.Add("bystanderStoreDisplayNames: '$store' is not ALSO in expectedStoreDisplayNames. Docs/live-tier-on-the-vm.md section 1.3 requires both: that list is what list_accounts exactness counts, and a bystander left out of it is watched only because the census adds declared bystanders back in. Name it in both.")
+            $Problems.Add("bystanderStoreDisplayNames: '$store' is not ALSO in expectedStoreDisplayNames. The tier would still census it - it adds declared bystanders back in, deliberately - but on a test guest every mounted store goes in the watched list, because outlook_health's reachability check and list_accounts exactness read that list and nothing else (Docs/live-tier-on-the-vm.md section 2.10). Name it in both.")
         }
     }
 
@@ -813,6 +855,119 @@ function Add-SettingsProblems {
     }
     if ($policed.Count -eq 0) {
         $Problems.Add("bystanderStoreDisplayNames: declares nothing the count tripwire could fail on - no watched store that is both non-hub and denied every write. The tier refuses exactly this at start ('NO STORE THIS CENSUS WATCHES CAN PRODUCE A FAILURE'). Declare the plain bystander, and the corpus store, in bystanderStoreDisplayNames.")
+    }
+
+    # indexedStoreDisplayNames - the stores the index tier measures. The loader's own rules first
+    # (watched, never a delegate, the hub included), then the ORDER and NAMING a test guest keeps.
+    foreach ($store in $indexed) {
+        if (Test-NameIn $store $delegates) {
+            $Problems.Add("indexedStoreDisplayNames: '$store' is a delegate mailbox. A delegate is indexed under its owner's subtree and has no index scope of its own; the loader refuses it.")
+        }
+        elseif (-not (Test-NameIn $store (@($expected) + @($bystanders)))) {
+            $Problems.Add("indexedStoreDisplayNames: '$store' is in neither expectedStoreDisplayNames nor bystanderStoreDisplayNames, so the tests would read a store the count tripwire never censuses. The loader refuses it.")
+        }
+        elseif ($null -ne $corpusName -and [string]::Equals($store, $corpusName, [System.StringComparison]::OrdinalIgnoreCase)) { }
+        elseif ($store -cnotmatch $script:AddressPattern) {
+            $Problems.Add("indexedStoreDisplayNames: '$store' is not named as an address. Only the corpus - big enough to dominate the index's 2000-row discovery sample - may be named otherwise: a small store is found only through mail addressed to it, and the product's own search and outlook_health try that only for a name shaped like an address (MailService.ResolveFolderScope, ProbeStoreInIndex). Name the store as an .invalid address.")
+        }
+    }
+    if ($indexed.Count -gt 0) {
+        if ($null -ne $hub -and -not [string]::Equals($indexed[0], $hub, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $Problems.Add("indexedStoreDisplayNames: the hub '$hub' must come FIRST. Several index tests read entry 0 - the post-filter, the filter shapes, the sender filter - and the hub population is the one that carries attachments, unread mail and senders. The loader also refuses a non-empty list without the hub.")
+        }
+        if ($null -ne $corpusName -and (Test-NameIn $corpusName $indexed) -and
+            -not [string]::Equals($indexed[$indexed.Count - 1], $corpusName, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $Problems.Add("indexedStoreDisplayNames: the corpus store '$corpusName' must come LAST. The exclude-subfolders measurement takes the first non-hub entry and needs a mail folder with populated children - which the bystander population has and the measurement corpus does not.")
+        }
+    }
+    if ($guestIndexed -eq $true -and $indexed.Count -eq 0) {
+        $Problems.Add("indexedStoreDisplayNames: empty, on the guest testbed.json records as INDEXED. Name the hub, the bystander and the corpus store - in that order.")
+    }
+    if ($guestIndexed -eq $false -and $indexed.Count -gt 0) {
+        $Problems.Add("indexedStoreDisplayNames: names $($indexed.Count) store(s) on a guest testbed.json records as UNINDEXED. Nothing is indexed there, so every test measuring these would fail by construction; the list is [] and the index tests are deselected with Requires!=SearchIndex.")
+    }
+
+    # probeTerm - one word, set exactly when the guest has an index.
+    $probeTerm = Get-FieldValue $Settings 'probeTerm'
+    $probeText = $null
+    if (-not $probeTerm.Present) { $Problems.Add('probeTerm: missing. It is a string - the generator''s probe term on the indexed guest, empty on the unindexed one.') }
+    elseif (-not ($probeTerm.Value -is [string])) { $Problems.Add('probeTerm: must be a string.') }
+    else {
+        $probeText = [string]$probeTerm.Value
+        if ($probeText.Length -gt 0 -and $probeText -cnotmatch '^[A-Za-z]{3,}$') {
+            $Problems.Add("probeTerm: '$probeText' is not one plain word. The tests put it inside a CONTAINS phrase and a search query as it stands.")
+        }
+        if ($guestIndexed -eq $true -and $probeText.Length -eq 0) {
+            $Problems.Add('probeTerm: empty on the INDEXED guest. Six index tests search for it - use the population generator''s own term, which corpus-plan --population hub prints.')
+        }
+        if ($guestIndexed -eq $false -and $probeText.Length -gt 0) {
+            $Problems.Add("probeTerm: '$probeText' on a guest with no index. Leave it empty: it names a word 'proven to hit this machine's search index', and there is no index.")
+        }
+    }
+
+    # subjectOnlyProbe - the SF-6 population, which the hub population holds.
+    $subjectProbe = Get-FieldValue $Settings 'subjectOnlyProbe'
+    $subjectProbeStore = $null
+    if ($subjectProbe.Present) {
+        $block = $subjectProbe.Value
+        if (-not (Test-IsJsonObject $block)) {
+            $Problems.Add('subjectOnlyProbe: must be an object carrying every field. An absent one is left out of the file, never written as null or anything else.')
+        }
+        else {
+            foreach ($inner in $block.PSObject.Properties) {
+                if ($inner.Name.StartsWith('_')) { continue }
+                if ($script:BlockFields['subjectOnlyProbe'] -cnotcontains $inner.Name) { $Problems.Add("subjectOnlyProbe.$($inner.Name): not a field this script has a rule for.") }
+            }
+            foreach ($name in @($script:BlockFields['subjectOnlyProbe'] | Where-Object { -not (Get-FieldValue $block $_).Present })) {
+                $Problems.Add("subjectOnlyProbe.${name}: missing. The block is all or nothing - the loader refuses a partial one.")
+            }
+            $storeName = (Get-FieldValue $block 'storeDisplayName').Value
+            $problem = Test-StoreName -Name $storeName -Where 'subjectOnlyProbe.storeDisplayName'
+            if ($null -ne $problem) { $Problems.Add($problem) }
+            else {
+                $subjectProbeStore = $storeName
+                if ($null -ne $hub -and -not [string]::Equals($storeName, $hub, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $Problems.Add("subjectOnlyProbe.storeDisplayName: '$storeName' is not the hub '$hub'. The generated population that holds the subject-only probe folder is the HUB's.")
+                }
+                if (-not (Test-NameIn $storeName $indexed)) {
+                    $Problems.Add("subjectOnlyProbe.storeDisplayName: '$storeName' is not in indexedStoreDisplayNames, and every SF-6 test reads it through the index.")
+                }
+            }
+            $folderPath = (Get-FieldValue $block 'folderPath').Value
+            if (-not ($folderPath -is [string]) -or $folderPath.Length -eq 0 -or $folderPath.StartsWith('/') -or $folderPath.EndsWith('/') -or $folderPath.Contains('\')) {
+                $Problems.Add('subjectOnlyProbe.folderPath: must be a store-relative path with forward slashes and none at either end, like Inbox/OutlookAI-Corpus-Folder-Notices.')
+            }
+            $subjectTerm = (Get-FieldValue $block 'subjectTerm').Value
+            if (-not ($subjectTerm -is [string]) -or $subjectTerm -cnotmatch '^[A-Za-z]{5,}$') {
+                $Problems.Add('subjectOnlyProbe.subjectTerm: must be one word of at least five letters - the prefix-stem test shortens it by two.')
+            }
+            $senderFragment = (Get-FieldValue $block 'senderFragment').Value
+            if (-not ($senderFragment -is [string]) -or $senderFragment -cnotmatch '^[A-Za-z0-9]{3,}$') {
+                $Problems.Add('subjectOnlyProbe.senderFragment: must be one word of letters and digits, at least three long.')
+            }
+        }
+    }
+    if ($guestIndexed -eq $true -and -not $subjectProbe.Present) {
+        $Problems.Add('subjectOnlyProbe: absent on the INDEXED guest. Five SF-6 tests read it, and the hub population holds exactly that population - corpus-plan --population hub prints the four values.')
+    }
+    if ($guestIndexed -eq $false -and $subjectProbe.Present) {
+        $Problems.Add('subjectOnlyProbe: present on a guest with no index. Every test that reads it measures the index; leave it out (null in testbed.json).')
+    }
+
+    # Every store named as an address is a synthetic one, under RFC 2606's .invalid - a guest's
+    # stores are named after nothing real, and an address that resolved would be one somebody owns.
+    $allNamed = @()
+    if ($null -ne $hub) { $allNamed += $hub }
+    $allNamed += @($expected) + @($indexed) + @($delegates) + @($bystanders)
+    if ($null -ne $corpusName) { $allNamed += $corpusName }
+    if ($null -ne $subjectProbeStore) { $allNamed += $subjectProbeStore }
+    $reported = @()
+    foreach ($store in $allNamed) {
+        if ($store -is [string] -and $store -cmatch $script:AddressPattern -and
+            -not $store.EndsWith('.invalid', [System.StringComparison]::OrdinalIgnoreCase) -and $reported -notcontains $store) {
+            $reported += $store
+            $Problems.Add("'$store' is named as an address outside the RFC 2606 .invalid domain. A test guest's stores are synthetic; an address that can resolve is one somebody could own.")
+        }
     }
 
     # corpus - all or nothing, a declared bystander, and the corpus the testbed record says it is.
@@ -890,13 +1045,13 @@ function Add-SettingsProblems {
             }
 
             # One corpus, one record. The testbed record assigns each guest its id, and holds the
-            # build parameters once a build has produced them.
-            $mine = @(@($Assigned) | Where-Object { (Test-IsJsonObject $_) -and $_.guest -is [string] -and $_.guest -ceq $VMName })
-            if ($mine.Count -ne 1) {
-                $Problems.Add("corpus: testbed.json's corpusIdConvention.assigned has $($mine.Count) entries for guest '$VMName', where exactly one is needed - it is the record that says which corpus id this guest may use.")
-            }
-            else {
-                $entry = $mine[0]
+            # build parameters once a build has produced them. The record itself was looked up
+            # above, and a guest with none has already been told so.
+            if ($null -ne $entry) {
+                $minimum = (Get-FieldValue $entry 'minimumItemCount').Value
+                if ((Test-IsInteger $minimum) -and (Test-IsInteger $itemCount) -and [decimal]$itemCount -lt [decimal]$minimum) {
+                    $Problems.Add("corpus.itemCount: $itemCount, below the $minimum corpusIdConvention requires for '$($entry.corpusId)'. The index tier's latency bounds are tests only against an index of production scale - see that entry's _minimumItemCount - so this guest's corpus is rebuilt at that size, not rendered at this one.")
+                }
                 if ($idUsable -and $entry.corpusId -cne $corpusId) {
                     $Problems.Add("corpus.corpusId: '$corpusId' is not the id corpusIdConvention assigns to '$VMName', which is '$($entry.corpusId)'. Two guests sharing an id overwrite each other's manifest (Testbed/README.md section 3).")
                 }
@@ -959,9 +1114,11 @@ function Add-SettingsProblems {
     $named = New-Object System.Collections.Generic.List[object]
     if ($null -ne $hub) { $named.Add(@('testHubStoreDisplayName', $hub)) }
     foreach ($store in $expected) { $named.Add(@('expectedStoreDisplayNames', $store)) }
+    foreach ($store in $indexed) { $named.Add(@('indexedStoreDisplayNames', $store)) }
     foreach ($store in $delegates) { $named.Add(@('expectedDelegateStoreDisplayNames', $store)) }
     foreach ($store in $bystanders) { $named.Add(@('bystanderStoreDisplayNames', $store)) }
     if ($null -ne $corpusStore) { $named.Add(@('corpus.storeDisplayName', $corpusStore)) }
+    if ($null -ne $subjectProbeStore) { $named.Add(@('subjectOnlyProbe.storeDisplayName', $subjectProbeStore)) }
     foreach ($pair in $named) {
         $key = $pair[1].ToLowerInvariant()
         if (-not $spellings.ContainsKey($key)) { $spellings[$key] = $pair; continue }
@@ -1190,16 +1347,29 @@ function Get-GitProvenance {
     param([string] $Root, [string[]] $Inputs)
     # Provenance only: a render is right or wrong by its checks, not by this line. So git missing or
     # failing is reported as 'unknown' rather than stopping anything.
-    $ErrorActionPreference = 'Continue'
     $inside = @($Inputs | Where-Object { -not [System.IO.Path]::IsPathRooted($_) })
     $outside = @($Inputs | Where-Object { [System.IO.Path]::IsPathRooted($_) })
+
+    # WINDOWS POWERSHELL 5.1: with the preference at 'Stop', the FIRST line a native program writes
+    # to stderr is a terminating NativeCommandError - whether it is sent to $null, merged with 2>&1 or
+    # left alone to a file - and git writes warnings there. PowerShell 7 does not do this. So each git
+    # call runs under 'Continue', restored in a finally, and success is judged by $LASTEXITCODE alone.
+    # With 'Continue' the redirected lines arrive as ErrorRecord objects rather than strings; 2>$null
+    # discards them, and only the success stream is read.
+    $text = $null
     try {
-        $head = @(& git -C $Root rev-parse HEAD 2>$null)
+        $saved = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $head = @(& git -C $Root rev-parse HEAD 2>$null) }
+        finally { $ErrorActionPreference = $saved }
         if ($LASTEXITCODE -ne 0 -or $head.Count -eq 0) { $text = 'an unknown repository commit (git did not answer)' }
         else {
             $text = "repository commit $(([string]$head[0]).Trim())"
             if ($inside.Count -gt 0) {
-                $dirty = @(& git -C $Root status --porcelain -- $inside 2>$null)
+                $saved = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                try { $dirty = @(& git -C $Root status --porcelain -- $inside 2>$null) }
+                finally { $ErrorActionPreference = $saved }
                 if ($LASTEXITCODE -eq 0 -and $dirty.Count -gt 0) {
                     $text += " WITH UNCOMMITTED CHANGES to $($inside -join ' or '), so that commit does not fully describe these values"
                 }
@@ -1279,9 +1449,18 @@ function Invoke-SelfTest {
   "_note": "comment keys are ignored at every level",
   "machineProfile": "Portable",
   "testHubStoreDisplayName": "hub@render.invalid",
-  "expectedStoreDisplayNames": [ "hub@render.invalid", "Synthetic Corpus", "Synthetic Bystander", "identity@render.invalid" ],
+  "expectedStoreDisplayNames": [ "hub@render.invalid", "Synthetic Corpus", "bystander@render.invalid", "identity@render.invalid" ],
+  "indexedStoreDisplayNames": [ "hub@render.invalid", "bystander@render.invalid", "Synthetic Corpus" ],
   "expectedDelegateStoreDisplayNames": [],
-  "bystanderStoreDisplayNames": [ "Synthetic Bystander", "Synthetic Corpus" ],
+  "bystanderStoreDisplayNames": [ "bystander@render.invalid", "Synthetic Corpus" ],
+  "probeTerm": "invoice",
+  "subjectOnlyProbe": {
+    "_note": "the hub population's notices folder",
+    "storeDisplayName": "hub@render.invalid",
+    "folderPath": "Inbox/OutlookAI-Corpus-Folder-Notices",
+    "subjectTerm": "bulletin",
+    "senderFragment": "noticebot"
+  },
   "corpus": {
     "_note": "ignored too",
     "storeDisplayName": "Synthetic Corpus",
@@ -1301,7 +1480,7 @@ function Invoke-SelfTest {
   }
 }
 '@
-    $conventionText = '{ "assigned": [ { "corpusId": "vm-synthetic", "guest": "OutlookAI-Synthetic", "seed": 4242, "anchor": "2026-08-01", "itemCount": 1000 }, { "corpusId": "vm-other", "guest": "OutlookAI-Other", "seed": null, "anchor": null, "itemCount": null } ] }'
+    $conventionText = '{ "assigned": [ { "corpusId": "vm-synthetic", "guest": "OutlookAI-Synthetic", "indexed": true, "seed": 4242, "anchor": "2026-08-01", "itemCount": 1000, "minimumItemCount": 1000 }, { "corpusId": "vm-other", "guest": "OutlookAI-Other", "indexed": false, "seed": null, "anchor": null, "itemCount": null }, { "corpusId": "vm-unknown", "guest": "OutlookAI-Unknown", "seed": null, "anchor": null, "itemCount": null } ] }'
     $assigned = (ConvertFrom-JsonText -Text $conventionText -What 'the synthetic convention').assigned
 
     function New-Guest { return (ConvertFrom-JsonText -Text $guestText -What 'the synthetic guest') }
@@ -1415,7 +1594,7 @@ function Invoke-SelfTest {
     $shape = Get-TemplateFields -Template $template
     Test-Case 'every value in it is the token for its own path' '' ($shape.Problems -join ' | ')
     Test-Case 'it names exactly the fields this script has rules for' '' ((Get-TemplateDriftProblems -Fields $shape.Fields) -join ' | ')
-    Test-Case 'in order' 'machineProfile,testHubStoreDisplayName,expectedStoreDisplayNames,expectedDelegateStoreDisplayNames,bystanderStoreDisplayNames,corpus.storeDisplayName,corpus.manifestPath,corpus.corpusId,corpus.seed,corpus.anchorUtc,corpus.itemCount,corpus.windowDays,mailSink.submitHost,mailSink.submitPort,mailSink.retrieveHost,mailSink.retrievePort,mailSink.connectTimeoutMs' ((@($shape.Fields | ForEach-Object { $_.Path })) -join ',')
+    Test-Case 'in order' 'machineProfile,testHubStoreDisplayName,expectedStoreDisplayNames,indexedStoreDisplayNames,expectedDelegateStoreDisplayNames,bystanderStoreDisplayNames,probeTerm,subjectOnlyProbe.storeDisplayName,subjectOnlyProbe.folderPath,subjectOnlyProbe.subjectTerm,subjectOnlyProbe.senderFragment,corpus.storeDisplayName,corpus.manifestPath,corpus.corpusId,corpus.seed,corpus.anchorUtc,corpus.itemCount,corpus.windowDays,mailSink.submitHost,mailSink.submitPort,mailSink.retrieveHost,mailSink.retrievePort,mailSink.connectTimeoutMs' ((@($shape.Fields | ForEach-Object { $_.Path })) -join ',')
 
     $bad = ConvertFrom-JsonText -Text '{ "machineProfile": "Portable", "corpus": { "seed": "{{corpus.itemCount}}", "deep": { "x": "{{corpus.deep.x}}" } } }' -What 'a bad template'
     $badShape = Get-TemplateFields -Template $bad
@@ -1430,7 +1609,7 @@ function Invoke-SelfTest {
     $resolved = Resolve-GuestValues -Fields $shape.Fields -Guest (New-Guest) -Where 'the synthetic guest'
     Test-Case 'a complete guest has no problems' '' ($resolved.Problems -join ' | ')
     Test-Case 'and no block left out' 0 $resolved.Omitted.Count
-    Test-Case 'and every field has a value' 17 $resolved.ByPath.Count
+    Test-Case 'and every field has a value' 23 $resolved.ByPath.Count
 
     $guest = New-Guest
     $guest.testHubStoreDisplayName = '<FILL: from the guest>'
@@ -1531,7 +1710,9 @@ function Invoke-SelfTest {
     $parsed = ConvertFrom-JsonText -Text $text -What 'the rendered text'
     Test-Case 'it parses' $true (Test-IsJsonObject $parsed)
     Test-Case 'the hub arrives' 'hub@render.invalid' $parsed.testHubStoreDisplayName
-    Test-Case 'the store list arrives whole, in order' 'hub@render.invalid|Synthetic Corpus|Synthetic Bystander|identity@render.invalid' ($parsed.expectedStoreDisplayNames -join '|')
+    Test-Case 'the store list arrives whole, in order' 'hub@render.invalid|Synthetic Corpus|bystander@render.invalid|identity@render.invalid' ($parsed.expectedStoreDisplayNames -join '|')
+    Test-Case 'the indexed list arrives whole, in order' 'hub@render.invalid|bystander@render.invalid|Synthetic Corpus' ($parsed.indexedStoreDisplayNames -join '|')
+    Test-Case 'the probe term and the subject-only probe arrive' 'invoice|bulletin|noticebot' ('{0}|{1}|{2}' -f $parsed.probeTerm, $parsed.subjectOnlyProbe.subjectTerm, $parsed.subjectOnlyProbe.senderFragment)
     Test-Case 'an empty list arrives as a list' $true ($parsed.expectedDelegateStoreDisplayNames -is [System.Array])
     Test-Case 'the corpus arrives with its numbers as numbers' '4242|1000|7,30,60' ('{0}|{1}|{2}' -f $parsed.corpus.seed, $parsed.corpus.itemCount, ($parsed.corpus.windowDays -join ','))
     Test-Case 'and its anchor as the string it was' '2026-08-01T00:00:00Z' $parsed.corpus.anchorUtc
@@ -1545,6 +1726,8 @@ function Invoke-SelfTest {
     $guest = New-Guest
     $guest.corpus = $null
     $guest.mailSink = $null
+    # A corpus that is not built is not indexed either, so it leaves the indexed list with its block.
+    $guest.indexedStoreDisplayNames = @('hub@render.invalid', 'bystander@render.invalid')
     $resolved = Resolve-GuestValues -Fields $shape.Fields -Guest $guest -Where 'the synthetic guest'
     $text = (ConvertTo-JsonLiteral -Value (New-RenderedDocument -Fields $shape.Fields -Resolved $resolved -VMName $vm -Provenance 'a self-test' -RenderedAtUtc ([datetime]::UtcNow))) + "`n"
     $parsed = ConvertFrom-JsonText -Text $text -What 'the rendered text'
@@ -1553,6 +1736,23 @@ function Invoke-SelfTest {
     $problems = New-Object System.Collections.Generic.List[string]
     Add-SettingsProblems -Settings $parsed -VMName $vm -Assigned $assigned -Problems $problems
     Test-Case 'a guest with neither block breaks no rule' '' ($problems -join ' | ')
+
+    # The unindexed guest's shape: nothing indexed, no probe term, no subject-only probe - rendered,
+    # with the probe block left OUT, and accepted for a guest the record calls unindexed.
+    $guest = New-Guest
+    $guest.corpus = $null
+    $guest.indexedStoreDisplayNames = @()
+    $guest.probeTerm = ''
+    $guest.subjectOnlyProbe = $null
+    $resolved = Resolve-GuestValues -Fields $shape.Fields -Guest $guest -Where 'the synthetic guest'
+    $text = (ConvertTo-JsonLiteral -Value (New-RenderedDocument -Fields $shape.Fields -Resolved $resolved -VMName 'OutlookAI-Other' -Provenance 'a self-test' -RenderedAtUtc ([datetime]::UtcNow))) + "`n"
+    $parsed = ConvertFrom-JsonText -Text $text -What 'the rendered text'
+    Test-Case 'an unindexed guest''s probe block is absent from the file' $false ($null -ne (Get-ExactProperty $parsed 'subjectOnlyProbe'))
+    Test-Case 'and a note says why' $true ($null -ne (Get-ExactProperty $parsed '_subjectOnlyProbe'))
+    Test-Case 'and its indexed list is an empty LIST' $true ($parsed.indexedStoreDisplayNames -is [System.Array])
+    $problems = New-Object System.Collections.Generic.List[string]
+    Add-SettingsProblems -Settings $parsed -VMName 'OutlookAI-Other' -Assigned $assigned -Problems $problems
+    Test-Case 'the unindexed guest''s shape breaks no rule' '' ($problems -join ' | ')
 
     # ---------------------------------------------------------------------------------------
     Write-Host ''
@@ -1566,7 +1766,7 @@ function Invoke-SelfTest {
         return , $found.ToArray()
     }
 
-    Test-HasProblem 'Production is refused, and says why' (Get-RuleProblems { param($s) $s.machineProfile = 'Production' }) 'needs probeTerm'
+    Test-HasProblem 'Production is refused, and says why' (Get-RuleProblems { param($s) $s.machineProfile = 'Production' }) 'A test guest is Portable'
     Test-HasProblem 'a profile in the wrong case is refused' (Get-RuleProblems { param($s) $s.machineProfile = 'portable' }) "must be the string 'Portable'"
     Test-HasProblem 'a numeric profile is refused' (Get-RuleProblems { param($s) $s.machineProfile = 1 }) "must be the string 'Portable'"
     Test-HasProblem 'a missing profile is refused' (Get-RuleProblems { param($s) $s.PSObject.Properties.Remove('machineProfile') }) 'machineProfile: missing'
@@ -1578,7 +1778,7 @@ function Invoke-SelfTest {
     Test-HasProblem 'a census list that is not a list is refused' (Get-RuleProblems { param($s) $s.expectedStoreDisplayNames = 'hub@render.invalid' }) 'must be a list'
     Test-HasProblem 'a store named twice is refused' (Get-RuleProblems { param($s) $s.expectedStoreDisplayNames = @('hub@render.invalid', 'Synthetic Corpus', 'synthetic corpus', 'Synthetic Bystander') }) 'twice'
     Test-HasProblem 'a store name with a slash is refused' (Get-RuleProblems { param($s) $s.expectedStoreDisplayNames = @('hub@render.invalid', 'Synthetic Corpus', 'Synthetic Bystander', 'A/B') }) 'contains a slash'
-    Test-HasProblem 'a bystander missing from the census list is refused - the double declaration' (Get-RuleProblems { param($s) $s.expectedStoreDisplayNames = @('hub@render.invalid', 'Synthetic Corpus') }) "'Synthetic Bystander' is not ALSO in expectedStoreDisplayNames"
+    Test-HasProblem 'a bystander missing from the census list is refused - the guest convention' (Get-RuleProblems { param($s) $s.expectedStoreDisplayNames = @('hub@render.invalid', 'Synthetic Corpus') }) "'bystander@render.invalid' is not ALSO in expectedStoreDisplayNames"
     Test-HasProblem 'the hub declared a bystander is refused' (Get-RuleProblems { param($s) $s.bystanderStoreDisplayNames = @('Synthetic Bystander', 'Synthetic Corpus', 'hub@render.invalid') }) 'names the hub'
     Test-HasProblem 'no bystander at all is refused, in the tier''s own words' (Get-RuleProblems { param($s) $s.bystanderStoreDisplayNames = @(); $s.corpus = $null }) 'NO STORE THIS CENSUS WATCHES CAN PRODUCE A FAILURE'
     Test-HasProblem 'a delegate that is also in the census list is refused' (Get-RuleProblems { param($s) $s.expectedDelegateStoreDisplayNames = @('identity@render.invalid') }) 'inside the identity-draft grant'
@@ -1608,9 +1808,31 @@ function Invoke-SelfTest {
     Test-HasProblem 'a sink port of zero is refused' (Get-RuleProblems { param($s) $s.mailSink.retrievePort = 0 }) 'must be a port number'
     Test-HasProblem 'a sink port past 65535 is refused' (Get-RuleProblems { param($s) $s.mailSink.submitPort = 70000 }) 'must be a port number'
     Test-HasProblem 'a sink timeout of zero is refused' (Get-RuleProblems { param($s) $s.mailSink.connectTimeoutMs = 0 }) 'connectTimeoutMs'
-    Test-HasProblem 'a field nobody wrote a rule for is refused' (Get-RuleProblems { param($s) $s | Add-Member -NotePropertyName 'probeTerm' -NotePropertyValue 'x' }) 'probeTerm: not a field this script has a rule for'
-    Test-HasProblem 'one store spelt two ways is refused' (Get-RuleProblems { param($s) $s.bystanderStoreDisplayNames = @('synthetic bystander', 'Synthetic Corpus') }) "where expectedStoreDisplayNames spells it 'Synthetic Bystander'"
+    Test-HasProblem 'a field nobody wrote a rule for is refused' (Get-RuleProblems { param($s) $s | Add-Member -NotePropertyName 'delegateNestedFolderProbe' -NotePropertyValue 'x' }) 'delegateNestedFolderProbe: not a field this script has a rule for'
+    Test-HasProblem 'one store spelt two ways is refused' (Get-RuleProblems { param($s) $s.bystanderStoreDisplayNames = @('BYSTANDER@render.invalid', 'Synthetic Corpus') }) "where expectedStoreDisplayNames spells it 'bystander@render.invalid'"
     Test-Case 'faults are all reported together' $true ((Get-RuleProblems { param($s) $s.machineProfile = 'Production'; $s.mailSink.submitHost = '10.0.0.1'; $s.corpus.itemCount = 0 }).Count -ge 3)
+
+    # The indexed list, the probe values and the addresses.
+    Test-HasProblem 'an indexed store the census does not watch is refused' (Get-RuleProblems { param($s) $s.indexedStoreDisplayNames = @('hub@render.invalid', 'nobody@render.invalid', 'Synthetic Corpus') }) 'in neither expectedStoreDisplayNames nor bystanderStoreDisplayNames'
+    Test-HasProblem 'a delegate in the indexed list is refused' (Get-RuleProblems { param($s) $s.expectedDelegateStoreDisplayNames = @('shared@render.invalid'); $s.indexedStoreDisplayNames = @('hub@render.invalid', 'shared@render.invalid', 'Synthetic Corpus') }) 'is a delegate mailbox'
+    Test-HasProblem 'the hub must come first in the indexed list' (Get-RuleProblems { param($s) $s.indexedStoreDisplayNames = @('bystander@render.invalid', 'hub@render.invalid', 'Synthetic Corpus') }) 'must come FIRST'
+    Test-HasProblem 'an indexed list without the hub is refused' (Get-RuleProblems { param($s) $s.indexedStoreDisplayNames = @('bystander@render.invalid', 'Synthetic Corpus') }) 'must come FIRST'
+    Test-HasProblem 'the corpus must come last in the indexed list' (Get-RuleProblems { param($s) $s.indexedStoreDisplayNames = @('hub@render.invalid', 'Synthetic Corpus', 'bystander@render.invalid') }) 'must come LAST'
+    Test-HasProblem 'a small indexed store not named as an address is refused' (Get-RuleProblems { param($s) $s.expectedStoreDisplayNames += 'Plain Store'; $s.bystanderStoreDisplayNames += 'Plain Store'; $s.indexedStoreDisplayNames = @('hub@render.invalid', 'Plain Store', 'Synthetic Corpus') }) 'is not named as an address'
+    Test-HasProblem 'an address outside .invalid is refused' (Get-RuleProblems { param($s) $s.expectedStoreDisplayNames += 'mail@example.com'; $s.bystanderStoreDisplayNames += 'mail@example.com' }) 'outside the RFC 2606 .invalid domain'
+    Test-HasProblem 'the indexed guest names indexed stores' (Get-RuleProblems { param($s) $s.indexedStoreDisplayNames = @() }) 'records as INDEXED'
+    Test-HasProblem 'the unindexed guest names none' (Get-RuleProblems -ForVm 'OutlookAI-Other' { param($s) $s.corpus = $null; $s.PSObject.Properties.Remove('corpus'); $s.probeTerm = ''; $s.PSObject.Properties.Remove('subjectOnlyProbe') }) 'records as UNINDEXED'
+    Test-HasProblem 'a record that does not say whether the guest is indexed is refused' (Get-RuleProblems -ForVm 'OutlookAI-Unknown' { param($s) $s.PSObject.Properties.Remove('corpus') }) "carries no true/false 'indexed'"
+    Test-HasProblem 'a probe term of two words is refused' (Get-RuleProblems { param($s) $s.probeTerm = 'two words' }) 'is not one plain word'
+    Test-HasProblem 'the indexed guest needs a probe term' (Get-RuleProblems { param($s) $s.probeTerm = '' }) 'empty on the INDEXED guest'
+    Test-HasProblem 'the unindexed guest carries none' (Get-RuleProblems -ForVm 'OutlookAI-Other' { param($s) $s.PSObject.Properties.Remove('corpus'); $s.indexedStoreDisplayNames = @(); $s.PSObject.Properties.Remove('subjectOnlyProbe') }) 'on a guest with no index'
+    Test-HasProblem 'the subject-only probe lives in the hub' (Get-RuleProblems { param($s) $s.subjectOnlyProbe.storeDisplayName = 'bystander@render.invalid' }) 'is not the hub'
+    Test-HasProblem 'a partial subject-only probe is refused' (Get-RuleProblems { param($s) $s.subjectOnlyProbe.PSObject.Properties.Remove('subjectTerm') }) 'subjectOnlyProbe.subjectTerm: missing'
+    Test-HasProblem 'a subject term too short to stem is refused' (Get-RuleProblems { param($s) $s.subjectOnlyProbe.subjectTerm = 'abc' }) 'at least five letters'
+    Test-HasProblem 'a folder path with a leading slash is refused' (Get-RuleProblems { param($s) $s.subjectOnlyProbe.folderPath = '/Inbox/x' }) 'forward slashes and none at either end'
+    Test-HasProblem 'the indexed guest needs the subject-only probe' (Get-RuleProblems { param($s) $s.PSObject.Properties.Remove('subjectOnlyProbe') }) 'absent on the INDEXED guest'
+    Test-HasProblem 'a subject-only probe written as null is refused - absent means left out' (Get-RuleProblems { param($s) $s.subjectOnlyProbe = $null }) 'never written as null'
+    Test-HasProblem 'a corpus below the recorded minimum size is refused' (Get-RuleProblems { param($s) $s.corpus.itemCount = 999 }) 'below the 1000 corpusIdConvention requires'
 
     # ---------------------------------------------------------------------------------------
     Write-Host ''
@@ -1744,7 +1966,16 @@ Write-Host ("  sha256      {0}" -f $hash)
 Write-Host ("  profile     {0}" -f $parsed.machineProfile)
 Write-Host ("  hub         {0}   - the one store the suite may write to" -f $hub)
 Write-Host ("  watched     {0} store(s): {1}" -f @($parsed.expectedStoreDisplayNames).Count, (@($parsed.expectedStoreDisplayNames) -join ', '))
+$indexedList = @($parsed.indexedStoreDisplayNames)
+if ($indexedList.Count -gt 0) {
+    Write-Host ("  indexed     {0} store(s), in the order the index tests read them: {1}" -f $indexedList.Count, ($indexedList -join ', '))
+}
+else { Write-Host '  indexed     none - this guest has no index, and the index tests refuse rather than pass here' }
 Write-Host ("  bystanders  {0}   - denied every write, and censused" -f ($bystanderList -join ', '))
+if (([string]$parsed.probeTerm).Length -gt 0) { Write-Host ("  probeTerm   {0}" -f $parsed.probeTerm) }
+if ($null -ne (Get-ExactProperty $parsed 'subjectOnlyProbe')) {
+    Write-Host ("  SF-6 probe  '{0}' in {1}, term {2}, sender {3}" -f $parsed.subjectOnlyProbe.folderPath, $parsed.subjectOnlyProbe.storeDisplayName, $parsed.subjectOnlyProbe.subjectTerm, $parsed.subjectOnlyProbe.senderFragment)
+}
 if ($grant.Count -gt 0) {
     Write-Host ("  identity    {0}   - draft and delete only: the identity tests write here" -f ($grant -join ', '))
 }
@@ -1764,6 +1995,8 @@ Write-Host 'NOT CHECKED HERE - only the guest can answer these, and a wrong answ
 Write-Host '  * that the TIER profile mounts every store named above, under exactly these names'
 Write-Host '    (a declared store the running profile does not mount is censused, not found, and refused)'
 Write-Host '  * that the hub is an account''s delivery store, and that account''s SmtpAddress is the hub''s name'
+Write-Host '  * that the hub and bystander POPULATIONS are built and censused (Docs/live-tier-on-the-vm.md section 3b) -'
+Write-Host '    every hub test, and the probe values above, read them'
 if ($null -ne (Get-ExactProperty $parsed 'corpus')) {
     Write-Host ("  * that {0} exists on the guest, and the corpus is still fresh - the tier checks both at start" -f $parsed.corpus.manifestPath)
 }

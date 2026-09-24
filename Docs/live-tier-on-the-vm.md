@@ -97,51 +97,108 @@ So corpus work happens in a profile with **no accounts**, and the tier runs in a
 has the dummy account. Switching between them is a restart of Outlook, and it recurs: every
 corpus rebuild is another switch.
 
-### 1.3 Three stores, because two do not compose
+### 1.3 The stores, the two lists, and what every store holds
 
-| Store | Indexed | Purpose |
-| --- | --- | --- |
-| Corpus A | **yes** | the index tier, and the shape most `Requires=SearchIndex` tests want |
-| Corpus B | **no** | the degraded path: no index frontier, the seven-day fallback window, the sweep and frame measurements |
-| Bystander | either | the store the count tripwire actually watches, and the absent-arrival-folders shape |
+**Rewritten 2026-09-24** for two decisions the maintainer made that day (Q70): the generator now
+builds a small, tagged **population** into the hub and the bystander (and the identity store), and
+the one list that used to mean two things is **split into a watched list and an indexed list**.
+Everything below describes that final shape.
 
-**The "no" in row two is a property of the MACHINE, not of that store** (2026-09-16). The
-exclusion is per Windows account, so on the unindexed guest **the hub and the bystander are
-unindexed too** - every store on it is. That is intended and costs nothing, because the tests
-that need an index run on the other guest; but the table reads as though only Corpus B were
-affected, and a rebuilder will otherwise expect the hub on that guest to be searchable and
-treat its empty `index.perStore[]` row as a fault.
+| Store | Named | Watched | Indexed list | What is in it |
+| --- | --- | --- | --- | --- |
+| Hub | as its account's address, e.g. `tier@vm.invalid` | yes | **first**, on the indexed guest | the **hub population** (56 items, section 3b) plus whatever a run is writing |
+| Bystander | as an address, e.g. `bystander@vm.invalid` | yes, and a **declared bystander** | **second**, on the indexed guest | the **bystander population** (300 items, section 3b) - never written by a test |
+| Corpus A / Corpus B | anything - `Corpus A` in the examples | yes, and a **declared bystander** | **last**, on the indexed guest | the measurement corpus: at least **160,000** items on the indexed guest (`minimumItemCount` in `Testbed/testbed.json`); no minimum is recorded for the unindexed guest's |
 
-The bystander is the one people leave out, and the tripwire is useless without it. The
-tripwire **exempts the hub**, because the hub is where the suite writes; a machine whose only
-store is the hub gets a guard that censuses, reports zero failures, and is structurally
-incapable of reporting anything else. The bystander must therefore be a store **no test ever
-touches**, and it must hold a few hundred items rather than none, because an empty store
-exercises the item-by-item identity path over nothing.
+These three are the floor, and the shape of the committed example (section 2.8b says why the table
+stays there). **Section 2.8b adds a fourth store, the identity account's**: named as its address, e.g.
+`identity@vm.invalid`; watched and **not** a declared bystander, which is the point of it; **not** in
+the indexed list; holding the **identity population** (8 items, section 3b) plus the identity tests'
+transient drafts.
 
-A corpus is the wrong shape for that job. The identity budget is 500 items per folder and
-3,000 per store; a 20,000-item corpus is over both in all four populated folders, so every one
-of them falls back to a bare count. A few hundred items in a small store is what the guard
-wants.
+**The indexed list is empty on the unindexed guest** - the exclusion is per machine (section 1.1a),
+so every store there is unindexed, hub and bystander included. That is intended and costs nothing,
+because the tests that need an index run on the other guest; a rebuilder should not read an empty
+`index.perStore[]` row there as a fault.
 
-**A bystander is DECLARED, not merely listed - and listing it in only one place is a REFUSAL,
-not a warning (2026-08-24).** It must appear in **both**:
+#### The two lists (split 2026-09-24)
 
-* `expectedStoreDisplayNames` - which is what censuses it, and what `list_accounts` exactness
-  counts. Removing it from here does not make it a bystander; it makes it invisible.
-* `bystanderStoreDisplayNames` - which is what the write allowlist refuses on.
+`expectedStoreDisplayNames` used to mean two things at once, and a machine could only be described
+truthfully while the two happened to coincide. They are now two lists:
 
-Name it in one and not the other and the tier stops, deliberately. The half-declared state used
-to be a warning, which meant a machine could run for months believing a store was protected
-when the guard had never been told.
+* **`expectedStoreDisplayNames` - the WATCHED list.** Every store the tier profile mounts. It is
+  what the count tripwire censuses (with the bystander and delegate lists unioned in), what the
+  identity-draft grant is drawn from, what `list_accounts` exactness counts, what `outlook_health`'s
+  reachability check reads, and what the archive-resolution test walks.
+* **`indexedStoreDisplayNames` - the INDEXED list.** The stores the index-tier tests measure, in
+  order; each must be discoverable in the search index with mail in it. **Absent, it means exactly
+  the watched list** - which is what every index test read before the split, so a settings file
+  written earlier behaves as it did. Present, it may name only watched stores, never a delegate
+  mailbox, and must include the hub; empty is allowed only on a Portable machine, and there every
+  index test **refuses** rather than iterate nothing (`LiveTestSettings.RequireIndexedStores`).
 
-**Both corpus stores are declared bystanders too.** They are stores no test may write to, which
-is exactly what the declaration means. Before that was true, the identity tests resolved to
-`Corpus A` and drafted **into the measurement corpus**.
+The identity store is the reason the split had to happen: it is watched, written to and granted,
+and holds almost nothing - one list could not say "watch it, but do not demand an index scope of it".
+The admission check (`TripwireWatchSoundness`) does not read the indexed list at all.
+`T1/StoreListSplitTests` pins both the loader rules and, from the compiled IL, which consumer reads
+which list.
 
-**`Corpus B` is deliberately NOT declared in this machine's settings file.** It lives in the
-other Windows account's profile, and a declared bystander the running profile does not mount is
-censused, not found, and refuses the tier. It belongs in *that* account's settings file.
+**The ORDER of the indexed list is read.** Several index tests read its first entry - the post-filter,
+the filter shapes, the sender filter - so the hub, whose population carries attachments, unread mail
+and senders, comes first. The exclude-subfolders measurement takes the first non-hub entry and needs a
+mail folder with populated children, which only the bystander population has - so the bystander comes
+second and the corpus last. `Testbed/host/New-LiveTestSettings.ps1` refuses any other order.
+
+**Every indexed store except the corpus is named as an `.invalid` address.** Not tidiness: the product
+finds a small store in the index only through mail addressed to it (`TryDiscoverStoreScopeByAddress`),
+and its own search and `outlook_health` try that only for a name shaped like an address
+(`MailService.ResolveFolderScope`, `ProbeStoreInIndex`). A 300-item bystander named `OutlookAI
+Bystander` beside a 160,000-item corpus is missed by the 2000-row discovery sample, and health then
+reports it missing from the index. The corpus dominates that sample and may keep a plain name. Every
+population item is addressed to or sent from its store's owner for the same reason.
+
+#### The bystander
+
+The tripwire **exempts the hub**, because the hub is where the suite writes; a machine whose only
+store is the hub gets a guard that censuses, reports zero failures, and is structurally incapable of
+reporting anything else - and the tier refuses to start on it (`NO STORE THIS CENSUS WATCHES CAN
+PRODUCE A FAILURE`). The bystander must therefore be a store **no test ever touches**, and it must hold
+a few hundred items rather than none, because an empty store exercises the item-by-item identity path
+over nothing. A corpus is the wrong shape for that: the identity budget is 500 items per folder and
+3,000 per store, and a corpus is over both in every populated folder, so it falls back to bare counts.
+
+**It is populated by the generator** (`corpus-build --population bystander`, section 3b) - 300 tagged
+items in four folders, every one inside the identity budget, two of them subfolders of the Inbox. The
+earlier objection that "the generator tags everything it creates, and the bystander's whole job is to
+be untouched" does not hold: the tag is the CORPUS tag, which no artifact sweep can select, and no test
+writes to the store either way.
+
+#### What each list refuses, and what it does not (corrected 2026-09-24, Q77)
+
+This section used to say that a bystander named in only one of `expectedStoreDisplayNames` and
+`bystanderStoreDisplayNames` refuses the tier. **The code does not do that, and on the maintainer's
+decision the documents now say what the code does:**
+
+* **`bystanderStoreDisplayNames` is what DECLARES a bystander.** It denies the store every kind of
+  write and keeps it in the census - the census watches every declared bystander **whether or not
+  `expectedStoreDisplayNames` names it**, deliberately, so the declaration alone is sufficient
+  (`T1/TripwireBystanderStoreTests.TheCensusWatchesEveryDeclaredBystanderEvenOneNoOtherListNames`).
+* **A store in `expectedStoreDisplayNames` and not declared is inside the identity-draft grant.** That
+  is the identity account's legitimate shape (section 2.8b), not a mistake. The tier refuses it only in
+  the one case that matters: when no watched store is left that is both non-hub and denied every
+  write, because then the census can fail on nothing.
+* **On a test guest, name every mounted store in `expectedStoreDisplayNames` as well** - declared
+  bystanders included. The tier would not refuse the omission, but `outlook_health`'s reachability
+  check and `list_accounts` exactness read only that list, and a store missing from it is one they
+  never look for. The renderer holds guests to this; the maintainer's own file is not held to it.
+
+**Both corpus stores are declared bystanders.** They are stores no test may write to, which is exactly
+what the declaration means. Before that was true, the identity tests resolved to `Corpus A` and drafted
+**into the measurement corpus**.
+
+**`Corpus B` is deliberately NOT declared in the indexed guest's settings file.** It lives on the other
+guest, and a declared bystander the running profile does not mount is censused, not found, and refuses
+the tier. It belongs in *that* guest's settings file.
 
 ### 1.4 A dummy account, and NO SINK - decided 2026-09-15
 
@@ -472,6 +529,21 @@ script:
 * **Attaching an existing store that already holds items is NOT covered by this narrowing.** It
   is one step from there to a script that opens a real mailbox, which is where the original rule
   came from.
+* **ONE ADDITION, written out because Q70 needs it (2026-09-24): a store this testbed created may be
+  attached to the guest's OTHER profile as well - while it still holds no items.** The generator
+  builds only in the account-less corpus profile and refuses, with no override and rightly, any
+  profile holding an account; the tests run in the tier profile. So every store that gets a
+  generated population - the hub, the bystander, the identity store - has to be mounted in both,
+  as a corpus store is. And the hub cannot simply be created in the corpus profile, because only a
+  store Outlook mints in the tier profile becomes the dummy account's delivery store. The line is
+  drawn at EMPTY, as the one above is: attach the store to its second profile straight after it is
+  created, before any population is built into it and before any test has run against it. Section
+  3b gives the order. `Add-OutlookPstStore.ps1` is what does it - `AddStoreEx` opens a file that is
+  already there instead of creating one - and it still never reads, moves or deletes an item.
+  **A store that already holds items is still never attached by script, whatever its origin:** if
+  a profile ever has to be rebuilt around a populated store, add that store through the GUI and
+  say so in the session log. **This ADDS to the line drawn above rather than reading it more
+  generously, and the maintainer should see it as an addition.**
 
 **Why write the boundary out rather than just permitting it.** A rule narrowed by precedent keeps
 narrowing - the next person reasons "it's only a store" and then "it's only one item". A rule
@@ -531,14 +603,25 @@ Naming matters more than it looks:
 * **The dummy account's delivery store must be a separate throwaway PST**, not a corpus store.
   An account delivering into the corpus store can flip that store's `IsDataFileStore`, and
   `CorpusSafety` reads that property as one of four independent facts it requires before it
-  will write anything. Get it wrong and the generator refuses that store permanently.
-* **The bystander is DECLARED in two places and is never the hub.** It goes in
-  `expectedStoreDisplayNames` (which censuses it) **and** in `bystanderStoreDisplayNames`
-  (which makes the write allowlist refuse it). Naming it in only one of the two **refuses the
-  tier** - see section 1.3. The same double declaration applies to `Corpus A`.
+  will write anything. In the TIER profile, that is. Whether the same PST attached to the
+  account-less corpus profile reads `IsDataFileStore = true` there - it has no account delivering
+  into it in that profile - is what the hub population's first build establishes (section 3b); the
+  code says it should, and nothing has run it.
+* **The bystander is named as an `.invalid` address too**, e.g. `bystander@vm.invalid`, and so is the
+  identity store. Section 1.3 says why: the product finds a small store in the index only through
+  mail addressed to it, and only for a name shaped like an address. Only the corpus - big enough to
+  dominate the index's discovery sample - may keep a plain name.
+* **The bystander is DECLARED, and is never the hub.** It goes in `bystanderStoreDisplayNames`,
+  which denies it every write and keeps it censused; on a test guest it goes in
+  `expectedStoreDisplayNames` as well, because that is the list `outlook_health` and `list_accounts`
+  read. **Naming it in only the bystander list does NOT refuse the tier** - the census adds declared
+  bystanders back in - and a store named only in `expectedStoreDisplayNames` is inside the
+  identity-draft grant, which is the identity account's legitimate shape; section 1.3 has the one
+  case that does refuse. The same declaration applies to `Corpus A`.
 
-Populate the bystander with a few hundred ordinary items. The corpus generator cannot honestly
-do this: it tags everything it creates, and the bystander's whole job is to be untouched.
+**Populate the hub and the bystander with the generator**, not by hand: `corpus-build --population
+hub` and `--population bystander` build a small, tagged, deterministic population into each (section
+3b). The identity store gets `--population identity` once section 2.8b has built it.
 
 ### 2.7 The mail sink
 
@@ -765,16 +848,22 @@ population.
 > where the maintainer's own hand-written file lives. Everything below still describes the file,
 > and is still how the maintainer's own is written.
 >
-> **One rule in the table below is stricter than the code, and that is recorded rather than
-> resolved.** It says naming a store in only one of `expectedStoreDisplayNames` and
-> `bystanderStoreDisplayNames` refuses the tier. Read against the code on 2026-09-24, that holds
-> only for a store left OUT of the bystander list, and only when that leaves the count tripwire
-> nothing it could fail on - otherwise such a store is simply inside the identity-draft grant,
-> which is exactly what section 2.8b's identity account is meant to be. A bystander left out of
-> `expectedStoreDisplayNames` is not refused at all: the census adds declared bystanders back in
-> (`T1/TripwireBystanderStoreTests.TheCensusWatchesEveryDeclaredBystanderEvenOneNoOtherListNames`).
-> The renderer refuses that second shape itself. Whether the table or the loader should change is
-> an open question for the maintainer.
+> **The table below used to be stricter than the code; since 2026-09-24 (Q77) it says what the code
+> does.** It said naming a store in only one of `expectedStoreDisplayNames` and
+> `bystanderStoreDisplayNames` refuses the tier. It does not: a bystander left out of
+> `expectedStoreDisplayNames` is still censused, because the census adds declared bystanders back in
+> on purpose (`T1/TripwireBystanderStoreTests.TheCensusWatchesEveryDeclaredBystanderEvenOneNoOtherListNames`),
+> and a store in `expectedStoreDisplayNames` that is not declared is inside the identity-draft grant,
+> which is exactly the shape section 2.8b's identity account is meant to have. The tier refuses only
+> when that leaves the count tripwire nothing it could fail on. The maintainer chose to correct the
+> documents rather than tighten the loader. **The renderer still holds a guest to the stricter
+> shape** - every declared bystander named in `expectedStoreDisplayNames` too - because that list is
+> also what `outlook_health` and `list_accounts` read, and on a machine this project builds there is
+> no reason to leave a store out of it.
+>
+> **And the one list that used to mean two things is two lists (Q70, 2026-09-24):**
+> `expectedStoreDisplayNames` is the WATCHED list and `indexedStoreDisplayNames` the INDEXED one.
+> Section 1.3 says why, and what reads which.
 
 Create `McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json`. It is
 gitignored and must stay that way: it names real stores and this repository is public. Without
@@ -784,9 +873,17 @@ it the whole live tier refuses to start.
 {
   "machineProfile": "Portable",
   "testHubStoreDisplayName": "test@vm.invalid",
-  "expectedStoreDisplayNames": [ "test@vm.invalid", "Corpus A", "OutlookAI Bystander" ],
-  "bystanderStoreDisplayNames": [ "OutlookAI Bystander", "Corpus A" ],
+  "expectedStoreDisplayNames": [ "test@vm.invalid", "bystander@vm.invalid", "Corpus A" ],
+  "indexedStoreDisplayNames": [ "test@vm.invalid", "bystander@vm.invalid", "Corpus A" ],
+  "bystanderStoreDisplayNames": [ "bystander@vm.invalid", "Corpus A" ],
   "expectedDelegateStoreDisplayNames": [],
+  "probeTerm": "invoice",
+  "subjectOnlyProbe": {
+    "storeDisplayName": "test@vm.invalid",
+    "folderPath": "Inbox/OutlookAI-Corpus-Folder-Notices",
+    "subjectTerm": "bulletin",
+    "senderFragment": "noticebot"
+  },
   "corpus": {
     "storeDisplayName": "Corpus A",
     "manifestPath": "D:\\corpus\\vm1.jsonl",
@@ -809,11 +906,12 @@ it the whole live tier refuses to start.
 | --- | --- | --- |
 | `machineProfile` | `Production` or `Portable`. Absent means `Production`, so an older settings file keeps the validation it was written under. Accepted as a string or a number. | no |
 | `testHubStoreDisplayName` | Display name of the store the suite may write to, exactly as Outlook shows it. Doubles as an SMTP address. | **yes** |
-| `expectedStoreDisplayNames` | Every store the count tripwire watches. Include the hub. | **yes** |
-| `bystanderStoreDisplayNames` | Stores the write allowlist must **refuse**. Every name here must also be in `expectedStoreDisplayNames`; naming a store in only one of the two refuses the tier. Both corpus stores belong here. | no |
+| `expectedStoreDisplayNames` | The **WATCHED** list: every store the tier profile mounts. The count tripwire censuses it (with the bystander and delegate lists unioned in); the identity-draft grant, `list_accounts` exactness, `outlook_health`'s reachability check and the archive-resolution test read it. Include the hub. | **yes** |
+| `indexedStoreDisplayNames` | The **INDEXED** list: the stores the index-tier tests measure, in order - the hub first, the bystander second, the corpus last (section 1.3 says why the order is read). Every entry must be watched; never a delegate mailbox; must include the hub unless empty. **Absent means "the same as the watched list"**, which is what every file written before the split meant. Empty only on a `Portable` machine, and there every index test refuses rather than iterate nothing. | no |
+| `bystanderStoreDisplayNames` | Stores the write allowlist must **refuse**. Declaring a store here is sufficient to have it censused - the census adds declared bystanders back in - so leaving one out of `expectedStoreDisplayNames` does not refuse the tier; name it there too all the same, because `outlook_health` and `list_accounts` read only that list, and the renderer holds a test guest to it. Both corpus stores belong here, and so does the bystander. Never the hub. | no |
 | `expectedDelegateStoreDisplayNames` | Delegate/shared mailboxes. Watched, never written, folder hierarchy allowed to come and go. Empty here. | no |
-| `probeTerm` | A word proven to hit this machine's search index. | Production only |
-| `subjectOnlyProbe` | Coordinates of a population whose term is in the subject and not the body. Four fields, all or none. | Production only |
+| `probeTerm` | A word proven to hit this machine's search index, in every indexed store and in one text attachment of the hub. On a test guest it is the generator's `CorpusPopulation.ProbeTerm`, `invoice`; empty on a guest with no index. | Production only |
+| `subjectOnlyProbe` | Coordinates of a population whose term is in the subject and not the body. Four fields, all or none. On the indexed test guest it is the hub population's Notices folder, and three of the four values are generator constants (`corpus-plan --population hub` prints them); only the store - the hub - is read off the guest. Absent on a guest with no index. | Production only |
 | `delegateNestedFolderProbe` | A delegate folder Outlook nests and the index publishes flat. | never |
 | `corpus` | Where the measurement corpus is and what it was generated from, so the tier can prove it is still measurable. Six fields plus optional `windowDays`. | no, all or none |
 | `mailSink` | Loopback submission and retrieval endpoints. **Absent is AMBIGUOUS and that is a known hazard: it means EITHER this machine has real transport OR it has none at all.** The testbed guests are the second case (decided 2026-09-15, no sink), the maintainer's machine is the first, and the settings file cannot currently tell them apart - so a guest with no transport reads exactly like a machine with perfect transport. See the no-sink decision in section 1.4. | no, all or none |
@@ -919,6 +1017,158 @@ it applied to re-anchoring too, which also touched every item.
 **The one remaining use of the old verb** is `--diagnose-write-path`, named after the only
 thing it is still good for: establishing whether date writes land on an existing item on a
 given machine. It prints the retirement notice as well.
+
+---
+
+## 3b. Keeping the fixture populations usable
+
+**Added 2026-09-24 for Q70. NOTHING IN THIS SECTION HAS RUN ON A GUEST.** The generator half is
+built and pinned on the host - `T1/CorpusPopulationTests`, 50 cases, no Outlook - and every step
+below that opens a store is guest-only and unmeasured. The first build of each population is what
+answers the questions at the end of this section.
+
+**What a population is.** A small, curated, deterministic set of items the corpus generator builds
+into a store the measurement corpus cannot serve: `corpus-build --population hub|bystander|identity`.
+Same generator, same guards - the store allowlist, the four store facts, no account in the profile,
+none of them overridable - the same `[OutlookAI-Corpus]` tag, the same manifest and the same two-key
+teardown. What it adds is exactly what the corpus leaves out on purpose: senders and recipients,
+attachments, conversations with more than one member, created subfolders, and every item addressed
+to or sent from the store's owner, which is what lets the index find a small store at all (section
+1.3).
+
+| Population | Built into | Items | What it carries, and for whom |
+| --- | --- | --- | --- |
+| `hub` | the hub, `testHubStoreDisplayName` | 56 | Four conversations of four, alternating Inbox and Sent Items, whose newest member is the newest item in the store - one minute before the anchor. Sixteen received and six sent singles; six items in `Inbox/OutlookAI-Corpus-Folder-Projects`. Eleven attachments - PNG, `.ics`, `.eml` and text, and one mail carrying three - with the probe term `invoice` in one text attachment and in its parent's body. Read and unread mail. And the SF-6 subject-only population: twelve items in `Inbox/OutlookAI-Corpus-Folder-Notices`, all from `Noticebot Relay <noticebot@alerts.invalid>` and nobody else, `bulletin` in every subject and in no body. For the tests that read, page, cap or walk the hub; the index tests that read the first indexed store; SF-6; the attachment-kind recall; the conversation walk; the staleness frontier. |
+| `bystander` | the plain bystander | 300 | Six conversations of three; 160 received and 50 sent singles spread over two years, one in eight received with an attachment; two populated subfolders of the Inbox, `-Projects` (40) and `-Suppliers` (32). Every folder inside the census identity budget. For the count tripwire's item-by-item path and the exclude-subfolders measurement. |
+| `identity` | the identity account's delivery store (section 2.8b) | 8 | Five received, three sent, all to or from its owner - so the index knows the store exists and `outlook_health` does not report it missing. |
+
+**It costs nothing to look at one.** `corpus-plan` is pure - no Outlook, runnable on the host - and
+for a hub population it also prints the values a settings file must carry:
+
+```
+dotnet run --project McpServer/OutlookAI.RemediationTools/OutlookAI.RemediationTools.csproj -- \
+  corpus-plan --population hub --store tier@vm.invalid \
+  --corpus-id hub-indexed --seed 8181 --anchor 2026-09-24T08:00:00Z
+```
+
+`--store` is required even here, because the store's name decides the owner every item is addressed
+to. `--count` may be left out: a population's size is part of what it is, and a different number is
+refused rather than building part of one.
+
+**The ids and seeds are assigned**, in `Testbed/testbed.json` under
+`corpusIdConvention.populations` - `hub-indexed` 8181, `bystander-indexed` 8282, `identity-indexed`
+8383, and `hub-unindexed` / `bystander-unindexed` on the other guest - for the same reason the corpus
+ids are (section 2.9): the manifest is `corpus-<id>.jsonl`, every guest's manifest lands in one pull
+directory, and a manifest is the only allowlist teardown will delete from. **The anchor is not
+fixed**, and for the hub that is the point; see below.
+
+### Building them the first time
+
+Every store that gets a population must be mounted in BOTH profiles - built in the account-less one,
+read in the tier one - and attached to its second profile **while it is still empty** (section 2.6,
+the addition written out there). So the order is:
+
+1. **In the tier profile**, after sections 2.5 and 2.8: the hub exists, minted by
+   `New-TierProfile.ps1` (by default `C:\OutlookAI-Tier\tier.pst`) and named by
+   `Rename-OutlookStore.ps1`. Create the bystander here too, new and empty, with
+   `Add-OutlookPstStore.ps1`. Once section 2.8b has minted the identity account's store, it is here
+   as well.
+2. **Switch the default to the corpus profile** (`Set-DefaultOutlookProfile.ps1`) and restart
+   Outlook - gracefully, under mailbox-safety rule 7.
+3. **Attach each of those stores to the corpus profile by its path, before anything is in it**:
+   `Add-OutlookPstStore.ps1 -ProfileName <corpus profile> -DisplayName tier@vm.invalid -Path
+   C:\OutlookAI-Tier\tier.pst -Execute`, and the same for the bystander and the identity store. The
+   name must come back byte-identical to the one the tier profile shows; the script checks.
+4. **Build each population there**, as for a corpus: `corpus-probe`, then `corpus-build` dry, then
+   `corpus-build --execute`, which runs its own census. For the hub:
+
+   ```
+   dotnet run --project <as above> -- corpus-build --population hub \
+     --store tier@vm.invalid --allow-store tier@vm.invalid \
+     --corpus-id hub-indexed --seed 8181 --anchor <now, UTC, to the second> \
+     --manifest C:\OutlookAI-Q5\corpus-hub-indexed.jsonl --execute
+   ```
+
+   Before letting it proceed, read its own output: the store and profile lines accepted, `profile
+   accounts: 0`, both corpus probes verified, and **`== enrichment probe ==` reporting sender,
+   recipients, attachment and conversation index all written**. That third probe is new: a
+   population is built only where one throwaway item proved every write it depends on, with no
+   override. After the build, the census reads every item back - sender, recipients, attachments,
+   conversation - and fails the build on any difference.
+5. **Switch the default back to the tier profile**, restart Outlook, and on the indexed guest let
+   the indexer settle. `outlook_health`'s `index.perStore[]` must then list every store in
+   `indexedStoreDisplayNames` with rows.
+
+The hub's build prints the `probeTerm` and `subjectOnlyProbe` values for the settings file; three of
+the four `subjectOnlyProbe` fields are generator constants that `Testbed/testbed.json` already
+carries, and the fourth is the hub's own name.
+
+### The hub is rebuilt before every run
+
+`LiveIndexSearchTests.Staleness_SelfReportsPlausibleFrontier` asserts that the index frontier is not
+in the future. On a guest whose newest item is weeks old, a product that misread local time as UTC
+would still pass it; with the newest item one minute old, the same misreading puts the frontier an
+hour or two in the future - the guest's UTC offset - and fails it. So the hub population is built
+against **the moment the run starts**, which is why its anchor is not recorded in
+`Testbed/testbed.json`: the manifest header records it, and the next rebuild reads it from there.
+
+The rebuild is the same switch as above, and it tears down with the anchor the manifest records -
+the anchor is part of the shape key, so a teardown given today's anchor is refused as a different
+population:
+
+```
+:: in the corpus profile
+dotnet run --project <as above> -- corpus-teardown --population hub \
+  --store tier@vm.invalid --allow-store tier@vm.invalid \
+  --corpus-id hub-indexed --seed 8181 --anchor <the anchor the manifest header records> \
+  --manifest C:\OutlookAI-Q5\corpus-hub-indexed.jsonl --execute
+dotnet run --project <as above> -- corpus-build --population hub ... --anchor <now> --execute
+:: then back to the tier profile, let the index take the 56 items, and start the run
+```
+
+Teardown removes the population's items AND the two folders it created, and drains Deleted Items
+behind itself: a delete in a PST is a soft one that re-issues the EntryID, so teardown re-scans and
+deletes again, still by both keys. **The frontier test has to run within the guest's UTC offset of
+the build, less its own five-minute tolerance** - under 55 minutes in winter and 115 in summer on a
+`W. Europe` guest, counting the indexer's crawl and everything the run does before it gets there - or
+it is back to proving what it proved before.
+
+The bystander and identity populations have no such clock: no test reads their dates, so they are
+built once and left alone. A checkpoint restored from before they were built needs them built again.
+
+### What only a guest can answer
+
+These are INFERRED from the code, and each is settled by the first build of the population it names:
+
+1. **Does the hub, mounted in the account-less profile, pass the store guard?** `IsDataFileStore`
+   should read true there - nothing delivers into it in that profile - and the other three facts do
+   not depend on the profile. If it reads false, the hub population cannot be built by this route,
+   and the answer is to report it, not to relax the guard.
+2. **Does every enrichment write land?** The sender goes on through `PropertyAccessor`
+   (`PR_SENDER_*` and `PR_SENT_REPRESENTING_*`), recipients through `Recipients.Add` and `Resolve`,
+   attachments by value from a temporary file, and the conversation through `PR_CONVERSATION_INDEX`
+   and `PR_CONVERSATION_TOPIC`. The enrichment probe refuses the build if any does not.
+3. **Does the index carry what the tests read?** `FromAddress`/`FromName`, `ToAddress`, one
+   attachment row per attachment, and a `ConversationID` shared by each conversation's members.
+4. **Does a store mounted in two profiles give the index two scopes?** The per-store scope URL is
+   `mapi16://{SID}/StoreDisplayName($Hash)/`. Corpus A has always been in the same position, so the
+   answer - whatever it is - is not new to the populations.
+5. **How long does the indexer take over a fresh hub?** It bounds how soon after the rebuild the run
+   can start, and so how much of the UTC-offset margin is left for the run itself.
+
+**What a population does not carry, and what that costs - OPEN, for the maintainer.** Every
+population item is a dated `IPM.Note` with a plain-text body: no appointment, contact or task, no
+unsent item, no HTML. So on a guest the index holds **no undated rows** - bar whatever drafts other
+tests happen to have left in the hub at that moment, which is nothing to measure against - and the three
+`LiveOrderKeyCollationTests` - which exist because rows with no `System.Message.DateReceived` share
+the `ORDER BY ... DESC` cut with mail - run, pass, and say nothing about undated rows:
+`NullCollation_UnderDateReceivedDescending_IsMeasured` reports `no-undated-rows-in-sample` instead
+of the provider's NULL collation, `OrderKeyFloorPredicate_IsAccepted_AndAdmitsOnlyDatedRows` excludes
+undated rows from a sample that has none, and
+`WidenedSearch_NeverReturnsFewerRowsThanTheOldMailKindShape` compares two shapes that return the
+same rows. Before the populations they could not run at all; now they run weak. Giving the hub a few
+undated items of other classes would make them real, and is a change to what a population is - so it
+is recorded here rather than made quietly.
 
 ---
 

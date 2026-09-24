@@ -42,6 +42,12 @@ public sealed class LiveOrderKeyCollationTests
     }
 
     /// <summary>
+    /// The stores the index tier measures - the settings' INDEXED list, never the watched one, and
+    /// refused rather than empty (see <see cref="LiveTestSettings.RequireIndexedStores"/>).
+    /// </summary>
+    private List<string> Indexed => _fixture.Settings.RequireIndexedStores().ToList();
+
+    /// <summary>
     /// THE MEASUREMENT. Runs the shipped widened statement over each store and records where
     /// the undated rows landed. Asserts nothing about the answer, because either answer is
     /// legitimate provider behaviour: what it produces is the number that belongs in
@@ -54,7 +60,7 @@ public sealed class LiveOrderKeyCollationTests
         IIndexClient client = IndexClientFactory.CreateAuto(out string report);
         _output.WriteLine(report);
 
-        foreach (string storeName in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string storeName in Indexed)
         {
             StoreScopeInfo scope = _fixture.GetScope(storeName);
             IndexQuery query = new()
@@ -112,7 +118,7 @@ public sealed class LiveOrderKeyCollationTests
     {
         IIndexClient client = IndexClientFactory.CreateAuto(out _);
 
-        foreach (string storeName in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string storeName in Indexed)
         {
             StoreScopeInfo scope = _fixture.GetScope(storeName);
             IndexQuery query = new()
@@ -149,7 +155,7 @@ public sealed class LiveOrderKeyCollationTests
     [Trait("Requires", "SearchIndex")]
     public void WidenedSearch_NeverReturnsFewerRowsThanTheOldMailKindShape()
     {
-        foreach (string storeName in _fixture.Settings.ExpectedStoreDisplayNames)
+        foreach (string storeName in Indexed)
         {
             StoreScopeInfo scope = _fixture.GetScope(storeName);
 

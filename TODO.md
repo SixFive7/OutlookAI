@@ -1153,6 +1153,13 @@
     must stay in `expectedStoreDisplayNames` (that is what censuses it and what
     `list_accounts` exactness counts). Listing it in only one of the two is a refusal, not a
     warning.
+    **CORRECTED AND DONE 2026-09-24 (Q77): that last sentence was wrong.** The census adds every
+    declared bystander back in, so one left out of `expectedStoreDisplayNames` is still watched and
+    is not refused, and a store only in `expectedStoreDisplayNames` is the identity account's
+    legitimate shape; the tier refuses only when no watched store is both non-hub and write-denied.
+    The maintainer chose to correct the documents rather than the loader, and sections 1.3, 2.6 and
+    2.10 now say what the code does. The 2.10 example and field table below are done too - with the
+    split into a watched and an indexed list (Q70) on top.
   - **The section 2.10 settings example needs the new key**, matching
     `Testbed/live-test-settings.example.json`: `"bystanderStoreDisplayNames": [ "OutlookAI
     Bystander" ]`. Without it a rebuilder follows the runbook and gets a bystander the suite
@@ -2252,6 +2259,11 @@
       Settings > Data Files > Add) rather than a script - creating stores is not something the
       tested helpers do, and mailbox mutation from ad-hoc shell code is the thing that once
       destroyed real mail.
+      **2026-09-24:** the store is named as an `.invalid` address now (`bystander@vm.invalid` in the
+      example), because a small store is found in the index only through mail addressed to it, and it
+      gets the generator's bystander population (next item). Adding it by script has been permitted
+      on a guest since 2026-09-15, and attaching it to the second profile while still empty since
+      2026-09-24 - `Docs/live-tier-on-the-vm.md` §2.6 draws both lines.
 
 - [ ] **Put a few hundred items in the SECOND store, not the corpus, or the identity half of the
       count tripwire is never exercised.** The identity budget is 500 items per folder and 3,000
@@ -2261,6 +2273,13 @@
       the scans and sweeps that need nothing but an Outlook all target the hub and take a "corpus
       too small" early return against an empty one - so the second store is the only one the
       tripwire can watch anyway.
+      **TOOLING DONE 2026-09-24 (Q70); the build is a guest step and has not run.** The generator
+      now builds it: `corpus-build --population bystander` puts 300 tagged, deterministic items in
+      the bystander - every folder inside the identity budget, two of them populated subfolders of
+      the Inbox - and `--population hub` gives the hub a 56-item population of its own, so the
+      "corpus too small" early returns above no longer need the corpus to be the hub.
+      `Docs/live-tier-on-the-vm.md` §3b is the procedure. Close this once a guest's census reads the
+      bystander item by item.
 
 - [ ] **UNTESTED: what an ADVISED EVENT SINK leaves inside Outlook when its COM host is killed.
       Two of the three nominated mechanisms were measured on 2026-09-15 and both came back
@@ -2454,7 +2473,8 @@
       ordinal.** Found 2026-09-16 while establishing what the census's duplicate-ordinal fault is
       actually for. `CorpusCommands.RunReindex` writes one manifest line per scan row, taking
       `row.Ordinal` straight through
-      (`McpServer/OutlookAI.RemediationTools/CorpusCommands.cs:866-869`), and `CorpusManifest.Parse`
+      (`McpServer/OutlookAI.RemediationTools/CorpusCommands.cs:1073-1077` since the population work of
+      2026-09-24, which also writes the created folders first; the item loop is unchanged), and `CorpusManifest.Parse`
       keys items by ordinal - `manifest._items[item.Ordinal] = item;`
       (`McpServer/OutlookAI.RemediationTools/CorpusManifest.cs:226`), and `Add` does the same at
       `:248`. So the second line for an ordinal **overwrites** the first, in memory, with no

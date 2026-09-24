@@ -84,6 +84,14 @@ public sealed class CorpusOptions
     /// <summary>Actually write; without it every command dry-runs, as the rest of this console does.</summary>
     public bool Execute { get; private set; }
 
+    /// <summary>
+    /// Build a curated fixture POPULATION rather than the measurement corpus - <c>hub</c>,
+    /// <c>bystander</c> or <c>identity</c>. The population is addressed to the owner of
+    /// <see cref="Store"/>, so a population plan needs <c>--store</c> even for the pure commands,
+    /// and its item count is fixed by the kind. See <see cref="CorpusPopulation"/>.
+    /// </summary>
+    public CorpusPopulationKind? Population { get; private set; }
+
     /// <summary>Parses the arguments after the command word. Throws on anything unrecognised.</summary>
     public static CorpusOptions Parse(IEnumerable<string> args)
     {
@@ -141,7 +149,24 @@ public sealed class CorpusOptions
                 + "same seed would stop meaning the same corpus.");
         }
 
-        return new CorpusPlanOptions(CorpusId!, Seed, AnchorUtc.Value);
+        if (Population == null)
+        {
+            return new CorpusPlanOptions(CorpusId!, Seed, AnchorUtc.Value);
+        }
+
+        if (string.IsNullOrWhiteSpace(Store))
+        {
+            throw new ArgumentException(
+                "--store <display name> is required with --population, even for a command that never opens the store: "
+                + "every population item is addressed to or sent from the store's owner, so the store is part of "
+                + "what the population IS.");
+        }
+
+        return new CorpusPlanOptions(CorpusId!, Seed, AnchorUtc.Value)
+        {
+            Population = Population,
+            Owner = CorpusMailboxOwner.ForStore(Store!),
+        };
     }
 
     private void SetFlag(string name)
@@ -205,6 +230,14 @@ public sealed class CorpusOptions
             case "window":
                 Windows.Add(int.Parse(value, CultureInfo.InvariantCulture));
                 break;
+            case "population":
+                if (!CorpusPopulation.TryParseKind(value, out CorpusPopulationKind kind))
+                {
+                    throw new ArgumentException($"--population '{value}' is not one of hub, bystander or identity.");
+                }
+
+                Population = kind;
+                break;
             default:
                 throw new ArgumentException($"Unknown option --{name}.");
         }
@@ -247,15 +280,44 @@ public static class CorpusCommands
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(output);
+        var plan = new CorpusPlan(options.ToPlanOptions());
+        int count = EffectiveCount(options, plan);
+        CorpusPlanReport report = plan.Report(1, count);
+        WriteReport(plan, report, output);
+        return 0;
+    }
+
+    /// <summary>
+    /// How many ordinals a command works over. A measurement corpus takes <c>--count</c>, which is
+    /// required. A population FIXES its own count - which ordinal is threaded and which carries which
+    /// attachment is part of its structure - so <c>--count</c> may be left out, and a different
+    /// number is refused rather than quietly building part of one or asking for items it does not have.
+    /// </summary>
+    public static int EffectiveCount(CorpusOptions options, CorpusPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(plan);
+        int? fixedCount = plan.FixedItemCount;
+        if (fixedCount != null)
+        {
+            if (options.Count != 0 && options.Count != fixedCount.Value)
+            {
+                throw new ArgumentException(
+                    $"The {plan.Population!.Kind.ToString().ToLowerInvariant()} population holds exactly "
+                    + $"{fixedCount.Value.ToString(CultureInfo.InvariantCulture)} items; --count "
+                    + $"{options.Count.ToString(CultureInfo.InvariantCulture)} describes a different one. Leave --count out, "
+                    + $"or give {fixedCount.Value.ToString(CultureInfo.InvariantCulture)}.");
+            }
+
+            return fixedCount.Value;
+        }
+
         if (options.Count < 1)
         {
             throw new ArgumentException("--count <n> is required.");
         }
 
-        var plan = new CorpusPlan(options.ToPlanOptions());
-        CorpusPlanReport report = plan.Report(1, options.Count);
-        WriteReport(plan, report, output);
-        return 0;
+        return options.Count;
     }
 
     /// <summary>
@@ -286,7 +348,7 @@ public static class CorpusCommands
         output.WriteLine("  received range        : " + CorpusManifest.FormatUtc(report.OldestReceivedUtc)
             + " .. " + CorpusManifest.FormatUtc(report.NewestReceivedUtc));
         output.WriteLine("  per folder            : "
-            + string.Join(", ", report.ByFolderId.Select(kv => FolderName(kv.Key) + "=" + kv.Value.ToString("N0", invariant))));
+            + string.Join(", ", report.ByFolderId.Select(kv => plan.FolderLabel(kv.Key) + "=" + kv.Value.ToString("N0", invariant))));
         output.WriteLine("  per size class        : "
             + string.Join(", ", report.BySizeClass.Select(kv => kv.Key + "=" + kv.Value.ToString("N0", invariant))));
         output.WriteLine("  per date band         : "
@@ -294,6 +356,73 @@ public static class CorpusCommands
         output.WriteLine("  unread                : " + report.UnreadItems.ToString("N0", invariant));
         output.WriteLine("  selected by window    : "
             + string.Join(", ", report.WithinDays.Select(kv => kv.Key + "d=" + kv.Value.ToString("N0", invariant))));
+        WritePopulationReport(plan, report, output);
+    }
+
+    /// <summary>
+    /// What a population carries beyond the corpus basics, for the plan sheet: who owns it, its
+    /// conversations and attachments, and - for the hub - the probe coordinates the live-test
+    /// settings must name. Printed so the values an operator copies into a settings file come off
+    /// the plan rather than out of somebody's memory.
+    /// </summary>
+    public static void WritePopulationReport(CorpusPlan plan, CorpusPlanReport report, TextWriter output)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(report);
+        ArgumentNullException.ThrowIfNull(output);
+        CorpusPopulation? population = plan.Population;
+        if (population == null)
+        {
+            return;
+        }
+
+        CultureInfo invariant = CultureInfo.InvariantCulture;
+        var kinds = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var threads = new HashSet<int>();
+        int attachments = 0;
+        int probeTermBodies = 0;
+        int probeTermAttachments = 0;
+        for (int ordinal = report.FromOrdinal; ordinal <= report.ToOrdinal; ordinal++)
+        {
+            CorpusItemEnrichment enrichment = plan.Enrich(ordinal)!;
+            if (enrichment.ThreadKey != null)
+            {
+                threads.Add(enrichment.ThreadKey.Value);
+            }
+
+            foreach (CorpusAttachment attachment in enrichment.Attachments)
+            {
+                attachments++;
+                string kind = attachment.Kind.ToString().ToLowerInvariant();
+                kinds[kind] = kinds.TryGetValue(kind, out int n) ? n + 1 : 1;
+                if (attachment.Text?.Contains(CorpusPopulation.ProbeTerm, StringComparison.Ordinal) == true)
+                {
+                    probeTermAttachments++;
+                }
+            }
+
+            if (plan.BuildBody(plan.Describe(ordinal)).Contains(CorpusPopulation.ProbeTerm, StringComparison.Ordinal))
+            {
+                probeTermBodies++;
+            }
+        }
+
+        output.WriteLine("  population            : " + population.Kind.ToString().ToLowerInvariant()
+            + " v" + CorpusPopulation.Version.ToString(invariant)
+            + ", owner " + population.Owner.Name + " <" + population.Owner.Address + ">");
+        output.WriteLine("  conversations         : " + threads.Count.ToString(invariant));
+        output.WriteLine("  attachments           : " + attachments.ToString(invariant)
+            + (kinds.Count == 0 ? string.Empty : " (" + string.Join(", ", kinds.Select(k => k.Key + "=" + k.Value.ToString(invariant))) + ")"));
+        output.WriteLine("  subfolders            : "
+            + (population.Folders.Count == 0 ? "none" : string.Join(", ", population.Folders.Select(f => f.Path))));
+        output.WriteLine("  probe term            : " + CorpusPopulation.ProbeTerm + " - in " + probeTermBodies.ToString(invariant)
+            + " body(ies) and " + probeTermAttachments.ToString(invariant) + " text attachment(s)");
+        if (population.SubjectOnlyProbe != null)
+        {
+            CorpusSubjectOnlyProbe probe = population.SubjectOnlyProbe;
+            output.WriteLine("  subjectOnlyProbe      : folderPath=" + probe.FolderPath + ", subjectTerm=" + probe.SubjectTerm
+                + ", senderFragment=" + probe.SenderFragment + ", storeDisplayName=<this store>");
+        }
     }
 
     /// <summary>
@@ -329,7 +458,29 @@ public static class CorpusCommands
         (bool dateOk, string message) =
             CorpusDateFidelity.Decide(chosen, options.AllowUndated, Math.Max(options.Count, 1));
         output.WriteLine(message);
-        return placementOk && dateOk ? 0 : 1;
+
+        // A population's own writes, on one more throwaway item, placed with the rung that verified.
+        bool enrichmentOk = true;
+        if (planOptions.Population != null)
+        {
+            (enrichmentOk, string enrichmentMessage) = ProbeEnrichment(options, planOptions, placement, output);
+            output.WriteLine(enrichmentMessage);
+        }
+
+        return placementOk && dateOk && enrichmentOk ? 0 : 1;
+    }
+
+    /// <summary>Runs the enrichment probe and reports it. Shared by <c>corpus-probe</c> and <c>corpus-build</c>.</summary>
+    private static (bool Proceed, string Message) ProbeEnrichment(
+        CorpusOptions options, CorpusPlanOptions planOptions, CorpusPlacementMethod placement, TextWriter output)
+    {
+        output.WriteLine("== enrichment probe ==");
+        CorpusEnrichmentProbe probe = ComCorpusMailbox.ProbeEnrichment(options.Store!, planOptions.CorpusId, placement);
+        output.WriteLine($"  sender={probe.SenderWritten} recipients={probe.RecipientsWritten} attachment={probe.AttachmentWritten}"
+            + $" conversationIndex={probe.ConversationIndexWritten}"
+            + $" conversationId={(string.IsNullOrWhiteSpace(probe.ConversationId) ? "(none)" : "(computed)")}"
+            + (probe.Error == null ? string.Empty : $" error={probe.Error}"));
+        return CorpusEnrichmentFidelity.Decide(probe);
     }
 
     /// <summary>
@@ -342,11 +493,6 @@ public static class CorpusCommands
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(output);
-        if (options.Count < 1)
-        {
-            throw new ArgumentException("--count <n> is required.");
-        }
-
         if (string.IsNullOrWhiteSpace(options.ManifestPath))
         {
             throw new ArgumentException("--manifest <path> is required - without it nothing could ever be torn down.");
@@ -354,12 +500,13 @@ public static class CorpusCommands
 
         CorpusPlanOptions planOptions = options.ToPlanOptions();
         var plan = new CorpusPlan(planOptions);
+        int count = EffectiveCount(options, plan);
         if (!Vet(options, output, out CorpusStoreFacts facts))
         {
             return 1;
         }
 
-        WriteReport(plan, plan.Report(1, options.Count), output);
+        WriteReport(plan, plan.Report(1, count), output);
 
         CorpusManifest? existing = LoadManifest(options.ManifestPath!, output);
         if (existing != null)
@@ -377,9 +524,9 @@ public static class CorpusCommands
 
         if (!options.Execute)
         {
-            int todo = existing == null ? options.Count : existing.MissingOrdinals(options.Count).Count();
-            output.WriteLine($"Dry-run complete; {todo:N0} item(s) would be created. Nothing written, and neither "
-                + "the placement probe nor the date probe was run (both create items). Re-run with --execute.");
+            int todo = existing == null ? count : existing.MissingOrdinals(count).Count();
+            output.WriteLine($"Dry-run complete; {todo:N0} item(s) would be created. Nothing written, and "
+                + "no probe was run (every probe creates items). Re-run with --execute.");
             return 0;
         }
 
@@ -387,7 +534,7 @@ public static class CorpusCommands
             ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
         CorpusPlacementMethod placement = ReportPlacementProbes(placements, output);
         (bool placementOk, string placementMessage) =
-            CorpusPlacement.Decide(placement, options.AllowDraftsPlacement, options.Count, placements);
+            CorpusPlacement.Decide(placement, options.AllowDraftsPlacement, count, placements);
         output.WriteLine(placementMessage);
         if (!placementOk)
         {
@@ -399,11 +546,24 @@ public static class CorpusCommands
             ComCorpusMailbox.ProbeDateFidelity(options.Store!, planOptions.CorpusId, probeInstant, placement);
         CorpusDateWriteMethod chosen = ReportProbes(probes, output);
         (bool proceed, string message) =
-            CorpusDateFidelity.Decide(chosen, options.AllowUndated, options.Count);
+            CorpusDateFidelity.Decide(chosen, options.AllowUndated, count);
         output.WriteLine(message);
         if (!proceed)
         {
             return 1;
+        }
+
+        // A population is built only where one throwaway item proved every one of its own writes
+        // lands - sender, recipients, attachment and conversation index. No override, like the
+        // store guard: a population missing any of them is one its tests would misread.
+        if (planOptions.Population != null)
+        {
+            (bool enrichmentOk, string enrichmentMessage) = ProbeEnrichment(options, planOptions, placement, output);
+            output.WriteLine(enrichmentMessage);
+            if (!enrichmentOk)
+            {
+                return 1;
+            }
         }
 
         TimeSpan writeShift = ShiftFrom(probes, chosen);
@@ -434,7 +594,7 @@ public static class CorpusCommands
             outcome = ComCorpusMailbox.Build(
                 plan,
                 options.Store!,
-                options.Count,
+                count,
                 chosen,
                 placement,
                 writeShift,
@@ -471,7 +631,7 @@ public static class CorpusCommands
         // plus 5 532 copies in the Outbox, and said nothing. The census is a read-only scan
         // of what is now in the store, compared against the plan, and it decides the exit
         // code alongside the failure count.
-        bool clean = RunCensusPass(options, plan, output);
+        bool clean = RunCensusPass(options, plan, count, output);
         return outcome.Failed == 0 && clean ? 0 : 1;
     }
 
@@ -479,39 +639,80 @@ public static class CorpusCommands
     /// <c>corpus-census</c>: READ-ONLY. Scans the store and says whether the corpus that is
     /// there is the corpus the plan describes - right count, right folders, one copy each,
     /// and nothing stranded in Drafts or the Outbox. Safe at any time; it is what a build
-    /// runs on itself.
+    /// runs on itself. For a population it also reads every item back and checks the sender,
+    /// recipients, attachments and conversation the plan gave it.
     /// </summary>
     public static int RunCensus(CorpusOptions options, TextWriter output)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(output);
-        if (options.Count < 1)
+        var plan = new CorpusPlan(options.ToPlanOptions());
+        if (plan.FixedItemCount == null && options.Count < 1)
         {
             throw new ArgumentException("--count <n> is required - a census compares against a plan of a known size.");
         }
 
-        var plan = new CorpusPlan(options.ToPlanOptions());
+        int count = EffectiveCount(options, plan);
         if (!Vet(options, output, out _))
         {
             return 1;
         }
 
-        return RunCensusPass(options, plan, output) ? 0 : 1;
+        return RunCensusPass(options, plan, count, output) ? 0 : 1;
     }
 
     /// <summary>The census itself, shared by <c>corpus-census</c> and the build's own check.</summary>
-    private static bool RunCensusPass(CorpusOptions options, CorpusPlan plan, TextWriter output)
+    private static bool RunCensusPass(CorpusOptions options, CorpusPlan plan, int count, TextWriter output)
     {
+        CorpusManifest? manifest = LoadManifest(options.ManifestPath, output);
         ComCorpusMailbox.ScanResult scan =
-            ComCorpusMailbox.Scan(options.Store!, plan.Options.CorpusId, LoadManifest(options.ManifestPath, output));
+            ComCorpusMailbox.Scan(options.Store!, plan.Options.CorpusId, manifest, plan.Population);
         CorpusCensusReport census = CorpusCensus.Compare(
             plan,
-            options.Count,
+            count,
             scan.Items.Select(r => new CorpusSighting(r.Ordinal, r.FolderId)),
             scan.LegacyTagged);
         (bool clean, string message) = CorpusCensus.Decide(census);
         output.WriteLine(message);
-        return clean;
+        if (plan.Population == null)
+        {
+            return clean;
+        }
+
+        // The census proves the items are there, once each, where the plan files them. A
+        // population also has to CARRY what its tests read, and a write Outlook declined leaves an
+        // item the census cannot tell from a good one - so every item is read back. It needs the
+        // manifest's EntryIDs; without one there is nothing to read back by, and that is a fault.
+        if (manifest == null)
+        {
+            output.WriteLine("Population read-back: SKIPPED - no manifest, so no EntryID to read any item back by. "
+                + "A population census without its manifest proves only the counts.");
+            return false;
+        }
+
+        IReadOnlyList<CorpusEnrichmentObservation> observations = ComCorpusMailbox.ReadEnrichment(options.Store!, manifest);
+        (bool enriched, string enrichmentMessage) =
+            CorpusEnrichmentCheck.Decide(CorpusEnrichmentCheck.Compare(plan, count, observations));
+        output.WriteLine(enrichmentMessage);
+        WriteSubjectOnlyProbeLine(plan, options, output);
+        return clean && enriched;
+    }
+
+    /// <summary>
+    /// The four values a test guest's <c>subjectOnlyProbe</c> settings block must carry, printed by
+    /// the build and the census of a hub population so they are copied, not remembered.
+    /// </summary>
+    private static void WriteSubjectOnlyProbeLine(CorpusPlan plan, CorpusOptions options, TextWriter output)
+    {
+        CorpusSubjectOnlyProbe? probe = plan.Population?.SubjectOnlyProbe;
+        if (probe == null)
+        {
+            return;
+        }
+
+        output.WriteLine("For the live-test settings: probeTerm=" + CorpusPopulation.ProbeTerm
+            + "; subjectOnlyProbe = { storeDisplayName: " + options.Store + ", folderPath: " + probe.FolderPath
+            + ", subjectTerm: " + probe.SubjectTerm + ", senderFragment: " + probe.SenderFragment + " }.");
     }
 
     /// <summary>
@@ -530,10 +731,8 @@ public static class CorpusCommands
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(output);
-        if (options.Count < 1)
-        {
-            throw new ArgumentException("--count <n> is required.");
-        }
+        var plan = new CorpusPlan(options.ToPlanOptions());
+        int count = EffectiveCount(options, plan);
 
         if (string.IsNullOrWhiteSpace(options.ManifestPath))
         {
@@ -542,7 +741,6 @@ public static class CorpusCommands
                 + "manifest records each item as holding; without it there is nothing to compare the plan against.");
         }
 
-        var plan = new CorpusPlan(options.ToPlanOptions());
         CorpusManifest manifest = LoadManifest(options.ManifestPath!, output)
             ?? throw new ArgumentException($"Manifest not found: {options.ManifestPath}");
 
@@ -553,7 +751,7 @@ public static class CorpusCommands
 
         CorpusFreshnessReport report = CorpusFreshness.Evaluate(
             plan,
-            options.Count,
+            count,
             applied,
             DateTime.UtcNow,
             options.Windows.Count > 0 ? options.Windows : null,
@@ -833,7 +1031,8 @@ public static class CorpusCommands
             return 1;
         }
 
-        ComCorpusMailbox.ScanResult scan = ComCorpusMailbox.Scan(options.Store!, planOptions.CorpusId, null);
+        CorpusPopulation? population = planOptions.Population == null ? null : new CorpusPlan(planOptions).Population;
+        ComCorpusMailbox.ScanResult scan = ComCorpusMailbox.Scan(options.Store!, planOptions.CorpusId, null, population);
         IReadOnlyList<ComCorpusMailbox.ScanRow> rows = scan.Items;
         output.WriteLine($"Read-only scan found {rows.Count:N0} corpus item(s) "
             + $"across {rows.Select(r => r.FolderId).Distinct().Count()} folder(s).");
@@ -863,6 +1062,14 @@ public static class CorpusCommands
             "reindexed");
         using (StreamWriter writer = OpenManifest(options.ManifestPath!, writeHeader: true, header))
         {
+            // The created folders first, as a build writes them: teardown removes a folder only
+            // when the manifest records its EntryID, so a recovered manifest that left them out
+            // would strand every folder the build made, empty but permanent.
+            foreach (CorpusManifestFolder folder in scan.Folders)
+            {
+                writer.WriteLine(CorpusManifest.RenderLine(folder));
+            }
+
             foreach (ComCorpusMailbox.ScanRow row in rows.OrderBy(r => r.Ordinal))
             {
                 writer.WriteLine(CorpusManifest.RenderLine(
@@ -870,7 +1077,7 @@ public static class CorpusCommands
             }
         }
 
-        output.WriteLine($"Wrote {rows.Count:N0} entries to {options.ManifestPath}. "
+        output.WriteLine($"Wrote {rows.Count:N0} entries and {scan.Folders.Count} created folder(s) to {options.ManifestPath}. "
             + "Inspect it before handing it to corpus-teardown - it records what is in the store now, "
             + "not what a build claimed to create.");
         return 0;

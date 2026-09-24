@@ -42,6 +42,8 @@
         "seed": null,
         "anchor": null,
         "itemCount": null,
+        "minimumItemCount": 160000,
+        "_minimumItemCount": "A REQUIREMENT, not a measurement - decided 2026-09-24 so the index tier's latency assertions are tests on this guest rather than formalities. Every index query in the live tier is held to MaxQueryMs = 2000, and against one 20,000-item store on an idle VM that is met by construction; the maintainer's profile, which those numbers were set against, holds ~160,000 items across five stores (Docs/vm-coverage-analysis.md section 3.3; its largest folder alone is 108,144). So Corpus A on the indexed guest is built at production scale. Testbed/host/New-LiveTestSettings.ps1 refuses to render this guest's settings while the recorded itemCount is below it. The build is deterministic and resumable; at the recorded 24.8 items/s it is roughly 1 h 50 min, plus the indexer's own crawl.",
         "_note": "Corpus A in the layout of Docs/live-tier-on-the-vm.md section 1.3: the store the index tier reads. Fill the nulls in, and add the expected plan, only when a build has actually produced it."
       },
       {
@@ -55,6 +57,17 @@
         "_note": "Corpus B: the degraded path, no index frontier, the seven-day fallback window and the sweep and frame measurements."
       }
     ],
+    "populations": {
+      "_what": "The ids reserved for the curated FIXTURE populations the generator builds into each guest's hub, bystander and identity stores (corpus-build --population hub|bystander|identity; Q70, 2026-09-24; Docs/live-tier-on-the-vm.md section 3b). Same id rules and same reason as above: a population's manifest is corpus-<id>.jsonl, it lands in the same shared pull directory, and it is the only allowlist corpus-teardown will delete from - and the hub is not a store anybody can simply delete and recreate, because it is the dummy account's delivery store. None of these are built; nothing here is a measurement.",
+      "_seedAndAnchor": "A population's seed is fixed per id below, so a rebuild reproduces it byte-for-byte. Its anchor is NOT fixed: the hub population is rebuilt against the moment a run starts, because its newest item is what makes the index frontier one minute old, and a frontier younger than the guest's UTC offset is the only kind LiveIndexSearchTests.Staleness_SelfReportsPlausibleFrontier can catch a local-time misreading with. The anchor goes in the manifest header, which is where a rebuild reads it from.",
+      "assigned": [
+        { "corpusId": "hub-indexed", "guest": "OutlookAI-Indexed", "population": "hub", "seed": 8181, "store": "the hub - testHubStoreDisplayName", "status": "NOT BUILT" },
+        { "corpusId": "bystander-indexed", "guest": "OutlookAI-Indexed", "population": "bystander", "seed": 8282, "store": "the plain bystander", "status": "NOT BUILT" },
+        { "corpusId": "identity-indexed", "guest": "OutlookAI-Indexed", "population": "identity", "seed": 8383, "store": "the identity account's delivery store, once section 2.8b has built it", "status": "NOT BUILT" },
+        { "corpusId": "hub-unindexed", "guest": "OutlookAI-Unindexed", "population": "hub", "seed": 8181, "store": "the hub - testHubStoreDisplayName", "status": "NOT BUILT" },
+        { "corpusId": "bystander-unindexed", "guest": "OutlookAI-Unindexed", "population": "bystander", "seed": 8282, "store": "the plain bystander", "status": "NOT BUILT" }
+      ]
+    },
     "open": "Whether vm-indexed and vm-unindexed should share a seed and anchor is STILL NOT SETTLED - it is item 16 of Docs/live-tier-on-the-vm.md section 8, and nothing here decides it. Sharing them makes the two stores directly comparable, which is probably what is wanted; that is a reason, not a decision. The ids are distinct either way, which is the point: two corpora may share every generator parameter and still must not share an id, because the id is what names the POPULATION - one machine's store - and those are two different stores whichever way the seed question goes."
   },
 
@@ -121,15 +134,29 @@
   "liveTestSettings": {
     "_what": "The per-guest values for Testbed/live-test-settings.template.json, one section per guest, keyed by VM name. 'pwsh -File Testbed/host/New-LiveTestSettings.ps1 -VMName <name>' renders that guest's gitignored live-test-settings.json from them. Unlike the file it renders, this section IS committed - which is safe only because a test guest's stores are synthetic: created by this directory's own scripts and named after nothing real. NEVER put a store name from a working Outlook profile here. The maintainer's own settings file stays hand-written and gitignored, and the renderer refuses to write anywhere it could live.",
     "_fill": "Every value that begins '<FILL' is a placeholder, and the renderer REFUSES a guest while any remains, naming each one. They are store names and corpus build parameters that can only be READ OFF THE GUEST - over COM, from the TIER profile the live tier runs under - and nobody has read them yet. Do not type the name you expect to be there; copy the one Outlook reports. Declare only stores that profile mounts: a declared store the running profile does not have is censused, is not found, and refuses the tier. The renderer cannot check that from the host and says so every time it runs.",
-    "_blocks": "corpus and mailSink take either an object carrying every field, or null for 'this guest has none'. Never a partial object: the loader refuses one and so does the renderer. null leaves the block out of the rendered file, which the loader reads as absent. When this guest's corpus is not built, or its tier profile does not mount the corpus store, set corpus to null. When it IS declared, the renderer holds corpusId, seed, anchorUtc and itemCount against corpusIdConvention above - so a corpus that record still calls NOT BUILT has to be recorded there first.",
-    "_decided": "Five values are filled in because they are recorded DECISIONS, not facts to read off a machine. machineProfile is Portable: a guest has no index probe population to offer, and the template is the Portable shape, which carries no probeTerm or subjectOnlyProbe for a Production profile to demand. expectedDelegateStoreDisplayNames is empty: DelegateStore is the one capability no test machine can be given (Docs/live-tier-on-the-vm.md section 5). mailSink is null: the guests get NO sink (section 1.4, decided 2026-09-15), and a sink block pointing at a listener that is not there refuses the whole tier at start. corpus.corpusId is the id corpusIdConvention assigns to this guest, and corpus.windowDays copies Testbed/live-test-settings.example.json. Change any of them only with the decision behind it.",
+    "_blocks": "subjectOnlyProbe, corpus and mailSink take either an object carrying every field, or null for 'this guest has none'. Never a partial object: the loader refuses one and so does the renderer. null leaves the block out of the rendered file, which the loader reads as absent. When this guest's corpus is not built, or its tier profile does not mount the corpus store, set corpus to null. When it IS declared, the renderer holds corpusId, seed, anchorUtc and itemCount against corpusIdConvention above - so a corpus that record still calls NOT BUILT has to be recorded there first.",
+    "_decided": "Some values are filled in because they are recorded DECISIONS, not facts to read off a machine. machineProfile is Portable: a guest declares no Production population, and Portable is the profile whose missing populations announce PROVED NOTHING instead of refusing. expectedDelegateStoreDisplayNames is empty: DelegateStore is the one capability no test machine can be given (Docs/live-tier-on-the-vm.md section 5). mailSink is null: the guests get NO sink (section 1.4, decided 2026-09-15), and a sink block pointing at a listener that is not there refuses the whole tier at start. corpus.corpusId is the id corpusIdConvention assigns to this guest, and corpus.windowDays copies Testbed/live-test-settings.example.json. On the INDEXED guest, probeTerm and three of subjectOnlyProbe's four fields are the population generator's own constants (CorpusPopulation.ProbeTerm, SubjectOnlyTerm, SubjectOnlySenderFragment and the hub's Notices folder) - T1/LiveTestSettingsTemplateTests holds them equal - and only the store, which is the hub, is read off the guest. On the UNINDEXED guest nothing is indexed, so indexedStoreDisplayNames is [], probeTerm is empty and subjectOnlyProbe is null: the index tests are deselected there, and the loader turns any that run anyway into a refusal. Change any of them only with the decision behind it.",
+    "_indexedOrder": "indexedStoreDisplayNames on the indexed guest is [hub, bystander, corpus] in THAT order, and the renderer holds it: several index tests read entry 0, which must be the hub whose population carries senders and attachments; the exclude-subfolders measurement reads the first non-hub entry, which must be the bystander whose population has subfolders. Every entry but the corpus must be named as an .invalid address - the product finds a small store in the index only through mail addressed to it, and only for a name shaped like an address. The identity account's store is WATCHED and not in this list: it is written to by the identity tests and holds only its tiny population.",
 
     "OutlookAI-Indexed": {
       "machineProfile": "Portable",
       "testHubStoreDisplayName": "<FILL: the hub's Store.DisplayName - the dummy account's delivery store, named exactly as that account's SMTP address>",
       "expectedStoreDisplayNames": [ "<FILL: the Store.DisplayName of every store the tier profile mounts and the census must watch - the hub, the bystander, this guest's corpus store and, once it exists, the identity account's store>" ],
+      "indexedStoreDisplayNames": [
+        "<FILL: the hub's Store.DisplayName - FIRST>",
+        "<FILL: the plain bystander's Store.DisplayName, an .invalid address - SECOND>",
+        "<FILL: this guest's corpus store's Store.DisplayName - LAST>"
+      ],
       "expectedDelegateStoreDisplayNames": [],
-      "bystanderStoreDisplayNames": [ "<FILL: the stores no test may write to - the plain bystander and this guest's corpus store. Each must ALSO be in expectedStoreDisplayNames; never the hub, never the identity account's store>" ],
+      "bystanderStoreDisplayNames": [ "<FILL: the stores no test may write to - the plain bystander and this guest's corpus store. Name each in expectedStoreDisplayNames as well; never the hub, never the identity account's store>" ],
+      "probeTerm": "invoice",
+      "subjectOnlyProbe": {
+        "_note": "The hub population's SF-6 folder (corpus-plan --population hub prints all four). Only the store is read off the guest: it is the hub.",
+        "storeDisplayName": "<FILL: the hub's Store.DisplayName>",
+        "folderPath": "Inbox/OutlookAI-Corpus-Folder-Notices",
+        "subjectTerm": "bulletin",
+        "senderFragment": "noticebot"
+      },
       "corpus": {
         "_note": "Corpus A in Docs/live-tier-on-the-vm.md section 1.3. Or null - see _blocks above.",
         "storeDisplayName": "<FILL: the corpus store's Store.DisplayName in the tier profile>",
@@ -147,8 +174,11 @@
       "machineProfile": "Portable",
       "testHubStoreDisplayName": "<FILL: the hub's Store.DisplayName - the dummy account's delivery store, named exactly as that account's SMTP address>",
       "expectedStoreDisplayNames": [ "<FILL: the Store.DisplayName of every store the tier profile mounts and the census must watch - the hub, the bystander, this guest's corpus store and, once it exists, the identity account's store>" ],
+      "indexedStoreDisplayNames": [],
       "expectedDelegateStoreDisplayNames": [],
-      "bystanderStoreDisplayNames": [ "<FILL: the stores no test may write to - the plain bystander and this guest's corpus store. Each must ALSO be in expectedStoreDisplayNames; never the hub, never the identity account's store>" ],
+      "bystanderStoreDisplayNames": [ "<FILL: the stores no test may write to - the plain bystander and this guest's corpus store. Name each in expectedStoreDisplayNames as well; never the hub, never the identity account's store>" ],
+      "probeTerm": "",
+      "subjectOnlyProbe": null,
       "corpus": {
         "_note": "Corpus B in Docs/live-tier-on-the-vm.md section 1.3. Or null - see _blocks above.",
         "storeDisplayName": "<FILL: the corpus store's Store.DisplayName in the tier profile>",

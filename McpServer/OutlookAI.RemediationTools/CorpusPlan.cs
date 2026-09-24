@@ -100,13 +100,39 @@ public sealed record CorpusPlanOptions(string CorpusId, long Seed, DateTime Anch
     public IReadOnlyList<CorpusFolderShare> Folders { get; init; } = DefaultFolders;
 
     /// <summary>
+    /// The curated fixture population this plan describes, or null for the measurement corpus.
+    /// <para>
+    /// Null is the default and changes NOTHING about the corpus: the mixture above, every item's
+    /// description and the shape key are exactly what they were, which is what keeps every corpus
+    /// already built - and the <c>vm2</c> one every published measurement rests on - reproducible
+    /// by the same four parameters. See <see cref="CorpusPopulation"/>.
+    /// </para>
+    /// </summary>
+    public CorpusPopulationKind? Population { get; init; }
+
+    /// <summary>
+    /// Who a population's mailbox belongs to - derived from the store it is built into, see
+    /// <see cref="CorpusMailboxOwner.ForStore"/>. Required with <see cref="Population"/>, ignored
+    /// without it.
+    /// </summary>
+    public CorpusMailboxOwner? Owner { get; init; }
+
+    /// <summary>
     /// A stable digest of everything except the item COUNT, so a resumed or extended run
     /// can prove it is adding to the same corpus. The count is excluded on purpose: item
     /// N's description never depends on how many items were asked for, which is what
     /// makes "build 20 000 more" an addition rather than a silent rewrite of the first
     /// 20 000 (see <see cref="CorpusPlan.Describe"/>).
+    /// <para>
+    /// A population appends its kind, its format version and its owner, so a population's
+    /// manifest can never be continued as a corpus's or as another store's population. Without
+    /// one the key is byte-identical to what it has always been.
+    /// </para>
     /// </summary>
-    public string ShapeKey
+    public string ShapeKey => BaseShapeKey
+        + (Population == null || Owner == null ? string.Empty : CorpusPopulation.ShapeKeySuffixFor(Population.Value, Owner));
+
+    private string BaseShapeKey
     {
         get
         {
@@ -291,6 +317,7 @@ public sealed class CorpusPlan
     private static readonly string[] SubjectPrefixes = { "", "", "", "RE: ", "RE: ", "FW: " };
 
     private readonly CorpusPlanOptions _options;
+    private readonly CorpusPopulation? _population;
     private readonly int _sizeWeightTotal;
     private readonly int _dateWeightTotal;
     private readonly int _folderWeightTotal;
@@ -340,10 +367,46 @@ public sealed class CorpusPlan
         }
 
         _options = options;
+        _population = options.Population == null ? null : CorpusPopulation.Create(options);
     }
 
     /// <summary>The shape this plan was built from.</summary>
     public CorpusPlanOptions Options => _options;
+
+    /// <summary>The curated population this plan describes, or null for the measurement corpus.</summary>
+    public CorpusPopulation? Population => _population;
+
+    /// <summary>
+    /// The item count a population FIXES, or null for the measurement corpus, whose count is the
+    /// caller's to choose. A population's count is part of its structure - which ordinal is
+    /// threaded, which carries which attachment - so asking for a different one is an error, not
+    /// an extension.
+    /// </summary>
+    public int? FixedItemCount => _population?.ItemCount;
+
+    /// <summary>
+    /// Everything item <paramref name="ordinal"/> carries beyond subject, body, dates and read
+    /// state - sender, recipients, attachments, conversation - or null for a measurement-corpus
+    /// item, which carries none of them.
+    /// </summary>
+    public CorpusItemEnrichment? Enrich(int ordinal) => _population?.Enrich(ordinal);
+
+    /// <summary>
+    /// A readable name for a folder id: a population's own subfolder as its store-relative path,
+    /// an Outlook default folder by its English name, anything else by number.
+    /// </summary>
+    public string FolderLabel(int folderId)
+        => _population?.FolderLabel(folderId) ?? folderId switch
+        {
+            3 => "Deleted Items",
+            4 => "Outbox",
+            5 => "Sent Items",
+            6 => "Inbox",
+            16 => "Drafts",
+            23 => "Junk Email",
+            0 => "created folder",
+            _ => "folder " + folderId.ToString(CultureInfo.InvariantCulture),
+        };
 
     /// <summary>
     /// What item <paramref name="ordinal"/> is. Depends only on the seed, the ordinal and
@@ -354,6 +417,11 @@ public sealed class CorpusPlan
         if (ordinal < 1)
         {
             throw new ArgumentOutOfRangeException(nameof(ordinal), "Ordinals are 1-based.");
+        }
+
+        if (_population != null)
+        {
+            return _population.Describe(ordinal);
         }
 
         CorpusFolderShare folder = PickWeighted(_options.Folders, f => f.Weight, _folderWeightTotal, Draw(ordinal, StreamFolder));
@@ -407,6 +475,11 @@ public sealed class CorpusPlan
     /// </summary>
     public string BuildSubject(int ordinal)
     {
+        if (_population != null)
+        {
+            return _population.BuildSubject(ordinal);
+        }
+
         ulong r = Draw(ordinal, StreamSubject);
         var sb = new StringBuilder(96);
         sb.Append(SubjectTag).Append(CorpusTagOpen).Append(_options.CorpusId).Append('#')
@@ -504,6 +577,13 @@ public sealed class CorpusPlan
     public string BuildBody(CorpusItemSpec spec)
     {
         ArgumentNullException.ThrowIfNull(spec);
+        if (_population != null)
+        {
+            // A population body is written text rather than a byte-count target, and its
+            // description already carries the exact length of it.
+            return _population.BuildBody(spec.Ordinal);
+        }
+
         var sb = new StringBuilder(spec.BodyBytes + 128);
         int paragraph = 0;
         while (sb.Length < spec.BodyBytes)
