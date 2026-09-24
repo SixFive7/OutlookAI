@@ -4,7 +4,6 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
-using Microsoft.Win32;
 
 namespace OutlookAI.Core.Services
 {
@@ -53,7 +52,11 @@ namespace OutlookAI.Core.Services
             ReplyForwardSignature = replyForwardSignature;
         }
 
-        /// <summary>Account name as the profile registry records it (the SMTP address).</summary>
+        /// <summary>
+        /// The account's email address (<see cref="ProfileAccountEntries"/>: <c>Email</c> for
+        /// POP3/IMAP, <c>Account Name</c> for Exchange) - never a data file's or address book's
+        /// name, which is what the old "Account Name contains @" rule reported alongside.
+        /// </summary>
         public string Account { get; }
 
         /// <summary>Signature name assigned for new messages (null = not recorded in the registry - unknown, never guessed).</summary>
@@ -154,10 +157,15 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// Reads per-account default-signature assignments from the profile registry.
-        /// Never throws: unreadable/absent state yields an empty list (unknown - the
-        /// Phase-4 degradation contract). <paramref name="valuesReader"/> is the T1
-        /// injection seam - production passes null for the live registry.
+        /// Reads per-account default-signature assignments from the profile registry - for MAIL
+        /// ACCOUNTS only, by <see cref="ProfileAccountEntries"/>' rule, the same one
+        /// manage_signature writes and verifies by. It used to be "any entry whose Account Name
+        /// contains @", which listed a data file named after an address as that address's
+        /// account and missed a POP3/IMAP account the user had named anything else - so this,
+        /// list_signatures' answer, confirmed the very write that had gone to the data file
+        /// (2026-09-24). Never throws: unreadable/absent state yields an empty list (unknown -
+        /// the Phase-4 degradation contract). <paramref name="valuesReader"/> is the T1 injection
+        /// seam - production passes null for the live registry.
         /// </summary>
         public static IReadOnlyList<SignatureAssignment> ReadAccountAssignments(
             Func<IReadOnlyList<IReadOnlyDictionary<string, object?>>>? valuesReader = null)
@@ -170,18 +178,15 @@ namespace OutlookAI.Core.Services
                 List<SignatureAssignment> result = new List<SignatureAssignment>();
                 foreach (IReadOnlyDictionary<string, object?> values in accountValueSets)
                 {
-                    string? account = DecodeRegistryString(values.TryGetValue("Account Name", out object? a) ? a : null);
-
-                    // Only mail accounts: profile subkeys also cover address books and
-                    // other providers; the SMTP-shaped Account Name is the mail marker.
-                    if (account == null || account.IndexOf('@') < 0)
+                    // Mail accounts only: the key also lists every data file and address book of
+                    // the profile, and a data file's name can be an address.
+                    ProfileAccountEntry entry = ProfileAccountEntries.Classify(string.Empty, values);
+                    if (entry.Kind != ProfileEntryKind.MailAccount || entry.Address == null)
                     {
                         continue;
                     }
 
-                    string? newSignature = DecodeRegistryString(values.TryGetValue("New Signature", out object? n) ? n : null);
-                    string? replyForward = DecodeRegistryString(values.TryGetValue("Reply-Forward Signature", out object? r) ? r : null);
-                    result.Add(new SignatureAssignment(account, EmptyToNull(newSignature), EmptyToNull(replyForward)));
+                    result.Add(new SignatureAssignment(entry.Address, entry.NewSignature, entry.ReplyForwardSignature));
                 }
 
                 return result;
@@ -194,59 +199,12 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// Reads the raw per-account value sets from
-        /// HKCU\...\Outlook\Profiles\&lt;default profile&gt;\9375CFF0413111d3B88A00104B2A6676\*.
+        /// The raw value sets of the default profile's account-manager entries - the same reader
+        /// manage_signature writes through (<see cref="LiveProfileAccountRegistry"/>).
         /// </summary>
         private static IReadOnlyList<IReadOnlyDictionary<string, object?>> ReadProfileAccountValueSets()
         {
-            // Not a const any more: the Office major in the Outlook root is detected at runtime.
-            string outlookRoot = OutlookProfileRegistry.OutlookRootKeyPath;
-            const string accountsSubKey = OutlookProfileRegistry.AccountsSubKeyName;
-
-            List<IReadOnlyDictionary<string, object?>> sets = new List<IReadOnlyDictionary<string, object?>>();
-            using RegistryKey? outlook = Registry.CurrentUser.OpenSubKey(outlookRoot);
-            if (outlook == null)
-            {
-                return sets;
-            }
-
-            string? defaultProfile = outlook.GetValue("DefaultProfile") as string;
-            using RegistryKey? profiles = outlook.OpenSubKey("Profiles");
-            if (profiles == null)
-            {
-                return sets;
-            }
-
-            IEnumerable<string> profileNames = defaultProfile != null
-                ? new[] { defaultProfile }
-                : profiles.GetSubKeyNames();
-            foreach (string profileName in profileNames)
-            {
-                using RegistryKey? accounts = profiles.OpenSubKey(profileName + "\\" + accountsSubKey);
-                if (accounts == null)
-                {
-                    continue;
-                }
-
-                foreach (string subKeyName in accounts.GetSubKeyNames())
-                {
-                    using RegistryKey? account = accounts.OpenSubKey(subKeyName);
-                    if (account == null)
-                    {
-                        continue;
-                    }
-
-                    Dictionary<string, object?> values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-                    foreach (string valueName in account.GetValueNames())
-                    {
-                        values[valueName] = account.GetValue(valueName);
-                    }
-
-                    sets.Add(values);
-                }
-            }
-
-            return sets;
+            return new LiveProfileAccountRegistry().ReadEntries().Select(e => e.Values).ToList();
         }
 
         /// <summary>
@@ -332,11 +290,6 @@ namespace OutlookAI.Core.Services
             {
                 return null;
             }
-        }
-
-        private static string? EmptyToNull(string? value)
-        {
-            return string.IsNullOrWhiteSpace(value) ? null : value!.Trim();
         }
     }
 }

@@ -4,7 +4,6 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
-using Microsoft.Win32;
 
 namespace OutlookAI.Core.Services
 {
@@ -30,7 +29,7 @@ namespace OutlookAI.Core.Services
         public string? DefaultForScope { get; set; }
     }
 
-    /// <summary>One profile mail account's default-signature registry state (read/write handle).</summary>
+    /// <summary>One profile MAIL ACCOUNT's default-signature registry state (read/write handle).</summary>
     public sealed class SignatureDefaultsRow
     {
         /// <summary>Creates a row.</summary>
@@ -45,7 +44,13 @@ namespace OutlookAI.Core.Services
         /// <summary>Opaque store handle of the account (registry subkey path for the production store).</summary>
         public string AccountKey { get; }
 
-        /// <summary>Account SMTP address ("Account Name" registry value).</summary>
+        /// <summary>
+        /// The account's email address - what <c>list_accounts</c> reports and
+        /// <c>set_default_for.account</c> is matched against. <see cref="ProfileAccountEntries"/>
+        /// derives it: <c>Email</c> for a POP3/IMAP account, <c>Account Name</c> for an Exchange
+        /// account (which records no <c>Email</c>). It used to be <c>Account Name</c> for every
+        /// entry, which is a display name - and, for a data file, the store's name.
+        /// </summary>
         public string Account { get; }
 
         /// <summary>Currently assigned new-message signature name (null = absent).</summary>
@@ -59,12 +64,24 @@ namespace OutlookAI.Core.Services
     /// Read/write access to the per-account default-signature registry values
     /// ("New Signature" / "Reply-Forward Signature" under the profile's 9375CFF0...
     /// key - the locations D37 verified readable on this machine). The interface is
-    /// the T1 seam; <see cref="ProfileSignatureDefaultsStore"/> is the live registry.
+    /// the T1 seam; <see cref="ProfileSignatureDefaultsStore"/> is the live registry (or, for T1,
+    /// any <see cref="IProfileAccountRegistry"/>).
     /// </summary>
     public interface ISignatureDefaultsStore
     {
-        /// <summary>Enumerates the profile's mail accounts with their current assignments.</summary>
+        /// <summary>
+        /// Enumerates the profile's MAIL ACCOUNTS - never a data file or an address book, whatever
+        /// it is named (<see cref="ProfileAccountEntries"/>) - with their current assignments.
+        /// </summary>
         IReadOnlyList<SignatureDefaultsRow> ReadAccounts();
+
+        /// <summary>
+        /// Re-reads ONE entry from the store, now, and classifies it from its raw values - null
+        /// when it is no longer an entry of the profile's account list. The independent half of
+        /// the read-back: it says what the entry a write went to actually IS, rather than what
+        /// the row the write was aimed with claimed.
+        /// </summary>
+        ProfileAccountEntry? ReadEntry(string accountKey);
 
         /// <summary>Writes one default value (REG_SZ; absent value is created).</summary>
         void WriteDefault(string accountKey, string valueName, string signatureName);
@@ -74,95 +91,95 @@ namespace OutlookAI.Core.Services
     }
 
     /// <summary>
-    /// Live registry implementation over
-    /// HKCU\Software\Microsoft\Office\&lt;major&gt;\Outlook\Profiles\&lt;default profile&gt;\9375CFF0413111d3B88A00104B2A6676,
-    /// where the major is whichever Office version this machine actually has
-    /// (<see cref="OutlookProfileRegistry.OfficeVersion"/> - it used to be a hardcoded 16.0).
-    /// Writes are surgical: only the two known value names, only on subkeys that carry
-    /// an SMTP-shaped "Account Name", never creating subkeys.
+    /// Signature defaults in the profile registry: the entries of
+    /// HKCU\Software\Microsoft\Office\&lt;major&gt;\Outlook\Profiles\&lt;default profile&gt;\9375CFF0413111d3B88A00104B2A6676
+    /// (<see cref="LiveProfileAccountRegistry"/>; the major is whichever Office version this
+    /// machine actually has), or any <see cref="IProfileAccountRegistry"/> for T1. Which entries
+    /// are accounts, and what their addresses are, is <see cref="ProfileAccountEntries"/>' rule.
+    /// Writes are surgical: only the two known value names, only on an entry that - re-read at
+    /// the moment of the write - classifies as a MAIL ACCOUNT, never creating an entry. The old
+    /// guard was "an SMTP-shaped Account Name", which a data file named after its address
+    /// passes (the 2026-09-24 defect).
     /// </summary>
     public sealed class ProfileSignatureDefaultsStore : ISignatureDefaultsStore
     {
-        // static readonly, not const: the Office major in this path is detected at runtime now.
-        private static readonly string OutlookRoot = OutlookProfileRegistry.OutlookRootKeyPath;
-        private const string AccountsSubKey = OutlookProfileRegistry.AccountsSubKeyName;
+        private readonly IProfileAccountRegistry _registry;
+
+        /// <summary>The live registry.</summary>
+        public ProfileSignatureDefaultsStore()
+            : this(new LiveProfileAccountRegistry())
+        {
+        }
+
+        /// <summary>Any registry - the T1 seam.</summary>
+        public ProfileSignatureDefaultsStore(IProfileAccountRegistry registry)
+        {
+            _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+        }
 
         /// <inheritdoc />
         public IReadOnlyList<SignatureDefaultsRow> ReadAccounts()
         {
-            List<SignatureDefaultsRow> rows = new List<SignatureDefaultsRow>();
-            using RegistryKey? outlook = Registry.CurrentUser.OpenSubKey(OutlookRoot);
-            if (outlook == null)
-            {
-                return rows;
-            }
+            return ProfileAccountEntries.ReadAll(_registry)
+                .Where(e => e.Kind == ProfileEntryKind.MailAccount && e.Address != null)
+                .Select(e => new SignatureDefaultsRow(e.Key, e.Address!, e.NewSignature, e.ReplyForwardSignature))
+                .ToList();
+        }
 
-            string? defaultProfile = outlook.GetValue("DefaultProfile") as string;
-            using RegistryKey? profiles = outlook.OpenSubKey("Profiles");
-            if (profiles == null)
-            {
-                return rows;
-            }
-
-            IEnumerable<string> profileNames = defaultProfile != null
-                ? new[] { defaultProfile }
-                : profiles.GetSubKeyNames();
-            foreach (string profileName in profileNames)
-            {
-                string accountsPath = profileName + "\\" + AccountsSubKey;
-                using RegistryKey? accounts = profiles.OpenSubKey(accountsPath);
-                if (accounts == null)
-                {
-                    continue;
-                }
-
-                foreach (string subKeyName in accounts.GetSubKeyNames())
-                {
-                    using RegistryKey? account = accounts.OpenSubKey(subKeyName);
-                    if (account == null)
-                    {
-                        continue;
-                    }
-
-                    string? address = SignatureCatalog.DecodeRegistryString(account.GetValue("Account Name"));
-                    if (address == null || address.IndexOf('@') < 0)
-                    {
-                        continue;
-                    }
-
-                    rows.Add(new SignatureDefaultsRow(
-                        OutlookRoot + "\\Profiles\\" + accountsPath + "\\" + subKeyName,
-                        address.Trim(),
-                        Normalize(SignatureCatalog.DecodeRegistryString(account.GetValue(SignatureManager.NewSignatureValueName))),
-                        Normalize(SignatureCatalog.DecodeRegistryString(account.GetValue(SignatureManager.ReplyForwardSignatureValueName)))));
-                }
-            }
-
-            return rows;
+        /// <inheritdoc />
+        public ProfileAccountEntry? ReadEntry(string accountKey)
+        {
+            return ProfileAccountEntries.ReadAll(_registry)
+                .FirstOrDefault(e => ProfileAccountEntries.KeyEquals(e.Key, accountKey));
         }
 
         /// <inheritdoc />
         public void WriteDefault(string accountKey, string valueName, string signatureName)
         {
-            using RegistryKey? account = Registry.CurrentUser.OpenSubKey(accountKey, writable: true);
-            if (account == null)
-            {
-                throw new InvalidOperationException("The account's profile registry key no longer exists: " + accountKey);
-            }
-
-            account.SetValue(valueName, signatureName, RegistryValueKind.String);
+            RequireDefaultValueName(valueName);
+            ProfileAccountEntry entry = ReadEntry(accountKey)
+                ?? throw new InvalidOperationException(
+                    "The account's profile registry entry is no longer there (or no longer in the default profile): " + accountKey);
+            RequireMailAccount(entry, valueName);
+            _registry.SetString(accountKey, valueName, signatureName);
         }
 
         /// <inheritdoc />
         public void ClearDefault(string accountKey, string valueName)
         {
-            using RegistryKey? account = Registry.CurrentUser.OpenSubKey(accountKey, writable: true);
-            account?.DeleteValue(valueName, throwOnMissingValue: false);
+            RequireDefaultValueName(valueName);
+            ProfileAccountEntry? entry = ReadEntry(accountKey);
+            if (entry == null)
+            {
+                // Nothing of the profile's account list there - nothing to clear.
+                return;
+            }
+
+            RequireMailAccount(entry, valueName);
+            _registry.DeleteValue(accountKey, valueName);
         }
 
-        private static string? Normalize(string? value)
+        private static void RequireDefaultValueName(string valueName)
         {
-            return string.IsNullOrWhiteSpace(value) ? null : value!.Trim();
+            if (!string.Equals(valueName, SignatureManager.NewSignatureValueName, StringComparison.Ordinal)
+                && !string.Equals(valueName, SignatureManager.ReplyForwardSignatureValueName, StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    "Only '" + SignatureManager.NewSignatureValueName + "' and '" + SignatureManager.ReplyForwardSignatureValueName
+                    + "' are ever written to the profile registry, not '" + valueName + "'.",
+                    nameof(valueName));
+            }
+        }
+
+        private static void RequireMailAccount(ProfileAccountEntry entry, string valueName)
+        {
+            if (entry.Kind != ProfileEntryKind.MailAccount)
+            {
+                throw new InvalidOperationException(
+                    "Refusing to change '" + valueName + "' on profile entry " + ProfileAccountEntries.ShortKey(entry.Key)
+                    + ": it is a " + ProfileAccountEntries.Describe(entry.Kind) + ", not a mail account, and signature "
+                    + "defaults are only ever written to a mail account's own entry.");
+            }
         }
     }
 
@@ -175,19 +192,21 @@ namespace OutlookAI.Core.Services
     /// set is copied to %LOCALAPPDATA%\OutlookAI\signature-backups\&lt;utc&gt;-&lt;name&gt;\ and
     /// the backup path is returned - a failing backup ABORTS the operation. Optional
     /// default assignment writes the per-account "New Signature"/"Reply-Forward
-    /// Signature" REG_SZ values (D37 locations); deleting a signature clears dangling
-    /// assignments that referenced it. Pure filesystem + registry - no COM, never
-    /// starts Outlook. NOTE (docs): on Microsoft 365 Apps 2303+ roaming signatures can
-    /// overrule local files unless DisableRoamingSignatures=1; on Office LTSC (this
-    /// machine) local files are authoritative.
+    /// Signature" REG_SZ values (D37 locations) onto the ONE mail account whose address is
+    /// the one asked for (<see cref="ProfileAccountEntries"/>' rule; none or several is
+    /// refused before anything is written) and reads them back before reporting success;
+    /// deleting a signature clears dangling assignments that referenced it. Pure filesystem +
+    /// registry - no COM, never starts Outlook. NOTE (docs): on Microsoft 365 Apps 2303+
+    /// roaming signatures can overrule local files unless DisableRoamingSignatures=1; on
+    /// Office LTSC (this machine) local files are authoritative.
     /// </summary>
     public static class SignatureManager
     {
         /// <summary>Registry value name for the new-message default.</summary>
-        public const string NewSignatureValueName = "New Signature";
+        public const string NewSignatureValueName = ProfileAccountEntries.NewSignatureValueName;
 
         /// <summary>Registry value name for the reply/forward default.</summary>
-        public const string ReplyForwardSignatureValueName = "Reply-Forward Signature";
+        public const string ReplyForwardSignatureValueName = ProfileAccountEntries.ReplyForwardSignatureValueName;
 
         /// <summary>Maximum signature name length (file-name discipline).</summary>
         public const int NameMaxChars = 128;
@@ -261,14 +280,7 @@ namespace OutlookAI.Core.Services
             if (defaultAccount != null)
             {
                 store = defaultsStore ?? new ProfileSignatureDefaultsStore();
-                targetAccount = store.ReadAccounts()
-                    .FirstOrDefault(r => string.Equals(r.Account, defaultAccount, StringComparison.OrdinalIgnoreCase));
-                if (targetAccount == null)
-                {
-                    throw new ArgumentException(
-                        "Account '" + defaultAccount + "' was not found in the Outlook profile registry - "
-                        + "set_default_for.account must be one of the profile's account SMTP addresses (see list_accounts).");
-                }
+                targetAccount = SelectDefaultTarget(store.ReadAccounts(), defaultAccount);
             }
 
             string? backupPath = null;
@@ -306,6 +318,7 @@ namespace OutlookAI.Core.Services
                 if (targetAccount != null && store != null)
                 {
                     ApplyDefaults(store, targetAccount, defaultScope!, name);
+                    VerifyDefaults(store, targetAccount, defaultAccount!, defaultScope!, name);
                     outcome.DefaultSetForAccount = targetAccount.Account;
                     outcome.DefaultSetScope = defaultScope;
                     advice.Add(DefaultsRestartAdvice);
@@ -649,6 +662,47 @@ namespace OutlookAI.Core.Services
 
         // ------------------------------------------------------------------ defaults
 
+        /// <summary>
+        /// The ONE entry a default is written to: the mail account whose address IS
+        /// <paramref name="address"/>. The rows are mail accounts only
+        /// (<see cref="ISignatureDefaultsStore.ReadAccounts"/>), so a data file or an address book
+        /// never gets this far, whatever it is named. None, or more than one, is a refusal decided
+        /// before any file or registry work - nothing has been touched when it is thrown. The old
+        /// selection took the FIRST entry whose Account Name equalled the address, out of the
+        /// entries with an '@' in that name: on the 2026-09-24 guest that was a data file, and the
+        /// account itself was not among them.
+        /// </summary>
+        private static SignatureDefaultsRow SelectDefaultTarget(IReadOnlyList<SignatureDefaultsRow> accounts, string address)
+        {
+            List<SignatureDefaultsRow> matches = accounts
+                .Where(r => ProfileAccountEntries.AddressEquals(r.Account, address))
+                .ToList();
+            if (matches.Count == 1)
+            {
+                return matches[0];
+            }
+
+            if (matches.Count == 0)
+            {
+                string known = accounts.Count > 0
+                    ? " Mail accounts in the profile: "
+                        + string.Join(", ", accounts.Select(r => r.Account).Distinct(StringComparer.OrdinalIgnoreCase)) + "."
+                    : " The profile lists no mail account this product recognises (POP3, IMAP or Exchange).";
+                throw new ArgumentException(
+                    "Account '" + address + "' was not found in the Outlook profile registry - set_default_for.account must be "
+                    + "one of the profile's account SMTP addresses (see list_accounts), in full." + known
+                    + " Only mail-account entries count: a data file or address book named after an address is not an account. "
+                    + "Nothing was written.");
+            }
+
+            throw new ArgumentException(
+                matches.Count.ToString(CultureInfo.InvariantCulture) + " mail accounts in the Outlook profile registry have the "
+                + "address '" + address + "' (entries "
+                + string.Join(", ", matches.Select(r => ProfileAccountEntries.ShortKey(r.AccountKey)))
+                + ") - refusing to guess which one to record the default on. Nothing was written. Set it in Outlook instead "
+                + "(File > Options > Mail > Signatures), which lists each account separately.");
+        }
+
         private static void ApplyDefaults(ISignatureDefaultsStore store, SignatureDefaultsRow account, string scope, string name)
         {
             try
@@ -663,12 +717,101 @@ namespace OutlookAI.Core.Services
                     store.WriteDefault(account.AccountKey, ReplyForwardSignatureValueName, name);
                 }
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException
+                or InvalidOperationException)
             {
-                throw new InvalidOperationException(
+                // Applied, not unchanged: the signature files are already on disk, and with scope
+                // 'both' the first of the two values may be too.
+                throw new OperationOutcomeException(
+                    Com.MutationOutcome.Applied,
                     "The signature files were written, but recording it as the default for '" + account.Account
                     + "' failed: " + ex.Message, ex);
             }
+        }
+
+        /// <summary>
+        /// Reads the default back before it is reported as set - and NOT through the row the write
+        /// was aimed with. That is what let the 2026-09-24 defect confirm itself: list_signatures
+        /// re-read the data file by the very rule that had chosen it, and said "set". Three checks,
+        /// all on a FRESH read of the store: the entry written, re-read on its own and classified
+        /// from its raw values, is a MAIL ACCOUNT carrying the requested address; the selection,
+        /// re-run from scratch by the same rule, still lands on that one entry and no other; and
+        /// the value(s) just written read back exactly. A failure is thrown with
+        /// <see cref="Com.MutationOutcome.Applied"/>: the files and a registry value were written,
+        /// and the message says where.
+        /// </summary>
+        private static void VerifyDefaults(
+            ISignatureDefaultsStore store, SignatureDefaultsRow written, string address, string scope, string name)
+        {
+            string? problem;
+            try
+            {
+                problem = FindDefaultsProblem(store, written, address, scope, name);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                problem = "the profile registry could not be read back (" + ex.GetType().Name + ": " + ex.Message + ")";
+            }
+
+            if (problem != null)
+            {
+                throw new OperationOutcomeException(
+                    Com.MutationOutcome.Applied,
+                    "The signature files were written and a default was recorded on profile entry "
+                    + ProfileAccountEntries.ShortKey(written.AccountKey) + ", but reading it back did not confirm it, so it is "
+                    + "NOT reported as set: " + problem + ". Check the default for '" + address + "' in Outlook "
+                    + "(File > Options > Mail > Signatures).");
+            }
+        }
+
+        private static string? FindDefaultsProblem(
+            ISignatureDefaultsStore store, SignatureDefaultsRow written, string address, string scope, string name)
+        {
+            ProfileAccountEntry? entry = store.ReadEntry(written.AccountKey);
+            if (entry == null)
+            {
+                return "that entry is no longer in the profile's account list";
+            }
+
+            if (entry.Kind != ProfileEntryKind.MailAccount)
+            {
+                return "that entry is a " + ProfileAccountEntries.Describe(entry.Kind) + ", not a mail account";
+            }
+
+            if (!ProfileAccountEntries.AddressEquals(entry.Address, address))
+            {
+                return "that entry belongs to " + Quote(entry.Address) + ", not '" + address + "'";
+            }
+
+            List<SignatureDefaultsRow> now = store.ReadAccounts()
+                .Where(r => ProfileAccountEntries.AddressEquals(r.Account, address))
+                .ToList();
+            if (now.Count != 1 || !ProfileAccountEntries.KeyEquals(now[0].AccountKey, written.AccountKey))
+            {
+                return "selecting the account for '" + address + "' again finds "
+                    + (now.Count == 0
+                        ? "no entry"
+                        : "entr" + (now.Count == 1 ? "y " : "ies ")
+                            + string.Join(", ", now.Select(r => ProfileAccountEntries.ShortKey(r.AccountKey))));
+            }
+
+            if ((scope == "new" || scope == "both") && !string.Equals(entry.NewSignature, name, StringComparison.Ordinal))
+            {
+                return "its '" + NewSignatureValueName + "' reads " + Quote(entry.NewSignature) + ", not '" + name + "'";
+            }
+
+            if ((scope == "reply" || scope == "both") && !string.Equals(entry.ReplyForwardSignature, name, StringComparison.Ordinal))
+            {
+                return "its '" + ReplyForwardSignatureValueName + "' reads " + Quote(entry.ReplyForwardSignature)
+                    + ", not '" + name + "'";
+            }
+
+            return null;
+        }
+
+        private static string Quote(string? value)
+        {
+            return value == null ? "nothing" : "'" + value + "'";
         }
 
         private static IReadOnlyList<string>? ClearDanglingDefaults(

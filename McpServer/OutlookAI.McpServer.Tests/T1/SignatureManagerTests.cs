@@ -420,6 +420,12 @@ public sealed class SignatureManagerTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// Row-level fake: every row IS a mail account by construction, so this exercises
+    /// Manage's orchestration only. Which registry entries count as accounts - and the
+    /// 2026-09-24 data-file defect - is SignatureDefaultTargetTests, over a registry fake.
+    /// Stateful, because Manage now reads a default back before reporting it set.
+    /// </summary>
     private sealed class FakeDefaultsStore : ISignatureDefaultsStore
     {
         public List<SignatureDefaultsRow> Rows { get; } = new List<SignatureDefaultsRow>();
@@ -430,17 +436,42 @@ public sealed class SignatureManagerTests : IDisposable
 
         public IReadOnlyList<SignatureDefaultsRow> ReadAccounts()
         {
-            return Rows;
+            // A snapshot: the delete sweep clears while it iterates.
+            return Rows.ToList();
+        }
+
+        public ProfileAccountEntry? ReadEntry(string accountKey)
+        {
+            SignatureDefaultsRow? row = Rows.FirstOrDefault(r => r.AccountKey == accountKey);
+            return row == null
+                ? null
+                : new ProfileAccountEntry(row.AccountKey, ProfileEntryKind.MailAccount, row.Account, row.Account, row.NewMessage, row.ReplyForward);
         }
 
         public void WriteDefault(string accountKey, string valueName, string signatureName)
         {
             Writes.Add((accountKey, valueName, signatureName));
+            Replace(accountKey, valueName, signatureName);
         }
 
         public void ClearDefault(string accountKey, string valueName)
         {
             Clears.Add((accountKey, valueName));
+            Replace(accountKey, valueName, null);
+        }
+
+        private void Replace(string accountKey, string valueName, string? value)
+        {
+            int index = Rows.FindIndex(r => r.AccountKey == accountKey);
+            if (index < 0)
+            {
+                return;
+            }
+
+            SignatureDefaultsRow row = Rows[index];
+            Rows[index] = valueName == SignatureManager.NewSignatureValueName
+                ? new SignatureDefaultsRow(row.AccountKey, row.Account, value, row.ReplyForward)
+                : new SignatureDefaultsRow(row.AccountKey, row.Account, row.NewMessage, value);
         }
     }
 }
