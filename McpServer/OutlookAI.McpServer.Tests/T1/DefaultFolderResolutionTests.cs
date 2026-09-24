@@ -25,6 +25,14 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// default folder set).
 /// </para>
 /// <para>
+/// THAT CONTRACT IS NOT THE WHOLE TRUTH (Q84, measured 2026-09-24): on a POP3 PST,
+/// GetDefaultFolder(23) and GetDefaultFolder(39) CREATED the folders the store lacked instead
+/// of returning null. So the sweep no longer learns absence from that call:
+/// <see cref="SpecialFolders.Resolve"/> establishes it without creating anything and only
+/// then asks, and this classifier judges the answer as before. The non-creating half is
+/// pinned in <see cref="ReadOnlyFolderLookupTests"/>.
+/// </para>
+/// <para>
 /// THE DEFECT. Resolution used to be one try/catch: a null answer was dereferenced one
 /// line later, the C# dynamic binder turned that into a RuntimeBinderException, and the
 /// catch counted it as a SKIPPED folder - identical to a folder that genuinely would not

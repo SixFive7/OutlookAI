@@ -2701,7 +2701,7 @@ namespace OutlookAI.Core.Services
         /// <summary>Store-relative path of the designated Archive folder (localized name - e.g. Archive/Archiveren).</summary>
         public string Folder { get; set; } = string.Empty;
 
-        /// <summary>Resolution mechanism ("outlookDefaultFolder" or "storeArchiveProperty").</summary>
+        /// <summary>Resolution mechanism ("outlookDefaultFolder", "storeArchiveProperty" or "inboxArchiveProperty").</summary>
         public string Via { get; set; } = string.Empty;
     }
 
@@ -2719,6 +2719,14 @@ namespace OutlookAI.Core.Services
 
         /// <summary>The designated Archive folder per store involved (resolved, never guessed by name).</summary>
         public IReadOnlyList<ArchiveFolderView>? ArchiveFolders { get; set; }
+
+        /// <summary>
+        /// Archive folders this call CREATED, as <c>store/path</c>, when any: a store that had
+        /// no designated Archive folder (a POP/IMAP account, a data file) gets one when mail is
+        /// archived into it (Q84). Reported whether that store's items then moved or not - like
+        /// move_mail's createdFolders - because this server cannot delete folders.
+        /// </summary>
+        public IReadOnlyList<string>? CreatedFolders { get; set; }
 
         /// <summary>Per-item results, input order (toFolder = the store's Archive folder).</summary>
         public IReadOnlyList<MoveItemView> Items { get; set; } = Array.Empty<MoveItemView>();

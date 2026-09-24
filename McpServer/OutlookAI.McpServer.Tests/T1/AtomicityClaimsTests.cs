@@ -794,6 +794,7 @@ public sealed class AtomicityClaimsTests
                     return Snapshot();
 
                 case nameof(IOutlookSession.TryResolveArchiveFolder):
+                case nameof(IOutlookSession.TryResolveOrCreateArchiveFolder):
                     return new ComArchiveFolderInfo("Work", "store-work", "folder-archive", "Archive", "Archive", "designated");
 
                 case nameof(IOutlookSession.TryMoveItemToFolderId):
