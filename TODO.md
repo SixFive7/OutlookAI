@@ -139,9 +139,13 @@
         2026-09-24: the guests' sink is **Inbucket 3.1.1**, not smtp4dev, chosen because its POP3
         accepts a login with no password and shows each login only its own mailbox (the
         maintainer asked for a ready-made open-source tool; `Testbed/MEDIA.md`, "The mail sink").
-        What is still open is not this question: `Testbed/guest/Install-MailSink.ps1` has never
-        run on a guest, and whether Outlook logs in without a stored POP3 password is a guest
-        measurement - `Docs/live-tier-on-the-vm.md` section 2.7. The original item follows.
+        **Both follow-ups are settled too, 2026-09-24 on `OutlookAI-Unindexed`:**
+        `Testbed/guest/Install-MailSink.ps1` reported `SINK-READY` at its first `-Execute` and again
+        after a graceful restart (the sink started 7 s after boot); and Outlook holding no stored
+        POP3 password PROMPTS and never connects, so `Testbed/guest/New-TierProfile.ps1
+        -StoreSinkPassword -Execute` now stores one - proven by the sink's debug log
+        (`read USER tier`, `read PASS any-value`) - `Docs/live-tier-on-the-vm.md` section 2.7. The
+        original item follows.
 
         **Settle whether smtp4dev serves POP3 at all.** The runbook specifies POP3 on 110 and a
         POP3 dummy account, and `MailSinkSettings.RetrievePort` documents itself as POP3, but

@@ -1592,6 +1592,36 @@ Treat those numbers as "what they were when this was written" - measured 2026-08
 are the authority; the counts in a document drift. `Requires!=X` means "no value of `Requires` on
 this test equals X", which is what makes a multi-valued trait usable as an exclusion.
 
+### 4.1 The first live-tier run on a VM - `OutlookAI-Unindexed`, 2026-09-24
+
+**Why this section exists.** Until this date the live tier had never run on a test machine (section 9,
+`Testbed/README.md` section 6 item 13). This is the record of bringing `OutlookAI-Unindexed` from
+`CP-05-CORPUS-B-CLEAN-UNINDEXED` to the full design, one scripted step at a time, each step proven
+on the guest and checkpointed, and then running the tier there. Raw logs of every step were kept
+outside the repository (`.work\g2-buildout\` in the main checkout).
+
+**The build-out, step by step:**
+
+| Step | What ran | Verdict | Checkpoint |
+| --- | --- | --- | --- |
+| Restart route | CP-05's saved memory carries an Object Model Guard prompt with no client left; `Application.Quit()` was ignored while it stood. Answered **Deny** by the dialog's own `WM_COMMAND` (a `BM_CLICK` was ignored), then a graceful `Quit()` - exited in 2 s | - | - |
+| 1. First-run settings | `Set-OfficeFirstRunSuppressed.ps1 -Verify` (10 OK, 3 FAIL: exactly the three classic-Outlook values), `-Execute`, `-Verify` | 13 of 13, still 13 after two Outlook restarts | `CP-06-FIRSTRUN-REPAIRED` |
+| 2. Programmatic access (Q80) | `Set-OutlookProgrammaticAccess.ps1`: a control `-Verify` with nothing written, `-Execute`, `-Verify` | control `PROMPTED` in 0.7 s; then `NO-PROMPT`, `SmtpAddress` in 16 ms | `CP-07-PROGRAMMATIC-ACCESS` |
+| 3. Mail sink | `Install-MailSink.ps1 -LogLevel debug -Execute`, graceful restart, `-Verify`; then the password question (section 2.7) | `SINK-READY` twice, started 7 s after boot; Outlook PROMPTED and never connected, so `New-TierProfile.ps1 -StoreSinkPassword` - then `read USER tier` / `read PASS any-value` | `CP-08-MAIL-SINK` |
+| 4. Add-in | `Publish-AddInPayload.ps1` on the host (`fe65ced`, host unchanged), `Install-OutlookAIAddIn.ps1` `-SelfTest`, `-Verify`, `-Execute`, restart, `-Execute`; then `Set-OutlookIndexingDisabled.ps1 -Verify` | `NOT-INSTALLED`, then `ADDIN-READY` twice (tuning state 3.5 s and 3 s after the start; trust entry kept the second time); the index verify `NO-INDEXER` when its first reading fell 74 s after boot, before Windows Search's delayed start, then `UNINDEXED` on a re-run | `CP-09-ADDIN-READY` (the identity import of step 5 already pending in it) |
+
+**What the build-out found, beyond the step verdicts:**
+
+* **An Outlook started by COM (`-Embedding`) is not in the Running Object Table**, so
+  `GetActiveObject` fails (`MK_E_UNAVAILABLE`) while `New-Object -ComObject Outlook.Application` from
+  the same session and integrity level attaches to it. And attaching to an Outlook started as a
+  PROGRAM launches a transient `OUTLOOK.EXE -Embedding` that hands off and exits within seconds.
+* **A modal dialog swallows `Application.Quit()`** - measured with the guard prompt: `Quit()` returned,
+  and Outlook was still up four minutes later.
+* **Office LTSC 2024 does not register the VSTO runtime** Installer.iss looks for (`v4R` absent; only
+  `v4` `10.0.60910`), so the add-in installer's own runtime step is load-bearing on a guest.
+* **Inbucket's log is written through a 4 KB buffer** (section 2.7): read it after more has been logged.
+
 ---
 
 ## 5. Which tests are in which bucket, and how to find out

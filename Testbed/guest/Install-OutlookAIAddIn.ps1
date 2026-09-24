@@ -1,7 +1,45 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    NEVER EXECUTED ON A GUEST. WRITTEN 2026-09-24. WHAT HAS RUN IS ON THE HOST, AND IT IS THIS:
+    RUN ON OutlookAI-Unindexed 2026-09-24 (FROM CP-08): ADDIN-READY, TWICE.
+    ============================================================================================
+
+    The payload was built on the host by Testbed/host/Publish-AddInPayload.ps1 from commit fe65ced
+    (376 host lines identical before and after the build), staged with the pinned
+    vstor_redist.exe, and run from C:\OutlookAI-Q5 in session 1 through Register-InteractiveTask.ps1,
+    with the tier profile the default, its POP3 password stored and the Q80 programmatic-access
+    policy in place:
+
+      -SelfTest   on the guest it DIED at the contract section - "Cannot bind argument to parameter
+                  'Path' because it is an empty string": staged at C:\OutlookAI-Q5, two levels up is
+                  '' and Join-Path refused it. Fixed (it now says SKIP, as it always meant to);
+                  85 assertions, 0 failures there, the 30 contract checks skipped because the
+                  suite's source is not staged yet at this step; 115 on the host.
+      -Verify     before: NOT-INSTALLED, exit 3. v4R ABSENT, v4 10.0.60910 - Office LTSC 2024 does
+                  NOT bring the VSTO runtime key Installer.iss looks for.
+      -Execute    ADDIN-READY, exit 0. The runtime installed in 20 s (v4R 10.0.60917); the product's
+                  installer in 6 s; the inclusion entry written; Outlook started over COM in 3.2 s,
+                  and the add-in wrote its tuning state 3.5 s after the start (Initialized DWORD 1,
+                  Enabled DWORD 1, LastReconcileUtc REG_SZ); COMAddIns Connect True, and the add-in
+                  answered GetRestartNeeded() (True). No trust prompt, no other window. The index
+                  exclusion UNCHANGED. The headless Outlook then closed by itself within ~45 s of
+                  the last reference being released.
+      restart     graceful (no Outlook running; shutdown /r /t 0), then -Execute AGAIN: ADDIN-READY;
+                  "already registered: v4R 10.0.60917 - not reinstalling"; "kept the existing entry
+                  36156351-... - same URL, same key"; tuning state 3 s after the start;
+                  GetRestartNeeded() False this time.
+      after it    Set-OutlookIndexingDisabled.ps1 -Verify: UNINDEXED (catalog reachable, no Outlook
+                  row on either reading). Its first attempt said NO-INDEXER only because its first
+                  reading fell 74 s after a boot, before Windows Search's delayed start.
+
+    NOT EXERCISED ON A GUEST: -Verify -WithOutlook (the COM-started Outlook had already closed by
+    itself). Worth knowing before relying on it: it attaches with GetActiveObject, and an Outlook
+    started BY COM (-Embedding) is not in the Running Object Table - measured the same day on CP-05's
+    Outlook, MK_E_UNAVAILABLE - so against that kind of Outlook it would report an error, not a
+    verdict.
+
+    ============================================================================================
+    WRITTEN 2026-09-24. WHAT HAD RUN BEFORE THE GUEST RUN WAS ON THE HOST, AND IT WAS THIS:
     ============================================================================================
 
       * -SelfTest: 115 assertions, 0 failures, under Windows PowerShell 5.1 and PowerShell 7 - 30
@@ -17,10 +55,8 @@
     Every mechanism below was checked against something real before it was written down - the
     VSTO runtime's own IL, the installer's own source, trust entries the runtime itself wrote on
     the maintainer's workstation - and each is labelled with how it is known. None of that is a
-    guest run. The things only a guest can settle are listed at the end of -SelfTest's output.
-
-    Replace this banner with what it actually did the first time it runs on a guest, and say which
-    of the four verdicts it printed.
+    guest run. The things only a guest can settle are listed at the end of -SelfTest's output -
+    and the guest run above settled all but the last of them.
 
 .SYNOPSIS
     Puts the OutlookAI add-in - built from a named commit by Testbed/host/Publish-AddInPayload.ps1 -
@@ -1077,8 +1113,12 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
 
     Write-Host ''
     Write-Host '== the contract this script mirrors, read from the repository =='
+    # Two levels up from Testbed\guest is the repository. Staged on its own - C:\OutlookAI-Q5\ on a
+    # guest, before the suite's source is there - two levels up is '' and Join-Path refused it:
+    # "Cannot bind argument to parameter 'Path' because it is an empty string", which ended the
+    # FIRST guest -SelfTest (2026-09-24, OutlookAI-Unindexed) before this section could say SKIP.
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-    if (Test-Path -LiteralPath (Join-Path $repo 'Services\AddInServerContract.cs')) {
+    if ($repo -and (Test-Path -LiteralPath (Join-Path $repo 'Services\AddInServerContract.cs'))) {
         foreach ($c in (Get-ContractChecks)) {
             $path = Join-Path $repo $c.File
             $text = ''
@@ -1087,7 +1127,7 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
         }
     }
     else {
-        Write-Host "  SKIP no repository at $repo - the contract cannot be read from here."
+        Write-Host "  SKIP no repository two levels above $PSScriptRoot - the contract cannot be read from here. Run -SelfTest from the staged suite source (C:\OutlookAI-Q5\src\Testbed\guest) to include it."
     }
 
     Write-Host ''
