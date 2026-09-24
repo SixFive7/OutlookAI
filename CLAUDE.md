@@ -76,7 +76,26 @@ licence key, and anything a rebuilder would have to download and install beyond 
 answer is to question the requirement, not the rule — see `TODO.md` for how the POP3 account
 question was reframed rather than bought.
 
+**One exception, decided by the maintainer 2026-09-24 (Q71): a loopback mail sink for the test
+VMs.** A ready-made open-source mail server is permitted for this one job, so that the live tests
+that send mail can run on the VMs. Conditions, all of them: free and open source under a
+permissive licence; no licence key, account or telemetry; staged offline as media in
+`Testbed/MEDIA.md` and pinned by a hash its own maintainers publish; installed only on the test
+guests, never on the maintainer's workstation. `Testbed/MEDIA.md` names the tool and version.
+This is the only exception; it does not generalise to "open source is fine".
+
 ## Mailbox Safety (MANDATORY — live tests touch REAL mailboxes)
+
+**THE MAINTAINER'S WORKSTATION IS READ-ONLY FOR LIVE TESTS — ALWAYS.** Decided by the maintainer
+2026-09-24 (Q69, Q72), in his words: *"run read-only and always only read-only!"* Every live test
+that can run on the test VMs runs **only** there. The only live tests that may run on the
+workstation are the fundamentally immovable ones — those that need Exchange (delegate and shared
+mailboxes, cached mode), which no test VM can have under the Dependencies rule — and they run
+**read-only**. **Never run a write-capable live test on the workstation, and never select a
+workstation run by a filter that could include one.** Until a code gate enforces this (tracked in
+`TODO.md`), the run filter is the only thing between a write and a real mailbox: if you cannot
+show a workstation run is read-only, do not start it. The rules below still bind every live run,
+on the workstation and on the VMs alike.
 
 `Category=Live` tests run against the developer's **real production Outlook profile**: real mail accounts plus delegate/shared mailboxes **to which the profile has full write access**. Treat every live run as an operation on production data. A past incident mass-deleted real mail (fully recovered) because an agent improvised a cleanup script — these rules exist so that never repeats. They are non-negotiable and apply to every agent, every session, whether or not live tests are the task:
 

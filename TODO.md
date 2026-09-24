@@ -56,6 +56,21 @@
   The *live* number stays out of the repo - it is a fact about one machine. Dated measurements in
   `Testbed/MEDIA.md` are history, not a threshold, and are fine.
 
+- [ ] **ENFORCE, IN CODE, THAT THE WORKSTATION IS READ-ONLY FOR LIVE TESTS (Q72 decided; Q74 is how).**
+  The maintainer decided 2026-09-24: live tests on his workstation run read-only, always, and only
+  the fundamentally immovable ones - the Exchange-only tests - run there at all. `CLAUDE.md` now
+  says so, but today nothing but the run filter enforces it, and the retirement review found two
+  gaps a filter cannot close. First, tests that write through the MCP server process (the stdio,
+  tier-3 tests) bypass the in-process `StoreWriteAllowlist` entirely. Second, a hand-kept filter
+  string is exactly what this repository's history shows drifting. The recommended shape
+  (Q74 a+c+d): a trait marking tests that never write, pinned by CI; a workstation machine profile
+  whose write allowlist refuses EVERY store, hub included, so an in-process write throws; the test
+  client refusing to call any write-capable MCP tool under that profile, so an out-of-process write
+  is refused before it is sent; and per-population declarations replacing Production/Portable.
+  **Waiting on:** the store-list split and the other Q69 work landing, since they touch the same
+  test infrastructure, and the maintainer's go on Q74. Until then no write-capable live test may be
+  started on the workstation at all.
+
 - [ ] **Restore the installed MCP server — it is deliberately disabled right now.**
   On 2026-08-16, while developing the COM-host work, the installed executable was moved
   aside so that no Claude Code session could start a stale build and re-activate Outlook
