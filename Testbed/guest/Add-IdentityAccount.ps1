@@ -62,7 +62,7 @@
         out of date - the guests have no network. -TrySmtpAddress attempts it last, in its own job,
         and reports a block as a block. The registry's `Email` value is read regardless.
       * Whether a later Outlook REPAIR or an account edit in the GUI rewrites the binding. Not tried.
-      * The signature §2.8b also wants on this account. Not done here: Set-AccountSignature.ps1.
+      * The signature section 2.8b also wants on this account. Not done here: Set-AccountSignature.ps1.
 
     WHAT IT NEVER DOES: start, quit or kill Outlook; create, modify, move or delete an item; touch
     any profile other than -ProfileName, or any account other than the one whose Email is

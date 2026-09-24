@@ -48,6 +48,49 @@ jobs:
         shell: pwsh
         run: .github/scripts/check-testbed-references.ps1
 
+      # Every script here must run on the Windows PowerShell 5.1 that ships with Windows - the only
+      # PowerShell the test guests have (decided 2026-09-24, Q78). Three 5.1-only failures reached
+      # the tree while everything ran under pwsh 7: a param() default built from $PSScriptRoot, a
+      # non-ASCII character in a file with no BOM, and a native program's redirected stderr under
+      # 'Stop'. This fails on all three, statically, in every script.
+      - name: Check scripts run on Windows PowerShell 5.1
+        shell: pwsh
+        run: .github/scripts/check-powershell-51.ps1
+
+      # The same guards again, run BY Windows PowerShell 5.1. A static check cannot prove a script
+      # runs on 5.1; running it there does, and it is what stops the next 5.1-only failure passing
+      # every pwsh step the way the last three did. Each guard gets its own process and -File - the
+      # mode the $PSScriptRoot failure needs - so one failing guard cannot hide another. Here
+      # check-powershell-51.ps1 also parses every script with 5.1's own parser, which is what
+      # catches PowerShell 7-only syntax, and check-measurement-privacy.ps1 runs the measurement
+      # gate's self-test under the same 5.1, so the gate is covered too.
+      - name: Run every guard under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSEdition -ne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5) {
+            Write-Host "::error::This step exists to run the guards under Windows PowerShell 5.1, and it is running under $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion)."
+            exit 1
+          }
+          $shellExe = Join-Path $PSHOME 'powershell.exe'
+          $guards = @(Get-ChildItem -Path .github/scripts -Filter 'check-*.ps1' -File | Sort-Object Name)
+          if ($guards.Count -eq 0) {
+            Write-Host '::error::Found no check-*.ps1 guard under .github/scripts, so this step would prove nothing.'
+            exit 1
+          }
+          $failed = @()
+          foreach ($guard in $guards) {
+            Write-Host ''
+            Write-Host "=== $($guard.Name) under Windows PowerShell $($PSVersionTable.PSVersion)"
+            & $shellExe -NoProfile -ExecutionPolicy Bypass -File $guard.FullName
+            if ($LASTEXITCODE -ne 0) { $failed += "$($guard.Name) (exit $LASTEXITCODE)" }
+          }
+          Write-Host ''
+          if ($failed.Count -gt 0) {
+            Write-Host "::error::Failed under Windows PowerShell $($PSVersionTable.PSVersion): $($failed -join ', ')"
+            exit 1
+          }
+          Write-Host "All $($guards.Count) guards pass under Windows PowerShell $($PSVersionTable.PSVersion)."
+
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3
 

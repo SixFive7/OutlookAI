@@ -769,6 +769,37 @@ then on the guest: Expand-Archive C:\OutlookAI-Q5\Tools.zip -DestinationPath C:\
 $identity = @('--corpus-id', $CorpusId, '--seed', "$Seed", '--anchor', $Anchor, '--count', "$Count")
 $target = @('--store', $Store, '--allow-store', $Store)
 
+# A NATIVE PROGRAM WHOSE STDERR IS REDIRECTED RUNS THROUGH HERE (Q78). Under
+# $ErrorActionPreference = 'Stop', Windows PowerShell 5.1 turns the first line a native program
+# writes to a redirected stderr - 2>$null, 2>&1 and *> alike - into a terminating
+# NativeCommandError, so one warning or progress line ends the script before its exit code can be
+# read. PowerShell 7 does not. Measured on the host 2026-09-24. So, here and only here:
+#   * 'Continue' holds in THIS function's scope. The caller's 'Stop' is never changed, so there is
+#     nothing to restore and nothing else is relaxed.
+#   * The try is load-bearing. Without one, 'Continue' also demotes a terminating error inside the
+#     block - the program not being found at all - to a printed message, and the caller goes on to
+#     read a stale $LASTEXITCODE. Inside a try it stops the caller exactly as it always did.
+#     Measured in both shells.
+#   * Stderr lines come back as plain strings in both shells, never as ErrorRecords: 5.1 renders
+#     those with a position block around every line, and an empty one as an exception type name.
+#   * The exit code is left in $LASTEXITCODE, and the caller checks it.
+# Restated in each script that needs it, as this repository restates its shared rules.
+# .github/scripts/check-powershell-51.ps1 fails the build on a redirected native call that does
+# not go through a function like this one.
+function Invoke-NativeCommand {
+    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
+
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $NativeCommand | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
+        }
+    }
+    catch {
+        throw
+    }
+}
+
 function Invoke-Corpus {
     param([string] $Verb, [string[]] $Arguments, [switch] $Fatal)
 
@@ -779,7 +810,10 @@ function Invoke-Corpus {
 
     # Output is captured and echoed rather than streamed, so a child that outlives the call
     # cannot hold the pipe open. Every number these verbs print is meant to be kept anyway.
-    $output = & $ToolsExe $Verb @Arguments 2>&1
+    # Through Invoke-NativeCommand because this runs on the guests' Windows PowerShell 5.1: until
+    # it did, one line on the tool's stderr - an unhandled exception's report, say - surfaced as a
+    # NativeCommandError here, and the tool's own exit code and message were never read.
+    $output = Invoke-NativeCommand { & $ToolsExe $Verb @Arguments 2>&1 }
     $code = $LASTEXITCODE
     $text = ($output | Out-String)
     Write-Host $text

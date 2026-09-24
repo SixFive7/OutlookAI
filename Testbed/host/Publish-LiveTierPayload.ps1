@@ -172,6 +172,37 @@ $env:DOTNET_NOLOGO = '1'
 function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 function SizeMb([string] $path) { return [math]::Round((Get-Item -LiteralPath $path).Length / 1MB, 1) }
 
+# A NATIVE PROGRAM WHOSE STDERR IS REDIRECTED RUNS THROUGH HERE (Q78). Under
+# $ErrorActionPreference = 'Stop', Windows PowerShell 5.1 turns the first line a native program
+# writes to a redirected stderr - 2>$null, 2>&1 and *> alike - into a terminating
+# NativeCommandError, so one warning or progress line ends the script before its exit code can be
+# read. PowerShell 7 does not. Measured on the host 2026-09-24. So, here and only here:
+#   * 'Continue' holds in THIS function's scope. The caller's 'Stop' is never changed, so there is
+#     nothing to restore and nothing else is relaxed.
+#   * The try is load-bearing. Without one, 'Continue' also demotes a terminating error inside the
+#     block - the program not being found at all - to a printed message, and the caller goes on to
+#     read a stale $LASTEXITCODE. Inside a try it stops the caller exactly as it always did.
+#     Measured in both shells.
+#   * Stderr lines come back as plain strings in both shells, never as ErrorRecords: 5.1 renders
+#     those with a position block around every line, and an empty one as an exception type name.
+#   * The exit code is left in $LASTEXITCODE, and the caller checks it.
+# Restated in each script that needs it, as this repository restates its shared rules.
+# .github/scripts/check-powershell-51.ps1 fails the build on a redirected native call that does
+# not go through a function like this one.
+function Invoke-NativeCommand {
+    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
+
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $NativeCommand | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
+        }
+    }
+    catch {
+        throw
+    }
+}
+
 # ---------------------------------------------------------------------------------------------
 # 1. The SDK installer. Identified, never produced.
 # ---------------------------------------------------------------------------------------------
@@ -219,7 +250,10 @@ Say ''
 Say '== Source =='
 if (-not $SkipSource) {
     if (Test-Path -LiteralPath $sourceZip) { Remove-Item -LiteralPath $sourceZip -Force }
-    $resolved = (@(& git -C $RepoRoot rev-parse --verify $Ref 2>&1) | Out-String).Trim()
+    # git's own complaint is what goes into the error below, so its stderr is merged in - which
+    # under Windows PowerShell 5.1 is exactly what used to end the script first; see
+    # Invoke-NativeCommand.
+    $resolved = (@(Invoke-NativeCommand { & git -C $RepoRoot rev-parse --verify $Ref 2>&1 }) | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "git could not resolve '$Ref' in $RepoRoot - $resolved" }
 
     $dirty = @(& git -C $RepoRoot status --porcelain)
@@ -271,8 +305,11 @@ if (-not $SkipPackages) {
         Say "  restoring $($p.Name)"
         $log = Join-Path $OutDir ("restore-" + [IO.Path]::GetFileNameWithoutExtension($p.Name) + ".log")
         # Output to a file, never streamed: a restore that spawns its own children can hold the
-        # pipe open long after it has finished.
-        & dotnet restore $p.FullName --packages $cacheDir *> $log
+        # pipe open long after it has finished. Stdout and stderr both land in the log, as they
+        # did with *>, and through Invoke-NativeCommand so that Windows PowerShell 5.1 does not
+        # end the script on the first line a restore writes to stderr.
+        Invoke-NativeCommand { & dotnet restore $p.FullName --packages $cacheDir 2>&1 } |
+            Out-File -LiteralPath $log
         if ($LASTEXITCODE -ne 0) {
             Write-Host (Get-Content -LiteralPath $log -Tail 40 | Out-String)
             throw "dotnet restore failed for $($p.Name) (exit $LASTEXITCODE). Full log: $log"
@@ -335,7 +372,8 @@ else {
     $ok = $true
     foreach ($p in $projects) {
         $log = Join-Path $OutDir ("feedcheck-" + [IO.Path]::GetFileNameWithoutExtension($p.Name) + ".log")
-        & dotnet restore $p.FullName --configfile $checkConfig --packages $checkPackages *> $log
+        Invoke-NativeCommand { & dotnet restore $p.FullName --configfile $checkConfig --packages $checkPackages 2>&1 } |
+            Out-File -LiteralPath $log
         if ($LASTEXITCODE -ne 0) {
             $ok = $false
             Write-Host (Get-Content -LiteralPath $log -Tail 30 | Out-String)

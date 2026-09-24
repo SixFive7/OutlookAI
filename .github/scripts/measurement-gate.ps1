@@ -560,6 +560,37 @@ function Read-JsonLines([string] $path) {
 # Collectors. All of them offline: no Outlook, no mailbox, no network.
 # =====================================================================================
 
+# A NATIVE PROGRAM WHOSE STDERR IS REDIRECTED RUNS THROUGH HERE (Q78). Under
+# $ErrorActionPreference = 'Stop', Windows PowerShell 5.1 turns the first line a native program
+# writes to a redirected stderr - 2>$null, 2>&1 and *> alike - into a terminating
+# NativeCommandError, so one warning or progress line ends the script before its exit code can be
+# read. PowerShell 7 does not. Measured on the host 2026-09-24. So, here and only here:
+#   * 'Continue' holds in THIS function's scope. The caller's 'Stop' is never changed, so there is
+#     nothing to restore and nothing else is relaxed.
+#   * The try is load-bearing. Without one, 'Continue' also demotes a terminating error inside the
+#     block - the program not being found at all - to a printed message, and the caller goes on to
+#     read a stale $LASTEXITCODE. Inside a try it stops the caller exactly as it always did.
+#     Measured in both shells.
+#   * Stderr lines come back as plain strings in both shells, never as ErrorRecords: 5.1 renders
+#     those with a position block around every line, and an empty one as an exception type name.
+#   * The exit code is left in $LASTEXITCODE, and the caller checks it.
+# Restated in each script that needs it, as this repository restates its shared rules.
+# .github/scripts/check-powershell-51.ps1 fails the build on a redirected native call that does
+# not go through a function like this one.
+function Invoke-NativeCommand {
+    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
+
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $NativeCommand | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
+        }
+    }
+    catch {
+        throw
+    }
+}
+
 function Read-RepoText([string] $relative) {
     $full = Join-Path $RepoRoot $relative
     if (-not (Test-Path -LiteralPath $full)) { return $null }
@@ -619,10 +650,13 @@ function Invoke-PinnedConstantsCollector {
         return @{ Ok = $false; Detail = 'check-pinned-constants.ps1 is missing.' }
     }
 
+    # Under the SAME PowerShell that is running the gate, not pwsh by name, so the gate needs
+    # nothing installed beyond the PowerShell Windows ships with (Q78).
+    $shellExe = if ($PSVersionTable.PSEdition -eq 'Core') { Join-Path $PSHOME 'pwsh.exe' } else { Join-Path $PSHOME 'powershell.exe' }
     $output = ''
     $exit = -1
     try {
-        $output = & pwsh -NoProfile -File $script 2>&1 | Out-String
+        $output = Invoke-NativeCommand { & $shellExe -NoProfile -File $script 2>&1 } | Out-String
         $exit = $LASTEXITCODE
     } catch {
         return @{ Ok = $false; Detail = "could not run check-pinned-constants.ps1: $($_.Exception.Message)" }
@@ -654,7 +688,7 @@ function Invoke-PinnedConstantsCollector {
 function Get-GitFact([string] $gitArgs) {
     try {
         $argv = @('-C', $RepoRoot) + @($gitArgs -split ' ')
-        $out = & git @argv 2>$null
+        $out = Invoke-NativeCommand { & git @argv 2>$null }
         if ($LASTEXITCODE -ne 0) { return $null }
         return ($out | Out-String).Trim()
     } catch {
@@ -670,7 +704,7 @@ function New-RunRecord {
     if ($null -ne $status) { $dirty = -not [string]::IsNullOrWhiteSpace($status) }
 
     $sdk = $null
-    try { $sdk = (& dotnet --version 2>$null | Out-String).Trim() } catch { $sdk = $null }
+    try { $sdk = (Invoke-NativeCommand { & dotnet --version 2>$null } | Out-String).Trim() } catch { $sdk = $null }
 
     return [pscustomobject]@{
         marker       = $script:RecordMarker

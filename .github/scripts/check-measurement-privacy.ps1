@@ -73,6 +73,37 @@ function Pass([string] $invariant, [string] $detail) {
     Write-Host "  OK   $invariant - $detail"
 }
 
+# A NATIVE PROGRAM WHOSE STDERR IS REDIRECTED RUNS THROUGH HERE (Q78). Under
+# $ErrorActionPreference = 'Stop', Windows PowerShell 5.1 turns the first line a native program
+# writes to a redirected stderr - 2>$null, 2>&1 and *> alike - into a terminating
+# NativeCommandError, so one warning or progress line ends the script before its exit code can be
+# read. PowerShell 7 does not. Measured on the host 2026-09-24. So, here and only here:
+#   * 'Continue' holds in THIS function's scope. The caller's 'Stop' is never changed, so there is
+#     nothing to restore and nothing else is relaxed.
+#   * The try is load-bearing. Without one, 'Continue' also demotes a terminating error inside the
+#     block - the program not being found at all - to a printed message, and the caller goes on to
+#     read a stale $LASTEXITCODE. Inside a try it stops the caller exactly as it always did.
+#     Measured in both shells.
+#   * Stderr lines come back as plain strings in both shells, never as ErrorRecords: 5.1 renders
+#     those with a position block around every line, and an empty one as an exception type name.
+#   * The exit code is left in $LASTEXITCODE, and the caller checks it.
+# Restated in each script that needs it, as this repository restates its shared rules.
+# .github/scripts/check-powershell-51.ps1 fails the build on a redirected native call that does
+# not go through a function like this one.
+function Invoke-NativeCommand {
+    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
+
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $NativeCommand | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
+        }
+    }
+    catch {
+        throw
+    }
+}
+
 Write-Host "Checking that no measurement data has reached $RepoRoot"
 Write-Host ''
 
@@ -84,10 +115,10 @@ $checks++
 $files = @()
 try {
     Push-Location $RepoRoot
-    $files = @(& git ls-files 2>$null)
+    $files = @(Invoke-NativeCommand { & git ls-files 2>$null })
     if ($LASTEXITCODE -ne 0) { $files = @() }
     if ($IncludeWorkingTree) {
-        $extra = @(& git ls-files --others --exclude-standard 2>$null)
+        $extra = @(Invoke-NativeCommand { & git ls-files --others --exclude-standard 2>$null })
         if ($LASTEXITCODE -eq 0) { $files += $extra }
     }
 } finally {
@@ -176,7 +207,11 @@ $gate = Join-Path $RepoRoot '.github/scripts/measurement-gate.ps1'
 if (-not (Test-Path -LiteralPath $gate)) {
     Fail 'measurement gate self-test' 'measurement-gate.ps1 is missing - the checks above now protect nothing.'
 } else {
-    $output = & pwsh -NoProfile -File $gate -SelfTest 2>&1 | Out-String
+    # Under the SAME PowerShell that is running this check, not pwsh by name: that is what makes
+    # CI's Windows PowerShell 5.1 pass run the gate under 5.1 as well, and what lets this check
+    # run on a machine that has only the PowerShell Windows ships with (Q78).
+    $shellExe = if ($PSVersionTable.PSEdition -eq 'Core') { Join-Path $PSHOME 'pwsh.exe' } else { Join-Path $PSHOME 'powershell.exe' }
+    $output = Invoke-NativeCommand { & $shellExe -NoProfile -File $gate -SelfTest 2>&1 } | Out-String
     if ($LASTEXITCODE -ne 0) {
         Fail 'measurement gate self-test' ("measurement-gate.ps1 -SelfTest failed:`n      " + ($output.Trim() -replace "`r?`n", "`n      "))
     } else {

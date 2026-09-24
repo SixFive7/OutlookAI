@@ -78,6 +78,37 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
 
+# A NATIVE PROGRAM WHOSE STDERR IS REDIRECTED RUNS THROUGH HERE (Q78). Under
+# $ErrorActionPreference = 'Stop', Windows PowerShell 5.1 turns the first line a native program
+# writes to a redirected stderr - 2>$null, 2>&1 and *> alike - into a terminating
+# NativeCommandError, so one warning or progress line ends the script before its exit code can be
+# read. PowerShell 7 does not. Measured on the host 2026-09-24. So, here and only here:
+#   * 'Continue' holds in THIS function's scope. The caller's 'Stop' is never changed, so there is
+#     nothing to restore and nothing else is relaxed.
+#   * The try is load-bearing. Without one, 'Continue' also demotes a terminating error inside the
+#     block - the program not being found at all - to a printed message, and the caller goes on to
+#     read a stale $LASTEXITCODE. Inside a try it stops the caller exactly as it always did.
+#     Measured in both shells.
+#   * Stderr lines come back as plain strings in both shells, never as ErrorRecords: 5.1 renders
+#     those with a position block around every line, and an empty one as an exception type name.
+#   * The exit code is left in $LASTEXITCODE, and the caller checks it.
+# Restated in each script that needs it, as this repository restates its shared rules.
+# .github/scripts/check-powershell-51.ps1 fails the build on a redirected native call that does
+# not go through a function like this one.
+function Invoke-NativeCommand {
+    param([Parameter(Mandatory = $true)] [scriptblock] $NativeCommand)
+
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $NativeCommand | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { $_ }
+        }
+    }
+    catch {
+        throw
+    }
+}
+
 if (-not $OutDir) { $OutDir = Join-Path $RepoRoot '.work\testbed-payload' }
 
 $payloads = @(
@@ -99,9 +130,12 @@ foreach ($p in $payloads) {
         if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
         Write-Host "Publishing $($p.Project) -> $dest"
         # Output is captured rather than streamed: a publish that spawns its own children can
-        # otherwise hold the pipe open long after it has finished.
+        # otherwise hold the pipe open long after it has finished. Stdout and stderr both land in
+        # the log, as they did with *>; Invoke-NativeCommand is what lets a warning on stderr do
+        # that under Windows PowerShell 5.1 instead of ending the script.
         $log = Join-Path $OutDir ("publish-" + [IO.Path]::GetFileNameWithoutExtension($p.Zip) + ".log")
-        & dotnet publish $proj -c $Configuration -f net10.0-windows -r win-x64 --self-contained true -o $dest *> $log
+        Invoke-NativeCommand { & dotnet publish $proj -c $Configuration -f net10.0-windows -r win-x64 --self-contained true -o $dest 2>&1 } |
+            Out-File -LiteralPath $log
         if ($LASTEXITCODE -ne 0) {
             Write-Host (Get-Content -LiteralPath $log -Tail 40 | Out-String)
             throw "dotnet publish failed for $($p.Project) (exit $LASTEXITCODE). Full log: $log"
