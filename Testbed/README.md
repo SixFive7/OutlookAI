@@ -777,12 +777,14 @@ starting Outlook), so the opt-in goes INTO the script it is handed, right before
 .\Register-InteractiveTask.ps1 -TimeoutSeconds 7200 -Script @'
 $env:OUTLOOKAI_LIVE_OPT_IN = 'OAI-INDEXED'   # THIS guest's computer name - $env:COMPUTERNAME prints it
 Set-Location C:\OutlookAI-Q5\src
-dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj --filter "Category=Live&Requires!=DelegateStore"
+dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --filter "Category=Live&Requires!=DelegateStore"
 '@
 ```
 
-`C:\OutlookAI-Q5\src` is where step 8b expands the source; the filter is the runbook's
-(`Docs/live-tier-on-the-vm.md` §4). Three rules, each refused with a message that says why:
+`C:\OutlookAI-Q5\src` is where step 8b expands the source, and `-c Release` is the tree its
+`-Verify` already built (without it `dotnet test` builds a second, Debug, tree beside it); the
+filter is the runbook's (`Docs/live-tier-on-the-vm.md` §4). Three rules, each refused with a
+message that says why:
 
 * **The value is the computer name, not "1" or "true"**, so an opt-in carried to another machine -
   a copied script, a roaming profile - opens nothing there. Spell it out rather than pasting
