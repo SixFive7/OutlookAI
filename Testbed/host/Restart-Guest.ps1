@@ -38,10 +38,13 @@
            * REFUSES if the add-in installer's OutlookAISetup mutex is held (v3 S7);
            * REFUSES if Outlook shows ANY visible dialog - a modal wait nobody on an unattended
              guest answers, and Quit() behind one parks. It names the dialog. The one exception,
-             only with -CancelLogonPrompt: the "Internet Email - <account>" logon prompt the tier
-             profile's POP3 account raises at every start (no stored password, no sink), which
-             is cancelled - that sends nothing and stores nothing. A security prompt, such as the
-             Object Model Guard's, is never clicked from here;
+             only with -CancelLogonPrompt: the "Internet Email - <account>" logon prompt a POP3
+             account of the tier profile raises at a start while it has no stored password, which
+             is cancelled - that sends nothing and stores nothing. (The guests' loopback sink is
+             there and takes any password, but Outlook asks before it connects; once
+             Testbed/guest/New-TierProfile.ps1 -StoreSinkPassword has stored one, the prompt
+             stops - runbook 2.7.) A security prompt, such as the Object Model Guard's, is never
+             clicked from here;
            * ATTACHES to the running instance - through the Running Object Table first
              (Marshal.GetActiveObject), which cannot start anything. Office registers there only
              once its window has LOST focus (Microsoft KB 238610), and on an unattended guest
@@ -114,10 +117,14 @@
     Press CANCEL on Outlook's "Internet Email - <account>" logon prompts before quitting - every one:
     Outlook raises one per POP3 account, the next only after the previous is answered (measured:
     'tier', then 'identity' three seconds later), so it cancels in rounds until a round finds none.
-    Without it such a prompt - like any other visible Outlook dialog - is a refusal. The tier
-    profile's POP3 accounts raise them at every start on the guests (no stored password, no sink), so
-    a restart with that profile running needs this. Cancelling sends nothing and stores nothing. Nothing else
-    is ever clicked: a security prompt is a refusal whatever this says.
+    Without it such a prompt - like any other visible Outlook dialog - is a refusal. A POP3 account
+    of the tier profile raises one at every start while it has no stored password: the guests' sink
+    has been there since 2026-09-24 and accepts any password, but Outlook asks before it connects.
+    Testbed/guest/New-TierProfile.ps1 -StoreSinkPassword stores one on every sink account and the
+    prompt stops (runbook 2.7) - both guests' current checkpoints have it. So this is needed between
+    adding an account and that step - the identity account's import, runbook 2.8b - and harmless
+    after it: a round that finds no prompt ends the cancelling. Cancelling sends nothing and stores
+    nothing. Nothing else is ever clicked: a security prompt is a refusal whatever this says.
 
 .PARAMETER RestartTimeoutMinutes
     How long each wait in phase 4 may take.
@@ -232,8 +239,9 @@ if (@(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue).Count -eq 0) { Ou
 
 # A visible DIALOG is a modal wait nobody on an unattended guest will answer, and Quit() behind one
 # parks. So every visible dialog Outlook owns is named and refused - with one exception, and only
-# when the caller asked for it: the "Internet Email - <account>" logon prompt, which the tier
-# profile's POP3 account raises at every start (no stored password, no sink - runbook 1.4).
+# when the caller asked for it: the "Internet Email - <account>" logon prompt, which a POP3 account
+# of the tier profile raises at a start while it has no stored password (runbook 2.7: the sink is
+# there, but Outlook asks before it connects, until New-TierProfile.ps1 -StoreSinkPassword has run).
 # Cancelling it sends nothing and stores nothing. Security prompts are never answered from here.
 if (-not ('OaiRestartDialogs' -as [type])) {
     Add-Type -TypeDefinition @"
