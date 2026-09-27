@@ -2283,18 +2283,41 @@ In the mint profile, before the rename, `corpus-folders` (pass 1) listed Inbox, 
 Items, Outbox, Drafts, Calendar, Contacts and Tasks - every one `items=0`, and Junk Email `ABSENT`.
 
 **The display names, for Q92.** Over COM (`Store.DisplayName`): after the mint `Outlook Data File`,
-after the rename `identity@vm.invalid`, after the attach `identity@vm.invalid`. In the registry after
-pass 2, the name each PROFILE keeps for the file - its service section's `PR_DISPLAY_NAME_W`, which
-section 8 item 22 measured the index to use: `identity@vm.invalid` in the tier profile and
-`identity@vm.invalid` in the mint profile (the rename in the mint profile reached its section; the tier
-profile's section got the name at the attach). For comparison, `CorpusProfile`'s section for Corpus B
-reads `Outlook Data File`. Whether the index then scopes the store as `identity@vm.invalid(...)` rather
-than as item 22's `Outlook Data File(...)` is for the indexed guest; this one has no index.
+after the rename `identity@vm.invalid`, after the attach `identity@vm.invalid`. The name the index
+files a store under is the store's OWN `PR_DISPLAY_NAME` - its root folder's name, which is what
+`Rename-OutlookStore.ps1` renames (section 8 item 24, which corrects item 22) - and that rename ran in
+the mint profile, before the attach: so this store's own name is `identity@vm.invalid` from then on,
+and the index should file it as `identity@vm.invalid($<hash>)`, where both guests' AddStoreEx stores
+were `Outlook Data File(...)`. Unmeasured: this guest has no index. Also read, in the registry after
+pass 2: the name each PROFILE keeps for the file in its service section (`PR_DISPLAY_NAME_W`) is
+`identity@vm.invalid` in the tier profile and in the mint profile, and `Outlook Data File` for Corpus B
+in `CorpusProfile` - which, by item 24, the index does not use.
 
 **What is left.** The mint profile, which nothing opens again. The identity account's signature:
-`CP-10B` has none, where `CP-10` had one on the wrong subkey - `Set-AccountSignature.ps1` with the
-fixed server is the next step (section 2.8b). And `OutlookAI-Indexed`, whose identity account is still
-the old one.
+`CP-10B` has none, where `CP-10` had one on the wrong subkey - put back in section 4.1c. And
+`OutlookAI-Indexed`, whose identity account is still the old one.
+
+### 4.1c Signature, SDK and suite on the minted line - `OutlookAI-Unindexed`, 2026-09-27
+
+**Why this section exists.** What the old `CP-11`/`CP-12` line had, put on the `CP-10B` line: the
+identity account's signature, the .NET SDK and the suite. From `CP-10B-IDENTITY-REAL-INBOX`, master
+`af56efc` staged first. No population (Q98 is open) and no live tier. Raw logs:
+`.work\g2-cp11b\` in the main checkout.
+
+| Step | What ran | Verdict |
+| --- | --- | --- |
+| Restage | `Publish-GuestPayload.ps1` at `af56efc`, the server and the tools expanded (the old ones kept as `server.fe65ced`, `tools.751b5dc`); master's guest scripts copied | server and tools `99.99.99.0+af56efc...`; every staged script hash equal to the host's. `Register-InteractiveTask.ps1` and `Reset-HubPopulation.ps1` were already current on this line - `CP-09B` was restaged from `751b5dc` - and are unchanged since |
+| 1. Signature | the account entries read from the registry; Outlook started NOT elevated (`Start-OutlookUnelevated.ps1 -Profile OutlookAI-Tier`, up in 6 s); `Set-AccountSignature.ps1 -Account identity@vm.invalid -Execute` in a `RunLevel Limited` task (Medium Mandatory Level); the entries read again; `list_accounts` and `list_signatures` asked separately, read-only; `Restart-Guest.ps1 -Execute` (its quit task picked Limited from Outlook's token) | before: every entry `New Signature=''`. `signature 'Identity' -> create`, `account: identity@vm.invalid / new message: Identity`, `Verified`. After: `New Signature='Identity'` on `00000004` (clsid `{ED475411-...}`, `OutlookAI identity sink`, `identity@vm.invalid`) and on nothing else - `00000005`, the data-file entry named `identity@vm.invalid`, still `''`; `Identity.htm` 152 B, `.rtf` 113 B, `.txt` 72 B. The separate read-back: `account 'identity@vm.invalid' newMessage='Identity'`, `account 'tier@vm.invalid' newMessage=''`. Only those four tools were called - none creates an item - and every Outbox read 0 at the quit |
+| 2. SDK | `Install-DotnetSdk.ps1 -ExpectedSha512 <MEDIA.md's> -Execute`, then `-Verify` from a new session | `hash matches`, `installer exited 0` in 40 s, `wrote C:\OutlookAI-Q5\src\NuGet.config`; both runs `VERDICT: TEST-READY` - SDK 10.0.401, the probe `OUTLOOKAI-SDK-PROBE-OK 10.0.12 x64`, **3,105 tests discovered**, 17 run and passed |
+| 3. Suite | `Publish-LiveTierPayload.ps1 -Ref af56efc` on the host (54 packages, 75.7 MB; the offline feed restores all five projects with every other source cleared), `Source.zip` and `NuGet.zip` expanded into `src` and `nuget-offline` - before step 2, which builds from them | 451 source files, 54 packages; the guest-built `McpServerExePath` target exists |
+| 4. Index | `Set-OutlookIndexingDisabled.ps1 -Verify`, Outlook closed - after step 1's NOT elevated Outlook, the kind that registers itself where nothing excludes it | `the service says: included=False reason=USER`; `mapiRows=0 ... outlookRowsTotal=0` at both readings, ten minutes apart; `VERDICT: UNINDEXED`. The catalog itself grew from 1,397 to 3,365 items while it watched - files, none of them Outlook's |
+| 5. Checkpoint | Outlook not running, default profile `OutlookAI-Tier` | `CP-11B-SIGNATURE-SDK-SUITE` |
+
+**Order.** Step 3's archives went in before step 2 ran: `Install-DotnetSdk.ps1` writes the suite's
+`NuGet.config` into `src` and builds the suite from it, so `TEST-READY` needs both there first.
+
+**Not on this line yet, and not asked for:** the live-test settings file (`Testbed/README.md` step 9 -
+the old `CP-13` had one), any population (Q98), and a live run.
 
 ### 4.2 The indexed guest's build-out - `OutlookAI-Indexed`, 2026-09-24 and 2026-09-27
 

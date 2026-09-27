@@ -195,9 +195,10 @@
         to the `AddStoreEx` PST's hidden root, attached as `identity@vm.invalid`, and nothing in the
         repository removes a store from a profile - so it is rebuilt from its checkpoint before the
         identity account (runbook §4.2), not patched.
-  - [ ] **Put the identity account's signature back on `OutlookAI-Unindexed`.** `CP-10B` has none
-        (`CP-10` had one, on the wrong subkey): `Set-AccountSignature.ps1 -Account identity@vm.invalid
-        -Execute` with the fixed server, at Outlook's integrity level (runbook §2.8b, §4.2).
+  - [x] **Put the identity account's signature back on `OutlookAI-Unindexed`** - done 2026-09-27
+        with the fixed server from `af56efc`, at `RunLevel Limited` against an unelevated Outlook:
+        `New Signature` = `Identity` on the POP3 account's own entry and nowhere else, read back by
+        the product (runbook §4.1c; `CP-11B-SIGNATURE-SDK-SUITE`).
   - [ ] **Run `Testbed/guest/Measure-SweepCost.ps1` once.** It is the reconstruction of
         `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1`, which is gitignored and gone with its
         scratch directory. Written from the shipped `SweepFolder` source, read-only by
