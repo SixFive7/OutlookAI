@@ -371,6 +371,13 @@ from-scratch rebuild replaces the guests (see `Testbed/README.md` section 1b).
   `PlatformTarget x64`, partly because the `Search.CollatorDSO` OLE DB provider the index tier
   reads needs an x64 host. Whether Office itself must be x64 is untested; x64 is the safer
   choice and is what you should record.
+  *(2026-09-27: recorded since - `Testbed/MEDIA.md`'s Office section and section 8 item 7 below:
+  the Office Deployment Tool with `ProPlus2024Volume` on `PerpetualVL2024`, 64-bit
+  (`OfficeClientEdition="64"`) - `Testbed.xml` for the script-built guests, `VoIPFabric.xml` for
+  the original one - and a guest build read on 2026-09-15 of 16.0.17932.20884. `Testbed.xml` also
+  sets `<Updates Enabled="FALSE" />`, the pin the last bullet asks for. What stays untested is
+  whether Office MUST be x64: every guest is 64-bit by configuration, and a 32-bit Office has
+  never been tried.)*
 * Suppress the first-run wizard and the "add an account" prompt. A profile that opens a dialog
   cannot be driven over COM, and the suite cannot answer one.
 * Pin the update channel. An Office auto-update invalidates the Office checkpoint silently.
