@@ -191,10 +191,13 @@
         `Add-IdentityAccount.ps1 -Phase Mint` / `-Phase CaptureMint`; CaptureStore passes from the
         tier profile, Verify says the account delivers into `Inbox`. The display names at each stage
         are recorded there for Q92.
-  - [ ] **Rebuild `OutlookAI-Indexed`'s identity account the same way.** Its identity account is bound
-        to the `AddStoreEx` PST's hidden root, attached as `identity@vm.invalid`, and nothing in the
-        repository removes a store from a profile - so it is rebuilt from its checkpoint before the
-        identity account (runbook §4.2), not patched.
+  - [x] **Rebuild `OutlookAI-Indexed`'s identity account the same way** - done 2026-09-27 from
+        `CP-08B-RESTORED-BEFORE-IDENTITY` on master `af56efc` (runbook §4.2b; `CP-09C-IDENTITY-REAL-INBOX`
+        to `CP-15C-SIGNATURE-SUITE-STAGED`): Verify says the account delivers into `Inbox` (node
+        0x8082); the guest `INDEXED` again, 20,059 rows, the identity store filed as
+        `identity@vm.invalid($be889d8b)`; the sink, the add-in, the signature on the POP3 account's own
+        entry and the suite (`TEST-READY`, 3,105 tests) redone. `Set-OutlookProgrammaticAccess.ps1` has
+        to run BEFORE the route there - without it CaptureStore blocked behind the guard prompt.
   - [x] **Put the identity account's signature back on `OutlookAI-Unindexed`** - done 2026-09-27
         with the fixed server from `af56efc`, at `RunLevel Limited` against an unelevated Outlook:
         `New Signature` = `Identity` on the POP3 account's own entry and nowhere else, read back by
