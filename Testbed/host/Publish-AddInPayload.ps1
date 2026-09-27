@@ -35,13 +35,15 @@
         was caught.
       * 2026-09-27, THE LAUNCH MODE Q81 FOUND IN Tools/Switch-AddInBuild.ps1. Windows PowerShell
         5.1 started by Start-Process from PowerShell 7 ran this script for 2 seconds and stopped
-        on Get-FileHash, before building anything (the Import-Module below says why). Fixed the
+        on Get-FileHash, before building anything (OwnEditionModules.ps1 says why). Fixed the
         way that script was, then run end to end from 4dca745 both ways - 5.1 by Start-Process
         from 7 (21 s) and 5.1 started directly from a 7 prompt (18 s): exit 0 both times, guard 3
         UNCHANGED over 358 lines, and a reg export of the add-in registration and of the VSTO
         trust list byte-identical before and after each run. The AddIn.zip the framework's zip
         now writes expands under 5.1's Expand-Archive to the stage's two files, hash for hash.
         -SelfTest 96/0 under PowerShell 7.6.6 and under 5.1 in both launch modes.
+      * 2026-09-27, later: the import moved into Testbed/host/OwnEditionModules.ps1, which every host
+        script that needs either module now dot-sources.
 
 .SYNOPSIS
     Builds the OutlookAI Outlook add-in on the HOST from a NAMED COMMIT, packages it with the
@@ -205,16 +207,11 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
 }
 
 # The running edition's OWN Security and Utility modules, imported by path - the fix
-# Tools/Switch-AddInBuild.ps1 made for Q81. Measured 2026-09-27 on the maintainer's workstation:
-# Windows PowerShell 5.1 started by Start-Process from PowerShell 7 inherits 7's PSModulePath and
-# resolves both modules to 7's copies. 7's Security module does not load in 5.1 ("The member
-# AuditToString is already present"), so there is no Cert: drive and no Get-AuthenticodeSignature;
-# 7's Utility module loads without the script half of 5.1's, which is where 5.1 keeps Get-FileHash.
-# This script stopped on Get-FileHash, before it built anything. 5.1 started any other way - from a
-# PowerShell 7 prompt directly, which resets the path, or from anywhere else - had both.
-foreach ($ownModule in @('Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Utility')) {
-    Import-Module (Join-Path $PSHOME "Modules\$ownModule\$ownModule.psd1")
-}
+# Tools/Switch-AddInBuild.ps1 made for Q81, shared by the host scripts through the file below, whose
+# header has the measurement. Windows PowerShell 5.1 started by Start-Process from PowerShell 7
+# resolves both modules to 7's copies and can use neither: this script stopped on Get-FileHash,
+# before it built anything, and the Cert: drive and Get-AuthenticodeSignature were missing too.
+. (Join-Path $PSScriptRoot 'OwnEditionModules.ps1')
 
 # Defaulted HERE rather than in param(): Windows PowerShell 5.1 leaves $PSScriptRoot EMPTY inside a
 # param() default (the reason Testbed/host/New-LiveTestSettings.ps1 does the same).
@@ -1189,8 +1186,8 @@ foreach ($p in @($sourceZip, $sourceDir, $installerDir, $stageDir)) {
 Invoke-NativeCommand { & git -C $RepoRoot archive --format=zip -o $sourceZip $commit }
 if ($LASTEXITCODE -ne 0) { throw "git archive failed (exit $LASTEXITCODE)." }
 # The framework's own zip rather than Expand-Archive and Compress-Archive, whose module a mixed
-# PSModulePath (see the Import-Module at the top) hands to the other edition - measured: 7's Archive
-# 1.2.6 running inside 5.1. As Tools/Switch-AddInBuild.ps1 does.
+# PSModulePath (see OwnEditionModules.ps1, dot-sourced at the top) hands to the other edition -
+# measured: 7's Archive 1.2.6 running inside 5.1. As Tools/Switch-AddInBuild.ps1 does.
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::ExtractToDirectory($sourceZip, $sourceDir)
 Say "  $Ref = $commit"

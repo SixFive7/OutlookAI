@@ -145,6 +145,10 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
 
+# Get-FileHash, on the staged SDK installer, is 5.1's Utility module's; Windows PowerShell 5.1
+# started from PowerShell 7 loads 7's copy of that module instead, which lacks it.
+. (Join-Path $PSScriptRoot 'OwnEditionModules.ps1')
+
 if (-not $OutDir) { $OutDir = Join-Path $RepoRoot '.work\testbed-livetier-payload' }
 if (-not $SdkInstallerPath) { $SdkInstallerPath = Join-Path $RepoRoot '.work\media\dotnet-sdk-10.0.401-win-x64.exe' }
 

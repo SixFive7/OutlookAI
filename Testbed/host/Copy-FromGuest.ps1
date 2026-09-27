@@ -128,6 +128,10 @@ if (-not $PSBoundParameters.ContainsKey('RepoRoot')) { $RepoRoot = (Split-Path -
 
 $ErrorActionPreference = 'Stop'
 
+# Get-FileHash, on the host copy of a file, is 5.1's Utility module's; Windows PowerShell 5.1
+# started from PowerShell 7 loads 7's copy of that module instead, which lacks it.
+. (Join-Path $PSScriptRoot 'OwnEditionModules.ps1')
+
 # A manifest is recognised by its NAME, here and nowhere else, so the two places that care - which
 # directory it lands in, and which refusal message it gets - cannot drift apart.
 $ManifestPattern = 'corpus-*.jsonl'

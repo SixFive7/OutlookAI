@@ -75,6 +75,11 @@ if (-not $PSBoundParameters.ContainsKey('RepoRoot')) { $RepoRoot = (Split-Path -
 
 $ErrorActionPreference = 'Stop'
 
+# ConvertTo-SecureString below is a Security-module cmdlet, and Windows PowerShell 5.1 started from
+# PowerShell 7 cannot load 7's copy of that module - so this shell's own is imported first. Every
+# caller of this script that touches a guest goes through here for its credential.
+. (Join-Path $PSScriptRoot 'OwnEditionModules.ps1')
+
 $path = Join-Path $RepoRoot 'McpServer\OutlookAI.McpServer.Tests\live-fixtures\vm-credentials.json'
 if (-not (Test-Path -LiteralPath $path)) {
     throw @"

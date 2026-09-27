@@ -84,6 +84,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Get-FileHash is 5.1's Utility module's; Windows PowerShell 5.1 started from PowerShell 7 loads 7's
+# copy of that module instead, which lacks it.
+. (Join-Path $PSScriptRoot 'OwnEditionModules.ps1')
+
 # The recorded choice. One entry per release this repository has decided to use; the value must
 # equal the one in Testbed/MEDIA.md, and the dry run fails when it does not.
 $RecordedSha256 = @{

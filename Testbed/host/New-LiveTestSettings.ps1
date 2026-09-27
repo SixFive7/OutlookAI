@@ -176,6 +176,10 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
 
+# Get-FileHash, on the rendered file, is 5.1's Utility module's; Windows PowerShell 5.1 started from
+# PowerShell 7 loads 7's copy of that module instead, which lacks it.
+. (Join-Path $PSScriptRoot 'OwnEditionModules.ps1')
+
 # Defaulted HERE rather than in param(): Windows PowerShell 5.1 leaves $PSScriptRoot EMPTY inside
 # the param() defaults of an advanced script run with -File (measured 2026-09-24; PowerShell 7 fills
 # it), so the usual one-liner there throws before the script starts.
