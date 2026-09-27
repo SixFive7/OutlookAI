@@ -1,20 +1,34 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    WRITTEN 2026-09-27 FOR Q81. WHAT HAS RUN SO FAR, ALL ON THE MAINTAINER'S WORKSTATION:
+    WRITTEN AND RUN 2026-09-27 ON THE MAINTAINER'S WORKSTATION, FOR Q81. -Execute HAS NOT RUN.
     ============================================================================================
 
-      * -SelfTest, under Windows PowerShell 5.1 and PowerShell 7 (the count is in the commit that
-        added this script). Every registry write this script can make ran against a scratch key
-        under HKCU\Software\OutlookAI-SelfTest\<run id>, which it then deleted; the real
-        registration and trust keys were compared before and after and were identical.
-      * -Status, and the dry runs of -Restore and of the default mode. They only read.
-      * -BuildOnly, twice: once from a commit that predates the project's own Q81 guard, so only
-        this script's guards stood between the build and the host, and once from a commit that has
-        it. Both left the watched host state identical.
+    Every run below was wrapped in a `reg export` of the add-in registration and of the VSTO trust
+    list (plus VSTO\SolutionMetadata, every Outlook add-in, FormRegions, Software\OutlookAI, the
+    slow-add-in exemption and six certificate stores) before and after; every run left them
+    byte-identical.
 
-    NOT RUN: -Execute, in either direction. The maintainer decides when his Outlook changes.
-    Replace this banner with what the first -Execute did.
+      * -SelfTest: 121 assertions, 0 failures, under Windows PowerShell 5.1.26100 and PowerShell
+        7.6.6. Every registry write this script can make ran against a scratch key under
+        HKCU\Software\OutlookAI-SelfTest\<run id>, which it then deleted; the real registration,
+        trust, uninstall and exemption keys (46 lines) were identical before and after.
+      * -Status, and the dry runs of -Restore (with and without -RemoveBuildTrust) and of the
+        default mode. They only read. -Status found Outlook registered at the main checkout's
+        bin\Release, a build of 2026-08-24, not at the installed 3.0.1.321.
+      * -BuildOnly from 4e23866, a commit from BEFORE the project's own Q81 guard - so this
+        script's guards alone stood between a registering build and the host: built in 3 s, both
+        scheduled stand-ins logged, the throwaway certificate removed from My and from CA, 358
+        host lines identical. The first two attempts refused before building, both correctly and
+        both now fixed: 5.1 started by Start-Process from PowerShell 7 had no Cert: drive, and a
+        plain Import-Module of the Security module failed there too (see the Import-Module below).
+      * -BuildOnly from 9f24e5c, which has the guard: this script's Override stand-ins took over
+        from the project's own ("Created an override using task"), with no conflict; 358 lines
+        identical.
+
+    NOT RUN: -Execute, in either direction - the maintainer decides when his Outlook changes - so
+    nothing here has yet been loaded by Outlook. Replace this banner with what the first -Execute
+    did, and whether Outlook then loaded the build with no trust prompt.
 
 .SYNOPSIS
     Puts a development build of the OutlookAI add-in on THIS machine's Outlook when the maintainer
