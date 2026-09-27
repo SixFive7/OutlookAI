@@ -2732,6 +2732,14 @@ unrecorded or unverified.
    `4.000,50` for four thousand and `25-8-2026` for a date, on purpose.**
    Still unrecorded: computer name, and Defender exclusions - an indexer, a 400 MB PST and
    real-time AV interact, and nobody has measured how much.
+   *(2026-09-27: the computer name IS recorded for the script-built guests, by construction:
+   `Testbed/host/New-AnswerFile.ps1` sets it from the VM name, `OutlookAI-` shortened to `OAI-`,
+   unless `-ComputerName` is given, refuses any name not starting `OAI-`, and writes it into
+   `Testbed/guest/autounattend.template.xml`'s `<ComputerName>`; the guests report `OAI-INDEXED`
+   and `OAI-UNINDEXED`, and the first-logon script refuses a guest named otherwise
+   (`Testbed/README.md` section 1b). It is still unrecorded for the original guest,
+   `OutlookAI-TestVM`. Defender exclusions stay open on every guest: no script here adds one, and
+   none has been read off a guest - README section 6 item 2.)*
 7. ~~Office version, channel, bitness, install method~~ - **RECORDED in `Testbed/MEDIA.md`**:
    Office Deployment Tool with `ProPlus2024Volume` on `PerpetualVL2024`, 64-bit, and
    **`ExcludeApp OutlookForWindows`, which is load-bearing** - it suppresses the new Outlook,
