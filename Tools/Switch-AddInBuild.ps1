@@ -1,7 +1,8 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    WRITTEN AND RUN 2026-09-27 ON THE MAINTAINER'S WORKSTATION, FOR Q81. -Execute HAS NOT RUN.
+    WRITTEN AND RUN 2026-09-27 ON THE MAINTAINER'S WORKSTATION, FOR Q81. -Restore -Execute HAS
+    RUN ONCE THERE (Q90); -Commit <rev> -Execute, WHICH PUTS A DEV BUILD ON, HAS NEVER RUN.
     ============================================================================================
 
     Every run below was wrapped in a `reg export` of the add-in registration and of the VSTO trust
@@ -37,8 +38,16 @@
         exports of the add-in registration and the VSTO trust list, byte-identical each time.
         -SelfTest 125/0 in all three launch modes.
 
-    NOT RUN: -Execute, in either direction - the maintainer decides when his Outlook changes - so
-    nothing here has yet been loaded by Outlook. Replace this banner with what the first -Execute
+    -Restore -Execute, ONCE: 2026-09-27 04:17 local, on the workstation, on the maintainer's
+    decision Q90 (a) - "point Outlook back at the installed copy" - and NOT with -RemoveBuildTrust,
+    which is still an open question (Q97-1). Unlike the runs above it was meant to change the
+    registration, and -Status, run before and after, says what Outlook loads at its next start:
+      * before: a BUILD FOLDER - the main checkout's bin\Release, version 99.99.99.0;
+      * after:  THE INSTALLED RELEASE, 3.0.1.321.
+    Its audit record is %LOCALAPPDATA%\OutlookAI\DevBuilds\restore-20260927-041728.json.
+
+    NOT RUN: -Commit <rev> -Execute - the maintainer decides when a dev build goes on his Outlook -
+    so no dev build from this script has yet been loaded by Outlook. Record here what the first one
     did, and whether Outlook then loaded the build with no trust prompt.
 
 .SYNOPSIS
