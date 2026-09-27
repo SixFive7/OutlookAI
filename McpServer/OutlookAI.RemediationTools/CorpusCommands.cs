@@ -775,6 +775,30 @@ public static class CorpusCommands
         return RunCensusPass(options, plan, count, output) ? 0 : 1;
     }
 
+    /// <summary>
+    /// <c>corpus-folders</c>: READ-ONLY. Lists a store's default folders, each found without the lookup
+    /// that creates one, and its visible folder tree with item counts - behind the same store and
+    /// profile guard as every other verb, so it cannot be pointed at a store the operator did not
+    /// name on <c>--allow-store</c>, or run in a profile that holds an account. Needs no corpus id,
+    /// seed or anchor: it describes the store, not a corpus.
+    /// </summary>
+    public static int RunFolders(CorpusOptions options, TextWriter output)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(output);
+        if (!Vet(options, output, out _))
+        {
+            return 1;
+        }
+
+        foreach (string line in CorpusFolderListing.Render(options.Store!, ComCorpusMailbox.ListFolders(options.Store!)))
+        {
+            output.WriteLine(line);
+        }
+
+        return 0;
+    }
+
     /// <summary>The census itself, shared by <c>corpus-census</c> and the build's own check.</summary>
     private static bool RunCensusPass(CorpusOptions options, CorpusPlan plan, int count, TextWriter output)
     {

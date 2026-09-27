@@ -427,6 +427,137 @@ public static class ComCorpusMailbox
     }
 
     /// <summary>
+    /// READ-ONLY: the store's default folders, each found by the non-creating resolver
+    /// (<see cref="ResolveVisibleDefaultFolder"/>), and every folder of its visible tree with its item
+    /// count and kind - what <c>corpus-folders</c> prints (<see cref="CorpusFolderListing"/>). It opens
+    /// folders and reads counts and nothing else: no item is opened, no folder is asked for by
+    /// <c>GetDefaultFolder</c>, nothing is written.
+    /// </summary>
+    public static FolderListing ListFolders(string storeDisplayName)
+    {
+        return RunSta<FolderListing>(
+            "corpus folder listing",
+            TimeSpan.FromMinutes(5),
+            checkpoint =>
+            {
+                dynamic app = CreateOutlookApplication();
+                dynamic? ns = null;
+                dynamic? stores = null;
+                dynamic? store = null;
+                dynamic? root = null;
+                try
+                {
+                    ns = BindNamespace(app, checkpoint);
+                    stores = ns.Stores;
+                    store = FindStore(stores, storeDisplayName)
+                        ?? throw new InvalidOperationException("Store not found for the folder listing.");
+
+                    var defaults = new List<ListedDefaultFolder>();
+                    foreach (int folderId in CorpusFolderListing.DefaultFolderIds)
+                    {
+                        dynamic? folder = null;
+                        try
+                        {
+                            folder = ResolveVisibleDefaultFolder(
+                                (object)store!, folderId, out OutlookComSession.DefaultFolderResolution resolution, out bool invisible);
+                            string? name = folder == null ? null : TryRead<string>(() => (string)folder!.Name);
+                            defaults.Add(new ListedDefaultFolder(folderId, resolution, invisible, name));
+                        }
+                        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                        {
+                            defaults.Add(new ListedDefaultFolder(
+                                folderId, OutlookComSession.DefaultFolderResolution.Unreadable, false, null));
+                        }
+                        finally
+                        {
+                            Release(folder);
+                        }
+                    }
+
+                    var tree = new List<ListedFolder>();
+                    bool truncated = false;
+                    root = store!.GetRootFolder();
+                    ListChildren((object)root!, string.Empty, 0, tree, ref truncated, checkpoint);
+                    return new FolderListing(defaults, tree, truncated);
+                }
+                finally
+                {
+                    Release(root);
+                    Release(store);
+                    Release(stores);
+                    Release(ns);
+                    Release(app);
+                }
+            });
+    }
+
+    private static void ListChildren(
+        object parentObject, string parentPath, int depth, List<ListedFolder> tree, ref bool truncated, ComStaCheckpoint checkpoint)
+    {
+        if (depth >= CorpusFolderListing.MaxDepth)
+        {
+            truncated = true;
+            return;
+        }
+
+        dynamic parent = parentObject;
+        dynamic? children = null;
+        try
+        {
+            children = parent.Folders;
+            int count = TryReadStruct(() => (int)children!.Count) ?? 0;
+            for (int i = 1; i <= count && checkpoint.Step("list folder"); i++)
+            {
+                if (tree.Count >= CorpusFolderListing.MaxFolders)
+                {
+                    truncated = true;
+                    return;
+                }
+
+                dynamic? child = null;
+                dynamic? items = null;
+                try
+                {
+                    child = children![i];
+                    string name = TryRead<string>(() => (string)child!.Name) ?? "(nameless)";
+                    string path = parentPath.Length == 0 ? name : parentPath + "/" + name;
+                    int? itemCount = null;
+                    try
+                    {
+                        items = child!.Items;
+                        itemCount = TryReadStruct(() => (int)items!.Count);
+                    }
+                    catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                    {
+                        itemCount = null;
+                    }
+
+                    int? kind = TryReadStruct(() => (int)child!.DefaultItemType);
+                    tree.Add(new ListedFolder(path, depth, itemCount, kind));
+                    ListChildren((object)child!, path, depth + 1, tree, ref truncated, checkpoint);
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    // A child that will not open is left out; the listing is a picture, not a census.
+                }
+                finally
+                {
+                    Release(items);
+                    Release(child);
+                }
+            }
+        }
+        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+        {
+            // A folder whose children cannot be listed simply has none shown.
+        }
+        finally
+        {
+            Release(children);
+        }
+    }
+
+    /// <summary>
     /// Reads the four facts <see cref="CorpusSafety.EvaluateStore"/> judges a store on.
     /// Read-only. Each fact is read in its own try block so one unreadable property leaves
     /// the others intact and the verdict is "unprovable" rather than an exception.
