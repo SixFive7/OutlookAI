@@ -531,8 +531,10 @@ collapsing.
 >    not use Windows Search - no rule, no store pushed, `Store.IsInstantSearchEnabled = False` -
 >    while the same Outlook started without elevation adds a root and a user INCLUDE rule for
 >    `mapi16://{SID}/` within seconds and pushes every item of its profile's stores. The testbed's
->    only route into session 1, `Testbed/guest/Register-InteractiveTask.ps1`, runs at `RunLevel
->    Highest`. Controlled A/B and the evidence: section 8 item 22.
+>    only route into session 1, `Testbed/guest/Register-InteractiveTask.ps1`, ran everything at
+>    `RunLevel Highest` - still its default; `-RunLevel Limited` exists since the same day, and the
+>    live tier runs at it (`Testbed/README.md` section 4c). Controlled A/B and the evidence: section
+>    8 item 22.
 > 2. **The fix is the documented writer, in both directions.** `-Enable -Execute` adds the root and
 >    the INCLUDE rule through the Crawl Scope Manager API and the service confirms it (`included=True
 >    reason=USER`); the registry afterwards holds, value for value, what the non-elevated Outlook
@@ -576,19 +578,25 @@ collapsing.
 >    `EnumerateScopeRules` stops listing the mapi16 rule once it excludes while
 >    `IncludedInCrawlScopeEx` and `WorkingSetRules` both show it - `-Verify` judges by the former
 >    and prints the registry beside it.
-> 4. **What `OutlookAI-Unindexed` needs - written down, not done: that guest was not touched.** Its
->    recorded state (2026-09-16, not re-read here) is the policy only: no rule, no Outlook row. Item
->    3 says that holds against either kind of Outlook as it stands, but it is the one exclusion the
->    service does not report. To make it the real one: stage `Set-OutlookIndexingDisabled.ps1` and
->    `SearchCrawlScope.cs` from this change into `C:\OutlookAI-Q5\`; close Outlook with
->    `Testbed/host/Restart-Guest.ps1 -VMName OutlookAI-Unindexed -Execute` (add `-CancelLogonPrompt`
->    if its tier profile is up); then, elevated over PowerShell Direct, `-Execute` - it adds the user
->    EXCLUDE rule, finds no row to purge, keeps the policy and restarts the service - and `-Verify`,
->    which should now say `UNINDEXED` with reason `USER` and **without** the policy-only caveat.
->    Checkpoint it. If `-Execute` finds Outlook rows after all (a non-elevated Outlook ran there
->    before the policy), let it wait them out and do not restart the guest meanwhile - or use
->    `-RebuildCatalog`. Nothing else - no `Start-OutlookUnelevated.ps1` there - and once the rule is
->    in, that guest's index state no longer depends on how its Outlook is started (items 1 and 3).
+> 4. **`OutlookAI-Unindexed` - DONE 2026-09-24, exactly as this item prescribed, and checkpointed
+>    `CP-14-EXCLUDED-BY-SCOPE-RULE`** (child of `CP-10-IDENTITY-ACCOUNT`, which it was restored to
+>    first: the checkpoints after it carry faulty populations - section 4.1).
+>    Before: the policy only - `PreventIndexingOutlook = 1`, the service reporting the scope
+>    `included=False reason=UNKNOWNSCOPE`, no Outlook row, and `-Verify` printing the policy-only
+>    caveat. The steps: `Set-OutlookIndexingDisabled.ps1` and `SearchCrawlScope.cs` staged into
+>    `C:\OutlookAI-Q5\`; `Testbed/host/Restart-Guest.ps1 -Execute -CancelLogonPrompt` (Outlook was not
+>    running; the guest restarted without force, 27 s); `-Execute` elevated over PowerShell Direct -
+>    the user EXCLUDE rule, and the service answered `included=False reason=USER` at once, though
+>    that guest has NO search root for the scope (the indexed guest's exclusions all had one); `no
+>    Outlook row in the catalog: nothing to purge`; the policy already 1; `WSearch` restarted. Then
+>    `-Verify`, twice (3 minutes apart, and again 1 minute apart immediately before the checkpoint):
+>    **`UNINDEXED`, reason `USER`, no caveat**, 0 Outlook rows, the catalog IDLE with 430 other items,
+>    `WorkingSetRules\18 include=0` in the registry, Outlook closed.
+>    `.work/aa5e-2026-09-24-q69b-runlevel-unindexed/`. Nothing else was run there - no
+>    `Start-OutlookUnelevated.ps1` - and with the rule in, that guest's index state no longer depends
+>    on how its Outlook is started (items 1 and 3). **The live tier's populations, the SDK and the
+>    settings file are NOT in `CP-14`** - they were built after `CP-10` - so steps 8a to 9 of
+>    `Testbed/README.md` section 1 run again from it.
 >
 > **MEASURED 2026-09-24 on `OutlookAI-Indexed` (Q68) - the registry half was exercised, and three
 > things changed.** Full evidence in the script's banner.
@@ -1894,10 +1902,13 @@ and the four faults above. **Still open, each settled by the first v2 build or r
 
 ## 4. Running the tier
 
-```
-dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj \
-  --filter "Category=Live&Requires!=DelegateStore"
-```
+**The run lines live in ONE place: `Testbed/README.md` section 4c.** This section keeps no copy, so
+the two cannot drift. There the filter below runs on a guest through
+`Testbed/guest/Register-InteractiveTask.ps1 -RunLevel Limited` - NOT elevated, because an elevated
+Outlook never feeds the index (section 8 item 22) - with the per-run opt-in `OUTLOOKAI_LIVE_OPT_IN`
+set to that guest's computer name inside the task's own script, and `-c Release`. The filter:
+
+`Category=Live&Requires!=DelegateStore`
 
 That filter IS the VM bucket, spelled out: everything live except the tests naming a capability
 this machine cannot be given. There is no separate "which bucket" trait to keep in step with it -
@@ -2528,16 +2539,23 @@ unrecorded or unverified.
     it needs - in section 2.4's Q69 block, item 3; the guest was restored to `CP-10-INDEXED` after
     it and re-verified `INDEXED` (20,048 rows over three stores, the catalog IDLE, nothing queued).
 
-    **What follows for the live tier on the guests - a decision, not taken here.** The index tests
-    need the index to MOVE while they run - a test creates an item and waits for the index to show it
-    - and on these guests the index moves only while a NON-elevated Outlook runs. Run through `Register-InteractiveTask.ps1` as the tier would be
-    today, Outlook is elevated, `IsInstantSearchEnabled` is `False`, and nothing a test creates is
-    ever indexed: the "not indexed yet" state, permanently, which the suite reads as a slow indexer.
-    So the tier's session-1 route must run Outlook - and the test host with it, because an elevation
-    mismatch breaks COM attach (v3.MD S8) - at `RunLevel Limited`. Options: a `-RunLevel` parameter
-    on `Register-InteractiveTask.ps1`; a second, Limited task for the tier; or Outlook started by
-    `Start-OutlookUnelevated.ps1` with the suite in a Limited task beside it. Not built here -
-    `Register-InteractiveTask.ps1` was not this round's file, and which route is the user's call.
+    **What follows for the live tier on the guests - DECIDED 2026-09-24 and built: the tier runs at
+    `RunLevel Limited`.** The index tests need the index to MOVE while they run - a test creates an
+    item and waits for the index to show it - and on these guests the index moves only while a
+    NON-elevated Outlook runs. Run through `Register-InteractiveTask.ps1` as it stood, Outlook is
+    elevated, `IsInstantSearchEnabled` is `False`, and nothing a test creates is ever indexed: the
+    "not indexed yet" state, permanently, which the suite reads as a slow indexer. So the tier's
+    session-1 route must run Outlook - and the test host with it, because an elevation mismatch
+    breaks COM attach (v3.MD S8) - at `RunLevel Limited`. Of the three routes (a `-RunLevel`
+    parameter on `Register-InteractiveTask.ps1`; a second, Limited task for the tier; Outlook started
+    by `Start-OutlookUnelevated.ps1` with the suite in a Limited task beside it) the first was
+    chosen: `Register-InteractiveTask.ps1 -RunLevel Highest|Limited`, **Highest by default** because
+    every existing caller expects it and the installers refuse without it. `Testbed/README.md`
+    section 4c carries the run lines, why, and the elevation audit - nothing in the live tier needs
+    elevation; three things need the SAME level as Outlook. Measured on `OAI-UNINDEXED`: the default
+    gave the job `High Mandatory Level`, `-RunLevel Limited` gave `Medium Mandatory Level`, the
+    suite's source tree rebuilt from scratch at Limited and `--list-tests` discovered the live
+    tests there; a live test was NOT executed at Limited - the tier has not yet run on any guest.
 
     **A side finding for the identity tests, not chased.** The index names a store by the name in
     its profile's service, not by the root-folder name COM reports. The tier store appears as
@@ -2546,8 +2564,25 @@ unrecorded or unverified.
     `/Outlook Data File`, while `Store.DisplayName` reads `identity@vm.invalid` (identified by
     elimination: it is the tier profile's only other store). `IndexSearchService.TryDiscoverStoreScopeByAddress`
     accepts a store only when the index's name EQUALS the address, so it cannot find the identity
-    store here. Whether anything the identity tests exercise goes through that path is not
-    established.
+    store here. **Checked by reading, 2026-09-24 - nothing changed:** the identity tests themselves
+    (`LiveDraftTests.IdentityDrafts_BusinessAccounts_...`, `LiveDraftOptionsTests.NewDraft_BusinessAccounts_...`)
+    are COM only and never reach the index, and every test caller of the method passes the hub, the
+    SF-6 probe store (the hub) or an INDEXED-list entry, which the settings keep the identity store
+    out of. **One path does need the index name to be the address: `outlook_health`.** For every
+    Outlook store whose name contains `@` and that the index sample does not name, it asks this
+    method (`MailService.AddStoresMissingFromIndex` -> `StoreHasIndexRows` -> `ProbeStoreInIndex`), a
+    `false` becomes a problem ("the local index holds nothing for identity@vm.invalid"), and any
+    problem makes the verdict `degraded`. `LiveHealthTests.Health_OnThisMachine_ReportsOkWithFullDetail`
+    (Requires `SearchIndex` and `MultipleStores`, so the VM filter keeps it on the indexed guest)
+    asserts `"ok"` - so on `OutlookAI-Indexed`, with the identity store indexed under
+    `Outlook Data File`, it should fail. INFERRED from the code and the measured index name; not run.
+    `ListAccounts_ExactAccountsDelegatesAndFlags` would fail the same way (`InLocalIndex` for every
+    watched store) but carries `Requires: DelegateStore` and is never selected on a guest. The corpus
+    tool asks the same question (`CorpusCommands.cs`, `corpus-indexed` for a store named like an
+    address), so waiting for an identity population to reach the index would never end either. The
+    index name is fixed where the store is made: a PST named through its profile service, not by a
+    root-folder rename, would be indexed under its address - untested, and a question for however
+    `identity.pst` gets its real Inbox (section 3b).
 23. **OPEN - Outlook's Object Model Guard prompts on the guests, and the live tier reads protected
     members.** Windows Security Center reports Defender's signatures out of date (dated 2025-09-17,
     372 days on 2026-09-24; the guests have no network), so Outlook treats every out-of-process COM
