@@ -1,8 +1,18 @@
 <#
     ============================================================================================
-    RUN TWICE: WRONG ENTRY WITH THE OLD SERVER (2026-09-24), THE ACCOUNT WITH THE FIXED ONE
-    (2026-09-27). READ WHAT "Verified" DOES AND DOES NOT MEAN BEFORE TRUSTING IT.
+    RUN THREE TIMES: WRONG ENTRY WITH THE OLD SERVER (2026-09-24), THE ACCOUNT WITH THE FIXED ONE
+    (2026-09-27, on both guests). READ WHAT "Verified" DOES AND DOES NOT MEAN BEFORE TRUSTING IT.
     ============================================================================================
+
+      OutlookAI-Unindexed, 2026-09-27, from CP-10B-IDENTITY-REAL-INBOX (the identity store minted,
+        Q87 (a)) with a server published from af56efc: Outlook started NOT elevated
+        (Start-OutlookUnelevated.ps1), this script in a RunLevel Limited task. "Verified", and
+        right: every account entry read '' before; afterwards 'New Signature' = 'Identity' on
+        00000004 (the POP3 account, clsid {ED475411-...}, Email identity@vm.invalid) and nothing on
+        00000005 (the data-file entry named identity@vm.invalid) or anywhere else; Identity.htm, .rtf
+        and .txt written; a separate read-only list_signatures call read back identity@vm.invalid
+        newMessage 'Identity' and tier@vm.invalid with none. Checkpoint CP-11B-SIGNATURE-SDK-SUITE
+        (Docs/live-tier-on-the-vm.md section 4.1c).
 
       OutlookAI-Unindexed, 2026-09-24, with a server built before the manage_signature fix:
         printed "Verified" and was WRONG. The server wrote 'New Signature' onto the identity PST's
