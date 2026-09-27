@@ -1,6 +1,73 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
+    2026-09-27 (Q87 (a)): THE IDENTITY STORE IS MINTED, NOT CREATED. MEASURED ON
+    `OutlookAI-Unindexed` FROM CP-09-ADDIN-READY, THEN SCRIPTED HERE AS -Phase Mint AND
+    -Phase CaptureMint.
+    ============================================================================================
+
+    WHY. A PST that AddStoreEx creates has no Inbox (section 4.1 of the runbook, defect 4), so the
+    identity account was bound to its hidden root on both guests, and CaptureStore now refuses such a
+    store. The maintainer chose direction (a) of Docs/live-tier-on-the-vm.md section 3b: let Outlook
+    MINT the store as the DEFAULT store of a throwaway account-less profile - `OUTLOOK.EXE /PIM <name>`,
+    the mechanism that gave the hub its full folder set - then name it and attach it to the tier
+    profile, where it keeps its Inbox.
+
+    MEASURED, 2026-09-27 (every step in session 1 at RunLevel Highest, every Outlook close a graceful
+    quit through Testbed/host/Restart-Guest.ps1, every read through a repository tool):
+      * `OUTLOOK.EXE /PIM IdentityMint` opened "Outlook Today" with no dialog, minted
+        C:\OutlookAI-Tier\Outlook Data File - IdentityMint.pst (ForcePSTPath), and left the default
+        profile OutlookAI-Tier. The store was named 'Outlook Data File'.
+      * In that profile the store has a designated, visible Inbox and a designated Drafts - CaptureStore
+        read it as `Inbox designated=True, EntryID 24 bytes, name 'Inbox', visible=True; Drafts
+        designated` - and every default folder but Junk Email, every one empty.
+      * Rename-OutlookStore.ps1 there: 'Outlook Data File' -> 'identity@vm.invalid'.
+      * Attached to the tier profile by Add-OutlookPstStore.ps1 (AddStoreEx opens the existing file):
+        before and after, 'identity@vm.invalid'. CaptureStore FROM THE TIER PROFILE then PASSED with
+        the same line, the Inbox's PST node id 0x8082; Bind re-pointed the account from the tier store;
+        Verify: `the identity account delivers into 'Inbox' (visible=True, PST node id 0x8082)`, two
+        accounts on two distinct stores, both SmtpAddress reads, and no logon dialog once
+        New-TierProfile.ps1 -StoreSinkPassword had run.
+      * The store's display name at each stage, for Q92: after the mint 'Outlook Data File', after the
+        rename 'identity@vm.invalid', after the attach 'identity@vm.invalid'.
+
+    THE ROUTE, as this script runs it (Outlook closed / running as each phase says; it never starts,
+    quits or kills Outlook itself - start it in session 1 through Register-InteractiveTask.ps1, and
+    close it with Testbed/host/Restart-Guest.ps1 from the host):
+
+      -Phase Mint -Execute          Outlook CLOSED. Refuses a pending ImportPRF (a /PIM start would
+                                    process it, unmeasured), a mint profile that already exists (/PIM
+                                    would open it, not mint) and a missing ForcePSTPath. Records the
+                                    PSTs already in ForcePSTPath.
+      <start OUTLOOK.EXE /PIM IdentityMint, ~90 s>
+      -Phase CaptureMint -Execute   Outlook RUNNING on the mint profile. Finds the one store it holds -
+                                    the default, a NEW file in ForcePSTPath - requires a designated,
+                                    visible Inbox and not one item in any folder, and records its path.
+      Rename-OutlookStore.ps1 -StoreFilePath <minted> -DisplayName identity@vm.invalid -Execute
+      <quit: Restart-Guest.ps1 -Execute>
+      -Phase Import -Execute        Outlook CLOSED (skip it if the account exists). Then start Outlook.
+      Add-OutlookPstStore.ps1 -ProfileName OutlookAI-Tier -DisplayName identity@vm.invalid
+                              -Path <minted> -Execute                     Outlook RUNNING (tier)
+      -Phase CaptureStore -Execute  Outlook RUNNING (tier) - the question (a) turned on.
+      <quit: Restart-Guest.ps1 -Execute -CancelLogonPrompt>
+      -Phase Bind -Execute, then New-TierProfile.ps1 -StoreSinkPassword -Execute   Outlook CLOSED
+      <start Outlook>
+      -Phase Verify -TrySmtpAddress
+
+    From here on the phases take the identity store's path from the mint record (-MintRecordPath)
+    unless -PstPath names one: the file name is Outlook's choice, read off the guest, not assumed.
+    A guest whose ImportPRF is already pending - CP-09-ADDIN-READY on both guests - completes that
+    import first: start Outlook once on the tier profile, quit it (-CancelLogonPrompt), then Mint.
+
+    WHAT IT LEAVES BEHIND: the mint profile. A profile has no free delete route (runbook section 1),
+    and nothing opens it again. It still names the minted file; the tier profile now does too.
+
+    NOT DONE HERE: a guest that already has an AddStoreEx identity.pst attached as
+    'identity@vm.invalid' (both guests from their CP-10 on) cannot attach the minted store under the
+    same name - Add-OutlookPstStore.ps1 refuses a taken name - and nothing in this repository removes a
+    store from a profile. Rebuild such a guest from its checkpoint before the identity account.
+
+    ============================================================================================
     RUN 2026-09-24 ON `OutlookAI-Indexed`, END TO END, AND IT WORKS - WITH ONE STEP THAT IS NOT
     DOCUMENTED BY MICROSOFT. READ WHICH ONE BEFORE YOU TRUST IT.
     ============================================================================================
@@ -106,9 +173,9 @@
         is read off the Inbox or the store object and opened by EntryID. Not designated is reported,
         not failed - the product's new_draft makes Drafts on first use, in a store it may write.
       * So on the guests as they stand (identity.pst attached by AddStoreEx, no Inbox) CaptureStore
-        REFUSES. That is the point: HOW identity.pst gets a real, designated Inbox is an open
-        question, and its candidates are listed in Docs/live-tier-on-the-vm.md section 3b, "The
-        identity store has no Inbox" - each to be measured on a guest before any is written in here.
+        REFUSES. That is the point: HOW identity.pst gets a real, designated Inbox was an open
+        question - DECIDED 2026-09-27 (Q87 (a)) and measured: the store is minted, the banner at the
+        top of this file.
 
     WHAT IS STILL NOT KNOWN, stated where it matters:
       * Account.SmtpAddress over COM ON A GUEST WITHOUT Q80. It is on Microsoft's list of members
@@ -124,10 +191,11 @@
         whose 'Account Name' is the store name identity@vm.invalid), not to this account (00000004,
         'Account Name' = 'OutlookAI identity sink'). Docs/live-tier-on-the-vm.md section 2.8b.
 
-    WHAT IT NEVER DOES: start, quit or kill Outlook; create, modify, move or delete an item; touch
-    any profile other than -ProfileName, or any account other than the one whose Email is
-    -EmailAddress. Every write is under HKCU\...\Office\<ver>\Outlook, plus the rendered .prf and
-    the JSON capture under -WorkDir.
+    WHAT IT NEVER DOES: start, quit or kill Outlook; create, modify, move or delete an item; write to
+    any profile other than -ProfileName (-Phase CaptureMint READS the mint profile's one store: its
+    folders, their item counts, its Inbox designation - nothing else), or touch any account other
+    than the one whose Email is -EmailAddress. Every write is under HKCU\...\Office\<ver>\Outlook,
+    plus the rendered .prf, the JSON capture and the mint record under -WorkDir.
 
     THE GUARD: Assert-TestbedGuest from OutlookMapiInterop.ps1 (dot-sourced; stage it beside this
     script). It refuses anywhere not logged on as vmadmin - on the maintainer's workstation this
@@ -137,11 +205,22 @@
     (Register-InteractiveTask.ps1); Outlook cannot start in session 0.
 
 .PARAMETER Phase
-    Import, CaptureStore, Bind or Verify - see above. Without -Execute, Import, CaptureStore and
-    Bind print what they would do and change nothing.
+    Mint, CaptureMint, Import, CaptureStore, Bind or Verify - see above. Without -Execute, Mint,
+    CaptureMint, Import, CaptureStore and Bind print what they would do and change nothing.
+
+.PARAMETER PstPath
+    The identity store's file. Leave it out: the phases after -Phase CaptureMint take it from the
+    mint record, because Outlook, not this script, names a minted file.
+
+.PARAMETER MintProfileName
+    The throwaway account-less profile `OUTLOOK.EXE /PIM` creates to mint the store in. It must not
+    exist yet - /PIM opens an existing profile instead of minting.
+
+.PARAMETER MintRecordPath
+    Where -Phase Mint records the PSTs already in ForcePSTPath, and -Phase CaptureMint the minted one.
 
 .PARAMETER SelfTest
-    Pure: renders the template, and drives the account-selection, EntryID-sanity and verdict
+    Pure: renders the template, and drives the account-selection, EntryID-sanity, mint and verdict
     decisions with synthetic inputs. No registry, no COM, no files written. Runs anywhere.
 
 .PARAMETER TrySmtpAddress
@@ -149,16 +228,24 @@
 
 .EXAMPLE
     .\Add-IdentityAccount.ps1 -SelfTest
+    .\Add-IdentityAccount.ps1 -Phase Mint -Execute
+    <start OUTLOOK.EXE /PIM IdentityMint in session 1>
+    .\Add-IdentityAccount.ps1 -Phase CaptureMint -Execute
+    .\Rename-OutlookStore.ps1 -StoreFilePath '<the minted file CaptureMint printed>' -DisplayName identity@vm.invalid -Execute
+    <quit Outlook: Testbed/host/Restart-Guest.ps1 -VMName <guest> -Execute, from the host>
     .\Add-IdentityAccount.ps1 -Phase Import -Execute
-    .\Add-OutlookPstStore.ps1 -ProfileName OutlookAI-Tier -DisplayName identity@vm.invalid -Path C:\OutlookAI-Tier\identity.pst -Execute
+    <start Outlook on the tier profile>
+    .\Add-OutlookPstStore.ps1 -ProfileName OutlookAI-Tier -DisplayName identity@vm.invalid -Path '<the minted file>' -Execute
     .\Add-IdentityAccount.ps1 -Phase CaptureStore -Execute
+    <quit Outlook: Restart-Guest.ps1 -VMName <guest> -Execute -CancelLogonPrompt>
     .\Add-IdentityAccount.ps1 -Phase Bind -Execute
     .\New-TierProfile.ps1 -StoreSinkPassword -Execute
+    <start Outlook on the tier profile>
     .\Add-IdentityAccount.ps1 -Phase Verify -TrySmtpAddress
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Import', 'CaptureStore', 'Bind', 'Verify')] [string] $Phase,
+    [ValidateSet('Mint', 'CaptureMint', 'Import', 'CaptureStore', 'Bind', 'Verify')] [string] $Phase,
     [string] $ProfileName      = 'OutlookAI-Tier',
     [string] $EmailAddress     = 'identity@vm.invalid',
     [string] $StoreDisplayName = 'identity@vm.invalid',
@@ -169,7 +256,9 @@ param(
     [int]    $Pop3Port         = 110,
     [int]    $SmtpPort         = 25,
     [string] $WorkDir          = 'C:\OutlookAI-Tier',
-    [string] $PstPath          = 'C:\OutlookAI-Tier\identity.pst',
+    [string] $PstPath,
+    [string] $MintProfileName  = 'IdentityMint',
+    [string] $MintRecordPath   = 'C:\OutlookAI-Tier\identity-mint.json',
     [string] $IdsPath          = 'C:\OutlookAI-Tier\identity-store-ids.json',
     [string] $TemplatePath,
     [string] $OfficeVersion    = '16.0',
@@ -329,6 +418,82 @@ function Get-IdentityVerdict {
     return $problems
 }
 
+# ---- The mint (Q87 (a), 2026-09-27) --------------------------------------------------------------
+
+# Why -Phase Mint may NOT prepare a mint - or $null when it may. The /PIM start it prepares must MINT:
+# a pending ImportPRF would be processed by that same start, which nothing here has measured; a
+# profile that already exists is OPENED by /PIM, not minted; and Outlook mints the file into
+# ForcePSTPath, which must be set and exist.
+function Get-MintPreflightRefusal {
+    param([string] $ImportPrf, [bool] $MintProfileExists, [string] $MintProfileName, [string] $ForcePstPath, [bool] $ForcePstPathExists)
+    if (-not [string]::IsNullOrWhiteSpace($ImportPrf)) {
+        return ("an ImportPRF is pending ('$ImportPrf'), and the /PIM start would process it as well - which has not been measured. " +
+            'Complete it first: start Outlook once on the default profile, then quit it gracefully (Testbed/host/Restart-Guest.ps1 -Execute -CancelLogonPrompt).')
+    }
+    if ($MintProfileExists) {
+        return ("a profile named '$MintProfileName' already exists, and OUTLOOK.EXE /PIM opens an existing profile instead of minting one. " +
+            'A profile has no free delete route; pick another -MintProfileName - or, if this route minted that profile''s store already, start it with /PIM and go on to -Phase CaptureMint.')
+    }
+    if ([string]::IsNullOrWhiteSpace($ForcePstPath)) {
+        return 'ForcePSTPath is not set, so Outlook would mint the store under Documents\Outlook Files. New-TierProfile.ps1 -Execute writes it.'
+    }
+    if (-not $ForcePstPathExists) { return "ForcePSTPath '$ForcePstPath' is not a directory that exists." }
+    return $null
+}
+
+# Stores: objects with FilePath and IsDefault - every store of the running MINT profile. The minted
+# store is the one store a /PIM profile holds, its default, and a NEW file in ForcePSTPath - not one of
+# the PSTs -Phase Mint found there before the start. Anything else refuses.
+function Select-MintedStore {
+    param([object[]] $Stores, [string[]] $PstsBefore, [string] $ForcePstPath)
+    $all = @($Stores | Where-Object { $null -ne $_ })
+    if ($all.Count -ne 1) {
+        return [pscustomobject]@{ Row = $null; Refusal = "the mint profile holds $($all.Count) store(s), and a profile /PIM just made holds exactly the one it minted - something else is attached, so refusing to guess which" }
+    }
+    $s = $all[0]
+    if ($s.IsDefault -ne $true) { return [pscustomobject]@{ Row = $null; Refusal = "its one store, '$($s.FilePath)', is not the profile's default store" } }
+    if ([string]::IsNullOrWhiteSpace($s.FilePath)) { return [pscustomobject]@{ Row = $null; Refusal = 'its one store has no file path - it is not a PST' } }
+    $dir = [IO.Path]::GetDirectoryName($s.FilePath)
+    if ([string]::IsNullOrWhiteSpace($ForcePstPath) -or -not [string]::Equals($dir.TrimEnd('\'), $ForcePstPath.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+        return [pscustomobject]@{ Row = $null; Refusal = "its store '$($s.FilePath)' is not in ForcePSTPath '$ForcePstPath', where Outlook mints" }
+    }
+    $name = [IO.Path]::GetFileName($s.FilePath)
+    foreach ($b in @($PstsBefore)) {
+        if ($null -ne $b -and [string]::Equals([string]$b, $name, [StringComparison]::OrdinalIgnoreCase)) {
+            return [pscustomobject]@{ Row = $null; Refusal = "'$name' was in ForcePSTPath before the /PIM start - it is not a store that start minted" }
+        }
+    }
+    return [pscustomobject]@{ Row = $s; Refusal = $null }
+}
+
+# Folders: objects with Path and Items (an [int], or $null when the count would not read). A store is
+# attached to a second profile by script only while it holds NO item (Docs/live-tier-on-the-vm.md
+# section 2.6), and a count that would not read, or a walk that stopped at its limit, proves nothing.
+function Get-MintItemsRefusal {
+    param([object[]] $Folders, [bool] $Truncated)
+    $all = @($Folders | Where-Object { $null -ne $_ })
+    if ($all.Count -eq 0) { return 'no folder of it was counted at all' }
+    $unread = @($all | Where-Object { $null -eq $_.Items })
+    if ($unread.Count -gt 0) { return ("the item count of {0} folder(s) would not read ({1}), so nothing proves the store is empty" -f $unread.Count, (($unread | ForEach-Object { $_.Path }) -join ', ')) }
+    $held = @($all | Where-Object { $_.Items -gt 0 })
+    if ($held.Count -gt 0) {
+        return ("it already holds items ({0}), and a store with items is never attached to a second profile by script (Docs/live-tier-on-the-vm.md section 2.6)" -f (($held | ForEach-Object { '{0}={1}' -f $_.Path, $_.Items }) -join ', '))
+    }
+    if ($Truncated) { return 'the folder walk stopped at its limit before it had counted every folder' }
+    return $null
+}
+
+# Where the identity store is: -PstPath when given, else the minted file -Phase CaptureMint recorded.
+# There is no default path any more: the AddStoreEx identity.pst the old default named has no Inbox.
+function Resolve-IdentityPstPath {
+    param([string] $BoundPath, $MintRecord)
+    if (-not [string]::IsNullOrWhiteSpace($BoundPath)) { return [pscustomobject]@{ Path = $BoundPath; Source = '-PstPath'; Refusal = $null } }
+    if ($null -ne $MintRecord -and $null -ne $MintRecord.PSObject.Properties['MintedPath'] -and -not [string]::IsNullOrWhiteSpace([string]$MintRecord.MintedPath)) {
+        return [pscustomobject]@{ Path = [string]$MintRecord.MintedPath; Source = 'the mint record'; Refusal = $null }
+    }
+    return [pscustomobject]@{ Path = $null; Source = $null; Refusal = 'No identity store to work on: mint it first (-Phase Mint -Execute, start OUTLOOK.EXE /PIM, -Phase CaptureMint -Execute), which records its path - or pass -PstPath.' }
+}
+
 function Invoke-SelfTest {
     $script:pass = 0; $script:fail = 0
     function Check([string] $what, [bool] $ok) {
@@ -406,6 +571,46 @@ function Invoke-SelfTest {
     $brokenDrafts = [pscustomobject]@{ Name = 'OutlookAI identity sink'; DeliveryPath = 'C:\OutlookAI-Tier\identity.pst'; DeliveryStoreId = 'BB'; DraftsOk = $false; DraftsAbsent = $false }
     Check 'a designated Drafts that will not open is' ((@(Get-IdentityVerdict -Accounts @($tier, $brokenDrafts) -IdentityName 'OutlookAI identity sink' -Path 'C:\OutlookAI-Tier\identity.pst')).Count -gt 0)
 
+    # The mint (Q87 (a)). Every input below is the MEASURED shape of 2026-09-27 on OAI-UNINDEXED, and
+    # each refusal has its control beside it.
+    $minted = 'C:\OutlookAI-Tier\Outlook Data File - IdentityMint.pst'
+    $before = @('Outlook Data File - CorpusProfile.pst', 'Outlook.pst')
+    Check 'the mint preflight passes the measured guest: no import pending, a new profile name, ForcePSTPath there (the control)' ($null -eq (Get-MintPreflightRefusal -ImportPrf '' -MintProfileExists $false -MintProfileName 'IdentityMint' -ForcePstPath 'C:\OutlookAI-Tier' -ForcePstPathExists $true))
+    $why = Get-MintPreflightRefusal -ImportPrf 'C:\OutlookAI-Tier\identity-account.prf' -MintProfileExists $false -MintProfileName 'IdentityMint' -ForcePstPath 'C:\OutlookAI-Tier' -ForcePstPathExists $true
+    Check 'a pending ImportPRF - CP-09-ADDIN-READY on both guests - refuses the mint, and says how to complete it' ($null -ne $why -and $why.Contains('ImportPRF') -and $why.Contains('-CancelLogonPrompt'))
+    Check 'a mint profile that already exists refuses (/PIM would open it, not mint)' ((Get-MintPreflightRefusal -ImportPrf '' -MintProfileExists $true -MintProfileName 'IdentityMint' -ForcePstPath 'C:\OutlookAI-Tier' -ForcePstPathExists $true).Contains('already exists'))
+    Check 'no ForcePSTPath refuses' ($null -ne (Get-MintPreflightRefusal -ImportPrf '' -MintProfileExists $false -MintProfileName 'IdentityMint' -ForcePstPath '' -ForcePstPathExists $false))
+    Check 'a ForcePSTPath that is not there refuses' ($null -ne (Get-MintPreflightRefusal -ImportPrf '' -MintProfileExists $false -MintProfileName 'IdentityMint' -ForcePstPath 'C:\Nowhere' -ForcePstPathExists $false))
+
+    $one = @([pscustomobject]@{ FilePath = $minted; IsDefault = $true })
+    Check 'the measured minted store is found: the one default store, a new file in ForcePSTPath (the control)' ((Select-MintedStore -Stores $one -PstsBefore $before -ForcePstPath 'C:\OutlookAI-Tier').Row.FilePath -eq $minted)
+    Check 'and ForcePSTPath compares without its case or a trailing backslash' ($null -eq (Select-MintedStore -Stores $one -PstsBefore $before -ForcePstPath 'c:\outlookai-tier\').Refusal)
+    $two = @($one) + @([pscustomobject]@{ FilePath = 'C:\OutlookAI-Tier\Outlook.pst'; IsDefault = $false })
+    Check 'a mint profile holding two stores refuses' ($null -ne (Select-MintedStore -Stores $two -PstsBefore $before -ForcePstPath 'C:\OutlookAI-Tier').Refusal)
+    Check 'a store that is not the default refuses' ($null -ne (Select-MintedStore -Stores @([pscustomobject]@{ FilePath = $minted; IsDefault = $false }) -PstsBefore $before -ForcePstPath 'C:\OutlookAI-Tier').Refusal)
+    Check 'a store outside ForcePSTPath refuses' ($null -ne (Select-MintedStore -Stores @([pscustomobject]@{ FilePath = 'C:\Users\vmadmin\Documents\Outlook Files\Outlook.pst'; IsDefault = $true }) -PstsBefore $before -ForcePstPath 'C:\OutlookAI-Tier').Refusal)
+    $old = Select-MintedStore -Stores @([pscustomobject]@{ FilePath = 'C:\OutlookAI-Tier\OUTLOOK.PST'; IsDefault = $true }) -PstsBefore $before -ForcePstPath 'C:\OutlookAI-Tier'
+    Check 'a file that was there before the start - the tier store, say - refuses, whatever its case' ($null -ne $old.Refusal -and $old.Refusal.Contains('before the /PIM start'))
+    Check 'no store at all refuses' ($null -ne (Select-MintedStore -Stores @() -PstsBefore $before -ForcePstPath 'C:\OutlookAI-Tier').Refusal)
+
+    $empty = @('Deleted Items', 'Inbox', 'Outbox', 'Sent Items', 'Calendar', 'Contacts', 'Journal', 'Notes', 'Tasks', 'Drafts', 'RSS Feeds') | ForEach-Object { [pscustomobject]@{ Path = $_; Items = 0 } }
+    Check 'the measured minted store - every folder empty - may be attached (the control)' ($null -eq (Get-MintItemsRefusal -Folders $empty -Truncated $false))
+    $withItem = @($empty) + @([pscustomobject]@{ Path = 'Inbox/Sub'; Items = 1 })
+    $why = Get-MintItemsRefusal -Folders $withItem -Truncated $false
+    Check 'one item anywhere refuses, and names the folder' ($null -ne $why -and $why.Contains('Inbox/Sub=1'))
+    Check 'a count that would not read refuses' ($null -ne (Get-MintItemsRefusal -Folders (@($empty) + @([pscustomobject]@{ Path = 'Calendar'; Items = $null })) -Truncated $false))
+    Check 'a walk that stopped at its limit refuses' ($null -ne (Get-MintItemsRefusal -Folders $empty -Truncated $true))
+    Check 'no folder counted refuses' ($null -ne (Get-MintItemsRefusal -Folders @() -Truncated $false))
+
+    $record = [pscustomobject]@{ MintProfile = 'IdentityMint'; MintedPath = $minted }
+    Check 'the identity store is the minted file the record names, when -PstPath is not given' ((Resolve-IdentityPstPath -BoundPath '' -MintRecord $record).Path -eq $minted)
+    Check '-PstPath wins over the record' ((Resolve-IdentityPstPath -BoundPath 'D:\x.pst' -MintRecord $record).Path -eq 'D:\x.pst')
+    Check 'a record from -Phase Mint alone - nothing minted yet - refuses' ($null -ne (Resolve-IdentityPstPath -BoundPath '' -MintRecord ([pscustomobject]@{ MintProfile = 'IdentityMint' })).Refusal)
+    Check 'no record and no -PstPath refuses - there is no default path any more' ($null -ne (Resolve-IdentityPstPath -BoundPath '' -MintRecord $null).Refusal)
+    # The MEASURED delivery folder of the minted store, read from the tier profile: its Inbox, PST node
+    # id 0x8082 - accepted by the same rule that refuses the AddStoreEx store's root.
+    Check 'the minted store''s measured Inbox (node 0x8082) is a delivery folder nothing refuses' ($null -eq (Get-DeliveryFolderRefusal -EntryIdHex '0000000006BC1DA715E59C419E92901D3513E13682800000' -Name 'Inbox' -Visible $true))
+
     Write-Host ''
     Write-Host ("SelfTest: {0} passed, {1} failed. The guest halves - the import, AddStoreEx, the COM reads and whether Outlook honours the bound values - are what -Phase proves, not this." -f $script:pass, $script:fail)
     if ($script:fail -gt 0) { exit 1 }
@@ -413,13 +618,109 @@ function Invoke-SelfTest {
 }
 
 if ($SelfTest) { Invoke-SelfTest }
-if (-not $Phase) { throw 'Pass -Phase Import|CaptureStore|Bind|Verify, or -SelfTest.' }
+if (-not $Phase) { throw 'Pass -Phase Mint|CaptureMint|Import|CaptureStore|Bind|Verify, or -SelfTest.' }
 
 # =============================================================================================
 # GUEST ONLY FROM HERE.
 # =============================================================================================
 . "$PSScriptRoot\OutlookMapiInterop.ps1"
 Assert-TestbedGuest -ExpectedUser $ExpectedUser
+
+# The mint record: what -Phase Mint found in ForcePSTPath, and what -Phase CaptureMint minted. $null
+# when there is none; a record that will not read refuses rather than being taken for none.
+function Read-MintRecord {
+    if (-not (Test-Path -LiteralPath $MintRecordPath)) { return $null }
+    try { return (Get-Content -LiteralPath $MintRecordPath -Raw | ConvertFrom-Json) }
+    catch { throw "The mint record at $MintRecordPath would not read: $($_.Exception.Message)" }
+}
+
+# The phases that work on the identity store find it here: -PstPath, else the minted file.
+if (@('CaptureStore', 'Bind', 'Verify') -contains $Phase) {
+    $resolvedPst = Resolve-IdentityPstPath -BoundPath $PstPath -MintRecord (Read-MintRecord)
+    if ($resolvedPst.Refusal) { throw "REFUSING: $($resolvedPst.Refusal)" }
+    $PstPath = $resolvedPst.Path
+    Say "identity store: $PstPath (from $($resolvedPst.Source))"
+}
+
+# What a store offers an account as its delivery target, read WITHOUT the lookups that create folders:
+# the Inbox only when the store's PR_VALID_FOLDER_MASK proves it - the rule OutlookAI.Core's
+# SpecialFolders follows - and Drafts by its designation. Asked for without that proof,
+# GetDefaultFolder(6) on an AddStoreEx PST hands back its non-IPM ROOT (measured on both guests,
+# 2026-09-24), and that is what CaptureStore used to record. Shared by CaptureStore and CaptureMint.
+function Read-DeliveryTarget {
+    param($Store)
+    $accessor = $Store.PropertyAccessor
+    $mask = $null
+    try { $mask = [int]$accessor.GetProperty($ValidFolderMaskSchema) } catch { $mask = $null }
+    if ($null -eq $mask) { throw "The store's PR_VALID_FOLDER_MASK would not read, so nothing proves whether it has an Inbox. Refusing to capture." }
+    $inboxHex = ''; $inboxName = ''; $inboxVisible = $false; $draftsHex = ''
+    if (($mask -band $FolderIpmInboxValid) -ne 0) {
+        $inbox = $Store.GetDefaultFolder(6)
+        $inboxHex = [string]$inbox.EntryID
+        $inboxName = [string]$inbox.Name
+        $rootId = [string]$Store.GetRootFolder().EntryID
+        $ancestors = New-Object System.Collections.Generic.List[object]
+        $parent = $null
+        try { $parent = $inbox.Parent } catch { $parent = $null }
+        for ($depth = 0; $depth -lt 32 -and $null -ne $parent; $depth++) {
+            $parentId = $null
+            try { $parentId = [string]$parent.EntryID } catch { $parentId = $null }
+            $ancestors.Add($parentId)
+            if ($null -eq $parentId -or $parentId -ieq $rootId) { break }
+            try { $parent = $parent.Parent } catch { $parent = $null }
+        }
+        $inboxVisible = Test-FolderIsVisible -Name $inboxName -AncestorEntryIds $ancestors.ToArray() -RootEntryId $rootId
+        # Drafts by its DESIGNATION, never by GetDefaultFolder(16), which creates one a PST lacks.
+        try { $draftsHex = [string]$inbox.PropertyAccessor.BinaryToString($inbox.PropertyAccessor.GetProperty($DraftsEntryIdSchema)) } catch { $draftsHex = '' }
+    }
+    if (-not $draftsHex) {
+        try { $draftsHex = [string]$accessor.BinaryToString($accessor.GetProperty($DraftsEntryIdSchema)) } catch { $draftsHex = '' }
+    }
+    return [pscustomobject]@{
+        Mask = $mask; InboxDesignated = (($mask -band $FolderIpmInboxValid) -ne 0)
+        InboxEntryID = $inboxHex; InboxName = $inboxName; InboxVisible = $inboxVisible; DraftsEntryID = $draftsHex
+    }
+}
+
+# Every folder under a store's root, breadth first, with its item count - READ ONLY: Folders and
+# Items.Count, no lookup that creates anything. A count or a subfolder list that will not read is
+# recorded as unread ($null), which Get-MintItemsRefusal refuses; so is stopping at the limits.
+function Get-FolderItemCounts {
+    param($Root, [int] $MaxDepth = 8, [int] $MaxFolders = 500)
+    $rows = New-Object System.Collections.Generic.List[object]
+    $truncated = $false
+    $rootCount = $null
+    try { $rootCount = [int]$Root.Items.Count } catch { $rootCount = $null }
+    $rows.Add([pscustomobject]@{ Path = '(the root folder)'; Items = $rootCount })
+    $queue = New-Object System.Collections.Generic.Queue[object]
+    $queue.Enqueue(@($Root, '', 0))
+    while ($queue.Count -gt 0 -and -not $truncated) {
+        $entry = $queue.Dequeue()
+        $folder = $entry[0]; $path = [string]$entry[1]; $depth = [int]$entry[2]
+        $children = $null
+        try { $children = $folder.Folders } catch { $children = $null }
+        if ($null -eq $children) { $rows.Add([pscustomobject]@{ Path = "$path (its subfolders)"; Items = $null }); continue }
+        for ($i = 1; $i -le $children.Count; $i++) {
+            if ($rows.Count -ge $MaxFolders) { $truncated = $true; break }
+            $child = $children.Item($i)
+            $name = [string]$child.Name
+            $childPath = $name
+            if ($path) { $childPath = "$path/$name" }
+            $count = $null
+            try { $count = [int]$child.Items.Count } catch { $count = $null }
+            $rows.Add([pscustomobject]@{ Path = $childPath; Items = $count })
+            if ($depth + 1 -lt $MaxDepth) { $queue.Enqueue(@($child, $childPath, ($depth + 1))) }
+            else {
+                # At the depth limit: a folder that has (or will not say whether it has) subfolders is
+                # a part of the store this walk did not count.
+                $below = -1
+                try { $below = [int]$child.Folders.Count } catch { $below = -1 }
+                if ($below -ne 0) { $truncated = $true }
+            }
+        }
+    }
+    return [pscustomobject]@{ Folders = $rows.ToArray(); Truncated = $truncated }
+}
 
 function Get-AccountRows {
     $mgr = Join-Path (Join-Path $ProfilesKey $ProfileName) $AcctMgrName
@@ -444,6 +745,70 @@ function Show-Accounts {
 }
 
 switch ($Phase) {
+    'Mint' {
+        Assert-OutlookNotRunning
+        $importPrf = ''
+        if (Test-Path -LiteralPath $SetupKey) { $importPrf = [string](Get-ItemProperty -LiteralPath $SetupKey).ImportPRF }
+        $profileExists = Test-Path -LiteralPath (Join-Path $ProfilesKey $MintProfileName)
+        $force = ''
+        if (Test-Path -LiteralPath $OutlookKey) { $force = [Environment]::ExpandEnvironmentVariables([string](Get-ItemProperty -LiteralPath $OutlookKey).ForcePSTPath) }
+        $forceExists = (-not [string]::IsNullOrWhiteSpace($force)) -and (Test-Path -LiteralPath $force -PathType Container)
+        $refusal = Get-MintPreflightRefusal -ImportPrf $importPrf -MintProfileExists $profileExists -MintProfileName $MintProfileName -ForcePstPath $force -ForcePstPathExists $forceExists
+        if ($refusal) { throw "REFUSING to prepare the mint: $refusal" }
+        $before = @(Get-ChildItem -LiteralPath $force -Filter '*.pst' -File | ForEach-Object { $_.Name })
+        Say "mint profile '$MintProfileName' (does not exist yet); ForcePSTPath '$force' holds $($before.Count) PST(s): $($before -join ', ')"
+        if (-not $Execute) { Say "Dry run. Would record that in $MintRecordPath."; return }
+        $record = [pscustomobject]@{ MintProfile = $MintProfileName; ForcePSTPath = $force; PstsBefore = $before; RecordedAt = (Get-Date).ToString('o') }
+        Set-Content -LiteralPath $MintRecordPath -Value ($record | ConvertTo-Json) -Encoding UTF8
+        Say "wrote $MintRecordPath"
+        Say "NEXT: start  OUTLOOK.EXE /PIM $MintProfileName  in session 1 (Register-InteractiveTask.ps1) and let it settle ~90 s - it opens 'Outlook Today' with no dialog (measured) - then:"
+        Say '  .\Add-IdentityAccount.ps1 -Phase CaptureMint -Execute'
+    }
+    'CaptureMint' {
+        $record = Read-MintRecord
+        if ($null -eq $record) { throw "No mint record at $MintRecordPath. Run -Phase Mint -Execute first, with Outlook closed." }
+        if ([string]$record.MintProfile -ne $MintProfileName) { throw "The mint record is for profile '$($record.MintProfile)', not '$MintProfileName'." }
+        $script:minted = $null
+        Invoke-WithOutlookSession -Body {
+            param($ns)
+            if ($ns.CurrentProfileName -ne $MintProfileName) { throw "Outlook is on profile '$($ns.CurrentProfileName)', not the mint profile '$MintProfileName'. Start it as OUTLOOK.EXE /PIM $MintProfileName." }
+            if ($ns.Accounts.Count -ne 0) { throw "The mint profile holds $($ns.Accounts.Count) account(s); a profile /PIM made holds none." }
+            $defaultId = [string]$ns.DefaultStore.StoreID
+            $rows = @()
+            for ($i = 1; $i -le $ns.Stores.Count; $i++) {
+                $s = $ns.Stores.Item($i)
+                $rows += [pscustomobject]@{ FilePath = [string]$s.FilePath; IsDefault = ([string]$s.StoreID -eq $defaultId); Store = $s }
+            }
+            $sel = Select-MintedStore -Stores $rows -PstsBefore @($record.PstsBefore) -ForcePstPath ([string]$record.ForcePSTPath)
+            if ($sel.Refusal) { throw "REFUSING: $($sel.Refusal)." }
+            $store = $sel.Row.Store
+            $script:minted = [pscustomobject]@{
+                MintedPath = $sel.Row.FilePath; DisplayName = [string]$store.DisplayName
+                Target = (Read-DeliveryTarget $store); Counts = (Get-FolderItemCounts -Root $store.GetRootFolder())
+            }
+        }
+        $m = $script:minted
+        $items = 0
+        foreach ($f in @($m.Counts.Folders)) { if ($null -ne $f.Items) { $items += $f.Items } }
+        Say ("minted store '{0}' at {1} (profile '{2}'): mask 0x{3:X}; Inbox designated={4}, name '{5}', visible={6}; Drafts {7}; {8} folder(s) counted, {9} item(s)" -f $m.DisplayName, $m.MintedPath, $MintProfileName, $m.Target.Mask, $m.Target.InboxDesignated, $m.Target.InboxName, $m.Target.InboxVisible, $(if ($m.Target.DraftsEntryID) { 'designated' } else { 'NOT designated' }), @($m.Counts.Folders).Count, $items)
+        $refusal = Get-DeliveryFolderRefusal -EntryIdHex $m.Target.InboxEntryID -Name $m.Target.InboxName -Visible $m.Target.InboxVisible
+        if ($refusal) { throw "REFUSING: the minted store's Inbox - $refusal. The mint route does not hold here; nothing was recorded." }
+        $itemsRefusal = Get-MintItemsRefusal -Folders $m.Counts.Folders -Truncated $m.Counts.Truncated
+        if ($itemsRefusal) { throw "REFUSING: $itemsRefusal. Nothing was recorded." }
+        if (-not $Execute) { Say "Dry run. Would record '$($m.MintedPath)' in $MintRecordPath."; return }
+        foreach ($p in @(@('MintedPath', $m.MintedPath), @('DisplayNameAfterMint', $m.DisplayName), @('ValidFolderMask', $m.Target.Mask), @('InboxName', $m.Target.InboxName), @('CapturedAt', (Get-Date).ToString('o')))) {
+            $record | Add-Member -NotePropertyName $p[0] -NotePropertyValue $p[1] -Force
+        }
+        Set-Content -LiteralPath $MintRecordPath -Value ($record | ConvertTo-Json) -Encoding UTF8
+        Say "recorded in $MintRecordPath - the phases from here take the identity store's path from it"
+        Say 'NEXT, with Outlook still on the mint profile - name the store:'
+        Say "  .\Rename-OutlookStore.ps1 -StoreFilePath '$($m.MintedPath)' -DisplayName $StoreDisplayName -Execute"
+        Say 'THEN: quit Outlook gracefully - from the host, Testbed/host/Restart-Guest.ps1 -VMName <this guest> -Execute - and, Outlook closed:'
+        Say '  .\Add-IdentityAccount.ps1 -Phase Import -Execute     (skip it if the identity account exists already)'
+        Say 'THEN: start Outlook on the tier profile, and with it running:'
+        Say "  .\Add-OutlookPstStore.ps1 -ProfileName $ProfileName -DisplayName $StoreDisplayName -Path '$($m.MintedPath)' -Execute"
+        Say '  .\Add-IdentityAccount.ps1 -Phase CaptureStore -Execute'
+    }
     'Import' {
         Assert-OutlookNotRunning
         if (-not (Test-Path -LiteralPath (Join-Path $ProfilesKey $ProfileName))) { throw "REFUSING: profile '$ProfileName' does not exist. Build the tier profile first (New-TierProfile.ps1)." }
@@ -469,9 +834,17 @@ switch ($Phase) {
             else { Say "Setup\$n already absent" }
         }
         if ((Get-ItemProperty -LiteralPath $SetupKey).ImportPRF -ne $RenderedPrf) { throw 'ImportPRF did not read back.' }
-        Say 'NEXT: start Outlook once (it imports at start-up and deletes ImportPRF itself - measured), then with it running:'
-        Say "  .\Add-OutlookPstStore.ps1 -ProfileName $ProfileName -DisplayName $StoreDisplayName -Path $PstPath -Execute"
-        Say '  .\Add-IdentityAccount.ps1 -Phase CaptureStore -Execute'
+        Say 'NEXT: start Outlook once (it imports at start-up and deletes ImportPRF itself - measured).'
+        $minted = Resolve-IdentityPstPath -BoundPath $PstPath -MintRecord (Read-MintRecord)
+        if ($minted.Refusal) {
+            Say 'The identity store is not minted yet, and a /PIM start must not find an import pending - so let this start complete the import, quit Outlook gracefully (Restart-Guest.ps1 -Execute -CancelLogonPrompt), then:'
+            Say '  .\Add-IdentityAccount.ps1 -Phase Mint -Execute'
+        }
+        else {
+            Say 'Then, with it running:'
+            Say "  .\Add-OutlookPstStore.ps1 -ProfileName $ProfileName -DisplayName $StoreDisplayName -Path '$($minted.Path)' -Execute"
+            Say '  .\Add-IdentityAccount.ps1 -Phase CaptureStore -Execute'
+        }
     }
     'CaptureStore' {
         $script:captured = $null
@@ -484,52 +857,21 @@ switch ($Phase) {
             if (-not $hit) { throw "No store in '$ProfileName' has FilePath '$target'. Run Add-OutlookPstStore.ps1 first." }
             if ($hit.DisplayName -cne $StoreDisplayName) { throw "The store at '$target' is named '$($hit.DisplayName)', not '$StoreDisplayName'. Name it first (Add-OutlookPstStore.ps1 renames)." }
 
-            # The Inbox is PROVEN present by the store's own PR_VALID_FOLDER_MASK before it is asked
-            # for - the rule OutlookAI.Core's SpecialFolders follows. Asked for without that proof,
-            # GetDefaultFolder(6) on an AddStoreEx PST hands back its non-IPM ROOT (measured on both
-            # guests, 2026-09-24), and that is what this phase used to record.
-            $accessor = $hit.PropertyAccessor
-            $mask = $null
-            try { $mask = [int]$accessor.GetProperty($ValidFolderMaskSchema) } catch { $mask = $null }
-            if ($null -eq $mask) { throw "The store's PR_VALID_FOLDER_MASK would not read, so nothing proves whether it has an Inbox. Refusing to capture." }
-            $inboxHex = ''; $inboxName = ''; $inboxVisible = $false; $draftsHex = ''
-            if (($mask -band $FolderIpmInboxValid) -ne 0) {
-                $inbox = $hit.GetDefaultFolder(6)
-                $inboxHex = [string]$inbox.EntryID
-                $inboxName = [string]$inbox.Name
-                $rootId = [string]$hit.GetRootFolder().EntryID
-                $ancestors = New-Object System.Collections.Generic.List[object]
-                $parent = $null
-                try { $parent = $inbox.Parent } catch { $parent = $null }
-                for ($depth = 0; $depth -lt 32 -and $null -ne $parent; $depth++) {
-                    $parentId = $null
-                    try { $parentId = [string]$parent.EntryID } catch { $parentId = $null }
-                    $ancestors.Add($parentId)
-                    if ($null -eq $parentId -or $parentId -ieq $rootId) { break }
-                    try { $parent = $parent.Parent } catch { $parent = $null }
-                }
-                $inboxVisible = Test-FolderIsVisible -Name $inboxName -AncestorEntryIds $ancestors.ToArray() -RootEntryId $rootId
-                # Drafts by its DESIGNATION, never by GetDefaultFolder(16), which creates one a PST lacks.
-                try { $draftsHex = [string]$inbox.PropertyAccessor.BinaryToString($inbox.PropertyAccessor.GetProperty($DraftsEntryIdSchema)) } catch { $draftsHex = '' }
-            }
-            if (-not $draftsHex) {
-                try { $draftsHex = [string]$accessor.BinaryToString($accessor.GetProperty($DraftsEntryIdSchema)) } catch { $draftsHex = '' }
-            }
-
+            $t = Read-DeliveryTarget $hit
             $script:captured = [pscustomobject]@{
                 FilePath = $hit.FilePath; DisplayName = $hit.DisplayName; StoreID = $hit.StoreID
-                InboxEntryID = $inboxHex; InboxName = $inboxName; InboxVisible = $inboxVisible
-                InboxDesignated = (($mask -band $FolderIpmInboxValid) -ne 0); DraftsEntryID = $draftsHex
+                InboxEntryID = $t.InboxEntryID; InboxName = $t.InboxName; InboxVisible = $t.InboxVisible
+                InboxDesignated = $t.InboxDesignated; DraftsEntryID = $t.DraftsEntryID; ValidFolderMask = $t.Mask
                 Profile = $ns.CurrentProfileName; CapturedAt = (Get-Date).ToString('o')
             }
         }
         $c = $script:captured
-        Say ("store '{0}' at {1}: StoreID {2} bytes; Inbox designated={3}, EntryID {4} bytes, name '{5}', visible={6}; Drafts {7}" -f $c.DisplayName, $c.FilePath, ($c.StoreID.Length / 2), $c.InboxDesignated, ($c.InboxEntryID.Length / 2), $c.InboxName, $c.InboxVisible, $(if ($c.DraftsEntryID) { 'designated' } else { 'NOT designated' }))
+        Say ("store '{0}' at {1}: StoreID {2} bytes; mask 0x{3:X}; Inbox designated={4}, EntryID {5} bytes, name '{6}', visible={7}; Drafts {8}" -f $c.DisplayName, $c.FilePath, ($c.StoreID.Length / 2), $c.ValidFolderMask, $c.InboxDesignated, ($c.InboxEntryID.Length / 2), $c.InboxName, $c.InboxVisible, $(if ($c.DraftsEntryID) { 'designated' } else { 'NOT designated' }))
         $refusal = Get-DeliveryFolderRefusal -EntryIdHex $c.InboxEntryID -Name $c.InboxName -Visible $c.InboxVisible
         if ($refusal) {
             throw ("REFUSING to capture '$($c.DisplayName)' as the identity account's delivery target: $refusal. " +
-                'Binding it anyway is exactly the 2026-09-24 defect - POP3 mail filed where nobody can see it. The store needs a real, ' +
-                'designated Inbox first, and HOW is an open decision: Docs/live-tier-on-the-vm.md section 3b, "The identity store has no Inbox". Nothing was written.')
+                'Binding it anyway is exactly the 2026-09-24 defect - POP3 mail filed where nobody can see it. A store AddStoreEx creates has no ' +
+                'Inbox; the identity store is MINTED instead (-Phase Mint, then -Phase CaptureMint - the banner). Nothing was written.')
         }
         if (-not (Test-StoreEntryIdNamesPath -EntryId (ConvertFrom-HexString $c.StoreID) -Path $c.FilePath)) { throw 'The StoreID does not carry the PST path; refusing to record it.' }
         if (-not $Execute) { Say "Dry run. Would write $IdsPath."; return }
