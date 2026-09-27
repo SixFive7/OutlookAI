@@ -32,6 +32,20 @@
                   row on either reading). Its first attempt said NO-INDEXER only because its first
                   reading fell 74 s after a boot, before Windows Search's delayed start.
 
+    RUN ON OutlookAI-Indexed TOO, TWICE: 2026-09-24 (payload 98e050e, CP-14-ADDIN-READY) and
+    2026-09-27 on its Q87 rebuild (payload af56efc, CP-14C-ADDIN-READY). Both times NOT-INSTALLED,
+    then ADDIN-READY twice across a graceful restart; v4R absent, then 10.0.60917; the trust entry
+    kept the second time; the index exclusion state UNCHANGED. Tuning state 8.3 s and 3.6 s after the
+    start the first time, 3.5 s both times on the rebuild. The headless Outlook the script leaves
+    running had closed by itself within 11 s of the first -Execute both times (the restart found it
+    gone), and within 20 s of the second on the rebuild (the index -Verify found it gone).
+    Set-OutlookIndexingDisabled.ps1 -Verify after the second -Execute: INDEXED, 20,048 and then
+    20,059 rows, the same on both readings.
+      On that guest every other Outlook start is unelevated (an elevated Outlook does not feed
+    Windows Search). This one is not: -Execute runs from a RunLevel Highest task - the VSTO runtime
+    needs it - and starts its first-run Outlook over COM from there. The index was intact after
+    it, as above; the elevation of that Outlook itself was not read.
+
     NOT EXERCISED ON A GUEST: -Verify -WithOutlook (the COM-started Outlook had already closed by
     itself). Worth knowing before relying on it: it attaches with GetActiveObject, and an Outlook
     started BY COM (-Embedding) is not in the Running Object Table - measured the same day on CP-05's

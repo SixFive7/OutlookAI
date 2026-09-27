@@ -1231,6 +1231,14 @@ SMTP side - is retired.
 > profile behind, and cannot replace an `AddStoreEx` identity store that is already attached under
 > the same name (the script's banner says both).
 >
+> **Two preconditions the indexed guest added** (section 4.2b, `CP-09C-IDENTITY-REAL-INBOX`, the same
+> lines from `CP-08B`): run `Set-OutlookProgrammaticAccess.ps1 -Execute` BEFORE the route - without
+> it CaptureStore's COM read met the Object Model Guard prompt about two minutes after a boot and
+> blocked behind it, the phase having no deadline; and on that guest start every Outlook NOT
+> elevated and run every phase that attaches through `Register-InteractiveTask.ps1 -RunLevel
+> Limited` - the `/PIM` start included, as a Limited job running `Start-Process OUTLOOK.EXE /PIM
+> IdentityMint`, because `Start-OutlookUnelevated.ps1` opens only a profile that exists.
+>
 > **The boxes below are the route as it was built on 2026-09-24, kept as the record: both guests'
 > identity accounts from their `CP-10` on are bound to that PST's hidden root.**
 
@@ -2367,6 +2375,64 @@ nothing repaired.
 as started "-199,807 s after boot" - `LastBootUpTime` moves with the clock jump. Cosmetic; every
 check passed.
 
+### 4.2b The indexed guest rebuilt on the Q87 route - `OutlookAI-Indexed`, 2026-09-27
+
+**Why this section exists.** The identity account of every checkpoint above, `CP-09-IDENTITY-ACCOUNT`
+on, delivers into the hidden root of an `AddStoreEx` PST, and a minted store cannot be attached under
+the same name where that one already is (section 2.8b). So the guest was rebuilt from
+`CP-08B-RESTORED-BEFORE-IDENTITY` on the Q87 route and taken back through section 4.2's steps, from
+master `af56efc`. Every Outlook start NOT elevated but one - the add-in installer's own first-run
+Outlook in step 4.4, which it starts over COM from its `RunLevel Highest` task, as it did in section
+4.2 - everything that attached to Outlook through `Register-InteractiveTask.ps1 -RunLevel Limited`,
+every close `Testbed/host/Restart-Guest.ps1`. No population, no live tier. Raw logs:
+`.work\g1-rebuild-q87\` in the main checkout.
+
+| Step | What ran | Verdict | Checkpoint |
+| --- | --- | --- | --- |
+| Restore | `Restore-VMSnapshot CP-08B-RESTORED-BEFORE-IDENTITY`, master's guest scripts staged (every hash equal) | default `OutlookAI-Tier`, no identity account, no `ImportPRF` pending, `PreventIndexingOutlook` absent, no scope rule, 0 Outlook rows (`NOT-IN-SCOPE`); WSC `0x061100` | - |
+| 1. Identity (Q87) | `-Phase Mint -Execute`; `OUTLOOK.EXE /PIM IdentityMint` started by a `-RunLevel Limited` job; CaptureMint; `Rename-OutlookStore.ps1`; graceful restart; `-Phase Import -Execute`; the tier profile started (it imported the account); the attach; **CaptureStore - blocked, see below**; restart; `Set-OutlookProgrammaticAccess.ps1 -Execute` (brought forward from step 4.2); start; CaptureStore; restart; Bind; `New-TierProfile.ps1 -StoreSinkPassword -Execute`; start; `-Phase Verify -TrySmtpAddress` | as section 4.1b, line for line: the minted store `Outlook Data File`, mask `0xFF`, Inbox designated and visible, 14 folders, 0 items; CaptureStore PASSED from the tier profile; Verify `delivers into 'Inbox' (visible=True, PST node id 0x8082)`, 2 accounts on 2 stores, both `SmtpAddress` reads, no logon dialog | `CP-09C-IDENTITY-REAL-INBOX` |
+| 2. Indexed | `Set-OutlookIndexingDisabled.ps1 -Enable -Execute`; `Start-OutlookUnelevated.ps1 -Profile CorpusProfile` and `-Verify -SettleMinutes 1 -WaitMinutes 30 -MinimumOutlookRows 20000`; restart; the same on `OutlookAI-Tier`; restart | the scope was already IN - the step-1 Outlooks, NOT elevated, had added the rule themselves (`included=True reason=USER`, 32 rows); `-Enable` wrote policy 0 and re-asserted the rule; with the corpus profile open the Outlook rows reached 20,000 10.3 min in and 20,059 by 11.4 min, `INDEXED` at 12.5 min: **20,059 rows** - corpus 20,028, tier 16, identity 15 - unchanged by the tier profile's start after it | `CP-10C-INDEXED` |
+| 3. Q92 evidence | the Q92 agent's read-only probe (`DIRECTORY='mapi16://{SID}/'`, `SCOPE` counts), and the store hash computed on the host from each store's `StoreID` | below | - |
+| 4.1 First-run | `Set-OfficeFirstRunSuppressed.ps1` `-Verify`, `-Execute`, `-Verify` | 10 OK and the same 3 FAIL, then 13 of 13 | `CP-11C-FIRSTRUN-REPAIRED` |
+| 4.2 Programmatic access | (`-Execute` in step 1) `-Verify` from a Limited job | `NO-PROMPT`, both `SmtpAddress` in 1.1 s | `CP-12C-PROGRAMMATIC-ACCESS` |
+| 4.3 Mail sink | `Install-MailSink.ps1 -LogLevel debug -Execute`; restart; `-Verify`; `-StoreSinkPassword -Execute` (both `ours` already); the tier profile started | `SINK-READY` twice, the sink up 4 s after the boot; no logon dialog; `read USER tier` and `read USER identity`, each with `read PASS any-value` and a `STAT` | `CP-13C-MAIL-SINK` |
+| 4.4 Add-in | built from `af56efc` (host unchanged); `-SelfTest` 85/0, `-Verify`, `-Execute`, restart, `-Execute` - from a `RunLevel Highest` task, as the VSTO runtime needs, so the installer's first-run Outlook is the one start here that is not unelevated | `NOT-INSTALLED`, then `ADDIN-READY` twice (tuning state 3.5 s after the start both times; trust entry kept the second time; the index exclusion state `UNCHANGED`); the installer's headless Outlook had exited by itself within 11 s and 20 s; `INDEXED`, 20,059, after it | `CP-14C-ADDIN-READY` |
+| 4.5 Signature | the server published from `af56efc`; entries `00000004` and `00000005` read; `Set-AccountSignature.ps1 -Execute` from a Limited job; read again; `list_signatures` asked separately | `New Signature` = `Identity` on `00000004` (the POP3 account) and nothing on `00000005` (the minted file's entry, `Account Name` `identity@vm.invalid`); the three files written; the read-back `identity@vm.invalid` newMessage `Identity`. No item created | - |
+| 4.6 Suite | `Publish-LiveTierPayload.ps1 -Ref af56efc`, old `src` and feed kept as `*.2026-09-17`, fresh ones expanded, `Install-DotnetSdk.ps1 -Execute` (writes `NuGet.config`), `-Verify` from a new session | `TEST-READY` twice: **3,105 tests discovered**, 17 run; `McpServerExePath` names an exe that exists | `CP-15C-SIGNATURE-SUITE-STAGED` |
+
+`INDEXED` held at every check after step 2 - 20,059 rows, the catalog `IDLE`, nothing queued - with
+Outlook closed and with it running NOT elevated on `OutlookAI-Tier`, and after the add-in
+installer's first-run Outlook (started from its elevated task; that Outlook's own token was not
+read).
+
+**The guard prompt, and why Q80 came first.** CaptureStore's first attempt, about two minutes after
+the restart that closed the mint profile, raised the Object Model Guard prompt ("A program is trying
+to access email address information stored in Outlook") and its COM read blocked behind it - the
+phase has no deadline - until the job's own time limit ended the job 15 minutes later; the orphaned
+prompt was then answered **Deny** through its own `WM_COMMAND` (README step 4d; Deny grants nothing).
+Windows Security Center read `0x061100` - signatures up to date - both before and after, its
+timestamp 16 s after that read began. So a guest without `Set-OutlookProgrammaticAccess.ps1` can
+prompt at any moment, whatever one WSC reading says, and the route of section 2.8b needs the values
+first. `OutlookAI-Unindexed` never met this: it had them from `CP-07`.
+
+**The display names, stage by stage.** Over COM (`Store.DisplayName`, the root's name the same): after
+the mint `Outlook Data File`; after the rename `identity@vm.invalid`; after the attach
+`identity@vm.invalid`; at CaptureStore and Verify `identity@vm.invalid`. In the registry, each
+profile's service section `PR_DISPLAY_NAME_W`: `IdentityMint` - `Outlook Data File` after the mint,
+`identity@vm.invalid` after the rename; `OutlookAI-Tier` - `identity@vm.invalid` from the attach on.
+
+**What the index says (Q92).** `DIRECTORY='mapi16://{SID}/'` lists three store roots in 2 ms:
+`identity@vm.invalid($be889d8b)`, `Outlook Data File($23a27f0d)` (the corpus, another profile's store)
+and `tier@vm.invalid($93f42b43)`. The identity store is filed under **its address and a NEW hash**,
+`be889d8b` - section 8 item 24's rule exactly: the name is the store's own `PR_DISPLAY_NAME`, now the
+address, and the hash follows the file's path, which moved from `identity.pst` (`b25ac20a`) to
+`Outlook Data File - IdentityMint.pst`. The host reproduces all three hashes (`be889d8b`, `93f42b43`,
+`23a27f0d`) - the identity store's from the `Store.StoreID` CaptureStore recorded, the other two
+from their profile `PR_ENTRYID`s, which item 24 found equal to `Store.StoreID` for a PST. **No two stores share a name any more** - before the rebuild the
+identity store and the corpus were both `Outlook Data File`. The mint profile mounts the same file, so
+it adds no fourth root. The identity store's 15 rows are all folders; the product's discovery sample
+(`TOP 2000 ... Kind='email'`) saw only the corpus, as section 8 item 24 found.
+
 ---
 
 ## 5. Which tests are in which bucket, and how to find out
@@ -2941,6 +3007,11 @@ unrecorded or unverified.
     `PR_MAPPING_SIGNATURE` readable through `PropertyAccessor` equals the profile's, which the hash
     uses) and the delegate `/1/<name>` subtrees - both are the maintainer's workstation's shape.
     `Store.PropertyAccessor` reads raised no Object Model Guard prompt at `CP-15` (item 23).
+
+    **Borne out by the Q87 rebuild of the same guest** (section 4.2b, `CP-10C-INDEXED`): the minted
+    identity store, renamed `identity@vm.invalid`, is filed as `identity@vm.invalid($be889d8b)` - its
+    own name, and a new hash because its file is a new path; the host reproduces `be889d8b` from its
+    `StoreID`. `DIRECTORY` lists the three roots in 2 ms, and no two stores share a name any more.
 
 ---
 
