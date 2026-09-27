@@ -247,8 +247,91 @@
     <ManifestCertificateThumbprint>2578F7B869383572E751DD6B61B5374C55C6E995</ManifestCertificateThumbprint>
   </PropertyGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <!--
+    A BUILD OUTSIDE VISUAL STUDIO NEVER REGISTERS THE ADD-IN ON THE MACHINE THAT BUILT IT.
+    Decided by the maintainer 2026-09-27 (Q81); CLAUDE.md, "The add-in on the maintainer's
+    workstation", is the rule this enforces.
+
+    The VSTO build targets imported below write the BUILD MACHINE's registry on every build
+    (read in OfficeTools\Microsoft.VisualStudio.Tools.Office.targets and in the IL of the tasks):
+      * RegisterOfficeAddin, which the targets put on PrepareForRun, runs
+        SetOffice2007AddInRegistration: HKCU\Software\Microsoft\Office\Outlook\Addins\OutlookAI
+        gets Manifest = <this build's output>\OutlookAI.vsto|vstolocal - the key the installer
+        writes - plus solution metadata under HKCU\Software\Microsoft\VSTO\SolutionMetadata.
+        From its next start, Outlook loads the build.
+      * VisualStudioForApplicationsBuild ends with SetInclusionListEntry: a VSTO trust entry for the
+        build output under HKCU\Software\Microsoft\VSTO\Security\Inclusion, so it loads unasked.
+      * Clean (and so Rebuild) runs UnregisterOfficeAddin, which DELETES that add-in key whatever
+        it points at - the installed release's registration included - and
+        RemoveOfficeAddInSecurity.
+    On the maintainer's workstation that meant a plain msbuild in any checkout or agent worktree
+    silently repointed his own Outlook at a folder builds keep writing into, and deleting the
+    worktree left it pointing at nothing.
+
+    Inside Visual Studio all of it stays: BuildingInsideVisualStudio is true there, F5 needs the
+    registration, and every IDE build writes the trust entry again. Everywhere else - msbuild on a
+    command line, CI, an agent - two things take it away:
+      1. The two writing tasks are replaced by stand-ins that only log NOT-REGISTERED-OUTSIDE-VS.
+         A UsingTask declared BEFORE the import that declares the real one wins ("the first
+         UsingTask element that applies to a TaskName will be used" - MSBuild's UsingTask
+         reference; measured 2026-09-27 on MSBuild 18.10). They are deliberately NOT Override="true":
+         Testbed/host/Publish-AddInPayload.ps1 and Tools/Switch-AddInBuild.ps1 bring Override
+         stand-ins of their own, which win over these without a conflict.
+      2. The targets that call them come off PrepareForRun and VSTOClean (below the import).
+    RegisterFormRegions is left alone on purpose. This add-in has no form region, so it writes
+    nothing; a stand-in would silently drop any future form region from the manifest of every
+    command-line build, release.yml's included.
+
+    To put a build on this machine, ask for it: Tools/Switch-AddInBuild.ps1.
+  -->
+  <UsingTask TaskName="SetOffice2007AddInRegistration" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll" Condition="'$(BuildingInsideVisualStudio)' != 'true'">
+    <ParameterGroup>
+      <Url ParameterType="System.String" />
+      <AddInName ParameterType="System.String" />
+      <OfficeApplication ParameterType="System.String" />
+      <FriendlyName ParameterType="System.String" />
+      <Description ParameterType="System.String" />
+      <LoadBehavior ParameterType="System.String" />
+      <Unregister ParameterType="System.String" />
+      <SolutionID ParameterType="System.String" />
+      <IsDocument ParameterType="System.String" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+string key = @"HKCU\Software\Microsoft\Office\" + OfficeApplication + @"\Addins\" + AddInName;
+if (string.Equals(Unregister, "true", StringComparison.OrdinalIgnoreCase))
+    Log.LogMessage(MessageImportance.High, "NOT-REGISTERED-OUTSIDE-VS: this clean did not unregister the add-in; " + key + " is unchanged.");
+else
+    Log.LogMessage(MessageImportance.High, "NOT-REGISTERED-OUTSIDE-VS: this build is not registered with " + OfficeApplication + "; " + key + " is unchanged, so Outlook loads what it loaded before. Not registered: " + Url);
+]]></Code>
+    </Task>
+  </UsingTask>
+  <UsingTask TaskName="SetInclusionListEntry" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll" Condition="'$(BuildingInsideVisualStudio)' != 'true'">
+    <ParameterGroup>
+      <DeploymentManifestFullPath ParameterType="System.String" />
+      <CertificateThumbprint ParameterType="System.String" />
+      <Unregister ParameterType="System.String" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+if (string.Equals(Unregister, "true", StringComparison.OrdinalIgnoreCase))
+    Log.LogMessage(MessageImportance.High, @"NOT-REGISTERED-OUTSIDE-VS: this clean removed no VSTO trust entry (HKCU\Software\Microsoft\VSTO\Security\Inclusion) for " + DeploymentManifestFullPath);
+else
+    Log.LogMessage(MessageImportance.High, @"NOT-REGISTERED-OUTSIDE-VS: no VSTO trust entry (HKCU\Software\Microsoft\VSTO\Security\Inclusion) was written for " + DeploymentManifestFullPath);
+]]></Code>
+    </Task>
+  </UsingTask>
   <!-- Include additional build rules for an Office application add-in. -->
   <Import Project="$(VSToolsPath)\OfficeTools\Microsoft.VisualStudio.Tools.Office.targets" Condition="'$(VSToolsPath)' != ''" />
+  <!-- Outside Visual Studio, the targets that call the two registry writers are not scheduled at
+       all: part 2 of the rule in the comment above the UsingTasks. The Unescape is load-bearing:
+       MSBuild escapes what a property function returns, so a bare .Replace() turns the list's
+       semicolons into %3B and the whole chain into ONE target name (MSB4057 - measured
+       2026-09-27, the first build of this change). -->
+  <PropertyGroup Condition="'$(BuildingInsideVisualStudio)' != 'true'">
+    <PrepareForRunDependsOn>$([MSBuild]::Unescape($(PrepareForRunDependsOn.Replace('RegisterOfficeAddin', ''))))</PrepareForRunDependsOn>
+    <VSTOCleanDependsOn>$([MSBuild]::Unescape($(VSTOCleanDependsOn.Replace('RemoveOfficeAddInSecurity', '').Replace('UnregisterOfficeAddin', ''))))</VSTOCleanDependsOn>
+  </PropertyGroup>
   <!-- This section defines VSTO properties that describe the host-changeable project properties.
 
        The two 16.0 literals below are NOT the hardcoded-hive defect that Services\OfficeVersions.cs

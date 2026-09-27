@@ -437,7 +437,9 @@ and `SetInclusionListEntry`, which writes a VSTO trust entry. The workstation al
 trust entries for builds made under this repository's agent worktrees. The host script builds with
 three guards - the registration target off the chain, the writing tasks replaced by logging
 stand-ins, and a before/after snapshot of the host that fails on any trace - and three runs left the
-workstation identical. Its banner is the record.
+workstation identical. Its banner is the record. Since Q81 (2026-09-27) `OutlookAI.csproj` itself
+stops both writers outside Visual Studio; the script keeps its guards, because it can build a commit
+from before that change.
 
 **On the guest, `Testbed/guest/Install-OutlookAIAddIn.ps1 -Execute`, through the interactive task**:
 
