@@ -73,7 +73,10 @@
     on the maintainer's workstation the same day, under Windows PowerShell 5.1, with -Script and
     with -ScriptPath: "REFUSING TO RUN. This session is logged on as ...", zero calls reaching a
     tripwire that stood in for every write command, no job directory and no task. The vmadmin
-    half is not yet run on a guest.
+    half RAN on OAI-UNINDEXED the same day, over PowerShell Direct: the guard returned without a
+    word and three jobs ran - one at the default level (High Mandatory Level) and two at
+    -RunLevel Limited (Medium Mandatory Level); the Limited job's own cmd.ps1, run again from the
+    elevated session, refused with exit 4 and ran none of its work.
 
 .PARAMETER ScriptPath
     A .ps1 on the guest to run in session 1.

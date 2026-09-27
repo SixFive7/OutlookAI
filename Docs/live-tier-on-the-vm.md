@@ -1894,10 +1894,13 @@ and the four faults above. **Still open, each settled by the first v2 build or r
 
 ## 4. Running the tier
 
-```
-dotnet test McpServer/OutlookAI.McpServer.Tests/OutlookAI.McpServer.Tests.csproj \
-  --filter "Category=Live&Requires!=DelegateStore"
-```
+**The run lines live in ONE place: `Testbed/README.md` section 4c.** This section keeps no copy, so
+the two cannot drift. There the filter below runs on a guest through
+`Testbed/guest/Register-InteractiveTask.ps1 -RunLevel Limited` - NOT elevated, because an elevated
+Outlook never feeds the index (section 8 item 22) - with the per-run opt-in `OUTLOOKAI_LIVE_OPT_IN`
+set to that guest's computer name inside the task's own script, and `-c Release`. The filter:
+
+`Category=Live&Requires!=DelegateStore`
 
 That filter IS the VM bucket, spelled out: everything live except the tests naming a capability
 this machine cannot be given. There is no separate "which bucket" trait to keep in step with it -
@@ -2519,7 +2522,12 @@ unrecorded or unverified.
     asserts `"ok"` - so on `OutlookAI-Indexed`, with the identity store indexed under
     `Outlook Data File`, it should fail. INFERRED from the code and the measured index name; not run.
     `ListAccounts_ExactAccountsDelegatesAndFlags` would fail the same way (`InLocalIndex` for every
-    watched store) but carries `Requires: DelegateStore` and is never selected on a guest.
+    watched store) but carries `Requires: DelegateStore` and is never selected on a guest. The corpus
+    tool asks the same question (`CorpusCommands.cs`, `corpus-indexed` for a store named like an
+    address), so waiting for an identity population to reach the index would never end either. The
+    index name is fixed where the store is made: a PST named through its profile service, not by a
+    root-folder rename, would be indexed under its address - untested, and a question for however
+    `identity.pst` gets its real Inbox (section 3b).
 23. **OPEN - Outlook's Object Model Guard prompts on the guests, and the live tier reads protected
     members.** Windows Security Center reports Defender's signatures out of date (dated 2025-09-17,
     372 days on 2026-09-24; the guests have no network), so Outlook treats every out-of-process COM
