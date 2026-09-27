@@ -38,8 +38,10 @@
         `read USER identity` / `read PASS any-value` at the start after the password was stored.
 
     THE ROUTE, as this script runs it (Outlook closed / running as each phase says; it never starts,
-    quits or kills Outlook itself - start it in session 1 through Register-InteractiveTask.ps1, and
-    close it with Testbed/host/Restart-Guest.ps1 from the host):
+    quits or kills Outlook itself - start it in session 1 through Register-InteractiveTask.ps1, at
+    -RunLevel Limited on the indexed guest, and close it with Testbed/host/Restart-Guest.ps1 from the
+    host). Set-OutlookProgrammaticAccess.ps1 -Execute must already have run - see the indexed guest's
+    run below:
 
       -Phase Mint -Execute          Outlook CLOSED. Refuses a pending ImportPRF (a /PIM start would
                                     process it, unmeasured), a mint profile that already exists (/PIM
@@ -64,6 +66,26 @@
     unless -PstPath names one: the file name is Outlook's choice, read off the guest, not assumed.
     A guest whose ImportPRF is already pending - CP-09-ADDIN-READY on both guests - completes that
     import first: start Outlook once on the tier profile, quit it (-CancelLogonPrompt), then Mint.
+
+    RUN AGAIN 2026-09-27 ON `OutlookAI-Indexed`, REBUILT FROM CP-08B-RESTORED-BEFORE-IDENTITY (no
+    ImportPRF pending there, so -Phase Mint ran first), to checkpoint CP-09C-IDENTITY-REAL-INBOX -
+    the same lines as above: CaptureMint 'Outlook Data File' at ...\Outlook Data File -
+    IdentityMint.pst, mask 0xFF, Inbox designated and visible, 14 folders, 0 items; the rename to
+    'identity@vm.invalid'; the attach, before and after 'identity@vm.invalid'; CaptureStore PASSED
+    from the tier profile (Inbox EntryID 24 bytes, node 0x8082); Bind re-pointed the account from
+    the tier store; Verify `delivers into 'Inbox' (visible=True, PST node id 0x8082)`, two accounts
+    on two distinct stores, both SmtpAddress reads. Two things that guest added:
+      * EVERY OUTLOOK THERE STARTS NOT ELEVATED (an elevated one never feeds the index), so every
+        phase that attaches ran through Register-InteractiveTask.ps1 -RunLevel Limited, and the
+        /PIM start too: Start-OutlookUnelevated.ps1 opens only a profile that already exists, so the
+        mint start was a -RunLevel Limited job running `Start-Process OUTLOOK.EXE /PIM IdentityMint`
+        ('Outlook Today - Outlook' in 6 s, no dialog, the new OUTLOOK.EXE's token not elevated).
+      * APPLY Set-OutlookProgrammaticAccess.ps1 (Q80) BEFORE THIS ROUTE. That guest had not had it
+        yet, and CaptureStore's COM reads include members the Object Model Guard protects: about two
+        minutes after a boot the guard prompt came up ("A program is trying to access email
+        address information ...") and the read blocked behind it - these phases have no deadline -
+        until the job's time limit ended the job. With the values written, CaptureStore passed. The
+        unindexed guest never met this only because it had Q80 from CP-07.
 
     WHAT IT LEAVES BEHIND: the mint profile. A profile has no free delete route (runbook section 1),
     and nothing opens it again. It still names the minted file; the tier profile now does too.

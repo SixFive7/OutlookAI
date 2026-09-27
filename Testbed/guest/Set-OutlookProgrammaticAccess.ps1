@@ -52,11 +52,22 @@
 
     WHAT IT DID NOT PROVE THERE. At that moment Windows Security Center reported the antivirus
     product state 0x061100 - "signatures up to date" - while Defender itself (Get-MpComputerStatus)
-    reported its signatures 372 days old and DefenderSignaturesOutOfDate=True. The guard follows
-    WSC [MS-DOC 1], so its trigger was ABSENT: that run proves the nine values are in place and that
-    the protected read works from a Limited caller, NOT that the policy suppressed a prompt. The
-    control on OutlookAI-Unindexed (0x061110 there) remains the only proof of that. Both guests
-    had recorded 0x061110 earlier; why WSC's view flipped on the indexed guest is not established.
+    reported its signatures 372 days old and DefenderSignaturesOutOfDate=True. That run proves the
+    nine values are in place and that the protected read works from a Limited caller; whether the
+    guard would have prompted without them at that moment was not measured. The control on
+    OutlookAI-Unindexed (0x061110 there) remains the only proof that the policy suppresses a prompt.
+
+    AND A 0x061100 READING DOES NOT MEAN THE GUARD IS QUIET - measured on OutlookAI-Indexed
+    2026-09-27, rebuilding from CP-08B-RESTORED-BEFORE-IDENTITY with these values ABSENT: WSC read
+    0x061100 when the guest resumed (its timestamp still 2026-09-24), yet about two minutes after
+    the next boot Add-IdentityAccount.ps1 -Phase CaptureStore raised the guard prompt ("A program is
+    trying to access email address information stored in Outlook") and its COM call blocked behind
+    it until the job's time limit ended the job - and WSC then read 0x061100 again, with a
+    timestamp 16 s AFTER that read began. So WSC's view on these guests changes after a boot,
+    a single reading says nothing about the next minute, and a guest without these values can
+    prompt at any time: apply them BEFORE anything reads a guarded member, the identity route of
+    Docs/live-tier-on-the-vm.md section 2.8b included. With them written, that CaptureStore then
+    passed, and Verify read both accounts' SmtpAddress with no prompt.
 
 .SYNOPSIS
     Auto-approves Outlook's programmatic-access prompts (the Object Model Guard) on an OFFLINE TEST
