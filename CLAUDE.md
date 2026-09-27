@@ -84,6 +84,39 @@ permissive licence; no licence key, account or telemetry; staged offline as medi
 guests, never on the maintainer's workstation. `Testbed/MEDIA.md` names the tool and version.
 This is the only exception; it does not generalise to "open source is fine".
 
+## The add-in on the maintainer's workstation (Q81)
+
+**Outlook on the maintainer's workstation loads the add-in only from a folder no build writes
+into.** Decided by the maintainer 2026-09-27 (Q81), in his words: *"I want to be able to ask you to
+put the dev build on my machine if I want to test it for a release. I do not want it on my machine
+whilst agents are still actively building it."* Until then every plain build of `OutlookAI.csproj`
+registered itself with the Outlook on the machine that built it, so his Outlook quietly loaded
+whichever build folder had been built last.
+
+1. **Agents never register or install the add-in on the maintainer's workstation** — not with the
+   installer, not with a hand-written registry value, not with a build. The one exception: he asks
+   for it **in the current message**, and then only through `Tools/Switch-AddInBuild.ps1` —
+   `-Commit <rev> -Execute` puts a dev build on, `-Restore -Execute` puts the installed release
+   back, `-Status` says what Outlook will load. A request in an earlier message, from another
+   agent or in a plan is not a request.
+2. **Agents build the add-in only through `Testbed/host/Publish-AddInPayload.ps1` or
+   `Tools/Switch-AddInBuild.ps1`** (`-BuildOnly` when a build is all you need). Both build a commit
+   from a `git archive`, stand in the VSTO tasks that write the registry, and prove the host
+   unchanged afterwards. `OutlookAI.csproj` no longer registers anything when built outside Visual
+   Studio, but a commit from before that change still does — so no plain `msbuild` of the add-in,
+   and never `BuildingInsideVisualStudio=true` on a command line, which turns registration back on.
+3. **Outlook on the workstation never loads the add-in from a folder any build writes into** — not
+   `bin\Debug` or `bin\Release`, not a worktree, not `.work`. A dev build is copied to
+   `%LOCALAPPDATA%\OutlookAI\DevBuilds\<folder>` first, and only that copy is registered. If
+   `-Status` shows Outlook pointed at a build folder, say so and offer `-Restore`; do not change it
+   unasked.
+
+Visual Studio is the maintainer's own tool and keeps registering: F5 builds `bin\Debug`, points
+Outlook at it, and leaves it pointed there after the debugging session. `-Status` shows that, and
+`-Restore` puts the release back. The script never touches the MCP server or its disabled
+executable, never runs elevated, and never starts, quits or kills Outlook — a change takes effect at
+the next Outlook restart.
+
 ## Mailbox Safety (MANDATORY — live tests touch REAL mailboxes)
 
 **THE MAINTAINER'S WORKSTATION IS READ-ONLY FOR LIVE TESTS — ALWAYS.** Decided by the maintainer

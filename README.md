@@ -372,6 +372,16 @@ The installer registers the add-in directly via the Windows registry and install
 
 The project uses MSBuild to generate VSTO manifests and Inno Setup for the installer. Releases are created on demand via the release workflow (`gh workflow run release`).
 
+**Which build your Outlook loads.** Building inside Visual Studio registers the build with your Outlook and marks it as trusted, as VSTO projects always have — F5 debugging needs that — and leaves Outlook pointed at `bin\Debug` afterwards. A build outside Visual Studio (`msbuild` on a command line, CI) registers nothing and writes no trust entry, so it never changes the add-in your Outlook loads, and cleaning it never removes one. To try a build in your own Outlook, for instance before a release:
+
+```
+powershell -File Tools\Switch-AddInBuild.ps1 -Commit <commit> -Execute   # build it, copy it to %LOCALAPPDATA%\OutlookAI\DevBuilds\, register the copy
+powershell -File Tools\Switch-AddInBuild.ps1 -Restore -Execute           # put the installed release back
+powershell -File Tools\Switch-AddInBuild.ps1 -Status                     # which build Outlook will load, and whether it will ask to trust it
+```
+
+Without `-Execute` the first two only show what they would change. The dev build is copied out of the build folder first, so later builds cannot change it underneath you; it carries version 99.99.99.0, so the add-in's updater leaves it alone; and it does not include the mail server. Changes take effect the next time Outlook starts — the script never starts or closes Outlook.
+
 The mail server is a separate .NET 10 project built with `dotnet`, not through the Visual Studio solution — see [`McpServer/README.md`](McpServer/README.md) for its build, test, and registration instructions. The release workflow publishes it (framework-dependent, win-x64) into the installer payload and stamps it with the **same version as the add-in**, so one release produces one version across the whole product; local developer builds of both carry `99.99.99.0`, which is also the marker the auto-updater uses to leave a developer build alone.
 
 ---
