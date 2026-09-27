@@ -44,6 +44,12 @@
         -SelfTest 96/0 under PowerShell 7.6.6 and under 5.1 in both launch modes.
       * 2026-09-27, later: the import moved into Testbed/host/OwnEditionModules.ps1, which every host
         script that needs either module now dot-sources.
+      * 2026-09-27, later still: an -OutDir holding ',' or ';' is refused before anything runs
+        (Get-MSBuildPathProblem says how each breaks MSBuild). Refused in under a second under 5.1
+        from 7 and under 7, for both characters, with no directory and no certificate made; then,
+        with both changes above, run end to end from 5e1e19e under 5.1 from 7 with the default
+        -OutDir: exit 0, guard 3 UNCHANGED over 358 lines, the reg export byte-identical.
+        -SelfTest 100/0 under 7 and under 5.1 in both launch modes.
 
 .SYNOPSIS
     Builds the OutlookAI Outlook add-in on the HOST from a NAMED COMMIT, packages it with the
@@ -159,7 +165,9 @@
 
 .PARAMETER OutDir
     Where everything lands. Default: .work/testbed-addin-payload under the repository root, which
-    is gitignored. Refused anywhere inside a git working tree except under .work/.
+    is gitignored. Refused anywhere inside a git working tree except under .work/, and refused when
+    the full path contains ',' or ';', which MSBuild's command line splits on (see
+    Get-MSBuildPathProblem) - before anything is built.
 
 .PARAMETER Ref
     The commit to build. HEAD by default. Uncommitted edits are NOT in the build, on purpose.
@@ -621,6 +629,27 @@ function Test-IsUnderGitWorkTreeButNotWork {
     return (-not $p.StartsWith($work, [System.StringComparison]::OrdinalIgnoreCase))
 }
 
+# MSBuild's command line cuts a /p: switch into separate properties at every ',' and ';' outside
+# quotes - its reference: "use a semicolon or a comma to separate multiple properties". Measured
+# 2026-09-27 on MSBuild 18.10, on a one-target probe project:
+#   * ','  /p:X=C:\a,b\t.targets stops on MSB1006, "Property is not valid". The first run to meet it
+#          was an -OutDir ending "-A,B": its stand-in targets path reached MSBuild as a property
+#          called "B\NoHostWrite.targets", and guard 1's evaluation refused.
+#   * ';'  Format-MSBuildProperty writes it as %3B, which MSBuild reads back as ';' - but the /flp:
+#          switch has no such escape: with a ';' in its LogFile path the detailed log went to a file
+#          cut off at the ';', with no error, and guards 1 and 2 are proven FROM that log.
+# Every path this script hands MSBuild - the project, the stand-in targets, the log - lies under
+# -OutDir, so a ',' or ';' there is refused up front, before anything is archived, snapshotted,
+# signed or built, rather than every argument having to get an escaping rule right. $null when the
+# path is fine.
+function Get-MSBuildPathProblem {
+    param([string] $Path)
+    $separators = @(@(',', ';') | Where-Object { $Path.Contains($_) })
+    if ($separators.Count -eq 0) { return $null }
+    $named = ($separators | ForEach-Object { "'$_'" }) -join ' and '
+    return "-OutDir '$Path' contains $named, which MSBuild's command line reads as a separator - a ',' stops the build on MSB1006 ('Property is not valid'), a ';' sends the detailed log this script proves its guards from somewhere else. Every path this build hands MSBuild lies under -OutDir; choose one with no ',' or ';' in it"
+}
+
 # =============================================================================================
 # SELF-TEST
 # =============================================================================================
@@ -823,6 +852,10 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Test-Case 'under .work is allowed' $false (Test-IsUnderGitWorkTreeButNotWork -Path 'C:\r\.work\testbed-addin-payload' -WorkTreeRoot 'C:\r')
     Test-Case 'elsewhere in the working tree is refused' $true (Test-IsUnderGitWorkTreeButNotWork -Path 'C:\r\Testbed\out' -WorkTreeRoot 'C:\r')
     Test-Case 'outside the working tree is allowed' $false (Test-IsUnderGitWorkTreeButNotWork -Path 'D:\payloads' -WorkTreeRoot 'C:\r')
+    Test-Case 'an -OutDir with a comma is refused - MSBuild would split it' $true ([string](Get-MSBuildPathProblem 'C:\w\.work\testbed-addin-payload-A,B')).Contains("contains ','")
+    Test-Case 'and one with a semicolon' $true ([string](Get-MSBuildPathProblem 'C:\w\.work\a;b')).Contains("contains ';'")
+    Test-Case 'a path with both is refused naming both' $true ([string](Get-MSBuildPathProblem 'C:\a,b;c')).Contains("',' and ';'")
+    Test-Case 'a space is accepted - Format-MSBuildProperty quotes it' '' ([string](Get-MSBuildPathProblem 'C:\a b\.work\testbed-addin-payload'))
 
     Write-Host ''
     Write-Host "$($script:Checks) assertion(s), $($script:Failures.Count) failure(s)."
@@ -1109,6 +1142,8 @@ if (-not (Test-FourPartVersion $Version)) { throw "-Version '$Version' is not a 
 if (-not $OutDir) { $OutDir = Join-Path $RepoRoot '.work\testbed-addin-payload' }
 if (-not $VstoRuntimePath) { $VstoRuntimePath = Join-Path $RepoRoot '.work\media\vstor_redist.exe' }
 $OutDir = [System.IO.Path]::GetFullPath($OutDir)
+$outDirProblem = Get-MSBuildPathProblem $OutDir
+if ($outDirProblem) { throw "REFUSING: $outDirProblem. Nothing was created, signed or built." }
 
 $workTree = (@(Invoke-NativeCommand { & git -C $RepoRoot rev-parse --show-toplevel 2>$null }) | Out-String).Trim().Replace('/', '\')
 if (Test-IsUnderGitWorkTreeButNotWork -Path $OutDir -WorkTreeRoot $workTree) {
