@@ -43,11 +43,12 @@
 
     THE INTEGRITY LEVEL HAS TO MATCH. On the indexed guest Outlook runs NOT elevated - started by
     Testbed/guest/Start-OutlookUnelevated.ps1, because an elevated Outlook never feeds the index.
-    An elevated caller cannot attach to it (Testbed/host/Restart-Guest.ps1 says why), and
-    Testbed/guest/Register-InteractiveTask.ps1 always runs elevated. So there -Verify ran in a
+    An elevated caller cannot attach to it (Testbed/host/Restart-Guest.ps1 says why), and at the
+    time Testbed/guest/Register-InteractiveTask.ps1 ran only elevated. So there -Verify ran in a
     one-shot scheduled task at RunLevel LIMITED in session 1 - the level Outlook itself had
-    (integrity 0x2000 for both, read from their tokens). Against an Outlook the testbed started
-    elevated, Register-InteractiveTask.ps1 is still the route.
+    (integrity 0x2000 for both, read from their tokens). Register-InteractiveTask.ps1 has a
+    -RunLevel switch since: -RunLevel Limited against an Outlook started unelevated, its default
+    (Highest) against one the testbed started elevated.
 
     WHAT IT DID NOT PROVE THERE. At that moment Windows Security Center reported the antivirus
     product state 0x061100 - "signatures up to date" - while Defender itself (Get-MpComputerStatus)
@@ -64,10 +65,10 @@
 
 .DESCRIPTION
     RUN ON THE GUEST. Windows PowerShell 5.1 - no ternary, no `??`. -Verify runs in the
-    INTERACTIVE session AT OUTLOOK'S OWN INTEGRITY LEVEL: through
-    Testbed/guest/Register-InteractiveTask.ps1 (elevated) for an Outlook the testbed started
-    elevated, and in a RunLevel Limited task for one started by
-    Testbed/guest/Start-OutlookUnelevated.ps1 (the indexed guest) - see the second run above. NEVER
+    INTERACTIVE session AT OUTLOOK'S OWN INTEGRITY LEVEL, through
+    Testbed/guest/Register-InteractiveTask.ps1: its default (Highest) for an Outlook the testbed
+    started elevated, -RunLevel Limited for one started by Testbed/guest/Start-OutlookUnelevated.ps1
+    (the indexed guest) - see the second run above. NEVER
     on the maintainer's workstation: the guard below refuses there, and on that machine the Object
     Model Guard is doing its job.
 

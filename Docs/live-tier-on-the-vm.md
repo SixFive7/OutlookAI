@@ -2070,13 +2070,14 @@ Raw logs: `.work\g1-buildout\` in the main checkout.
 **Every COM caller ran at Outlook's own integrity level.** Outlook on this guest is started NOT
 elevated (`Testbed/guest/Start-OutlookUnelevated.ps1`), because only that Outlook feeds the index
 (section 8 item 22). An elevated caller cannot attach to it, and `Register-InteractiveTask.ps1`
-registers only `RunLevel Highest`, so the steps that talk to Outlook - `Set-OutlookProgrammaticAccess.ps1
--Verify`, `Set-AccountSignature.ps1`, the product's read-back - ran in a one-shot `RunLevel Limited`
-interactive task, a scratch helper (both tokens read integrity 0x2000). Closing Outlook was
-`Testbed/host/Restart-Guest.ps1 -Execute -CancelLogonPrompt` every time; it picks its quit task's
-run level from Outlook's own token. A committed Limited route - a `-RunLevel` switch on
-`Register-InteractiveTask.ps1`, say - is what the live tier on this guest needs too (section 8
-item 22, last paragraph).
+still registered only `RunLevel Highest` in the tree these steps ran from, so the steps that talk
+to Outlook - `Set-OutlookProgrammaticAccess.ps1 -Verify`, `Set-AccountSignature.ps1`, the product's
+read-back - ran in a one-shot `RunLevel Limited` interactive task, a scratch helper (both tokens
+read integrity 0x2000). Closing Outlook was `Testbed/host/Restart-Guest.ps1 -Execute
+-CancelLogonPrompt` every time; it picks its quit task's run level from Outlook's own token. The
+committed route landed on master meanwhile - `Register-InteractiveTask.ps1 -RunLevel Limited`, the
+live tier's route (section 4 and section 8 item 22) - and it replaces that scratch helper: a
+rebuild runs these steps through it.
 
 | Step | What ran | Verdict | Index after | Checkpoint |
 | --- | --- | --- | --- | --- |

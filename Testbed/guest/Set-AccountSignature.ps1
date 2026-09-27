@@ -23,8 +23,9 @@
 
     RUN IT AT OUTLOOK'S INTEGRITY LEVEL. The MCP server attaches to the running Outlook over COM
     (list_accounts). On the indexed guest Outlook runs NOT elevated (Start-OutlookUnelevated.ps1),
-    so this ran in a RunLevel Limited task in session 1; Register-InteractiveTask.ps1 is elevated,
-    and an elevated caller cannot reach a non-elevated Outlook (Testbed/host/Restart-Guest.ps1).
+    so this ran in a RunLevel Limited task in session 1: an elevated caller cannot reach a
+    non-elevated Outlook (Testbed/host/Restart-Guest.ps1). Register-InteractiveTask.ps1 -RunLevel
+    Limited is that route now; its default (Highest) is for an Outlook the testbed started elevated.
 
     WHAT IT DOES. Gives the identity account the signature that Docs/live-tier-on-the-vm.md
     section 2.8b requires: a signature configured for NEW MAIL on a specific account, so
@@ -77,8 +78,8 @@
     %LOCALAPPDATA%\OutlookAI\signature-backups first. So a second run is safe and leaves one more
     backup directory behind. The script chooses create-or-update by asking list_signatures first.
 
-    RUN IT IN SESSION 1, AT OUTLOOK'S INTEGRITY LEVEL (above): Register-InteractiveTask.ps1 for an
-    elevated Outlook, a RunLevel Limited task for a non-elevated one. Windows PowerShell 5.1 - no ternary,
+    RUN IT IN SESSION 1, AT OUTLOOK'S INTEGRITY LEVEL (above): Register-InteractiveTask.ps1, with
+    -RunLevel Limited for a non-elevated Outlook. Windows PowerShell 5.1 - no ternary,
     no `??`.
 
 .PARAMETER Account
