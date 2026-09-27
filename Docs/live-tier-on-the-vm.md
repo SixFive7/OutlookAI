@@ -1629,12 +1629,16 @@ given machine. It prints the retirement notice as well.
 ## 3b. Keeping the fixture populations usable
 
 **Added 2026-09-24 for Q70; generator v2 the same evening. v1 RAN ON A GUEST ONCE AND WAS NOT CLEAN;
-v2 HAS NOT RUN ON ONE.** `OutlookAI-Unindexed` built all three populations with v1 (section 4.1, step
-6): every build exited 1, and the four defects it found are what v2 fixes - "What v2 changed", below.
+v2's PROBES RAN ON ONE, AND NO v2 POPULATION IS BUILT.** `OutlookAI-Unindexed` built all three
+populations with v1 (section 4.1, step 6): every build exited 1, and the four defects it found are
+what v2 fixes - "What v2 changed", below. On 2026-09-27 v2 probed the hub and the bystander on the
+same guest (section 4.1a): placement, dates and enrichment verified on both, and **the undated items
+refused on both** - an appointment, a contact or a task saved into a PST is DATED, and Outlook will not
+remove the date. That is open, for the maintainer - "The undated kinds are dated in a PST", below.
 The generator half is pinned on the host - `T1/CorpusPopulationTests` (77 cases), `T1/CorpusDefaultFolderTests`
-(16), the placement cases of `T1/CorpusGeneratorTests` and `T1/CorpusProbeResidueCensusTests`, no
-Outlook - and every step below that opens a store is guest-only. The guest is rolled back to before
-step 6 and the populations rebuilt with v2; "What only a guest can answer" lists what that settles.
+(16), the placement cases of `T1/CorpusGeneratorTests`, `T1/CorpusProbeResidueCensusTests`,
+`T1/CorpusUndatedTableTests` and `T1/CorpusUndatedWritePathTests`, no Outlook - and every step below
+that opens a store is guest-only. "What only a guest can answer" lists what the probes settled.
 
 **What a population is.** A small, curated, deterministic set of items the corpus generator builds
 into a store the measurement corpus cannot serve: `corpus-build --population hub|bystander|identity`.
@@ -1662,7 +1666,12 @@ unsent drafts too, and there are none - a deviation, with its reason:** measured
 DEFAULT store's Drafts, whichever store's folder created it, and a population is never built into the
 default store - so a draft could only be made in one by writing into another store first, which is
 the defect below. The undated kinds are never unsent, and the undated probe checks, per kind, that its
-save stayed in the target store before any is built.
+save stayed in the target store before any is built. **The deviation is accepted - decided 2026-09-27
+(Q89 (a)): no drafts among the undated items, and nothing changed in the code.**
+
+**And the three kinds turned out not to be undated in a PST** - measured on `OutlookAI-Unindexed`,
+2026-09-27; "The undated kinds are dated in a PST", below, has the lines and the question it leaves
+open.
 
 **It costs nothing to look at one.** `corpus-plan` is pure - no Outlook, runnable on the host - and
 for a hub population it also prints the values a settings file must carry:
@@ -1719,15 +1728,17 @@ the addition written out there). So the order is:
      than the target in which it found this corpus's probe items. It should find none;
    * `== placement probe ==`: `target store: NOT the profile's default store` for every population
      store (in the corpus profile the default is the corpus PST), `target folder:` the store's own
-     Inbox for the hub or a STAND-IN for a store without one, then one line per rung - only
-     `InPlaceReceived` and `PostAsNote` on a non-default store - with `visible=True` and
-     `store=target`. A rung whose first save landed in another store says `store=OTHER` and is
-     unusable, whatever else it achieved;
+     Inbox for the hub or a STAND-IN for a store without one, then one line per rung - on a
+     non-default store only `PostAsNote`, the one rung measured to keep its first save there - with
+     `visible=True` and `store=target`. A rung whose first save landed in another store says
+     `store=OTHER` and is unusable, whatever else it achieved;
    * the date probe verified;
    * **`== enrichment probe ==` reporting sender, recipients, attachment and conversation index all
      written** - and the recipient it checks is now the store's OWNER, the one v1 left unresolved;
    * `== undated probe ==` (hub and bystander): each kind `inFolder=True`, `undated=True`,
-     `inTargetStore=True`.
+     `tableUndated=True`, `inTargetStore=True`, and no `removalRefused=`. **On a PST no kind gets
+     there** (measured 2026-09-27, below), so today this line refuses every population that carries
+     undated items.
 
    A population is built only where one throwaway item proved every write it depends on, with no
    override. After the build, the census reads every item back - sender, recipients (the owner
@@ -1804,7 +1815,7 @@ fault, host-side, and each answer is a probe or a check that fails the build rat
 | --- | --- |
 | Every RECEIVED item carried one unresolved To row with an EMPTY address: the owner was added as `tier@vm.invalid <tier@vm.invalid>`, which Outlook's resolver refuses. The enrichment probe passed, because its item was addressed to correspondents only | A recipient whose name IS an address is added as the bare address (`CorpusCorrespondent.ToRecipientSpec`), and the enrichment probe's To row is now the store's OWNER - the case that failed |
 | A PST attached with `AddStoreEx` has no Inbox and no Sent Items; `GetDefaultFolder(6)` returned its hidden root, the bystander's 172 and the identity store's 5 "Inbox" items went there, and the placement probe printed `target= landedIn=` and said VERIFIED | Every default folder is found without a creating lookup (`SpecialFolders.Resolve` and the Calendar/Contacts/Tasks designations), and returned only when it is a NAMED folder under the store's root (`CorpusFolderVisibility`). A store without one gets a visible stand-in under its root, recorded in the manifest. The placement probe refuses an invisible target |
-| Failed probe rungs stranded 12 items in Corpus B's Drafts - the corpus profile's DEFAULT store, on no allowlist - because an unsent mail item's first save goes to the default store's Drafts, and the delete looked in the target | A store that is not the profile's default is probed only with the two rungs whose item is never unsent: `InPlaceReceived` (the flags written before the first save) and `PostAsNote` (a post, created in the sent state, converted to a note). Every first save's store is read before anything else, and an item that landed elsewhere is deleted THERE; every other store's Drafts and Deleted Items are swept of this corpus's probe items before the probes, after them, and after teardown, by the two-key rule - `ComCorpusMailbox.SweepProbeResidueOutsideTarget` |
+| Failed probe rungs stranded 12 items in Corpus B's Drafts - the corpus profile's DEFAULT store, on no allowlist - because an unsent mail item's first save goes to the default store's Drafts, and the delete looked in the target | A store that is not the profile's default is probed only with `PostAsNote` (a post, created in the sent state, converted to a note) - the one rung measured to keep its first save there. v2 shipped with `InPlaceReceived` (the flags written before the first save) beside it; on `OutlookAI-Unindexed`, 2026-09-27, its first save landed in the corpus profile's default store (`store=OTHER`), so it was retired from every ladder the same day. Every first save's store is read before anything else, and an item that landed elsewhere is deleted THERE; every other store's Drafts and Deleted Items are swept of this corpus's probe items before the probes, after them, and after teardown, by the two-key rule - `ComCorpusMailbox.SweepProbeResidueOutsideTarget` |
 | `GetDefaultFolder` created Drafts and Junk Email in the bystander during its build | No lookup creates a folder: the scans, the probes and the build all go through the non-creating resolver |
 
 **The Drafts-then-Move rungs are not probed on a non-default store either, and that is measured, not
@@ -1813,14 +1824,25 @@ in the TARGET store's own Drafts for `DraftsThenMoveWithSentFlag`: it failed bef
 found in Corpus B's Drafts. So even a Drafts-created item's first save lands in the default store, and
 every item those rungs built in v1 passed through Corpus B on its way.
 
-**If neither rung stays in the target store, the build refuses - there is no override.** The
-directions then, for the maintainer: (a) build each population with its store as the profile's
-DEFAULT store - a throwaway account-less profile per store, created with `/PIM`, which cannot be
-deleted without the GUI; (b) accept a transient write into the default store for the Drafts-then-Move
-rungs, with the transit check and the cross-store sweep behind it - which the maintainer's rule "a
-probe must never write outside its target store" forbids as written; (c) Extended MAPI's
-`IMessage` creation in the target folder, which the Dependencies rule allows but the repository chose
-not to rebuild on (Q67, knowledge only). Recommended: (a).
+**If no rung stays in the target store, the build refuses - there is no override.** The directions
+were (a) build each population with its store as the profile's DEFAULT store - a throwaway
+account-less profile per store, created with `/PIM`, which cannot be deleted without the GUI; (b)
+accept a transient write into the default store for the Drafts-then-Move rungs, with the transit check
+and the cross-store sweep behind it - which the maintainer's rule "a probe must never write outside its
+target store" forbids as written; (c) Extended MAPI's `IMessage` creation in the target folder, which
+the Dependencies rule allows but the repository chose not to rebuild on (Q67, knowledge only).
+**Decided 2026-09-27 (Q88 (a)) - and not needed:** `PostAsNote` keeps its first save in the target, on
+both stores probed (section 4.1a):
+
+```
+hub (its own Inbox):
+  PostAsNote  target=Inbox visible=True store=target landedIn=Inbox parentMatches=True inFolderTable=True sentFlag=True usable=True
+bystander (a stand-in):
+  PostAsNote  target=OutlookAI-Corpus-Folder-6 visible=True store=target landedIn=OutlookAI-Corpus-Folder-6 parentMatches=True inFolderTable=True sentFlag=True usable=True
+```
+
+(a) stands as the route to take if a later probe ever refuses `PostAsNote` too; the refusal message
+names it.
 
 ### The bystander keeps its shape - checked test by test
 
@@ -1841,7 +1863,52 @@ The bystander's role is the count tripwire's watched store AND the absent-arriva
 
 No test needed the bystander's Inbox, so none was moved and none was weakened.
 
-### The identity store has no Inbox - OPEN, for the maintainer
+### The undated kinds are dated in a PST - OPEN, for the maintainer
+
+**The question.** The hub's 12 and the bystander's 42 undated items exist so the three
+`LiveOrderKeyCollationTests` have index rows with NO `System.Message.DateReceived` to measure (question
+A (a), 2026-09-24; drafts left out, Q89 (a)). Their premise was that an appointment, a contact or a task
+carries no received date. **In a PST it does, and Outlook will not take it off**, so the undated probe
+refuses every kind and no population that carries undated items - the hub, the bystander - can be
+built, on either guest. The identity population carries none and is not affected.
+
+**What the guest showed** (`OutlookAI-Unindexed`, 2026-09-27, section 4.1a; the bystander, in its
+stand-ins `-9`, `-10` and `-13`, printed the same three lines):
+
+```
+== undated probe ==
+  appointment  folder=True inFolder=True tag=True undated=False tableUndated=False class=True inTargetStore=True removalRefused=UnauthorizedAccessException: The property "http://schemas.microsoft.com/mapi/proptag/0x0E060040" does not support this operation.
+  contact      folder=True inFolder=True tag=True undated=False tableUndated=False class=True inTargetStore=True removalRefused=UnauthorizedAccessException: The property "http://schemas.microsoft.com/mapi/proptag/0x0E060040" does not support this operation.
+  task         folder=True inFolder=True tag=True undated=False tableUndated=False class=True inTargetStore=True removalRefused=UnauthorizedAccessException: The property "http://schemas.microsoft.com/mapi/proptag/0x0E060040" does not support this operation.
+```
+
+* **The date is STORED, not supplied by the object model.** `undated=False` is the PropertyAccessor's
+  read; `tableUndated=False` is the folder's own table, restricted by the store - it returns the item for
+  `NOT ("urn:schemas:httpmail:datereceived" IS NULL)` and not for `IS NULL`. So every DASL path of the
+  product sees these items as dated, and so would anything reading the message through MAPI.
+* **Outlook refuses to delete it**, for all three kinds: `PropertyAccessor.DeleteProperty` on
+  PR_MESSAGE_DELIVERY_TIME throws E_ACCESSDENIED.
+* **What the INDEX makes of it is not known.** Whether Windows Search derives `System.Message.DateReceived`
+  from that property for a calendar item, a contact or a task is item 4 below - the indexed guest only.
+  `LiveOrderKeyCollationTests`' own comment says those kinds carry none; nothing here has measured it.
+* Everything else held: each kind landed in its own folder of the target store, kept its tag and its
+  class, and the probes left no item behind - only the bystander's four stand-ins, empty (section 4.1a).
+
+| Direction | How | For | Against |
+| --- | --- | --- | --- |
+| **(a) Defer the undated items** | Build v2 without them - the hub 56 items, the bystander 300 - and keep the probe, the census check and their T1 tests, so a later route re-enables them by giving the two populations their undated kinds back | Unblocks every v2 build on both guests today; builds nothing on an unmeasured premise; the order-key tests are exactly where they were before v2 (`no-undated-rows-in-sample`), no worse | Gives up, for now, the measurement question A added them for; the population counts, digests, `UndatedRemedy`'s wording and these docs change |
+| (b) Build them dated, and let the index answer | For the three kinds the probe's criterion becomes folder, tag, class and store - not "no delivery time" - and `corpus-indexed` reports per kind whether the index dates them | Keeps the items; the one reading the tests depend on, the index's, is taken on the indexed guest as a by-product; if the index leaves those kinds undated, the tests measure at last | Builds on an unverified premise - if the index dates them, 54 items give the tests nothing; the hub's newest indexed row becomes an item saved at build time, which the frontier test's reasoning never planned for; census, `corpus-indexed` and the docs change |
+| (c) Remove the date through Extended MAPI | `IMAPIProp::DeleteProps` and `SaveChanges` on the saved item | Permitted by the Dependencies rule; the probe's two reads would say at once whether it held | `item.MAPIOBJECT` hands out an in-process MAPI interface and the corpus tool runs out of process, so the dependable form is a MAPI session of the tool's own (`MAPIInitialize`, `MAPILogonEx`, `OpenMsgStore`, `OpenEntry`) - the interop this repository deleted and kept as knowledge only (Q67); and whether the PST provider stamps the date again on `SaveChanges` is unknown |
+| (d) Undated drafts, where the store IS the default | The Q88 (a) route - a throwaway `/PIM` profile per store - so an unsent mail's first save stays in the store; drafts become the undated rows (reopens Q89 (a)) | Outlook's own object model only; an unsent mail is the textbook row with no received date | The heaviest: a profile per store, none deletable without the GUI; the bystander would gain the full default folder set it is designed not to have; that a draft in a PST carries no delivery time is itself unmeasured |
+| (e) Measure the premise first, read-only | On the maintainer's workstation: content-free COUNTS of the index's `mapi` rows by kind, with and without `System.Message.DateReceived` - no Outlook, no MAPI, no mailbox, like the three SELECTs of 2026-08-18. Exchange is believed to give every item a delivery time, calendar items and contacts included (not measured here), so undated calendar and contact rows there would mean the index does not date those kinds at all | About ten minutes; decides between (a) and (b) on evidence | A read of the workstation's index about real mail, counts only - the maintainer's to allow; and it speaks for Exchange items, not PST ones |
+
+**Recommended: (a) now, and (e) as the follow-up that decides whether (b) is worth building.** The NULL
+collation is a cost question, not a correctness one: `IndexOrderGuard` is sound under any collation by
+construction (QUESTIONS.md, 2026-08-18), so nothing the product guarantees waits on it - while every v2
+population and the per-run hub rebuild do. Nothing is changed until this is decided; the probes refuse,
+as designed, and `CP-14A-POPULATIONS-V2-PROBED` holds the probed guest.
+
+### The identity store has no Inbox - DECIDED (a) 2026-09-27 (Q87), NOT YET MEASURED
 
 **The question.** The identity account delivers into the identity PST (section 2.8b), and a delivery
 store needs a real, designated Inbox - one the store's own folder mask and receive folder name, that
@@ -1859,33 +1926,48 @@ belong in that Inbox - wait on this decision.
 | (d) A plain folder named Inbox | `Folders.Add("Inbox", 6)` under the IPM root, and bind the account to it | Cheap, scriptable, visible | NOT designated: the store still has no Inbox to the mask, `SpecialFolders.Resolve` or the product's sweep; it fixes the symptom the tests never read and leaves the defect |
 | (e) Let POP3 delivery make one | Bind the account to the store with an empty `Delivery Folder EntryID` and see what the first send/receive does | Nothing to write if it works | Unknown; the plausible outcome is delivery falling back to the default store's Inbox - the tier's - which is exactly what the identity account must not share |
 
-**Recommended: (a)**, measured before anything is written into `Add-IdentityAccount.ps1`. The
+**Decided 2026-09-27: (a) (Q87)**, measured before anything is written into `Add-IdentityAccount.ps1`. The
 measurement, from a checkpoint before the identity account (`CP-09-ADDIN-READY` on
-`OutlookAI-Unindexed`), every step in session 1 and every Outlook close a graceful quit: list
-`C:\OutlookAI-Tier\*.pst`; `OUTLOOK.EXE /PIM IdentityMint`, wait 90 s, list again - the new file is
-the minted store; read over COM that store's `PR_VALID_FOLDER_MASK` (Inbox bit set?) and, only if it
-is, its Inbox's name and parent chain; quit; confirm the default profile is still `OutlookAI-Tier`;
-then section 2.8b's sequence with `-PstPath` and `Add-OutlookPstStore.ps1 -Path` naming the minted
-file (renamed to `identity@vm.invalid` first), where `-Phase CaptureStore` must now PASS - and read
-the mask and the Inbox again from the tier profile, which is the question (a) turns on. Nothing has
-run.
+`OutlookAI-Unindexed`), every step in session 1 and every Outlook close a graceful quit: first
+re-apply the index exclusion, which CP-09 predates - `Set-OutlookIndexingDisabled.ps1 -Execute`, then
+`-Verify` must say `UNINDEXED` with reason `USER`; list `C:\OutlookAI-Tier\*.pst`;
+`OUTLOOK.EXE /PIM IdentityMint`, wait 90 s, list again - the new file is the minted store; read over
+COM that store's `PR_VALID_FOLDER_MASK` (Inbox bit set?) and, only if it is, its Inbox's name and parent
+chain; quit; confirm the default profile is still `OutlookAI-Tier`; then section 2.8b's sequence with
+`-PstPath` and `Add-OutlookPstStore.ps1 -Path` naming the minted file (renamed to
+`identity@vm.invalid` first), where `-Phase CaptureStore` must now PASS - and read the mask and the
+Inbox again from the tier profile, which is the question (a) turns on. **Record the store's display
+name at each stage - after the mint, after the rename, after the attach** (Q92, still with the
+maintainer). Nothing has run.
 
 ### What only a guest can answer
 
 **Answered by v1's build on `OutlookAI-Unindexed`, 2026-09-24:** the store guard accepts the hub, the
 bystander and the identity store in the account-less profile; sender, correspondent recipients,
 attachment and conversation index all land; the store computes one conversation id per conversation;
-and the four faults above. **Still open, each settled by the first v2 build or run:**
+and the four faults above. **Answered by v2's probes on the same guest, 2026-09-27 (section 4.1a):**
+items 1, 2, 3 and 8. **Still open:** 4 to 7 - each settled by the first v2 build or run, which waits on
+"The undated kinds are dated in a PST", above.
 
-1. **Does `InPlaceReceived` or `PostAsNote` keep its first save in a store that is not the profile's
-   default, parent it in the target folder, and show it in that folder's table?** The placement probe
-   prints both; if neither, the build refuses - the directions are above.
-2. **Does the owner, added as a bare address, resolve?** The enrichment probe checks exactly that.
-3. **Do an appointment, a contact and a task, saved into a non-default store's (stand-in) Calendar,
-   Contacts and Tasks, stay there?** The undated probe's `inTargetStore` column.
+1. **ANSWERED: `PostAsNote` does; `InPlaceReceived` does NOT.** In a store that is not the profile's
+   default, `PostAsNote` kept its first save in the target, parented it in the target folder and showed
+   it in that folder's table - the hub's own Inbox and the bystander's stand-in alike (the lines are
+   under "What v2 changed"). `InPlaceReceived`'s first save landed in another store -
+   `InPlaceReceived  target=Inbox visible=True store=OTHER landedIn=(unknown) parentMatches=False
+   inFolderTable=False sentFlag=False usable=False error=its first save landed in another store` - and
+   the sweep after the probes found and deleted it there (`1 probe item(s) of 'hub-unindexed' found in
+   'Outlook Data File', which is NOT the target; 1 deleted by the two-key rule`). Retired from every
+   ladder the same day.
+2. **ANSWERED: yes.** The enrichment probe, whose To row is the owner, on both stores:
+   `sender=True recipients=True attachment=True conversationIndex=True conversationId=(computed)`.
+3. **ANSWERED: they stay - and they are dated.** On the hub (its own Calendar, Contacts and Tasks) and
+   the bystander (stand-ins), every kind `folder=True inFolder=True tag=True class=True
+   inTargetStore=True`; but `undated=False tableUndated=False`, and Outlook refused to remove the date.
+   Open, above.
 4. **Does the index carry what the tests read** - `FromAddress`/`FromName`, `ToAddress` (the owner's
    now), one attachment row per attachment, a `ConversationID` shared by each conversation's members,
-   and the undated rows with NO `System.Message.DateReceived`? The indexed guest only.
+   and the undated rows with NO `System.Message.DateReceived`? The indexed guest only - and the last
+   part is now the question above.
 5. **Does a store mounted in two profiles give the index two scopes?** The per-store scope URL is
    `mapi16://{SID}/StoreDisplayName($Hash)/`. Corpus A has always been in the same position, so the
    answer - whatever it is - is not new to the populations.
@@ -1895,8 +1977,12 @@ and the four faults above. **Still open, each settled by the first v2 build or r
    created folder with `Folder.Delete()`, which in a PST is very likely a move into Deleted Items like
    an item's - so every rebuild may add two empty `OutlookAI-Corpus-Folder-*` folders there. Look after
    the first `Reset-HubPopulation.ps1` run; not measured, not changed.
-8. **A probe that makes a stand-in and a build that then refuses** leave that stand-in, empty, in the
-   target store; the next build adopts it by name and records it. Inferred from the code.
+8. **ANSWERED: a probe that makes a stand-in and a build that then refuses leave that stand-in, empty,
+   in the target store.** The bystander, before its probe: `Deleted Items  items=0` and nothing else.
+   After it, and after the undated probe refused: `OutlookAI-Corpus-Folder-6  items=0  mail`, `-9
+   calendar`, `-10 contacts`, `-13 tasks`, every one `items=0` and `[made by the corpus tool]`, under
+   the store root - and no Inbox, Drafts or Junk Email created. That the next build adopts them by name
+   is still inferred from the code; the build has not run.
 
 ---
 
@@ -2058,6 +2144,48 @@ which are therefore not the pure reads that script's banner calls them.
   and no mailbox - adds enough debug lines to push the buffer out; one such session was enough.
 * **`manage_signature` can bind a signature to a data file** (section 2.8b): it picks the profile
   subkey by an `@` in `Account Name`, and a PST named after an address has one.
+
+### 4.1a Populations v2 on `OutlookAI-Unindexed`, 2026-09-27 - probed, NOT built
+
+**Why this section exists.** The first guest run of generator v2 (section 3b), from
+`CP-14-EXCLUDED-BY-SCOPE-RULE` - `CP-10-IDENTITY-ACCOUNT` plus the index exclusion - on the one guest
+this work owned. Every mailbox write went through the corpus tool; nothing else wrote to a store.
+Raw logs: `.work\g2-populations-v2\` in the main checkout.
+
+| Step | What ran | Verdict | Checkpoint |
+| --- | --- | --- | --- |
+| 1. Restore and stage | `Restore-VMSnapshot CP-14-EXCLUDED-BY-SCOPE-RULE`; the tools and server published from `685a2be`, the settings rendered by `New-LiveTestSettings.ps1`, and `Reset-HubPopulation.ps1`, `Start-OutlookUnelevated.ps1`, `Register-InteractiveTask.ps1`, `Add-OutlookPstStore.ps1`, `Set-DefaultOutlookProfile.ps1` copied in | restored `Running`; the default profile `OutlookAI-Tier`, no Outlook, no pending `ImportPRF` | - |
+| 2. Still unindexed | `Set-OutlookIndexingDisabled.ps1 -Verify` | `the service says: included=False reason=USER`; two catalog readings ten minutes apart, `mapiRows=0` both; `VERDICT: UNINDEXED` | - |
+| 3. Stores | Outlook started on the tier profile; `Add-OutlookPstStore.ps1` made `bystander@vm.invalid` there (`before : Store.DisplayName='Outlook Data File'`, `after : Store.DisplayName='bystander@vm.invalid'`); `Restart-Guest.ps1 -Execute`; the default to `CorpusProfile`, Outlook started, the hub and the bystander attached by path while empty | quit in 0 s, restart 25 s; both names came back byte-identical; `corpus-folders` on each: the hub every default folder, all `items=0`; the bystander `Deleted Items` only | - |
+| 4. Probes | `corpus-probe --population hub` and `--population bystander`, four tool builds (below) | placement, dates and enrichment VERIFIED on both; **undated REFUSED on both** | - |
+| 5. After | `corpus-folders` of the hub, the bystander and Corpus B; `Restart-Guest.ps1 -Execute`; the state read back | hub all `items=0`; the bystander four empty stand-ins; Corpus B unchanged - `Inbox 10912`, `Sent Items 4964`, `Deleted Items 2461`, `Junk Email 1663`, `Drafts 0`, as before the probes; Outlook not running, default `CorpusProfile` | `CP-14A-POPULATIONS-V2-PROBED` |
+
+**Four tool builds, because the guest proved three fixes necessary - each made host-side first, with
+T1 tests and controls:**
+
+1. `685a2be`: `InPlaceReceived`'s first save landed in the corpus profile's default store
+   (`store=OTHER`, and the sweep after the probes deleted it there); `PostAsNote` stayed. And every
+   undated kind read back CARRYING a delivery time. **`185113a`** retired `InPlaceReceived` from every
+   ladder, leaving `PostAsNote` the one rung for a non-default store, and made the undated write path
+   remove the delivery time after the first save.
+2. `185113a`: the undated probe ended the run - `FATAL: InvalidOperationException: corpus undated probe
+   failed.` - with its cause dropped, and the sweep after the probes skipped. **`0ab9232`** names the
+   whole inner chain on the FATAL line and runs that sweep in a `finally`, as the build and re-anchor
+   already did.
+3. `0ab9232`: `... <- caused by: UnauthorizedAccessException: The property
+   "http://schemas.microsoft.com/mapi/proptag/0x0E060040" does not support this operation.` - the
+   PropertyAccessor refuses the removal, and E_ACCESSDENIED is not in the COM-failure set the probe
+   caught. **`c3529c9`** returns a refused removal instead of throwing it, reports it per kind, reads
+   the date a second way - the folder's own table - and has the build record an undated item before it
+   refuses one.
+4. `c3529c9`: every probe ran to the end and refused cleanly; the lines are in section 3b, "The undated
+   kinds are dated in a PST", which is where this run stops.
+
+**Stopped there, as designed:** no population was built, so `CP-15-POPULATIONS-V2` was not taken, the
+hub rebuild (`Reset-HubPopulation.ps1`) did not run, and the live tier did not run. Apart from the
+first run's one `InPlaceReceived` item, deleted where it landed, no sweep found a probe item in any
+other store - before or after the probes; the `185113a` run skipped its sweep after them (the defect
+`0ab9232` fixed), and the next run's sweep before them found nothing.
 
 ### 4.2 The indexed guest's build-out - `OutlookAI-Indexed`, 2026-09-24 and 2026-09-27
 
