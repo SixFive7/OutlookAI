@@ -19,11 +19,31 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// STRICTLY READ-ONLY on the delegate mailbox: counts, booleans and the locator tier only -
 /// no subject, sender or body reaches the output (S4), and nothing is written (S1).
 /// </para>
+/// <para>
+/// <b>It cannot pass without resolving something (Q76, 2026-09-27).</b> Both of its early returns
+/// - no probe configured, and a delegate folder tree that does not list the probe folder NESTED
+/// right now - refuse on a Production profile and print <c>PROVED NOTHING:</c> on a Portable one.
+/// The second used to log a line and return GREEN. Pinned by <c>T1/LiveEarlyReturnGuardTests</c>.
+/// </para>
 /// </summary>
 [Collection(LiveCollections.Phase2)]
 [Trait("Category", "Live")]
 public sealed class LiveStaleIndexRowTests
 {
+    /// <summary>
+    /// What the locator assertion resolves against, named as the Production refusal wraps it. A path
+    /// of one segment is the folder at the top of the tree, where there is nothing flat to resolve.
+    /// </summary>
+    internal const string NestedPathPopulation =
+        "a nested path for the probe folder in the delegate mailbox's folder tree as Outlook lists it right now";
+
+    /// <summary>What a reader of a PROVED NOTHING line here is to do about it.</summary>
+    internal const string NestedPathRemedy =
+        "Outlook syncs a delegate mailbox's folder hierarchy lazily - the same nested folder was listed in one walk "
+        + "and missing from the next, minutes apart (soak fix 16) - so re-run once the tree has synced. If it never "
+        + "lists the folder nested, 'delegateNestedFolderProbe' names a folder that is not nested (any more) and "
+        + "needs one that is.";
+
     private readonly LivePhase2Fixture _fixture;
     private readonly ITestOutputHelper _output;
 
@@ -79,11 +99,18 @@ public sealed class LiveStaleIndexRowTests
                 ? "(none - the delegate hierarchy is not enumerable right now)"
                 : string.Join(" | ", matches.Select(m => string.Join("/", m)))));
 
-        if (matches.Count == 0 || matches.All(m => m.Count <= 1))
+        // Nothing nested in the tree right now means nothing to resolve against, so the assertion
+        // below cannot run. That used to log a line and return GREEN; it is the same question the
+        // probe guard above asks, and it gets the same answer (Q76).
+        IReadOnlyList<IReadOnlyList<string>> nested = LivePopulationCoverage.Require(
+            _fixture.Settings,
+            NestedPaths(matches),
+            NestedPathPopulation,
+            "the delegate leaf-name locator assertion",
+            NestedPathRemedy,
+            _output.WriteLine);
+        if (nested.Count == 0)
         {
-            _output.WriteLine(
-                "the delegate folder tree does not currently expose the nested folder - there is nothing to "
-                + "resolve against, so the locator assertion is skipped this run.");
             return;
         }
 
@@ -96,4 +123,15 @@ public sealed class LiveStaleIndexRowTests
         Assert.Equal("delegateLeafName", read.LocatedVia);
     }
 
+    /// <summary>
+    /// The leaf matches the locator assertion can resolve against: the ones BELOW the store root.
+    /// Empty exactly when the test used to log "not currently exposed" and return green - no match
+    /// at all, or only matches at the top of the tree - which <c>T1/LiveEarlyReturnGuardTests</c>
+    /// holds it to, shape by shape.
+    /// </summary>
+    internal static IReadOnlyList<IReadOnlyList<string>> NestedPaths(IReadOnlyList<IReadOnlyList<string>> matches)
+    {
+        ArgumentNullException.ThrowIfNull(matches);
+        return matches.Where(m => m.Count > 1).ToList();
+    }
 }

@@ -2552,7 +2552,19 @@ Six guards arm themselves; none needs remembering.
 * `PROVED NOTHING:` - a test that ran but found no population to test. On a machine declaring
   `machineProfile: "Portable"`
   that is expected for the handful of tests that discover their own population; on a Production
-  machine it throws instead.
+  machine it throws instead. **Since 2026-09-27 (Q76) that handful includes all four
+  `LiveResumableScanTests`**, on a hub whose exhaustive scan fits one page of two: they need a
+  chain of pages, so at least five mail items in the hub, which the rebuilt hub population has -
+  on a guest, read it first as a hub nobody rebuilt. It also includes `LiveStaleIndexRowTests`
+  when the delegate's folder tree does not list the probe folder nested at that moment, a
+  delegate test and so in practice a refusal on a Production machine. Both used to return green
+  with a line that did not say so.
+* **A non-empty Outbox fails `LiveDisconnectRecoveryTests` on every profile** - not a skip and
+  not a `PROVED NOTHING:` (Q76, 2026-09-27). The test closes Outlook, which S7 forbids while
+  anything is queued, and on a guest nothing but a test ever queues mail, so a count above zero
+  there is residue that guard 4 above exists to refuse: find out what was not delivered before
+  re-running. On a working profile it may be the user's own unsent mail. An unreadable count
+  fails the same way.
 
 **And check that a verification happened at all.** A run that prints a `baseline` line and no
 `post-run census` line did not compare anything.
@@ -2801,11 +2813,22 @@ unrecorded or unverified.
     exposed now announce it: the `RequireProductionPopulation` + `PROVED NOTHING:` idiom throws
     on a `Production` profile and prints on a `Portable` one, and the two identity tests were
     converted to it on 2026-08-25 after being found green-while-iterating-nothing.
-    **Three more silently-empty iterations are known and unfixed**, listed in `TODO.md`; the
-    strongest is `LiveFolderScopeTests.DelegateFirstLevelFolders_StillResolve_...`, which
-    iterates `expectedDelegateStoreDisplayNames` with no guard while a sibling two methods above
-    it asserts non-emptiness first - so the omission reads as an oversight, and that list is
-    empty on every Portable machine including this one.
+    **The silently-empty cases found since are fixed the same way.** Three iterations on
+    2026-09-15 (`LiveFolderScopeTests`, `LiveSignatureTests`, `LiveIndexSearchTests`, all through
+    `T2/LivePopulationCoverage`; `TODO.md` has them). On 2026-09-27 (Q76) the early returns of
+    `LiveResumableScanTests` - four, not the three first counted, plus its acceptance, which on a
+    one-page hub compared two sets that agree by construction - and the delegate-tree return of
+    `LiveStaleIndexRowTests`, pinned by `T1/LiveEarlyReturnGuardTests`; the same decision made
+    `LiveDisconnectRecoveryTests`' non-empty Outbox a FAILURE on every profile rather than an
+    announcement (section 6 says why). **Early returns that still end green on a `SKIP:` line,
+    or on none, are known and are the maintainer's to decide**: the rest of
+    `LiveDisconnectRecoveryTests`' guards (a user active in the last three minutes, an open
+    Inspector, a window appearing mid-scenario), `LiveUiSearchBackendTests`' policy-hive skip,
+    `T3/OutlookAvailabilityLiveTests` (both tests) and `T3/ComHostSupervisionLiveTests`' no-host
+    branch - plus `LiveHeadlessGuaranteeTests`' read/thread checks, which skip without returning.
+    `LiveAttachmentKindRecallTests`' two `SKIP (the parent-open assertion ONLY ...)` returns were
+    kept on purpose on 2026-09-15: that line is accurate, and the test has asserted recall above
+    them.
 20. **CLOSED 2026-08-24 - and worth reading how, because the obvious fix was the wrong one.** The
     grant was NOT narrowed: two live tests legitimately need draft-create in a non-hub store.
     Instead a store is now **declared** a bystander in `bystanderStoreDisplayNames`, the write

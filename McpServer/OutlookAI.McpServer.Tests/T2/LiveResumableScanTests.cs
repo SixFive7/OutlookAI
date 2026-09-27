@@ -23,6 +23,16 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// surface their EntryIDs from cache, and it touches nothing else. No item is created, moved,
 /// edited or deleted, so no test artifact exists to sweep up afterwards.
 /// </para>
+/// <para>
+/// <b>Every test here needs a CHAIN, and says so when there is none (Q76, 2026-09-27).</b> A hub
+/// whose scan fits one page of <see cref="SmallPage"/> hands out no resume token, which leaves
+/// three of these tests nothing to record, refuse or supersede - and the "paged" scan is one page,
+/// so its two sets agree by construction. Those three used to return GREEN there - four early
+/// returns between them, each with a log line and nothing else - and the acceptance passed without
+/// ever resuming. Every test now asks <see cref="RequireResumeTokens"/>, which is
+/// <see cref="LivePopulationCoverage"/>: a refusal on a Production profile, a
+/// <c>PROVED NOTHING:</c> line on a Portable one. Pinned by <c>T1/LiveEarlyReturnGuardTests</c>.
+/// </para>
 /// </summary>
 [Collection(LiveCollections.Phase3)]
 [Trait("Category", "Live")]
@@ -49,9 +59,53 @@ public sealed class LiveResumableScanTests
         _output = output;
     }
 
+    /// <summary>
+    /// What every test here pages through, named as the Production refusal wraps it: a hub holding
+    /// no more than one page hands out no token at all.
+    /// </summary>
+    internal static readonly string ResumeTokenPopulation =
+        $"a resume token from an exhaustive scan of the test hub paged at top {SmallPage}";
+
+    /// <summary>
+    /// What <see cref="ASupersededToken_IsRefusedWithThePositionNeededToCarryOnWithoutIt"/> needs on
+    /// top of that: the chain still open after its second page, so the first token has been
+    /// superseded by something that is still live.
+    /// </summary>
+    internal static readonly string SecondResumeTokenPopulation =
+        $"a second resume token from that scan, which needs more mail in the test hub than two pages at top {SmallPage}";
+
+    /// <summary>What a reader of a PROVED NOTHING line here is to do about it.</summary>
+    internal static readonly string ResumeTokenRemedy =
+        $"To exercise it, give the test hub at least {(2 * SmallPage) + 1} mail items received since 2000 - more than "
+        + $"two pages of {SmallPage}. On a test guest that is the hub population, once Testbed/guest/Reset-HubPopulation.ps1 "
+        + "has rebuilt it at the start of the run (Docs/live-tier-on-the-vm.md section 3b); on a working profile the hub "
+        + "is real mail, and a scan that ends this soon means it has been emptied.";
+
     private MailService Service => _fixture.Service;
 
     private string Hub => _fixture.Settings.TestHubStoreDisplayName;
+
+    /// <summary>
+    /// The resume tokens a test here is about to rely on - and the only way this file decides
+    /// whether there are any. A null token is a page that ended the chain, so it counts as none.
+    /// <para>
+    /// <see cref="LivePopulationCoverage.Require"/> is the whole decision: the coverage line on
+    /// every run, a refusal on a Production profile when there is nothing, and a
+    /// <c>PROVED NOTHING:</c> line on a Portable one. A caller that gets an empty list back has
+    /// already been announced, and may only return.
+    /// </para>
+    /// </summary>
+    private IReadOnlyList<string> RequireResumeTokens(
+        IEnumerable<string?> tokens, string population, string whatWouldNotRun)
+    {
+        return LivePopulationCoverage.Require(
+            _fixture.Settings,
+            tokens.OfType<string>().ToList(),
+            population,
+            whatWouldNotRun,
+            ResumeTokenRemedy,
+            _output.WriteLine);
+    }
 
     [Fact]
     [Trait("Requires", "OutlookInstance")]
@@ -71,6 +125,7 @@ public sealed class LiveResumableScanTests
         // The same scope, paged.
         HashSet<string> paged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         List<string> duplicates = new List<string>();
+        List<string> followed = new List<string>();
         string? token = null;
         int pages = 0;
         int itemsReturnedTotal = 0;
@@ -106,6 +161,7 @@ public sealed class LiveResumableScanTests
             Assert.Equal(FreshMerge.FreshnessPartial, page.Freshness);
             Assert.NotNull(page.Exhaustive.Position);
             token = page.Exhaustive.NextToken;
+            followed.Add(token);
         }
 
         clock.Stop();
@@ -114,6 +170,11 @@ public sealed class LiveResumableScanTests
             + $"duplicates={duplicates.Count} itemsReturnedTotal={itemsReturnedTotal} totalMs={clock.ElapsedMilliseconds}");
 
         Assert.True(pages < MaxPages, $"the chain did not terminate within {MaxPages} pages");
+
+        // A scan that fitted ONE page never resumed, so the two sets below agree by construction and
+        // say nothing about resumption. They are still asserted - a one-page answer that differs from
+        // the unpaged one is a defect of its own - but the run is told first (Q76).
+        _ = RequireResumeTokens(followed, ResumeTokenPopulation, "the paged-versus-unpaged acceptance");
 
         // THE ACCEPTANCE. Nothing skipped and nothing repeated - the two halves that make a
         // continuation token worth having rather than merely convenient.
@@ -133,9 +194,8 @@ public sealed class LiveResumableScanTests
         SearchOutcome first = Service.Search(request);
 
         Assert.NotNull(first.Exhaustive);
-        if (first.Exhaustive!.NextToken == null)
+        if (RequireResumeTokens(new[] { first.Exhaustive!.NextToken }, ResumeTokenPopulation, "the resume-rung record").Count == 0)
         {
-            _output.WriteLine("hub corpus fits one page of " + SmallPage + " - no rung was exercised");
             return;
         }
 
@@ -161,9 +221,8 @@ public sealed class LiveResumableScanTests
         // the scan while the caller believed it was continuing.
         SearchOutcome first = Service.Search(NewRequest(SmallPage));
         Assert.NotNull(first.Exhaustive);
-        if (first.Exhaustive!.NextToken == null)
+        if (RequireResumeTokens(new[] { first.Exhaustive!.NextToken }, ResumeTokenPopulation, "the changed-question refusal").Count == 0)
         {
-            _output.WriteLine("hub corpus fits one page of " + SmallPage + " - no token to refuse");
             return;
         }
 
@@ -189,18 +248,19 @@ public sealed class LiveResumableScanTests
     {
         SearchOutcome first = Service.Search(NewRequest(SmallPage));
         Assert.NotNull(first.Exhaustive);
-        if (first.Exhaustive!.NextToken == null)
+        if (RequireResumeTokens(new[] { first.Exhaustive!.NextToken }, ResumeTokenPopulation, "the superseded-token refusal").Count == 0)
         {
-            _output.WriteLine("hub corpus fits one page of " + SmallPage + " - no chain to supersede");
             return;
         }
 
         SearchRequest second = NewRequest(SmallPage);
         second.ResumeToken = first.Exhaustive.NextToken;
         SearchOutcome next = Service.Search(second);
-        if (next.Exhaustive!.NextToken == null)
+
+        // A chain that FINISHED on its second page has nothing left that the first token could be
+        // superseded by, so the replay below would be answered by a different refusal, or none.
+        if (RequireResumeTokens(new[] { next.Exhaustive!.NextToken }, SecondResumeTokenPopulation, "the superseded-token refusal").Count == 0)
         {
-            _output.WriteLine("hub corpus fits two pages of " + SmallPage + " - the chain finished");
             return;
         }
 

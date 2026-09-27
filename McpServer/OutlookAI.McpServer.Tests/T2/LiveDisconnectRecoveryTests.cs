@@ -28,7 +28,10 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// Safety: pre-existing windows (normally the show-me tests' parked hub Explorer -
 /// this collection runs last) are closed gracefully ONLY under the S7 quit-when-safe
 /// counts (user idle >= 3 min, zero open Inspectors, every Outbox empty) - otherwise
-/// the test skips; never kill. Side benefit: a full-suite run now ENDS with Outlook
+/// the test stops without closing anything; never kill. A recently active user or an open
+/// Inspector still ends it with a SKIP line; an Outbox that is not provably empty FAILS it,
+/// on every machine profile (Q76 - <see cref="OutboxRefusal"/> says why that one is not a
+/// skip). Side benefit: a full-suite run now ENDS with Outlook
 /// headless (D33) instead of leaving the show-me Explorer open.
 ///
 /// EVERY WAIT IN HERE IS BOUNDED, and that is a safety property rather than a tidiness
@@ -116,10 +119,12 @@ public sealed class LiveDisconnectRecoveryTests
             int outboxItems = clock.Step(
                 "count Outbox items (S7 safety count)",
                 () => independentGateway.Run(s => ((OutlookComSession)s).CountOutboxItems()));
-            if (outboxItems != 0)
+            string? outboxRefusal = OutboxRefusal(outboxItems);
+            if (outboxRefusal != null)
             {
-                _output.WriteLine($"SKIP: {outboxItems} Outbox item(s) (or count unavailable) - not closing anything.");
-                return;
+                // Not a skip, and not a Portable announcement either (Q76) - see OutboxRefusal.
+                _output.WriteLine(outboxRefusal);
+                Assert.Fail(outboxRefusal);
             }
 
             _output.WriteLine($"closing {baselineWindows.Count} parked Explorer window(s) gracefully (idle {idleSeconds:F0} s, no inspectors, outbox empty)");
@@ -316,6 +321,51 @@ public sealed class LiveDisconnectRecoveryTests
     {
         return $"running={health.Outlook.Running} comConnected={health.Outlook.ComConnected} "
             + $"headless={health.Outlook.Headless?.ToString() ?? "null"}";
+    }
+
+    /// <summary>
+    /// What this test says when the S7 Outbox count is not a clean zero - or null when it is, and
+    /// the parked windows may be closed.
+    /// <para>
+    /// <b>A FAILURE on every machine profile - not a skip, and not a Portable announcement (Q76,
+    /// 2026-09-27).</b> It used to print <c>SKIP:</c> and return GREEN, having proved nothing about
+    /// disconnect recovery. The usual answer to "this test could not prove anything here" is the
+    /// Production/Portable split of <see cref="LivePopulationCoverage"/>, and it was deliberately NOT
+    /// used, because its premise does not hold for an Outbox. Its Portable half announces instead of
+    /// failing because a test machine legitimately LACKS some population and names it under
+    /// <c>Requires</c>; an empty Outbox is not something any machine lacks - every machine can have
+    /// one, and the suite demands it. On a test guest nothing but a test ever queues mail, and this
+    /// collection is forced last, after every other collection has swept - so a count above zero
+    /// there is residue the zero-artifact rule forbids (a send the local sink never delivered, an
+    /// earlier run's leftovers, a corpus build's strays), and <see cref="LiveMailSink.EnsureOutboxDrained"/>
+    /// already refuses a whole run for it. Announcing it would turn a stuck Outbox into a permanent
+    /// <c>PROVED NOTHING:</c>, and this test would never run on that guest again. On a Production
+    /// profile the split would fail it anyway.
+    /// </para>
+    /// <para>
+    /// An unreadable count (-1) fails the same way: unknown is unsafe under S7, the rule
+    /// <see cref="LiveMailSink.EnsureOutboxDrained"/> keeps too. A count, never a subject (S4) - on a
+    /// working profile the Outbox is the user's own unsent mail.
+    /// </para>
+    /// </summary>
+    internal static string? OutboxRefusal(int outboxItems)
+    {
+        if (outboxItems == 0)
+        {
+            return null;
+        }
+
+        string found = outboxItems < 0
+            ? "The Outbox item count could not be read, so an empty Outbox cannot be told from a full one"
+            : "The profile's Outbox holds " + outboxItems.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + " item(s)";
+        return found + ". This test closes Outlook, and the quit-when-safe rule (S7) forbids that while anything may "
+            + "be queued, so it closed nothing and proved nothing about disconnect recovery. That fails on every machine "
+            + "profile instead of skipping (Q76). On a test guest nothing but a test ever queues mail, and this collection "
+            + "runs after every other one has swept, so this is residue the zero-artifact rule forbids - a send the local "
+            + "sink never delivered, an earlier run's leftovers or a corpus build's strays; "
+            + "LiveMailSink.EnsureOutboxDrained refuses a whole run for the same state. On a working profile it may be "
+            + "your own unsent mail: send or clear it, then re-run.";
     }
 
     /// <summary>
