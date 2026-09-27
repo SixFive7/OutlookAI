@@ -1972,7 +1972,11 @@ items 1, 2, 3 and 8. **Still open:** 4 to 7 - each settled by the first v2 build
    part is now the question above.
 5. **Does a store mounted in two profiles give the index two scopes?** The per-store scope URL is
    `mapi16://{SID}/StoreDisplayName($Hash)/`. Corpus A has always been in the same position, so the
-   answer - whatever it is - is not new to the populations.
+   answer - whatever it is - is not new to the populations. **Half answered 2026-09-27 (Q92, section
+   8 item 24):** `$Hash` is computed from the store's entry ID, which for a PST holds its file path
+   and nothing else that varies, and the name is the store's own, not the profile's - so one file
+   mounted from the same path in two profiles should give ONE scope. Predicted from the measured
+   rule; the two-profile mount itself was not made.
 6. **How long does the indexer take over a fresh hub?** It bounds how soon after the rebuild the run
    can start, and so how much of the UTC-offset margin is left for the run itself.
 7. **Does teardown leave the emptied subfolders behind in the hub's Deleted Items?** It removes a
@@ -2709,12 +2713,19 @@ unrecorded or unverified.
     suite's source tree rebuilt from scratch at Limited and `--list-tests` discovered the live
     tests there; a live test was NOT executed at Limited - the tier has not yet run on any guest.
 
-    **A side finding for the identity tests, not chased.** The index names a store by the name in
-    its profile's service, not by the root-folder name COM reports. The tier store appears as
+    **A side finding for the identity tests, not chased.** ~~The index names a store by the name in
+    its profile's service, not by the root-folder name COM reports.~~ **CORRECTED 2026-09-27 (Q92,
+    item 24), by measurement - it is the other way round:** the index names a store by the store's
+    OWN display name (`PR_DISPLAY_NAME` on the store, which is its root folder's name), while
+    `Store.DisplayName` reports the name in the profile. At `CP-15` the identity store's profile
+    sections both say `identity@vm.invalid`; its root folder and `PR_DISPLAY_NAME` say
+    `Outlook Data File` - so whatever named it changed the profile and not the root folder, since a
+    root-folder rename through `Rename-OutlookStore.ps1` changes both (measured on the tier store,
+    item 24). The tier store appears as
     `tier@vm.invalid($93f42b43)`, but the identity store - named by `Add-OutlookPstStore.ps1` through a
     root-folder rename - appears as `Outlook Data File($b25ac20a)`, its folders under
-    `/Outlook Data File`, while `Store.DisplayName` reads `identity@vm.invalid` (identified by
-    elimination: it is the tier profile's only other store). `IndexSearchService.TryDiscoverStoreScopeByAddress`
+    `/Outlook Data File`, while `Store.DisplayName` reads `identity@vm.invalid` (identified since Q92
+    by its hash - `ComputeHash(Store.StoreID)` is `b25ac20a` - not by elimination). `IndexSearchService.TryDiscoverStoreScopeByAddress`
     accepts a store only when the index's name EQUALS the address, so it cannot find the identity
     store here. **Checked by reading, 2026-09-24 - nothing changed:** the identity tests themselves
     (`LiveDraftTests.IdentityDrafts_BusinessAccounts_...`, `LiveDraftOptionsTests.NewDraft_BusinessAccounts_...`)
@@ -2731,10 +2742,13 @@ unrecorded or unverified.
     `ListAccounts_ExactAccountsDelegatesAndFlags` would fail the same way (`InLocalIndex` for every
     watched store) but carries `Requires: DelegateStore` and is never selected on a guest. The corpus
     tool asks the same question (`CorpusCommands.cs`, `corpus-indexed` for a store named like an
-    address), so waiting for an identity population to reach the index would never end either. The
+    address), so waiting for an identity population to reach the index would never end either. ~~The
     index name is fixed where the store is made: a PST named through its profile service, not by a
     root-folder rename, would be indexed under its address - untested, and a question for however
-    `identity.pst` gets its real Inbox (section 3b).
+    `identity.pst` gets its real Inbox (section 3b).~~ **Superseded by item 24:** the index name is
+    not fixed - it is the store's own name, a root-folder rename changes it, and the index follows
+    the rename (by dropping the store and indexing it again). A name set only in the profile service
+    is exactly what the index does NOT use. The product fix is Q92: find a store's slice by its hash.
 23. **OPEN - Outlook's Object Model Guard prompts on the guests, and the live tier reads protected
     members.** Windows Security Center reports Defender's signatures out of date (dated 2025-09-17,
     372 days on 2026-09-24; the guests have no network), so Outlook treats every out-of-process COM
@@ -2756,6 +2770,45 @@ unrecorded or unverified.
     POP3 "Internet Email - <account>" logon prompt. So a guest with this prompt up now needs a person
     (or the decision above) before it can be restarted gracefully. Q69 read no address property and
     raised no prompt: `Store.DisplayName`, `FilePath` and `IsInstantSearchEnabled` never did.
+24. **MEASURED 2026-09-27 (Q92) - how the index identifies a store, and what a rename does to it.**
+    On `OutlookAI-Indexed` from `CP-15-SIGNATURE-SUITE-STAGED` (own checkpoint `CP-15a-Q92-BEFORE`,
+    restored to `CP-15` afterwards), Outlook started NOT elevated through `Start-OutlookUnelevated.ps1`,
+    the index read only through `SELECT` statements, COM read only (store properties and one table
+    row), the renames only through `Rename-OutlookStore.ps1`. Findings, each measured:
+
+    - **`($Hash)` is Microsoft's documented store hash** (*Algorithm to Calculate the Store Hash
+      Number*, MAPI reference; the same code is MFCMAPI's `ComputeStoreHash`): `h = h*33 + x` over the
+      blob's little-endian DWORDs, then its trailing bytes. The blob is the store's `PR_ENTRYID` - which
+      is `Store.StoreID`, byte for byte - for a PST, and the profile's `PR_MAPPING_SIGNATURE` for a
+      cached Exchange store (`'.PUB'` mixed in for public folders). All three stores on this guest
+      reproduce exactly from `Store.StoreID`: `93f42b43` (tier), `b25ac20a` (identity), `23a27f0d`
+      (corpus). A PST's entry ID is fixed provider bytes plus the file's full path, so its hash
+      changes when the file moves and never when the store is renamed.
+    - **The name in the URL is the store's own** `PR_DISPLAY_NAME` (= its root folder's name), not
+      `Store.DisplayName`, which reports the profile's name. The identity store differs (item 22).
+      Two stores share a name on this guest: `Outlook Data File($b25ac20a)` (identity) and
+      `Outlook Data File($23a27f0d)` (the corpus, another profile's store - the index is per Windows
+      user, not per profile, and lists every profile's stores).
+    - **`DIRECTORY='mapi16://{SID}/'` lists exactly one row per store root, in 2-3 ms**, including the
+      two stores that hold no mail. The product's discovery sample (`TOP 2000 ... System.Kind='email'`,
+      314-370 ms) saw only the corpus store, on every reading.
+    - **The store UID in every item URL** (EntryID bytes 4..19) is the PST's `PR_RECORD_KEY`
+      (= `PR_STORE_RECORD_KEY` = `PR_MAPPING_SIGNATURE` on a PST): `026047AA...` on all 20,012 corpus
+      rows. A store with no item rows has no UID in the index at all.
+    - **A rename drops the store from the index at once.** Renaming the corpus store's root folder,
+      Outlook running: `Outlook Data File($23a27f0d)`'s root and folder rows were gone within 30 s and
+      the catalog fell from 20,482 items to 455 within a minute, while Outlook re-pushed the store
+      under `q92-corpus-renamed($23a27f0d)` - same hash - and the index held all 20,028 rows again
+      13 minutes after the rename (about 2,000 items a minute). Renaming the tier store, which holds
+      only folders: its 16 rows were gone within two seconds and nothing came back in 5 minutes;
+      after a graceful restart and a new Outlook start, only the store-root row returned
+      (`q92-renamed@vm.invalid($93f42b43)`), and the 15 folders had not returned after 8 minutes.
+      `SCOPE='<that root>'` then matches 0 rows while `DIRECTORY` lists it.
+
+    Not measured, and not measurable on a guest: the cached-Exchange half (whether the
+    `PR_MAPPING_SIGNATURE` readable through `PropertyAccessor` equals the profile's, which the hash
+    uses) and the delegate `/1/<name>` subtrees - both are the maintainer's workstation's shape.
+    `Store.PropertyAccessor` reads raised no Object Model Guard prompt at `CP-15` (item 23).
 
 ---
 
