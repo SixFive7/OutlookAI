@@ -7,8 +7,9 @@
 
     WHY NO GUEST WAS EVER INDEXED. Every Outlook the testbed started was ELEVATED, and an elevated
     Outlook does not use Windows Search at all. The session-1 route,
-    Testbed/guest/Register-InteractiveTask.ps1, registers its task at RunLevel Highest; every
-    Outlook started through it - UI watches, Build-Corpus.ps1, COM starts - inherited that token.
+    Testbed/guest/Register-InteractiveTask.ps1, registered every task at RunLevel Highest (still its
+    default; -RunLevel Limited since the same day); every Outlook started through it - UI watches,
+    Build-Corpus.ps1, COM starts - inherited that token.
     A NON-elevated Outlook registers itself within seconds. Measured on OAI-INDEXED from the same
     clean checkpoint (CP-09: no mapi16 rule, no Outlook row), same profile, a graceful restart in
     between, only the integrity level differing:

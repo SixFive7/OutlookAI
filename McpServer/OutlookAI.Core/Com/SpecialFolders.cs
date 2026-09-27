@@ -505,6 +505,142 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
+        /// For the three write paths that PUT an item into a special folder, and so may create
+        /// it: new_draft's Drafts, a reply's or forward's Drafts in the SOURCE item's store, and
+        /// the Deleted Items a discarded draft goes to. Q85, maintainer direction 2 (2026-09-27):
+        /// they MAY create the folder, and they MUST REPORT it. Returns the folder the old
+        /// <c>Store.GetDefaultFolder</c> call returned - throwing what it threw - and sets
+        /// <paramref name="created"/> only when this call is proven to have made it.
+        /// <para>
+        /// <b>Exchange</b> is asked exactly as before and never reports: its designated folders
+        /// are server defaults that always exist.
+        /// </para>
+        /// <para>
+        /// <b>Any other store</b> is first asked the non-creating way (<see cref="Resolve"/>). A
+        /// folder proven present is returned as it is, and nothing else is called. Otherwise the
+        /// store's top-level folders are listed, the creating call is made, and the folder it
+        /// returns counts as CREATED on evidence only, never on a guess:
+        /// </para>
+        /// <list type="bullet">
+        /// <item><description>With the listings: its EntryID was not among the store's
+        /// top-level folders before the call, and is among them after it - Drafts and Deleted
+        /// Items sit directly under the store's top folder (MS-OXOSFLD 3.1.1.1), which is
+        /// where the creating call makes them (measured for Archive on a POP3 PST). A folder
+        /// that already existed but that <see cref="Resolve"/> could not see - designated
+        /// somewhere it does not look, or nested below the top - is returned, and not
+        /// reported.</description></item>
+        /// <item><description>Where a listing could not be read: the maintainer's rule itself -
+        /// absent before (<see cref="Resolve"/> answered Absent; Unreadable proves nothing)
+        /// and present after.</description></item>
+        /// </list>
+        /// <para>
+        /// A call that returns no folder, or throws, is not reported: nothing then shows the
+        /// folder present afterwards.
+        /// </para>
+        /// </summary>
+        public static object? GetDefaultFolderReportingCreation(
+            ISpecialFolderStore store,
+            int olDefaultFolderId,
+            out bool created)
+        {
+            if (store == null)
+            {
+                throw new ArgumentNullException(nameof(store));
+            }
+
+            created = false;
+            if (IsExchangeStore(store.ExchangeStoreType))
+            {
+                // Exactly as before: a server default folder, which the call returns.
+                return store.GetDefaultFolder(olDefaultFolderId);
+            }
+
+            OutlookComSession.DefaultFolderResolution before = Resolve(store, olDefaultFolderId, out object? existing, out _);
+            if (before == OutlookComSession.DefaultFolderResolution.Resolved)
+            {
+                // Proven present: the folder the creating call would have returned, unasked.
+                return existing;
+            }
+
+            IReadOnlyList<string>? topBefore = store.ListRootChildEntryIds();
+
+            // THE CREATING CALL - on a store that lacks the folder, Outlook makes it here.
+            object? folder = store.GetDefaultFolder(olDefaultFolderId);
+            if (folder == null)
+            {
+                return null;
+            }
+
+            string? entryId = store.EntryIdOf(folder);
+            bool absentBefore = before == OutlookComSession.DefaultFolderResolution.Absent;
+            if (topBefore == null || entryId == null)
+            {
+                created = absentBefore;
+                return folder;
+            }
+
+            if (ContainsEntryId(topBefore, entryId))
+            {
+                // It was already there: an existing folder, now handed back.
+                return folder;
+            }
+
+            IReadOnlyList<string>? topAfter = store.ListRootChildEntryIds();
+            created = topAfter != null ? ContainsEntryId(topAfter, entryId) : absentBefore;
+            return folder;
+        }
+
+        /// <summary>
+        /// How a folder a write path CREATED is named in its result: <c>store/path</c>, the form
+        /// archive_mail's <c>createdFolders</c> has always used - a bare <c>Drafts</c> would not
+        /// say which mailbox gained it. Pure.
+        /// </summary>
+        public static string CreatedFolderLabel(string store, string storeRelativePath)
+        {
+            return store + "/" + storeRelativePath;
+        }
+
+        /// <summary>
+        /// The <see cref="CreatedFolderLabel"/> of a folder a write path created, from what the
+        /// folder itself says. The store is the display name the caller read; when that would
+        /// not read, the store segment of the folder's own <c>FolderPath</c>
+        /// (<c>\\store\Drafts</c>) stands in for it - Outlook's own name for the store, never a
+        /// guess. The path is the <c>FolderPath</c> made store-relative, or the folder's name
+        /// when the path would not read. Pure, public for T1.
+        /// </summary>
+        public static string CreatedFolderLabelFor(string? folderPath, string? folderName, string? storeDisplayName)
+        {
+            string relative = OutlookComSession.ToStoreRelativeFolderPath(folderPath, storeDisplayName);
+            if (relative.Length == 0)
+            {
+                relative = string.IsNullOrEmpty(folderName) ? "(unnamed folder)" : folderName!;
+            }
+
+            string? store = storeDisplayName;
+            if (string.IsNullOrEmpty(store) && folderPath != null)
+            {
+                string trimmed = folderPath.TrimStart('\\');
+                int separator = trimmed.IndexOf('\\');
+                store = separator > 0 ? trimmed.Substring(0, separator) : null;
+            }
+
+            return CreatedFolderLabel(string.IsNullOrEmpty(store) ? "(unnamed store)" : store!, relative);
+        }
+
+        private static bool ContainsEntryId(IReadOnlyList<string> entryIds, string entryId)
+        {
+            foreach (string candidate in entryIds)
+            {
+                if (string.Equals(candidate, entryId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Opens the folder a store-object PR_IPM_ARCHIVE_ENTRYID names - D39's fallback, which
         /// the move path keeps exactly as it was. Never creates.
         /// </summary>

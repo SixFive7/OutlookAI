@@ -14,10 +14,11 @@
     crawl scope, never pushes a store's items to the indexer, loads no Search proxy, and reports
     Store.IsInstantSearchEnabled = False. The same Outlook started NOT elevated registers within
     seconds and pushes every item of the stores its profile opens. Testbed/guest/
-    Register-InteractiveTask.ps1 - the testbed's route into session 1 - registers its task at
-    RunLevel Highest, so everything it starts is elevated; that is why the indexed guest sat with
-    an empty index for nine days. This script is the other route: a one-shot interactive task at
-    RunLevel LIMITED, the filtered token a user double-clicking Outlook gets.
+    Register-InteractiveTask.ps1 - the testbed's route into session 1 - registered every task at
+    RunLevel Highest, so everything it started was elevated; that is why the indexed guest sat with
+    an empty index for nine days. (It takes -RunLevel Limited since 2026-09-24, and the live tier
+    runs at it; Highest is still its default.) This script is the other route: a one-shot
+    interactive task at RunLevel LIMITED, the filtered token a user double-clicking Outlook gets.
 
     USE. Step 8c of Testbed/README.md section 1: with the crawl scope already set
     (Set-OutlookIndexingDisabled.ps1 -Enable -Execute), start Outlook here once per profile and let

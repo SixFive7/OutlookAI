@@ -221,6 +221,12 @@ namespace OutlookAI.Core.Com
         /// reach, because its registry gate only knows ids the caller was told. It is
         /// re-read after the relocate, since a move mints a new one.
         /// </param>
+        /// <param name="createdFolder">
+        /// The Drafts folder this call CREATED, as <c>store/path</c>, reported whether the
+        /// call then succeeded or failed; null when it created nothing (Q85: may create, must
+        /// report). A POP3, IMAP or data-file store without a Drafts folder gets one when a
+        /// draft is saved into it; an Exchange mailbox always has one.
+        /// </param>
         ComDraftCreateResult? TryCreateNewDraft(
             string accountSmtpAddress,
             IReadOnlyList<string> toRecipients,
@@ -230,6 +236,7 @@ namespace OutlookAI.Core.Com
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
             out string? savedDraftEntryId,
+            out string? createdFolder,
             out string? error);
 
         /// <summary>Creates a reply, reply-all or forward draft via Outlook's own derivation.</summary>
@@ -237,6 +244,11 @@ namespace OutlookAI.Core.Com
         /// Same contract as <see cref="TryCreateNewDraft"/>'s: the id of the saved draft,
         /// reported even when a later step fails, so a failed derivation cannot leave an
         /// orphan out of the cleanup tool's reach.
+        /// </param>
+        /// <param name="createdFolder">
+        /// The Drafts folder this call CREATED in the SOURCE item's store - where the draft is
+        /// filed - as <c>store/path</c>, reported whether the call then succeeded or failed;
+        /// null when it created nothing (Q85).
         /// </param>
         ComDraftCreateResult? TryCreateDerivedDraft(
             string sourceEntryIdHex,
@@ -248,6 +260,7 @@ namespace OutlookAI.Core.Com
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
             out string? savedDraftEntryId,
+            out string? createdFolder,
             out string? error);
 
         /// <summary>
@@ -273,7 +286,12 @@ namespace OutlookAI.Core.Com
             out string? error);
 
         /// <summary>Deletes a draft this server created.</summary>
-        ComDraftDiscardResult? TryDiscardDraft(string entryIdHex, string? storeId, out string? error);
+        /// <param name="createdFolder">
+        /// The Deleted Items folder this call CREATED - the discard moves the draft into it -
+        /// as <c>store/path</c>, reported whether the call then succeeded or failed; null when
+        /// it created nothing (Q85).
+        /// </param>
+        ComDraftDiscardResult? TryDiscardDraft(string entryIdHex, string? storeId, out string? createdFolder, out string? error);
 
         /// <summary>Reads the state a draft must be in before it may be sent, including its content hash.</summary>
         ComSendableDraftState? TryGetSendableDraftState(string entryIdHex, string? storeId, out string? error);

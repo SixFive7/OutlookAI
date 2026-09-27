@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 
 using OutlookAI.ComHost.Supervision;
 using OutlookAI.Core.Com;
@@ -351,6 +352,139 @@ public sealed class AtomicityClaimsTests
         Assert.DoesNotContain("UNKNOWN", refusal.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("does not live in a Drafts folder", refusal.Message, StringComparison.Ordinal);
         Assert.Equal(MutationOutcome.Unchanged, OutlookTools.DraftRefusalOutcome(refusal.Reason));
+    }
+
+    // ---------------------------------------------------------------- Q85: the destinations may create, and must report
+
+    private const string MadeDrafts = "tier@vm.invalid/Drafts";
+
+    private const string MadeDeletedItems = "tier@vm.invalid/Deleted Items";
+
+    [Fact]
+    public void ANewDraftThatCreatedTheDraftsFolder_SaysSo_AndOneThatDidNot_SaysNothing()
+    {
+        RecordingSession session = new RecordingSession { CreatedFolder = MadeDrafts };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        DraftOutcome made = service.NewDraft("me@example.com", "them@example.com", null, "A subject", "body", display: false);
+        Assert.Equal(new[] { MadeDrafts }, made.CreatedFolders);
+
+        // Backward compatible: nothing created, no field at all - not an empty list.
+        session.CreatedFolder = null;
+        DraftOutcome plain = service.NewDraft("me@example.com", "them@example.com", null, "A subject", "body", display: false);
+        Assert.Null(plain.CreatedFolders);
+    }
+
+    [Fact]
+    public void ANewDraftThatFailedAfterCreatingTheDraftsFolder_StillReportsIt()
+    {
+        // The folder is made before the draft is saved, so a failure after it leaves the folder
+        // behind: the failure says so, in its field and in its sentence.
+        RecordingSession session = new RecordingSession { CreatedFolder = MadeDrafts, CreateRefusal = "COMException 0x80004005" };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
+            () => service.NewDraft("me@example.com", "them@example.com", null, "A subject", "body", display: false));
+
+        Assert.Equal(new[] { MadeDrafts }, failure.CreatedFolders);
+        Assert.Contains("CREATED before this failed", failure.Message, StringComparison.Ordinal);
+        Assert.Contains(MadeDrafts, failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ANewDraftRefusedBeforeAnythingWasLookedUp_ReportsNoFolder()
+    {
+        RecordingSession session = new RecordingSession { CreateRefusal = "AccountNotFound" };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
+            () => service.NewDraft("nobody@example.com", "them@example.com", null, "A subject", "body", display: false));
+
+        Assert.Null(failure.CreatedFolders);
+        Assert.DoesNotContain("CREATED", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AReplyOrForwardThatCreatedTheSourceStoresDraftsFolder_SaysSo()
+    {
+        RecordingSession session = new RecordingSession { CreatedFolder = MadeDrafts };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        DraftOutcome reply = service.ReplyDraft(ItemId, "body", display: false);
+        DraftOutcome forward = service.ForwardDraft(ItemId, "body", "them@example.com", display: false);
+
+        Assert.Equal(new[] { MadeDrafts }, reply.CreatedFolders);
+        Assert.Equal(new[] { MadeDrafts }, forward.CreatedFolders);
+    }
+
+    [Fact]
+    public void AReplyThatFailedAfterCreatingTheDraftsFolder_StillReportsIt()
+    {
+        RecordingSession session = new RecordingSession { CreatedFolder = MadeDrafts, CreateRefusal = "COMException 0x80004005" };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
+            () => service.ReplyDraft(ItemId, "body", display: false));
+
+        Assert.Equal(new[] { MadeDrafts }, failure.CreatedFolders);
+        Assert.Contains("CREATED before this failed", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ADiscardThatCreatedDeletedItems_SaysSo_AndOneThatDidNot_SaysNothing()
+    {
+        RecordingSession session = new RecordingSession { CreatedFolder = MadeDeletedItems };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        service.DraftRegistry.Register(DraftId);
+        DiscardDraftOutcome made = service.DiscardDraft(DraftId);
+        Assert.Equal(new[] { MadeDeletedItems }, made.CreatedFolders);
+
+        session.CreatedFolder = null;
+        service.DraftRegistry.Register(DraftId);
+        DiscardDraftOutcome plain = service.DiscardDraft(DraftId);
+        Assert.Null(plain.CreatedFolders);
+    }
+
+    [Fact]
+    public void ADiscardThatFailedAfterCreatingDeletedItems_StillReportsIt()
+    {
+        RecordingSession session = new RecordingSession { CreatedFolder = MadeDeletedItems, DiscardRefusal = "COMException 0x800706BE" };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        service.DraftRegistry.Register(DraftId);
+        DraftRefusedException refusal = Assert.Throws<DraftRefusedException>(() => service.DiscardDraft(DraftId));
+
+        Assert.Equal(MailService.ComFailureRefusal, refusal.Reason);
+        Assert.Equal(new[] { MadeDeletedItems }, refusal.CreatedFolders);
+        Assert.Contains("CREATED before this failed", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("WHETHER THE DRAFT WAS DELETED IS UNKNOWN", refusal.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheErrorPayload_CarriesCreatedFolders_OnlyWhenAFolderWasMade()
+    {
+        // The failure half of the field, on the wire. Absent means absent - the error shape
+        // every other failure has always had is untouched.
+        string with = ErrorJson(OutlookTools.Error("OperationFailed", "m", null, outcome: MutationOutcome.Unknown, createdFolders: new[] { MadeDrafts }));
+        string without = ErrorJson(OutlookTools.Error("OperationFailed", "m", null, outcome: MutationOutcome.Unknown));
+
+        using (JsonDocument parsed = JsonDocument.Parse(with))
+        {
+            JsonElement created = parsed.RootElement.GetProperty("error").GetProperty("createdFolders");
+            Assert.Equal(MadeDrafts, Assert.Single(created.EnumerateArray()).GetString());
+        }
+
+        using (JsonDocument parsed = JsonDocument.Parse(without))
+        {
+            Assert.False(parsed.RootElement.GetProperty("error").TryGetProperty("createdFolders", out _));
+        }
+    }
+
+    private static string ErrorJson(ModelContextProtocol.Protocol.CallToolResult result)
+    {
+        Assert.True(result.IsError);
+        return Assert.IsType<ModelContextProtocol.Protocol.TextContentBlock>(Assert.Single(result.Content)).Text;
     }
 
     [Fact]
@@ -766,6 +900,9 @@ public sealed class AtomicityClaimsTests
 
         internal string? SendRefusal { get; set; }
 
+        /// <summary>The folder the draft/discard call reports CREATING (Q85), in the COM layer's <c>store/path</c> form.</summary>
+        internal string? CreatedFolder { get; set; }
+
         private static ComDraftInfo Snapshot()
         {
             return new ComDraftInfo(
@@ -783,6 +920,7 @@ public sealed class AtomicityClaimsTests
                 case nameof(IOutlookSession.TryCreateNewDraft):
                 case nameof(IOutlookSession.TryCreateDerivedDraft):
                     SetOut(method, args, "savedDraftEntryId", SavedDraftEntryId);
+                    SetOut(method, args, "createdFolder", CreatedFolder);
                     if (CreateRefusal != null)
                     {
                         SetOut(method, args, "error", CreateRefusal);
@@ -792,6 +930,7 @@ public sealed class AtomicityClaimsTests
                     return new ComDraftCreateResult(Snapshot(), true, false, 0, 0, false, null, false);
 
                 case nameof(IOutlookSession.TryDiscardDraft):
+                    SetOut(method, args, "createdFolder", CreatedFolder);
                     if (DiscardRefusal != null)
                     {
                         SetOut(method, args, "error", DiscardRefusal);
