@@ -901,17 +901,41 @@ this is the part the maintainer asked for directly:
 
 **And the VM side must include** (these are prerequisites, not extras):
 
+*(Checked against the records 2026-09-27: five of the seven are done, two of them another way; one
+is superseded and one is still open.)*
+
 - [ ] Verify that one PST can be excluded from the Windows Search index while another in the same
       profile is included, and that it stays excluded across a profile switch. **Everything else in
       the three-store design rests on this.**
-- [ ] Name the hub PST as the dummy account's SMTP address, and confirm Outlook accepts it.
-- [ ] Point the dummy account's delivery store at a fourth throwaway PST, not at the corpus.
-- [ ] Give `expectedStoreDisplayNames` a companion list for "expected to be in the index", or the
+      *(Superseded 2026-09-15, not done: there are two GUESTS, one indexed and one not, so index
+      state is a property of the machine and no design rests on excluding one PST -
+      `Docs/live-tier-on-the-vm.md` section 1.1a; `Testbed/README.md` section 6 item 9.)*
+- [x] Name the hub PST as the dummy account's SMTP address, and confirm Outlook accepts it.
+      *(Measured twice 2026-09-15 on Office LTSC 2024: a store named `tier@vm.invalid` reads back
+      over COM through a `.prf` import and through a root-folder rename - `Testbed/README.md`
+      section 6 item 10; the runbook's section 8 item 2.)*
+- [x] Point the dummy account's delivery store at a fourth throwaway PST, not at the corpus.
+      *(Met another way: the dummy POP3 account delivers into a store Outlook mints for it, and that
+      store IS the hub - `tier@vm.invalid`, whose population is rebuilt before every run - so the
+      corpus is never an account's delivery store; the corpus tool builds the hub population in the
+      account-less corpus profile. `Testbed/README.md` section 5, `guest/tier-profile-forcepst.prf`;
+      `Testbed/testbed.json`, `testHubStoreDisplayName`; the runbook's section 3b.)*
+- [x] Give `expectedStoreDisplayNames` a companion list for "expected to be in the index", or the
       index tier cannot coexist with a deliberately unindexed store.
+      *(Done 2026-09-24, Q70: `indexedStoreDisplayNames`, the INDEXED list beside the WATCHED one -
+      the runbook's section 1.3, "The two lists", and section 2.10.)*
 - [ ] Put a few hundred items in the bystander so the tripwire's identity half runs.
+      *(Still open: the bystander population, 300 items, was built once by generator v1 on
+      2026-09-24 with faults and survives only in `OutlookAI-Unindexed`'s `CP-11` as evidence;
+      v2 was probed on 2026-09-27 and not built, and populations wait on Q98 - the runbook's
+      sections 4.1 step 6, 4.1a and 4.1c.)*
 - [x] Decide the Outbox question (section 7, question 3) before the first send-path test runs.
       *(Decided 2026-09-24, Q71: a loopback sink on the guests - see the note at that question.)*
-- [ ] Add a re-anchor step to the corpus runbook, or the date windows expire silently.
+- [x] Add a re-anchor step to the corpus runbook, or the date windows expire silently.
+      *(Met another way, and re-anchoring itself was retired on 2026-08-25 after it wrote wrong
+      dates: a stale corpus is REBUILT - `Testbed/README.md` section 3 - and the windows cannot
+      expire silently, because `corpus-verify` and the live tier's freshness guard refuse a
+      window that selects nothing - the runbook's section 6, guard 3.)*
 
 ---
 
