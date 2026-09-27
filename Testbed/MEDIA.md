@@ -479,6 +479,8 @@ documents that Office 2013 and later install the runtime's loader and its .NET 4
 
 Both tools are the project's existing release toolchain, not testbed additions: a machine without
 them cannot produce a release either. They are named here so a rebuilder knows before starting.
+**Accepted by the maintainer as host preconditions of a testbed rebuild, 2026-09-27 (Q82, option
+(a))** - only a build from the commit under test exercises the add-in and the server together.
 
 **The build must never register the add-in on the host, and a plain one does.** The VSTO build
 targets write `HKCU\Software\Microsoft\Office\Outlook\Addins\OutlookAI` to point at the build output
