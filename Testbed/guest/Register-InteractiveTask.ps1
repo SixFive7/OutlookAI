@@ -24,13 +24,24 @@
 
     THE CONTRACT, so a caller can drive it without reading the implementation:
 
-        <JobRoot>\<jobId>\cmd.ps1     the work. Written by this script from -ScriptPath or -Script.
+        <JobRoot>\<jobId>\cmd.ps1     the wrapper the task runs. It runs -ScriptPath's script, or work.ps1.
+        <JobRoot>\<jobId>\work.ps1    an inline -Script, written as a script of its own (since 2026-09-27).
         <JobRoot>\<jobId>\out.txt     everything the work wrote, stdout and stderr merged.
         <JobRoot>\<jobId>\exit.txt    the exit code. ITS EXISTENCE IS THE COMPLETION SIGNAL.
 
     exit.txt is written last, in a `finally`, so it exists even when the work throws. A job that
     has out.txt and no exit.txt is still running or died without unwinding - those two are
     genuinely different and this script says which by whether the deadline was reached.
+
+    WHAT exit.txt HOLDS, for -ScriptPath and -Script alike: the work's own `exit N`; 1 when it ended
+    on a terminating error - a throw, an -ErrorAction Stop, a script that does not parse; otherwise
+    the exit code of the last native program it ran; otherwise 0. (And 4 for a Limited job that
+    refused - below.) UNTIL 2026-09-27 AN INLINE -Script's `exit N` WROTE 0 (Q91): the body was
+    pasted into cmd.ps1, where `exit` ended the wrapper itself, and the `finally` recorded the 0 the
+    wrapper had started from - a failure that read as success. A body that did not parse made
+    cmd.ps1 unparseable, so no exit.txt came at all and the caller waited out -TimeoutSeconds. Both
+    measured on the host, both shells; the body now runs as work.ps1, the way a -ScriptPath script
+    always has, which ends both.
 
     NO WINDOW, EVER. `-WindowStyle Hidden` is passed to powershell.exe, where it hides that
     process's own console; the task settings ask for hidden as well. Do not "fix" a problem here
@@ -165,29 +176,51 @@ public static class OaiInteractiveTaskToken {
     }
 }
 
-$jobId = [guid]::NewGuid().ToString('N')
-$jobDir = Join-Path $JobRoot $jobId
-New-Item -ItemType Directory -Force -Path $jobDir | Out-Null
+# THE JOB'S SCRIPTS: cmd.ps1 always, and work.ps1 for an inline -Script. A function so that the
+# host can exercise exactly this code - lifted out by its syntax tree, and what it writes run under
+# both PowerShells - without running this script, whose guard refuses there (and must). Defined
+# after the guard, called once below. Returns the job's four paths.
+function Write-InteractiveTaskJob {
+    param(
+        [Parameter(Mandatory = $true)] [string] $JobDir,
+        [Parameter(Mandatory = $true)] [string] $RunLevel,
+        [string] $ScriptPath,
+        [string] $Script
+    )
 
-$cmdPath = Join-Path $jobDir 'cmd.ps1'
-$outPath = Join-Path $jobDir 'out.txt'
-$exitPath = Join-Path $jobDir 'exit.txt'
+    $paths = [pscustomobject]@{
+        Cmd  = (Join-Path $JobDir 'cmd.ps1')
+        Work = (Join-Path $JobDir 'work.ps1')
+        Out  = (Join-Path $JobDir 'out.txt')
+        Exit = (Join-Path $JobDir 'exit.txt')
+    }
+    $outPath = $paths.Out
+    $exitPath = $paths.Exit
 
-if ($PSCmdlet.ParameterSetName -eq 'Path') {
-    if (-not (Test-Path -LiteralPath $ScriptPath)) { throw "Not found on the guest: $ScriptPath" }
-    $body = "& '" + ($ScriptPath -replace "'", "''") + "'"
-}
-else {
-    $body = $Script
-}
+    if ($ScriptPath) {
+        if (-not (Test-Path -LiteralPath $ScriptPath)) { throw "Not found on the guest: $ScriptPath" }
+        $body = "& '" + ($ScriptPath -replace "'", "''") + "'"
+    }
+    else {
+        # AN INLINE -Script RUNS AS ITS OWN SCRIPT, work.ps1 (Q91, decided 2026-09-27) - the way a
+        # -ScriptPath script always has. Pasted into the wrapper, as it was, its `exit N` ended
+        # cmd.ps1 itself and exit.txt said 0 (the banner). As work.ps1, `exit N` ends work.ps1 alone
+        # and reaches $LASTEXITCODE; a throw still reaches the wrapper's catch; the last native
+        # program's exit code still reaches $LASTEXITCODE; and a body that does not parse fails at
+        # once, with its parse error, instead of leaving no exit.txt. Written with a byte order
+        # mark, so Windows PowerShell 5.1 reads any non-ASCII in it as UTF-8, whichever PowerShell
+        # wrote it.
+        [System.IO.File]::WriteAllText($paths.Work, $Script, (New-Object System.Text.UTF8Encoding($true)))
+        $body = "& '" + ($paths.Work -replace "'", "''") + "'"
+    }
 
-# The level check, Limited only: the token is read BEFORE the work, and an elevated one runs none
-# of it - an elevated job asked to be non-elevated is the exact failure -RunLevel exists to end
-# (the banner), and it would otherwise look like a normal run. With Highest the check is empty,
-# $code is still 0 when the gate below is reached, and the work runs as it always did.
-$levelCheck = ''
-if ($RunLevel -eq 'Limited') {
-    $levelCheck = @"
+    # The level check, Limited only: the token is read BEFORE the work, and an elevated one runs
+    # none of it - an elevated job asked to be non-elevated is the exact failure -RunLevel exists to
+    # end (the banner), and it would otherwise look like a normal run. With Highest the check is
+    # empty, $code is still 0 when the gate below is reached, and the work runs as it always did.
+    $levelCheck = ''
+    if ($RunLevel -eq 'Limited') {
+        $levelCheck = @"
     `$levelPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     if (`$levelPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
         'REFUSED: this job was registered at RunLevel Limited and its token is ELEVATED anyway, so none of the work ran. Is UAC off (EnableLUA)? An elevated Outlook never feeds Windows Search, and COM will not attach across integrity levels.' | Out-File -FilePath '$outPath' -Encoding utf8 -Append
@@ -197,12 +230,12 @@ if ($RunLevel -eq 'Limited') {
         'run level: Limited - this token is NOT elevated (read before the work ran)' | Out-File -FilePath '$outPath' -Encoding utf8 -Append
     }
 "@
-}
+    }
 
-# The wrapper, not the work. It exists to guarantee three things the work cannot guarantee about
-# itself: everything it writes reaches out.txt, an exit code is recorded even when it throws, and
-# exit.txt is written LAST so its existence really does mean "finished".
-$wrapper = @"
+    # The wrapper, not the work. It exists to guarantee three things the work cannot guarantee
+    # about itself: everything it writes reaches out.txt, an exit code is recorded even when it
+    # throws, and exit.txt is written LAST so its existence really does mean "finished".
+    $wrapper = @"
 `$ErrorActionPreference = 'Continue'
 `$code = 0
 try {
@@ -222,7 +255,19 @@ finally {
     "`$code" | Out-File -FilePath '$exitPath' -Encoding utf8
 }
 "@
-Set-Content -LiteralPath $cmdPath -Value $wrapper -Encoding UTF8
+    Set-Content -LiteralPath $paths.Cmd -Value $wrapper -Encoding UTF8
+    return $paths
+}
+
+$jobId = [guid]::NewGuid().ToString('N')
+$jobDir = Join-Path $JobRoot $jobId
+New-Item -ItemType Directory -Force -Path $jobDir | Out-Null
+
+if ($PSCmdlet.ParameterSetName -eq 'Path') { $job = Write-InteractiveTaskJob -JobDir $jobDir -RunLevel $RunLevel -ScriptPath $ScriptPath }
+else { $job = Write-InteractiveTaskJob -JobDir $jobDir -RunLevel $RunLevel -Script $Script }
+$cmdPath = $job.Cmd
+$outPath = $job.Out
+$exitPath = $job.Exit
 
 $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($existing) { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false }

@@ -2397,9 +2397,29 @@ unrecorded or unverified.
    `Add-OutlookPstStore.ps1` has now also run on a guest (2026-09-24, `AddStoreEx` returned
    promptly, the rename carried) - so of the profile scripts only `New-OutlookProfile.ps1` is
    still unexecuted as far as this guest's record goes.
-10. The scheduled-task recipe for session 1: task name, principal, working directory, argument
-    line, output redirection and exit-code capture. Only "`-LogonType Interactive`" is recorded,
-    and an elevated process's stdout cannot reach the caller, so output must go to a file.
+10. ~~The scheduled-task recipe for session 1~~ - **ANSWERED by `Testbed/guest/Register-InteractiveTask.ps1`,
+    whose banner is the recipe - with ONE CHECK STILL OWED ON A GUEST (Q91, 2026-09-27).** Task
+    `OutlookAI-Interactive`, principal `-LogonType Interactive` at `-RunLevel Highest` (the default)
+    or `Limited`, a job directory `C:\OutlookAI-Q5\jobs\<id>` holding `cmd.ps1` (the wrapper), the
+    inline work as `work.ps1`, `out.txt` and `exit.txt` - output goes to a file because a task's
+    stdout never reaches the caller. **Exit-code capture changed on 2026-09-27:** an inline `-Script`
+    used to be pasted into `cmd.ps1`, where its `exit N` ended the wrapper itself and `exit.txt`
+    recorded 0 - a failure read as success - and a body that did not parse left no `exit.txt` at all,
+    so the caller waited out `-TimeoutSeconds`. It now runs as its own `work.ps1`, the shape
+    `Testbed/host/Restart-Guest.ps1`'s quit task has used since Q69, whose `exit 10` and `exit 16`
+    reached `exit.txt` on `OAI-INDEXED`. **Proven on the host only**: 15 cases - `exit N`, `exit` in a
+    function, a bare `exit`, a throw, `-ErrorAction Stop`, `$ErrorActionPreference = 'Stop'`, a
+    non-terminating error, a trailing native exit code, a parse error, non-ASCII text - for `-Script`
+    and `-ScriptPath`, at both run levels, each job written by and run under both PowerShells, with
+    the old wrapper as the control (it recorded `exit 7` as 0 and wrote no `exit.txt` for the parse
+    error); `-ScriptPath` wrote byte-identical `cmd.ps1` files old and new
+    (`.work/aa5e-2026-09-27-q91-inline-exit/`). **PENDING - at the next use of either guest, before
+    anything relies on an inline job's exit code** (a minute; no Outlook, no mailbox): stage the new
+    script beside `OutlookMapiInterop.ps1` in `C:\OutlookAI-Q5` and, over PowerShell Direct, run
+    `.\Register-InteractiveTask.ps1 -Script "'q91'; exit 7"` - expect `exit 7` printed and returned,
+    and a kept job directory holding `work.ps1` - then the same with `-RunLevel Limited` (`exit 7`),
+    with `-Script "'q91'; throw 'boom'"` (`exit 1`, `WRAPPER CAUGHT`), and with `-Script "'q91'"`
+    (`exit 0`). Record the result here and in the script's banner.
 11. The exact PST file paths and names for all four stores, and the mapping from file name to
     display name.
 12. .NET SDK version, clone path, build configuration, and how the built server exe reaches the
