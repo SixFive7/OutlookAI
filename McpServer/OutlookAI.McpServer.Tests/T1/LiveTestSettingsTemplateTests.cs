@@ -334,10 +334,11 @@ public sealed class LiveTestSettingsTemplateTests
     [Fact]
     public void WithEveryOptionalBlockDeclaredAbsent_ItLeavesThemOut_AndStillLoadsAndIsAdmitted()
     {
-        // The shape the UNINDEXED guest renders to: no index, so no indexed store, no probe term and
-        // no subject-only probe; no corpus built yet; no sink (Docs/live-tier-on-the-vm.md section
-        // 1.4). Blocks are left OUT, not written as null: absent is the documented shape, and the
-        // loader's default path.
+        // Every optional block absent: an UNINDEXED guest (no index, so no indexed store, no probe
+        // term and no subject-only probe) whose tier profile mounts no corpus, before its sink is
+        // declared - the guests get one (Q71, Docs/live-tier-on-the-vm.md section 1.4), declared once
+        // it reports SINK-READY. Blocks are left OUT, not written as null: absent is the documented
+        // shape, and the loader's default path.
         JsonObject values = SyntheticValues();
         values["indexedStoreDisplayNames"] = new JsonArray();
         values["probeTerm"] = string.Empty;

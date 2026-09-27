@@ -667,7 +667,7 @@ function New-RenderedDocument {
         $document['_corpus'] = 'Absent: testbed.json declares no corpus for this guest, so the tier skips the corpus freshness check.'
     }
     if ($Resolved.Omitted -contains 'mailSink') {
-        $document['_mailSink'] = "Absent: testbed.json declares no sink for this guest (Docs/live-tier-on-the-vm.md section 1.4). The loader reads absent as 'this machine has real transport' - the ambiguity section 2.10 names. Nothing listens here, so a send would queue in the Outbox: do not send."
+        $document['_mailSink'] = "Absent: testbed.json declares no sink for this guest yet. The guests get one (Q71, Docs/live-tier-on-the-vm.md section 1.4), declared once Testbed/guest/Install-MailSink.ps1 -Verify has reported SINK-READY on the guest. The loader reads absent as 'this machine has real transport' - the ambiguity section 2.10 names. With no sink declared, a send would queue in the Outbox: do not send."
     }
     foreach ($field in $Fields) {
         if ($null -eq $field.Block) {
@@ -2057,7 +2057,7 @@ else { Write-Host '  corpus      none declared - the freshness check is skipped'
 if ($null -ne (Get-ExactProperty $parsed 'mailSink')) {
     Write-Host ("  mailSink    submit {0}:{1}, retrieve {2}:{3}" -f $parsed.mailSink.submitHost, $parsed.mailSink.submitPort, $parsed.mailSink.retrieveHost, $parsed.mailSink.retrievePort)
 }
-else { Write-Host '  mailSink    none declared - the loader reads that as real transport; on a guest nothing listens, so do not send' }
+else { Write-Host '  mailSink    none declared - the loader reads that as real transport; do not send until the guest''s sink reports SINK-READY and is declared' }
 Write-Host ''
 Write-Host 'NOT CHECKED HERE - only the guest can answer these, and a wrong answer refuses the tier:'
 Write-Host '  * that the TIER profile mounts every store named above, under exactly these names'
