@@ -29,7 +29,13 @@
         accounts on two distinct stores, both SmtpAddress reads, and no logon dialog once
         New-TierProfile.ps1 -StoreSinkPassword had run.
       * The store's display name at each stage, for Q92: after the mint 'Outlook Data File', after the
-        rename 'identity@vm.invalid', after the attach 'identity@vm.invalid'.
+        rename 'identity@vm.invalid', after the attach 'identity@vm.invalid' (Store.DisplayName over
+        COM). And in the registry afterwards, the name each PROFILE holds for the file - its service
+        section's PR_DISPLAY_NAME_W, the name the index was measured to use (runbook section 8 item
+        22): 'identity@vm.invalid' in the tier profile AND in the mint profile.
+      * The same route again from the same checkpoint, run as the phases below (pass 2): the same
+        lines, mask 0xFF, 14 folders counted and 0 items at CaptureMint, and the sink logged
+        `read USER identity` / `read PASS any-value` at the start after the password was stored.
 
     THE ROUTE, as this script runs it (Outlook closed / running as each phase says; it never starts,
     quits or kills Outlook itself - start it in session 1 through Register-InteractiveTask.ps1, and
@@ -877,7 +883,7 @@ switch ($Phase) {
         if (-not $Execute) { Say "Dry run. Would write $IdsPath."; return }
         Set-Content -LiteralPath $IdsPath -Value ($c | ConvertTo-Json) -Encoding UTF8
         Say "wrote $IdsPath"
-        Say 'NEXT: close Outlook - a graceful Application.Quit() in session 1 (cancel the identity logon dialog first), never taskkill it - then:  .\Add-IdentityAccount.ps1 -Phase Bind -Execute'
+        Say 'NEXT: close Outlook the one way the runbook allows - from the host, Testbed/host/Restart-Guest.ps1 -VMName <this guest> -Execute -CancelLogonPrompt (it cancels the identity logon dialog, quits gracefully, restarts unforced; never taskkill) - then:  .\Add-IdentityAccount.ps1 -Phase Bind -Execute'
     }
     'Bind' {
         Assert-OutlookNotRunning

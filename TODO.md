@@ -185,12 +185,19 @@
         PR_MESSAGE_DELIVERY_TIME (the store's own table agrees) and Outlook refuses to delete it.
         Five directions; (a) defer the undated items now, with (e) a read-only index count as the
         follow-up, recommended.
-  - [ ] **Give `identity.pst` a real, designated Inbox - decided (a) 2026-09-27 (Q87):** mint it as
-        the default store of a throwaway `/PIM` profile, then attach it. Measure first, from
-        `CP-09-ADDIN-READY` with the index exclusion re-applied, exactly as runbook §3b writes out,
-        recording the store's display name after the mint, the rename and the attach (Q92). Until
-        then `Testbed/guest/Add-IdentityAccount.ps1 -Phase CaptureStore` refuses the store and the
-        identity account, and the identity population, wait.
+  - [x] **Give the identity store a real, designated Inbox - decided (a) 2026-09-27 (Q87), measured
+        and BUILT on `OutlookAI-Unindexed` the same day** (runbook §2.8b first box, §4.1b;
+        `CP-10B-IDENTITY-REAL-INBOX`): minted by `OUTLOOK.EXE /PIM`, scripted as
+        `Add-IdentityAccount.ps1 -Phase Mint` / `-Phase CaptureMint`; CaptureStore passes from the
+        tier profile, Verify says the account delivers into `Inbox`. The display names at each stage
+        are recorded there for Q92.
+  - [ ] **Rebuild `OutlookAI-Indexed`'s identity account the same way.** Its identity account is bound
+        to the `AddStoreEx` PST's hidden root, attached as `identity@vm.invalid`, and nothing in the
+        repository removes a store from a profile - so it is rebuilt from its checkpoint before the
+        identity account (runbook §4.2), not patched.
+  - [ ] **Put the identity account's signature back on `OutlookAI-Unindexed`.** `CP-10B` has none
+        (`CP-10` had one, on the wrong subkey): `Set-AccountSignature.ps1 -Account identity@vm.invalid
+        -Execute` with the fixed server, at Outlook's integrity level (runbook §2.8b, §4.2).
   - [ ] **Run `Testbed/guest/Measure-SweepCost.ps1` once.** It is the reconstruction of
         `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1`, which is gitignored and gone with its
         scratch directory. Written from the shipped `SweepFolder` source, read-only by
