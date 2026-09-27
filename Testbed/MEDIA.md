@@ -125,7 +125,9 @@ maintainer and nowhere else. The Windows ISO in `.work/media/` has exactly the s
 
 **The configuration files contain product keys and are therefore not reproduced here.** What the
 **existing** guest was built with — `VoIPFabric.xml`, the workstation configuration, because at
-the time there was no other:
+the time there was no other (*noted 2026-09-27: "existing" is the original guest, `OutlookAI-TestVM`,
+the one the published measurements were taken on - the only guest when this was written, on
+2026-08-24. `Testbed/README.md` section 6 item 3 had it as unrecorded; it now points here*):
 
 | Setting | Value |
 | --- | --- |

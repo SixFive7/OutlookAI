@@ -1048,6 +1048,20 @@ that was left out.
 3. **Office version, channel, bitness and install method**, and how the first-run wizard is
    suppressed. Bitness in particular: the test host is x64 because the `Search.CollatorDSO`
    provider needs an x64 host, but whether Office itself must be x64 is untested.
+   **Reconciled with `MEDIA.md` 2026-09-27 - most of this IS recorded, for the original guest
+   too.** `MEDIA.md`'s Office section says it was installed with the Office Deployment Tool from
+   `VoIPFabric.xml`, the maintainer's own configuration: `ProPlus2024Volume`, channel
+   `PerpetualVL2024`, `OfficeClientEdition="64"` - the settings recorded 2026-08-24 and the file
+   named 2026-09-15, as how it was built, not read off the guest. On that guest it MEASURED the
+   licence SKU `Office24ProPlus2024VL_KMS_Client_AE`, `VOLUME_KMSCLIENT` (its licence-clocks
+   section, 2026-09-15), and its version-gap table, measured the same day, gives a guest build of
+   16.0.17932.20884 on `PerpetualVL2024` (which guest that table read it does not say). The
+   script-built guests are installed from `Testbed.xml`: the same settings without Visio, Project
+   and proofing tools, with the installer's UI off and updates pinned. **Still open:** how the
+   original guest's first-run dialogs were suppressed - the script-built ones use
+   `guest/Set-OfficeFirstRunSuppressed.ps1` (§1 step 4b) - and whether Office must be x64: every
+   guest is 64-bit by configuration, and a 32-bit Office has never been tried. `testbed.json`'s
+   `unrecorded` list asks the same question about the same machine, and is narrowed to match.
 4. **The second Windows account.** The layout in `Docs/live-tier-on-the-vm.md` §1.1 needs two
    Windows accounts, one indexed and one not. The guest has `vmadmin`. Whether a second account
    exists, what it is called, and whether it has its own clone and runtime, is unknown.
