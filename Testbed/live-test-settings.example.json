@@ -9,6 +9,9 @@
 
   "testHubStoreDisplayName": "test@vm.invalid",
 
+  "_hubPopulation": "The manifest of the population generated into the hub (corpus-build --population hub), named corpus-<id>.jsonl after the id Testbed/testbed.json's corpusIdConvention.populations assigns this guest's hub. On a test guest the hub is REBUILT BEFORE EVERY RUN from it - Testbed/guest/Reset-HubPopulation.ps1 - because the index frontier test can catch a local-time misreading only while the hub's newest item is younger than the machine's UTC offset; that test reads this manifest and fails with the remedy on a hub nobody rebuilt. Leave the key out on a machine whose hub holds no generated population - the maintainer's own, whose hub is real mail - and the test says what it could not prove instead.",
+  "hubPopulationManifestPath": "C:\\OutlookAI-Q5\\corpus-hub-indexed.jsonl",
+
   "_watched": "expectedStoreDisplayNames is the WATCHED list: every store the tier profile mounts. It is what the count tripwire censuses (with the bystander and delegate lists unioned in), what the identity-draft grant is drawn from, what list_accounts exactness counts and what outlook_health must reach. It does NOT say a store is indexed - that is the next list.",
   "expectedStoreDisplayNames": [
     "test@vm.invalid",

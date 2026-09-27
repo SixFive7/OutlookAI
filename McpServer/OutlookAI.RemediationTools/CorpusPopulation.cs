@@ -106,8 +106,29 @@ public sealed record CorpusMailboxOwner(string Name, string Address)
 /// <param name="Address">SMTP address.</param>
 public sealed record CorpusCorrespondent(string Name, string Address)
 {
-    /// <summary>The <c>Name &lt;address&gt;</c> form Outlook resolves to a one-off recipient.</summary>
+    /// <summary>The <c>Name &lt;address&gt;</c> form, as a message header carries it.</summary>
     public string ToAddressSpec() => Name + " <" + Address + ">";
+
+    /// <summary>
+    /// What a recipient row is ADDED as, for <c>Recipients.Add</c> to resolve to a one-off: the
+    /// <c>Name &lt;address&gt;</c> form when the name is a name, and the bare address when the name
+    /// is itself an address.
+    /// <para>
+    /// <b>Why, measured on OAI-UNINDEXED 2026-09-24.</b> A store named as an address makes its owner
+    /// <c>Name = Address = tier@vm.invalid</c>, and Outlook's resolver REFUSES
+    /// <c>tier@vm.invalid &lt;tier@vm.invalid&gt;</c>: every received item of the hub, bystander and
+    /// identity populations - 42 of 56, 244 of 300 and 5 of 8 - carried one UNRESOLVED To row whose
+    /// Address was empty and whose Name was the whole spec, while <c>Kester Wren
+    /// &lt;kester.wren@margie.invalid&gt;</c> on the sent items resolved to an SMTP one-off. An owner
+    /// the index cannot see as a recipient is exactly the store discovery the populations exist to
+    /// make possible. The bare address is a string the resolver has no display part to misread in.
+    /// </para>
+    /// </summary>
+    public string ToRecipientSpec()
+        => string.Equals(Name, Address, StringComparison.OrdinalIgnoreCase)
+            || Name.IndexOfAny(new[] { '@', '<', '>' }) >= 0
+            ? Address
+            : ToAddressSpec();
 }
 
 /// <summary>Which recipient row an address goes in.</summary>
@@ -310,6 +331,17 @@ public sealed record CorpusPopulationFolder(int FolderId, int ParentFolderId, st
 public sealed record CorpusSubjectOnlyProbe(int FolderId, string FolderPath, string SubjectTerm, string SenderFragment);
 
 /// <summary>
+/// What an UNDATED population item carries beyond its subject and body. Every one of them has no
+/// received date and no sender; what differs is kind-specific.
+/// </summary>
+/// <param name="Kind">Which undated kind.</param>
+/// <param name="AppointmentStartUtc">An appointment's start, in UTC; null for every other kind.</param>
+/// <param name="AppointmentMinutes">An appointment's length; null for every other kind.</param>
+/// <param name="ContactFullName">A contact's full name - the tagged subject; null for every other kind.</param>
+public sealed record CorpusUndatedDetail(
+    CorpusItemKind Kind, DateTime? AppointmentStartUtc, int? AppointmentMinutes, string? ContactFullName);
+
+/// <summary>
 /// A CURATED fixture population: the small, tagged mini-corpora the generator builds into the
 /// live tier's hub, bystander and identity stores so the tests that read those stores have
 /// something to read. Decided 2026-09-24 (Q70): the hub PST the design used to leave empty, and
@@ -345,8 +377,17 @@ public sealed class CorpusPopulation
     /// The population format version, folded into the shape key. Bump it whenever a change here
     /// would make a rebuild produce a different population from the same seed, so an old manifest
     /// is refused rather than extended with items of a different shape.
+    /// <para>
+    /// 2 (2026-09-24): the hub gains twelve UNDATED items and the bystander forty-two -
+    /// appointments, contacts and tasks, <see cref="CorpusItemKind"/> - for
+    /// <c>LiveOrderKeyCollationTests</c>. No unsent drafts, although they were the first choice:
+    /// Outlook files a new unsent item in the profile's DEFAULT store's Drafts on its first save
+    /// (measured on OAI-UNINDEXED the same day - see <see cref="CorpusItemKind"/>), and a
+    /// population is never built into the default store, so a draft cannot be made in one without
+    /// writing into another store first.
+    /// </para>
     /// </summary>
-    public const int Version = 1;
+    public const int Version = 2;
 
     /// <summary>The lowest synthetic folder id. Outlook's default-folder ids stop in the low forties.</summary>
     public const int SubfolderIdBase = 1000;
@@ -411,6 +452,26 @@ public sealed class CorpusPopulation
     /// <summary>The words the SF-6 probe subjects add around <see cref="SubjectOnlyTerm"/>.</summary>
     private static readonly string[] NoticeSubjectWords = { "weekly" };
 
+    /// <summary>
+    /// Words only an UNDATED item's subject carries. Disjoint - as substrings, which is stricter
+    /// than the word breaker - from every word a DATED item carries anywhere, in both directions:
+    /// the live tests that derive terms from the hub's mail (the oracle, the exhaustive known
+    /// answer, the subject/body separation) must never hit an undated row, because some of them
+    /// compare against ground truth drawn from received mail only.
+    /// </summary>
+    private static readonly string[] UndatedSubjectWords =
+    {
+        "lantern", "harbour", "meadow", "compass", "glacier", "orchard",
+        "beacon", "canyon", "saffron", "thistle", "juniper", "marble",
+    };
+
+    /// <summary>Words only an UNDATED item's body carries. Same rules as <see cref="UndatedSubjectWords"/>, and disjoint from them.</summary>
+    private static readonly string[] UndatedBodyWords =
+    {
+        "pebble", "willow", "falcon", "cobalt", "garnet", "tundra",
+        "velvet", "walnut", "zephyr", "amber", "cinder", "sorrel",
+    };
+
     /// <summary>The synthetic directory every correspondent is drawn from.</summary>
     private static readonly CorpusCorrespondent[] Directory =
     {
@@ -438,6 +499,7 @@ public sealed class CorpusPopulation
     private const int StreamBody = 220_000;
     private const int StreamAttachment = 230_000;
     private const int StreamThread = 240_000;
+    private const int StreamUndated = 250_000;
 
     private readonly CorpusPlanOptions _options;
     private readonly Slot[] _slots;
@@ -496,6 +558,22 @@ public sealed class CorpusPopulation
     /// <summary>Everybody a population can address.</summary>
     public static IReadOnlyList<CorpusCorrespondent> Correspondents => Directory;
 
+    /// <summary>The words undated items' subjects are built from.</summary>
+    public static IReadOnlyList<string> UndatedSubjectVocabulary => UndatedSubjectWords;
+
+    /// <summary>The words undated items' bodies are built from.</summary>
+    public static IReadOnlyList<string> UndatedBodyVocabulary => UndatedBodyWords;
+
+    /// <summary>The undated kinds this population carries, in <see cref="CorpusItemKinds.Undated"/> order. Empty for the identity store.</summary>
+    public IReadOnlyList<CorpusItemKind> UndatedKinds
+        => CorpusItemKinds.Undated.Where(k => _slots.Any(s => s.Kind == k)).ToList();
+
+    /// <summary>
+    /// The default folders this population's undated items live in - what a scan of it must walk on
+    /// top of the corpus's own folder set, and what its undated probe and teardown must reach.
+    /// </summary>
+    public IReadOnlyList<int> UndatedFolderIds => UndatedKinds.Select(CorpusItemKinds.FolderIdOf).ToList();
+
     /// <summary>The shape-key fragment that makes a population's manifest unmistakable for any other.</summary>
     public string ShapeKeySuffix => ShapeKeySuffixFor(Kind, Owner);
 
@@ -531,7 +609,8 @@ public sealed class CorpusPopulation
         }
 
         string id = options.CorpusId.ToLowerInvariant();
-        foreach (string word in SubjectWords.Concat(BodyWords).Concat(BodyFiller.Where(w => w.Length >= 4)))
+        foreach (string word in SubjectWords.Concat(BodyWords).Concat(BodyFiller.Where(w => w.Length >= 4))
+            .Concat(UndatedSubjectWords).Concat(UndatedBodyWords))
         {
             if (id.Contains(word, StringComparison.Ordinal))
             {
@@ -600,6 +679,23 @@ public sealed class CorpusPopulation
     {
         Slot slot = SlotOf(ordinal);
         string body = BuildBody(ordinal);
+        if (CorpusItemKinds.IsUndated(slot.Kind))
+        {
+            // No received date and no submit date: that absence IS the item. Read, because an
+            // unread flag on an item nobody receives is a state no reader of it expects.
+            return new CorpusItemSpec(
+                ordinal,
+                slot.FolderId,
+                BuildSubject(ordinal),
+                body.Length,
+                CorpusItemSpec.UndatedInstant,
+                CorpusItemSpec.UndatedInstant,
+                true,
+                "population-" + Kind.ToString().ToLowerInvariant(),
+                "undated-" + slot.Kind.ToString().ToLowerInvariant(),
+                slot.Kind);
+        }
+
         long ageSeconds = AgeSecondsOf(ordinal, slot);
         DateTime receivedUtc = DateTime.SpecifyKind(_options.AnchorUtc, DateTimeKind.Utc).AddSeconds(-ageSeconds);
         bool outbound = slot.Role is SlotRole.Outbound;
@@ -649,6 +745,13 @@ public sealed class CorpusPopulation
             return sb.ToString();
         }
 
+        if (CorpusItemKinds.IsUndated(slot.Kind))
+        {
+            // Two or three words of the undated vocabulary, and nothing a dated item carries.
+            AppendWords(sb, UndatedSubjectWords, ordinal, StreamSubject + 1, 2 + (int)(Draw(ordinal, StreamSubject) % 2UL));
+            return sb.ToString();
+        }
+
         int words = 3 + (int)(Draw(ordinal, StreamSubject) % 3UL);
         AppendWords(sb, SubjectWords, ordinal, StreamSubject + 1, words);
         return sb.ToString();
@@ -662,6 +765,22 @@ public sealed class CorpusPopulation
     public string BuildBody(int ordinal)
     {
         Slot slot = SlotOf(ordinal);
+        if (CorpusItemKinds.IsUndated(slot.Kind))
+        {
+            // Short, and only the undated body words: an appointment's or a contact's notes, a
+            // task's description, a draft's text. No filler word either - the filler is shared
+            // with dated bodies, and "please" in an undated row would be a dated term's hit.
+            var undated = new StringBuilder();
+            int sentences = 2 + (int)(Draw(ordinal, StreamBody) % 2UL);
+            for (int s = 0; s < sentences; s++)
+            {
+                string words = Words(UndatedBodyWords, ordinal, StreamBody + 10 + (s * 32), 4 + (int)(Draw(ordinal, StreamBody + 5 + s) % 3UL));
+                undated.Append(char.ToUpperInvariant(words[0])).Append(words, 1, words.Length - 1).Append(".\n");
+            }
+
+            return undated.ToString();
+        }
+
         int target = slot.Role == SlotRole.Notice
             ? 160 + (int)(Draw(ordinal, StreamBody) % 240UL)
             : 220 + (int)(Draw(ordinal, StreamBody) % 1180UL);
@@ -696,10 +815,20 @@ public sealed class CorpusPopulation
         return sb.ToString();
     }
 
-    /// <summary>Everything item <paramref name="ordinal"/> carries beyond the corpus basics.</summary>
-    public CorpusItemEnrichment Enrich(int ordinal)
+    /// <summary>
+    /// Everything item <paramref name="ordinal"/> carries beyond the corpus basics, or null for an
+    /// UNDATED item: a draft nobody has addressed, an appointment with no attendees, a contact and a
+    /// task have no sender, no recipient row and no attachment, and saying so with null is what keeps
+    /// every consumer from reading a sender off one. See <see cref="UndatedDetail"/> for what they do carry.
+    /// </summary>
+    public CorpusItemEnrichment? Enrich(int ordinal)
     {
         Slot slot = SlotOf(ordinal);
+        if (CorpusItemKinds.IsUndated(slot.Kind))
+        {
+            return null;
+        }
+
         CorpusCorrespondent owner = new(Owner.Name, Owner.Address);
         CorpusCorrespondent counterpart = slot.Thread != null
             ? Directory[(int)(DrawThread(slot.Thread.Index, 1) % (ulong)Directory.Length)]
@@ -743,6 +872,39 @@ public sealed class CorpusPopulation
             slot.Thread?.Index,
             slot.Thread == null ? null : ThreadTopic(slot.Thread.Index),
             slot.Thread == null ? null : ConversationIndexOf(slot.Thread, ordinal));
+    }
+
+    /// <summary>
+    /// What an UNDATED item carries beyond its subject and body, or null for a dated item. Pure, and
+    /// fixed by the plan like everything else, so a rebuild writes the same appointment at the same
+    /// hour and the same contact under the same name.
+    /// </summary>
+    public CorpusUndatedDetail? UndatedDetail(int ordinal)
+    {
+        Slot slot = SlotOf(ordinal);
+        if (!CorpusItemKinds.IsUndated(slot.Kind))
+        {
+            return null;
+        }
+
+        switch (slot.Kind)
+        {
+            case CorpusItemKind.Appointment:
+                // In the PAST, relative to the anchor, on the hour: a past appointment with no
+                // reminder raises nothing on screen, and a guest's Outlook has no one to dismiss it.
+                DateTime anchorDay = DateTime.SpecifyKind(_options.AnchorUtc.Date, DateTimeKind.Utc);
+                DateTime start = anchorDay.AddDays(-(slot.Index + 2)).AddHours(9 + (int)(Draw(ordinal, StreamUndated) % 6UL));
+                int minutes = Draw(ordinal, StreamUndated + 1) % 2UL == 0UL ? 30 : 60;
+                return new CorpusUndatedDetail(slot.Kind, start, minutes, null);
+            case CorpusItemKind.Contact:
+                // The name carries the subject, tags included. Which of a contact's name fields
+                // Outlook derives PR_SUBJECT from is not something to lean on, so every field it
+                // could derive it from carries the tag - and the undated probe proves the subject
+                // survives on this store before a single contact is built.
+                return new CorpusUndatedDetail(slot.Kind, null, null, BuildSubject(ordinal));
+            default:
+                return new CorpusUndatedDetail(slot.Kind, null, null, null);
+        }
     }
 
     /// <summary>A human label for a synthetic folder id, or null when it is not one of this population's.</summary>
@@ -829,7 +991,40 @@ public sealed class CorpusPopulation
             slots.Add(Single(SlotRole.Notice, notices.FolderId, "notices", i, Array.Empty<CorpusAttachmentKind>(), unread: i % 3 == 2, probeTerm: false, 1, 40));
         }
 
+        // 57-68: the UNDATED rows LiveOrderKeyCollationTests measure - four appointments, four
+        // contacts and four tasks. Twelve, not more: every one is a search hit (gap B3 admits every
+        // item class), and Phase7's top-100 search over the hub must stay under 100 with room for
+        // what a run writes. The bystander carries the volume. No drafts: see Version.
+        AddUndated(slots, 4, CorpusItemKinds.Undated);
+
         return (slots.ToArray(), new[] { projects, notices });
+    }
+
+    /// <summary>
+    /// Appends <paramref name="perKind"/> undated slots of each of <paramref name="kinds"/>, in that
+    /// order, each in its kind's own default folder.
+    /// </summary>
+    private static void AddUndated(List<Slot> slots, int perKind, IEnumerable<CorpusItemKind> kinds)
+    {
+        foreach (CorpusItemKind kind in kinds)
+        {
+            for (int i = 0; i < perKind; i++)
+            {
+                slots.Add(new Slot(
+                    SlotRole.Undated,
+                    CorpusItemKinds.FolderIdOf(kind),
+                    "undated-" + kind.ToString().ToLowerInvariant(),
+                    i,
+                    null,
+                    Array.Empty<CorpusAttachmentKind>(),
+                    Unread: false,
+                    ProbeTerm: false,
+                    FixedAgeSeconds: 0,
+                    AgeFromSeconds: 0,
+                    AgeToSeconds: 0,
+                    Kind: kind));
+            }
+        }
     }
 
     private static (Slot[] Slots, IReadOnlyList<CorpusPopulationFolder> Folders) BystanderLayout()
@@ -893,6 +1088,15 @@ public sealed class CorpusPopulation
         {
             slots.Add(Single(SlotRole.Inbound, suppliers.FolderId, "suppliers", i, Array.Empty<CorpusAttachmentKind>(), unread: false, probeTerm: false, 5, 600));
         }
+
+        // 301-342: forty-two UNDATED non-mail rows - fourteen appointments, contacts and tasks.
+        // LiveOrderKeyCollationTests.WidenedSearch compares a TOP 25 search that admits every item
+        // class, over-fetched to TOP 60, against the old mail-only shape; the order-key refetch it
+        // guards can only be told apart from its absence when more undated rows sort ahead of the
+        // cut than the over-fetch leaves room for (60 - 25 = 35). The hub cannot carry that many
+        // (its search must stay under 100 hits); the bystander, which no test writes and nothing
+        // pages, can. No drafts here: a bystander has no business holding unsent mail.
+        AddUndated(slots, 14, new[] { CorpusItemKind.Appointment, CorpusItemKind.Contact, CorpusItemKind.Task });
 
         return (slots.ToArray(), new[] { projects, suppliers });
     }
@@ -1081,6 +1285,7 @@ public sealed class CorpusPopulation
         Inbound,
         Outbound,
         Notice,
+        Undated,
     }
 
     private sealed record ThreadSlot(int Index, int Position);
@@ -1096,7 +1301,8 @@ public sealed class CorpusPopulation
         bool ProbeTerm,
         long FixedAgeSeconds,
         long AgeFromSeconds,
-        long AgeToSeconds);
+        long AgeToSeconds,
+        CorpusItemKind Kind = CorpusItemKind.Mail);
 }
 
 /// <summary>
