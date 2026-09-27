@@ -30,6 +30,33 @@
 
     NOT EXERCISED ON A GUEST: -Execute -Revert.
 
+    ============================================================================================
+    RUN ON OutlookAI-Indexed 2026-09-24 (FROM CP-11-FIRSTRUN-REPAIRED): NO-PROMPT - AND WHY THAT
+    RUN, UNLIKE THE ONE ABOVE, PROVES LESS THAN IT READS.
+    ============================================================================================
+
+      -SelfTest     43 checks, 0 failures, on the guest.
+      -Execute      Outlook closed; the key did not exist; all nine written and read back REG_DWORD.
+      -Verify       SmtpAddress of both accounts ('tier@vm.invalid', 'identity@vm.invalid') in 1.5 s
+                    all told, no prompt - VERDICT: NO-PROMPT, exit 0. The same transient
+                    'OUTLOOK.EXE -Embedding' handed off and exited, as described above.
+
+    THE INTEGRITY LEVEL HAS TO MATCH. On the indexed guest Outlook runs NOT elevated - started by
+    Testbed/guest/Start-OutlookUnelevated.ps1, because an elevated Outlook never feeds the index.
+    An elevated caller cannot attach to it (Testbed/host/Restart-Guest.ps1 says why), and
+    Testbed/guest/Register-InteractiveTask.ps1 always runs elevated. So there -Verify ran in a
+    one-shot scheduled task at RunLevel LIMITED in session 1 - the level Outlook itself had
+    (integrity 0x2000 for both, read from their tokens). Against an Outlook the testbed started
+    elevated, Register-InteractiveTask.ps1 is still the route.
+
+    WHAT IT DID NOT PROVE THERE. At that moment Windows Security Center reported the antivirus
+    product state 0x061100 - "signatures up to date" - while Defender itself (Get-MpComputerStatus)
+    reported its signatures 372 days old and DefenderSignaturesOutOfDate=True. The guard follows
+    WSC [MS-DOC 1], so its trigger was ABSENT: that run proves the nine values are in place and that
+    the protected read works from a Limited caller, NOT that the policy suppressed a prompt. The
+    control on OutlookAI-Unindexed (0x061110 there) remains the only proof of that. Both guests
+    had recorded 0x061110 earlier; why WSC's view flipped on the indexed guest is not established.
+
 .SYNOPSIS
     Auto-approves Outlook's programmatic-access prompts (the Object Model Guard) on an OFFLINE TEST
     GUEST, through the documented Outlook security Group Policy - and then PROVES it by reading
@@ -37,9 +64,12 @@
 
 .DESCRIPTION
     RUN ON THE GUEST. Windows PowerShell 5.1 - no ternary, no `??`. -Verify runs in the
-    INTERACTIVE session, through Testbed/guest/Register-InteractiveTask.ps1. NEVER on the
-    maintainer's workstation: the guard below refuses there, and on that machine the Object Model
-    Guard is doing its job.
+    INTERACTIVE session AT OUTLOOK'S OWN INTEGRITY LEVEL: through
+    Testbed/guest/Register-InteractiveTask.ps1 (elevated) for an Outlook the testbed started
+    elevated, and in a RunLevel Limited task for one started by
+    Testbed/guest/Start-OutlookUnelevated.ps1 (the indexed guest) - see the second run above. NEVER
+    on the maintainer's workstation: the guard below refuses there, and on that machine the Object
+    Model Guard is doing its job.
 
     WHY THIS EXISTS - Q80, DECIDED BY THE MAINTAINER 2026-09-24: auto-approve Outlook's
     programmatic-access prompt on the offline test guests ONLY. Outlook's Object Model Guard lets
