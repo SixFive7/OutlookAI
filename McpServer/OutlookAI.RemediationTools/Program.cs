@@ -170,12 +170,12 @@ internal static class Program
             // next moves: the first invites a re-run, and a re-run during the second is two
             // writers against one store. Any wrapper testing for non-zero still sees a
             // failure; one that can tell the two apart now can.
-            Console.Error.WriteLine($"FATAL: {ex.GetType().Name}: {ex.Message}");
+            Console.Error.WriteLine($"FATAL: {ToolFailure.Describe(ex)}");
             return ex.Acknowledged ? 1 : AbandonedStaSessionExitCode;
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"FATAL: {ex.GetType().Name}: {ex.Message}");
+            Console.Error.WriteLine($"FATAL: {ToolFailure.Describe(ex)}");
             return 1;
         }
     }
