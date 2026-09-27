@@ -1737,8 +1737,8 @@ against **the moment the run starts**, which is why its anchor is not recorded i
 
 **The rebuild is a script step, not a paragraph - decided 2026-09-24 (question D, option (a)), the
 pattern chosen for `ImportPRF`.** `Testbed/guest/Reset-HubPopulation.ps1 -Execute`, through
-`Register-InteractiveTask.ps1 -TimeoutSeconds 3600`, right after a guest restart (section 4 has the
-line). It reads everything from the guest's own live-test settings - the hub, the manifest
+`Register-InteractiveTask.ps1 -TimeoutSeconds 3600`, right after a guest restart through
+Testbed/host/Restart-Guest.ps1 (section 4 has the line). It reads everything from the guest's own live-test settings - the hub, the manifest
 (`hubPopulationManifestPath`, whose file name is the population id) and whether the hub is indexed -
 and the seed and the old anchor from the manifest's header, and then:
 
@@ -1754,7 +1754,7 @@ and the seed and the old anchor from the manifest's header, and then:
 6. quits the Outlook it started, under mailbox-safety rule 7 - attached through the Running Object
    Table, every Outbox proven empty by its store's folder mask, no item window open, and OUTLOOK.EXE
    the one process it started; a quit that does not complete (a modal dialog swallows `Quit()`,
-   measured) stops with "restart the guest, then `-SkipRebuild`";
+   measured) stops with "`Testbed/host/Restart-Guest.ps1 -Execute`, then `-SkipRebuild`";
 7. makes the tier profile the default again, starts Outlook on it NOT ELEVATED
    (`Start-OutlookUnelevated.ps1` - an elevated Outlook never feeds the index, section 8 item 22,
    and the run attaches at the user's own level), and on the indexed guest runs `corpus-indexed`
@@ -1773,7 +1773,7 @@ guest, counting the indexer's crawl and everything the run does before it gets t
 depends on anyone remembering: the frontier test reads the manifest and FAILS, naming the script, on a
 hub too old to catch a local-time frontier with.
 
-`-SelfTest` covers every decision above (78 assertions, Windows PowerShell 5.1 and 7), and the guest
+`-SelfTest` covers every decision above (79 assertions, Windows PowerShell 5.1 and 7), and the guest
 guard refuses the script on the workstation. **Nothing below its guard has run on a guest.**
 
 The bystander and identity populations have no such clock: no test reads their dates, so they are
@@ -1896,7 +1896,8 @@ this machine cannot be given. There is no separate "which bucket" trait to keep 
 see section 5.
 
 **On a test guest, every run starts with the hub rebuild - a script step, decided 2026-09-24
-(question D, option (a)).** Restart the guest, then in session 1:
+(question D, option (a)).** Restart the guest gracefully - Testbed/host/Restart-Guest.ps1 -VMName <guest>
+-Execute, the only restart this runbook allows - then in session 1:
 
 ```
 .\Register-InteractiveTask.ps1 -TimeoutSeconds 3600 -Script "& 'C:\OutlookAI-Q5\Reset-HubPopulation.ps1' -Execute"

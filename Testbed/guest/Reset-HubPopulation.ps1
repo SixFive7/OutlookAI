@@ -94,8 +94,9 @@
     profile is the account-less one, OUTLOOK.EXE is the very process it started, nothing is open,
     and every Outbox is provably empty. Otherwise it refuses and leaves Outlook running. It then
     releases its own reference and waits for the process to leave. If it does not within
-    -QuitTimeoutSeconds, it stops: NEVER taskkill OUTLOOK.EXE - restart the guest and run this
-    again with -SkipRebuild, which finishes steps 9 and 10 against the hub already rebuilt.
+    -QuitTimeoutSeconds, it stops: NEVER taskkill OUTLOOK.EXE - restart the guest with
+    Testbed/host/Restart-Guest.ps1 -Execute and run this again with -SkipRebuild, which finishes
+    steps 9 and 10 against the hub already rebuilt.
 
     WHAT IT NEVER DOES. Kill a process. Quit an Outlook it did not start. Touch a store but the
     hub, or delete anything except through corpus-teardown's two keys. Run a live test. Rebuild the
@@ -110,7 +111,7 @@
         so, and builds.
       * stopped during the build: the new manifest records what was built; the next run tears
         that down by ITS anchor and builds again.
-      * stopped at the quit: restart the guest, then -SkipRebuild.
+      * stopped at the quit: Testbed/host/Restart-Guest.ps1 -Execute, then -SkipRebuild.
     Every stop but the last leaves the ACCOUNT-LESS profile the default. A live run started then
     refuses on its own (its census does not find the tier profile's stores as named), and the
     frontier test refuses a stale hub - but do not rely on that: re-run this script.
@@ -577,7 +578,7 @@ function Get-NewestFromPlanText {
 <# What to do when Outlook is up where it must not be, or would not leave. #>
 function Format-RestartAdvice {
     param([string] $Then)
-    return "Restart the guest - from the host, over PowerShell Direct, which lands in session 0: Invoke-Command -VMName <this guest> -Credential <vmadmin> { shutdown /r /t 0 } (Testbed/README.md section 1, step 4d). NEVER taskkill OUTLOOK.EXE: mailbox-safety rule 7 forbids it outright. Once autologon has brought session 1 back, $Then"
+    return "Restart the guest the one way the runbook allows - from the host: Testbed/host/Restart-Guest.ps1 -VMName <this guest> -Execute. It quits Outlook gracefully first and restarts Windows unforced, and it refuses rather than force anything; if it refuses, its reason is the next thing to fix. Never a raw restart command - one with any timeout force-closes Outlook - and NEVER taskkill OUTLOOK.EXE: mailbox-safety rule 7 forbids both. Once it reports the console session Active again, $Then"
 }
 
 # =============================================================================================
@@ -755,7 +756,8 @@ function Invoke-SelfTest {
     Write-Host ''
     Write-Host '== what it says when Outlook is in the way =='
     $advice = Format-RestartAdvice -Then 'run this again.'
-    Test-Says 'restart the guest, from session 0' @($advice) 'shutdown /r'
+    Test-Says 'restart the guest through Restart-Guest.ps1, from the host' @($advice) 'Testbed/host/Restart-Guest.ps1 -VMName <this guest> -Execute'
+    Test-Case 'and never through a raw shutdown command' $false ($advice.Contains('shutdown /r') -or $advice.Contains('Invoke-Command'))
     Test-Says 'and never kill Outlook' @($advice) 'NEVER taskkill OUTLOOK.EXE'
 
     Write-Host ''
@@ -1176,7 +1178,7 @@ if ($plan.Rebuild) {
     if ($null -ne $plan.TeardownAnchor) {
         $teardown = Invoke-HubTool -Write -Arguments (Get-HubToolArgument -Verb 'corpus-teardown' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $plan.TeardownAnchor -ManifestPath $plan.ManifestPath)
         if ($teardown.Code -ne 0) {
-            throw "corpus-teardown failed (exit $($teardown.Code)); the manifest is where it was, and Outlook is running on '$CorpusProfileName'. Read the output above. If it says the manifest records a different shape, the population was built by an older generator: corpus-reindex it into a NEW manifest path, inspect that, and tear down with it - never by hand. Then restart the guest and run this again. Log: $LogPath"
+            throw "corpus-teardown failed (exit $($teardown.Code)); the manifest is where it was, and Outlook is running on '$CorpusProfileName'. Read the output above. If it says the manifest records a different shape, the population was built by an older generator: corpus-reindex it into a NEW manifest path, inspect that, and tear down with it - never by hand. Then restart the guest (Testbed/host/Restart-Guest.ps1 -Execute) and run this again. Log: $LogPath"
         }
 
         [void][System.IO.Directory]::CreateDirectory($historyDirectory)
@@ -1195,7 +1197,7 @@ if ($plan.Rebuild) {
     $anchorBuilt = [datetime]::UtcNow.ToString($script:UtcFormat, $script:Invariant)
     $build = Invoke-HubTool -Write -Arguments (Get-HubToolArgument -Verb 'corpus-build' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $anchorBuilt -ManifestPath $plan.ManifestPath)
     if ($build.Code -ne 0) {
-        throw "corpus-build failed (exit $($build.Code)); Outlook is running on '$CorpusProfileName'. Read the output above: a probe that refused wrote nothing, and a build that failed after writing left a manifest the next run tears down. Restart the guest and run this again. Log: $LogPath"
+        throw "corpus-build failed (exit $($build.Code)); Outlook is running on '$CorpusProfileName'. Read the output above: a probe that refused wrote nothing, and a build that failed after writing left a manifest the next run tears down. Restart the guest (Testbed/host/Restart-Guest.ps1 -Execute) and run this again. Log: $LogPath"
     }
 
     $rebuilt = Read-HubManifestHeader (Read-FirstLine $plan.ManifestPath)
