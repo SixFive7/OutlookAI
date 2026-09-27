@@ -533,9 +533,7 @@ public static class CorpusCommands
         IReadOnlyList<CorpusUndatedProbe> probes = ComCorpusMailbox.ProbeUndated(options.Store!, plan.Options.CorpusId, kinds);
         foreach (CorpusUndatedProbe p in probes)
         {
-            output.WriteLine($"  {p.Kind.ToString().ToLowerInvariant(),-12} folder={p.FolderReachable} inFolder={p.InTheFolder}"
-                + $" tag={p.SubjectTagParses} undated={p.HasNoDeliveryTime} class={p.ClassMatches} inTargetStore={p.InTheTargetStore}"
-                + (p.Error == null ? string.Empty : $" error={p.Error}"));
+            output.WriteLine(CorpusUndatedFidelity.Line(p));
         }
 
         return CorpusUndatedFidelity.Decide(kinds, probes);

@@ -1219,17 +1219,23 @@ public static class ComCorpusMailbox
 
     /// <summary>
     /// Creates one UNDATED item of <paramref name="spec"/>'s kind in the folder whose Items collection
-    /// is <paramref name="items"/>, saves it, and returns its EntryID and the StoreID of the store the
-    /// save actually put it in - which the caller holds against the target. Shared by the build and the
-    /// undated probe, so the probe proves exactly the write path the build then uses.
+    /// is <paramref name="items"/>, saves it, and returns its EntryID, the StoreID of the store the
+    /// save actually put it in - which the caller holds against the target - and why the delivery time
+    /// could not be removed, or null. Shared by the build and the undated probe, so the probe proves
+    /// exactly the write path the build then uses.
     /// <para>
     /// What it deliberately does NOT do is the point: no date is written, nothing is moved, no
     /// recipient is added and nothing is sent. An appointment gets no attendees (so it is never a
     /// meeting request) and no reminder; a task no due date and no reminder; a contact no e-mail
     /// address.
     /// </para>
+    /// <para>
+    /// A refused removal is RETURNED, not thrown: the item is saved by then, and the caller is the one
+    /// holding what it takes to delete or record it. Thrown, it escaped the probe with the item's EntryID
+    /// unread (OAI-UNINDEXED, 2026-09-27).
+    /// </para>
     /// </summary>
-    private static (string EntryId, string? SavedStoreId) CreateUndatedItem(
+    private static (string EntryId, string? SavedStoreId, string? RemovalRefused) CreateUndatedItem(
         dynamic items, CorpusItemSpec spec, string body, CorpusUndatedDetail detail)
     {
         dynamic? item = null;
@@ -1264,13 +1270,18 @@ public static class ComCorpusMailbox
 
             item.Save();
 
+            // Read the moment it exists, so every path below can hand it back for deletion.
+            string entryId = (string)item!.EntryID;
+
             // MEASURED on OAI-UNINDEXED, 2026-09-27: an appointment, a contact and a task saved this way
             // into a PST CARRY PR_MESSAGE_DELIVERY_TIME after that first save - the undated probe refused
             // all three ("it CARRIES a delivery time, so the index would date it"). An undated item exists
             // to carry none, so the property is removed and the item saved again; the probe and the build's
-            // read-back re-open the item by EntryID and check that it stayed gone.
-            RemoveDeliveryTime(item!);
-            return ((string)item!.EntryID, SavedItemStoreId(item));
+            // read-back re-open the item by EntryID and check that it stayed gone. MEASURED the same day:
+            // for an appointment the PropertyAccessor REFUSES the removal (UnauthorizedAccessException,
+            // "does not support this operation") - so the refusal is returned, and the probe reports it.
+            string? removalRefused = TryRemoveDeliveryTime((object)item!);
+            return (TryRead<string>(() => (string)item!.EntryID) ?? entryId, SavedItemStoreId(item), removalRefused);
         }
         finally
         {
@@ -1279,9 +1290,36 @@ public static class ComCorpusMailbox
     }
 
     /// <summary>
+    /// <see cref="RemoveDeliveryTime"/>, with a refusal RETURNED as its description rather than thrown -
+    /// null when the property is gone or was never there.
+    /// </summary>
+    private static string? TryRemoveDeliveryTime(dynamic item)
+    {
+        try
+        {
+            RemoveDeliveryTime(item);
+            return null;
+        }
+        catch (Exception ex) when (IsUndatedWriteRefusal(ex))
+        {
+            return ToolFailure.Describe(ex);
+        }
+    }
+
+    /// <summary>
+    /// A COM call failure, or <see cref="UnauthorizedAccessException"/> - the shape E_ACCESSDENIED takes
+    /// through the interop, and the one the PropertyAccessor's refused <c>DeleteProperty</c> took on
+    /// OAI-UNINDEXED, 2026-09-27. <see cref="OutlookComSession.IsComCallFailure"/> does not include it,
+    /// and that is how the refusal escaped the undated probe and ended the run.
+    /// </summary>
+    private static bool IsUndatedWriteRefusal(Exception ex)
+        => OutlookComSession.IsComCallFailure(ex) || ex is UnauthorizedAccessException;
+
+    /// <summary>
     /// Removes PR_MESSAGE_DELIVERY_TIME from a SAVED undated item and saves it again. An item that does
-    /// not carry the property is left alone and not saved twice; any other failure propagates, so the
-    /// probe reports it and the build refuses rather than file an item the index would date.
+    /// not carry the property is left alone and not saved twice; any other failure propagates to
+    /// <see cref="TryRemoveDeliveryTime"/>, which reports it, so the build refuses rather than file an
+    /// item the index would date.
     /// </summary>
     private static void RemoveDeliveryTime(dynamic item)
     {
@@ -1377,7 +1415,7 @@ public static class ComCorpusMailbox
 
                     foreach (CorpusItemKind kind in checkpoint.Steps(kinds, "undated probe"))
                     {
-                        probes.Add(RunOneUndatedProbe(store!, ns!, storeId, corpusId, kind));
+                        probes.Add(RunOneUndatedProbe(store!, ns!, storeId, corpusId, kind, checkpoint));
                         PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint, folderIds);
                     }
 
@@ -1393,7 +1431,8 @@ public static class ComCorpusMailbox
             });
     }
 
-    private static CorpusUndatedProbe RunOneUndatedProbe(dynamic store, dynamic ns, string storeId, string corpusId, CorpusItemKind kind)
+    private static CorpusUndatedProbe RunOneUndatedProbe(
+        dynamic store, dynamic ns, string storeId, string corpusId, CorpusItemKind kind, ComStaCheckpoint checkpoint)
     {
         int folderId = CorpusItemKinds.FolderIdOf(kind);
         dynamic? folder = null;
@@ -1434,13 +1473,14 @@ public static class ComCorpusMailbox
                 kind == CorpusItemKind.Appointment ? 30 : null,
                 kind == CorpusItemKind.Contact ? subject : null);
             // (object): a dynamic argument would make the call - and so its tuple - dynamic.
-            (string createdId, string? savedStoreId) = CreateUndatedItem((object)items!, spec, "undated probe", detail);
+            (string createdId, string? savedStoreId, string? removalRefused) =
+                CreateUndatedItem((object)items!, spec, "undated probe", detail);
             entryId = createdId;
             if (savedStoreId != null && !string.Equals(savedStoreId, storeId, StringComparison.OrdinalIgnoreCase))
             {
                 // Saved into ANOTHER store: deleted there, in the finally, and the kind is refused.
                 deleteFrom = savedStoreId;
-                return new CorpusUndatedProbe(kind, true, false, false, false, false, false, null);
+                return new CorpusUndatedProbe(kind, true, false, false, false, false, false, null, removalRefused);
             }
 
             item = ns.GetItemFromID(entryId, storeId);
@@ -1452,11 +1492,18 @@ public static class ComCorpusMailbox
             bool? dated = ReadDeliveryTimePresence(item!);
             string? messageClass = TryRead<string>(() => (string)item!.MessageClass);
             bool classMatches = CorpusMessageFlags.ClassMatches(messageClass, CorpusItemKinds.MessageClassOf(kind));
-            return new CorpusUndatedProbe(kind, true, inFolder, tagParses, dated == false, classMatches, true, null);
+
+            // The second read of the received date: the folder's own table, restricted by the store.
+            // (object): static binding, so the lookups come back typed rather than dynamic.
+            bool? tableUndated = CorpusUndatedTable.Verdict(
+                Answer(TableFind((object)folder!, CorpusUndatedTable.Filter(corpusId, withReceivedDate: false), entryId, checkpoint)),
+                Answer(TableFind((object)folder!, CorpusUndatedTable.Filter(corpusId, withReceivedDate: true), entryId, checkpoint)));
+            return new CorpusUndatedProbe(
+                kind, true, inFolder, tagParses, dated == false, classMatches, true, null, removalRefused, tableUndated);
         }
-        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+        catch (Exception ex) when (IsUndatedWriteRefusal(ex))
         {
-            return new CorpusUndatedProbe(kind, folder != null, false, false, false, false, true, ex.Message);
+            return new CorpusUndatedProbe(kind, folder != null, false, false, false, false, true, ToolFailure.Describe(ex));
         }
         finally
         {
@@ -1800,7 +1847,7 @@ public static class ComCorpusMailbox
                                     folderItems[spec.FolderId] = undatedItems!;
                                 }
 
-                                (string undatedId, string? undatedStoreId) =
+                                (string undatedId, string? undatedStoreId, string? removalRefused) =
                                     CreateUndatedItem((object)undatedItems!, spec, plan.BuildBody(spec), plan.UndatedDetail(ordinal)!);
                                 RequireSavedInTarget(ns!, undatedId, undatedStoreId, targetStoreId, ordinal, plan.Options.CorpusId);
                                 var undatedLine = new CorpusManifestItem(ordinal, undatedId, spec.FolderId, spec.BodyBytes, null);
@@ -1808,6 +1855,10 @@ public static class ComCorpusMailbox
                                 record(undatedLine);
                                 created++;
                                 bytes += spec.BodyBytes;
+
+                                // RECORDED FIRST, then refused: the item is in the target store and the
+                                // manifest now names it, so corpus-teardown removes it.
+                                RequireDeliveryTimeRemoved(ordinal, removalRefused);
                             }
                             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
                             {
@@ -2753,6 +2804,25 @@ public static class ComCorpusMailbox
     }
 
     /// <summary>
+    /// The build's stop when the write path could not remove an undated item's delivery time: the item
+    /// is already in the target store and recorded in the manifest, so the refusal leaves nothing
+    /// teardown cannot reach. The undated probe checks exactly this first, so a build should never get here.
+    /// </summary>
+    private static void RequireDeliveryTimeRemoved(int ordinal, string? removalRefused)
+    {
+        if (removalRefused == null)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "REFUSING to go on building: undated item " + ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + " keeps its delivery time - Outlook refused to remove it (" + removalRefused + "). It is in the target "
+            + "store and recorded in the manifest, so corpus-teardown removes it. The undated probe checks this on a "
+            + "throwaway item, so a build should never get here; run corpus-probe and read its undated lines.");
+    }
+
+    /// <summary>
     /// Writes PR_MESSAGE_FLAGS on an item that has NEVER been saved: MSGFLAG_UNSENT and MSGFLAG_SUBMIT
     /// cleared, MSGFLAG_READ as asked - read-modify-write, like <see cref="ApplyMessageFlags"/>, but with
     /// no save. MAPI lets MSGFLAG_UNSENT change only before a message's first save, which is why this
@@ -3567,6 +3637,15 @@ public static class ComCorpusMailbox
         /// </summary>
         Inconclusive,
     }
+
+    /// <summary>A lookup as <see cref="CorpusUndatedTable.Verdict"/> takes it: found, not found, or no answer.</summary>
+    private static bool? Answer(TableLookup lookup)
+        => lookup switch
+        {
+            TableLookup.Found => true,
+            TableLookup.NotFound => false,
+            _ => null,
+        };
 
     /// <summary>
     /// Asks a folder's table whether it carries one specific item. The FILTER is expected to
