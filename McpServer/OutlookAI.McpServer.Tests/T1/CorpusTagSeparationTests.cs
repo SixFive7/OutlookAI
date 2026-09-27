@@ -15,10 +15,12 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// - literally the same constant - and <c>CorpusPlan.BuildSubject</c> put it at the front of
 /// every corpus subject. The live tier's post-run artifact sweep walks every store in
 /// <c>expectedStoreDisplayNames</c>, counts subjects containing that tag and calls
-/// <c>DeleteTaggedArtifactsUntilStableZero</c> on anything above zero; its folder set covers
-/// Inbox, Sent Items, Deleted Items and the Outbox - four of the corpus's five populated
-/// folders, ~21 000 items on the documented layout. So a live run was one sweep away from
-/// deleting the entire measurement corpus, through the tested helpers, inside the safety
+/// <c>DeleteTaggedArtifactsUntilStableZero</c> on anything above zero; its folder set - Drafts,
+/// Inbox, Sent Items, the Outbox, Deleted Items and the Sync Issues subtree - takes in three of
+/// the corpus's four populated folders, Inbox, Sent Items and Deleted Items: 18,337 of its
+/// 20,000 items on the documented layout. (The corpus plan puts nothing in the Outbox, and its
+/// fourth folder, Junk Email, is not swept.) So a live run was one sweep away from deleting
+/// nearly all of the measurement corpus, through the tested helpers, inside the safety
 /// rules, with nothing to stop it. Declaring the corpus store a bystander turned that into a
 /// write-guard refusal - safe, but a run whose normal outcome is a refusal gets muted.
 /// </para>
