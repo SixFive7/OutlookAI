@@ -25,6 +25,17 @@
       * -BuildOnly from 9f24e5c, which has the guard: this script's Override stand-ins took over
         from the project's own ("Created an override using task"), with no conflict; 358 lines
         identical.
+      * 2026-09-27, later: a -WorkRoot holding ',' or ';' is refused before anything runs, the dry
+        run included (Get-MSBuildPathProblem says how each breaks MSBuild). Established first on the
+        unchanged script, -BuildOnly from f89d502 under 5.1 from 7 and under 7: a ',' stopped guard
+        1's evaluation on MSB1006 after the throwaway certificate was made and the source archived;
+        a ';' built cleanly but sent the detailed log to a file cut off at the ';', so the log
+        checks FAILed a good build; the dry run passed both. Now refused in about a second under
+        5.1 from 7, 5.1 from a 7 prompt and 7 - ',', ';' and both with -BuildOnly, ',' in the dry
+        run - with no directory and no certificate made; -BuildOnly with an ordinary -WorkRoot
+        still built, guard 3 UNCHANGED over 358 lines. Every one of those runs sat between two reg
+        exports of the add-in registration and the VSTO trust list, byte-identical each time.
+        -SelfTest 125/0 in all three launch modes.
 
     NOT RUN: -Execute, in either direction - the maintainer decides when his Outlook changes - so
     nothing here has yet been loaded by Outlook. Replace this banner with what the first -Execute
@@ -136,6 +147,8 @@
 
 .PARAMETER WorkRoot
     Where builds happen. Default .work\switch-addin-build under the repository root (gitignored).
+    Refused when its full path contains ',' or ';', which MSBuild's command line splits on (see
+    Get-MSBuildPathProblem) - before anything is built, and by the dry run as well.
 
 .PARAMETER MSBuildPath
     MSBuild.exe. Default: found with vswhere, from a Visual Studio with the Office workload.
@@ -1425,6 +1438,31 @@ function Test-IsUnderGitWorkTreeButNotWork {
     return (-not $p.StartsWith($root + '.work\', [System.StringComparison]::OrdinalIgnoreCase))
 }
 
+# MSBuild's command line cuts a switch value into pieces at every ',' and ';' outside quotes, and
+# every path this script hands MSBuild - the project, the stand-in targets, the detailed log - lies
+# under -WorkRoot. Measured 2026-09-27 with this script's own Get-MSBuildArgumentList on MSBuild
+# 18.10, then with the script itself, -BuildOnly, under 5.1 started from 7 and under 7:
+#   * ','  /p:CustomBeforeMicrosoftCommonTargets=...\sw-A,B\...\NoHostWrite.targets stopped guard 1's
+#          evaluation on MSB1006 ("Property is not valid", switch "B\...\NoHostWrite.targets") -
+#          after the throwaway certificate was made and the source archived - and the run ended
+#          "The build did not produce a usable add-in", which it had never tried to build.
+#   * ';'  Format-MSBuildProperty's %3B keeps the stand-in path whole, so the guards held and the
+#          build succeeded - but /flp: has no such escape, and the detailed log went, with no error,
+#          to a file cut off at the ';'. Reading the log where it should have been, all three log
+#          checks FAILed a good build, two of them saying the real registry-writing tasks might have
+#          run.
+#   * The dry run printed both paths as where -Execute would build, and exited 0.
+# So a ',' or ';' is refused up front, dry run included, before anything is archived, signed or
+# built, rather than every argument having to get an escaping rule right - the refusal
+# Testbed/host/Publish-AddInPayload.ps1 has for its -OutDir. $null when the path is fine.
+function Get-MSBuildPathProblem {
+    param([string] $Path)
+    $separators = @(@(',', ';') | Where-Object { $Path.Contains($_) })
+    if ($separators.Count -eq 0) { return $null }
+    $named = ($separators | ForEach-Object { "'$_'" }) -join ' and '
+    return "-WorkRoot '$Path' contains $named, which MSBuild's command line reads as a separator - a ',' stops the build on MSB1006 ('Property is not valid'), a ';' sends the detailed log this script proves its guards from somewhere else. Every path this build hands MSBuild lies under -WorkRoot, which defaults to .work\switch-addin-build under the repository; choose one with no ',' or ';' in it"
+}
+
 function Resolve-Commit {
     param([string] $Ref)
     $sha = (@(Invoke-NativeCommand { & git -C $RepoRoot rev-parse --verify "$Ref^{commit}" 2>&1 }) | Out-String).Trim()
@@ -1698,6 +1736,10 @@ function Invoke-SelfTest {
     Test-Case 'the build directory is a footprint in forward-slash form' 1 @(Find-BuildFootprint -Lines @('HKCU\Software\Microsoft\VSTO\Security\Inclusion\{g}|Url=String:file:///C:/w/.work/switch-addin-build/x/source/bin/Release/OutlookAI.vsto') -BuildDirectory 'C:\w\.work\switch-addin-build\x' -Thumbprint '' -ModulusBase64 '').Count
     Test-Case 'a WorkRoot elsewhere in the working tree is refused' $true (Test-IsUnderGitWorkTreeButNotWork -Path 'C:\r\Tools\out' -WorkTreeRoot 'C:\r')
     Test-Case 'a WorkRoot under .work is allowed' $false (Test-IsUnderGitWorkTreeButNotWork -Path 'C:\r\.work\switch-addin-build' -WorkTreeRoot 'C:\r')
+    Test-Case 'a WorkRoot with a comma is refused - MSBuild would split it' $true ([string](Get-MSBuildPathProblem 'C:\w\.work\sw-A,B')).Contains("contains ','")
+    Test-Case 'and one with a semicolon' $true ([string](Get-MSBuildPathProblem 'C:\w\.work\sw-A;B')).Contains("contains ';'")
+    Test-Case 'a WorkRoot with both is refused naming both' $true ([string](Get-MSBuildPathProblem 'C:\a,b;c')).Contains("',' and ';'")
+    Test-Case 'a space is accepted - the arguments quote it' '' ([string](Get-MSBuildPathProblem 'C:\a b\.work\switch-addin-build'))
 
     Write-Host ''
     Write-Host '== OutlookAI.csproj keeps its own Q81 guard =='
@@ -1934,6 +1976,9 @@ if ($Restore) {
 }
 
 # ---- Putting a dev build on, or -BuildOnly -----------------------------------------------------
+# First, and for the dry run too: a -WorkRoot MSBuild's command line would cut in pieces.
+$workRootProblem = Get-MSBuildPathProblem (Get-NormalPath $WorkRoot)
+if ($workRootProblem) { throw "REFUSING: $workRootProblem. Nothing was built, copied, trusted or registered." }
 $commitInfo = Resolve-Commit $Commit
 $dirty = @(Invoke-NativeCommand { & git -C $RepoRoot status --porcelain })
 if ($dirty.Count -gt 0) { Say "NOTE the working tree has $($dirty.Count) uncommitted change(s). They are NOT in the build - it is built from $($commitInfo.Sha) on purpose." }
