@@ -1450,7 +1450,7 @@ function Invoke-GuardedBuild {
     $standIn = Join-Path $BuildDir 'NoHostWrite.targets'
     $log = Join-Path $BuildDir 'msbuild.log'
 
-    & git -C $RepoRoot archive --format=zip -o $sourceZip $CommitInfo.Sha
+    Invoke-NativeCommand { & git -C $RepoRoot archive --format=zip -o $sourceZip $CommitInfo.Sha }
     if ($LASTEXITCODE -ne 0) { throw "git archive failed (exit $LASTEXITCODE)." }
     # The framework's own unzip rather than Expand-Archive, whose module is exactly the kind a
     # mixed PSModulePath (see the Import-Module at the top) can hand to the wrong edition.
@@ -1935,7 +1935,7 @@ if ($Restore) {
 
 # ---- Putting a dev build on, or -BuildOnly -----------------------------------------------------
 $commitInfo = Resolve-Commit $Commit
-$dirty = @(& git -C $RepoRoot status --porcelain)
+$dirty = @(Invoke-NativeCommand { & git -C $RepoRoot status --porcelain })
 if ($dirty.Count -gt 0) { Say "NOTE the working tree has $($dirty.Count) uncommitted change(s). They are NOT in the build - it is built from $($commitInfo.Sha) on purpose." }
 $workTree = (@(Invoke-NativeCommand { & git -C $RepoRoot rev-parse --show-toplevel 2>$null }) | Out-String).Trim().Replace('/', '\')
 if (Test-IsUnderGitWorkTreeButNotWork -Path $WorkRoot -WorkTreeRoot $workTree) { throw "REFUSING: -WorkRoot $WorkRoot is inside the git working tree $workTree but not under .work\." }

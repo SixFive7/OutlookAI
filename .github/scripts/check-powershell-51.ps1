@@ -47,21 +47,34 @@
        on its line or the line above, with the reason:
            # ps51-native-stderr-ok: <why this call cannot die under 5.1>
 
+       UNDER Testbed/ AND Tools/ THE REDIRECTION IS NOT NEEDED, so there EVERY call to a program
+       counts - bare, through &, piped or captured, redirected or not - and is held to the same
+       rule. Those scripts run behind a redirection or in a remoting host: the guest wrapper
+       Testbed/guest/Register-InteractiveTask.ps1 puts around its work ends in *>&1, PowerShell
+       Direct is a remoting host, and a host script is as likely to be run by an agent from a job
+       or with its output redirected. Measured 2026-09-27 under Windows PowerShell 5.1 with
+       'Stop', a program writing one line to stderr: in a plain console only the redirected call
+       died; inside that wrapper's shape, and in a Start-Job job (the ServerRemoteHost PowerShell
+       Direct also uses), the piped, the bare, the & and the captured call died as well. "A
+       program" is read narrowly there, so the rule stays quiet where it cannot fire: a command
+       that is not a function of the file, a cmdlet or an alias, and not a .ps1 - a script runs
+       PowerShell, and its own calls are checked in its own file - and not a variable the file
+       only ever gives a script block (a [scriptblock] parameter, or $x = { ... }). Any other
+       variable or expression it runs is taken for a program.
+
     AND A SCRIPT THAT DOES NOT PARSE FAILS. Under 5.1 that is what PowerShell 7-only syntax - a
     ternary, ??, && or || between pipelines - looks like, which is one reason CI runs this script
     under both shells.
 
-    WHAT IT CANNOT SEE, stated rather than implied. A redirection applied by whatever RUNS a
-    script reaches every native call inside it, redirected or not, and so does a host that
-    captures stderr without being asked. Both happen to the guest scripts: the wrapper
-    Testbed/guest/Register-InteractiveTask.ps1 puts around its work ends in *>&1, and a
-    remoting host captures on its own. Measured 2026-09-24 under Windows PowerShell 5.1 with
-    'Stop': an UNREDIRECTED native call died inside that wrapper's shape, and inside a Start-Job
-    job, whose host is the ServerRemoteHost that PowerShell Direct also uses (PowerShell Direct
-    itself was not measured). That is a property of how a script is run, not of its text, so no
-    static check of the script can hold it: a guest script that sets 'Stop' is safe there only if
-    every native call it makes goes through Invoke-NativeCommand. Nor does this check read a
-    script that is dot-sourced into one that sets 'Stop' as if it set 'Stop' itself.
+    WHAT IT CANNOT SEE, stated rather than implied. How a script is RUN is not in its text: a
+    redirection applied by whatever runs it reaches every native call inside it, and so does a
+    host that captures stderr without being asked (measured 2026-09-24, and again 2026-09-27 for
+    every call shape - check 3). Under Testbed/ and Tools/ check 3 therefore assumes that host
+    and holds every program call to the helper; a script anywhere else is judged by its own
+    redirections only, so one of those run from a job or behind *>&1 is not protected by this
+    check. A program started by a helper defined in ANOTHER file is not a call it can see. Nor
+    does it read a script that is dot-sourced into one that sets 'Stop' as if it set 'Stop'
+    itself.
 
 .PARAMETER RepoRoot
     Repository root. Defaults to two levels above this script.
@@ -281,6 +294,61 @@ function Test-HasMarker($command, [string[]] $lines) {
     return $false
 }
 
+# The scripts that run behind a redirection or in a remoting host (check 3): there a program call
+# needs no redirection of its own to die, so every one is held to the rule.
+$script:NoRedirectionNeededRoots = @('Testbed/', 'Tools/')
+
+function Test-NoRedirectionNeeded([string] $relative) {
+    $r = $relative.Replace('\', '/')
+    foreach ($root in $script:NoRedirectionNeededRoots) {
+        if ($r.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
+# The variables a file only ever gives a script block - a [scriptblock] parameter, or one assigned
+# nothing but { ... } literals. Running one runs PowerShell, not a program.
+function Get-ScriptBlockVariables($ast) {
+    $names = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($p in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.ParameterAst] }, $true)) {
+        foreach ($attribute in $p.Attributes) {
+            if ($attribute -is [System.Management.Automation.Language.TypeConstraintAst] -and
+                $attribute.TypeName.FullName -match '^(?:System\.Management\.Automation\.)?ScriptBlock$') {
+                $null = $names.Add($p.Name.VariablePath.UserPath.ToLowerInvariant())
+            }
+        }
+    }
+    $blocks = New-Object 'System.Collections.Generic.HashSet[string]'
+    $others = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($a in $ast.FindAll({
+                param($n)
+                $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $n.Left -is [System.Management.Automation.Language.VariableExpressionAst]
+            }, $true)) {
+        $right = $a.Right
+        if ($right -is [System.Management.Automation.Language.PipelineAst] -and $right.PipelineElements.Count -eq 1) { $right = $right.PipelineElements[0] }
+        $name = $a.Left.VariablePath.UserPath.ToLowerInvariant()
+        if ($right -is [System.Management.Automation.Language.CommandExpressionAst] -and
+            $right.Expression -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) { $null = $blocks.Add($name) }
+        else { $null = $others.Add($name) }
+    }
+    foreach ($name in $blocks) { if (-not $others.Contains($name)) { $null = $names.Add($name) } }
+    return , $names
+}
+
+# A call this check can tell is a PROGRAM, for the rule that needs no redirection. Narrower than
+# Get-CommandKind's 'native' on purpose: a .ps1 runs PowerShell, and its own calls are checked in its
+# own file; a variable the file only gives a script block runs PowerShell too. Anything else it runs -
+# a program's name or path, another variable, an expression - is taken for a program.
+function Test-IsProgramCall($command, $context) {
+    if ((Get-CommandKind $command $context) -ne 'native') { return $false }
+    $first = $command.CommandElements[0]
+    if ($first.Extent.Text -match '\.ps[dm]?1\b') { return $false }
+    if ($first -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $context.ScriptBlockVariables.Contains($first.VariablePath.UserPath.ToLowerInvariant())) { return $false }
+    return $true
+}
+
 Write-Host "Checking that every PowerShell script under $RepoRoot runs on Windows PowerShell 5.1"
 Write-Host "(this pass: $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion))"
 Write-Host ''
@@ -311,6 +379,8 @@ $paramBlocks = 0
 $withBom = 0
 $stopFiles = 0
 $redirectedCalls = 0
+$noRedirectionNeededFiles = 0
+$unredirectedProgramCalls = 0
 $acceptedBy = @{}
 $marked = 0
 
@@ -395,12 +465,31 @@ foreach ($relative in $scripts) {
         })
     if (@($assignments | Where-Object { $_.IsStop }).Count -eq 0) { continue }
     $stopFiles++
-    $context = [pscustomobject]@{ Functions = $functions; Assignments = $assignments }
+    $noRedirectionNeeded = Test-NoRedirectionNeeded $relative
+    if ($noRedirectionNeeded) { $noRedirectionNeededFiles++ }
+    $context = [pscustomobject]@{ Functions = $functions; Assignments = $assignments; ScriptBlockVariables = (Get-ScriptBlockVariables $ast) }
 
     foreach ($command in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
-        if ($null -eq (Get-ErrorRedirection $command)) { continue }
-        $kind = Get-CommandKind $command $context
         $where = "${relative}:$($command.Extent.StartLineNumber)"
+        if ($null -eq (Get-ErrorRedirection $command)) {
+            # Under Testbed/ and Tools/ a program call dies without a redirection of its own - the
+            # host or the wrapper supplies one (check 3) - so it is judged exactly like a redirected one.
+            if (-not $noRedirectionNeeded -or -not (Test-IsProgramCall $command $context)) { continue }
+            $unredirectedProgramCalls++
+            if (Test-HasMarker $command $lines) { $marked++; continue }
+            $relaxation = Get-Relaxation $command $context
+            if ($null -eq $relaxation) {
+                $stderrProblems += "$where - $(Format-Command $command)`n        calls a native program under 'Stop' in a script under Testbed/ or Tools/, and those run behind a redirection or in a remoting host, where 5.1 dies on its first stderr line whether or not the call redirects anything. Run it through Invoke-NativeCommand { ... } - see the one in Testbed/host/Publish-GuestPayload.ps1 - or mark it with the reason it cannot die."
+            }
+            elseif (-not $relaxation.Loud) {
+                $stderrProblems += "$where - $(Format-Command $command)`n        runs under 'Continue' ($($relaxation.By)) with no try around it, so a missing program would print a message and the caller would read a stale `$LASTEXITCODE. Put the try in."
+            }
+            else {
+                $acceptedBy[$relaxation.Kind] = 1 + [int] $acceptedBy[$relaxation.Kind]
+            }
+            continue
+        }
+        $kind = Get-CommandKind $command $context
 
         if ($kind -eq 'native') {
             $redirectedCalls++
@@ -422,6 +511,9 @@ foreach ($relative in $scripts) {
         if (Test-HasMarker $command $lines) { $marked++; continue }
         $visited = New-Object 'System.Collections.Generic.HashSet[object]'
         foreach ($inner in (Get-ReachedNativeCall $command $context $visited)) {
+            # Under Testbed/ and Tools/ a program call is judged on its own line, above, whatever
+            # reaches it - reporting it here as well would name one fault twice.
+            if ($noRedirectionNeeded -and (Test-IsProgramCall $inner $context)) { continue }
             $redirectedCalls++
             $stderrProblems += "$where - $(Format-Command $command)`n        redirects stderr around a native call it runs at line $($inner.Extent.StartLineNumber), $(Format-Command $inner), and the redirection reaches it. Run that call through Invoke-NativeCommand, or drop the redirection."
         }
@@ -468,7 +560,7 @@ else {
     if ($marked -gt 0) { $how += "$marked marked" }
     $howText = ''
     if ($how.Count -gt 0) { $howText = ': ' + ($how -join ', ') }
-    Pass "no native program's stderr redirected under 'Stop'" "$redirectedCalls redirected native call(s) in $stopFiles script(s) that set 'Stop'$howText"
+    Pass "no native program's stderr redirected under 'Stop'" "$redirectedCalls redirected native call(s) in $stopFiles script(s) that set 'Stop', and $unredirectedProgramCalls unredirected program call(s) in the $noRedirectionNeededFiles of them under Testbed/ or Tools/$howText"
 }
 
 Write-Host ''

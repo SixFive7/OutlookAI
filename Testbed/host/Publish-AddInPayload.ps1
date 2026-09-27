@@ -1178,7 +1178,7 @@ Say ''
 Say '== Source, from a commit =='
 $commit = (@(Invoke-NativeCommand { & git -C $RepoRoot rev-parse --verify "$Ref^{commit}" 2>&1 }) | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or -not (Test-CommitText $commit)) { throw "git could not resolve '$Ref' to a commit in $RepoRoot - $commit" }
-$dirty = @(& git -C $RepoRoot status --porcelain)
+$dirty = @(Invoke-NativeCommand { & git -C $RepoRoot status --porcelain })
 if ($dirty.Count -gt 0) {
     Say "  NOTE the working tree has $($dirty.Count) uncommitted change(s). They are NOT in this build - it is"
     Say '       built from a commit on purpose. Commit first if the guest is meant to see them.'
@@ -1186,7 +1186,7 @@ if ($dirty.Count -gt 0) {
 foreach ($p in @($sourceZip, $sourceDir, $installerDir, $stageDir)) {
     if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force }
 }
-& git -C $RepoRoot archive --format=zip -o $sourceZip $commit
+Invoke-NativeCommand { & git -C $RepoRoot archive --format=zip -o $sourceZip $commit }
 if ($LASTEXITCODE -ne 0) { throw "git archive failed (exit $LASTEXITCODE)." }
 # The framework's own zip rather than Expand-Archive and Compress-Archive, whose module a mixed
 # PSModulePath (see the Import-Module at the top) hands to the other edition - measured: 7's Archive

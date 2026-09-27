@@ -256,7 +256,7 @@ if (-not $SkipSource) {
     $resolved = (@(Invoke-NativeCommand { & git -C $RepoRoot rev-parse --verify $Ref 2>&1 }) | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "git could not resolve '$Ref' in $RepoRoot - $resolved" }
 
-    $dirty = @(& git -C $RepoRoot status --porcelain)
+    $dirty = @(Invoke-NativeCommand { & git -C $RepoRoot status --porcelain })
     if ($dirty.Count -gt 0) {
         Say "  NOTE the working tree has $($dirty.Count) uncommitted change(s). They are NOT in this"
         Say '       archive - it is built from a commit on purpose. Commit first if the guest is'
@@ -264,7 +264,7 @@ if (-not $SkipSource) {
     }
 
     Say "  archiving $Ref ($resolved)"
-    & git -C $RepoRoot archive --format=zip -o $sourceZip $Ref
+    Invoke-NativeCommand { & git -C $RepoRoot archive --format=zip -o $sourceZip $Ref }
     if ($LASTEXITCODE -ne 0) { throw "git archive failed (exit $LASTEXITCODE)." }
     Say "  Source.zip  $(SizeMb $sourceZip) MB  -> expand on the guest into $GuestSourceRoot"
 }
