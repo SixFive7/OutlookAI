@@ -44,6 +44,21 @@ measurement records.
 >    Outlook's CPU by 0.19 s in 107 s. CI's plain `Category!=Live` is safe for the whole suite.
 > 7. **Section 8 item 4 is FIXED for three of the four vacuous live assertions it points at**
 >    (2026-09-15) - see the note there.
+> 8. **The `LiveResumableScanTests` early returns are FIXED (2026-09-27, Q76, `d97f6f0`)** - four of
+>    them across three tests, plus the acceptance, which on a one-page hub compared two sets that
+>    agree by construction. Everywhere below that says they "early-return green" - sections 2.3(f),
+>    2.5 item 5, 3.6 and the 6.6 checklist - describes the code before that commit. On a hub whose
+>    exhaustive scan fits one page of two they now FAIL on a `Production` profile and print a
+>    `PROVED NOTHING:` line naming the remedy on a `Portable` one, through `T2/LivePopulationCoverage`;
+>    what they need is a chain of pages - at least five mail items in the hub - not the corpus as the
+>    hub. The same commit put `LiveStaleIndexRowTests`' delegate-tree return through the same helper,
+>    and made `LiveDisconnectRecoveryTests`' non-empty Outbox a failure on every profile instead of a
+>    green skip. Pinned by `T1/LiveEarlyReturnGuardTests`. The early returns that still end green are
+>    listed in `Docs/live-tier-on-the-vm.md` section 8 item 19, as the maintainer's to decide.
+> 9. **Section 7's first two questions, corrected against the code (2026-09-27).** Question 1's
+>    closure note named the wrong third tool (see the note there), and question 2 was settled on
+>    2026-08-24 and never marked: `Requires` is declared per METHOD, and
+>    `T1/LiveTierInventoryTests.EveryLiveTestMethod_NamesItsOwnCapabilities` refuses a class-level one.
 
 **How to read the evidence markers.** `[V]` = verified this session by reading the code or by
 parsing it mechanically. `[R]` = recorded in this repository as a past measurement (I did not
@@ -313,7 +328,12 @@ all.
 `[V]` `Phase7LiveMcpToolShapeTests.Search_TopOne_OnHubStore_SetsTruncated_AndTopHundredDoesNot`
 carries `Requires=SmallHubStore` and asserts the hub holds between 2 and 99 items. The Portable scans
 and sweeps all need the corpus to BE the hub (they take a "corpus too small" early return otherwise;
-see 3.6). The two requirements are mutually exclusive on one machine. With three stores there is now
+see 3.6). The two requirements are mutually exclusive on one machine. *(Corrected 2026-09-27: the
+scans - `LiveResumableScanTests` - need at least five mail items in the hub, a chain of pages of two,
+and since Q76 a smaller hub makes them announce `PROVED NOTHING:` or fail rather than return; the
+sweeps, `LiveSweepScopeTests`, take no early return at all. Read in the code: a hub holding five to
+99 mail items satisfies both this test's `InRange(hubCount, 2, 99)` and the scans, so the two are
+no longer exclusive - correction 8 at the top.)* With three stores there is now
 a way out that did not exist before: make the **bystander** the small store this test points at, and
 give the test a settings-driven store name instead of the hub. That is a code change, not a
 configuration.
@@ -382,6 +402,11 @@ These are the things I expect to break first. All `[V]` from the code unless mar
    `LiveIndexSearchTests.FilterShapes_...` asserts `Assert.All(withAttachments.Hits, ...)` over what
    will be an empty list. **Running the tier on the VM without a "how many assertions actually fired"
    check trades a mailbox risk for a silent-green risk.**
+   *(Updated 2026-09-27: both examples are fixed - the `Assert.All` on 2026-09-15 (section 8 item 4)
+   and the four `LiveResumableScanTests` returns by Q76 (correction 8): on `Portable` each now prints
+   a `PROVED NOTHING:` line naming the remedy, on `Production` each fails. The risk itself stands: a
+   `PROVED NOTHING:` line on `Portable` still passes unless someone reads it, no assertion count
+   exists, and the early returns still ending green are listed in the runbook's section 8 item 19.)*
 6. **A fixed-anchor corpus decays.** `CorpusPlanOptions.AnchorUtc` is deliberately required rather
    than defaulted, so the same seed always means the same corpus. The consequence is that every
    "last N days" assertion measures the age of the checkpoint.
@@ -533,7 +558,10 @@ per-item half is not**.
 
 `[V]` `LiveResumableScanTests` (4 methods, the acceptance the project is blocked on) is fully
 VM-runnable **and needs the corpus to be the hub** - all four early-return green with "hub corpus fits
-one page" otherwise.
+one page" otherwise. *(Corrected 2026-09-27, Q76: they no longer return green. They need a hub
+whose exhaustive scan spans more than one page of two - at least five mail items, which the rebuilt
+hub population has - and on a smaller one they print `PROVED NOTHING:` on `Portable` and fail on
+`Production`. Correction 8 at the top.)*
 
 `[V]` `LiveTableSortProbeTests` (2 methods) is fully VM-runnable. Note that its subject, the sort
 defect, was settled today by `03a0857` on the real profile, and see 4.3 for why that matters.
@@ -864,7 +892,10 @@ this is the part the maintainer asked for directly:
 - [ ] A count of assertions that actually fired, so a `PROVED NOTHING` or an early return cannot pass
       as coverage. On a Production profile `RequireProductionPopulation` already throws; the early
       returns in `LiveResumableScanTests` and the vacuous `Assert.All` in
-      `LiveIndexSearchTests.FilterShapes_...` do not.
+      `LiveIndexSearchTests.FilterShapes_...` do not. *(2026-09-27: both now do - the `Assert.All`
+      since 2026-09-15, the early returns since Q76 - through `T2/LivePopulationCoverage`. The count
+      itself still does not exist; the returns still ending green are the runbook's section 8 item
+      19 list.)*
 - [ ] The store-count tripwire and the signature snapshot, unchanged. They are the reason a
       production run is survivable at all.
 
@@ -878,7 +909,8 @@ this is the part the maintainer asked for directly:
 - [ ] Give `expectedStoreDisplayNames` a companion list for "expected to be in the index", or the
       index tier cannot coexist with a deliberately unindexed store.
 - [ ] Put a few hundred items in the bystander so the tripwire's identity half runs.
-- [ ] Decide the Outbox question (section 7, question 3) before the first send-path test runs.
+- [x] Decide the Outbox question (section 7, question 3) before the first send-path test runs.
+      *(Decided 2026-09-24, Q71: a loopback sink on the guests - see the note at that question.)*
 - [ ] Add a re-anchor step to the corpus runbook, or the date windows expire silently.
 
 ---
@@ -904,6 +936,15 @@ and none of them sits in a guarded collection. The interim policy excludes the w
 > `LiveTier` value option 2 asks for no longer exists, and `Requires=OutlookInstance` is what was
 > used instead. What the pass did NOT fix is recorded in `TODO.md` under the tier-3 classification
 > residuals.
+>
+> **Corrected 2026-09-27, against the code:** the three tools `McpStdioClient` refuses undeclared are
+> `outlook_health`, `list_accounts` and **`list_folders`**, not `search` - its
+> `ToolsThatAlwaysReachOutlook` has named those three since `1098e90`, the commit that added it.
+> `search`, like `read`, `thread`, the draft tools and `move_mail`, is judged by its arguments, not
+> refused by name, because each has a refusal that fires before any COM work. And the environment
+> variable the project did add later is not option 4 below: `OUTLOOKAI_LIVE_OPT_IN` (2026-09-24,
+> `T2/LiveRunOptIn`) makes every `Category=Live` test REFUSE unless the run opted in for this
+> machine; it classifies nothing and skips nothing.
 
 1. **Keep the interim filter.** Cheapest, and wrong: it silently drops 92 wire-conformance tests,
    including every schema and description pin, which is exactly the coverage that catches an
@@ -921,6 +962,14 @@ should be rejected: a test that skips itself based on the environment is how the
 undifferentiated in the first place.
 
 ### Question 2 - how much class-level `Requires` over-attribution to fix
+
+> **SETTLED 2026-08-24 as option 1, and never marked here until 2026-09-27.** `Requires` is declared
+> on every live test METHOD, and `T1/LiveTierInventoryTests.EveryLiveTestMethod_NamesItsOwnCapabilities`
+> refuses a class-level one - its own comment gives the measured cost of the old shape: 6 methods
+> genuinely need a delegate mailbox, class-level attribution reported 23. The `LiveTier` axis that
+> option 4 would have extended was retired the same day (correction 4 at the top). Read in the code
+> on 2026-09-27: no live class carries a class-level `Requires`. The primer and options below are the
+> record of the question as it stood.
 
 **Primer.** 30 of 36 live classes declare `Requires` at the class level, so it reads as the union of
 what any test in the class needs. `LiveIndexSearchTests` carries `DelegateStore` for all ten of its
@@ -945,6 +994,14 @@ Adding `VmCapable` lets the inventory test keep enforcing "say why" while the su
 Then push `Requires` down for the six straddling classes.
 
 ### Question 3 - the Outbox, and whether a local SMTP sink is needed
+
+> **DECIDED 2026-09-24 (Q71) - option 4, as this question recommended.** The test guests get a
+> loopback sink that delivers back to the same account - Inbucket 3.1.1, SMTP on `127.0.0.1:25` and
+> POP3 on `:110` - so all 13 methods that put mail on the wire run as written, the zero-artifact sweep
+> stays strict, and the Outbox is a canary on the guests again (`Docs/live-tier-on-the-vm.md`
+> sections 1.4 and 2.7; `Testbed/MEDIA.md` pins it under the one Dependencies exception in
+> `CLAUDE.md`). Both guests have reported `SINK-READY` since 2026-09-24. The primer and options below
+> are the record of the question as it stood.
 
 **Primer.** The decided VM enables send on an unroutable account so a send can never leave the
 machine. `[V]` But the mailbox-safety contract requires every live run to end with **zero tagged
