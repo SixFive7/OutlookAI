@@ -1,10 +1,31 @@
 <#
     ============================================================================================
-    THIS SCRIPT HAS NEVER BEEN EXECUTED.
+    RUN TWICE: WRONG ENTRY WITH THE OLD SERVER (2026-09-24), THE ACCOUNT WITH THE FIXED ONE
+    (2026-09-27). READ WHAT "Verified" DOES AND DOES NOT MEAN BEFORE TRUSTING IT.
     ============================================================================================
 
-    Written by an agent forbidden to run it. Verified by PARSING only. Replace this banner with
-    what it actually did once it has run on a guest.
+      OutlookAI-Unindexed, 2026-09-24, with a server built before the manage_signature fix:
+        printed "Verified" and was WRONG. The server wrote 'New Signature' onto the identity PST's
+        DATA-FILE entry (profile subkey 00000005, whose 'Account Name' is the store's name
+        identity@vm.invalid), not onto the POP3 account (00000004), and list_signatures read it
+        back from the same wrong place (Docs/live-tier-on-the-vm.md section 2.8b).
+      OutlookAI-Indexed, 2026-09-27, with a server published from 4e23866, which carries the fix:
+        "Verified", and right. 'New Signature' = 'Identity' landed on 00000004 (clsid
+        {ED475411-...}, Email identity@vm.invalid), nothing on 00000005; Identity.htm, .rtf and
+        .txt were written; a separate list_signatures call afterwards read back account
+        identity@vm.invalid, newMessage 'Identity'. Both subkeys were read straight from the
+        registry before and after (Docs/live-tier-on-the-vm.md section 4.2).
+
+    WHAT "Verified" MEANS: the product's own read-back agrees with the product's own write - which
+    the first run shows can be wrong together. Read the account's subkey yourself. Whether Outlook
+    then INSERTS the signature into a new mail from that account is the live tier's question
+    (LiveDraftOptionsTests), not this script's, and nothing here creates an item to find out.
+
+    RUN IT AT OUTLOOK'S INTEGRITY LEVEL. The MCP server attaches to the running Outlook over COM
+    (list_accounts). On the indexed guest Outlook runs NOT elevated (Start-OutlookUnelevated.ps1),
+    so this ran in a RunLevel Limited task in session 1: an elevated caller cannot reach a
+    non-elevated Outlook (Testbed/host/Restart-Guest.ps1). Register-InteractiveTask.ps1 -RunLevel
+    Limited is that route now; its default (Highest) is for an Outlook the testbed started elevated.
 
     WHAT IT DOES. Gives the identity account the signature that Docs/live-tier-on-the-vm.md
     section 2.8b requires: a signature configured for NEW MAIL on a specific account, so
@@ -57,7 +78,8 @@
     %LOCALAPPDATA%\OutlookAI\signature-backups first. So a second run is safe and leaves one more
     backup directory behind. The script chooses create-or-update by asking list_signatures first.
 
-    RUN IT IN SESSION 1 (Register-InteractiveTask.ps1). Windows PowerShell 5.1 - no ternary,
+    RUN IT IN SESSION 1, AT OUTLOOK'S INTEGRITY LEVEL (above): Register-InteractiveTask.ps1, with
+    -RunLevel Limited for a non-elevated Outlook. Windows PowerShell 5.1 - no ternary,
     no `??`.
 
 .PARAMETER Account
