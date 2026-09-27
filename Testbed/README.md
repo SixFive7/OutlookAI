@@ -781,10 +781,12 @@ proves from the compiled code that no live class - the stdio tier's included - c
 it.
 
 On a guest, the tier runs through `guest/Register-InteractiveTask.ps1` (session 0 cannot finish
-starting Outlook), so the opt-in goes INTO the script it is handed, right before `dotnet test`:
+starting Outlook), **at `-RunLevel Limited`**, and the opt-in goes INTO the script it is handed,
+right before `dotnet test`. Start with no Outlook running - `host/Restart-Guest.ps1 -VMName <guest>
+-Execute -CancelLogonPrompt` from the host if anything may have started one - and then, on the guest:
 
 ```powershell
-.\Register-InteractiveTask.ps1 -TimeoutSeconds 7200 -Script @'
+.\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 7200 -Script @'
 $env:OUTLOOKAI_LIVE_OPT_IN = 'OAI-INDEXED'   # THIS guest's computer name - $env:COMPUTERNAME prints it
 Set-Location C:\OutlookAI-Q5\src
 dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --filter "Category=Live&Requires!=DelegateStore"
@@ -793,8 +795,42 @@ dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj
 
 `C:\OutlookAI-Q5\src` is where step 8b expands the source, and `-c Release` is the tree its
 `-Verify` already built (without it `dotnet test` builds a second, Debug, tree beside it); the
-filter is the runbook's (`Docs/live-tier-on-the-vm.md` §4). Three rules, each refused with a
-message that says why:
+filter is the runbook's (`Docs/live-tier-on-the-vm.md` §4, which points here rather than keeping a
+copy of these lines).
+
+**Why `-RunLevel Limited` - decided 2026-09-24.** Without it the task runs ELEVATED (the default,
+kept for the installers that need it), and so does the Outlook the suite starts - and an elevated
+Outlook never feeds Windows Search: no crawl-scope rule, no item pushed,
+`Store.IsInstantSearchEnabled` False (`Docs/live-tier-on-the-vm.md` section 8 item 22). Every
+index test that creates an item and waits for the index to show it would wait forever, and read it
+as a slow indexer. The product itself runs non-elevated by design (`ComGateway.cs`, S8), and COM
+does not attach across integrity levels, so **the suite and the Outlook it drives must share one
+level**: the suite starts its own Outlook, at the task's level, when none is running - which is why
+the run starts with Outlook closed. `Register-InteractiveTask.ps1` WARNS when an `OUTLOOK.EXE` at the
+other level is already running, and a Limited job whose token comes up elevated anyway (UAC off)
+REFUSES - none of it runs, exit 4. **Any job run at the default level that starts Outlook - a
+population rebuild through the same task, say - leaves it ELEVATED: restart the guest between it and
+the run, or give that job `-RunLevel Limited` too.**
+
+**Nothing in the live tier needs elevation** - audited 2026-09-24 against every live fixture and
+test and the product code they drive: no HKLM write (the two HKLM touches are reads -
+`HealthReporting.cs` reads WSearch's start type and Outlook's App Path; `LiveRunOptIn.cs` reads the
+machine environment), every registry write is HKCU (`LiveUiSearchBackendTests.cs`, and
+`ProfileAccountEntries.cs` behind `manage_signature`), every file written sits under `%TEMP%`,
+`%APPDATA%`, `%LOCALAPPDATA%` or the source tree itself (the build, and the screenshots
+`LivePhase3Fixture.cs` and `LivePhase4Fixture.cs` put beside the test project), no service is
+started, stopped or reconfigured, no performance counter is read anywhere in the repository, and
+the count tripwire and the artifact sweep are COM reads and COM deletes. What
+the audit found instead is things that need the SAME level as Outlook: the COM attach by ProgID
+(`LiveOutlookTestMailer.cs`, `OutlookComSession.Connect`), a `WM_CLOSE` posted to Outlook's window
+(`LiveDisconnectRecoveryTests.cs`) and the compose-window moves (`ComposeSurface.cs`) - window
+messages across integrity levels are dropped by Windows (UIPI). Measured on `OAI-UNINDEXED` the same
+day: the default gave the job `High Mandatory Level`, `-RunLevel Limited` gave `Medium Mandatory
+Level`; at Limited the suite's source tree rebuilt from scratch (`--no-incremental`, 0 errors - the
+guest's `C:\OutlookAI-Q5` grants Authenticated Users Modify) and `--list-tests` discovered the live
+tests; and the same Limited job re-run from an elevated shell refused with exit 4.
+
+Three rules for the opt-in, each refused with a message that says why:
 
 * **The value is the computer name, not "1" or "true"**, so an opt-in carried to another machine -
   a copied script, a roaming profile - opens nothing there. Spell it out rather than pasting
