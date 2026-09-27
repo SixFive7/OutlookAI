@@ -28,7 +28,13 @@ includes **Pro**. It sits in gitignored scratch; it is 7.9 GB and must never be 
 **Two deliberate differences from the machine it replaces, both of which change something.**
 
 **1. Consumer Pro, not Enterprise LTSC Evaluation.** The old guest was `TIMEBASED_EVAL` with a
-hard 90-day expiry. An unactivated consumer Pro install has **no expiry at all** — it watermarks,
+hard 90-day expiry (*noted 2026-09-27: the old guest is the original one, `OutlookAI-TestVM`, the
+one the published measurements were taken on. This file's first version recorded it on 2026-08-24
+as Windows 11 Enterprise LTSC Evaluation, build 26100, a `TIMEBASED_EVAL` channel install with a
+90-day clock (`7cceb1d`); the build number was lost when this section was rewritten for the staged
+image that afternoon (`9a627fa`), and is put back here. The licence clocks below were measured on
+it the same day. `Testbed/README.md` section 6 item 2 had all of this as unknown; it now points
+here*). An unactivated consumer Pro install has **no expiry at all** — it watermarks,
 blocks personalisation and nags, but it does not stop. Since the decided rebuild cadence is
 driven by Office's 30-day grace, the Windows clock was doing no useful work, and removing it
 means one fewer way for the testbed to die silently. The evaluation route also needed a

@@ -1045,6 +1045,19 @@ that was left out.
    name, the locale and the time zone are all decided in that file and are therefore a record.
    For the guest the published measurements were actually taken on, they remain unknown, and no
    answer file written afterwards can turn that into knowledge.
+   **Reconciled with `MEDIA.md` 2026-09-27 - some of this IS recorded for the original guest.**
+   `MEDIA.md`'s first version (`7cceb1d`, 2026-08-24) recorded it as Windows 11 Enterprise LTSC
+   Evaluation, build 26100, a `TIMEBASED_EVAL` install with a 90-day clock, and its licence-clocks
+   section measured that clock on the guest the same day: about 82 days left. The build number
+   dropped out when the Windows section was rewritten for the staged image that afternoon
+   (`9a627fa`); a dated note there puts it back. Its number format was Dutch: the remediation
+   console printed `4.000` for four thousand on it (`78dcb6f`, the same day, when it was the only
+   VM; `MEDIA.md` tells that story without naming the machine). **Still unknown for the original
+   guest:** the ISO it was installed from - `MEDIA.md`'s first version found no Windows media on the
+   host at all - its computer name, the rest of its locale, its time zone and its power policy.
+   Defender exclusions are open on every guest: no build script adds one, and none has been read
+   off a guest. `testbed.json`'s `unrecorded` list asks the same about the same machine, and is
+   narrowed to match.
 3. **Office version, channel, bitness and install method**, and how the first-run wizard is
    suppressed. Bitness in particular: the test host is x64 because the `Search.CollatorDSO`
    provider needs an x64 host, but whether Office itself must be x64 is untested.
