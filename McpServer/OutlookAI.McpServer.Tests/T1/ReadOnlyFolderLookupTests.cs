@@ -999,16 +999,260 @@ public sealed class ReadOnlyFolderLookupTests
         }
     }
 
+    // ------------------------------------------------------------------ the destinations: may create, must report (Q85)
+    //
+    // new_draft's Drafts, a reply's or forward's Drafts in the SOURCE item's store, and the
+    // Deleted Items a discarded draft goes to keep creating their folder when it is missing
+    // (maintainer direction 2, 2026-09-27) - and every creation is now reported. The rule runs
+    // here against the same fake stores; the control at the head of the section runs the
+    // destinations as they were.
+
+    [Fact]
+    public void Control_TheOldDestinations_CreateTheFolder_AndReportNothing()
+    {
+        // The old code path on the same fakes: the folder appears and nothing says so. If the
+        // reporting assertion did not fail on it, the report pins below would be decoration.
+        FakeStore dataFile = FakeStore.NonDeliveryPst();
+        (object? drafts, string? draftsReport) = DestinationAsItWas(dataFile, SpecialFolders.OlFolderDrafts);
+        Assert.NotNull(drafts);
+        Assert.Equal(new[] { SpecialFolders.OlFolderDrafts }, dataFile.Created);
+        Assert.Null(draftsReport);
+        Assert.ThrowsAny<XunitException>(() => AssertEveryCreationIsReported(dataFile, draftsReport));
+
+        FakeStore bare = FakeStore.WithoutSpecialFolders();
+        (object? deleted, string? deletedReport) = DestinationAsItWas(bare, SpecialFolders.OlFolderDeletedItems);
+        Assert.NotNull(deleted);
+        Assert.Equal(new[] { SpecialFolders.OlFolderDeletedItems }, bare.Created);
+        Assert.ThrowsAny<XunitException>(() => AssertEveryCreationIsReported(bare, deletedReport));
+    }
+
+    [Theory]
+    [InlineData(SpecialFolders.OlFolderDrafts)]
+    [InlineData(SpecialFolders.OlFolderDeletedItems)]
+    public void ReportingCreation_FolderPresent_IsReturnedWithoutTheCreatingCall_AndNothingIsReported(int folderId)
+    {
+        FakeStore pst = FakeStore.MeasuredTierPst();
+
+        (object? folder, string? report) = DestinationNow(pst, folderId);
+
+        Assert.Equal(pst.EntryIdOfSpecial(folderId), pst.EntryIdOf(folder!));
+        Assert.Null(report);
+        AssertCreatedNothing(pst);
+        AssertEveryCreationIsReported(pst, report);
+
+        // Proven present by the non-creating lookup, so the store's top was never even listed.
+        Assert.Equal(0, pst.RootListings);
+    }
+
+    [Fact]
+    public void ReportingCreation_DraftsAbsent_IsCreated_AndReportedAsStoreSlashPath()
+    {
+        FakeStore dataFile = FakeStore.NonDeliveryPst();
+
+        (object? drafts, string? report) = DestinationNow(dataFile, SpecialFolders.OlFolderDrafts);
+
+        Assert.NotNull(drafts);
+        Assert.Equal(new[] { SpecialFolders.OlFolderDrafts }, dataFile.Created);
+        Assert.Equal("Outlook Data File/Drafts", report);
+        AssertEveryCreationIsReported(dataFile, report);
+    }
+
+    [Fact]
+    public void ReportingCreation_DeletedItemsAbsent_IsCreated_AndReported()
+    {
+        FakeStore bare = FakeStore.WithoutSpecialFolders();
+
+        (object? deleted, string? report) = DestinationNow(bare, SpecialFolders.OlFolderDeletedItems);
+
+        Assert.NotNull(deleted);
+        Assert.Equal(new[] { SpecialFolders.OlFolderDeletedItems }, bare.Created);
+        Assert.Equal("Bare Data File/Deleted Items", report);
+        AssertEveryCreationIsReported(bare, report);
+    }
+
+    [Fact]
+    public void ReportingCreation_FolderAbsent_CreationFails_ThrowsAsBefore_AndReportsNothing()
+    {
+        // The creating call's failure reaches the caller exactly as it always did - the draft
+        // and discard paths already turn it into their own error - and nothing is claimed.
+        FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.DefaultFolderCallFails.Add(SpecialFolders.OlFolderDrafts);
+        bool created = true;
+
+        Assert.Throws<COMException>(() => SpecialFolders.GetDefaultFolderReportingCreation(dataFile, SpecialFolders.OlFolderDrafts, out created));
+
+        Assert.False(created);
+        AssertCreatedNothing(dataFile);
+    }
+
+    [Fact]
+    public void ReportingCreation_FolderAbsent_CallAnswersNoFolder_ReportsNothing()
+    {
+        FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.DefaultFolderCallAnswersNull.Add(SpecialFolders.OlFolderDrafts);
+
+        (object? drafts, string? report) = DestinationNow(dataFile, SpecialFolders.OlFolderDrafts);
+
+        Assert.Null(drafts);
+        Assert.Null(report);
+        AssertCreatedNothing(dataFile);
+    }
+
+    [Fact]
+    public void ReportingCreation_AnExistingDraftsTheResolverCannotSee_IsReturned_AndNotReported()
+    {
+        // Resolve's blind spot - a designation where it does not read one: the creating call
+        // IS made, hands back the Drafts folder that was already at the top, and is not
+        // reported as having created it. This is what the top-level listing is for.
+        FakeStore pst = FakeStore.MeasuredTierPst();
+        pst.InboxDesignationRead = PropertyReadStatus.NotFound;
+
+        (object? drafts, string? report) = DestinationNow(pst, SpecialFolders.OlFolderDrafts);
+
+        Assert.Contains(SpecialFolders.OlFolderDrafts, pst.GetDefaultFolderCalls);
+        Assert.Equal(pst.EntryIdOfSpecial(SpecialFolders.OlFolderDrafts), pst.EntryIdOf(drafts!));
+        Assert.Null(report);
+        AssertCreatedNothing(pst);
+    }
+
+    [Fact]
+    public void ReportingCreation_AnExistingDraftsBelowTheTop_IsNotReportedAsCreated()
+    {
+        // Not at the top before the call, and not at the top after it: an existing folder
+        // (some IMAP servers keep Drafts under Inbox), not one this call made.
+        FakeStore imapLike = FakeStore.WithoutSpecialFolders();
+        imapLike.AddSpecial(SpecialFolders.OlFolderInbox, "Inbox");
+        FakeFolder nested = imapLike.AddNestedSpecialOutOfResolversSight(SpecialFolders.OlFolderDrafts, "Drafts");
+
+        (object? drafts, string? report) = DestinationNow(imapLike, SpecialFolders.OlFolderDrafts);
+
+        Assert.Same(nested, drafts);
+        Assert.Null(report);
+        AssertCreatedNothing(imapLike);
+    }
+
+    [Fact]
+    public void ReportingCreation_WithoutTheListing_FallsBackToAbsentBeforeAndPresentAfter()
+    {
+        // The maintainer's rule itself, where the top-level folders will not list: the
+        // non-creating lookup proved it absent, and the call handed a folder back.
+        FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.RootListingFails = true;
+
+        (object? drafts, string? report) = DestinationNow(dataFile, SpecialFolders.OlFolderDrafts);
+
+        Assert.NotNull(drafts);
+        Assert.Equal("Outlook Data File/Drafts", report);
+        AssertEveryCreationIsReported(dataFile, report);
+    }
+
+    [Fact]
+    public void ReportingCreation_WithNoProofOfAbsence_ClaimsNothing()
+    {
+        // "Do not guess", from the other side. Where the designation will not read AND the
+        // top-level folders will not list, nothing shows the folder was ever absent, so no
+        // creation is claimed - even though this fake did make one. It takes two failures at
+        // once; it is pinned so that the day it happens, nobody mistakes it for a report.
+        FakeStore store = FakeStore.WithoutSpecialFolders();
+        store.AddSpecial(SpecialFolders.OlFolderInbox, "Inbox");
+        store.InboxDesignationRead = PropertyReadStatus.Failed;
+        store.RootListingFails = true;
+
+        (object? drafts, string? report) = DestinationNow(store, SpecialFolders.OlFolderDrafts);
+
+        Assert.NotNull(drafts);
+        Assert.Equal(new[] { SpecialFolders.OlFolderDrafts }, store.Created);
+        Assert.Null(report);
+    }
+
+    [Fact]
+    public void ReportingCreation_OnExchange_IsTheCallItAlwaysWas_AndNeverReports()
+    {
+        FakeStore mailbox = FakeStore.ExchangeMailbox();
+
+        (object? drafts, string? draftsReport) = DestinationNow(mailbox, SpecialFolders.OlFolderDrafts);
+        (object? deleted, string? deletedReport) = DestinationNow(mailbox, SpecialFolders.OlFolderDeletedItems);
+
+        Assert.Equal(mailbox.EntryIdOfSpecial(SpecialFolders.OlFolderDrafts), mailbox.EntryIdOf(drafts!));
+        Assert.Equal(mailbox.EntryIdOfSpecial(SpecialFolders.OlFolderDeletedItems), mailbox.EntryIdOf(deleted!));
+        Assert.Null(draftsReport);
+        Assert.Null(deletedReport);
+        Assert.Equal(new[] { SpecialFolders.OlFolderDrafts, SpecialFolders.OlFolderDeletedItems }, mailbox.GetDefaultFolderCalls);
+        Assert.Equal(0, mailbox.PropertyReads);
+        Assert.Equal(0, mailbox.RootListings);
+    }
+
+    [Theory]
+    [InlineData("\\\\tier@vm.invalid\\Drafts", "Drafts", "tier@vm.invalid", "tier@vm.invalid/Drafts")]
+    [InlineData("\\\\tier@vm.invalid\\Drafts", "Drafts", null, "tier@vm.invalid/Drafts")]
+    [InlineData(null, "Drafts", "tier@vm.invalid", "tier@vm.invalid/Drafts")]
+    [InlineData("\\\\Outlook Data File\\Deleted Items", "Deleted Items", "Outlook Data File", "Outlook Data File/Deleted Items")]
+    public void TheCreatedFolderLabel_IsStoreSlashPath_FromWhatTheFolderSays(
+        string? folderPath, string? folderName, string? storeDisplayName, string expected)
+    {
+        Assert.Equal(expected, SpecialFolders.CreatedFolderLabelFor(folderPath, folderName, storeDisplayName));
+    }
+
+    [Fact]
+    public void TheCreatedFolderLabel_IsTheOneArchiveMailUses()
+    {
+        Assert.Equal(
+            MailService.CreatedArchiveFolderLabel("tier@vm.invalid", "Archive"),
+            SpecialFolders.CreatedFolderLabel("tier@vm.invalid", "Archive"));
+        Assert.Equal("tier@vm.invalid/Archive", MailService.CreatedArchiveFolderLabel("tier@vm.invalid", "Archive"));
+    }
+
+    [Theory]
+    [InlineData("TryCreateNewDraft")]
+    [InlineData("TryCreateDerivedDraft")]
+    [InlineData("TryDiscardDraft")]
+    public void EveryDestination_CreatesOnlyThroughTheReportingLookup_AndHandsTheReportBack(string member)
+    {
+        string body = MemberBody("McpServer/OutlookAI.Core/Com/OutlookComSession.cs", member);
+
+        Assert.Contains("SpecialFolders.GetDefaultFolderReportingCreation(", body, StringComparison.Ordinal);
+        Assert.DoesNotContain(".GetDefaultFolder(", body, StringComparison.Ordinal);
+        Assert.Contains("createdFolder = capturedCreatedFolder;", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>A destination as it is now: the must-report lookup, and the label the COM layer puts on a creation.</summary>
+    private static (object? Folder, string? Report) DestinationNow(FakeStore store, int folderId)
+    {
+        object? folder = SpecialFolders.GetDefaultFolderReportingCreation(store, folderId, out bool created);
+        string? report = created && folder is FakeFolder made
+            ? SpecialFolders.CreatedFolderLabelFor(made.FolderPath, made.Name, store.DisplayName)
+            : null;
+        return (folder, report);
+    }
+
+    /// <summary>A destination as it was (the control): the creating call, and no report at all.</summary>
+    private static (object? Folder, string? Report) DestinationAsItWas(FakeStore store, int folderId)
+    {
+        return (store.GetDefaultFolder(folderId), null);
+    }
+
+    /// <summary>Every folder the store gained is the one the report names - and a report names nothing that was not made.</summary>
+    private static void AssertEveryCreationIsReported(FakeStore store, string? report)
+    {
+        List<string> made = store.Created.Select(store.LabelOfSpecial).ToList();
+        List<string> reported = report == null ? new List<string>() : new List<string> { report };
+        Assert.True(
+            made.SequenceEqual(reported, StringComparer.Ordinal),
+            "the store gained [" + string.Join(", ", made) + "] and the report named [" + string.Join(", ", reported) + "]");
+    }
+
     // ------------------------------------------------------------------ the source-level control
 
     /// <summary>
     /// Every member of the shipped product that may call a CREATING lookup, and why. A member
-    /// not on this list that calls <c>.GetDefaultFolder(</c>, <c>.GetSharedDefaultFolder(</c> or
-    /// <c>GetDefaultFolderMayCreate(</c> fails the test - which is what happens if a read-only
-    /// path (the sweep, navigation, the read-only archive lookup and its verification, the probes,
-    /// the Outbox count, the default-folder info) or one of the write tools' guards (move_mail's
-    /// Deleted Items/Outbox check, the update_draft/discard_draft Drafts gate - off this list since
-    /// decision A) is pointed back at <c>GetDefaultFolder</c>.
+    /// not on this list that calls <c>.GetDefaultFolder(</c>, <c>.GetSharedDefaultFolder(</c>,
+    /// <c>GetDefaultFolderMayCreate(</c> or <c>GetDefaultFolderReportingCreation(</c> fails the
+    /// test - which is what happens if a read-only path (the sweep, navigation, the read-only
+    /// archive lookup and its verification, the probes, the Outbox count, the default-folder info)
+    /// or one of the write tools' guards (move_mail's Deleted Items/Outbox check, the
+    /// update_draft/discard_draft Drafts gate - off this list since decision A) is pointed back at
+    /// a creating lookup. The three draft/discard destinations stay on it (Q85): they may create
+    /// their folder, and must report it.
     /// </summary>
     private static readonly Dictionary<string, string> ReviewedCreatingLookups = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -1018,6 +1262,8 @@ public sealed class ReadOnlyFolderLookupTests
             "ComSpecialFolderStore's COM implementation of ISpecialFolderStore.GetDefaultFolder",
         ["McpServer/OutlookAI.Core/Com/SpecialFolders.cs::GetDefaultFolderMayCreate"] =
             "the declaration of the product's explicit creating entry point",
+        ["McpServer/OutlookAI.Core/Com/SpecialFolders.cs::GetDefaultFolderReportingCreation"] =
+            "the must-report creating entry point (Q85): its creating call, made only when the non-creating resolver did not find the folder",
         ["McpServer/OutlookAI.Core/Com/ArchiveFolderResolution.cs::ResolveForMove"] =
             "archive_mail: the one path allowed to create (Q84 (c)); it reports what it created",
         ["McpServer/OutlookAI.Core/Com/ComposeSurface.cs::TryPinProcess"] =
@@ -1025,11 +1271,11 @@ public sealed class ReadOnlyFolderLookupTests
         ["McpServer/OutlookAI.Core/Com/OutlookComSession.cs::EnsureVisibleExplorer"] =
             "NOT CHANGED (display tools): NameSpace.GetDefaultFolder(6), the default store's Inbox; see the Q84 report",
         ["McpServer/OutlookAI.Core/Com/OutlookComSession.cs::TryCreateNewDraft"] =
-            "WRITE PATH, not changed: the new draft's destination, Drafts of the account's delivery store",
+            "WRITE PATH (Q85: may create, must report): the new draft's destination, Drafts of the account's delivery store",
         ["McpServer/OutlookAI.Core/Com/OutlookComSession.cs::TryCreateDerivedDraft"] =
-            "WRITE PATH, not changed: relocating a reply/forward into its source store's Drafts; see the Q84 report",
+            "WRITE PATH (Q85: may create, must report): a reply/forward's destination, Drafts of its source store",
         ["McpServer/OutlookAI.Core/Com/OutlookComSession.cs::TryDiscardDraft"] =
-            "WRITE PATH, not changed: naming the Deleted Items a discarded draft went to",
+            "WRITE PATH (Q85: may create, must report): the Deleted Items a discarded draft goes to",
     };
 
     [Fact]
@@ -1190,9 +1436,9 @@ public sealed class ReadOnlyFolderLookupTests
         return Path.GetFullPath(Path.Combine(testProjectDir, "..", ".."));
     }
 
-    /// <summary>A creating call, or the product's own creating entry point, on a line of code.</summary>
+    /// <summary>A creating call, or one of the product's own creating entry points, on a line of code.</summary>
     private static readonly Regex CreatingLookup = new Regex(
-        @"\.GetDefaultFolder\s*\(|\.GetSharedDefaultFolder\s*\(|\bGetDefaultFolderMayCreate\s*\(",
+        @"\.GetDefaultFolder\s*\(|\.GetSharedDefaultFolder\s*\(|\bGetDefaultFolderMayCreate\s*\(|\bGetDefaultFolderReportingCreation\s*\(",
         RegexOptions.CultureInvariant);
 
     /// <summary>
@@ -1354,6 +1600,9 @@ public sealed class ReadOnlyFolderLookupTests
         /// <summary>Folder ids whose <c>GetDefaultFolder</c> call fails, the way a COM call does.</summary>
         internal HashSet<int> DefaultFolderCallFails { get; } = new HashSet<int>();
 
+        /// <summary>Folder ids whose <c>GetDefaultFolder</c> call returns no folder, and makes none.</summary>
+        internal HashSet<int> DefaultFolderCallAnswersNull { get; } = new HashSet<int>();
+
         /// <summary>Entry ids of folders that open but will not say their EntryID.</summary>
         internal HashSet<string> EntryIdUnreadable { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -1427,6 +1676,15 @@ public sealed class ReadOnlyFolderLookupTests
             return _special.TryGetValue(folderId, out FakeFolder? folder) ? folder.EntryId : null;
         }
 
+        /// <summary>How the product labels one of this store's special folders it reports as created (Q85).</summary>
+        internal string LabelOfSpecial(int folderId)
+        {
+            FakeFolder folder = _special[folderId];
+            return SpecialFolders.CreatedFolderLabelFor(folder.FolderPath, folder.Name, _displayName);
+        }
+
+        internal string DisplayName => _displayName;
+
         /// <summary>Adds a special folder at the root, designated where the store type designates it.</summary>
         internal FakeFolder AddSpecial(int folderId, string name, int defaultItemType = 0)
         {
@@ -1446,6 +1704,20 @@ public sealed class ReadOnlyFolderLookupTests
             FakeFolder folder = new FakeFolder(entryId, name, "\\\\" + _displayName + "\\" + name, defaultItemType);
             _byEntryId[entryId] = folder;
             _rootChildren.Add(entryId);
+            return folder;
+        }
+
+        /// <summary>
+        /// Adds a special folder BELOW the top of the store (under Inbox, as some IMAP servers
+        /// keep it) - known to <c>GetDefaultFolder</c>, but not a top-level folder, and its
+        /// designation not where <see cref="SpecialFolders.Resolve"/> reads it.
+        /// </summary>
+        internal FakeFolder AddNestedSpecialOutOfResolversSight(int folderId, string name)
+        {
+            string entryId = "0000000038A1BB1005E5101AA1BB08002B2A56C2" + (_nextId++).ToString("X8", System.Globalization.CultureInfo.InvariantCulture);
+            FakeFolder folder = new FakeFolder(entryId, name, "\\\\" + _displayName + "\\Inbox\\" + name, 0);
+            _byEntryId[entryId] = folder;
+            _special[folderId] = folder;
             return folder;
         }
 
@@ -1544,6 +1816,11 @@ public sealed class ReadOnlyFolderLookupTests
                 throw new COMException("The operation failed.", unchecked((int)0x80004005));
             }
 
+            if (DefaultFolderCallAnswersNull.Contains(olDefaultFolderId))
+            {
+                return null;
+            }
+
             if (olDefaultFolderId == ArchiveFolderResolution.OlFolderArchive && ArchiveCallAnswersNull)
             {
                 if (ArchiveCallAddsUnreturnedRootFolder)
@@ -1564,6 +1841,8 @@ public sealed class ReadOnlyFolderLookupTests
             {
                 ArchiveFolderResolution.OlFolderArchive => "Archive",
                 SpecialFolders.OlFolderJunk => "Junk Email",
+                SpecialFolders.OlFolderDrafts => "Drafts",
+                SpecialFolders.OlFolderDeletedItems => "Deleted Items",
                 _ => "Special " + olDefaultFolderId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             };
             int itemType = olDefaultFolderId == ArchiveFolderResolution.OlFolderArchive ? CreatedArchiveItemType : 0;

@@ -3480,10 +3480,12 @@ namespace OutlookAI.Core.Com
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
             out string? savedDraftEntryId,
+            out string? createdFolder,
             out string? error)
         {
             EnsureNotDisposed();
             savedDraftEntryId = null;
+            createdFolder = null;
             if (string.IsNullOrWhiteSpace(accountSmtpAddress))
             {
                 throw new ArgumentException("Account SMTP address must not be blank.", nameof(accountSmtpAddress));
@@ -3506,6 +3508,7 @@ namespace OutlookAI.Core.Com
 
             string? capturedError = null;
             string? capturedSavedEntryId = null;
+            string? capturedCreatedFolder = null;
             ComDraftCreateResult? result = _runner.Run<ComDraftCreateResult?>(() =>
             {
                 // D49: an unpinned session kills the Outlook it composes in - see
@@ -3550,7 +3553,16 @@ namespace OutlookAI.Core.Com
                     string? deliveryStoreName = TryGetString(() => (string?)((dynamic)deliveryStore!).DisplayName);
                     string? deliveryStoreId = TryGetString(() => (string?)((dynamic)deliveryStore!).StoreID);
 
-                    draftsFolder = ((dynamic)deliveryStore).GetDefaultFolder(16); // olFolderDrafts
+                    // Q85 (maintainer direction 2): the draft goes INTO Drafts, so a store that
+                    // has none gets one - and the result says so. Exchange is asked as before.
+                    draftsFolder = SpecialFolders.GetDefaultFolderReportingCreation(
+                        new ComSpecialFolderStore(deliveryStore, _namespace!, deliveryStoreId),
+                        SpecialFolders.OlFolderDrafts,
+                        out bool draftsCreated);
+                    if (draftsCreated && draftsFolder != null)
+                    {
+                        capturedCreatedFolder = DescribeCreatedFolder(draftsFolder, deliveryStoreName);
+                    }
 
                     // Captured NOW (COM is demonstrably answering) as the deterministic
                     // folder identity for the outcome snapshot - see SnapshotDraft.
@@ -3662,6 +3674,7 @@ namespace OutlookAI.Core.Com
             });
 
             savedDraftEntryId = capturedSavedEntryId;
+            createdFolder = capturedCreatedFolder;
             error = capturedError;
             return result;
         }
@@ -3685,10 +3698,12 @@ namespace OutlookAI.Core.Com
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
             out string? savedDraftEntryId,
+            out string? createdFolder,
             out string? error)
         {
             EnsureNotDisposed();
             savedDraftEntryId = null;
+            createdFolder = null;
             if (string.IsNullOrWhiteSpace(sourceEntryIdHex))
             {
                 throw new ArgumentException("Source EntryID must not be blank.", nameof(sourceEntryIdHex));
@@ -3706,6 +3721,7 @@ namespace OutlookAI.Core.Com
 
             string? capturedError = null;
             string? capturedSavedEntryId = null;
+            string? capturedCreatedFolder = null;
             ComDraftCreateResult? result = _runner.Run<ComDraftCreateResult?>(() =>
             {
                 // D49: an unpinned session kills the Outlook it composes in - see
@@ -3853,7 +3869,16 @@ namespace OutlookAI.Core.Com
                     {
                         try
                         {
-                            draftsFolder = ((dynamic)sourceStore).GetDefaultFolder(16); // olFolderDrafts
+                            // Q85: the SOURCE store's Drafts, which a POP3, IMAP or data-file
+                            // store may not have - it is then created, and the result says so.
+                            draftsFolder = SpecialFolders.GetDefaultFolderReportingCreation(
+                                new ComSpecialFolderStore(sourceStore, (object)ns, sourceStoreIdActual),
+                                SpecialFolders.OlFolderDrafts,
+                                out bool draftsCreated);
+                            if (draftsCreated && draftsFolder != null)
+                            {
+                                capturedCreatedFolder = DescribeCreatedFolder(draftsFolder, sourceStoreName);
+                            }
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
@@ -3929,6 +3954,7 @@ namespace OutlookAI.Core.Com
             });
 
             savedDraftEntryId = capturedSavedEntryId;
+            createdFolder = capturedCreatedFolder;
             error = capturedError;
             return result;
         }
@@ -5313,15 +5339,17 @@ namespace OutlookAI.Core.Com
         /// A best-effort re-locate in Deleted Items returns the new EntryID so the discard
         /// stays reversible in the same way a move is (D39).
         /// </summary>
-        public ComDraftDiscardResult? TryDiscardDraft(string entryIdHex, string? storeId, out string? error)
+        public ComDraftDiscardResult? TryDiscardDraft(string entryIdHex, string? storeId, out string? createdFolder, out string? error)
         {
             EnsureNotDisposed();
+            createdFolder = null;
             if (string.IsNullOrWhiteSpace(entryIdHex))
             {
                 throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
             }
 
             string? capturedError = null;
+            string? capturedCreatedFolder = null;
             ComDraftDiscardResult? result = _runner.Run<ComDraftDiscardResult?>(() =>
             {
                 dynamic ns = _namespace!;
@@ -5366,7 +5394,22 @@ namespace OutlookAI.Core.Com
                             object? deleted = null;
                             try
                             {
-                                deleted = ((dynamic)parentStore!).GetDefaultFolder(3); // olFolderDeletedItems
+                                // Q85: the discard moves the draft INTO Deleted Items, so a store
+                                // without one gets it - and the result says so.
+                                deleted = SpecialFolders.GetDefaultFolderReportingCreation(
+                                    new ComSpecialFolderStore(
+                                        parentStore!,
+                                        (object)ns,
+                                        TryGetString(() => (string?)((dynamic)parentStore!).StoreID)),
+                                    SpecialFolders.OlFolderDeletedItems,
+                                    out bool deletedCreated);
+                                if (deletedCreated && deleted != null)
+                                {
+                                    capturedCreatedFolder = DescribeCreatedFolder(
+                                        deleted,
+                                        info.StoreDisplayName ?? TryGetString(() => (string?)((dynamic)parentStore!).DisplayName));
+                                }
+
                                 deletedItemsName = TryGetString(() => (string?)((dynamic)deleted!).Name);
                                 deletedItemsEntryId = TryGetString(() => (string?)((dynamic)deleted!).EntryID);
                             }
@@ -5409,8 +5452,22 @@ namespace OutlookAI.Core.Com
                 }
             });
 
+            createdFolder = capturedCreatedFolder;
             error = capturedError;
             return result;
+        }
+
+        /// <summary>
+        /// How a write path names a special folder it CREATED (Q85) - the COM half, which only
+        /// reads the folder's <c>FolderPath</c> and <c>Name</c>; the rule is
+        /// <see cref="SpecialFolders.CreatedFolderLabelFor"/>.
+        /// </summary>
+        private static string DescribeCreatedFolder(object folder, string? storeDisplayName)
+        {
+            return SpecialFolders.CreatedFolderLabelFor(
+                TryGetString(() => (string?)((dynamic)folder).FolderPath),
+                TryGetString(() => (string?)((dynamic)folder).Name),
+                storeDisplayName);
         }
 
         /// <summary>

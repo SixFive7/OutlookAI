@@ -2139,6 +2139,16 @@ namespace OutlookAI.Core.Services
         /// requested, so a mismatch with the Attachments list is visible rather than silent.
         /// </summary>
         public int? AttachmentsRequested { get; set; }
+
+        /// <summary>
+        /// Drafts folders this call CREATED, as <c>store/path</c>, when any - absent otherwise
+        /// (Q85: may create, must report). A POP3, IMAP or data-file mailbox without a Drafts
+        /// folder gets one when a draft is saved into it: the account's own mailbox for
+        /// new_draft, the SOURCE mail's mailbox for reply/replyall/forward. An Exchange or
+        /// Microsoft 365 mailbox always has one, so there it is never present. Named the way
+        /// archive_mail's <c>createdFolders</c> names an Archive folder it made.
+        /// </summary>
+        public IReadOnlyList<string>? CreatedFolders { get; set; }
     }
 
     /// <summary>
@@ -2314,6 +2324,13 @@ namespace OutlookAI.Core.Services
 
         /// <summary>How to undo it.</summary>
         public string? Advice { get; set; }
+
+        /// <summary>
+        /// The Deleted Items folder this call CREATED - the discard moves the draft into it -
+        /// as <c>store/path</c>, when a mailbox had none; absent otherwise (Q85). An Exchange or
+        /// Microsoft 365 mailbox always has one, and so does every data file Outlook makes.
+        /// </summary>
+        public IReadOnlyList<string>? CreatedFolders { get; set; }
     }
 
     /// <summary>

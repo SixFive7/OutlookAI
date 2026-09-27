@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace OutlookAI.Core.Services
 {
@@ -48,5 +49,12 @@ namespace OutlookAI.Core.Services
         /// state: <c>unchanged</c> | <c>applied</c> | <c>unknown</c>.
         /// </summary>
         public string Outcome { get; }
+
+        /// <summary>
+        /// Folders the failed call CREATED before it failed, as <c>store/path</c> - null when
+        /// it made none (Q85: may create, must report, on the failure path too). The tool
+        /// layer carries it out as the error's <c>createdFolders</c>.
+        /// </summary>
+        public IReadOnlyList<string>? CreatedFolders { get; internal set; }
     }
 }
