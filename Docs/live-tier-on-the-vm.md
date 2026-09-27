@@ -1192,6 +1192,48 @@ SMTP side - is retired.
 
 ### 2.8b The identity account - a BUILD step, not a TODO
 
+> **THE ROUTE SINCE 2026-09-27 (Q87 (a)): THE IDENTITY STORE IS MINTED, AND THE ACCOUNT DELIVERS
+> INTO A REAL INBOX.** Built on `OutlookAI-Unindexed` from `CP-09-ADDIN-READY` twice - once by hand
+> as the measurement, once as the script's phases - checkpoint `CP-10B-IDENTITY-REAL-INBOX` (section
+> 4.1b). A PST that `AddStoreEx` creates has no Inbox (the boxes below); one Outlook MINTS as a
+> profile's default store has every default folder, so the identity store is minted in a throwaway
+> account-less profile and then attached:
+>
+> ```
+> .\Add-IdentityAccount.ps1 -Phase Mint -Execute           # Outlook CLOSED; no ImportPRF pending
+> <start OUTLOOK.EXE /PIM IdentityMint, ~90 s: 'Outlook Today', no dialog>
+> .\Add-IdentityAccount.ps1 -Phase CaptureMint -Execute    # the one new default store: Inbox, 0 items
+> .\Rename-OutlookStore.ps1 -StoreFilePath '<minted>' -DisplayName identity@vm.invalid -Execute
+> <quit: Testbed/host/Restart-Guest.ps1 -VMName <guest> -Execute>
+> .\Add-IdentityAccount.ps1 -Phase Import -Execute         # skip if the account exists
+> <start Outlook on the tier profile>
+> .\Add-OutlookPstStore.ps1 -ProfileName OutlookAI-Tier -DisplayName identity@vm.invalid `
+>                           -Path '<minted>' -Execute
+> .\Add-IdentityAccount.ps1 -Phase CaptureStore -Execute
+> <quit: Restart-Guest.ps1 -VMName <guest> -Execute -CancelLogonPrompt>
+> .\Add-IdentityAccount.ps1 -Phase Bind -Execute
+> .\New-TierProfile.ps1 -StoreSinkPassword -Execute
+> <start Outlook on the tier profile>
+> .\Add-IdentityAccount.ps1 -Phase Verify -TrySmtpAddress
+> ```
+>
+> `<minted>` is `C:\OutlookAI-Tier\Outlook Data File - IdentityMint.pst` on this build - Outlook's
+> name for it, read off the guest by CaptureMint and recorded in `C:\OutlookAI-Tier\identity-mint.json`,
+> from which CaptureStore, Bind and Verify take it. A guest whose `ImportPRF` is already pending
+> (`CP-09-ADDIN-READY` on both guests) completes that import first - one start of the tier profile,
+> then a quit with `-CancelLogonPrompt` - because `-Phase Mint` refuses while it is pending: the
+> `/PIM` start would process it too, and that is unmeasured. What it produced, both times: the
+> minted store's folder mask `0xFF`, its Inbox named, visible and designated, 14 folders and no
+> item; CaptureStore from the tier profile `Inbox designated=True, EntryID 24 bytes, name 'Inbox',
+> visible=True; Drafts designated`; Verify `the identity account delivers into 'Inbox' (visible=True,
+> PST node id 0x8082)`, two accounts on two distinct stores, both `SmtpAddress` reads, no logon
+> dialog - and the sink's log `read USER identity`, `read PASS any-value`. It leaves the mint
+> profile behind, and cannot replace an `AddStoreEx` identity store that is already attached under
+> the same name (the script's banner says both).
+>
+> **The boxes below are the route as it was built on 2026-09-24, kept as the record: both guests'
+> identity accounts from their `CP-10` on are bound to that PST's hidden root.**
+
 > **BUILT BY SCRIPT, 2026-09-24, on `OutlookAI-Indexed` - checkpoint `CP-09-IDENTITY-ACCOUNT`.**
 > `Testbed/guest/Add-IdentityAccount.ps1`, in four phases because they alternate between Outlook
 > closed and Outlook running, and the script never starts or stops Outlook itself:
@@ -1910,7 +1952,14 @@ construction (QUESTIONS.md, 2026-08-18), so nothing the product guarantees waits
 population and the per-run hub rebuild do. Nothing is changed until this is decided; the probes refuse,
 as designed, and `CP-14A-POPULATIONS-V2-PROBED` holds the probed guest.
 
-### The identity store has no Inbox - DECIDED (a) 2026-09-27 (Q87), NOT YET MEASURED
+### The identity store has no Inbox - DECIDED (a) 2026-09-27 (Q87), MEASURED AND BUILT
+
+**Measured and built the same day on `OutlookAI-Unindexed`** (section 4.1b; checkpoint
+`CP-10B-IDENTITY-REAL-INBOX`): the minted store kept its designated Inbox as a secondary store of
+the tier profile - folder mask `0xFF` in both profiles - so `-Phase CaptureStore` PASSED from the
+tier profile, and the identity account now delivers into `Inbox` (PST node id `0x8082`). The route
+is scripted: section 2.8b, first box. What (a) was up against, and the four other directions, stay
+below as the record of the decision.
 
 **The question.** The identity account delivers into the identity PST (section 2.8b), and a delivery
 store needs a real, designated Inbox - one the store's own folder mask and receive folder name, that
@@ -1940,7 +1989,7 @@ chain; quit; confirm the default profile is still `OutlookAI-Tier`; then section
 `identity@vm.invalid` first), where `-Phase CaptureStore` must now PASS - and read the mask and the
 Inbox again from the tier profile, which is the question (a) turns on. **Record the store's display
 name at each stage - after the mint, after the rename, after the attach** (Q92, still with the
-maintainer). Nothing has run.
+maintainer). **Run 2026-09-27, and it passed** - section 4.1b has the lines and the names.
 
 ### What only a guest can answer
 
@@ -2192,6 +2241,60 @@ hub rebuild (`Reset-HubPopulation.ps1`) did not run, and the live tier did not r
 first run's one `InPlaceReceived` item, deleted where it landed, no sweep found a probe item in any
 other store - before or after the probes; the `185113a` run skipped its sweep after them (the defect
 `0ab9232` fixed), and the next run's sweep before them found nothing.
+
+### 4.1b The identity store minted - `OutlookAI-Unindexed`, 2026-09-27 (Q87 (a))
+
+**Why this section exists.** Direction (a) of section 3b, "The identity store has no Inbox": measured
+first with the repository's existing scripts, then scripted into `Add-IdentityAccount.ps1` and run
+again as its phases. Every step in session 1 at `RunLevel Highest`, every Outlook close
+`Testbed/host/Restart-Guest.ps1 -Execute` (with `-CancelLogonPrompt` whenever the identity account's
+POP3 prompt was up), every read through a repository tool. Raw logs: `.work\g2-identity-q87\` in the
+main checkout.
+
+| Step | What ran | Verdict | Checkpoint |
+| --- | --- | --- | --- |
+| Restore | `Restore-VMSnapshot CP-09-ADDIN-READY` | default `OutlookAI-Tier`, no Outlook, `ImportPRF` = `C:\OutlookAI-Tier\identity-account.prf` (the identity import pending since before CP-09), policy `PreventIndexingOutlook` 1, no scope rule | - |
+| Restage | master `751b5dc`'s guest scripts, and the tools published from it | every staged hash equal to the host's | - |
+| Exclusion | `Set-OutlookIndexingDisabled.ps1 -Execute` (session 0, Outlook closed) | `before: ... included=False reason=UNKNOWNSCOPE`, the rule added, `no Outlook row in the catalog: nothing to purge`, then its own verify: `included=False reason=USER`, `mapiRows=0` twice, `VERDICT: UNINDEXED` | `CP-09B-EXCLUDED-RESTAGED` |
+| Measure (by hand) | one tier start completing the import; `OUTLOOK.EXE /PIM IdentityMint`; `Add-OutlookPstStore.ps1 -ListOnly`, CaptureStore as a dry run and `corpus-folders` in the mint profile; `Rename-OutlookStore.ps1`; the attach to the tier profile; CaptureStore, Bind, `-StoreSinkPassword`, Verify | CaptureStore **PASSED from the tier profile**; Verify `OK` | not kept |
+| Script | `-Phase Mint` and `-Phase CaptureMint`, the path taken from the mint record (`3474396`) | `-SelfTest` 61/0 under 5.1 and 7 | - |
+| Prove | from `CP-09B` again, as the phases: Mint (refused while the import was pending, as written), the tier start, Mint, `/PIM`, CaptureMint, rename, attach, CaptureStore, Bind, `-StoreSinkPassword`, Verify; then `Set-OutlookIndexingDisabled.ps1 -Verify` | every phase as below; `VERDICT: UNINDEXED`, reason `USER`, after the four Outlook starts of this pass | `CP-10B-IDENTITY-REAL-INBOX` |
+
+**What the guest printed, pass 2 (pass 1 printed the same lines):**
+
+```
+-Phase Mint, the import pending:  REFUSING to prepare the mint: an ImportPRF is pending ('C:\OutlookAI-Tier\identity-account.prf') ...
+-Phase Mint -Execute:             mint profile 'IdentityMint' (does not exist yet); ForcePSTPath 'C:\OutlookAI-Tier' holds 2 PST(s): Outlook Data File - CorpusProfile.pst, Outlook.pst
+OUTLOOK.EXE /PIM IdentityMint:    'Outlook Today - Outlook', no dialog; default profile still 'OutlookAI-Tier'
+-Phase CaptureMint -Execute:      minted store 'Outlook Data File' at C:\OutlookAI-Tier\Outlook Data File - IdentityMint.pst (profile 'IdentityMint'): mask 0xFF; Inbox designated=True, name 'Inbox', visible=True; Drafts designated; 14 folder(s) counted, 0 item(s)
+Rename-OutlookStore.ps1:          current: Store.DisplayName='Outlook Data File' ... after: Store.DisplayName='identity@vm.invalid'
+Add-OutlookPstStore.ps1 (tier):   before : Store.DisplayName='identity@vm.invalid' ... after : Store.DisplayName='identity@vm.invalid'
+-Phase CaptureStore -Execute:     identity store: C:\OutlookAI-Tier\Outlook Data File - IdentityMint.pst (from the mint record)
+                                  store 'identity@vm.invalid' at ...: StoreID 164 bytes; mask 0xFF; Inbox designated=True, EntryID 24 bytes, name 'Inbox', visible=True; Drafts designated
+-Phase Bind -Execute:             before: Delivery Store EntryID = <the tier store's> ... after: bound to 'identity@vm.invalid' - both values read back byte-identical
+-Phase Verify -TrySmtpAddress:    COM: the identity account delivers into 'Inbox' (visible=True, PST node id 0x8082)
+                                  COM: 2 account(s), 2 distinct delivery store(s)
+                                  COM: account 'OutlookAI identity sink' SmtpAddress='identity@vm.invalid'
+                                  OK: 'OutlookAI identity sink' delivers to its own store 'identity@vm.invalid' ...
+the sink's log:                   5:14AM DBG read USER identity / read PASS any-value
+```
+
+In the mint profile, before the rename, `corpus-folders` (pass 1) listed Inbox, Sent Items, Deleted
+Items, Outbox, Drafts, Calendar, Contacts and Tasks - every one `items=0`, and Junk Email `ABSENT`.
+
+**The display names, for Q92.** Over COM (`Store.DisplayName`): after the mint `Outlook Data File`,
+after the rename `identity@vm.invalid`, after the attach `identity@vm.invalid`. In the registry after
+pass 2, the name each PROFILE keeps for the file - its service section's `PR_DISPLAY_NAME_W`, which
+section 8 item 22 measured the index to use: `identity@vm.invalid` in the tier profile and
+`identity@vm.invalid` in the mint profile (the rename in the mint profile reached its section; the tier
+profile's section got the name at the attach). For comparison, `CorpusProfile`'s section for Corpus B
+reads `Outlook Data File`. Whether the index then scopes the store as `identity@vm.invalid(...)` rather
+than as item 22's `Outlook Data File(...)` is for the indexed guest; this one has no index.
+
+**What is left.** The mint profile, which nothing opens again. The identity account's signature:
+`CP-10B` has none, where `CP-10` had one on the wrong subkey - `Set-AccountSignature.ps1` with the
+fixed server is the next step (section 2.8b). And `OutlookAI-Indexed`, whose identity account is still
+the old one.
 
 ### 4.2 The indexed guest's build-out - `OutlookAI-Indexed`, 2026-09-24 and 2026-09-27
 
@@ -2749,6 +2852,12 @@ unrecorded or unverified.
     not fixed - it is the store's own name, a root-folder rename changes it, and the index follows
     the rename (by dropping the store and indexing it again). A name set only in the profile service
     is exactly what the index does NOT use. The product fix is Q92: find a store's slice by its hash.
+    **Since 2026-09-27 the identity store is minted and renamed BEFORE it is attached to the tier
+    profile** (section 4.1b): `Rename-OutlookStore.ps1` renames the store itself - item 24 measured
+    that exact script changing the name the index files a store under - so by item 24's rule the
+    index should file it under `identity@vm.invalid`. The tier profile's service section names it
+    so too, but that is not what the index reads. The indexed guest has not been rebuilt this way
+    yet, so this is still unmeasured.
 23. **OPEN - Outlook's Object Model Guard prompts on the guests, and the live tier reads protected
     members.** Windows Security Center reports Defender's signatures out of date (dated 2025-09-17,
     372 days on 2026-09-24; the guests have no network), so Outlook treats every out-of-process COM
