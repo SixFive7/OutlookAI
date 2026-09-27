@@ -13,7 +13,9 @@
     Two checks (#12, #13) are the opposite shape and belong here for the same reason: they hold a
     value that USED to exist twice down to one copy. A mirror closed by sharing a file stays
     closed only while nobody types the literal again, and re-typing it compiles - so "this exists
-    exactly once, here" is as much a cross-file invariant as "these two agree".
+    exactly once, here" is as much a cross-file invariant as "these two agree". #14 is that shape
+    for a build rule: the guard in OutlookAI.csproj that keeps a command-line build from
+    registering the add-in, which no compilation can see and whose deletion breaks nothing.
 
     It is deliberately text-based. It cannot compile the add-in (net48/VSTO) and it cannot run
     Inno Setup, so it reads the sources and compares what it finds. Every check therefore also
@@ -528,6 +530,97 @@ if ($searchPathProblems.Count -gt 0) {
     Fail "Outlook Search key path is built by one expression" "$($searchPathProblems -join '; '). Both sides must build that key through $sharedSearchBuilder (and any Policies-hive path through OfficeVersions.PolicyOutlookKeyPath), because the add-in's half is net48/VSTO and no test in this repository can reach it - a mistyped path there writes into a key Outlook never reads while everything still compiles and outlook_health still answers."
 } else {
     Pass "Outlook Search key path is built by one expression" "$sharedSearchBuilder, both sides"
+}
+
+# ---------------------------------------------------------------------------------------------
+# 14. A build of the add-in outside Visual Studio does not register it (Q81, 2026-09-27).
+#     The VSTO build targets write the BUILD MACHINE's registry on every build: RegisterOfficeAddin
+#     runs SetOffice2007AddInRegistration, which points HKCU\...\Outlook\Addins\OutlookAI - the key
+#     the installer writes - at the build output; SetInclusionListEntry adds a VSTO trust entry for
+#     it; and Clean runs UnregisterOfficeAddin and RemoveOfficeAddInSecurity. Until OutlookAI.csproj
+#     took that away, every plain msbuild of the add-in - in any checkout, any agent worktree -
+#     silently repointed the maintainer's own Outlook at whatever it had just built (CLAUDE.md,
+#     "The add-in on the maintainer's workstation").
+#
+#     This is the opposite shape again (like #12 and #13): a guard that exists ONCE, and that no
+#     compilation, test or build can see. Deleting it breaks nothing - the build simply starts
+#     registering again. So its shape is pinned here, as the csproj's own comment explains it and
+#     as Tools/Switch-AddInBuild.ps1 -SelfTest already reads it locally:
+#       * each of the two writers has a stand-in: ONE UsingTask, conditioned exactly
+#         '$(BuildingInsideVisualStudio)' != 'true', declared BEFORE the VSTO targets import (the
+#         first UsingTask for a name wins), an inline RoslynCodeTaskFactory task that only logs its
+#         NOT-REGISTERED-OUTSIDE-VS line - and NOT Override="true": Publish-AddInPayload.ps1 and
+#         Switch-AddInBuild.ps1 bring Override stand-ins of their own, which win over these only
+#         while these are not;
+#       * RegisterFormRegions has NO stand-in, on purpose - a form region added later would be
+#         dropped from the manifest of every command-line build, release.yml's included;
+#       * AFTER the import, under the same condition, PrepareForRun and VSTOClean lose the targets
+#         that call the writers, through $([MSBuild]::Unescape(...)) - a bare .Replace() returns the
+#         list escaped, and MSBuild then looks for ONE target named after all of them (MSB4057).
+# ---------------------------------------------------------------------------------------------
+$script:Checks++
+$q81 = 'the add-in build does not register itself outside Visual Studio (Q81)'
+$projText = Read-Source 'OutlookAI.csproj'
+if ($null -ne $projText) {
+    $q81Problems = @()
+    $outsideVs = "'`$(BuildingInsideVisualStudio)' != 'true'"
+    $proj = New-Object System.Xml.XmlDocument
+    $parsed = $true
+    try { $proj.LoadXml($projText) } catch { $parsed = $false; $q81Problems += "OutlookAI.csproj does not parse as XML ($($_.Exception.Message)), so nothing here can be checked." }
+    if ($parsed) {
+        $ns = New-Object System.Xml.XmlNamespaceManager($proj.NameTable)
+        $ns.AddNamespace('m', 'http://schemas.microsoft.com/developer/msbuild/2003')
+        $top = @($proj.DocumentElement.ChildNodes | Where-Object { $_.NodeType -eq [System.Xml.XmlNodeType]::Element })
+        $vstoImport = @($top | Where-Object {
+                $_.LocalName -eq 'Import' -and
+                $_.GetAttribute('Project').EndsWith('\OfficeTools\Microsoft.VisualStudio.Tools.Office.targets', [System.StringComparison]::OrdinalIgnoreCase)
+            })
+        if ($vstoImport.Count -ne 1) {
+            $q81Problems += "OutlookAI.csproj imports OfficeTools\Microsoft.VisualStudio.Tools.Office.targets $($vstoImport.Count) time(s), not once - the file changed shape and this check no longer proves anything."
+        }
+        else {
+            $importAt = [array]::IndexOf($top, $vstoImport[0])
+            foreach ($task in @('SetOffice2007AddInRegistration', 'SetInclusionListEntry')) {
+                $standIns = @($top | Where-Object { $_.LocalName -eq 'UsingTask' -and $_.GetAttribute('TaskName') -ceq $task })
+                if ($standIns.Count -ne 1) {
+                    $q81Problems += "${task}: $($standIns.Count) UsingTask(s) for it, not one - its stand-in is what keeps a command-line build from writing the registry."
+                    continue
+                }
+                $ut = $standIns[0]
+                if ($ut.GetAttribute('Condition') -cne $outsideVs) { $q81Problems += "${task}: its Condition is `"$($ut.GetAttribute('Condition'))`", not `"$outsideVs`"." }
+                if ($ut.HasAttribute('Override')) { $q81Problems += "${task}: it carries Override=`"$($ut.GetAttribute('Override'))`" - the testbed's and Switch-AddInBuild.ps1's Override stand-ins win over this one only while it has none." }
+                if ([array]::IndexOf($top, $ut) -gt $importAt) { $q81Problems += "${task}: declared AFTER the VSTO targets import, so the real task is the first UsingTask for the name and the stand-in never runs." }
+                if ($ut.GetAttribute('TaskFactory') -cne 'RoslynCodeTaskFactory') { $q81Problems += "${task}: TaskFactory `"$($ut.GetAttribute('TaskFactory'))`", not RoslynCodeTaskFactory - it is no longer the inline stand-in." }
+                $code = $ut.SelectSingleNode('m:Task/m:Code', $ns)
+                if ($null -eq $code) { $q81Problems += "${task}: no inline Code - it is no longer the stand-in." }
+                else {
+                    if (-not $code.InnerText.Contains('NOT-REGISTERED-OUTSIDE-VS')) { $q81Problems += "${task}: its code no longer logs NOT-REGISTERED-OUTSIDE-VS." }
+                    foreach ($writer in @('Registry', 'File.', 'Process.')) {
+                        if ($code.InnerText.Contains($writer)) { $q81Problems += "${task}: its code names '$writer' - the stand-in may only log." }
+                    }
+                }
+            }
+            if (@($top | Where-Object { $_.LocalName -eq 'UsingTask' -and $_.GetAttribute('TaskName') -ceq 'RegisterFormRegions' }).Count -gt 0) {
+                $q81Problems += "RegisterFormRegions has a stand-in. It is left alone on purpose: the add-in has no form region, so the real task writes nothing, and a stand-in would silently drop any future one from the manifest of every command-line build, release.yml's included."
+            }
+            $chains = [ordered]@{
+                'PrepareForRunDependsOn' = "`$([MSBuild]::Unescape(`$(PrepareForRunDependsOn.Replace('RegisterOfficeAddin', ''))))"
+                'VSTOCleanDependsOn'     = "`$([MSBuild]::Unescape(`$(VSTOCleanDependsOn.Replace('RemoveOfficeAddInSecurity', '').Replace('UnregisterOfficeAddin', ''))))"
+            }
+            $groupsAfter = @($top | Where-Object { $_.LocalName -eq 'PropertyGroup' -and $_.GetAttribute('Condition') -ceq $outsideVs -and [array]::IndexOf($top, $_) -gt $importAt })
+            foreach ($property in $chains.Keys) {
+                $found = @($groupsAfter | ForEach-Object { $_.SelectNodes("m:$property", $ns) } | Where-Object { $_.InnerText -ceq $chains[$property] })
+                if ($found.Count -ne 1) {
+                    $q81Problems += "${property}: $($found.Count) of <$property>$($chains[$property])</$property> in a PropertyGroup conditioned `"$outsideVs`" after the VSTO import, not one - without it the targets that call the registry writers are scheduled again outside Visual Studio."
+                }
+            }
+        }
+    }
+    if ($q81Problems.Count -gt 0) {
+        Fail $q81 "$($q81Problems -join ' | ') The guard is the only thing between a plain msbuild of the add-in and the maintainer's own Outlook loading that build; see the comment above its UsingTasks in OutlookAI.csproj."
+    } else {
+        Pass $q81 "two stand-ins ahead of the VSTO import, RegisterFormRegions untouched, both chains stripped after it"
+    }
 }
 
 Write-Host ""

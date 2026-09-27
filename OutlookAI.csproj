@@ -283,6 +283,9 @@
     command-line build, release.yml's included.
 
     To put a build on this machine, ask for it: Tools/Switch-AddInBuild.ps1.
+
+    CI holds all of this in place - both stand-ins, their position, condition and missing Override,
+    and the two chains below the import: .github/scripts/check-pinned-constants.ps1, check 14.
   -->
   <UsingTask TaskName="SetOffice2007AddInRegistration" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll" Condition="'$(BuildingInsideVisualStudio)' != 'true'">
     <ParameterGroup>
