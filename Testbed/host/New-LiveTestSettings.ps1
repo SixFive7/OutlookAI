@@ -1098,7 +1098,7 @@ function Add-SettingsProblems {
                     $Problems.Add("corpus.corpusId: '$corpusId' is not the id corpusIdConvention assigns to '$VMName', which is '$($entry.corpusId)'. Two guests sharing an id overwrite each other's manifest (Testbed/README.md section 3).")
                 }
                 if ($null -eq $entry.seed -or $null -eq $entry.anchor -or $null -eq $entry.itemCount) {
-                    $Problems.Add("corpus: corpusIdConvention still records corpus '$($entry.corpusId)' as not built - its seed, anchor and itemCount are null there. If it is built, record it there first, from the manifest's header line, so the testbed record and this guest's settings describe one corpus. If it is not, set this guest's corpus to null.")
+                    $Problems.Add("corpus: corpusIdConvention does not record the build parameters of corpus '$($entry.corpusId)' - its seed, anchor and itemCount are null there, which means not recorded (its status says whether it is built). If it is built, record them there first, from the manifest's header line, so the testbed record and this guest's settings describe one corpus. If it is not, set this guest's corpus to null.")
                 }
                 else {
                     if ((Test-IsInteger $seed) -and (Test-IsInteger $entry.seed) -and [decimal]$seed -ne [decimal]$entry.seed) {
@@ -1836,7 +1836,7 @@ function Invoke-SelfTest {
     Test-HasProblem 'a relative manifest path is refused' (Get-RuleProblems { param($s) $s.corpus.manifestPath = 'corpus-vm-synthetic.jsonl' }) 'must be an absolute path'
     Test-HasProblem 'a corpus id with a space is refused' (Get-RuleProblems { param($s) $s.corpus.corpusId = 'vm synthetic' }) 'ASCII letters, digits'
     Test-HasProblem 'a corpus id the record gives another guest is refused' (Get-RuleProblems { param($s) $s.corpus.corpusId = 'vm-other'; $s.corpus.manifestPath = 'C:\OutlookAI-Q5\corpus-vm-other.jsonl' }) "is not the id corpusIdConvention assigns"
-    Test-HasProblem 'a corpus the record still calls not built is refused' (Get-RuleProblems -ForVm 'OutlookAI-Other' { param($s) $s.corpus.corpusId = 'vm-other'; $s.corpus.manifestPath = 'C:\OutlookAI-Q5\corpus-vm-other.jsonl' }) 'as not built'
+    Test-HasProblem 'a corpus whose parameters the record does not hold is refused' (Get-RuleProblems -ForVm 'OutlookAI-Other' { param($s) $s.corpus.corpusId = 'vm-other'; $s.corpus.manifestPath = 'C:\OutlookAI-Q5\corpus-vm-other.jsonl' }) 'does not record the build parameters'
     Test-HasProblem 'a guest the record assigns nothing is refused' (Get-RuleProblems -ForVm 'OutlookAI-Nobody' { param($s) }) 'has 0 entries for guest'
     Test-HasProblem 'a seed that disagrees with the record is refused' (Get-RuleProblems { param($s) $s.corpus.seed = 7 }) 'where corpusIdConvention records 4242'
     Test-HasProblem 'an item count that disagrees with the record is refused' (Get-RuleProblems { param($s) $s.corpus.itemCount = 999 }) 'where corpusIdConvention records 1000'

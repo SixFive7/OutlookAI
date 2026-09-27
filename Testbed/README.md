@@ -303,8 +303,8 @@ pull are wrong in different ways. Read them together before changing either.
 | Corpus id | Guest | Indexed | State |
 | --- | --- | --- | --- |
 | `vm2` | `OutlookAI-TestVM` | **unrecorded** | **built and measured** - section 3 above is its record |
-| `vm-indexed` | `OutlookAI-Indexed` | yes | not built; reserved name. `Corpus A` in the store layout |
-| `vm-unindexed` | `OutlookAI-Unindexed` | no | not built; reserved name. `Corpus B` in the store layout |
+| `vm-indexed` | `OutlookAI-Indexed` | yes | **built, 20,000 items** - below the 160,000 decided for this guest, so not yet the corpus its settings need. `Corpus A` in the store layout. Seed and anchor not recorded (corrected 2026-09-27 from `Docs/live-tier-on-the-vm.md` sections 2.4, 4.2b and 8 item 22; it said "not built") |
+| `vm-unindexed` | `OutlookAI-Unindexed` | no | **built, 20,000 items, census clean**. `Corpus B` in the store layout, in the corpus profile only. Seed and anchor not recorded (corrected 2026-09-27 from `Docs/live-tier-on-the-vm.md` sections 2.9 and 4.1a; it said "not built") |
 
 **Why those two names.** They name **the property that actually differs** - the index state - which
 is the only reason the two guests exist; a rebuilder reading `corpus-vm-indexed.jsonl` in a shared
@@ -326,9 +326,11 @@ about - and renaming it to fit a convention invented afterwards would break the 
 `testbed.json` carries this as **`corpusIdConvention`, a separate top-level key** rather than
 extra fields on `corpus`. That separation is the point: `corpus` is a record of one corpus that
 exists and was measured, and everything in it was read off a machine. The convention block is a
-naming rule plus reserved ids, and its seed, anchor and count are explicitly `null` because those
-corpora **do not exist yet**. Folding the two together would put unmeasured placeholders in the
-one place this repository treats as measured fact.
+naming rule plus reserved ids, each with a status citing where its state is recorded, and its seed,
+anchor and count stay explicitly `null` until someone reads them off that corpus's manifest header -
+`null` there means **not recorded**, which since 2026-09-27 is no longer the same as "not built":
+both guests' corpora exist, and neither's parameters have been read. Folding the two together
+would put unmeasured placeholders in the one place this repository treats as measured fact.
 
 **Whether the two new corpora share a seed and anchor is still open** (`Docs/live-tier-on-the-vm.md`
 section 8, item 16). Nothing here settles it, and nothing here needs to: two corpora may share
