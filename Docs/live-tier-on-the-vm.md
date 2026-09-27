@@ -2155,12 +2155,15 @@ Treat those numbers as "what they were when this was written" - measured 2026-08
 are the authority; the counts in a document drift. `Requires!=X` means "no value of `Requires` on
 this test equals X", which is what makes a multi-valued trait usable as an exclusion.
 
-### 4.1 The first live-tier run on a VM - `OutlookAI-Unindexed`, 2026-09-24
+### 4.1 The unindexed guest's build-out - `OutlookAI-Unindexed`, 2026-09-24 (the live run itself: on hold)
 
 **Why this section exists.** Until this date the live tier had never run on a test machine (section 9,
 `Testbed/README.md` section 6 item 13). This is the record of bringing `OutlookAI-Unindexed` from
 `CP-05-CORPUS-B-CLEAN-UNINDEXED` to the full design, one scripted step at a time, each step proven
-on the guest and checkpointed, and then running the tier there. Raw logs of every step were kept
+on the guest and checkpointed, and then running the tier there.
+*(Retitled 2026-09-27: it was called "The first live-tier run on a VM", and that run never
+happened - step 9 below was put on hold, and the tier has still not run on any guest (section 8
+item 22). What the section records is the build-out.)* Raw logs of every step were kept
 outside the repository (`.work\g2-buildout\` in the main checkout).
 
 **The build-out, step by step:**
