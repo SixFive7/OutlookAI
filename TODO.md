@@ -175,15 +175,22 @@
         Was: the path is baked in as `AssemblyMetadata("McpServerExePath")` and points into the
         repository's `bin` tree; the guest had no SDK, so nothing put a binary there.
   - [ ] **Rebuild the fixture populations with generator v2 on a guest, and run the hub rebuild
-        once (2026-09-24).** v1's build on `OutlookAI-Unindexed` was not clean (runbook §4.1 step 6);
-        v2's four fixes, the undated items and `Testbed/guest/Reset-HubPopulation.ps1` are host-side
-        only. From a checkpoint before step 6, read the probe output §3b lists - above all whether
-        `InPlaceReceived` or `PostAsNote` keeps its first save in a store that is not the profile's
-        default; if neither does, the build refuses and §3b has the directions.
-  - [ ] **Decide how `identity.pst` gets a real, designated Inbox** - runbook §3b, "The identity
-        store has no Inbox", five directions, (a) recommended and its measurement written out there.
-        Until then `Testbed/guest/Add-IdentityAccount.ps1 -Phase CaptureStore` refuses the store and
-        the identity account, and the identity population, wait.
+        once (2026-09-24).** v1's build on `OutlookAI-Unindexed` was not clean (runbook §4.1 step 6).
+        **v2 PROBED there 2026-09-27, NOT BUILT** (runbook §4.1a, `CP-14A-POPULATIONS-V2-PROBED`):
+        `PostAsNote` keeps its first save in a non-default store (`InPlaceReceived` does not, and is
+        retired), the owner resolves, and the dates and enrichment verify - but the undated items
+        refuse, which blocks the hub and the bystander on both guests. Waits on the item below.
+  - [ ] **Decide how the populations get rows with no received date** - runbook §3b, "The undated
+        kinds are dated in a PST": an appointment, a contact or a task saved into a PST carries
+        PR_MESSAGE_DELIVERY_TIME (the store's own table agrees) and Outlook refuses to delete it.
+        Five directions; (a) defer the undated items now, with (e) a read-only index count as the
+        follow-up, recommended.
+  - [ ] **Give `identity.pst` a real, designated Inbox - decided (a) 2026-09-27 (Q87):** mint it as
+        the default store of a throwaway `/PIM` profile, then attach it. Measure first, from
+        `CP-09-ADDIN-READY` with the index exclusion re-applied, exactly as runbook §3b writes out,
+        recording the store's display name after the mint, the rename and the attach (Q92). Until
+        then `Testbed/guest/Add-IdentityAccount.ps1 -Phase CaptureStore` refuses the store and the
+        identity account, and the identity population, wait.
   - [ ] **Run `Testbed/guest/Measure-SweepCost.ps1` once.** It is the reconstruction of
         `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1`, which is gitignored and gone with its
         scratch directory. Written from the shipped `SweepFolder` source, read-only by

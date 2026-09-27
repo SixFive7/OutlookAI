@@ -475,37 +475,46 @@ public static class CorpusCommands
         // new is written, so a probe never reports on top of somebody else's leftovers.
         SweepOtherStores(options, planOptions.CorpusId, output, "before the probes");
 
-        // Placement FIRST, and the date probe inherits it. Probing dates against an item
-        // that was filed somewhere other than the folder being queried cannot distinguish
-        // "the date does not drive selection" from "the item is not in this folder", and the
-        // first version of this tool reported the second as if it were the first.
-        CorpusPlacementSurvey survey = ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
-        CorpusPlacementMethod placement = ReportPlacementProbes(survey, output);
-        (bool placementOk, string placementMessage) = CorpusPlacement.Decide(
-            placement, options.AllowDraftsPlacement, Math.Max(options.Count, 1), survey.Probes, survey.TargetIsDefaultStore);
-        output.WriteLine(placementMessage);
-
-        DateTime probeInstant = planOptions.AnchorUtc.AddDays(-30);
-        IReadOnlyList<CorpusDateProbe> probes =
-            ComCorpusMailbox.ProbeDateFidelity(options.Store!, planOptions.CorpusId, probeInstant, placement);
-        CorpusDateWriteMethod chosen = ReportProbes(probes, output);
-        (bool dateOk, string message) =
-            CorpusDateFidelity.Decide(chosen, options.AllowUndated, Math.Max(options.Count, 1));
-        output.WriteLine(message);
-
-        // A population's own writes, on one more throwaway item, placed with the rung that verified.
-        bool enrichmentOk = true;
-        bool undatedOk = true;
-        if (planOptions.Population != null)
+        // The sweep after the probes runs even when a probe THROWS. On OAI-UNINDEXED, 2026-09-27,
+        // the undated probe threw and the sweep after it never ran, so the one check that a probe
+        // left nothing in another store was skipped on exactly the run that needed it.
+        try
         {
-            (enrichmentOk, string enrichmentMessage) = ProbeEnrichment(options, planOptions, placement, output);
-            output.WriteLine(enrichmentMessage);
-            (undatedOk, string undatedMessage) = ProbeUndated(options, new CorpusPlan(planOptions), output);
-            output.WriteLine(undatedMessage);
-        }
+            // Placement FIRST, and the date probe inherits it. Probing dates against an item
+            // that was filed somewhere other than the folder being queried cannot distinguish
+            // "the date does not drive selection" from "the item is not in this folder", and the
+            // first version of this tool reported the second as if it were the first.
+            CorpusPlacementSurvey survey = ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
+            CorpusPlacementMethod placement = ReportPlacementProbes(survey, output);
+            (bool placementOk, string placementMessage) = CorpusPlacement.Decide(
+                placement, options.AllowDraftsPlacement, Math.Max(options.Count, 1), survey.Probes, survey.TargetIsDefaultStore);
+            output.WriteLine(placementMessage);
 
-        SweepOtherStores(options, planOptions.CorpusId, output, "after the probes");
-        return placementOk && dateOk && enrichmentOk && undatedOk ? 0 : 1;
+            DateTime probeInstant = planOptions.AnchorUtc.AddDays(-30);
+            IReadOnlyList<CorpusDateProbe> probes =
+                ComCorpusMailbox.ProbeDateFidelity(options.Store!, planOptions.CorpusId, probeInstant, placement);
+            CorpusDateWriteMethod chosen = ReportProbes(probes, output);
+            (bool dateOk, string message) =
+                CorpusDateFidelity.Decide(chosen, options.AllowUndated, Math.Max(options.Count, 1));
+            output.WriteLine(message);
+
+            // A population's own writes, on one more throwaway item, placed with the rung that verified.
+            bool enrichmentOk = true;
+            bool undatedOk = true;
+            if (planOptions.Population != null)
+            {
+                (enrichmentOk, string enrichmentMessage) = ProbeEnrichment(options, planOptions, placement, output);
+                output.WriteLine(enrichmentMessage);
+                (undatedOk, string undatedMessage) = ProbeUndated(options, new CorpusPlan(planOptions), output);
+                output.WriteLine(undatedMessage);
+            }
+
+            return placementOk && dateOk && enrichmentOk && undatedOk ? 0 : 1;
+        }
+        finally
+        {
+            SweepOtherStores(options, planOptions.CorpusId, output, "after the probes");
+        }
     }
 
     /// <summary>
@@ -524,9 +533,7 @@ public static class CorpusCommands
         IReadOnlyList<CorpusUndatedProbe> probes = ComCorpusMailbox.ProbeUndated(options.Store!, plan.Options.CorpusId, kinds);
         foreach (CorpusUndatedProbe p in probes)
         {
-            output.WriteLine($"  {p.Kind.ToString().ToLowerInvariant(),-12} folder={p.FolderReachable} inFolder={p.InTheFolder}"
-                + $" tag={p.SubjectTagParses} undated={p.HasNoDeliveryTime} class={p.ClassMatches} inTargetStore={p.InTheTargetStore}"
-                + (p.Error == null ? string.Empty : $" error={p.Error}"));
+            output.WriteLine(CorpusUndatedFidelity.Line(p));
         }
 
         return CorpusUndatedFidelity.Decide(kinds, probes);
@@ -773,6 +780,30 @@ public static class CorpusCommands
         }
 
         return RunCensusPass(options, plan, count, output) ? 0 : 1;
+    }
+
+    /// <summary>
+    /// <c>corpus-folders</c>: READ-ONLY. Lists a store's default folders, each found without the lookup
+    /// that creates one, and its visible folder tree with item counts - behind the same store and
+    /// profile guard as every other verb, so it cannot be pointed at a store the operator did not
+    /// name on <c>--allow-store</c>, or run in a profile that holds an account. Needs no corpus id,
+    /// seed or anchor: it describes the store, not a corpus.
+    /// </summary>
+    public static int RunFolders(CorpusOptions options, TextWriter output)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(output);
+        if (!Vet(options, output, out _))
+        {
+            return 1;
+        }
+
+        foreach (string line in CorpusFolderListing.Render(options.Store!, ComCorpusMailbox.ListFolders(options.Store!)))
+        {
+            output.WriteLine(line);
+        }
+
+        return 0;
     }
 
     /// <summary>The census itself, shared by <c>corpus-census</c> and the build's own check.</summary>

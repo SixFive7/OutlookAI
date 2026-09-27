@@ -147,6 +147,7 @@ internal static class Program
                     "corpus-teardown" => CorpusCommands.RunTeardown(corpus, Console.Out),
                     "corpus-reindex" => CorpusCommands.RunReindex(corpus, Console.Out),
                     "corpus-indexed" => CorpusCommands.RunIndexed(corpus, Console.Out),
+                    "corpus-folders" => CorpusCommands.RunFolders(corpus, Console.Out),
                     _ => Fail($"Unknown command '{args[0]}'."),
                 };
             }
@@ -169,12 +170,12 @@ internal static class Program
             // next moves: the first invites a re-run, and a re-run during the second is two
             // writers against one store. Any wrapper testing for non-zero still sees a
             // failure; one that can tell the two apart now can.
-            Console.Error.WriteLine($"FATAL: {ex.GetType().Name}: {ex.Message}");
+            Console.Error.WriteLine($"FATAL: {ToolFailure.Describe(ex)}");
             return ex.Acknowledged ? 1 : AbandonedStaSessionExitCode;
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"FATAL: {ex.GetType().Name}: {ex.Message}");
+            Console.Error.WriteLine($"FATAL: {ToolFailure.Describe(ex)}");
             return 1;
         }
     }
@@ -543,6 +544,7 @@ internal static class Program
         Console.WriteLine("          its count is fixed (--count optional), --store is required even by corpus-plan,");
         Console.WriteLine("          and every verb that reads its manifest needs the same --population");
         Console.WriteLine("Indexed:  corpus-indexed --population ... [--manifest <path>] [--wait-seconds <n>]   (read-only, no Outlook)");
+        Console.WriteLine("Folders:  corpus-folders --store <name> --allow-store <name>   (read-only: default folders + visible tree)");
         Console.WriteLine("Verify:   --count <n> --manifest <path> [--window <days> (repeatable)]   (pure - no Outlook)");
         Console.WriteLine("Stale:    rebuild - corpus-teardown --execute (or delete the .pst), then corpus-build");
         Console.WriteLine("Override: [--allow-undated] [--allow-drafts-placement]  (each says what it costs)");

@@ -473,6 +473,19 @@ public static class CorpusEnrichmentFidelity
 /// any other kind doing the same.
 /// </param>
 /// <param name="Error">The COM failure that stopped this kind's probe, or null.</param>
+/// <param name="DeliveryTimeRemovalRefused">
+/// Why the write path could NOT remove PR_MESSAGE_DELIVERY_TIME after the first save, or null when it
+/// removed it or there was none. An observation, not a failure of the probe: the kind is still measured.
+/// MEASURED on OAI-UNINDEXED, 2026-09-27: for an appointment in a PST the PropertyAccessor refuses with
+/// <c>UnauthorizedAccessException: The property "http://schemas.microsoft.com/mapi/proptag/0x0E060040"
+/// does not support this operation.</c> - which used to escape the probe and end the run.
+/// </param>
+/// <param name="StoreTableSaysUndated">
+/// What the kind's folder's OWN TABLE says, through the store's restriction on the received date - the
+/// read the product's DASL paths make - rather than the PropertyAccessor's read of the item: true when
+/// the item is returned only where <c>datereceived IS NULL</c>, false when only where it is not, null
+/// when the two lookups did not answer or contradicted each other (<see cref="CorpusUndatedTable.Verdict"/>).
+/// </param>
 public sealed record CorpusUndatedProbe(
     CorpusItemKind Kind,
     bool FolderReachable,
@@ -481,7 +494,51 @@ public sealed record CorpusUndatedProbe(
     bool HasNoDeliveryTime,
     bool ClassMatches,
     bool InTheTargetStore,
-    string? Error);
+    string? Error,
+    string? DeliveryTimeRemovalRefused = null,
+    bool? StoreTableSaysUndated = null);
+
+/// <summary>
+/// The undated probe's second read of the received date: the folder's own table, restricted by the
+/// store, as opposed to the item's PropertyAccessor. Pure, so T1 pins the two filters and the verdict.
+/// <para>
+/// <b>Why a second read.</b> On OAI-UNINDEXED, 2026-09-27, the PropertyAccessor read a delivery time on
+/// every appointment, contact and task saved into a PST, and refused to delete it. Whether the STORE
+/// holds that value - what its restriction engine, the product's DASL paths and a MAPI reader see - or
+/// the object model supplies it is the question the next decision turns on, and the table answers it
+/// without writing anything.
+/// </para>
+/// </summary>
+public static class CorpusUndatedTable
+{
+    /// <summary>
+    /// A DASL restriction selecting ONE probe item - the corpus tag plus the reserved probe ordinal, the
+    /// fragment every probe's table lookup uses - AND whether it has a received date:
+    /// <c>IS NULL</c> for <paramref name="withReceivedDate"/> false, its negation for true.
+    /// </summary>
+    public static string Filter(string corpusId, bool withReceivedDate)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
+        string isNull = "(\"urn:schemas:httpmail:datereceived\" IS NULL)";
+        return "@SQL=(\"urn:schemas:httpmail:subject\" LIKE '%"
+            + CorpusPlan.DaslSubjectFragment(corpusId, CorpusPlan.ProbeOrdinal) + "%')"
+            + " AND " + (withReceivedDate ? "(NOT " + isNull + ")" : isNull);
+    }
+
+    /// <summary>
+    /// The store's answer from the two lookups: each is true when the table returned the item, false when
+    /// it was walked to its end without it, null when it did not answer. Undated only when found where
+    /// undated and NOT found where dated; dated only the other way round; anything else - a lookup that did
+    /// not answer, or the item in both or neither - is not an answer.
+    /// </summary>
+    public static bool? Verdict(bool? foundWhereUndated, bool? foundWhereDated)
+        => (foundWhereUndated, foundWhereDated) switch
+        {
+            (true, false) => true,
+            (false, true) => false,
+            _ => null,
+        };
+}
 
 /// <summary>
 /// The go/no-go on the undated probe, as a pure function: a population carrying undated items is only
@@ -490,6 +547,27 @@ public sealed record CorpusUndatedProbe(
 /// </summary>
 public static class CorpusUndatedFidelity
 {
+    /// <summary>
+    /// The probe's line for one kind. <c>tableUndated</c> is the folder table's answer
+    /// (<see cref="CorpusUndatedProbe.StoreTableSaysUndated"/>, <c>(unknown)</c> when it gave none), and
+    /// <c>removalRefused=</c> appears only when the write path could not remove the delivery time.
+    /// </summary>
+    public static string Line(CorpusUndatedProbe p)
+    {
+        ArgumentNullException.ThrowIfNull(p);
+        string table = p.StoreTableSaysUndated switch
+        {
+            true => "True",
+            false => "False",
+            null => "(unknown)",
+        };
+        return $"  {p.Kind.ToString().ToLowerInvariant(),-12} folder={p.FolderReachable} inFolder={p.InTheFolder}"
+            + $" tag={p.SubjectTagParses} undated={p.HasNoDeliveryTime} tableUndated={table} class={p.ClassMatches}"
+            + $" inTargetStore={p.InTheTargetStore}"
+            + (p.DeliveryTimeRemovalRefused == null ? string.Empty : $" removalRefused={p.DeliveryTimeRemovalRefused}")
+            + (p.Error == null ? string.Empty : $" error={p.Error}");
+    }
+
     /// <summary>Whether a build may proceed, and the sentence that says why either way.</summary>
     /// <param name="required">The undated kinds the population carries.</param>
     /// <param name="probes">What the probe found, one entry per kind it probed.</param>
@@ -543,7 +621,19 @@ public static class CorpusUndatedFidelity
 
             if (!probe.HasNoDeliveryTime)
             {
-                why.Add("it CARRIES a delivery time, so the index would date it");
+                why.Add("it CARRIES a delivery time, so the index would date it"
+                    + (probe.StoreTableSaysUndated == true
+                        ? " (though the folder's own table finds it undated - the two reads disagree)"
+                        : probe.StoreTableSaysUndated == false ? " (the folder's own table agrees)" : string.Empty)
+                    + (probe.DeliveryTimeRemovalRefused == null
+                        ? string.Empty
+                        : ", and Outlook refused to remove it (" + probe.DeliveryTimeRemovalRefused + ")"));
+            }
+            else if (probe.StoreTableSaysUndated == false)
+            {
+                // The PropertyAccessor reads nothing, and the store's own restriction finds a received date:
+                // the item is dated where the product's DASL paths look, whatever the object model says.
+                why.Add("the folder's own table finds it DATED though the item reads no delivery time - the two reads disagree");
             }
 
             if (!probe.ClassMatches)

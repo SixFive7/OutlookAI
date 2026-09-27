@@ -50,8 +50,11 @@ public enum CorpusPlacementMethod
 
     /// <summary>
     /// Create in the target folder and write PR_MESSAGE_FLAGS - MSGFLAG_UNSENT CLEARED, MSGFLAG_READ
-    /// as planned - BEFORE THE FIRST SAVE, then save. Added 2026-09-24, and the first of the two rungs a
-    /// store that is not the profile's DEFAULT store is probed with (<see cref="CorpusPlacement.LadderFor"/>).
+    /// as planned - BEFORE THE FIRST SAVE, then save. Added 2026-09-24 as the first of two candidates
+    /// for a store that is not the profile's DEFAULT store, and RETIRED from every ladder 2026-09-27:
+    /// measured on OAI-UNINDEXED against the hub, its first save landed in the default store all the
+    /// same (<c>store=OTHER</c>), so probing it writes outside the target. The value is kept so the
+    /// record reads; nothing probes or builds with it.
     /// <para>
     /// <b>Why.</b> Measured on OAI-UNINDEXED that day: a new unsent mail item's first save is filed
     /// in the DEFAULT store's Drafts, whichever store's folder created it - the target's Inbox (both
@@ -72,9 +75,11 @@ public enum CorpusPlacementMethod
     /// <summary>
     /// Create a POST item (<c>olPostItem</c>) in the target folder and save it; change its message
     /// class to <c>IPM.Note</c> and save again; re-open it by EntryID, which hands back a mail item.
-    /// The second rung for a store that is not the profile's DEFAULT store, added 2026-09-24 beside
-    /// <see cref="InPlaceReceived"/> so one probe session on a guest settles placement with two
-    /// independent chances rather than one.
+    /// The ONE rung for a store that is not the profile's DEFAULT store. Added 2026-09-24 beside
+    /// <see cref="InPlaceReceived"/>, so one probe session could settle placement with two chances; on
+    /// OAI-UNINDEXED 2026-09-27 it was the one that held, against the hub from the account-less profile:
+    /// <c>store=target landedIn=Inbox parentMatches=True inFolderTable=True sentFlag=True usable=True</c>,
+    /// and the date and enrichment probes then verified on items placed with it.
     /// <para>
     /// <b>Why it could work where every mail rung failed.</b> The object model creates a post in the
     /// SENT state - it is never MSGFLAG_UNSENT, so it is never a draft - and a post belongs to the
@@ -196,14 +201,17 @@ public static class CorpusPlacement
     };
 
     /// <summary>
-    /// The rungs for any OTHER store - every fixture population's case: only the ones whose item is
-    /// never unsent. Each rung of <see cref="Ladder"/> files its item in the DEFAULT store's Drafts on
-    /// the first save (measured 2026-09-24, for the InPlace and the Drafts rungs alike), so probing them
-    /// here would itself write outside the target, and a failed one would strand its item there.
+    /// The rung for any OTHER store - every fixture population's case: <see cref="CorpusPlacementMethod.PostAsNote"/>
+    /// alone, because it is the one rung MEASURED to keep its first save in a store that is not the
+    /// profile's default. Each rung of <see cref="Ladder"/> files its item in the DEFAULT store's Drafts
+    /// on the first save (measured on OAI-UNINDEXED 2026-09-24, for the InPlace and the Drafts rungs
+    /// alike), and so does <see cref="CorpusPlacementMethod.InPlaceReceived"/>, flags written before the
+    /// save and all (measured there 2026-09-27: <c>store=OTHER</c>, while PostAsNote read
+    /// <c>store=target landedIn=Inbox parentMatches=True inFolderTable=True</c>). Probing any of them here
+    /// would itself write outside the target, so none is probed: a probe writes only where it is aimed.
     /// </summary>
     public static readonly CorpusPlacementMethod[] NonDefaultStoreLadder =
     {
-        CorpusPlacementMethod.InPlaceReceived,
         CorpusPlacementMethod.PostAsNote,
     };
 
@@ -321,11 +329,12 @@ public static class CorpusPlacement
         if (chosen == CorpusPlacementMethod.None && !targetIsDefaultStore)
         {
             return (false, "Placement: NOT ACHIEVABLE on this store. It is not the profile's default store, so it is probed "
-                + "only with the rungs whose item is never unsent - "
+                + "only with the rung measured to keep its first save in the store it is aimed at - "
                 + string.Join(" and ", NonDefaultStoreLadder.Select(m => m.ToString()))
-                + " - because every other rung files its item in the DEFAULT store's Drafts first, and neither left an item "
-                + "in the target folder of the target store and in that folder's table. --allow-drafts-placement cannot "
-                + "help here: a draft of this store is filed in ANOTHER store. Refusing to build.");
+                + " - because every other rung files its item in the DEFAULT store's Drafts first, and it did not leave an "
+                + "item in the target folder of the target store and in that folder's table. --allow-drafts-placement "
+                + "cannot help here: a draft of this store is filed in ANOTHER store. Build this store in a profile where "
+                + "it IS the default (decided 2026-09-27, Q88 (a)). Refusing to build.");
         }
 
         if (chosen != CorpusPlacementMethod.None)
