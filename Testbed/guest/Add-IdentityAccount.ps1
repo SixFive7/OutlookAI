@@ -84,16 +84,31 @@
         after the restart. Without Q80 the section below still holds.
 
     AND ONE THING THAT RUN GOT WRONG, found afterwards (Docs/live-tier-on-the-vm.md section 4.1,
-    step 6, defect 4) and NOT fixed here, because the fix is a decision about how a secondary PST
-    gets default folders at all:
+    step 6, defect 4):
       * THE "INBOX ENTRYID" CAPTURED IS THE PST'S ROOT. identity.pst is attached by AddStoreEx and
         has no Inbox; Store.GetDefaultFolder(6) on it returns the PST's non-IPM root folder (NID
         0x122, no display name - its EntryID ends 22010000). CaptureStore recorded that, Bind wrote
-        it into `Delivery Folder EntryID`, and Verify cannot see it, because it checks the delivery
-        STORE and its Drafts. On both guests, then, POP3 mail for this account would be filed in a
-        folder Outlook's folder tree does not show.
-      * CAPTURESTORE AND VERIFY ARE NOT PURE READS. GetDefaultFolder(16) creates a missing Drafts
+        it into `Delivery Folder EntryID`, and Verify could not see it, because it checked the
+        delivery STORE and its Drafts. On both guests, then, POP3 mail for this account would be
+        filed in a folder Outlook's folder tree does not show.
+      * CAPTURESTORE AND VERIFY WERE NOT PURE READS. GetDefaultFolder(16) creates a missing Drafts
         folder on such a PST; the identity PST's Drafts very likely came from these two phases.
+
+    WHAT CHANGED BECAUSE OF IT (2026-09-24, later; host-side, SelfTest only - NOT YET RUN ON A GUEST):
+      * CaptureStore finds the Inbox only through the store's PR_VALID_FOLDER_MASK - no Inbox bit,
+        no Inbox, and the lookup that would hand back the root is never made - and REFUSES unless it
+        is a NAMED folder under the store's root folder whose EntryID's node id is not one of the
+        PST's fixed non-Inbox folders (the root 0x122, Top of Outlook data file 0x8022, the search
+        roots 0x8042 and 0x8062). Bind refuses the same on the captured bytes, and refuses a capture
+        written before these checks. Verify now reads the identity account's `Delivery Folder
+        EntryID` and FAILS on the root. Get-DeliveryFolderRefusal is the one rule; -SelfTest pins it.
+      * No phase asks for Drafts by the creating lookup any more: its designation, PR_IPM_DRAFTS_ENTRYID,
+        is read off the Inbox or the store object and opened by EntryID. Not designated is reported,
+        not failed - the product's new_draft makes Drafts on first use, in a store it may write.
+      * So on the guests as they stand (identity.pst attached by AddStoreEx, no Inbox) CaptureStore
+        REFUSES. That is the point: HOW identity.pst gets a real, designated Inbox is an open
+        question, and its candidates are listed in Docs/live-tier-on-the-vm.md section 3b, "The
+        identity store has no Inbox" - each to be measured on a guest before any is written in here.
 
     WHAT IS STILL NOT KNOWN, stated where it matters:
       * Account.SmtpAddress over COM ON A GUEST WITHOUT Q80. It is on Microsoft's list of members
@@ -176,6 +191,23 @@ $StoreValue   = 'Delivery Store EntryID'                    # MEASURED name on 1
 $FolderValue  = 'Delivery Folder EntryID'                   # MEASURED name on 16.0.17932
 $RenderedPrf  = Join-Path $WorkDir 'identity-account.prf'
 
+# PR_VALID_FOLDER_MASK and its Inbox bit (MAPIDefS.h FOLDER_IPM_INBOX_VALID), read as
+# OutlookAI.Core's SpecialFolders reads them: an Inbox is proven present before it is opened.
+$ValidFolderMaskSchema = 'http://schemas.microsoft.com/mapi/proptag/0x35DF0003'
+$FolderIpmInboxValid   = 0x02
+# PR_IPM_DRAFTS_ENTRYID - where Drafts is designated (on the Inbox, or the store object).
+$DraftsEntryIdSchema   = 'http://schemas.microsoft.com/mapi/proptag/0x36D70102'
+
+# The PST's fixed folders that are NOT an Inbox, by node id (MS-PST section 2.7.3: the root folder,
+# and the three folders every PST's root holds). A delivery folder with one of these ids is the
+# 2026-09-24 defect, whatever else is true of it.
+$NonInboxPstNids = @{
+    0x122  = 'the PST''s non-IPM ROOT folder'
+    0x8022 = 'Top of Outlook data file (the IPM subtree root)'
+    0x8042 = 'the search root'
+    0x8062 = 'the spam search folder'
+}
+
 function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 
 # =============================================================================================
@@ -233,17 +265,63 @@ function Select-IdentityAccountRow {
     return [pscustomobject]@{ Row = $hits[0]; Refusal = $null }
 }
 
+# A PST folder's EntryID is 24 bytes - 4 flag bytes, the store's 16-byte provider UID, and the
+# folder's 4-byte node id, little-endian (MS-PST's EntryID structure). The node id, or $null for an
+# EntryID of any other shape (an Exchange folder's, say), which this check then has no opinion on.
+function Get-PstFolderNid {
+    param([byte[]] $EntryId)
+    if ($null -eq $EntryId -or $EntryId.Length -ne 24) { return $null }
+    return [long][BitConverter]::ToUInt32($EntryId, 20)
+}
+
+# Whether a folder is one a person can SEE: NAMED, and a descendant of the store's root folder
+# (Store.GetRootFolder(), the top of the tree Outlook draws). Ancestors nearest first; a $null or
+# non-string entry ends the chain - the parent was not a folder, or would not say. The same rule as
+# the corpus tool's CorpusFolderVisibility.IsVisible.
+function Test-FolderIsVisible {
+    param([string] $Name, [object[]] $AncestorEntryIds, [string] $RootEntryId)
+    if ([string]::IsNullOrWhiteSpace($Name) -or [string]::IsNullOrEmpty($RootEntryId)) { return $false }
+    foreach ($id in @($AncestorEntryIds)) {
+        if ($null -eq $id -or -not ($id -is [string]) -or $id.Length -eq 0) { return $false }
+        if ([string]::Equals($id, $RootEntryId, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
+# Why a folder may NOT be an account's delivery folder - or $null when it may. The one rule behind
+# CaptureStore, Bind and Verify, written after both guests bound the identity account to the PST's
+# ROOT (Docs/live-tier-on-the-vm.md section 4.1, step 6, defect 4). $Visible is Test-FolderIsVisible's
+# answer; anything but $true refuses.
+function Get-DeliveryFolderRefusal {
+    param([string] $EntryIdHex, [string] $Name, $Visible)
+    if ([string]::IsNullOrWhiteSpace($EntryIdHex)) {
+        return 'the store has no Inbox to deliver into - its PR_VALID_FOLDER_MASK carries no FOLDER_IPM_INBOX_VALID bit, as on every PST attached with AddStoreEx'
+    }
+    $bytes = $null
+    try { $bytes = ConvertFrom-HexString $EntryIdHex } catch { return "its EntryID '$EntryIdHex' is not hex" }
+    $nid = Get-PstFolderNid $bytes
+    if ($null -ne $nid -and $NonInboxPstNids.ContainsKey([int]$nid)) {
+        return ("its EntryID names {0} (node id 0x{1:X}), not an Inbox - mail delivered there lands where Outlook's folder tree does not show it" -f $NonInboxPstNids[[int]$nid], $nid)
+    }
+    if ([string]::IsNullOrWhiteSpace($Name)) { return 'it has no display name - no folder anyone can pick out' }
+    if ($Visible -ne $true) { return 'it is not a descendant of the store''s root folder, so Outlook''s folder tree does not show it' }
+    return $null
+}
+
 # Accounts: objects with Name, DeliveryPath (null when DeliveryStore is NULL), DeliveryStoreId,
-# DraftsOk. The identity account must have its OWN store at -PstPath, shared with no other account.
+# DraftsOk (Drafts designated and it opened) and DraftsAbsent (not designated at all - the product's
+# new_draft makes it on first use, so that is reported, not failed). The identity account must have
+# its OWN store at -PstPath, shared with no other account, and a delivery FOLDER nothing refuses.
 function Get-IdentityVerdict {
-    param([object[]] $Accounts, [string] $IdentityName, [string] $Path)
+    param([object[]] $Accounts, [string] $IdentityName, [string] $Path, [string] $DeliveryFolderRefusal)
     $problems = @()
     $mine = @($Accounts | Where-Object { $_.Name -eq $IdentityName })
     if ($mine.Count -ne 1) { return @("expected exactly one account named '$IdentityName', found $($mine.Count)") }
     $me = $mine[0]
     if (-not $me.DeliveryPath) { $problems += 'its DeliveryStore is NULL - NewDraft would fail with AccountHasNoDeliveryStore' }
     elseif ($me.DeliveryPath -ine $Path) { $problems += "its DeliveryStore is '$($me.DeliveryPath)', not '$Path'" }
-    if (-not $me.DraftsOk) { $problems += 'its delivery store''s Drafts folder did not resolve' }
+    if (-not $me.DraftsOk -and $me.DraftsAbsent -ne $true) { $problems += 'its delivery store designates a Drafts folder that did not open' }
+    if (-not [string]::IsNullOrEmpty($DeliveryFolderRefusal)) { $problems += "its delivery FOLDER is refused: $DeliveryFolderRefusal" }
     foreach ($other in @($Accounts | Where-Object { $_.Name -ne $IdentityName })) {
         if ($me.DeliveryStoreId -and $other.DeliveryStoreId -eq $me.DeliveryStoreId) { $problems += "it SHARES its delivery store with '$($other.Name)'" }
         if (-not $other.DeliveryPath) { $problems += "'$($other.Name)' has no delivery store" }
@@ -299,6 +377,34 @@ function Invoke-SelfTest {
     Check 'bound to the tier store (what the .prf alone produces): refused' ((@(Get-IdentityVerdict -Accounts @($tier, $shared) -IdentityName 'OutlookAI identity sink' -Path 'C:\OutlookAI-Tier\identity.pst')).Count -gt 0)
     Check 'NULL delivery store: refused' ((@(Get-IdentityVerdict -Accounts @($tier, $null1) -IdentityName 'OutlookAI identity sink' -Path 'C:\OutlookAI-Tier\identity.pst')).Count -gt 0)
     Check 'identity account missing: refused' ((@(Get-IdentityVerdict -Accounts @($tier) -IdentityName 'OutlookAI identity sink' -Path 'C:\OutlookAI-Tier\identity.pst')).Count -gt 0)
+
+    # The delivery FOLDER (Docs/live-tier-on-the-vm.md section 4.1, step 6, defect 4). Both guests'
+    # identity account was bound to the PST's non-IPM ROOT: an EntryID ending 22010000, node 0x122.
+    $uid = '0000000038A1BB1005E5101AA1BB08002B2A56C2'
+    $rootHex = $uid + '22010000'
+    Check 'a PST folder EntryID carries its node id in its last four bytes, little-endian' ((Get-PstFolderNid (ConvertFrom-HexString $rootHex)) -eq 0x122)
+    Check 'an EntryID of another shape has no PST node id' ($null -eq (Get-PstFolderNid (ConvertFrom-HexString ('00' * 46))))
+    $why = Get-DeliveryFolderRefusal -EntryIdHex $rootHex -Name '' -Visible $false
+    Check 'the measured binding - the PST''s ROOT - is refused, by name' ($null -ne $why -and $why.Contains('non-IPM ROOT'))
+    Check 'even if it were named and reported visible' ($null -ne (Get-DeliveryFolderRefusal -EntryIdHex $rootHex -Name 'Inbox' -Visible $true))
+    Check 'Top of Outlook data file is not an Inbox either' ((Get-DeliveryFolderRefusal -EntryIdHex ($uid + '22800000') -Name 'identity@vm.invalid' -Visible $true).Contains('IPM subtree root'))
+    Check 'nor the search root' ($null -ne (Get-DeliveryFolderRefusal -EntryIdHex ($uid + '42800000') -Name 'Search Root' -Visible $true))
+    Check 'no Inbox at all is refused, and says why' ((Get-DeliveryFolderRefusal -EntryIdHex '' -Name '' -Visible $false).Contains('FOLDER_IPM_INBOX_VALID'))
+    $inboxHex = $uid + 'A2800000'
+    Check 'a named, visible folder of its own is accepted' ($null -eq (Get-DeliveryFolderRefusal -EntryIdHex $inboxHex -Name 'Inbox' -Visible $true))
+    Check 'a nameless one is refused' ($null -ne (Get-DeliveryFolderRefusal -EntryIdHex $inboxHex -Name ' ' -Visible $true))
+    Check 'an invisible one is refused' ($null -ne (Get-DeliveryFolderRefusal -EntryIdHex $inboxHex -Name 'Inbox' -Visible $false))
+    Check 'a visibility nobody established is refused' ($null -ne (Get-DeliveryFolderRefusal -EntryIdHex $inboxHex -Name 'Inbox' -Visible $null))
+    Check 'hex that is not hex is refused' ($null -ne (Get-DeliveryFolderRefusal -EntryIdHex 'XYZ1' -Name 'Inbox' -Visible $true))
+    Check 'a folder whose parent chain reaches the root folder is visible' (Test-FolderIsVisible -Name 'Inbox' -AncestorEntryIds @('ROOT') -RootEntryId 'root')
+    Check 'at any depth' (Test-FolderIsVisible -Name 'Projects' -AncestorEntryIds @('INBOX', 'ROOT') -RootEntryId 'ROOT')
+    Check 'a chain that ends before the root is not' (-not (Test-FolderIsVisible -Name 'Inbox' -AncestorEntryIds @('NONIPMROOT', $null) -RootEntryId 'ROOT'))
+    Check 'nor a nameless folder, nor one whose root would not read' ((-not (Test-FolderIsVisible -Name '' -AncestorEntryIds @('ROOT') -RootEntryId 'ROOT')) -and (-not (Test-FolderIsVisible -Name 'Inbox' -AncestorEntryIds @('ROOT') -RootEntryId '')))
+    Check 'a delivery-folder refusal fails the verdict' ((@(Get-IdentityVerdict -Accounts @($tier, $good) -IdentityName 'OutlookAI identity sink' -Path 'C:\OutlookAI-Tier\identity.pst' -DeliveryFolderRefusal $why) -join ' ').Contains('delivery FOLDER'))
+    $absentDrafts = [pscustomobject]@{ Name = 'OutlookAI identity sink'; DeliveryPath = 'C:\OutlookAI-Tier\identity.pst'; DeliveryStoreId = 'BB'; DraftsOk = $false; DraftsAbsent = $true }
+    Check 'Drafts not designated is not a failure - new_draft makes it' ((@(Get-IdentityVerdict -Accounts @($tier, $absentDrafts) -IdentityName 'OutlookAI identity sink' -Path 'C:\OutlookAI-Tier\identity.pst')).Count -eq 0)
+    $brokenDrafts = [pscustomobject]@{ Name = 'OutlookAI identity sink'; DeliveryPath = 'C:\OutlookAI-Tier\identity.pst'; DeliveryStoreId = 'BB'; DraftsOk = $false; DraftsAbsent = $false }
+    Check 'a designated Drafts that will not open is' ((@(Get-IdentityVerdict -Accounts @($tier, $brokenDrafts) -IdentityName 'OutlookAI identity sink' -Path 'C:\OutlookAI-Tier\identity.pst')).Count -gt 0)
 
     Write-Host ''
     Write-Host ("SelfTest: {0} passed, {1} failed. The guest halves - the import, AddStoreEx, the COM reads and whether Outlook honours the bound values - are what -Phase proves, not this." -f $script:pass, $script:fail)
@@ -377,14 +483,54 @@ switch ($Phase) {
             for ($i = 1; $i -le $ns.Stores.Count; $i++) { $s = $ns.Stores.Item($i); if ($s.FilePath -and ($s.FilePath -ieq $target)) { $hit = $s } }
             if (-not $hit) { throw "No store in '$ProfileName' has FilePath '$target'. Run Add-OutlookPstStore.ps1 first." }
             if ($hit.DisplayName -cne $StoreDisplayName) { throw "The store at '$target' is named '$($hit.DisplayName)', not '$StoreDisplayName'. Name it first (Add-OutlookPstStore.ps1 renames)." }
+
+            # The Inbox is PROVEN present by the store's own PR_VALID_FOLDER_MASK before it is asked
+            # for - the rule OutlookAI.Core's SpecialFolders follows. Asked for without that proof,
+            # GetDefaultFolder(6) on an AddStoreEx PST hands back its non-IPM ROOT (measured on both
+            # guests, 2026-09-24), and that is what this phase used to record.
+            $accessor = $hit.PropertyAccessor
+            $mask = $null
+            try { $mask = [int]$accessor.GetProperty($ValidFolderMaskSchema) } catch { $mask = $null }
+            if ($null -eq $mask) { throw "The store's PR_VALID_FOLDER_MASK would not read, so nothing proves whether it has an Inbox. Refusing to capture." }
+            $inboxHex = ''; $inboxName = ''; $inboxVisible = $false; $draftsHex = ''
+            if (($mask -band $FolderIpmInboxValid) -ne 0) {
+                $inbox = $hit.GetDefaultFolder(6)
+                $inboxHex = [string]$inbox.EntryID
+                $inboxName = [string]$inbox.Name
+                $rootId = [string]$hit.GetRootFolder().EntryID
+                $ancestors = New-Object System.Collections.Generic.List[object]
+                $parent = $null
+                try { $parent = $inbox.Parent } catch { $parent = $null }
+                for ($depth = 0; $depth -lt 32 -and $null -ne $parent; $depth++) {
+                    $parentId = $null
+                    try { $parentId = [string]$parent.EntryID } catch { $parentId = $null }
+                    $ancestors.Add($parentId)
+                    if ($null -eq $parentId -or $parentId -ieq $rootId) { break }
+                    try { $parent = $parent.Parent } catch { $parent = $null }
+                }
+                $inboxVisible = Test-FolderIsVisible -Name $inboxName -AncestorEntryIds $ancestors.ToArray() -RootEntryId $rootId
+                # Drafts by its DESIGNATION, never by GetDefaultFolder(16), which creates one a PST lacks.
+                try { $draftsHex = [string]$inbox.PropertyAccessor.BinaryToString($inbox.PropertyAccessor.GetProperty($DraftsEntryIdSchema)) } catch { $draftsHex = '' }
+            }
+            if (-not $draftsHex) {
+                try { $draftsHex = [string]$accessor.BinaryToString($accessor.GetProperty($DraftsEntryIdSchema)) } catch { $draftsHex = '' }
+            }
+
             $script:captured = [pscustomobject]@{
                 FilePath = $hit.FilePath; DisplayName = $hit.DisplayName; StoreID = $hit.StoreID
-                InboxEntryID = $hit.GetDefaultFolder(6).EntryID; DraftsEntryID = $hit.GetDefaultFolder(16).EntryID
+                InboxEntryID = $inboxHex; InboxName = $inboxName; InboxVisible = $inboxVisible
+                InboxDesignated = (($mask -band $FolderIpmInboxValid) -ne 0); DraftsEntryID = $draftsHex
                 Profile = $ns.CurrentProfileName; CapturedAt = (Get-Date).ToString('o')
             }
         }
         $c = $script:captured
-        Say ("store '{0}' at {1}: StoreID {2} bytes, Inbox EntryID {3} bytes" -f $c.DisplayName, $c.FilePath, ($c.StoreID.Length / 2), ($c.InboxEntryID.Length / 2))
+        Say ("store '{0}' at {1}: StoreID {2} bytes; Inbox designated={3}, EntryID {4} bytes, name '{5}', visible={6}; Drafts {7}" -f $c.DisplayName, $c.FilePath, ($c.StoreID.Length / 2), $c.InboxDesignated, ($c.InboxEntryID.Length / 2), $c.InboxName, $c.InboxVisible, $(if ($c.DraftsEntryID) { 'designated' } else { 'NOT designated' }))
+        $refusal = Get-DeliveryFolderRefusal -EntryIdHex $c.InboxEntryID -Name $c.InboxName -Visible $c.InboxVisible
+        if ($refusal) {
+            throw ("REFUSING to capture '$($c.DisplayName)' as the identity account's delivery target: $refusal. " +
+                'Binding it anyway is exactly the 2026-09-24 defect - POP3 mail filed where nobody can see it. The store needs a real, ' +
+                'designated Inbox first, and HOW is an open decision: Docs/live-tier-on-the-vm.md section 3b, "The identity store has no Inbox". Nothing was written.')
+        }
         if (-not (Test-StoreEntryIdNamesPath -EntryId (ConvertFrom-HexString $c.StoreID) -Path $c.FilePath)) { throw 'The StoreID does not carry the PST path; refusing to record it.' }
         if (-not $Execute) { Say "Dry run. Would write $IdsPath."; return }
         Set-Content -LiteralPath $IdsPath -Value ($c | ConvertTo-Json) -Encoding UTF8
@@ -396,6 +542,11 @@ switch ($Phase) {
         if (-not (Test-Path -LiteralPath $IdsPath)) { throw "No capture at $IdsPath. Run -Phase CaptureStore -Execute first, with Outlook running." }
         $ids = Get-Content -LiteralPath $IdsPath -Raw | ConvertFrom-Json
         if ($ids.FilePath -ine [IO.Path]::GetFullPath($PstPath)) { throw "The capture is for '$($ids.FilePath)', not '$PstPath'." }
+        if ($null -eq $ids.PSObject.Properties['InboxVisible']) {
+            throw "REFUSING: $IdsPath was written by a CaptureStore that did not check its Inbox is a visible folder - the version that captured the PST's ROOT on both guests (2026-09-24). Run -Phase CaptureStore -Execute again."
+        }
+        $refusal = Get-DeliveryFolderRefusal -EntryIdHex $ids.InboxEntryID -Name $ids.InboxName -Visible $ids.InboxVisible
+        if ($refusal) { throw "REFUSING to bind: the captured delivery folder - $refusal." }
         $storeBytes = ConvertFrom-HexString $ids.StoreID
         $folderBytes = ConvertFrom-HexString $ids.InboxEntryID
         if (-not (Test-StoreEntryIdNamesPath -EntryId $storeBytes -Path $ids.FilePath)) { throw 'The captured StoreID does not carry the PST path; refusing.' }
@@ -419,11 +570,20 @@ switch ($Phase) {
     'Verify' {
         Say "registry, profile ${ProfileName}:"
         Show-Accounts
+        # The identity account's delivery FOLDER, as Outlook will use it: the bytes Bind wrote.
+        $identityRow = $null
+        foreach ($r in @(Get-AccountRows)) { if ($r.Clsid -eq $Pop3Clsid -and $r.Email -is [string] -and $r.Email -ceq $EmailAddress) { $identityRow = $r } }
+        $folderHex = ''; $folderStoreHex = ''
+        if ($null -ne $identityRow) { $folderHex = ConvertTo-HexString $identityRow.FolderBytes; $folderStoreHex = ConvertTo-HexString $identityRow.StoreBytes }
         # Every COM read in a child job with a deadline, one member per line, so a blocked call is
         # reported as exactly that - the pattern this project settled on after reads that hung in a
-        # scheduled task's own runspace.
-        $job = Start-Job -ArgumentList @($ProfileName) -ScriptBlock {
-            param($want)
+        # scheduled task's own runspace. NO read here asks for a folder by the lookup that creates one:
+        # Drafts is found by its designation, PR_IPM_DRAFTS_ENTRYID, on the Inbox the store's
+        # PR_VALID_FOLDER_MASK proves - or on the store object - and opened by EntryID.
+        $job = Start-Job -ArgumentList @($ProfileName, $folderHex, $folderStoreHex) -ScriptBlock {
+            param($want, $folderHex, $folderStoreHex)
+            $mask = 'http://schemas.microsoft.com/mapi/proptag/0x35DF0003'
+            $draftsTag = 'http://schemas.microsoft.com/mapi/proptag/0x36D70102'
             $ol = New-Object -ComObject Outlook.Application
             $ns = $ol.GetNamespace('MAPI')
             $null = $ns.GetDefaultFolder(6)
@@ -435,10 +595,35 @@ switch ($Phase) {
                 $ds = $a.DeliveryStore
                 if ($null -eq $ds) { "ACCOUNT|$name|$($a.AccountType)|||0|" }
                 else {
-                    $ok = 0; $dn = ''
-                    try { $d = $ds.GetDefaultFolder(16); $dn = $d.Name; $ok = 1 } catch { $dn = 'ERR ' + $_.Exception.Message }
+                    $ok = 0; $dn = ''; $dh = ''
+                    $m = $null
+                    try { $m = [int]$ds.PropertyAccessor.GetProperty($mask) } catch { $m = $null }
+                    if ($null -ne $m -and ($m -band 2) -ne 0) {
+                        try { $ib = $ds.GetDefaultFolder(6); $dh = [string]$ib.PropertyAccessor.BinaryToString($ib.PropertyAccessor.GetProperty($draftsTag)) } catch { $dh = '' }
+                    }
+                    if (-not $dh) { try { $dh = [string]$ds.PropertyAccessor.BinaryToString($ds.PropertyAccessor.GetProperty($draftsTag)) } catch { $dh = '' } }
+                    if ($dh) { try { $d = $ns.GetFolderFromID($dh, $ds.StoreID); $dn = $d.Name; $ok = 1 } catch { $dn = 'ERR ' + $_.Exception.Message } }
+                    else { $dn = 'NOT DESIGNATED - new_draft makes it on first use'; $ok = 2 }
                     "ACCOUNT|$name|$($a.AccountType)|$($ds.DisplayName)|$($ds.FilePath)|$ok|$dn|$($ds.StoreID)"
                 }
+            }
+            if ($folderHex) {
+                try {
+                    $df = $ns.GetFolderFromID($folderHex, $folderStoreHex)
+                    $rootId = [string]$df.Store.GetRootFolder().EntryID
+                    $chain = @()
+                    $p = $null
+                    try { $p = $df.Parent } catch { $p = $null }
+                    for ($k = 0; $k -lt 32 -and $null -ne $p; $k++) {
+                        $pe = ''
+                        try { $pe = [string]$p.EntryID } catch { $pe = '' }
+                        $chain += $pe
+                        if (-not $pe -or $pe -ieq $rootId) { break }
+                        try { $p = $p.Parent } catch { $p = $null }
+                    }
+                    "DFOLDER|$($df.Name)|$rootId|$($chain -join ',')"
+                }
+                catch { "DFOLDER-ERR|$($_.Exception.Message)" }
             }
             'END'
         }
@@ -448,24 +633,33 @@ switch ($Phase) {
         if ($job.State -eq 'Running') { Stop-Job -Job $job; Remove-Job -Job $job -Force; throw "The COM read did not finish in 180 s. Last line: $($lines[-1])" }
         Remove-Job -Job $job -Force
         $accounts = @()
+        $folderRefusal = $null
+        if (-not $folderHex) { $folderRefusal = "the account has no '$FolderValue' at all" }
         foreach ($l in $lines) {
             $f = $l.Split('|')
             switch ($f[0]) {
                 'PROFILE' { Say "COM: profile '$($f[1])'"; if ($f[1] -ne $ProfileName) { throw "Outlook is on '$($f[1])', not '$ProfileName'." } }
                 'STORE' { Say "COM: store '$($f[1])'  $($f[2])" }
                 'ACCOUNT' {
-                    $acc = [pscustomobject]@{ Name = $f[1]; DeliveryPath = $(if ($f[4]) { $f[4] } else { $null }); DeliveryStoreId = $(if ($f.Count -gt 7) { $f[7] } else { $null }); DraftsOk = ($f[5] -eq '1') }
+                    $acc = [pscustomobject]@{ Name = $f[1]; DeliveryPath = $(if ($f[4]) { $f[4] } else { $null }); DeliveryStoreId = $(if ($f.Count -gt 7) { $f[7] } else { $null }); DraftsOk = ($f[5] -eq '1'); DraftsAbsent = ($f[5] -eq '2') }
                     $accounts += $acc
                     $dsText = '<NULL>'; if ($f[4]) { $dsText = "'$($f[3])' ($($f[4]))" }
                     Say ("COM: account '{0}' type={1} DeliveryStore={2} Drafts={3}" -f $f[1], $f[2], $dsText, $(if ($f.Count -gt 6) { $f[6] } else { '' }))
                 }
+                'DFOLDER' {
+                    $chain = @(); foreach ($e in @($f[3].Split(','))) { if ($e) { $chain += $e } else { $chain += $null } }
+                    $visible = Test-FolderIsVisible -Name $f[1] -AncestorEntryIds $chain -RootEntryId $f[2]
+                    $folderRefusal = Get-DeliveryFolderRefusal -EntryIdHex $folderHex -Name $f[1] -Visible $visible
+                    Say ("COM: the identity account delivers into '{0}' (visible={1}, PST node id {2})" -f $f[1], $visible, $(if ($null -ne (Get-PstFolderNid (ConvertFrom-HexString $folderHex))) { '0x{0:X}' -f (Get-PstFolderNid (ConvertFrom-HexString $folderHex)) } else { 'n/a' }))
+                }
+                'DFOLDER-ERR' { $folderRefusal = "its '$FolderValue' would not open: $($f[1])" }
                 'END' { }
                 default { Say "COM: $l" }
             }
         }
         $distinct = @($accounts | Where-Object { $_.DeliveryStoreId } | ForEach-Object { $_.DeliveryStoreId } | Sort-Object -Unique).Count
         Say "COM: $($accounts.Count) account(s), $distinct distinct delivery store(s)"
-        $problems = @(Get-IdentityVerdict -Accounts $accounts -IdentityName $AccountName -Path ([IO.Path]::GetFullPath($PstPath)))
+        $problems = @(Get-IdentityVerdict -Accounts $accounts -IdentityName $AccountName -Path ([IO.Path]::GetFullPath($PstPath)) -DeliveryFolderRefusal $folderRefusal)
         if ($TrySmtpAddress) {
             $sj = Start-Job -ScriptBlock {
                 $ol = New-Object -ComObject Outlook.Application
@@ -486,7 +680,7 @@ switch ($Phase) {
             foreach ($p in $problems) { Say "FAIL: the identity account - $p" }
             exit 1
         }
-        Say "OK: '$AccountName' delivers to its own store '$StoreDisplayName' ($PstPath), its Drafts resolves, and no other account shares it."
+        Say "OK: '$AccountName' delivers to its own store '$StoreDisplayName' ($PstPath), into a named, visible folder that is not the PST's root; its Drafts is designated and opens, or is not designated yet; and no other account shares the store."
         exit 0
     }
 }

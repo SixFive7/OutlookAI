@@ -174,6 +174,16 @@
         server; the two no longer need to be the same path. Question 12.
         Was: the path is baked in as `AssemblyMetadata("McpServerExePath")` and points into the
         repository's `bin` tree; the guest had no SDK, so nothing put a binary there.
+  - [ ] **Rebuild the fixture populations with generator v2 on a guest, and run the hub rebuild
+        once (2026-09-24).** v1's build on `OutlookAI-Unindexed` was not clean (runbook §4.1 step 6);
+        v2's four fixes, the undated items and `Testbed/guest/Reset-HubPopulation.ps1` are host-side
+        only. From a checkpoint before step 6, read the probe output §3b lists - above all whether
+        `InPlaceReceived` or `PostAsNote` keeps its first save in a store that is not the profile's
+        default; if neither does, the build refuses and §3b has the directions.
+  - [ ] **Decide how `identity.pst` gets a real, designated Inbox** - runbook §3b, "The identity
+        store has no Inbox", five directions, (a) recommended and its measurement written out there.
+        Until then `Testbed/guest/Add-IdentityAccount.ps1 -Phase CaptureStore` refuses the store and
+        the identity account, and the identity population, wait.
   - [ ] **Run `Testbed/guest/Measure-SweepCost.ps1` once.** It is the reconstruction of
         `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1`, which is gitignored and gone with its
         scratch directory. Written from the shipped `SweepFolder` source, read-only by

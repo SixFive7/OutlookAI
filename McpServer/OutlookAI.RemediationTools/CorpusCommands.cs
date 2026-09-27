@@ -92,6 +92,13 @@ public sealed class CorpusOptions
     /// </summary>
     public CorpusPopulationKind? Population { get; private set; }
 
+    /// <summary>
+    /// How long <c>corpus-indexed</c> keeps asking the index before it gives up, in seconds. Zero -
+    /// the default - asks once. The indexer takes a freshly built population in over minutes, and
+    /// only while Outlook runs.
+    /// </summary>
+    public int WaitSeconds { get; private set; }
+
     /// <summary>Parses the arguments after the command word. Throws on anything unrecognised.</summary>
     public static CorpusOptions Parse(IEnumerable<string> args)
     {
@@ -230,6 +237,9 @@ public sealed class CorpusOptions
             case "window":
                 Windows.Add(int.Parse(value, CultureInfo.InvariantCulture));
                 break;
+            case "wait-seconds":
+                WaitSeconds = Math.Max(0, int.Parse(value, CultureInfo.InvariantCulture));
+                break;
             case "population":
                 if (!CorpusPopulation.TryParseKind(value, out CorpusPopulationKind kind))
                 {
@@ -356,6 +366,14 @@ public static class CorpusCommands
         output.WriteLine("  unread                : " + report.UnreadItems.ToString("N0", invariant));
         output.WriteLine("  selected by window    : "
             + string.Join(", ", report.WithinDays.Select(kv => kv.Key + "d=" + kv.Value.ToString("N0", invariant))));
+        if (report.UndatedItems > 0)
+        {
+            // Printed only when there are any, so the measurement corpus's sheet - which every
+            // published measurement is read against - does not change by a single line.
+            output.WriteLine("  undated               : " + report.UndatedItems.ToString("N0", invariant)
+                + "  (no received date - in the folder counts, in none of the date lines above)");
+        }
+
         WritePopulationReport(plan, report, output);
     }
 
@@ -382,9 +400,17 @@ public static class CorpusCommands
         int attachments = 0;
         int probeTermBodies = 0;
         int probeTermAttachments = 0;
+        var undatedKinds = new SortedDictionary<string, int>(StringComparer.Ordinal);
         for (int ordinal = report.FromOrdinal; ordinal <= report.ToOrdinal; ordinal++)
         {
-            CorpusItemEnrichment enrichment = plan.Enrich(ordinal)!;
+            CorpusItemEnrichment? enrichment = plan.Enrich(ordinal);
+            if (enrichment == null)
+            {
+                string undatedKind = plan.Describe(ordinal).Kind.ToString().ToLowerInvariant();
+                undatedKinds[undatedKind] = undatedKinds.TryGetValue(undatedKind, out int u) ? u + 1 : 1;
+                continue;
+            }
+
             if (enrichment.ThreadKey != null)
             {
                 threads.Add(enrichment.ThreadKey.Value);
@@ -417,6 +443,11 @@ public static class CorpusCommands
             + (population.Folders.Count == 0 ? "none" : string.Join(", ", population.Folders.Select(f => f.Path))));
         output.WriteLine("  probe term            : " + CorpusPopulation.ProbeTerm + " - in " + probeTermBodies.ToString(invariant)
             + " body(ies) and " + probeTermAttachments.ToString(invariant) + " text attachment(s)");
+        output.WriteLine("  undated items         : "
+            + (undatedKinds.Count == 0
+                ? "none"
+                : string.Join(", ", undatedKinds.Select(k => k.Key + "=" + k.Value.ToString(invariant)))
+                    + " - no delivery time, for LiveOrderKeyCollationTests"));
         if (population.SubjectOnlyProbe != null)
         {
             CorpusSubjectOnlyProbe probe = population.SubjectOnlyProbe;
@@ -440,15 +471,18 @@ public static class CorpusCommands
             return 1;
         }
 
+        // Residue an older build of this tool stranded in ANOTHER store is cleared before anything
+        // new is written, so a probe never reports on top of somebody else's leftovers.
+        SweepOtherStores(options, planOptions.CorpusId, output, "before the probes");
+
         // Placement FIRST, and the date probe inherits it. Probing dates against an item
         // that was filed somewhere other than the folder being queried cannot distinguish
         // "the date does not drive selection" from "the item is not in this folder", and the
         // first version of this tool reported the second as if it were the first.
-        IReadOnlyList<CorpusPlacementProbe> placements =
-            ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
-        CorpusPlacementMethod placement = ReportPlacementProbes(placements, output);
-        (bool placementOk, string placementMessage) =
-            CorpusPlacement.Decide(placement, options.AllowDraftsPlacement, Math.Max(options.Count, 1), placements);
+        CorpusPlacementSurvey survey = ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
+        CorpusPlacementMethod placement = ReportPlacementProbes(survey, output);
+        (bool placementOk, string placementMessage) = CorpusPlacement.Decide(
+            placement, options.AllowDraftsPlacement, Math.Max(options.Count, 1), survey.Probes, survey.TargetIsDefaultStore);
         output.WriteLine(placementMessage);
 
         DateTime probeInstant = planOptions.AnchorUtc.AddDays(-30);
@@ -461,13 +495,41 @@ public static class CorpusCommands
 
         // A population's own writes, on one more throwaway item, placed with the rung that verified.
         bool enrichmentOk = true;
+        bool undatedOk = true;
         if (planOptions.Population != null)
         {
             (enrichmentOk, string enrichmentMessage) = ProbeEnrichment(options, planOptions, placement, output);
             output.WriteLine(enrichmentMessage);
+            (undatedOk, string undatedMessage) = ProbeUndated(options, new CorpusPlan(planOptions), output);
+            output.WriteLine(undatedMessage);
         }
 
-        return placementOk && dateOk && enrichmentOk ? 0 : 1;
+        SweepOtherStores(options, planOptions.CorpusId, output, "after the probes");
+        return placementOk && dateOk && enrichmentOk && undatedOk ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Runs the undated probe for every undated kind the population carries, and reports it. Shared
+    /// by <c>corpus-probe</c> and <c>corpus-build</c>. A population with no undated item probes nothing.
+    /// </summary>
+    private static (bool Proceed, string Message) ProbeUndated(CorpusOptions options, CorpusPlan plan, TextWriter output)
+    {
+        IReadOnlyList<CorpusItemKind> kinds = plan.Population?.UndatedKinds ?? Array.Empty<CorpusItemKind>();
+        if (kinds.Count == 0)
+        {
+            return CorpusUndatedFidelity.Decide(kinds, Array.Empty<CorpusUndatedProbe>());
+        }
+
+        output.WriteLine("== undated probe ==");
+        IReadOnlyList<CorpusUndatedProbe> probes = ComCorpusMailbox.ProbeUndated(options.Store!, plan.Options.CorpusId, kinds);
+        foreach (CorpusUndatedProbe p in probes)
+        {
+            output.WriteLine($"  {p.Kind.ToString().ToLowerInvariant(),-12} folder={p.FolderReachable} inFolder={p.InTheFolder}"
+                + $" tag={p.SubjectTagParses} undated={p.HasNoDeliveryTime} class={p.ClassMatches} inTargetStore={p.InTheTargetStore}"
+                + (p.Error == null ? string.Empty : $" error={p.Error}"));
+        }
+
+        return CorpusUndatedFidelity.Decide(kinds, probes);
     }
 
     /// <summary>Runs the enrichment probe and reports it. Shared by <c>corpus-probe</c> and <c>corpus-build</c>.</summary>
@@ -481,6 +543,68 @@ public static class CorpusCommands
             + $" conversationId={(string.IsNullOrWhiteSpace(probe.ConversationId) ? "(none)" : "(computed)")}"
             + (probe.Error == null ? string.Empty : $" error={probe.Error}"));
         return CorpusEnrichmentFidelity.Decide(probe);
+    }
+
+    /// <summary>
+    /// Every probe <c>corpus-build</c> runs before it writes a single corpus item - placement, dates,
+    /// and for a population its enrichment and undated kinds - each printed, and the first refusal
+    /// ending it. False means REFUSE: nothing is to be built.
+    /// </summary>
+    private static bool RunBuildProbes(
+        CorpusOptions options,
+        CorpusPlanOptions planOptions,
+        CorpusPlan plan,
+        int count,
+        TextWriter output,
+        out CorpusPlacementMethod placement,
+        out IReadOnlyList<CorpusDateProbe> probes,
+        out CorpusDateWriteMethod chosen)
+    {
+        probes = Array.Empty<CorpusDateProbe>();
+        chosen = CorpusDateWriteMethod.None;
+        CorpusPlacementSurvey survey = ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
+        placement = ReportPlacementProbes(survey, output);
+        (bool placementOk, string placementMessage) = CorpusPlacement.Decide(
+            placement, options.AllowDraftsPlacement, count, survey.Probes, survey.TargetIsDefaultStore);
+        output.WriteLine(placementMessage);
+        if (!placementOk)
+        {
+            return false;
+        }
+
+        DateTime probeInstant = planOptions.AnchorUtc.AddDays(-30);
+        probes = ComCorpusMailbox.ProbeDateFidelity(options.Store!, planOptions.CorpusId, probeInstant, placement);
+        chosen = ReportProbes(probes, output);
+        (bool proceed, string message) = CorpusDateFidelity.Decide(chosen, options.AllowUndated, count);
+        output.WriteLine(message);
+        if (!proceed)
+        {
+            return false;
+        }
+
+        // A population is built only where one throwaway item proved every one of its own writes
+        // lands - sender, the owner as a RESOLVED recipient, attachment and conversation index. No
+        // override, like the store guard: a population missing any of them is one its tests would misread.
+        if (planOptions.Population != null)
+        {
+            (bool enrichmentOk, string enrichmentMessage) = ProbeEnrichment(options, planOptions, placement, output);
+            output.WriteLine(enrichmentMessage);
+            if (!enrichmentOk)
+            {
+                return false;
+            }
+
+            // And every UNDATED kind the population carries, one throwaway item each: that it lands
+            // in its own folder of the TARGET store, keeps its tag, and carries no delivery time.
+            (bool undatedOk, string undatedMessage) = ProbeUndated(options, plan, output);
+            output.WriteLine(undatedMessage);
+            if (!undatedOk)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -530,40 +654,30 @@ public static class CorpusCommands
             return 0;
         }
 
-        IReadOnlyList<CorpusPlacementProbe> placements =
-            ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
-        CorpusPlacementMethod placement = ReportPlacementProbes(placements, output);
-        (bool placementOk, string placementMessage) =
-            CorpusPlacement.Decide(placement, options.AllowDraftsPlacement, count, placements);
-        output.WriteLine(placementMessage);
-        if (!placementOk)
+        // Every probe below writes throwaway items, and on OAI-UNINDEXED (2026-09-24) twelve of an
+        // older build's were stranded in another store's Drafts. Every store but the target is
+        // swept of this corpus's probe items before the probes and again once they are done -
+        // whether they passed or not - so a refused build leaves nothing behind either.
+        CorpusPlacementMethod placement;
+        IReadOnlyList<CorpusDateProbe> probes;
+        CorpusDateWriteMethod chosen;
+        SweepOtherStores(options, planOptions.CorpusId, output, "before the probes");
+        try
         {
-            return 1;
-        }
-
-        DateTime probeInstant = planOptions.AnchorUtc.AddDays(-30);
-        IReadOnlyList<CorpusDateProbe> probes =
-            ComCorpusMailbox.ProbeDateFidelity(options.Store!, planOptions.CorpusId, probeInstant, placement);
-        CorpusDateWriteMethod chosen = ReportProbes(probes, output);
-        (bool proceed, string message) =
-            CorpusDateFidelity.Decide(chosen, options.AllowUndated, count);
-        output.WriteLine(message);
-        if (!proceed)
-        {
-            return 1;
-        }
-
-        // A population is built only where one throwaway item proved every one of its own writes
-        // lands - sender, recipients, attachment and conversation index. No override, like the
-        // store guard: a population missing any of them is one its tests would misread.
-        if (planOptions.Population != null)
-        {
-            (bool enrichmentOk, string enrichmentMessage) = ProbeEnrichment(options, planOptions, placement, output);
-            output.WriteLine(enrichmentMessage);
-            if (!enrichmentOk)
+            if (!RunBuildProbes(options, planOptions, plan, count, output,
+                    out CorpusPlacementMethod probedPlacement, out IReadOnlyList<CorpusDateProbe> probedDates,
+                    out CorpusDateWriteMethod probedChosen))
             {
                 return 1;
             }
+
+            placement = probedPlacement;
+            probes = probedDates;
+            chosen = probedChosen;
+        }
+        finally
+        {
+            SweepOtherStores(options, planOptions.CorpusId, output, "after the probes");
         }
 
         TimeSpan writeShift = ShiftFrom(probes, chosen);
@@ -690,7 +804,7 @@ public static class CorpusCommands
             return false;
         }
 
-        IReadOnlyList<CorpusEnrichmentObservation> observations = ComCorpusMailbox.ReadEnrichment(options.Store!, manifest);
+        IReadOnlyList<CorpusEnrichmentObservation> observations = ComCorpusMailbox.ReadEnrichment(options.Store!, manifest, plan);
         (bool enriched, string enrichmentMessage) =
             CorpusEnrichmentCheck.Decide(CorpusEnrichmentCheck.Compare(plan, count, observations));
         output.WriteLine(enrichmentMessage);
@@ -875,13 +989,22 @@ public static class CorpusCommands
         // The same two probes the build runs, and for the same reason: a re-anchor writes the
         // same two date properties through the same PropertyAccessor, so it needs the rung
         // this store verified AND the local-time compensation that rung required. Skipping
-        // them would move the whole corpus by the machine's UTC offset.
-        IReadOnlyList<CorpusPlacementProbe> placements =
-            ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
-        CorpusPlacementMethod placement = ReportPlacementProbes(placements, output);
-        DateTime probeInstant = work.TargetAnchorUtc.AddDays(-30);
-        IReadOnlyList<CorpusDateProbe> probes =
-            ComCorpusMailbox.ProbeDateFidelity(options.Store!, planOptions.CorpusId, probeInstant, placement);
+        // them would move the whole corpus by the machine's UTC offset. Both write throwaway
+        // items, so every other store is swept of this corpus's probe items around them.
+        SweepOtherStores(options, planOptions.CorpusId, output, "before the probes");
+        IReadOnlyList<CorpusDateProbe> probes;
+        try
+        {
+            CorpusPlacementSurvey survey = ComCorpusMailbox.ProbePlacement(options.Store!, planOptions.CorpusId);
+            CorpusPlacementMethod placement = ReportPlacementProbes(survey, output);
+            DateTime probeInstant = work.TargetAnchorUtc.AddDays(-30);
+            probes = ComCorpusMailbox.ProbeDateFidelity(options.Store!, planOptions.CorpusId, probeInstant, placement);
+        }
+        finally
+        {
+            SweepOtherStores(options, planOptions.CorpusId, output, "after the probes");
+        }
+
         CorpusDateWriteMethod chosen = ReportProbes(probes, output);
         (bool dateOk, string dateMessage) = CorpusDateFidelity.Decide(chosen, options.AllowUndated, options.Count);
         output.WriteLine(dateMessage);
@@ -961,10 +1084,14 @@ public static class CorpusCommands
         }
 
         output.WriteLine($"Manifest records {manifest.Items.Count:N0} item(s) and {manifest.Folders.Count} created folder(s).");
+
+        // A population's undated items live in the Calendar, Contacts and Tasks; the scans below
+        // walk those folders only when they know the population is there.
+        CorpusPopulation? population = planOptions.Population == null ? null : new CorpusPlan(planOptions).Population;
         if (!options.Execute)
         {
             ComCorpusMailbox.ScanResult present =
-                ComCorpusMailbox.Scan(options.Store!, planOptions.CorpusId, manifest);
+                ComCorpusMailbox.Scan(options.Store!, planOptions.CorpusId, manifest, population);
             output.WriteLine($"Dry-run: a read-only scan finds {present.Items.Count:N0} corpus item(s) in the store. "
                 + "Nothing deleted. Re-run with --execute.");
             if (present.LegacyTagged > 0)
@@ -977,7 +1104,7 @@ public static class CorpusCommands
         }
 
         ComCorpusMailbox.TeardownOutcome outcome =
-            ComCorpusMailbox.Teardown(options.Store!, planOptions.CorpusId, manifest);
+            ComCorpusMailbox.Teardown(options.Store!, planOptions.CorpusId, manifest, population);
         if (outcome.LegacyTagged > 0)
         {
             // Reported instead of the counts, not beside them: nothing was attempted, so a
@@ -990,6 +1117,11 @@ public static class CorpusCommands
             + $"refused by rule {outcome.RefusedByRule:N0}, already gone {outcome.AlreadyGone:N0}, "
             + $"failed {outcome.Failed:N0}, folders removed {outcome.FoldersRemoved}.");
         output.WriteLine($"Post-teardown scan finds {outcome.RemainingInStore:N0} corpus item(s) remaining (expected 0).");
+
+        // And every OTHER store this corpus's probes could have written into. A probe item is never
+        // in the manifest - it is not a corpus item - so the teardown above cannot reach one that a
+        // probe stranded outside the target, and on OAI-UNINDEXED (2026-09-24) twelve were.
+        SweepOtherStores(options, planOptions.CorpusId, output, "teardown");
         return outcome.RemainingInStore == 0 && outcome.Failed == 0 ? 0 : 1;
     }
 
@@ -1009,6 +1141,104 @@ public static class CorpusCommands
             + "refusing is deliberate rather than a gap: a corpus lives in its own local .pst, so deleting that "
             + "file removes it completely, which is both cheaper and more certain than a second delete predicate "
             + "keyed on the artifact tag. Delete the .pst and build a fresh corpus.";
+
+    /// <summary>
+    /// How often <c>corpus-indexed</c> asks the index again while it waits. The indexer takes a
+    /// population of a few dozen items in over minutes; asking more often only adds load.
+    /// </summary>
+    public static readonly TimeSpan IndexedPollInterval = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// <c>corpus-indexed</c>: READ-ONLY, and it never opens Outlook - it asks the Windows Search
+    /// index, the way the product does, whether every item of a POPULATION has a row there, and
+    /// with <c>--wait-seconds</c> keeps asking until it has or the time is up. Exit 0 only when
+    /// the whole population is indexed.
+    /// <para>
+    /// It exists for the per-run hub rebuild (<c>Testbed/guest/Reset-HubPopulation.ps1</c>): a live
+    /// run started on a hub the indexer has only half taken in measures half a hub, and every index
+    /// test reads the hub. The received dates are compared with the store's and any systematic
+    /// difference is printed with its size (<see cref="CorpusIndexCoverage"/>).
+    /// </para>
+    /// </summary>
+    public static int RunIndexed(CorpusOptions options, TextWriter output)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(output);
+        var plan = new CorpusPlan(options.ToPlanOptions());
+        if (plan.Population == null)
+        {
+            throw new ArgumentException(
+                "corpus-indexed measures a fixture POPULATION (--population hub|bystander|identity), whose size is fixed. "
+                + "The measurement corpus has its own freshness check - corpus-verify - and draining a 160,000-item store "
+                + "row by row to count it is not a check anybody should wait on.");
+        }
+
+        int count = EffectiveCount(options, plan);
+        CorpusManifest? manifest = LoadManifest(options.ManifestPath, output);
+        OutlookAI.Core.IndexSearch.IndexSearchService service =
+            OutlookAI.Core.IndexSearch.IndexSearchService.CreateDefault(out string provider);
+        output.WriteLine("Index provider: " + provider);
+
+        // Monotonic: the wait is a duration, and a clock step on the guest must not end it early
+        // or stretch it (T1/LiveTierClockDriftTests holds the live tier to the same rule).
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        TimeSpan budget = TimeSpan.FromSeconds(options.WaitSeconds);
+        while (true)
+        {
+            CorpusIndexCoverageReport report = MeasureIndexCoverage(service, plan, count, options.Store!, manifest);
+            (bool complete, string message) = CorpusIndexCoverage.Decide(report);
+            output.WriteLine($"[{(int)waited.Elapsed.TotalSeconds,5} s] " + message);
+            if (complete)
+            {
+                return 0;
+            }
+
+            TimeSpan left = budget - waited.Elapsed;
+            if (left <= TimeSpan.Zero)
+            {
+                output.WriteLine(options.WaitSeconds == 0
+                    ? "Asked once (no --wait-seconds). Not complete."
+                    : $"Gave up after {options.WaitSeconds.ToString(CultureInfo.InvariantCulture)} s. Not complete: is Outlook "
+                        + "running on the profile that mounts this store? The indexer only advances while it does.");
+                return 1;
+            }
+
+            Thread.Sleep(left < IndexedPollInterval ? left : IndexedPollInterval);
+        }
+    }
+
+    /// <summary>
+    /// One pass of <see cref="RunIndexed"/>: finds the store's index scope - by the 2000-row sample,
+    /// then by mail addressed to it, exactly as the live tier does - and reads every message row
+    /// under it whose subject parses as this population's.
+    /// </summary>
+    private static CorpusIndexCoverageReport MeasureIndexCoverage(
+        OutlookAI.Core.IndexSearch.IndexSearchService service, CorpusPlan plan, int count, string store, CorpusManifest? manifest)
+    {
+        OutlookAI.Core.IndexSearch.StoreScopeInfo? scope = service.DiscoverStoreScopes(2000)
+                .FirstOrDefault(s => string.Equals(s.StoreDisplayName, store, StringComparison.OrdinalIgnoreCase))
+            ?? (CorpusMailboxOwner.IsAddress(store) ? service.TryDiscoverStoreScopeByAddress(store) : null);
+        var rows = new List<CorpusIndexedRow>();
+        if (scope != null)
+        {
+            OutlookAI.Core.IndexSearch.IndexSearchResult result = service.Search(new OutlookAI.Core.IndexSearch.IndexQuery
+            {
+                Scope = scope.StorePrefix,
+                Kinds = OutlookAI.Core.IndexSearch.KindFilter.MessagesOnly,
+                Top = Math.Min(OutlookAI.Core.IndexSearch.WsSqlBuilder.MaxTop, (count * 4) + 200),
+            });
+            foreach (OutlookAI.Core.IndexSearch.IndexHit hit in result.Hits)
+            {
+                if (!hit.IsAttachmentHit
+                    && CorpusPlan.ClassifySubject(hit.Subject, plan.Options.CorpusId, out int ordinal) == CorpusSubjectKind.Current)
+                {
+                    rows.Add(new CorpusIndexedRow(ordinal, hit.DateReceivedUtc));
+                }
+            }
+        }
+
+        return CorpusIndexCoverage.Compare(plan, count, rows, manifest);
+    }
 
     /// <summary>
     /// <c>corpus-reindex</c>: READ-ONLY. Walks the store, finds every item whose subject
@@ -1121,12 +1351,22 @@ public static class CorpusCommands
     /// the item instead, which is the difference between a diagnosis and a shrug.
     /// </summary>
     private static CorpusPlacementMethod ReportPlacementProbes(
-        IReadOnlyList<CorpusPlacementProbe> probes, TextWriter output)
+        CorpusPlacementSurvey survey, TextWriter output)
     {
         output.WriteLine("== placement probe ==");
-        foreach (CorpusPlacementProbe probe in probes)
+        output.WriteLine("  target store: " + (survey.TargetIsDefaultStore
+            ? "the profile's DEFAULT store - every rung is probed"
+            : "NOT the profile's default store - only the rungs whose item is never unsent ("
+                + string.Join(", ", CorpusPlacement.NonDefaultStoreLadder) + ") are probed; every other rung files its "
+                + "item in the default store's Drafts first"));
+        output.WriteLine("  target folder: '" + survey.TargetFolderName + "'" + (survey.TargetIsStandIn
+            ? " - a STAND-IN: the store has no visible Inbox of its own, and keeps none"
+            : " - the store's own Inbox"));
+        foreach (CorpusPlacementProbe probe in survey.Probes)
         {
             output.WriteLine($"  {probe.Method,-28} target={probe.TargetFolderName}"
+                + $" visible={probe.TargetVisible}"
+                + $" store={(probe.WroteOutsideTargetStore ? "OTHER" : "target")}"
                 + $" landedIn={probe.LandedInFolderName ?? "(unknown)"}"
                 + $" parentMatches={probe.ParentIsTargetFolder}"
                 + $" inFolderTable={probe.TargetFolderTableContainsIt}"
@@ -1135,7 +1375,31 @@ public static class CorpusCommands
                 + (probe.Error == null ? string.Empty : $" error={probe.Error}"));
         }
 
-        return CorpusPlacement.Choose(probes);
+        return CorpusPlacement.Choose(survey.Probes);
+    }
+
+    /// <summary>
+    /// Runs the cross-store residue sweep (<see cref="ComCorpusMailbox.SweepProbeResidueOutsideTarget"/>)
+    /// and says what it found - every store but the target, cleared of this corpus's probe items. It runs
+    /// before and after the probes, so residue an older build of this tool stranded is cleared by the next
+    /// probe, and anything this one strands despite everything is cleared before it returns.
+    /// </summary>
+    private static void SweepOtherStores(CorpusOptions options, string corpusId, TextWriter output, string when)
+    {
+        IReadOnlyList<ComCorpusMailbox.ResidueSweep> swept =
+            ComCorpusMailbox.SweepProbeResidueOutsideTarget(options.Store!, corpusId);
+        if (swept.Count == 0)
+        {
+            output.WriteLine($"Cross-store residue sweep ({when}): no probe item of '{corpusId}' in any other store.");
+            return;
+        }
+
+        foreach (ComCorpusMailbox.ResidueSweep line in swept)
+        {
+            output.WriteLine($"Cross-store residue sweep ({when}): {line.Found.ToString(CultureInfo.InvariantCulture)} probe "
+                + $"item(s) of '{corpusId}' found in '{line.Store}', which is NOT the target; "
+                + $"{line.Deleted.ToString(CultureInfo.InvariantCulture)} deleted by the two-key rule.");
+        }
     }
 
     private static CorpusDateWriteMethod ReportProbes(IReadOnlyList<CorpusDateProbe> probes, TextWriter output)

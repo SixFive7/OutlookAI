@@ -30,7 +30,7 @@ using OutlookAI.RemediationTools;
 /// Logging is S4-disciplined: counts/EntryIDs/booleans only for business stores;
 /// subject prefixes appear only for the designated test hub.
 ///
-/// Eight further commands build, check, age and remove a SYNTHETIC MEASUREMENT CORPUS in a
+/// Nine further commands build, check, age and remove a SYNTHETIC MEASUREMENT CORPUS in a
 /// local .pst, which is how the freshness-sweep and exhaustive-scan budgets get measured
 /// against known volume instead of modelled (see Docs/corpus-measurement-plan.md):
 ///
@@ -79,6 +79,12 @@ using OutlookAI.RemediationTools;
 ///       over 20 000 items once reported total success while dating every one of them inside
 ///       the six minutes it had been running. The command is kept, not deleted, because its
 ///       per-item write-landed guard is the thing that stops that repeating.
+///
+///   corpus-indexed  --population ... --store ... --corpus-id ... --seed N --anchor ...
+///                   [--manifest ...] [--wait-seconds N]
+///       READ-ONLY, no Outlook: asks the Windows Search index whether every item of a population
+///       has a row, waiting up to --wait-seconds for the indexer. Exit 0 only when all do. What the
+///       per-run hub rebuild waits on before a live run may start.
 ///
 ///   corpus-teardown --store ... --allow-store ... --corpus-id ... --manifest ... [--execute]
 ///       Removes exactly what the manifest records, by EntryID allowlist AND subject tag.
@@ -140,6 +146,7 @@ internal static class Program
                     "corpus-reanchor" => CorpusCommands.RunReanchor(corpus, Console.Out),
                     "corpus-teardown" => CorpusCommands.RunTeardown(corpus, Console.Out),
                     "corpus-reindex" => CorpusCommands.RunReindex(corpus, Console.Out),
+                    "corpus-indexed" => CorpusCommands.RunIndexed(corpus, Console.Out),
                     _ => Fail($"Unknown command '{args[0]}'."),
                 };
             }
@@ -526,7 +533,7 @@ internal static class Program
         Console.WriteLine("dedupe:   --store <primary store display name>");
         Console.WriteLine();
         Console.WriteLine("Measurement corpus: corpus-plan | corpus-probe | corpus-build | corpus-census");
-        Console.WriteLine("                    corpus-verify | corpus-teardown | corpus-reindex");
+        Console.WriteLine("                    corpus-verify | corpus-teardown | corpus-reindex | corpus-indexed");
         Console.WriteLine("                    corpus-reanchor is RETIRED - rebuild instead; run it to see why");
         Console.WriteLine("Common:   --corpus-id <id> --seed <n> --anchor <yyyy-MM-dd>   [--execute]");
         Console.WriteLine("Target:   --store <display name> --allow-store <display name> (repeatable; a local .pst only)");
@@ -535,6 +542,7 @@ internal static class Program
         Console.WriteLine("Fixture:  --population hub|bystander|identity   a curated test-guest population, not the corpus:");
         Console.WriteLine("          its count is fixed (--count optional), --store is required even by corpus-plan,");
         Console.WriteLine("          and every verb that reads its manifest needs the same --population");
+        Console.WriteLine("Indexed:  corpus-indexed --population ... [--manifest <path>] [--wait-seconds <n>]   (read-only, no Outlook)");
         Console.WriteLine("Verify:   --count <n> --manifest <path> [--window <days> (repeatable)]   (pure - no Outlook)");
         Console.WriteLine("Stale:    rebuild - corpus-teardown --execute (or delete the .pst), then corpus-build");
         Console.WriteLine("Override: [--allow-undated] [--allow-drafts-placement]  (each says what it costs)");

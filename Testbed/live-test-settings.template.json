@@ -11,6 +11,8 @@
 
   "testHubStoreDisplayName": "{{testHubStoreDisplayName}}",
 
+  "hubPopulationManifestPath": "{{hubPopulationManifestPath}}",
+
   "expectedStoreDisplayNames": "{{expectedStoreDisplayNames}}",
 
   "indexedStoreDisplayNames": "{{indexedStoreDisplayNames}}",

@@ -95,9 +95,16 @@ public sealed class LiveMailServiceTests
         Assert.Equal(10, succeeded);
         _output.WriteLine($"read ms: avg={readMillis.Average():F0} max={readMillis.Max()}");
 
-        // Located EntryIDs are cached: a repeat read must skip the locate cost entirely.
+        // Located EntryIDs are cached: a repeat read must skip the locate cost entirely. Timed on a
+        // hit from the LARGEST indexed store (decided 2026-09-24; T1/LatencyTargetTests holds it
+        // there) - it used to be hits[0], which comes from the FIRST indexed store, on a guest the
+        // few-dozen-item hub, where a two-second bound on anything is met by construction.
+        (IReadOnlyList<LiveStoreSize> sizes, string largest) = LiveLatencyTarget.Measure(_fixture.Settings);
+        _output.WriteLine(LiveLatencyTarget.Describe(sizes, largest));
+        HitSummary? timedHit = hits.FirstOrDefault(h => string.Equals(h.Store, largest, StringComparison.OrdinalIgnoreCase));
+        Assert.True(timedHit != null, $"none of the {hits.Count} hits read came from the largest indexed store '{largest}'");
         Stopwatch cached = Stopwatch.StartNew();
-        ReadOutcome again = Service.Read(hits[0].Id, maxBodyChars: 500);
+        ReadOutcome again = Service.Read(timedHit!.Id, maxBodyChars: 500);
         cached.Stop();
         Assert.Equal("cached", again.LocatedVia);
         _output.WriteLine($"cached re-read ms: {cached.ElapsedMilliseconds}");

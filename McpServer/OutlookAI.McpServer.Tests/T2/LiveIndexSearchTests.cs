@@ -138,6 +138,10 @@ public sealed class LiveIndexSearchTests
     [Trait("Requires", "MultipleStores")]
     public void FilterShapes_ReadAndAttachmentFlags_WorkUnder2s()
     {
+        // The CONTENT half reads the first indexed store - the hub on a guest, whose population
+        // carries attachments and unread mail. The LATENCY half is timed on the LARGEST indexed
+        // store (decided 2026-09-24): on a few-dozen-item hub a two-second bound is met by
+        // construction, and T1/LatencyTargetTests fails if this ever goes back to timing it there.
         StoreScopeInfo scope = _fixture.GetScope(Indexed[0]);
 
         IndexSearchResult unread = _fixture.Service.Search(new IndexQuery
@@ -157,8 +161,25 @@ public sealed class LiveIndexSearchTests
 
         _output.WriteLine($"unread rows={unread.Hits.Count} ms={unread.ElapsedMilliseconds}; "
             + $"withAttachments rows={withAttachments.Hits.Count} ms={withAttachments.ElapsedMilliseconds}");
-        Assert.InRange(unread.ElapsedMilliseconds, 0, MaxQueryMs);
-        Assert.InRange(withAttachments.ElapsedMilliseconds, 0, MaxQueryMs);
+
+        StoreScopeInfo timed = _fixture.LargestIndexedScope;
+        IndexSearchResult unreadTimed = _fixture.Service.Search(new IndexQuery
+        {
+            Scope = timed.StorePrefix,
+            Kinds = KindFilter.MailKindOnly,
+            IsRead = false,
+            Top = 5,
+        });
+        IndexSearchResult withAttachmentsTimed = _fixture.Service.Search(new IndexQuery
+        {
+            Scope = timed.StorePrefix,
+            Kinds = KindFilter.MailKindOnly,
+            HasAttachments = true,
+            Top = 5,
+        });
+
+        AssertTimedOnTheLargestStore(unreadTimed, timed, "unread filter");
+        AssertTimedOnTheLargestStore(withAttachmentsTimed, timed, "has-attachments filter");
 
         // The only assertion in this test that says anything about the FILTER rather than about how
         // long it took - and an empty hit list satisfies Assert.All without examining a single row,
@@ -200,6 +221,7 @@ public sealed class LiveIndexSearchTests
         Assert.True(candidates.Count > 0, "no sender addresses in recent hits");
 
         IndexSearchResult? filtered = null;
+        string? filteredOn = null;
         foreach (string candidate in candidates)
         {
             try
@@ -211,6 +233,7 @@ public sealed class LiveIndexSearchTests
                     SenderContains = candidate,
                     Top = 5,
                 });
+                filteredOn = candidate;
                 break;
             }
             catch (ArgumentException)
@@ -223,7 +246,37 @@ public sealed class LiveIndexSearchTests
 
         _output.WriteLine($"senderFiltered rows={filtered!.Hits.Count} ms={filtered.ElapsedMilliseconds}");
         Assert.True(filtered.Hits.Count > 0, "sender-filtered query returned no rows");
-        Assert.InRange(filtered.ElapsedMilliseconds, 0, MaxQueryMs);
+
+        // The LATENCY half: the same per-column CONTAINS, timed on the LARGEST indexed store
+        // (decided 2026-09-24; T1/LatencyTargetTests holds it there). It may match nothing there -
+        // the measurement corpus has no senders - and a shape that matches nothing over a large
+        // store is exactly the one that pays for a scan if the predicate is not index-backed.
+        StoreScopeInfo largestScope = _fixture.LargestIndexedScope;
+        IndexSearchResult timed = _fixture.Service.Search(new IndexQuery
+        {
+            Scope = largestScope.StorePrefix,
+            Kinds = KindFilter.MailKindOnly,
+            SenderContains = filteredOn!,
+            Top = 5,
+        });
+        AssertTimedOnTheLargestStore(timed, largestScope, "sender filter");
+    }
+
+    /// <summary>
+    /// The ONE way the filter-shape tests assert a latency bound, and it refuses to be handed anything
+    /// but the largest indexed store's scope - decided 2026-09-24 (<see cref="LiveLatencyTarget"/>).
+    /// T1/LatencyTargetTests pins, from the IL, that those tests time through here and never call
+    /// <c>Assert.InRange</c> themselves, so timing one on the first store again cannot happen quietly.
+    /// </summary>
+    private void AssertTimedOnTheLargestStore(IndexSearchResult result, StoreScopeInfo timedOn, string what)
+    {
+        (IReadOnlyList<LiveStoreSize> sizes, string largest) = LiveLatencyTarget.Measure(_fixture.Settings);
+        _output.WriteLine(LiveLatencyTarget.Describe(sizes, largest));
+        Assert.True(
+            string.Equals(timedOn.StorePrefix, _fixture.GetScope(largest).StorePrefix, StringComparison.OrdinalIgnoreCase),
+            $"the {what} latency was timed on '{timedOn.StoreDisplayName}', not on the largest indexed store '{largest}'");
+        _output.WriteLine($"{what}: timed on '{largest}' rows={result.Hits.Count} ms={result.ElapsedMilliseconds}");
+        Assert.InRange(result.ElapsedMilliseconds, 0, MaxQueryMs);
     }
 
     [Fact]
@@ -262,6 +315,42 @@ public sealed class LiveIndexSearchTests
         Assert.True(report.NewestIndexedReceivedUtc!.Value.Year >= 2020, "frontier implausibly old");
         // Allow small clock skew but the frontier must not sit in the future.
         Assert.True(report.NewestIndexedReceivedUtc.Value <= report.ClockUtc.AddMinutes(5), "frontier lies in the future");
+
+        // The "not in the future" half catches a product that reads the index's local time as UTC ONLY
+        // while the real frontier is younger than this machine's UTC offset. On a test guest the hub's
+        // generated population is what makes it that young - rebuilt against the moment the run starts,
+        // by Testbed/guest/Reset-HubPopulation.ps1 (decided 2026-09-24) - so a guest that declares one
+        // must have run that step: a stale hub FAILS here with the remedy rather than passing having
+        // measured nothing. And a frontier OLDER than the population's own newest item is the other
+        // direction of the same misreading - or an index that has not taken the rebuilt hub in yet.
+        string? manifest = _fixture.Settings.HubPopulationManifestPath;
+        TimeSpan offset = TimeZoneInfo.Local.GetUtcOffset(report.ClockUtc);
+        if (manifest != null)
+        {
+            Assert.True(File.Exists(manifest), $"the hub population manifest the settings name is not there: {manifest}");
+            HubPopulationFact hub = LiveHubPopulationFreshness.Read(File.ReadLines(manifest));
+            (bool fresh, string why) = LiveHubPopulationFreshness.Decide(hub, report.ClockUtc, offset);
+            _output.WriteLine(why);
+            Assert.True(fresh, why);
+            Assert.True(
+                report.NewestIndexedReceivedUtc.Value >= hub.NewestDatedUtc - TimeSpan.FromSeconds(2),
+                $"the index frontier {report.NewestIndexedReceivedUtc.Value:O} is OLDER than the hub population's own newest "
+                + $"item {hub.NewestDatedUtc:O}: either the product reads the index's time shifted back by the UTC offset, or "
+                + "the index has not taken the rebuilt hub in yet - Reset-HubPopulation.ps1 waits for it with corpus-indexed");
+            return;
+        }
+
+        // No generated hub declared - the maintainer's machine, whose hub is real mail. Nothing to
+        // rebuild, but the same limit applies and is said out loud rather than assumed away.
+        TimeSpan margin = LiveHubPopulationFreshness.DiscriminatingAge(offset);
+        LivePopulationCoverage.Require(
+            _fixture.Settings,
+            report.Age!.Value <= margin ? new[] { report.NewestIndexedReceivedUtc.Value } : Array.Empty<DateTime>(),
+            $"an index frontier younger than this machine's UTC offset less {LiveHubPopulationFreshness.FrontierFutureTolerance.TotalMinutes:F0} min ({margin.TotalMinutes:F0} min)",
+            "the local-time half of the frontier check",
+            "On a test guest declare the hub population (hubPopulationManifestPath) and rebuild it before the run with "
+                + "Testbed/guest/Reset-HubPopulation.ps1; elsewhere, run where mail has arrived within the last hour.",
+            _output.WriteLine);
     }
 
     [Fact]

@@ -5729,6 +5729,11 @@ namespace OutlookAI.Core.Services
                     return RefuseDraft("not_in_drafts_folder", operation, entryId,
                         "That item does not live in a Drafts folder, so it is not a draft this server may touch. "
                         + "Move it to Drafts in Outlook first if it really is an unfinished message.");
+                case SpecialFolderGuards.DraftsFolderUnreadable:
+                    return RefuseDraft("drafts_folder_unreadable", operation, entryId,
+                        "Whether that item lives in its mailbox's Drafts folder could not be checked - Outlook would not "
+                        + "say which folder that is - so it was refused rather than assumed to be a draft. This server "
+                        + "never creates a folder to answer that question. Retry when Outlook is responsive (see outlook_health).");
                 case "NoInspector":
                 case "NoWordEditor":
                     return RefuseDraft("compose_surface_unavailable", operation, entryId,
@@ -6824,6 +6829,7 @@ namespace OutlookAI.Core.Services
                 case "TargetNotAMailFolder":
                 case "TargetIsDeletedItems":
                 case "TargetIsOutbox":
+                case SpecialFolderGuards.TargetGuardUnreadable:
                 case "AlreadyInTargetFolder":
                 case "RootFolderUnavailable":
                     return Com.MutationOutcome.Unchanged;
@@ -6943,6 +6949,11 @@ namespace OutlookAI.Core.Services
                         + "delete surface. Ask the user to delete mail in Outlook themselves.";
                 case "TargetIsOutbox":
                     return "Refused: the Outbox is not a valid move target.";
+                case SpecialFolderGuards.TargetGuardUnreadable:
+                    return "Refused: whether '" + targetFolder + "' is the store's Deleted Items (or a subfolder of it) or its "
+                        + "Outbox could not be checked - Outlook would not say which folders those are - so the move was "
+                        + "refused rather than risk deletion semantics. Nothing was moved. Retry when Outlook is responsive "
+                        + "(see outlook_health).";
                 case "AlreadyInTargetFolder":
                     return "The item is already in the target folder - nothing to move.";
                 case "RootFolderUnavailable":

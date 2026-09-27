@@ -47,6 +47,45 @@ public enum CorpusPlacementMethod
     /// that was observed once generalises.
     /// </summary>
     InPlaceOnly = 4,
+
+    /// <summary>
+    /// Create in the target folder and write PR_MESSAGE_FLAGS - MSGFLAG_UNSENT CLEARED, MSGFLAG_READ
+    /// as planned - BEFORE THE FIRST SAVE, then save. Added 2026-09-24, and the first of the two rungs a
+    /// store that is not the profile's DEFAULT store is probed with (<see cref="CorpusPlacement.LadderFor"/>).
+    /// <para>
+    /// <b>Why.</b> Measured on OAI-UNINDEXED that day: a new unsent mail item's first save is filed
+    /// in the DEFAULT store's Drafts, whichever store's folder created it - the target's Inbox (both
+    /// InPlace rungs: "Could not open the item" when re-opened in the target) and the target's own
+    /// Drafts alike (the date probe's ObjectModel item, created in the target's Drafts for
+    /// DraftsThenMoveWithSentFlag, failed before its move and was found in CORPUS B's Drafts). Every
+    /// rung above creates an unsent item and saves it before touching a flag, so on a non-default
+    /// store every one of them writes into ANOTHER store first: the Drafts rungs carry the item back
+    /// with their move, and a rung that fails between the save and the move strands it there. Twelve
+    /// probe items were left in Corpus B's Drafts that way. MAPI lets MSGFLAG_UNSENT change only
+    /// before a message's first save, which is why this rung writes it there; an item that is never
+    /// unsent has nothing to be filed as a draft for. Whether Outlook honours a flag written before
+    /// the first save is exactly what the probe settles - it checks the item's store after that save.
+    /// </para>
+    /// </summary>
+    InPlaceReceived = 5,
+
+    /// <summary>
+    /// Create a POST item (<c>olPostItem</c>) in the target folder and save it; change its message
+    /// class to <c>IPM.Note</c> and save again; re-open it by EntryID, which hands back a mail item.
+    /// The second rung for a store that is not the profile's DEFAULT store, added 2026-09-24 beside
+    /// <see cref="InPlaceReceived"/> so one probe session on a guest settles placement with two
+    /// independent chances rather than one.
+    /// <para>
+    /// <b>Why it could work where every mail rung failed.</b> The object model creates a post in the
+    /// SENT state - it is never MSGFLAG_UNSENT, so it is never a draft - and a post belongs to the
+    /// folder it is made in. This is the object model's own documented-by-practice route to a message
+    /// in the sent state; its known cost is cosmetic (<c>PR_ICON_INDEX</c> may still say "post"). A
+    /// population item's recipients and attachments go on AFTER the conversion, and are committed by
+    /// the flag write's save. Like every rung, it is taken on the probe's evidence, never on this
+    /// paragraph's.
+    /// </para>
+    /// </summary>
+    PostAsNote = 6,
 }
 
 /// <summary>The outcome of one attempt to place a throwaway item in a target folder.</summary>
@@ -75,6 +114,19 @@ public enum CorpusPlacementMethod
 /// rather than assumed precisely because "should never" is what the last version said.
 /// </para>
 /// </param>
+/// <param name="WroteOutsideTargetStore">
+/// Whether the item's FIRST save landed in another store - read off the saved item's parent
+/// folder's StoreID before anything else is done to it. A rung that does is unusable whatever it
+/// achieves afterwards: it has written into a store no allowlist named. See
+/// <see cref="CorpusPlacementMethod.InPlaceReceived"/>.
+/// </param>
+/// <param name="TargetVisible">
+/// Whether the target folder is a folder of the store's VISIBLE folder tree - a named descendant of
+/// the store's root folder. False for what <c>GetDefaultFolder(olFolderInbox)</c> returned on a PST
+/// attached with <c>AddStoreEx</c> (OAI-UNINDEXED, 2026-09-24): the PST's non-IPM ROOT, nameless,
+/// where 172 bystander items then sat invisible while this probe printed <c>target= landedIn=</c>
+/// and said VERIFIED. A probe that proves an item lands in a folder nobody can see proves nothing.
+/// </param>
 public sealed record CorpusPlacementProbe(
     CorpusPlacementMethod Method,
     string TargetFolderName,
@@ -83,7 +135,27 @@ public sealed record CorpusPlacementProbe(
     bool SentFlagSet,
     string? LandedInFolderName,
     string? Error,
-    bool TableCheckConclusive = true);
+    bool TableCheckConclusive = true,
+    bool WroteOutsideTargetStore = false,
+    bool TargetVisible = true);
+
+/// <summary>What the placement probe found about the store, and every rung it ran.</summary>
+/// <param name="TargetIsDefaultStore">
+/// Whether the store is the profile's DEFAULT store - which decides the ladder
+/// (<see cref="CorpusPlacement.LadderFor"/>): only there does an unsent item's first save stay in it.
+/// </param>
+/// <param name="TargetFolderName">The folder probed: the store's own visible Inbox, or its stand-in.</param>
+/// <param name="TargetIsStandIn">
+/// Whether the store has no visible Inbox, so the probe - and the build after it - use the stand-in
+/// <see cref="CorpusFolderIds.StandInName"/>(6) under the store root instead. The bystander's case: a
+/// PST attached with <c>AddStoreEx</c> has no Inbox, and keeps none.
+/// </param>
+/// <param name="Probes">One result per rung run.</param>
+public sealed record CorpusPlacementSurvey(
+    bool TargetIsDefaultStore,
+    string TargetFolderName,
+    bool TargetIsStandIn,
+    IReadOnlyList<CorpusPlacementProbe> Probes);
 
 /// <summary>
 /// Decides, from probe results alone, whether corpus items can be made to live where the
@@ -110,7 +182,11 @@ public sealed record CorpusPlacementProbe(
 /// </summary>
 public static class CorpusPlacement
 {
-    /// <summary>The rungs, cheapest-that-could-work first. The builder takes the first that fully verifies.</summary>
+    /// <summary>
+    /// The rungs for the profile's DEFAULT store - the measurement corpus's case - cheapest-that-could-work
+    /// first. The builder takes the first that fully verifies. Where every unsent save lands is the
+    /// target itself, so none of these writes into another store.
+    /// </summary>
     public static readonly CorpusPlacementMethod[] Ladder =
     {
         CorpusPlacementMethod.InPlaceWithSentFlag,
@@ -118,6 +194,33 @@ public static class CorpusPlacement
         CorpusPlacementMethod.DraftsThenMove,
         CorpusPlacementMethod.InPlaceOnly,
     };
+
+    /// <summary>
+    /// The rungs for any OTHER store - every fixture population's case: only the ones whose item is
+    /// never unsent. Each rung of <see cref="Ladder"/> files its item in the DEFAULT store's Drafts on
+    /// the first save (measured 2026-09-24, for the InPlace and the Drafts rungs alike), so probing them
+    /// here would itself write outside the target, and a failed one would strand its item there.
+    /// </summary>
+    public static readonly CorpusPlacementMethod[] NonDefaultStoreLadder =
+    {
+        CorpusPlacementMethod.InPlaceReceived,
+        CorpusPlacementMethod.PostAsNote,
+    };
+
+    /// <summary>The rungs a store may be probed and built with, by whether it is the profile's default store.</summary>
+    public static IReadOnlyList<CorpusPlacementMethod> LadderFor(bool targetIsDefaultStore)
+        => targetIsDefaultStore ? Ladder : NonDefaultStoreLadder;
+
+    /// <summary>Whether this rung writes the message flags BEFORE the item's first save.</summary>
+    public static bool WritesFlagsBeforeSave(CorpusPlacementMethod method)
+        => method == CorpusPlacementMethod.InPlaceReceived;
+
+    /// <summary>
+    /// Whether this rung creates a POST and converts it to a mail item (<see cref="CorpusPlacementMethod.PostAsNote"/>),
+    /// so that a population item's recipients and attachments can only go on after the conversion.
+    /// </summary>
+    public static bool CreatesAsPost(CorpusPlacementMethod method)
+        => method == CorpusPlacementMethod.PostAsNote;
 
     /// <summary>Whether this rung creates the item in Drafts rather than in the target folder.</summary>
     public static bool CreatesInDrafts(CorpusPlacementMethod method)
@@ -129,7 +232,8 @@ public static class CorpusPlacement
 
     /// <summary>Whether this rung writes PR_MESSAGE_FLAGS to clear MSGFLAG_UNSENT.</summary>
     public static bool WritesSentFlag(CorpusPlacementMethod method)
-        => method is CorpusPlacementMethod.InPlaceWithSentFlag or CorpusPlacementMethod.DraftsThenMoveWithSentFlag;
+        => method is CorpusPlacementMethod.InPlaceWithSentFlag or CorpusPlacementMethod.DraftsThenMoveWithSentFlag
+            or CorpusPlacementMethod.InPlaceReceived;
 
     /// <summary>
     /// A rung counts as usable only when the item's parent IS the target folder AND the
@@ -146,17 +250,19 @@ public static class CorpusPlacement
     public static bool IsUsable(CorpusPlacementProbe probe)
     {
         ArgumentNullException.ThrowIfNull(probe);
-        return probe.Error == null && probe.ParentIsTargetFolder && probe.TargetFolderTableContainsIt;
+        return probe.Error == null && probe.ParentIsTargetFolder && probe.TargetFolderTableContainsIt
+            && !probe.WroteOutsideTargetStore && probe.TargetVisible;
     }
 
     /// <summary>
-    /// The rung to build with: the first in <see cref="Ladder"/> order that fully verified.
-    /// <see cref="CorpusPlacementMethod.None"/> when none did.
+    /// The rung to build with: the first in <see cref="Ladder"/> order, then
+    /// <see cref="NonDefaultStoreLadder"/> order, that fully verified. <see cref="CorpusPlacementMethod.None"/>
+    /// when none did.
     /// </summary>
     public static CorpusPlacementMethod Choose(IReadOnlyCollection<CorpusPlacementProbe> probes)
     {
         ArgumentNullException.ThrowIfNull(probes);
-        foreach (CorpusPlacementMethod method in Ladder)
+        foreach (CorpusPlacementMethod method in Ladder.Concat(NonDefaultStoreLadder))
         {
             foreach (CorpusPlacementProbe probe in probes)
             {
@@ -183,8 +289,45 @@ public static class CorpusPlacement
     /// </summary>
     public static (bool Proceed, string Message) Decide(
         CorpusPlacementMethod chosen, bool allowDraftsPlacement, int itemCount,
-        IReadOnlyCollection<CorpusPlacementProbe>? probes = null)
+        IReadOnlyCollection<CorpusPlacementProbe>? probes = null, bool targetIsDefaultStore = true)
     {
+        // Checked first, because it is about where the probe itself wrote. A rung that put its FIRST
+        // save in another store has already written somewhere no allowlist named, whatever else it did.
+        if (probes != null && probes.Any(p => p.WroteOutsideTargetStore))
+        {
+            string rungs = string.Join(", ", probes.Where(p => p.WroteOutsideTargetStore).Select(p => p.Method.ToString()));
+            string outside = $"Placement: rung(s) {rungs} filed their item OUTSIDE the target store on its first save - "
+                + "Outlook files a new unsent mail item in the profile's DEFAULT store's Drafts. That is a write into a "
+                + "store no allowlist named, so those rungs are unusable here whatever else they achieved; the "
+                + "cross-store residue sweep removes what they left.";
+            if (chosen == CorpusPlacementMethod.None)
+            {
+                return (false, outside + " No rung that stays in the target store verified. Refusing to build.");
+            }
+
+            return (true, outside + $" VERIFIED via {chosen}, which stays in the target store. Items will live in the "
+                + "folders the plan names.");
+        }
+
+        if (probes != null && probes.Count > 0 && probes.Any(p => !p.TargetVisible))
+        {
+            string name = probes.First(p => !p.TargetVisible).TargetFolderName;
+            return (false, $"Placement: REFUSED - the target folder '{name}' is not a folder of the store's VISIBLE tree, a named "
+                + "folder under its root. Items placed there exist and no one can see them: on OAI-UNINDEXED, 2026-09-24, "
+                + "GetDefaultFolder(olFolderInbox) on a PST attached with AddStoreEx returned the PST's nameless non-IPM root, "
+                + "and 172 bystander items sat there while this probe said VERIFIED. Refusing to build.");
+        }
+
+        if (chosen == CorpusPlacementMethod.None && !targetIsDefaultStore)
+        {
+            return (false, "Placement: NOT ACHIEVABLE on this store. It is not the profile's default store, so it is probed "
+                + "only with the rungs whose item is never unsent - "
+                + string.Join(" and ", NonDefaultStoreLadder.Select(m => m.ToString()))
+                + " - because every other rung files its item in the DEFAULT store's Drafts first, and neither left an item "
+                + "in the target folder of the target store and in that folder's table. --allow-drafts-placement cannot "
+                + "help here: a draft of this store is filed in ANOTHER store. Refusing to build.");
+        }
+
         if (chosen != CorpusPlacementMethod.None)
         {
             string extra = RequiresMove(chosen)

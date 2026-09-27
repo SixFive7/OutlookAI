@@ -65,9 +65,24 @@ public sealed record CorpusCensusReport(
     /// <summary>Items sitting in the Outbox, where the plan never puts anything.</summary>
     public int StrayOutbox => StrayOutboxPlannedUnread + StrayOutboxPlannedRead;
 
-    /// <summary>Items sitting in Drafts, where the plan never puts anything.</summary>
+    /// <summary>
+    /// Items sitting in Drafts that the plan puts somewhere ELSE - the failure mode of the first
+    /// real build, where every item meant for the Inbox was filed as a draft. Nothing is planned
+    /// into Drafts today (population version 2 dropped its undated drafts - see
+    /// <see cref="CorpusItemKind"/>), so every corpus item found there is a stray; the per-sighting
+    /// count still compares against the plan, so a plan that did put an item there would not be
+    /// counted against itself.
+    /// </summary>
     public int StrayDrafts
-        => Folders.Where(f => f.FolderId == CorpusCensus.DraftsFolderId).Sum(f => f.Observed);
+        => StrayDraftSightings
+            ?? Folders.Where(f => f.FolderId == CorpusCensus.DraftsFolderId).Sum(f => f.Observed);
+
+    /// <summary>
+    /// The exact count behind <see cref="StrayDrafts"/>, per sighting: found in Drafts, planned
+    /// elsewhere. Null only on a report built by hand, where the per-folder total stands in for it -
+    /// which is exact whenever nothing is planned into Drafts, the measurement corpus's case.
+    /// </summary>
+    public int? StrayDraftSightings { get; init; }
 }
 
 /// <summary>
@@ -92,7 +107,10 @@ public sealed record CorpusCensusReport(
 /// </summary>
 public static class CorpusCensus
 {
-    /// <summary>Outlook default-folder id for Drafts. Nothing is ever planned here.</summary>
+    /// <summary>
+    /// Outlook default-folder id for Drafts. Nothing is planned here: not by the measurement corpus,
+    /// and - since population version 2 - not by a fixture population either.
+    /// </summary>
     public const int DraftsFolderId = 16;
 
     /// <summary>Outlook default-folder id for the Outbox. Nothing is ever planned here either.</summary>
@@ -144,6 +162,7 @@ public static class CorpusCensus
         int outboxUnread = 0;
         int outboxRead = 0;
         int probeItems = 0;
+        int strayDrafts = 0;
         foreach (CorpusSighting sighting in sightings)
         {
             // A PROBE ITEM IS NOT A CORPUS ITEM, and it is separated here rather than filtered
@@ -169,6 +188,13 @@ public static class CorpusCensus
             if (!plannedFolderOf.TryGetValue(sighting.Ordinal, out int want) || want != sighting.FolderId)
             {
                 misplaced++;
+
+                // A draft the plan wanted elsewhere - never one of a population's own drafts,
+                // which the plan puts exactly here.
+                if (sighting.FolderId == DraftsFolderId)
+                {
+                    strayDrafts++;
+                }
             }
 
             if (sighting.FolderId == OutboxFolderId)
@@ -215,7 +241,10 @@ public static class CorpusCensus
             outboxUnread,
             outboxRead,
             legacyTagged,
-            probeItems);
+            probeItems)
+        {
+            StrayDraftSightings = strayDrafts,
+        };
     }
 
     /// <summary>
