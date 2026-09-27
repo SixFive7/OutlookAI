@@ -268,6 +268,12 @@ Outlook, holding no stored POP3 password, logs in or prompts (section 2.7).
 **NOTHING HERE HAS RUN ON A GUEST YET.** `Install-MailSink.ps1` passes its `-SelfTest` on the host
 and has never been executed on a guest. Until its `-Verify` reports `SINK-READY` on one, every
 statement in this section about how Inbucket behaves is read from source, not measured.
+**Corrected 2026-09-27: it has run, on both guests.** `-Verify` reported `SINK-READY` on
+`OutlookAI-Unindexed` on 2026-09-24 (section 2.7, `CP-08-MAIL-SINK`) and on `OutlookAI-Indexed` the
+same day and again on 2026-09-27 (section 4.2 step 3, section 4.2b step 4.3). So the `[SOURCE]` rows
+of the table above that `-Verify` asserts - any password or none accepted, deletes applied at
+`QUIT`, numbers fixed, `TOP` implemented - are measured on both guests. The RFC deviations section
+2.7 lists are still read from source.
 
 ### 1.4a Why the account points at `127.0.0.1`
 
@@ -378,6 +384,10 @@ from-scratch rebuild replaces the guests (see `Testbed/README.md` section 1b).
 > August guest and was never true of the scripted ones. **The guests have no SDK, no git, no
 > clone and no network**, and that - not anything about Outlook - is why the live tier has never
 > run on one.
+> *(2026-09-27: both have the SDK now - installed by the first bullet below on
+> `OutlookAI-Indexed` from 2026-09-17 and on `OutlookAI-Unindexed` from 2026-09-24, `TEST-READY` on
+> each (sections 4.1c and 4.2b). Still no git, no clone and no network; and the live tier still has
+> not run on either, for the reasons section 4 records.)*
 
 * **.NET SDK 10.0.401, win-x64, installed from STAGED media** by `Testbed/guest/Install-DotnetSdk.ps1`
   (`Testbed/MEDIA.md` declares the precondition). Nothing pins a feature band - there is no
@@ -479,6 +489,11 @@ state before and after its Outlook start and says if anything moved. **Order it 
 `Set-OutlookIndexingDisabled.ps1 -Verify` after it.
 
 **Never executed on a guest yet.** Everything above that says "measured" was measured on the host.
+**Corrected 2026-09-27: executed on both guests since, and it printed `ADDIN-READY`** -
+`OutlookAI-Unindexed` on 2026-09-24 (section 4.1 step 4, `CP-09-ADDIN-READY`), `OutlookAI-Indexed`
+the same day and again on 2026-09-27 (section 4.2 step 4, section 4.2b step 4.4): `NOT-INSTALLED`
+first, then `ADDIN-READY` twice each time, the trust entry kept on the second run, and the index
+exclusion state unchanged by it.
 
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Execute` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
@@ -649,6 +664,13 @@ arise and does not have to be waited out. `Testbed/README.md` section 1 carries 
 > exclude a guest whose corpus is already built, do not trust a settle window - rebuild the
 > catalog, or rebuild the guest.
 >
+> *(Answered 2026-09-24 by the Q69 block above, noted 2026-09-27: the policy on its own removes
+> nothing - the scope stays IN and every row stays (row P). It is the crawl-scope EXCLUDE rule that
+> takes a scope out, and the indexer then purges the rows itself within minutes, unless a service
+> restart interrupts the purge, which it does not redo (rows U, R and N). Excluding before the
+> corpus is built still keeps the question from arising; on a guest already crawled, `-Execute`
+> now writes the rule, waits for the purge and only then restarts (row N).)*
+>
 > **STILL NOT ESTABLISHED, 2026-09-24 - and now known to be unmeasurable on the guests as they
 > stand.** The experiment was set up on `OutlookAI-Indexed` precisely to answer it: exclude a
 > guest that already holds Outlook rows and see whether they go. It could not run, because that
@@ -735,8 +757,12 @@ route.
 **All of it is scripted, and all of it has now run on a guest.** The first attempt at the scripts
 went through Extended MAPI's `IProfAdmin`, which is **measured broken** on Office LTSC 2024
 16.0.17932.20884 (2026-09-16: `E_NOINTERFACE` on `IID_IProfAdmin`, with `MAPIInitialize` and
-`MAPIAdminProfiles` both succeeding; cause not established). The rewrites then ran on
-`OAI-UNINDEXED` on **2026-09-24**, each from a fresh restore of `CP-05-CORPUS-B-CLEAN-UNINDEXED`:
+`MAPIAdminProfiles` both succeeding; cause not established). *(Corrected 2026-09-27: the cause was
+established on 2026-09-24 and it was not Office - the interop declared the wrong IID, and a
+`QueryInterface` for Microsoft's `IID_IProfAdmin` succeeds on this build; section 8 item 9 (b),
+`Testbed/guest/OutlookMapiInterop.ps1`'s REOPEN section. Nothing was rebuilt on it.)* The
+rewrites then ran on `OAI-UNINDEXED` on **2026-09-24**, each from a fresh restore of
+`CP-05-CORPUS-B-CLEAN-UNINDEXED`:
 
 | Step | Route | What the guest run showed |
 | --- | --- | --- |
@@ -938,7 +964,8 @@ gets bound as the account's delivery store). So the name is set afterwards, by
 >
 > **ONE THING IN THAT LIST CHANGED AND IS WORTH SAYING OUT LOUD.** The script now names a store by
 > **renaming the store's root folder**, because the MAPI route that set the name at creation time
-> is measured broken (2026-09-16, `E_NOINTERFACE` on `IID_IProfAdmin`). So it does now modify a
+> is measured broken (2026-09-16, `E_NOINTERFACE` on `IID_IProfAdmin` - on the interop's wrong IID,
+> not on Office, as established 2026-09-24; section 8 item 9 (b)). So it does now modify a
 > FOLDER - the store's root node - where the older version did not. That is deliberately on the
 > permitted side of the line drawn above, and for the same reason
 > `Testbed/guest/Rename-OutlookStore.ps1` gives: the rule's subject is **items**, the folder in
@@ -2149,7 +2176,7 @@ outside the repository (`.work\g2-buildout\` in the main checkout).
 | 6. Fixture populations (section 3b) | In the tier profile `Add-OutlookPstStore.ps1` made `bystander@vm.invalid` (`C:\OutlookAI-Tier\bystander.pst`); all three population stores read 0 items. Default to `CorpusProfile`, the hub (`Outlook.pst`), bystander and identity PSTs attached there by path, names byte-identical. `corpus-probe --population hub`, then per population a dry run and `--execute` - `hub-unindexed` 8181, `bystander-unindexed` 8282, `identity-unindexed` 8383 (the last id is not yet in `testbed.json`), one anchor `2026-09-24T16:08:00Z` - then `corpus-census` of all three and of Corpus B. Default back to `OutlookAI-Tier` | **NOT CLEAN - every population build exited 1.** Placement census clean: 56, 300 and 8 items, each ordinal once, in the folder the manifest records. Read-back FAULTS: 42 of 56, 244 of 300 and 5 of 8 items - exactly the RECEIVED ones - carry no owner recipient. And three more defects, below. Corpus B: its own census clean (20,000), but 12 probe items now sit in its Drafts | `CP-11-POPULATIONS-BUILT-WITH-FAULTS` - evidence, not a base to build on |
 | 7. SDK and suite | `Publish-LiveTierPayload.ps1` on the host (source archived from `329925d`; the 54-package feed reused), both archives expanded on the guest, `Install-DotnetSdk.ps1 -ExpectedSha512 <the published hash> -Execute` over PowerShell Direct; then `-Verify` from a new session | `TEST-READY` both times: the installer exited 0 after 74 s, the offline probe ran (`OUTLOOKAI-SDK-PROBE-OK 10.0.12 x64`), **2,794 tests discovered**, 17 executed and passed; 148 s end to end. The Release build baked `McpServerExePath` = `C:\OutlookAI-Q5\src\McpServer\OutlookAI.McpServer\bin\Release\net10.0-windows\OutlookAI.McpServer.exe`, and that file exists - question 12 answered by construction, as the installer's banner predicted | `CP-12-SDK-TEST-READY` |
 | 8. Settings | Store names read over COM in the tier profile (three stores, the two accounts on their own stores); `OutlookAI-Unindexed`'s section of `Testbed/testbed.json` filled - watched `tier@`, `bystander@`, `identity@vm.invalid`, indexed `[]`, bystander `bystander@vm.invalid`, `corpus` null (the tier profile does not mount Corpus B), `mailSink` loopback 25/110 with a 2,000 ms connect timeout; `New-LiveTestSettings.ps1 -VMName OutlookAI-Unindexed`; the file copied to the suite's `live-fixtures` | rendered and admitted (Portable; hub `tier@vm.invalid`; identity `identity@vm.invalid` draft-and-delete only); SHA-256 `401A4BA8...5C6BF1` on host and guest alike | `CP-13-LIVE-SETTINGS` |
-| 9. First live run | **ON HOLD, not started** - by instruction: the live tier's own census, `LiveOutlookTestMailer.CaptureMailFolderCensus`, calls `GetDefaultFolder` for Deleted Items and ids 19-23 on every store, and on a PST lacking one of those folders that CREATES it (step 6 above measured the same thing from the generator's side). A run now would write into the bystander PST and measure the harness. It waits for the non-creating resolver and the matching harness fix | - |
+| 9. First live run | **ON HOLD, not started** - by instruction: the live tier's own census, `LiveOutlookTestMailer.CaptureMailFolderCensus`, calls `GetDefaultFolder` for Deleted Items and ids 19-23 on every store, and on a PST lacking one of those folders that CREATES it (step 6 above measured the same thing from the generator's side). A run now would write into the bystander PST and measure the harness. It waits for the non-creating resolver and the matching harness fix. *(2026-09-27: that fix landed the same evening - Q84, `4f82004`: the census and the sweeps now resolve those folders without creating them. The run itself has still not happened; section 8 item 22.)* | - |
 
 **Step 6's defects, measured on the guest, none fixed here** (the generator is outside this work's
 files; each needs its owner's fix and a rebuild, and two need a decision first):
@@ -2183,7 +2210,8 @@ files; each needs its owner's fix and a rebuild, and two need a decision first):
    (`...22010000`), not an Inbox. Drafts resolves, which is all section 2.8b's two tests use; mail
    delivered to the account would land where nothing shows it.
 
-Also measured here, and the reason for the harness fix the first live run now waits for:
+Also measured here, and the reason for the harness fix the first live run now waits for (landed
+the same day - Q84, `4f82004`):
 `GetDefaultFolder` CREATES some missing special folders on such a PST. The bystander PST held only
 `Deleted Items` before its build and gained `Drafts` and `Junk Email` during it - the generator's
 store scan calls `GetDefaultFolder` for Drafts, Inbox, Sent Items, Junk Email, Outbox and Deleted
@@ -2334,6 +2362,10 @@ INDEXED: from `CP-10-INDEXED` (20,048 Outlook rows over three stores, the catalo
 at a time, each checkpointed, with `Set-OutlookIndexingDisabled.ps1 -Verify -SettleMinutes 1
 -MinimumOutlookRows 20000` after every step that started Outlook or installed something. No
 population was built and the live tier did not run: both wait on the generator and harness fixes.
+*(2026-09-27: both have landed - the harness's on 2026-09-24 (Q84, `4f82004`), generator v2 and its
+guest fixes by 2026-09-27 (section 4.1a). What is still missing here is a population - Q98, open -
+this guest's settings, whose store names are still placeholders in `Testbed/testbed.json`, and a
+live run; section 4.2b's rebuild ran neither a population nor the tier.)*
 Raw logs: `.work\g1-buildout\` in the main checkout.
 
 **Every COM caller ran at Outlook's own integrity level.** Outlook on this guest is started NOT
@@ -2601,6 +2633,15 @@ five-store profile it is a different number entirely and has never been measured
   `GetDefaultFolder` for Junk, in which case a generator-made "Junk Email" folder is treated as
   ordinary and a decrease in it would FAIL rather than be noted. Nothing prunes it here, so this
   should stay theoretical - but if the tripwire ever fires on Junk, this is why.
+  *(Corrected 2026-09-27: the mechanism is no longer this, and its premise was measured wrong. A
+  PST does not refuse `GetDefaultFolder` for Junk - it CREATES the folder (measured on the guests'
+  PSTs, 2026-09-24; section 4.1). Since Q84 (`4f82004`, the same day) the census never calls it on a
+  non-Exchange store: it marks Junk self-pruning only when the store's Inbox designates a Junk
+  E-mail folder in `PR_ADDITIONAL_REN_ENTRYIDS` and that entry id opens
+  (`McpServer/OutlookAI.Core/Com/SpecialFolders.cs`). The conclusion stands for that reason instead: a Junk
+  folder the Inbox does not designate is counted as ordinary, and a decrease in it fails rather
+  than being noted. Whether the Junk Email folders on the guests' stores carry that designation
+  has not been read.)*
 * **A move whose destination was only counted cannot be exonerated.** The census can prove an
   item was filed rather than deleted only when BOTH folders were walked item by item. An item
   moved from a small folder into one above the budget is reported as removed.
