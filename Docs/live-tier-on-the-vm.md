@@ -1212,10 +1212,14 @@ SMTP side - is retired.
 > is read-only and Microsoft documents only the GUI's *Change Folder*.
 > `Docs/research/profile-automation-research.md` §4 has the full evidence.
 >
-> **Still to do on this machine, and NOT done by that script:** the **signature** below
-> (`Testbed/guest/Set-AccountSignature.ps1`, never executed); the settings-file declaration below;
-> and reading `Account.SmtpAddress` over COM, which the Object Model Guard blocks on these guests
-> (section 8 item 23). The rest of this section is the specification the script was built to.
+> **Still to do on this machine, and NOT done by that script:** the **signature** below; the
+> settings-file declaration below; and reading `Account.SmtpAddress` over COM, which the Object
+> Model Guard blocked on these guests (section 8 item 23). **Two of the three are done since**
+> (section 4.2): `Set-OutlookProgrammaticAccess.ps1` made the `SmtpAddress` read work
+> (`CP-12-PROGRAMMATIC-ACCESS`), and `Testbed/guest/Set-AccountSignature.ps1`, run with the fixed
+> server on 2026-09-27, put `New Signature` = `Identity` on the identity ACCOUNT's own entry
+> (`00000004`), where the product read it back (`CP-15-SIGNATURE-SUITE-STAGED`). The settings file
+> is not rendered yet. The rest of this section is the specification the script was built to.
 
 > **BUILT AGAIN, 2026-09-24, on `OutlookAI-Unindexed` - from `CP-09-ADDIN-READY` to checkpoint
 > `CP-10-IDENTITY-ACCOUNT`.** Same script, same result: two POP3 accounts, `OutlookAI tier sink`
@@ -1248,6 +1252,10 @@ SMTP side - is retired.
 >   address - Outlook's own default for a POP3/IMAP account - the tool can write a user's default
 >   signature onto the wrong subkey and report success. The fix is a product decision, not a
 >   testbed one; it is left in place on this guest so the live run shows what Outlook does with it.
+>   **Fixed in the product since** (the merge "manage_signature writes to the mail account, never
+>   to a data file named like an address"): on `OutlookAI-Indexed`, 2026-09-27, the fixed server
+>   wrote the ACCOUNT entry and left the data-file entry alone (section 4.2). This guest's
+>   checkpoints from `CP-10-IDENTITY-ACCOUNT` on still carry the misplaced value.
 > * **The account's delivery FOLDER is the PST's hidden root, not an Inbox** - found at step 6
 >   (section 4.1, defect 4). `identity.pst`, attached by `AddStoreEx`, has no Inbox, and
 >   `GetDefaultFolder(6)` on it returns the root folder (NID `0x122`, no display name), so
@@ -2038,6 +2046,53 @@ which are therefore not the pure reads that script's banner calls them.
   and no mailbox - adds enough debug lines to push the buffer out; one such session was enough.
 * **`manage_signature` can bind a signature to a data file** (section 2.8b): it picks the profile
   subkey by an `@` in `Account Name`, and a PST named after an address has one.
+
+### 4.2 The indexed guest's build-out - `OutlookAI-Indexed`, 2026-09-24 and 2026-09-27
+
+**Why this section exists.** The same build-out as section 4.1, on the guest that must stay
+INDEXED: from `CP-10-INDEXED` (20,048 Outlook rows over three stores, the catalog IDLE), one step
+at a time, each checkpointed, with `Set-OutlookIndexingDisabled.ps1 -Verify -SettleMinutes 1
+-MinimumOutlookRows 20000` after every step that started Outlook or installed something. No
+population was built and the live tier did not run: both wait on the generator and harness fixes.
+Raw logs: `.work\g1-buildout\` in the main checkout.
+
+**Every COM caller ran at Outlook's own integrity level.** Outlook on this guest is started NOT
+elevated (`Testbed/guest/Start-OutlookUnelevated.ps1`), because only that Outlook feeds the index
+(section 8 item 22). An elevated caller cannot attach to it, and `Register-InteractiveTask.ps1`
+registers only `RunLevel Highest`, so the steps that talk to Outlook - `Set-OutlookProgrammaticAccess.ps1
+-Verify`, `Set-AccountSignature.ps1`, the product's read-back - ran in a one-shot `RunLevel Limited`
+interactive task, a scratch helper (both tokens read integrity 0x2000). Closing Outlook was
+`Testbed/host/Restart-Guest.ps1 -Execute -CancelLogonPrompt` every time; it picks its quit task's
+run level from Outlook's own token. A committed Limited route - a `-RunLevel` switch on
+`Register-InteractiveTask.ps1`, say - is what the live tier on this guest needs too (section 8
+item 22, last paragraph).
+
+| Step | What ran | Verdict | Index after | Checkpoint |
+| --- | --- | --- | --- | --- |
+| 1. First-run settings | `Set-OfficeFirstRunSuppressed.ps1 -Verify`, `-Execute`, `-Verify` | 10 OK and 3 FAIL - the same three classic-Outlook values as on the other guest, its `Options\General` key missing altogether - then 13 of 13 | no Outlook start; `INDEXED` at the baseline | `CP-11-FIRSTRUN-REPAIRED` |
+| 2. Programmatic access (Q80) | `-SelfTest` 43/0, `-Execute`, Outlook started unelevated on the tier profile, `-Verify` from a Limited task | `NO-PROMPT`, both accounts' `SmtpAddress` in 1.5 s all told. **No control, and one would have proved nothing here**: Windows Security Center reported the antivirus up to date (`0x061100`) while Defender reported its signatures 372 days old - so the guard's trigger was absent (the script's banner) | `INDEXED`, 20,048 | `CP-12-PROGRAMMATIC-ACCESS` |
+| 3. Mail sink | `Install-MailSink.ps1 -LogLevel debug -Execute`, graceful restart, `-Verify`; `New-TierProfile.ps1 -StoreSinkPassword -Execute`; Outlook started unelevated | `SINK-READY` twice, the sink up with the boot; a password stored on both accounts; no logon dialog; the sink logged `read USER tier` and `read USER identity`, each with `read PASS any-value` and a `STAT` | `INDEXED`, 20,048 | `CP-13-MAIL-SINK` |
+| 4. Add-in | `Publish-AddInPayload.ps1` on the host from `98e050e` (host unchanged), `Install-OutlookAIAddIn.ps1` `-SelfTest` 85/0, `-Verify`, `-Execute`, graceful restart, `-Execute` | `NOT-INSTALLED`, then `ADDIN-READY` twice: VSTO `v4R` absent, then 10.0.60917; tuning state 8.3 s and 3.6 s after the start; the trust entry kept the second time; the index exclusion state `UNCHANGED` by both runs. The installer's first-run Outlook is started over COM from the elevated task, so it is elevated - it did not disturb the index | `INDEXED`, 20,048 | `CP-14-ADDIN-READY` |
+| 5. Signature | the server published from `4e23866`'s McpServer tree; Outlook started unelevated; the two profile entries read; `Set-AccountSignature.ps1 -Account identity@vm.invalid -Execute` from a Limited task; the entries read again; the product's `list_signatures` asked separately | `New Signature` = `Identity` on `00000004` (clsid `{ED475411-...}`, `Email` `identity@vm.invalid`), nothing on `00000005` (the `identity.pst` data-file entry); `Identity.htm`, `.rtf`, `.txt` written; the separate read-back: account `identity@vm.invalid`, newMessage `Identity`, and `tier@vm.invalid` with none | `INDEXED`, 20,048 | - |
+| 6. Suite | `Publish-LiveTierPayload.ps1 -Ref 4e23866` (54 packages; the feed restores everything), the guest's old `src` and feed kept as `*.2026-09-17` and fresh ones expanded; `Install-DotnetSdk.ps1 -Execute` - the SDK present, the installer skipped; it writes the `NuGet.config` a fresh `src` lacks, without which `-Verify` stops at `SDK-ONLY` - then `-Verify` from a new session | `TEST-READY` both times: **3,041 tests discovered**, 17 run and passed, 35 s and 11 s; the `McpServerExePath` the guest's build bakes in names an exe that exists | `INDEXED`, 20,048 | `CP-15-SIGNATURE-SUITE-STAGED` |
+
+**The interruption, and why step 5 ran twice.** On 2026-09-24 the first pass of step 5, with a
+server from `98e050e` that already wrote the account entry, also ran a scratch COM probe: an
+unsaved MailItem in the identity store's Drafts with `SendUsingAccount` pinned, `GetInspector`,
+`HTMLBody` read, `Close(olDiscard)`. It saw the signature inserted, and a census of every folder of
+both stores before and after found nothing added. The session then stopped, and both guests were
+saved to disk for three days. **That probe created an item from ad-hoc code, which mailbox-safety
+rule 1 forbids on the guests as well**, so on 2026-09-27 the guest was restored to
+`CP-14-ADDIN-READY` - discarding the probe and everything after it - and step 5 was redone creating
+no item at all; `CP-15` descends from that pass. Whether Outlook inserts the signature into a new
+mail is left to the live tier (`LiveDraftOptionsTests`). The resumed guest, before the restore, still
+read `INDEXED`, with Outlook running from the probe's pass and its clock three days behind until
+time sync caught it up within seconds; after the restore, `SINK-READY` and `INDEXED` both held with
+nothing repaired.
+
+**Also found:** `Install-MailSink.ps1 -Verify` on a guest resumed from saved state reported the sink
+as started "-199,807 s after boot" - `LastBootUpTime` moves with the clock jump. Cosmetic; every
+check passed.
 
 ---
 
