@@ -1263,12 +1263,47 @@ public static class ComCorpusMailbox
             }
 
             item.Save();
-            return ((string)item.EntryID, SavedItemStoreId(item));
+
+            // MEASURED on OAI-UNINDEXED, 2026-09-27: an appointment, a contact and a task saved this way
+            // into a PST CARRY PR_MESSAGE_DELIVERY_TIME after that first save - the undated probe refused
+            // all three ("it CARRIES a delivery time, so the index would date it"). An undated item exists
+            // to carry none, so the property is removed and the item saved again; the probe and the build's
+            // read-back re-open the item by EntryID and check that it stayed gone.
+            RemoveDeliveryTime(item!);
+            return ((string)item!.EntryID, SavedItemStoreId(item));
         }
         finally
         {
             Release(item);
         }
+    }
+
+    /// <summary>
+    /// Removes PR_MESSAGE_DELIVERY_TIME from a SAVED undated item and saves it again. An item that does
+    /// not carry the property is left alone and not saved twice; any other failure propagates, so the
+    /// probe reports it and the build refuses rather than file an item the index would date.
+    /// </summary>
+    private static void RemoveDeliveryTime(dynamic item)
+    {
+        dynamic? accessor = null;
+        try
+        {
+            accessor = item.PropertyAccessor;
+            try
+            {
+                accessor!.DeleteProperty(PrMessageDeliveryTime);
+            }
+            catch (COMException ex) when (IsPropertyNotFound(ex))
+            {
+                return;
+            }
+        }
+        finally
+        {
+            Release(accessor);
+        }
+
+        item.Save();
     }
 
     /// <summary>
@@ -1810,9 +1845,9 @@ public static class ComCorpusMailbox
                             // first save, the way a person composes one - after the conversion,
                             // for a post (CommitNewItem); its sender and conversation are properties
                             // written after it, and saved by the flag write below. A
-                            // measurement-corpus item has none of them. InPlaceReceived makes the
-                            // item NOT unsent before it is ever saved, which is what is meant to keep
-                            // Outlook from filing it in the default store's Drafts.
+                            // measurement-corpus item has none of them. On a store that is not the
+                            // profile's default the rung is PostAsNote, the one measured to keep its
+                            // first save where it is aimed (OAI-UNINDEXED, 2026-09-27).
                             CorpusItemEnrichment? enrichment = plan.Enrich(ordinal);
                             Action<dynamic>? compose = null;
                             if (enrichment != null)

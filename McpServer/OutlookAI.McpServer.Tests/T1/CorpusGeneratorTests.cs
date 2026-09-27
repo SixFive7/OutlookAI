@@ -748,17 +748,23 @@ public class CorpusGeneratorTests
     // ------------------------------------------------------------------ placement off the default store
 
     [Fact]
-    public void Placement_ANonDefaultStore_IsProbedOnlyWithRungsWhoseItemIsNeverUnsent()
+    public void Placement_ANonDefaultStore_IsProbedOnlyWithTheRungMeasuredToStayInIt()
     {
         // OAI-UNINDEXED, 2026-09-24: a new unsent mail item's first save lands in the profile's DEFAULT
         // store's Drafts - both InPlace rungs ("Could not open the item" in the target), and the target's
         // own Drafts too (the date probe's ObjectModel item, created there for DraftsThenMoveWithSentFlag,
-        // was found in Corpus B's Drafts). So none of the four is even PROBED on another store.
+        // was found in Corpus B's Drafts). And 2026-09-27, against the hub: InPlaceReceived printed
+        // store=OTHER, PostAsNote store=target landedIn=Inbox parentMatches=True inFolderTable=True. So on
+        // another store only PostAsNote is probed, and a probe writes only where it is aimed.
         Assert.Equal(CorpusPlacement.Ladder, CorpusPlacement.LadderFor(targetIsDefaultStore: true));
-        Assert.Equal(
-            new[] { CorpusPlacementMethod.InPlaceReceived, CorpusPlacementMethod.PostAsNote },
-            CorpusPlacement.LadderFor(targetIsDefaultStore: false));
+        Assert.Equal(new[] { CorpusPlacementMethod.PostAsNote }, CorpusPlacement.LadderFor(targetIsDefaultStore: false));
         Assert.Empty(CorpusPlacement.Ladder.Intersect(CorpusPlacement.NonDefaultStoreLadder));
+
+        // The retired rung is in NO ladder, so nothing probes or builds with it - and a probe result
+        // naming it is never chosen, whatever it says.
+        Assert.DoesNotContain(CorpusPlacementMethod.InPlaceReceived, CorpusPlacement.LadderFor(true));
+        Assert.DoesNotContain(CorpusPlacementMethod.InPlaceReceived, CorpusPlacement.LadderFor(false));
+        Assert.Equal(CorpusPlacementMethod.None, CorpusPlacement.Choose(new[] { PlacementProbe(CorpusPlacementMethod.InPlaceReceived) }));
 
         // The default store's ladder is exactly what it was: the measurement corpus is untouched.
         Assert.Equal(
@@ -771,7 +777,7 @@ public class CorpusGeneratorTests
     }
 
     [Fact]
-    public void Placement_TheTwoNonDefaultRungs_NeverMoveAndNeverTouchDrafts()
+    public void Placement_TheNonDefaultRung_NeverMovesAndNeverTouchesDrafts()
     {
         foreach (CorpusPlacementMethod method in CorpusPlacement.NonDefaultStoreLadder)
         {
@@ -779,8 +785,8 @@ public class CorpusGeneratorTests
             Assert.False(CorpusPlacement.RequiresMove(method));
         }
 
-        // InPlaceReceived writes PR_MESSAGE_FLAGS BEFORE the first save - MAPI lets MSGFLAG_UNSENT change
-        // only then - and is the one rung that does.
+        // The retired InPlaceReceived keeps its facts, so the record of what it did still reads: it wrote
+        // PR_MESSAGE_FLAGS BEFORE the first save - and its item was filed in the default store all the same.
         Assert.True(CorpusPlacement.WritesFlagsBeforeSave(CorpusPlacementMethod.InPlaceReceived));
         Assert.True(CorpusPlacement.WritesSentFlag(CorpusPlacementMethod.InPlaceReceived));
         Assert.False(CorpusPlacement.CreatesAsPost(CorpusPlacementMethod.InPlaceReceived));
@@ -849,31 +855,41 @@ public class CorpusGeneratorTests
     public void Placement_OnANonDefaultStore_TheDraftsOverrideCannotRescueABuild()
     {
         // --allow-drafts-placement builds a corpus that lives in Drafts. On a store that is not the
-        // default, "Drafts" is ANOTHER STORE's Drafts - so the override is refused, and says so.
-        CorpusPlacementProbe failed = PlacementProbe(CorpusPlacementMethod.InPlaceReceived, parentMatches: false, inTable: false);
+        // default, "Drafts" is ANOTHER STORE's Drafts - so the override is refused, and the refusal names
+        // the route the maintainer decided for that case (Q88 (a), 2026-09-27).
+        CorpusPlacementProbe failed = PlacementProbe(CorpusPlacementMethod.PostAsNote, parentMatches: false, inTable: false);
         (bool proceed, string message) = CorpusPlacement.Decide(
             CorpusPlacementMethod.None, allowDraftsPlacement: true, itemCount: 56,
-            probes: new[] { failed, failed with { Method = CorpusPlacementMethod.PostAsNote } }, targetIsDefaultStore: false);
+            probes: new[] { failed }, targetIsDefaultStore: false);
         Assert.False(proceed);
         Assert.Contains("--allow-drafts-placement cannot help here", message, StringComparison.Ordinal);
-        Assert.Contains("InPlaceReceived and PostAsNote", message, StringComparison.Ordinal);
+        Assert.Contains("- PostAsNote -", message, StringComparison.Ordinal);
+        Assert.Contains("a profile where it IS the default", message, StringComparison.Ordinal);
 
         // The default store's override is unchanged.
         Assert.True(CorpusPlacement.Decide(CorpusPlacementMethod.None, allowDraftsPlacement: true, itemCount: 56,
-            probes: new[] { failed }, targetIsDefaultStore: true).Proceed);
+            probes: new[] { failed with { Method = CorpusPlacementMethod.InPlaceOnly } }, targetIsDefaultStore: true).Proceed);
     }
 
     [Fact]
-    public void Placement_ChoosesInPlaceReceivedOverPostAsNote_WhenBothVerify()
+    public void Placement_WhatTheHubProbeMeasured_DecidesPostAsNote()
     {
-        // A mail item composed in place is the closer copy of received mail; the post is converted.
-        Assert.Equal(
-            CorpusPlacementMethod.InPlaceReceived,
-            CorpusPlacement.Choose(new[]
-            {
-                PlacementProbe(CorpusPlacementMethod.PostAsNote),
-                PlacementProbe(CorpusPlacementMethod.InPlaceReceived),
-            }));
+        // The two lines OAI-UNINDEXED printed on 2026-09-27, as the decision sees them: a rung that went
+        // to another store, and the post that stayed. The build proceeds with the post, and says which
+        // rung wrote outside - so a log shows the transient write the probe of an unknown rung costs.
+        CorpusPlacementProbe inPlace = new(
+            CorpusPlacementMethod.InPlaceReceived, "Inbox", false, false, false, null,
+            "its first save landed in another store", true, WroteOutsideTargetStore: true, TargetVisible: true);
+        CorpusPlacementProbe post = new(
+            CorpusPlacementMethod.PostAsNote, "Inbox", true, true, true, "Inbox", null, true, false, true);
+        Assert.False(CorpusPlacement.IsUsable(inPlace));
+        Assert.True(CorpusPlacement.IsUsable(post));
+        Assert.Equal(CorpusPlacementMethod.PostAsNote, CorpusPlacement.Choose(new[] { inPlace, post }));
+
+        (bool proceed, string message) = CorpusPlacement.Decide(
+            CorpusPlacementMethod.PostAsNote, false, 68, new[] { inPlace, post }, targetIsDefaultStore: false);
+        Assert.True(proceed, message);
+        Assert.Contains("VERIFIED via PostAsNote", message, StringComparison.Ordinal);
     }
 
     [Fact]
