@@ -225,7 +225,7 @@ signature-directory snapshot, the zero-artifact sweep — lives in **xUnit fixtu
 launcher runs the tier with its guards absent, against a real mailbox. That is worse than not
 running it, and it is why the answer is an SDK on the guest rather than a cleverer runner.
 
-**This is media, not a dependency.** The repository's `## Dependencies` rule in `CLAUDE.md`
+**This is media, not a dependency.** The repository's `## Dependencies` rule in `AGENTS.md`
 forbids "anything a rebuilder would have to download and install beyond the media
 `Testbed/MEDIA.md` already names as preconditions" — so naming it here is exactly the mechanism
 that rule points at, the same one the Windows ISO, the Office Deployment Tool and the mail sink
@@ -344,7 +344,7 @@ what actually happened the first time either of them runs on a guest.
 
 ## The mail sink - Inbucket, the one third-party program the guests run
 
-**Decided 2026-09-24, and it is a deliberate exception to a standing rule.** `CLAUDE.md`'s
+**Decided 2026-09-24, and it is a deliberate exception to a standing rule.** `AGENTS.md`'s
 `## Dependencies` section says no external applications, ever. The maintainer set that aside for
 exactly this job: asked to put a loopback mail sink on the guests, they asked for "a simple ready
 made open source tool" rather than one written here - "try to keep it as simple as possible" - and

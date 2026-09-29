@@ -359,7 +359,7 @@ public sealed class CorpusPlan
     /// both directions; a comment could not.
     /// </para>
     /// <para>
-    /// A corpus item is still deleted by the two independent keys CLAUDE.md mailbox-safety
+    /// A corpus item is still deleted by the two independent keys AGENTS.md mailbox-safety
     /// rule 2 requires - an EntryID this run's manifest recorded AND an ordinal tag match on
     /// the re-read subject. Only WHICH tag is matched changed.
     /// </para>

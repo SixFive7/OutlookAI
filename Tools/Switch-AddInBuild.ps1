@@ -60,7 +60,7 @@
     it on my machine whilst agents are still actively building it." Until then any plain build of
     the add-in registered ITSELF with the Outlook on the machine that built it (see the comment in
     OutlookAI.csproj), so the maintainer's Outlook loaded whatever build folder had been built last.
-    This script is the one sanctioned way to change what his Outlook loads - CLAUDE.md, "The add-in
+    This script is the one sanctioned way to change what his Outlook loads - AGENTS.md, "The add-in
     on the maintainer's workstation".
 
     FOUR MODES. Dry run by default: nothing changes without -Execute.
@@ -1618,7 +1618,7 @@ function Invoke-SelfTest {
     $script:Failures = @()
 
     # Compared with -ceq; searched with String.Contains. Never -like: a bracket in a -like pattern
-    # is a character class (Testbed/README.md section 4b; CLAUDE.md mailbox rule 2).
+    # is a character class (Testbed/README.md section 4b; AGENTS.md mailbox rule 2).
     function Test-Case {
         param([string] $What, $Expected, $Actual)
         $script:Checks++

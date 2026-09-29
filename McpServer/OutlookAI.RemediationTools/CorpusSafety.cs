@@ -101,7 +101,7 @@ public enum CorpusStoreRefusal
 /// else in this project, because the thing being decided is whether it is safe to write
 /// tens of thousands of items into a mailbox.
 /// <para>
-/// The rules follow CLAUDE.md's mailbox-safety section. Two of them are load-bearing and
+/// The rules follow AGENTS.md's mailbox-safety section. Two of them are load-bearing and
 /// neither has an exception:
 /// </para>
 /// <list type="number">
@@ -316,7 +316,7 @@ public static class CorpusSafety
         return $"REFUSING to build a corpus in store '{target}' (bound profile: '{boundProfile}'): {why}. {remedy} "
             + "This tool logs on with the DEFAULT profile and does not attach to a running Outlook, so if that "
             + "profile name is not the one you expected, the target you are looking at is not the target being "
-            + "vetted. See the mailbox-safety rules in CLAUDE.md.";
+            + "vetted. See the mailbox-safety rules in AGENTS.md.";
     }
 
     /// <summary>

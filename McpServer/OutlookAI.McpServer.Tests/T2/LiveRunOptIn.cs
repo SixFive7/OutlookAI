@@ -32,7 +32,7 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// <para>
 /// <b>WHAT IT IS NOT.</b> It says only that a live run was meant. It does not make any test
 /// read-only, and it does not decide which machine may run which test. The maintainer's
-/// workstation is read-only for live tests, always (CLAUDE.md, Mailbox Safety); how that rule is
+/// workstation is read-only for live tests, always (AGENTS.md, Mailbox Safety); how that rule is
 /// enforced in code is the maintainer's open decision (Q74), and nothing here pre-empts it.
 /// </para>
 /// </summary>
@@ -143,7 +143,7 @@ public static class LiveRunOptIn
             + "Testbed/guest/Register-InteractiveTask.ps1 (Testbed/README.md, section 4c)."
             + " The value must equal the computer name of the machine the run is on, so a value carried to another "
             + "machine opens nothing, and it must never be saved with setx or in the user or machine environment."
-            + " THE MAINTAINER'S WORKSTATION IS READ-ONLY FOR LIVE TESTS, ALWAYS (CLAUDE.md, Mailbox Safety): this "
+            + " THE MAINTAINER'S WORKSTATION IS READ-ONLY FOR LIVE TESTS, ALWAYS (AGENTS.md, Mailbox Safety): this "
             + "variable only says a run was intended - it makes no test read-only, and it must never be set there to "
             + "run a test that can write.";
     }

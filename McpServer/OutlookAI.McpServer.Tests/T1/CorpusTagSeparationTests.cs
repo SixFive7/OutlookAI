@@ -126,7 +126,7 @@ public sealed class CorpusTagSeparationTests
     public void TheDeleteAndRewriteGuardsFollowTheNewTag()
     {
         // corpus-teardown selects by EntryID allowlist AND ordinal tag match, both required
-        // (CLAUDE.md mailbox-safety rule 2). Both keys are re-checked here against the CURRENT
+        // (AGENTS.md mailbox-safety rule 2). Both keys are re-checked here against the CURRENT
         // tag, because a tag change that missed either turns a safety guard into a no-op.
         HashSet<string> allowlist = CorpusSafety.BuildEntryIdAllowlist(new[] { "ID-1" });
         string subject = Plan().BuildSubject(42);

@@ -4,7 +4,12 @@
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
 # Claude Code local config
-.claude/
+.claude/*
+!.claude/settings.json
+
+# Instructions live in AGENTS.md; a CLAUDE.md makes Claude Code skip it
+CLAUDE.md
+CLAUDE.local.md
 
 # User-specific files
 *.rsuser

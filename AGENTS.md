@@ -1,5 +1,9 @@
 # Project Instructions
 
+## Subfolder instructions
+
+Before working in a subfolder, read any AGENTS.md from that folder up to the repo root that you haven't seen yet. Claude Code attaches them only when a file there is read: https://github.com/anthropics/claude-code/tree/main/mods/agents-md#where-it-still-differs-from-claudemd
+
 ## Changelog
 
 When committing changes, **always update `CHANGELOG.md`** under the `## Unreleased` section.

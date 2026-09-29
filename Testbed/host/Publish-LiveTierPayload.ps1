@@ -291,7 +291,7 @@ Say "  $($projects.Count) project(s) in the archive:"
 foreach ($p in $projects) { Say ("    " + $p.Name) }
 
 # The add-in at the repository root is MSBuild-only (VSTO) and `dotnet restore` cannot read it.
-# Restricting to McpServer/ is what CLAUDE.md says about building this repository, restated as
+# Restricting to McpServer/ is what AGENTS.md says about building this repository, restated as
 # code so it cannot be forgotten here.
 
 # ---------------------------------------------------------------------------------------------

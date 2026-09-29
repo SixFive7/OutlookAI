@@ -231,6 +231,6 @@ public sealed class StoreWriteAllowlist
                     : "only the designated test mailbox may be written to";
 
         return "REFUSING '" + operation + "' (" + kind.ToString().ToLowerInvariant() + ") on store '" + target
-            + "': " + why + ". See the mailbox-safety rules in CLAUDE.md; widen the live-test settings, never the guard.";
+            + "': " + why + ". See the mailbox-safety rules in AGENTS.md; widen the live-test settings, never the guard.";
     }
 }

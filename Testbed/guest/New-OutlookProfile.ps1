@@ -1373,7 +1373,7 @@ function Invoke-SelfTest {
     # -like treats '[...]' as a CHARACTER CLASS, so `$prf -like '*[Account1]*'` asks "does this
     # text contain any one of A,c,o,u,n,t,1" - which is true of almost any text, and the assertion
     # then passes for the wrong reason. Written with -like first, four of these lied. It is the
-    # same wildcard trap CLAUDE.md's mailbox-safety rule 2 is about, and every section header in a
+    # same wildcard trap AGENTS.md's mailbox-safety rule 2 is about, and every section header in a
     # .prf is in square brackets, so it would have hit every interesting assertion here.
     # Contains is ordinal and case-SENSITIVE, which is what a .prf needs anyway.
     $oneStore = @([pscustomobject]@{ DisplayName = 'Corpus A'; Path = 'C:\OutlookAI-Q5\pst\corpus-a.pst' })

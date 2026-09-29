@@ -659,7 +659,7 @@ of what is unproven.
 > reason. Four assertions in `New-OutlookProfile.ps1` were written with `-like` and did exactly
 > that before they were caught.
 >
-> It is the same wildcard trap as `CLAUDE.md` mailbox-safety rule 2, which exists because
+> It is the same wildcard trap as `AGENTS.md` mailbox-safety rule 2, which exists because
 > `-like "*[tag]*"` once matched nearly every subject in a real mailbox and destroyed real mail.
 > Here it costs a false green rather than data - but it is the same operator, the same
 > misunderstanding, and worth recognising on sight. `Contains` is ordinal and case-sensitive, which
@@ -864,7 +864,7 @@ Three rules for the opt-in, each refused with a message that says why:
   included. Do not put it in a PowerShell profile either - nothing can detect that, and it defeats
   the point the same way.
 * **It changes nothing else.** It says a live run was intended; it makes no test read-only and
-  chooses no tests. **The maintainer's workstation is read-only for live tests, always** (CLAUDE.md,
+  chooses no tests. **The maintainer's workstation is read-only for live tests, always** (AGENTS.md,
   Mailbox Safety); how that is enforced in code is the maintainer's open decision (Q74), not this.
 
 Without the opt-in, every live collection fails at its fixture with `LIVE TEST REFUSED` and nothing

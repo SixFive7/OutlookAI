@@ -58,7 +58,7 @@
 
 - [ ] **ENFORCE, IN CODE, THAT THE WORKSTATION IS READ-ONLY FOR LIVE TESTS (Q72 decided; Q74 is how).**
   The maintainer decided 2026-09-24: live tests on his workstation run read-only, always, and only
-  the fundamentally immovable ones - the Exchange-only tests - run there at all. `CLAUDE.md` now
+  the fundamentally immovable ones - the Exchange-only tests - run there at all. `AGENTS.md` now
   says so, but today nothing but the run filter enforces it, and the retirement review found two
   gaps a filter cannot close. First, tests that write through the MCP server process (the stdio,
   tier-3 tests) bypass the in-process `StoreWriteAllowlist` entirely. Second, a hand-kept filter
@@ -2560,3 +2560,20 @@
   - [ ] remove the "v3 planning documents" section at the bottom of `.gitignore`
   - [ ] delete the local plan-doc backup folder (location documented in v3.MD §0.8 D16 on the machine that holds it)
   - [ ] delete this TODO entry (and this file if empty)
+
+- [ ] **Remove the 13 stale Agent-tool worktrees and their `worktree-agent-*` branches.**
+  All 13 under .claude/worktrees are clean, unlocked and 0 commits ahead of master (0 to 107
+  behind), so every commit they hold is on master already. Each still has a checked-out CLAUDE.md,
+  which a session started or resumed there would load. Confirm no agent is running in one (the last
+  writes were 2026-09-24 to 2026-09-27), then for each: `git worktree remove .claude/worktrees/agent-<id>`
+  and `git branch -d worktree-agent-<id>`; `-d` refuses a branch that is not merged, which is the check.
+  Added in 2.1.277: https://code.claude.com/docs/en/changelog#2-1-277
+  Extended in 2.1.281: https://code.claude.com/docs/en/changelog#2-1-281
+  Remaining differences: https://github.com/anthropics/claude-code/tree/main/mods/agents-md#where-it-still-differs-from-claudemd
+
+- [ ] **Clean up old `.work` folders (`.work/g2-cp11b`, `.work/q81-addin-registration`, `.work/testbed-livetier-payload`, `.work/worktree-archive`).**
+  Their copies and clones carry CLAUDE.md/AGENTS.md files. `.claude/settings.json` keeps them out of
+  Claude's context (`claudeMdExcludes`), but delete what is no longer needed.
+  Added in 2.1.277: https://code.claude.com/docs/en/changelog#2-1-277
+  Extended in 2.1.281: https://code.claude.com/docs/en/changelog#2-1-281
+  Remaining differences: https://github.com/anthropics/claude-code/tree/main/mods/agents-md#where-it-still-differs-from-claudemd

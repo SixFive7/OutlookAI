@@ -5,7 +5,7 @@ moved to another host, with nothing but this repository and a Windows ISO. It as
 knowledge of how the tier grew up. It is also the reference for running the tier once the
 machine exists.
 
-**Read `CLAUDE.md`'s Mailbox Safety section first.** Nothing here overrides it. Every rule in
+**Read `AGENTS.md`'s Mailbox Safety section first.** Nothing here overrides it. Every rule in
 it applies on a test machine too, and the guards described below are what enforce it.
 
 **Secrets are not in this repository, which is public.** Guest account passwords, the host's
@@ -241,7 +241,7 @@ the thirteenth, the product's own two-step `send`, cannot be replaced at all. A 
 thirteen as written. Asked to build one, the maintainer asked instead for "a simple ready made
 open source tool... as simple as possible"; section 2.7 says why that is Inbucket, and
 `Testbed/MEDIA.md` records it as the one third-party program on the guests, under a carve-out of
-`CLAUDE.md`'s Dependencies rule that the maintainer confirmed.
+`AGENTS.md`'s Dependencies rule that the maintainer confirmed.
 
 **What the 2026-09-15 decision weighed, and what answers each point now:**
 
@@ -312,7 +312,7 @@ them - becomes correct rather than a list of tests that could only fail.
 **Until a guest's sink is installed and its `-Verify` reports `SINK-READY`, do not send on that
 guest.** A send with nothing listening queues in the Outbox, and the tier's Outbox check then
 refuses every later run until that item is removed - through the suite's own helpers, never from a
-shell (`CLAUDE.md`, mailbox-safety rule 1).
+shell (`AGENTS.md`, mailbox-safety rule 1).
 
 **`OutlookAI-Unindexed` reports `SINK-READY` since 2026-09-24**, the first guest to - installed,
 restarted and verified again, starting with the guest (section 2.7). Section 1.4's closing paragraph,
@@ -917,7 +917,7 @@ guest is a different act. So the line now runs between items and stores, not bet
 script:
 
 * **No script may create, delete, move or modify an ITEM.** That is unchanged, absolute, and
-  `CLAUDE.md` mailbox-safety rule 1 remains the authority: item mutation goes through the tested
+  `AGENTS.md` mailbox-safety rule 1 remains the authority: item mutation goes through the tested
   helpers or the shipped MCP tools, never through improvised code.
 * **Creating a NEW, EMPTY store on a testbed guest is permitted from a script**, provided the
   script verifies which machine and which account it is running as before it writes anything.

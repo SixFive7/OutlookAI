@@ -539,7 +539,7 @@ if ($searchPathProblems.Count -gt 0) {
 #     the installer writes - at the build output; SetInclusionListEntry adds a VSTO trust entry for
 #     it; and Clean runs UnregisterOfficeAddin and RemoveOfficeAddInSecurity. Until OutlookAI.csproj
 #     took that away, every plain msbuild of the add-in - in any checkout, any agent worktree -
-#     silently repointed the maintainer's own Outlook at whatever it had just built (CLAUDE.md,
+#     silently repointed the maintainer's own Outlook at whatever it had just built (AGENTS.md,
 #     "The add-in on the maintainer's workstation").
 #
 #     This is the opposite shape again (like #12 and #13): a guard that exists ONCE, and that no

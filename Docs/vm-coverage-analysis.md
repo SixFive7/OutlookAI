@@ -1024,7 +1024,7 @@ Then push `Requires` down for the six straddling classes.
 > POP3 on `:110` - so all 13 methods that put mail on the wire run as written, the zero-artifact sweep
 > stays strict, and the Outbox is a canary on the guests again (`Docs/live-tier-on-the-vm.md`
 > sections 1.4 and 2.7; `Testbed/MEDIA.md` pins it under the one Dependencies exception in
-> `CLAUDE.md`). Both guests have reported `SINK-READY` since 2026-09-24. The primer and options below
+> `AGENTS.md`). Both guests have reported `SINK-READY` since 2026-09-24. The primer and options below
 > are the record of the question as it stood.
 
 **Primer.** The decided VM enables send on an unroutable account so a send can never leave the

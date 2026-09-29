@@ -249,7 +249,7 @@
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!--
     A BUILD OUTSIDE VISUAL STUDIO NEVER REGISTERS THE ADD-IN ON THE MACHINE THAT BUILT IT.
-    Decided by the maintainer 2026-09-27 (Q81); CLAUDE.md, "The add-in on the maintainer's
+    Decided by the maintainer 2026-09-27 (Q81); AGENTS.md, "The add-in on the maintainer's
     workstation", is the rule this enforces.
 
     The VSTO build targets imported below write the BUILD MACHINE's registry on every build
