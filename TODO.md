@@ -2577,3 +2577,20 @@
   Added in 2.1.277: https://code.claude.com/docs/en/changelog#2-1-277
   Extended in 2.1.281: https://code.claude.com/docs/en/changelog#2-1-281
   Remaining differences: https://github.com/anthropics/claude-code/tree/main/mods/agents-md#where-it-still-differs-from-claudemd
+
+- [ ] **Move OutlookAI from MIT to the FSL-based licence BrowserAI carries.**
+  Decided by the maintainer on 2026-10-01, in his words: *"Move both OutlookAI and the new library
+  to the FSL based license BrowserAI has."* The new library is the shared MCP registration library
+  that is being extracted from BrowserAI. Nothing in this repository has been changed for it: this
+  entry is the whole of the change so far, added from the BrowserAI session on his instruction.
+  **The licence to copy** is `LICENSE` in the BrowserAI repository: the Functional Source License
+  1.1 (MIT Future License), modified to a five-year term. It is a bespoke variant, and its own text
+  forbids the plain `FSL-1.1-MIT` identifier. BrowserAI names it
+  `LicenseRef-BrowserAI-FSL-1.1-MIT-5yr` in its SPDX headers, so OutlookAI needs a name of its own
+  in the same form.
+  **What the move touches, to be checked when it is done:** `LICENSE`; the licence line in
+  `README.md`; any licence field in the project files and in `Installer.iss`; source-file headers,
+  if this repository wants them; and `CHANGELOG.md` under Unreleased, because the licence a user
+  receives changes.
+  **One thing to settle first.** Every release published so far went out under MIT. Decide whether
+  the change applies from the next release or from a stated date, and say so in the release notes.
