@@ -2416,7 +2416,9 @@ public static class LiveOutlookTestMailer
 
             if (!underDeletedItems)
             {
-                folder.Delete(); // soft: moves under Deleted Items with a NEW EntryID
+                // Soft: moves it under Deleted Items. On a PST it KEEPS its EntryID there (measured, Q114 -
+                // Docs/live-tier-on-the-vm.md section 8 item 31); the next pass finds it by walking anyway.
+                folder.Delete();
                 return 1;
             }
 

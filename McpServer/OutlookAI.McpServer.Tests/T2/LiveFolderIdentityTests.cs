@@ -309,6 +309,29 @@ public sealed class LiveFolderIdentityTests
                     Assert.Equal(itemProviderItemId, itemRowProviderItemId);
                 }
             }
+
+            // The largest top-level folder too - Corpus A's hold tens of thousands of items - for what the
+            // node-id lookup costs at production scale. Only its scope is mapped; its rows are not read.
+            FolderListing? largest = listing
+                .Where(f => f.Depth == 1 && f.ItemCount > MaxItemsPerFolder && Plain(f.Name))
+                .OrderByDescending(f => f.ItemCount)
+                .FirstOrDefault();
+            if (largest != null && FolderEntryIdLayout.Parse(largest.EntryId)?.Kind == FolderEntryIdKind.Pst)
+            {
+                IReadOnlyList<string>? bigSegments = RelativeSegments(rootFolderPath, largest.FolderPath);
+                if (bigSegments != null && bigSegments.All(Plain))
+                {
+                    string expected = rootUrl + "/0/" + string.Join("/", bigSegments.Select(MapiUrlSegment.Encode));
+                    Stopwatch big = Stopwatch.StartNew();
+                    string? mapped = FolderScopeFromIndexOnly(client, roots, largest.EntryId, out string how);
+                    big.Stop();
+                    _output.WriteLine(
+                        "  largest folder '" + string.Join("/", bigSegments) + "' (" + largest.ItemCount + " items): id -> scope from the index alone "
+                        + (mapped ?? "(none)") + " in " + big.ElapsedMilliseconds + " ms (" + how + ")");
+                    Assert.Equal(expected, mapped?.TrimEnd('/'));
+                    mappedEndToEnd++;
+                }
+            }
         }
 
         _output.WriteLine(
