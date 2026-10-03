@@ -15,7 +15,10 @@ namespace OutlookAI.TaskPane
     ///
     /// FIVE TABS, and what is on them:
     ///   Outlook     - the master switch and the three Outlook tuning groups, plus the restart
-    ///                 and group-policy status lines.
+    ///                 and group-policy status lines. The caching group lists the five Cached
+    ///                 Mode POLICY values one per row - current, desired (a list to change it),
+    ///                 and whether it is in effect or needs an administrator - and "Apply as
+    ///                 administrator" writes the ones that do, through UAC (Q128).
     ///   Claude Code - which model requests run on, and where the mail server is registered.
     ///   Prompts     - the five prompt sections every request is assembled from.
     ///   Buttons     - the quick buttons the compose sidebar shows, in order.
@@ -92,6 +95,25 @@ namespace OutlookAI.TaskPane
         private readonly GroupBox grpCaching;
         private readonly CheckBox chkCaching;
         private readonly Label lblCachingValues;
+
+        // The five Cached Mode policy values (Q128), one row each, in CachedModePolicy's order.
+        private readonly string[] _policyNames;
+        private readonly Label lblPolicyIntro;
+        private readonly TableLayoutPanel tblPolicy;
+        private readonly Label[] lblPolicyName;
+        private readonly Label[] lblPolicyLive;
+        private readonly ComboBox[] cmbPolicyDesired;
+        private readonly Label[] lblPolicyState;
+        private readonly Button btnElevate;
+        private readonly Label lblElevateStatus;
+        private readonly ToolTip _policyTips = new ToolTip();
+        private Image _shieldImage;
+
+        /// <summary>True while the UAC prompt or the helper behind it is running; set and read on the UI thread only.</summary>
+        private bool _elevating;
+
+        /// <summary>How the last "Apply as administrator" ended - the status line's colour; null before the first.</summary>
+        private PolicyElevationResult? _lastElevation;
         private readonly GroupBox grpOst;
         private readonly CheckBox chkOst;
         private readonly Label lblOstValues;
@@ -293,8 +315,76 @@ namespace OutlookAI.TaskPane
             chkCaching = NewCheck("chkCaching", "Keep full Cached Mode sync applied");
             lblCachingValues = NewLabel("", LabelRole.Body, wrap: true);
             lblCachingValues.Name = "lblCachingValues";
+
+            // The five POLICY values (Q128): Outlook reads them from HKCU\Software\Policies, which a
+            // NOT elevated Outlook - the one people run - can read and cannot write. So each is
+            // shown with what is in effect, what OutlookAI wants (a list: picking from it is the
+            // decision, like a tick box, and writes the desired value at once), and whether it is
+            // in effect or needs an administrator; the button writes those through UAC.
+            lblPolicyIntro = NewLabel(
+                "Outlook's Cached Mode policy. Anyone can read these; changing them needs an "
+                + "administrator, so OutlookAI asks Windows for one when you apply them.",
+                LabelRole.Secondary, wrap: true);
+            lblPolicyIntro.Name = "lblPolicyIntro";
+
+            _policyNames = new List<string>(CachedModePolicy.ValueNames).ToArray();
+            lblPolicyName = new Label[_policyNames.Length];
+            lblPolicyLive = new Label[_policyNames.Length];
+            cmbPolicyDesired = new ComboBox[_policyNames.Length];
+            lblPolicyState = new Label[_policyNames.Length];
+            tblPolicy = new TableLayoutPanel
+            {
+                Name = "tblPolicy",
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 4,
+                RowCount = 0,
+                Anchor = AnchorStyles.Left | AnchorStyles.Top,
+                Margin = Padding.Empty,
+            };
+            for (int c = 0; c < 4; c++)
+                tblPolicy.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            AddPolicyRow(NewGridLabel("Policy value", LabelRole.Secondary), NewGridLabel("Current", LabelRole.Secondary),
+                         NewGridLabel("Desired", LabelRole.Secondary), NewGridLabel("State", LabelRole.Secondary));
+            for (int i = 0; i < _policyNames.Length; i++)
+            {
+                string name = _policyNames[i];
+                lblPolicyName[i] = NewGridLabel(name, LabelRole.Body);
+                lblPolicyName[i].Name = "lblPolicy" + name;
+                _policyTips.SetToolTip(lblPolicyName[i], CachedModePolicy.Meaning(name));
+                lblPolicyLive[i] = NewGridLabel("", LabelRole.Body);
+                lblPolicyLive[i].Name = "lblPolicyLive" + name;
+                cmbPolicyDesired[i] = new ComboBox
+                {
+                    Name = "cmbPolicy" + name,
+                    DropDownStyle = ComboBoxStyle.DropDownList,
+                    Anchor = AnchorStyles.Left,
+                    FormattingEnabled = false,
+                    // Owner-drawn for the reason the model picker is: the OS paints the closed
+                    // field white in dark mode whatever BackColor it is given.
+                    DrawMode = DrawMode.OwnerDrawFixed,
+                    Tag = i,
+                    AccessibleName = name + ", desired value",
+                };
+                foreach (CachedModePolicy.Choice choice in CachedModePolicy.Choices(name))
+                    cmbPolicyDesired[i].Items.Add(choice);
+                lblPolicyState[i] = NewGridLabel("", LabelRole.Body);
+                lblPolicyState[i].Name = "lblPolicyState" + name;
+                AddPolicyRow(lblPolicyName[i], lblPolicyLive[i], cmbPolicyDesired[i], lblPolicyState[i]);
+            }
+
+            btnElevate = NewButton("Apply as administrator\u2026", "btnElevate");
+            btnElevate.TextImageRelation = TextImageRelation.ImageBeforeText;
+            btnElevate.ImageAlign = ContentAlignment.MiddleLeft;
+            // Hidden until there is something true to say - see ShowElevationStatus.
+            lblElevateStatus = NewLabel("", LabelRole.Dynamic, wrap: true);
+            lblElevateStatus.Name = "lblElevateStatus";
+            lblElevateStatus.Visible = false;
+
             grpCaching = NewGroup("grpCaching", "Full caching (sync slider = All)",
-                                  chkCaching, lblCachingValues);
+                                  chkCaching, lblPolicyIntro, tblPolicy,
+                                  NewButtonRow("policyButtons", btnElevate), lblElevateStatus,
+                                  lblCachingValues);
 
             // The cap is read from the tuning service rather than typed in here: the desired
             // numbers live in the registry and are meant to be tunable, so a hand-written
@@ -461,6 +551,12 @@ namespace OutlookAI.TaskPane
             chkSearch.CheckedChanged += OnToggleChanged;
             chkCaching.CheckedChanged += OnToggleChanged;
             chkOst.CheckedChanged += OnToggleChanged;
+            foreach (ComboBox combo in cmbPolicyDesired)
+            {
+                combo.SelectedIndexChanged += OnPolicyDesiredChanged;
+                combo.DrawItem += OnDrawModelChoice;
+            }
+            btnElevate.Click += OnApplyAsAdministrator;
             // Deliberately NOT OnToggleChanged: this one owns a different service, and
             // toggling it must not drag the Outlook tuning reconcile along with it.
             chkGlobalMcp.CheckedChanged += OnGlobalMcpChanged;
@@ -839,6 +935,21 @@ namespace OutlookAI.TaskPane
                 lblRestart.Margin = new Padding(0, gap, 0, 0);
                 lblGpo.Margin = new Padding(0, gap, 0, 0);
 
+                lblPolicyIntro.Margin = new Padding(0, gap, 0, Scaled(2));
+                tblPolicy.Margin = new Padding(0, 0, 0, 0);
+                foreach (Control cell in tblPolicy.Controls)
+                    cell.Margin = new Padding(0, Scaled(2), Scaled(14), Scaled(2));
+                foreach (ComboBox combo in cmbPolicyDesired)
+                {
+                    combo.Width = Scaled(150);
+                    combo.DropDownWidth = Scaled(190);
+                }
+                SetShieldImage(Scaled(16));
+                SizeButton(btnElevate, Scaled(176), rowHeight);
+                btnElevate.Margin = new Padding(0, gap, gap, 0);
+                lblElevateStatus.Margin = new Padding(0, gap, 0, 0);
+                lblCachingValues.Margin = new Padding(0, gap, 0, 0);
+
                 // Indented to sit under the tick box's caption, the way it always has. The reflow
                 // subtracts the margin, so an indented label wraps at the width it really has.
                 lblGlobalMcpHelp.Margin = new Padding(Scaled(20), 0, 0, gap);
@@ -1110,6 +1221,207 @@ namespace OutlookAI.TaskPane
             RefreshFromState();
         }
 
+        // ===== The five Cached Mode policy values (Q128) =====
+
+        /// <summary>A grid cell: unwrapped, vertically centred against the list beside it.</summary>
+        private Label NewGridLabel(string text, LabelRole role)
+        {
+            Label label = NewLabel(text, role, wrap: false);
+            label.Anchor = AnchorStyles.Left;
+            return label;
+        }
+
+        private void AddPolicyRow(Control name, Control live, Control desired, Control state)
+        {
+            tblPolicy.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            tblPolicy.RowCount = tblPolicy.RowStyles.Count;
+            int row = tblPolicy.RowCount - 1;
+            tblPolicy.Controls.Add(name, 0, row);
+            tblPolicy.Controls.Add(live, 1, row);
+            tblPolicy.Controls.Add(desired, 2, row);
+            tblPolicy.Controls.Add(state, 3, row);
+        }
+
+        /// <summary>
+        /// A desired value picked from a list. Instant, like a tick box: it is stored as the
+        /// DESIRED value - the add-in's own key, always writable - and the reconcile then writes
+        /// the live one if it can, or records that it needs an administrator. Never a UAC prompt by
+        /// itself: that is the button's, so changing three values asks once, not three times.
+        /// </summary>
+        private void OnPolicyDesiredChanged(object sender, EventArgs e)
+        {
+            if (_updating)
+                return;
+            try
+            {
+                var combo = (ComboBox)sender;
+                var choice = combo.SelectedItem as CachedModePolicy.Choice;
+                if (choice == null)
+                    return;
+                string name = _policyNames[(int)combo.Tag];
+                if (!OutlookTuningService.SetPolicyDesired(name, choice.Value))
+                    ShowElevationStatus("OutlookAI could not store " + name + " = " + choice.Value + ".", PolicyElevationResult.Failed);
+                OutlookTuningService.ReconcileFromUi();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Settings policy value: " + ex.Message);
+            }
+            RefreshFromState();
+        }
+
+        /// <summary>
+        /// "Apply as administrator": the values that need one, through UAC, in one prompt. The
+        /// prompt and the helper run on a worker thread - ShellExecuteEx blocks until the prompt is
+        /// answered, and Outlook's UI thread must not - and the result comes back here.
+        /// </summary>
+        private void OnApplyAsAdministrator(object sender, EventArgs e)
+        {
+            if (_elevating)
+                return;
+            _elevating = true;
+            ShowElevationStatus("Waiting for Windows to ask for administrator approval\u2026", null);
+            RefreshFromState();
+
+            IntPtr owner = IntPtr.Zero;
+            try { owner = Handle; }
+            catch (Exception ex) { Debug.WriteLine("Settings owner handle: " + ex.Message); }
+
+            var worker = new System.Threading.Thread(() =>
+            {
+                PolicyElevationOutcome outcome = PolicyElevation.ApplyPending(owner);
+                try
+                {
+                    BeginInvoke((Action)(() => OnElevationFinished(outcome)));
+                }
+                catch (ObjectDisposedException) { }
+                catch (InvalidOperationException) { }
+            });
+            worker.IsBackground = true;
+            worker.Name = "OutlookAI policy elevation";
+            // ShellExecuteEx belongs on an STA thread: it may hand the verb to shell extensions.
+            worker.SetApartmentState(System.Threading.ApartmentState.STA);
+            worker.Start();
+        }
+
+        private void OnElevationFinished(PolicyElevationOutcome outcome)
+        {
+            _elevating = false;
+            if (_disposedCustom || IsDisposed)
+                return;
+            ShowElevationStatus(outcome.Message, outcome.Result);
+            RefreshFromState();
+        }
+
+        /// <summary>The line under the button. A cancelled prompt reads as information, not as an error.</summary>
+        private void ShowElevationStatus(string message, PolicyElevationResult? result)
+        {
+            _lastElevation = result;
+            lblElevateStatus.Text = message ?? "";
+            lblElevateStatus.ForeColor = ElevationColour();
+            lblElevateStatus.Visible = !string.IsNullOrEmpty(message);
+            RelayoutAfterTextChange();
+        }
+
+        private Color ElevationColour()
+        {
+            if (!_lastElevation.HasValue)
+                return ThemeService.SecondaryText;
+            switch (_lastElevation.Value)
+            {
+                case PolicyElevationResult.Applied:
+                    return ThemeService.StatusSuccess;
+                case PolicyElevationResult.Refused:
+                case PolicyElevationResult.Failed:
+                    return ThemeService.StatusError;
+                default:
+                    return ThemeService.SecondaryText;
+            }
+        }
+
+        /// <summary>
+        /// One row per policy value: what is in effect, the desired value selected in its list,
+        /// and the state. The button is live only while a value needs an administrator.
+        /// </summary>
+        private void RefreshPolicyGrid(TuningSnapshot snap)
+        {
+            bool anyNeedsAdministrator = false;
+            for (int i = 0; i < _policyNames.Length; i++)
+            {
+                TuningValueState state = null;
+                foreach (TuningValueState v in snap.Values)
+                {
+                    if (v.Entry.IsPolicyHive && v.Entry.ValueName == _policyNames[i])
+                    {
+                        state = v;
+                        break;
+                    }
+                }
+
+                if (state == null)
+                {
+                    lblPolicyLive[i].Text = "(unknown)";
+                    lblPolicyState[i].Text = "Unknown";
+                    cmbPolicyDesired[i].SelectedIndex = -1;
+                    cmbPolicyDesired[i].Enabled = false;
+                    continue;
+                }
+
+                lblPolicyLive[i].Text = CachedModePolicy.Describe(_policyNames[i], state.Live);
+                int selected = -1;
+                for (int j = 0; j < cmbPolicyDesired[i].Items.Count; j++)
+                {
+                    var choice = cmbPolicyDesired[i].Items[j] as CachedModePolicy.Choice;
+                    if (choice != null && choice.Value == state.Desired)
+                    {
+                        selected = j;
+                        break;
+                    }
+                }
+                cmbPolicyDesired[i].SelectedIndex = selected;
+                cmbPolicyDesired[i].Enabled = state.GroupEnabled && !_elevating;
+                lblPolicyState[i].Text = DescribePolicyState(state);
+                if (state.GroupEnabled && state.NeedsAdministrator)
+                    anyNeedsAdministrator = true;
+            }
+            btnElevate.Enabled = anyNeedsAdministrator && !_elevating;
+        }
+
+        private static string DescribePolicyState(TuningValueState v)
+        {
+            if (!v.GroupEnabled)
+                return "Not managed";
+            if (v.BackedOff)
+                return "Managed by your organization";
+            if (v.InSync)
+                return "In effect";
+            if (v.NeedsAdministrator)
+                return "Needs administrator";
+            if (!CachedModePolicy.IsAllowed(v.Entry.ValueName, v.Desired))
+                return "Desired " + v.Desired + " is not offered";
+            return "Not applied yet";
+        }
+
+        /// <summary>The UAC shield on the button that raises a UAC prompt, at the size the display needs.</summary>
+        private void SetShieldImage(int size)
+        {
+            try
+            {
+                if (_shieldImage != null && _shieldImage.Width == size)
+                    return;
+                Image old = _shieldImage;
+                using (var icon = new Icon(SystemIcons.Shield, new Size(size, size)))
+                    _shieldImage = icon.ToBitmap();
+                btnElevate.Image = _shieldImage;
+                if (old != null)
+                    old.Dispose();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Settings shield icon: " + ex.Message);
+            }
+        }
+
         // The "all my projects" toggle. Ticking or unticking it IS the user declaring their
         // intent, so it applies immediately rather than waiting for Apply now - a user who
         // unticks it expects the entry gone now - and it never re-opens the question the startup
@@ -1200,11 +1512,12 @@ namespace OutlookAI.TaskPane
                 using (var brush = new SolidBrush(back))
                     e.Graphics.FillRectangle(brush, e.Bounds);
 
-                if (e.Index >= 0 && e.Index < cmbModel.Items.Count)
+                var combo = sender as ComboBox;
+                if (combo != null && e.Index >= 0 && e.Index < combo.Items.Count)
                 {
                     TextRenderer.DrawText(
                         e.Graphics,
-                        Convert.ToString(cmbModel.Items[e.Index]),
+                        Convert.ToString(combo.Items[e.Index]),
                         e.Font ?? Font,
                         e.Bounds,
                         fore,
@@ -1739,7 +2052,7 @@ namespace OutlookAI.TaskPane
             // Result ignored on purpose: this method re-lays the window out at the end either way.
             RefreshVersionLine();
 
-            OutlookTuningService.TuningSnapshot snap;
+            TuningSnapshot snap;
             try
             {
                 snap = OutlookTuningService.GetSnapshot();
@@ -1767,6 +2080,7 @@ namespace OutlookAI.TaskPane
                 lblSearchValues.Text = BuildGroupText(snap, OutlookTuningService.GroupSearch);
                 lblCachingValues.Text = BuildGroupText(snap, OutlookTuningService.GroupCaching);
                 lblOstValues.Text = BuildGroupText(snap, OutlookTuningService.GroupOst);
+                RefreshPolicyGrid(snap);
 
                 lblRestart.Visible = snap.RestartNeeded;
 
@@ -1799,12 +2113,13 @@ namespace OutlookAI.TaskPane
             RelayoutAfterTextChange();
         }
 
-        private static string BuildGroupText(OutlookTuningService.TuningSnapshot snap, string groupId)
+        private static string BuildGroupText(TuningSnapshot snap, string groupId)
         {
             var sb = new StringBuilder();
             foreach (var v in snap.Values)
             {
-                if (v.Entry.GroupId != groupId)
+                // The policy values have a row each in the grid above (RefreshPolicyGrid).
+                if (v.Entry.GroupId != groupId || v.Entry.IsPolicyHive)
                     continue;
                 string prefix = "";
                 if (groupId == OutlookTuningService.GroupCaching)
@@ -1865,6 +2180,7 @@ namespace OutlookAI.TaskPane
                 // is green after a save and red after a failed one.
                 RefreshMcpLine();
                 _lblStatus.ForeColor = StatusColour();
+                lblElevateStatus.ForeColor = ElevationColour();
 
                 // The tab strip and the page frame are painted, not coloured, so the flip has to
                 // reach the paint: the surfaces are set explicitly and the strip is invalidated.
@@ -1975,6 +2291,16 @@ namespace OutlookAI.TaskPane
                 // process, and there is one of these per Outlook session.
                 ThemeService.ThemeChanged -= OnThemeChanged;
                 UpdateService.StateChanged -= OnUpdateStateChanged;
+                try
+                {
+                    _policyTips.Dispose();
+                    if (_shieldImage != null)
+                        _shieldImage.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine("Settings dispose (policy): " + ex.Message);
+                }
                 try
                 {
                     if (_versionTimer != null)

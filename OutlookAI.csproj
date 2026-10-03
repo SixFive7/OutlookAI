@@ -179,6 +179,7 @@
          copy: McpServer\OutlookAI.Core\OutlookAI.Core.csproj LINKS this same file, and so does
          the test project. See the file's own header for why it is constants only and internal. -->
     <Compile Include="Services\AddInServerContract.cs" />
+    <Compile Include="Services\CachedModePolicy.cs" />
     <Compile Include="Services\ClaudeServices.cs" />
     <Compile Include="Services\McpConfigEditor.cs" />
     <Compile Include="Services\McpRegistrationDecision.cs" />
@@ -186,11 +187,14 @@
     <Compile Include="Services\ModelCatalog.cs" />
     <Compile Include="Services\OfficeVersions.cs" />
     <Compile Include="Services\OutlookTuningService.cs" />
+    <Compile Include="Services\PolicyElevation.cs" />
+    <Compile Include="Services\PolicyWriterRequest.cs" />
     <Compile Include="Services\PromptDefaults.cs" />
     <Compile Include="Services\PromptLint.cs" />
     <Compile Include="Services\PromptStore.cs" />
     <Compile Include="Services\SignatureStore.cs" />
     <Compile Include="Services\ThemeService.cs" />
+    <Compile Include="Services\TuningReconciler.cs" />
     <Compile Include="Services\UpdatePollSchedule.cs" />
     <Compile Include="Services\UpdateService.cs" />
     <Compile Include="TaskPane\AITaskPane.cs">
@@ -224,6 +228,44 @@
     </Compile>
     <AppDesigner Include="Properties\" />
   </ItemGroup>
+  <!--
+    THE ELEVATED HELPER, OutlookAI.PolicyWriter.exe (Q128): the settings dialog starts it through
+    UAC to write the five Cached Mode policy values a NOT elevated Outlook may only read. See
+    PolicyWriter\OutlookAI.PolicyWriter.csproj and Services\PolicyElevation.cs.
+
+    Built as a ProjectReference that is NOT referenced as an assembly - the add-in never loads it -
+    and shipped as Content: copied beside OutlookAI.dll, listed and hashed in the signed
+    OutlookAI.dll.manifest like every other file of the add-in, flattened into publish\ by the
+    payload and release builds, and carried to {app} by the installer's publish\* rule.
+
+    GlobalPropertiesToRemove is load-bearing. Testbed/host/Publish-AddInPayload.ps1 and
+    Tools/Switch-AddInBuild.ps1 pass PrepareForRunDependsOn as a GLOBAL property (guard 1 of Q81:
+    the registration target taken off the chain), and a global property flows into every
+    referenced project - where VisualStudioForApplicationsBuild, the other half of that chain, does
+    not exist (MSB4057). The helper builds with its own, ordinary chain.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="PolicyWriter\OutlookAI.PolicyWriter.csproj">
+      <Project>{30CFD827-272A-449A-9B82-97488D3619E3}</Project>
+      <Name>OutlookAI.PolicyWriter</Name>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <GlobalPropertiesToRemove>PrepareForRunDependsOn</GlobalPropertiesToRemove>
+    </ProjectReference>
+    <Content Include="PolicyWriter\bin\$(Configuration)\OutlookAI.PolicyWriter.exe">
+      <Link>OutlookAI.PolicyWriter.exe</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </Content>
+  </ItemGroup>
+  <PropertyGroup>
+    <!-- MSB3178, "Assembly 'PolicyWriter\bin\Release\OutlookAI.PolicyWriter.exe' is incorrectly
+         specified as a file": ClickOnce's manifest resolution noticing that the helper is a .NET
+         assembly listed as a plain file. It is one on purpose. The add-in never loads it, so it is no
+         dependency of the add-in's, and as a <file> it is still hashed, SHA-256, into the signed
+         OutlookAI.dll.manifest - measured 2026-10-03 in the payload build of the commit that added it.
+         A message, not a warning, so a build log with a real warning in it still stands out. -->
+    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3178</MSBuildWarningsAsMessages>
+  </PropertyGroup>
   <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">17.0</VisualStudioVersion>
     <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>

@@ -114,7 +114,7 @@ run either script's `-SelfTest` here.
 
 ## MCP Server (`McpServer/`)
 
-- `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which only contains the VSTO add-in (MSBuild-only).
+- `McpServer/` holds the MCP server projects (`OutlookAI.Core`, `OutlookAI.McpServer`, `OutlookAI.McpServer.Tests`). Build them with `dotnet build` **by explicit csproj path** — never via `OutlookAI.slnx`, which only contains the VSTO add-in and its elevated helper `PolicyWriter/` (both MSBuild-only).
 - The non-live suite (`dotnet test --filter "Category!=Live"`) runs only on the build VM - next section. Tests marked `Category=Live` need Outlook and a mailbox: they run on the test VMs - the ones that need Exchange on the Exchange VM, `OutlookAI-Exchange` - and never on this workstation (Q116 (a), Mailbox Safety below).
 - Developer documentation: `McpServer/README.md`.
 

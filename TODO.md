@@ -80,24 +80,6 @@
   instead of being filtered out. (3) The five `T2/LiveSearchInTests` throw NullReference when the
   settings carry no `subjectOnlyProbe` instead of refusing with the remedy.
 
-- [ ] **Decide what the add-in's tuning reconcile does with the five Cached Mode values it writes
-  under `HKCU\Software\Policies` (found 2026-10-03 by the first guest run of the two-phase add-in
-  install).** `OutlookTuningService.Reconcile` writes D25's five `caching.policy.*` values there, and
-  that key is read-only to a NOT elevated token - so in the Outlook a user runs, the first of them
-  throws, the reconcile's catch-all swallows it, and nothing after it runs: not the two user Cached
-  Mode values, not the two OST size values, not `LastReconcileUtc` (`outlook_health` then reports
-  `tuning.lastReconcileUtc` null). Only a machine where an administrator, a GPO or an earlier
-  elevated Outlook already set the five values escapes it; the maintainer's workstation is one.
-  Measured, with a control that isolates it, in `Docs/live-tier-on-the-vm.md` section 2.3. Until it
-  is decided, a guest rebuilt by `Testbed/README.md` section 1 stops at step 7c `BROKEN`, where
-  `T2/LiveHealthTests` would fail. Directions: (1) walk on past a value that cannot be written,
-  record it - in `PolicyConflicts`, or a new "needs an administrator" list the settings dialog and
-  `outlook_health` show - and always write `LastReconcileUtc`; (2) stop writing the Policies hive and
-  keep only the user-hive values; (3) write the policy values from an elevated step - the installer,
-  per-user today, or a one-time elevated helper; (4) change nothing in the product and set the five
-  values in the testbed's elevated install phase, which hides the defect the way the old elevated
-  `-Execute` did. Recommended: (1), then the proof again from `CP-08`, for `ADDIN-READY` with no
-  control.
 - [ ] **Stop D49's lifetime pins being left behind - and decide whether S6 needs anything of its own
   (Q118, measured 2026-10-03 on `OAI-UNINDEXED`; `McpServer/Docs/com-host.md`, "Pins left behind,
   measured").** A session pins only when it finds no Explorer, so against a user's open Outlook no
