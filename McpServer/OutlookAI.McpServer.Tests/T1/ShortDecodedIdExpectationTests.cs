@@ -54,7 +54,7 @@ public sealed class ShortDecodedIdExpectationTests
         List<string> requires = Requires(nameof(LiveDecodeVerifyTests.ShortDecodedId_IsRejectedByGetItemFromID_DiscoveryRecorded));
 
         Assert.Contains(LiveRunFilters.CachedExchange, requires);
-        Assert.Contains(LiveRunFilters.CachedExchange, LiveRunFilters.WorkstationOnlyCapabilities);
+        Assert.Contains(LiveRunFilters.CachedExchange, LiveRunFilters.ExchangeOnlyCapabilities);
     }
 
     [Fact]
@@ -64,7 +64,7 @@ public sealed class ShortDecodedIdExpectationTests
         List<string> requires = Requires(nameof(LiveDecodeVerifyTests.ShortDecodedId_OpensAsTheItemItself_OnAPstStore));
 
         Assert.Contains(LiveRunFilters.SearchIndex, requires);
-        Assert.DoesNotContain(requires, LiveRunFilters.WorkstationOnlyCapabilities.Contains);
+        Assert.DoesNotContain(requires, LiveRunFilters.ExchangeOnlyCapabilities.Contains);
     }
 
     private static List<string> Requires(string method)

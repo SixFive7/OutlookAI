@@ -376,7 +376,11 @@ public static class TripwireWatchSoundness
         List<string> writable = new();
         foreach (string store in watched)
         {
-            if (allowlist.IsHub(store))
+            // The hub is exempt only where the suite may write in it. On a read-only machine
+            // (LiveWriteAccess.RefusesEveryWrite) nothing may be written anywhere, the hub included,
+            // so the hub is a store the census can fail on like any other - which is what lets the
+            // Exchange VM, whose one mailbox is also its hub, run at all (2026-10-03, Q108).
+            if (allowlist.IsHub(store) && !allowlist.RefusesEveryWrite)
             {
                 continue;
             }

@@ -126,10 +126,11 @@ public sealed class LiveTierInventoryTests
     };
 
     /// <summary>
-    /// The capabilities no dedicated test machine can be given by configuration - the whole
-    /// definition of the production-only bucket, and of the tests the maintainer's read-only
-    /// workstation runs. Read from <see cref="LiveRunFilters.WorkstationOnlyCapabilities"/>, which
-    /// the run filters are derived from, so this pin and the filters cannot name different sets.
+    /// The capabilities no PST test guest can be given by configuration - the whole definition of the
+    /// Exchange-only bucket, and of the tests the Exchange test VM runs (Q116 (a); until then the
+    /// maintainer's read-only workstation ran them). Read from
+    /// <see cref="LiveRunFilters.ExchangeOnlyCapabilities"/>, which the run filters are derived from,
+    /// so this pin and the filters cannot name different sets.
     /// <para>
     /// Two entries, and both are Exchange. A delegate/shared mailbox is indexed with its folder
     /// hierarchy FLATTENED, which is not a property a local PST can be made to have; and a cached
@@ -139,7 +140,7 @@ public sealed class LiveTierInventoryTests
     /// one of those is a VM test even if it has only ever run on the maintainer's machine.
     /// </para>
     /// </summary>
-    private static readonly string[] ProductionOnlyCapabilities = LiveRunFilters.WorkstationOnlyCapabilities.ToArray();
+    private static readonly string[] ProductionOnlyCapabilities = LiveRunFilters.ExchangeOnlyCapabilities.ToArray();
 
     /// <summary>An Outlook to attach to, and nothing more specific than that.</summary>
     /// <remarks>
@@ -292,7 +293,7 @@ public sealed class LiveTierInventoryTests
 
         // And every name the filters exclude is a real capability, so no exclusion is a typo.
         Assert.Contains(LiveRunFilters.SearchIndex, AllCapabilities);
-        Assert.All(LiveRunFilters.WorkstationOnlyCapabilities, c => Assert.Contains(c, AllCapabilities));
+        Assert.All(LiveRunFilters.ExchangeOnlyCapabilities, c => Assert.Contains(c, AllCapabilities));
     }
 
     [Fact]
@@ -395,17 +396,18 @@ public sealed class LiveTierInventoryTests
         }
 
         Assert.Empty(problems);
-        Assert.True(carriers > 0, "no test carries " + LiveRunFilters.WritesTrait + " - the workstation filter would select nothing");
+        Assert.True(carriers > 0, "no test carries " + LiveRunFilters.WritesTrait + " - the Exchange VM's filter would select nothing");
     }
 
     [Fact]
-    public void EveryTestOnlyTheWorkstationCanRun_DeclaresWritesNothing()
+    public void EveryExchangeOnlyTest_DeclaresWritesNothing()
     {
-        // Since Q72 the maintainer's workstation runs only tests that write nothing, and no test guest
-        // can be given an Exchange profile. A test that needs one and may write could therefore run
-        // NOWHERE: it is either read-only and says so, or it is a test nobody can run, which is a
-        // decision to make out loud rather than a test to keep. Control: before Q74 none of the seven
-        // carried the trait.
+        // No PST guest can be given an Exchange profile, and the one machine that has one - the
+        // Exchange test VM, since Q116 (a) the only place these tests run - is read-only until the
+        // maintainer approves its Phase 2 write-safety design. A test that needs Exchange and may write
+        // could therefore run NOWHERE: it is either read-only and says so, or it is a test nobody can
+        // run, which is a decision to make out loud rather than a test to keep. Control: before Q74
+        // none of the seven carried the trait.
         List<string> problems = new();
         foreach (MethodInfo method in LiveTestMethods())
         {
@@ -414,7 +416,7 @@ public sealed class LiveTierInventoryTests
             {
                 problems.Add(Name(method) + " (Requires " + string.Join(", ", blocking) + ") does not declare "
                     + LiveRunFilters.WritesTrait + "=" + LiveRunFilters.WritesNothing
-                    + ": no guest can run it and the read-only workstation may not");
+                    + ": no PST guest can run it, and the Exchange VM runs only read-only tests until Phase 2 is approved");
             }
         }
 
@@ -422,11 +424,13 @@ public sealed class LiveTierInventoryTests
     }
 
     [Fact]
-    public void TheWorkstationFilter_IsDerivedFromTheVocabulary()
+    public void TheExchangeGuestFilter_IsDerivedFromTheVocabulary()
     {
+        // Literal on purpose (see TheGuestFilters_AreDerivedFromTheVocabulary). Read-only, cached
+        // Exchange, and no delegate store until the shared test mailbox exists (Q109).
         Assert.Equal(
-            "Category=Live&Writes=Nothing&(Requires=DelegateStore|Requires=CachedExchange)",
-            LiveRunFilters.Workstation);
+            "Category=Live&Writes=Nothing&Requires=CachedExchange&Requires!=DelegateStore",
+            LiveRunFilters.ExchangeGuest);
     }
 
     [Fact]
@@ -442,7 +446,7 @@ public sealed class LiveTierInventoryTests
                 .Select(a => (string)a.ConstructorArguments[0].Value!),
             StringComparer.Ordinal);
 
-        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.Workstation })
+        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.ExchangeGuest })
         {
             foreach (string key in System.Text.RegularExpressions.Regex.Matches(filter, @"([A-Za-z]+)!?=").Select(m => m.Groups[1].Value))
             {
@@ -466,7 +470,7 @@ public sealed class LiveTierInventoryTests
             "the Writes trait's value is 'None', which VSTest also gives every test that lacks the trait");
         Assert.DoesNotContain(AllCapabilities, c => string.Equals(c, "None", StringComparison.OrdinalIgnoreCase));
 
-        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.Workstation })
+        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.ExchangeGuest })
         {
             Assert.False(
                 System.Text.RegularExpressions.Regex.IsMatch(filter, @"!?=None\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
@@ -475,24 +479,25 @@ public sealed class LiveTierInventoryTests
     }
 
     [Fact]
-    public void EveryQuotedWorkstationFilter_IsTheDerivedOne()
+    public void EveryQuotedExchangeGuestFilter_IsTheDerivedOne()
     {
-        // The two places a person reads the workstation run from. A copy that drifted from the derived
-        // string - a key misspelt, a capability dropped - is exactly the hand-kept filter Q74 retired.
+        // The two places a person reads the Exchange VM's run from (since Q116 (a); before it, the
+        // workstation's). A copy that drifted from the derived string - a key misspelt, a capability
+        // dropped - is exactly the hand-kept filter Q74 retired.
         List<string> problems = new();
         foreach (string file in new[] { "Testbed/README.md", "Docs/live-tier-on-the-vm.md" })
         {
             string text = File.ReadAllText(Path.Combine(RepoRoot(), file));
-            if (!text.Contains(LiveRunFilters.Workstation, StringComparison.Ordinal))
+            if (!text.Contains(LiveRunFilters.ExchangeGuest, StringComparison.Ordinal))
             {
-                problems.Add(file + " never quotes the workstation filter " + LiveRunFilters.Workstation);
+                problems.Add(file + " never quotes the Exchange VM's filter " + LiveRunFilters.ExchangeGuest);
             }
 
             foreach (System.Text.RegularExpressions.Match quoted in System.Text.RegularExpressions.Regex.Matches(text, @"Category=Live&Writes=[^\s`""']*"))
             {
-                if (!string.Equals(quoted.Value, LiveRunFilters.Workstation, StringComparison.Ordinal))
+                if (!string.Equals(quoted.Value, LiveRunFilters.ExchangeGuest, StringComparison.Ordinal))
                 {
-                    problems.Add(file + " quotes '" + quoted.Value + "', not the derived " + LiveRunFilters.Workstation);
+                    problems.Add(file + " quotes '" + quoted.Value + "', not the derived " + LiveRunFilters.ExchangeGuest);
                 }
             }
         }

@@ -223,6 +223,20 @@ public sealed class LiveTestSettingsTemplateTests
         return Assert.IsType<JsonObject>(testbed["liveTestSettings"]);
     }
 
+    /// <summary>
+    /// True for the Exchange test VM's section: the VM testbed.json's exchangeVm block names, which must
+    /// also be the one section declaring machineProfile ExchangeGuest - the two records cannot part.
+    /// </summary>
+    private static bool IsTheExchangeVm(KeyValuePair<string, JsonNode?> section)
+    {
+        string path = Path.Combine(RepoRoot(), "Testbed", "testbed.json");
+        string? exchangeVm = JsonNode.Parse(File.ReadAllText(path))!["exchangeVm"]?["vmName"]?.GetValue<string>();
+        bool named = exchangeVm != null && string.Equals(section.Key, exchangeVm, StringComparison.Ordinal);
+        bool declared = section.Value?["machineProfile"]?.GetValue<string>() == nameof(LiveMachineProfile.ExchangeGuest);
+        Assert.True(named == declared, section.Key + ": testbed.json's exchangeVm and the section's machineProfile disagree about whether it is the Exchange VM");
+        return named;
+    }
+
     private static bool? GuestIsIndexed(string guest)
     {
         string path = Path.Combine(RepoRoot(), "Testbed", "testbed.json");
@@ -481,7 +495,7 @@ public sealed class LiveTestSettingsTemplateTests
         int guests = 0;
         foreach (KeyValuePair<string, JsonNode?> section in Guests())
         {
-            if (section.Key.StartsWith('_'))
+            if (section.Key.StartsWith('_') || IsTheExchangeVm(section))
             {
                 continue;
             }
@@ -587,6 +601,16 @@ public sealed class LiveTestSettingsTemplateTests
             }
 
             JsonObject values = section.Value!.AsObject();
+            if (IsTheExchangeVm(section))
+            {
+                // A real mailbox: no generated population, so no probe term and no subject-only probe -
+                // one would have to be read out of its owner's mail (Testbed/README.md section 4e).
+                Assert.Equal(string.Empty, values["probeTerm"]!.GetValue<string>());
+                Assert.Null(values["subjectOnlyProbe"]);
+                Assert.Null(values["hubPopulationManifestPath"]);
+                continue;
+            }
+
             bool? indexed = GuestIsIndexed(section.Key);
             Assert.True(indexed != null, section.Key + " has no corpusIdConvention entry saying whether it is indexed.");
             if (indexed == true)

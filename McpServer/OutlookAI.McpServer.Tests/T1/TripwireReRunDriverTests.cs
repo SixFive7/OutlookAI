@@ -318,15 +318,18 @@ public sealed class TripwireReRunDriverTests
     }
 
     [Fact]
-    public void EveryDeclaredProfileIsClassified_AndOnlyOneOfThemRetries()
+    public void EveryDeclaredProfileIsClassified_AndOnlyTheRealMailboxesRetry()
     {
-        // Guards the shape rather than the two values: a third profile added later shows up
-        // here as a second retrying profile, or as a profile nobody classified.
+        // Guards the shape rather than the values: a profile added later shows up here as a
+        // retrying profile nobody decided on, or as one nobody classified. The two that retry are
+        // the two whose mailboxes are real - the workstation's and, since 2026-10-03 (Q108), the
+        // Exchange VM's - and neither ever gets the re-run rung
+        // (NoMachineProfile_DeclaredOrNot_ReachesTheReRunRung).
         List<LiveMachineProfile> retrying = Enum.GetValues<LiveMachineProfile>()
             .Where(profile => TripwireRetryPolicy.For(profile).RetriesAtAll)
             .ToList();
 
-        Assert.Equal(new[] { LiveMachineProfile.Production }, retrying);
+        Assert.Equal(new[] { LiveMachineProfile.Production, LiveMachineProfile.ExchangeGuest }, retrying);
     }
 
     [Theory]

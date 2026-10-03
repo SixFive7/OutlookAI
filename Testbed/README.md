@@ -19,6 +19,12 @@ guest itself, by luck rather than by design. **Nothing in here should exist only
 (2026-10-03, Q94 and Q102). The non-live suite and every script `-SelfTest` run on it, through
 `host/Invoke-TestsOnBuildVm.ps1`, and on the maintainer's workstation not at all - section 1c.
 
+**And a fourth, `OutlookAI-Exchange`** (2026-10-03, Q108 to Q111): ONE real Microsoft 365 mailbox,
+cached and indexed, where the live tests that need an Exchange profile run - the maintainer's
+workstation runs no live test any more (Q116 (a), section 4d). It is the one testbed VM with
+internet. Section 1d builds it; section 4e runs it, read-only until the maintainer approves its
+Phase 2 write-safety design.
+
 ---
 
 ## 0. Media is a precondition — read `MEDIA.md` first
@@ -299,6 +305,80 @@ feed lacks still passes - the runner stages that revision's packages and adds th
 but every such run pays for it. When that becomes the usual case, restage from a newer commit
 (B4, B5 with `-Execute` and `-Verify`), restart, settle and replace `CP-02-SDK-TEST-READY`
 (`Remove-VMSnapshot`, then B7), and record the commit in `testbed.json`'s `buildVm.baseFeedStagedFrom`.
+
+---
+
+## 1d. The fourth machine: `OutlookAI-Exchange`, where the Exchange-only tests run
+
+**One real mailbox and nothing else** - decided by the maintainer 2026-10-03 (Q108 to Q111). The
+Microsoft 365 mailbox `telefonie@xxlnet.nl`, production but of lower value than his others and his
+test hub on the workstation all along, in Outlook's cached mode, with Windows Search indexing it.
+No PST, no mail sink, no generated population. It runs the live tests that need an Exchange profile -
+`Requires=CachedExchange` now, `Requires=DelegateStore` once the free shared test mailbox he
+requested exists (Q109) - which until Q116 (a) ran read-only on his workstation. Its runs are §4e,
+its record `testbed.json`'s `exchangeVm` block and `liveTestSettings.OutlookAI-Exchange` section,
+and its build-out the runbook's §4.4. Computer name `OAI-EXCHANGE`.
+
+**The one testbed VM with internet** - Hyper-V's Default Switch NAT - by the maintainer's exception
+to the Dependencies rule (Q111, `AGENTS.md`), because its mailbox lives in his Microsoft 365 tenant.
+It is connected only after `CP-01-WIN-CLEAN`, so the Windows install is the other guests' offline one.
+Everything else is the other guests' media, unchanged (`MEDIA.md`).
+
+**Built 2026-10-03** - every step a script here or a Windows or Hyper-V command:
+
+| # | Step | What runs it | What it gave |
+| --- | --- | --- | --- |
+| E1 | The answer volume | `host/New-AnswerFile.ps1 -VMName OutlookAI-Exchange -ComputerName OAI-EXCHANGE -RepoRoot <main checkout>` | |
+| E2 | Create it and boot | `host/New-TestbedVm.ps1 -Name OutlookAI-Exchange -IsoPath .work\media\Win11_25H2_EnglishInternational_x64_v2.iso -AnswerIsoPath <E1's ISO> -VhdPath E:\Hyper-V\VirtualHardDisks\OutlookAI-Exchange\OutlookAI-Exchange.vhdx -ProcessorCount 4 -MemoryStartupBytes 8GB -StaticMemory -Execute -Start` - no `-SwitchName`, and a disk folder of its own, where its checkpoints' differencing disks land too | `AutomaticStartAction Nothing`, `AutomaticStopAction Save` |
+| E3 | Windows; then eject, `CP-01-WIN-CLEAN`, delete the answer ISO | `host/New-TestbedVm.ps1 -Name OutlookAI-Exchange -CompleteInstall -Execute -RepoRoot <main checkout>` | first logon `DONE` about six minutes after the start |
+| E4 | Internet, and no restart under a run | `Connect-VMNetworkAdapter -VMName OutlookAI-Exchange -SwitchName 'Default Switch'`; then, over PowerShell Direct, the documented Windows Update policy under `HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU`: `NoAutoUpdate` 0, `AUOptions` 4, `NoAutoRebootWithLoggedOnUsers` 1 | updates still install - Defender's signatures stay current, which keeps Outlook's programmatic-access prompt away without Q80's policy (not applied: it is for offline guests) - and Windows never restarts under the autologon session |
+| E5 | Office | `.work/office-odt/setup.exe` and `Testbed.xml`, unchanged, in with `host/Copy-ToGuest.ps1`; `setup.exe /configure Testbed.xml` over PowerShell Direct; the configuration, which holds a product key, deleted from the guest; step 4b's `guest/Set-OfficeFirstRunSuppressed.ps1 -Execute` and `-Verify` in session 1; checkpoint `CP-02-OFFICE-INSTALLED` | 2.3 min, online: 16.0.17932.21000, `ProPlus2024Volume`, x64, updates off. Licence `VOLUME_KMSCLIENT`, out-of-box grace: no KMS host is reachable, so nothing was activated and nothing consumed |
+| E6 | The account, at Outlook's FIRST start | `host/Invoke-ExchangeSignIn.ps1 -VMName OutlookAI-Exchange -Mode NewProfile -StartOutlook -RepoRoot <main checkout>`, with `guest/Connect-ExchangeAccount.ps1` staged in `C:\OutlookAI-Q5` beside `guest/OutlookMapiInterop.ps1` and `guest/Register-InteractiveTask.ps1`. Outlook starts NOT elevated, with no profile, and opens its own account setup | profile `Outlook`: one Exchange account, `ExchangeConnectionMode` 700 (cached, connected), its mailbox an `.ost`; device registration declined - `dsregcmd`: AzureAdJoined NO, WorkplaceJoined NO. Proven from `CP-02` in 2 min 51 s. No MFA code was asked for on either sign-in, so the code step has not yet met a real code page |
+| E7 | The index | `guest/Set-OutlookIndexingDisabled.ps1 -Verify -SettleMinutes 1 -WaitMinutes 10 -MinimumOutlookRows 1` - nothing to set: the unelevated Outlook added `mapi16://{SID}/` to the crawl scope itself | `INDEXED`, 183 rows under `telefonie@xxlnet.nl($65e0d53e)`, the crawl idle; checkpoint `CP-03-EXCHANGE-SIGNED-IN` |
+| E8 | The suite | step 8b: `host/Publish-LiveTierPayload.ps1 -Ref <commit>`, `host/Copy-ToGuest.ps1`, then `guest/Install-DotnetSdk.ps1 -ExpectedSha512 <MEDIA.md's hash> -Execute` over PowerShell Direct | `TEST-READY` |
+| E9 | The settings | `host/New-LiveTestSettings.ps1 -VMName OutlookAI-Exchange`, then the `host/Copy-ToGuest.ps1` line it prints | `machineProfile` `ExchangeGuest`: read-only |
+| E10 | The read-only run | §4e; checkpoint `CP-04-SUITE-READONLY-RUN` | |
+| E11 | The branch's final commit staged, the preflight passed, the read-only run again | E8 and E9 again, `host/Invoke-ExchangeSignIn.ps1 -Mode Preflight`, §4e; checkpoint `CP-05-PREFLIGHT-READONLY-RUN`, then the VM saved | |
+
+**The sign-in, and where the secrets go.** The credential is the maintainer's
+`live-fixtures/exchange-credentials.json` (§4), read only by `host/Get-ExchangeCredential.ps1`, in
+memory, on the host, at the moment each secret is typed. The guest never receives one as data: the
+host types it through Hyper-V's synthetic keyboard (`Msvm_Keyboard.TypeText`), so no script, task
+definition, job directory or pipe in the guest ever holds it, and the guest's one copy is the token
+cache Windows keeps for Outlook. Keystrokes go wherever the focus is, so the guest half,
+`guest/Connect-ExchangeAccount.ps1`, finds the page, puts the focus on the one field, reads it back -
+a password field for the password - and HOLDS it while the host types; anything else - `LOST-FOCUS`,
+`NOT-FOUND`, a timeout - stops the run with nothing typed. It answers the device-registration offer
+with "No, this app only", never "Yes", which would add a device to his tenant.
+
+**A checkpoint undoes nothing on the server.** Every change to the mailbox is permanent at Microsoft:
+restoring a checkpoint only makes the cached copy resync. And a sign-in token inside a checkpoint may
+have expired or been rotated since: `guest/Connect-ExchangeAccount.ps1 -Step Verify -Account <address>`
+says `SIGNED-IN` or `NOT-SIGNED-IN`, and `host/Invoke-ExchangeSignIn.ps1 -Mode Reauth` answers the
+sign-in Outlook raises. Measured 2026-10-03: `CP-04`, restored ten minutes after it was taken, read `SIGNED-IN`; how long a token inside a checkpoint stays good is not measured yet.
+
+**Four things this VM found about the guests' Windows**, worth knowing on any of them:
+
+1. **Windows Terminal is the default console host on this build, and it ignores `-WindowStyle
+   Hidden`.** Every `guest/Register-InteractiveTask.ps1` job showed a visible terminal window and
+   took the keyboard focus while it ran. `host/Invoke-ExchangeSignIn.ps1` sets the documented per-user
+   choice back to the Windows Console Host first (`HKCU:\Console\%%Startup`, `DelegationConsole` and
+   `DelegationTerminal`), which honours it.
+2. **The Start menu can be open at first logon, holding the focus**, and `SetForegroundWindow` alone
+   does not take it back. The guest half presses Escape only when the foreground belongs to the
+   shell's Start or search host, and takes the foreground by attaching to the holder's input.
+3. **Two PowerShell Direct connections opened at once fail as a bad credential** - "The credential
+   is invalid" - and each counts as a failed logon, against Windows 11's default lockout of 10 in 10
+   minutes (five were counted in one afternoon). A host script that needs a second channel into the
+   guest opens one session and runs the second thing as a job inside the guest.
+4. **Outlook's Object Model Guard comes back whenever Defender's signatures go stale - online or not.**
+   The image's signatures were a year old; Windows Update had not replaced them in the VM's first
+   hour, and after a checkpoint restore Security Center reported them out of date: the next run's
+   census met an Allow/Deny prompt on its first address read, and six stacked prompts later the run
+   had refused on a 300-second timeout, twice. `Update-MpSignature` cleared it in 26 s.
+   `host/Invoke-ExchangeSignIn.ps1 -Mode Preflight` does that before every run and waits for Security
+   Center to agree. Q80's auto-approve policy, which removes the dependency, is NOT applied here: it is
+   the offline guests' answer, and widening it is the maintainer's decision (`TODO.md`).
 
 ---
 
@@ -663,6 +743,7 @@ it once** - it survives in git history and had to be rotated.
 | Guest account password (PowerShell Direct, autologon) | `McpServer/OutlookAI.McpServer.Tests/live-fixtures/vm-credentials.json`, gitignored | Set it when you create the account. Set it to **never expire**: a maximum password age silently breaks the tier and recreates this problem. |
 | Live-test machine coordinates (store names, manifest path, sink ports) | `McpServer/OutlookAI.McpServer.Tests/live-fixtures/live-test-settings.json`, gitignored | **On a test guest:** rendered by `host/New-LiveTestSettings.ps1` from `Testbed/live-test-settings.template.json` and the guest's `liveTestSettings` section of `testbed.json` - committable only because a guest's stores are synthetic. **Anywhere else, the maintainer's machine above all:** copy `Testbed/live-test-settings.example.json` and fill it in by hand. The renderer never writes into any `live-fixtures` directory on the host. |
 | Dummy mail account password | wherever the sink is configured; the sink accepts anything | Anything. It is a loopback sink with no authentication. |
+| The Exchange VM's Microsoft 365 sign-in (Q108): the account, its password and its TOTP secret | `McpServer/OutlookAI.McpServer.Tests/live-fixtures/exchange-credentials.json`, gitignored: `account`, `passwordDpapi` and `totpUriDpapi` (an `otpauth://totp/...` URI), the two secrets DPAPI-encrypted for the maintainer's Windows user on his workstation | By the maintainer. Read only by `host/Get-ExchangeCredential.ps1`, in memory, at the moment of a sign-in; never printed, logged or written anywhere else (§1d) |
 
 `McpServer/**/live-fixtures/` is gitignored, and
 `Tools/Checks/check-testbed-references.ps1` asserts that the rule still covers every path
@@ -679,8 +760,9 @@ accounts yet.
 
 ## 4a. Nothing guesses which guest you mean
 
-**THREE MACHINES COEXIST**: the two Outlook guests, `OutlookAI-Indexed` and `OutlookAI-Unindexed`,
-and the build VM, `OutlookAI-Build` (§1c). **A default that silently picks one of three is the
+**FOUR MACHINES COEXIST**: the two Outlook guests, `OutlookAI-Indexed` and `OutlookAI-Unindexed`,
+the build VM, `OutlookAI-Build` (§1c), and the Exchange VM, `OutlookAI-Exchange` (§1d, 2026-10-03).
+**A default that silently picks one of four is the
 exact shape of mistake this testbed keeps making**, so as of 2026-09-15 there are no VM-name
 defaults left in `host/`. The rule dates from the changeover, when the third machine was
 `OutlookAI-TestVM` - the original guest, the one every published measurement was taken on - kept
@@ -1027,67 +1109,86 @@ builds a fixture.
   what removed them is not recorded - most likely the sweep of the next full run, before Q72 made
   that machine read-only.
 
-## 4d. The maintainer's workstation: the read-only run (Q72, enforced since Q74)
+## 4d. The maintainer's workstation runs NO live test (Q116 (a), since 2026-10-03)
 
-**The workstation is read-only for live tests, always, and runs only the tests no guest can.**
-Decided by the maintainer 2026-09-24 (Q72); enforced in code since 2026-10-03 (Q74, "layers 1+2+3,
-plus A1, B1, C1 with C3, and D1 + D2"). Every other live test runs on a guest, through section 4c.
+**No live test runs on the maintainer's workstation - read-only or not.** Decided by the maintainer
+2026-10-03 (Q116 (a)), once the Exchange VM had run the Exchange tests green (§4e). Enforced in code,
+by the machine's profile and nothing else: the workstation's settings declare no `machineProfile`,
+which reads as `Production`, and `LiveTestSettings.Load` refuses a Production profile outright -
+`LiveTestSettings.RefuseTheWorkstation`, called after the opt-in gate and the parse and before any
+fixture censuses a store, attaches to Outlook or starts an MCP server (`T1/LiveRunOptInTests` pins
+both the call and the refusal). The opt-in's own refusal says the same. **Never edit the
+workstation's settings file to get past it, and never declare it `Portable` or `ExchangeGuest`.**
 
-**The run, from the main checkout on the workstation, in one PowerShell session:**
-
-```powershell
-$env:OUTLOOKAI_LIVE_OPT_IN = '<this workstation's computer name>'
-dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --list-tests --filter "Category=Live&Writes=Nothing&(Requires=DelegateStore|Requires=CachedExchange)"
-dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --filter "Category=Live&Writes=Nothing&(Requires=DelegateStore|Requires=CachedExchange)"
-```
-
-List first and read the list: it was 7 tests on 2026-10-03, the six that need a delegate mailbox
-and the cached-Exchange half of the short-decoded-id check. The filter is DERIVED, not typed:
-`McpServer/OutlookAI.McpServer.Tests/T2/LiveRunFilters.cs` builds it from the trait vocabulary and
-`T1/LiveTierInventoryTests` fails the build if this copy, or the runbook's, stops matching it. Two
-halves, each sufficient on its own: `Requires=DelegateStore|CachedExchange` is "needs an Exchange
-profile, so no guest can run it", and `Writes=Nothing` is "changes nothing". Every test with the first
-must carry the second (`EveryTestOnlyTheWorkstationCanRun_DeclaresWritesNothing`), so a test that needs
-Exchange and may write is a test nobody can run - which is a decision to make out loud, not a test to
-keep.
-
-**What stands behind the filter - none of it typed, none of it remembered:**
-
-1. **The trait, proven (layer 1).** `Writes=Nothing` is declared per method, and
-   `T1/ReadOnlyLiveTestTests` walks the compiled code of every carrier - its body, its class's and its
-   fixtures' constructors and teardown, lambdas, async state machines, interface dispatch - and fails
-   the build on any way it can reach the write guard, a product member not listed as a read
-   (`T1/ReadOnlyProductApi.cs`, each entry itself walked inside the product for audit appends, COM
-   mutations, registry and file writes), a write-capable MCP tool, a late-bound COM mutation or a
-   registry write. Fifty-four live tests carry it; the seven above are the ones that need Exchange.
-2. **The profile refuses every write (layer 2).** The workstation's settings declare no
-   `machineProfile`, which reads as `Production`, and since Q74 Production - like any profile but
-   `Portable` - is read-only (`T2/LiveWriteAccess.cs`): the write allowlist refuses EVERY store, the
-   test mailbox included, so an in-process write throws `READ-ONLY MACHINE` before it reaches
-   Outlook. Never edit the workstation's settings file to change that, and never declare it
-   `Portable`.
-3. **The MCP client refuses every tool that is not read-only (layer 3).** Under the same profile
-   `McpStdioClient` refuses, before sending, every tool not classified read-only in
-   `T3/McpToolWriteClassification.cs` - an unclassified one included - so a write through the MCP
-   server process, which the in-process allowlist cannot see, is refused too.
-4. **No bounded re-run (A1).** If the count tripwire suspects a loss it re-counts twice, as before, and
-   then fails; it no longer starts a child live run of every class in the collections that ran.
-
-**A VSTest property this run depends on, measured 2026-10-03.** To the filter, a test that does not
-carry a trait has the value `None` for it: `Requires=None` lists all 3,144 tests without a `Requires`,
-and `Bogus=None` lists every test. So a clause `Key=None` selects every test that never declared the
-key - the opposite of what it reads as - which is why the trait's value is `Nothing`, and why
-`T1/LiveTierInventoryTests` refuses `None` as a trait value and in any derived filter. (The trait
-was briefly spelt `Writes=Nothing`; a `--list-tests` count of 128 instead of 54 is what showed it.) A
-key or value spelt wrong otherwise selects nothing (`Category=Live&Bogus=Thing` lists none), which
-is the safe direction: an empty run. On a build from before Q74 this filter therefore selects
-nothing, because no test there carries `Writes=Nothing` - read the list before running.
+**What it replaced.** From Q72 (2026-09-24) to Q116 the workstation ran only the live tests that
+need an Exchange profile, read-only, under four guards that stay as the floor beneath the refusal -
+so a Production profile that ever got past `Load` would still write nothing: the `Writes=Nothing`
+trait, proven per method from the compiled code by `T1/ReadOnlyLiveTestTests` (layer 1); a write
+allowlist that refuses EVERY store on any profile but `Portable`, the test mailbox included, so an
+in-process write throws `READ-ONLY MACHINE` (`T2/LiveWriteAccess.cs`, layer 2); an MCP client that
+refuses, before sending, every tool not classified read-only in `T3/McpToolWriteClassification.cs`
+(layer 3); and no bounded re-run from the count tripwire (A1). Those tests run on the Exchange VM now.
 
 **Releases.** The live tier is not a release gate; a short manual check of the Exchange-only WRITE
 paths no automated test reaches is, by hand: `Docs/release-manual-checks.md`.
 
----
+## 4e. The Exchange VM: the read-only run (Q108 to Q111; Phase 2 awaits approval)
 
+**Until the maintainer approves the Phase 2 write-safety design, `OutlookAI-Exchange` runs only
+tests that write nothing** - its mailbox is real mail. Its settings declare `machineProfile`
+`ExchangeGuest`, which refuses every in-process write and every write-capable MCP tool exactly as
+the workstation's profile did (layers 2 and 3 above, unchanged: only `Portable` writes); its filter
+selects only `Writes=Nothing` carriers (layer 1); it gets the count tripwire's re-censuses, which a
+real Exchange mailbox needs, and never its re-run. And because its one mailbox is also its hub, the
+tripwire does not exempt the hub there: on a read-only machine the hub is censused item by item like
+any store (`LiveStoreCountTripwire.ExemptHub`) - an arrival is noted, as real mail arrives; a
+departure fails.
+
+**The run** - with a lease (§5b), once `host/Invoke-ExchangeSignIn.ps1 -VMName OutlookAI-Exchange
+-Mode Preflight -RepoRoot <main checkout>` has exited 0: Defender's signatures current, so the Object
+Model Guard does not stall the run (§1d, item 4), and the account still `SIGNED-IN` (if not:
+`-Mode Reauth`). Then, on the guest:
+
+```powershell
+.\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 3600 -Script @'
+$env:OUTLOOKAI_LIVE_OPT_IN = 'OAI-EXCHANGE'
+Set-Location C:\OutlookAI-Q5\src
+dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --filter "Category=Live&Writes=Nothing&Requires=CachedExchange&Requires!=DelegateStore"
+'@
+```
+
+The filter is DERIVED, not typed - `LiveRunFilters.ExchangeGuest`, and `T1/LiveTierInventoryTests`
+fails the build if this copy or the runbook's stops matching it: the cached-Exchange tests that carry
+`Writes=Nothing`, and none that needs a delegate store until the shared test mailbox exists (Q109).
+Every test needing Exchange must carry `Writes=Nothing` (`EveryExchangeOnlyTest_DeclaresWritesNothing`),
+so a test that needs Exchange and may write is a test nobody can run before Phase 2 - a decision to
+make out loud, not a test to keep. Settings: `host/New-LiveTestSettings.ps1 -VMName OutlookAI-Exchange`
+renders them under the Exchange VM's own rules (one store, the hub; no delegate, bystander,
+population, probe term, corpus or sink).
+
+**What it selects, and what it found on 2026-10-03** (runbook §4.4): four tests - the
+cached-Exchange half of the short-decoded-id check, `T2/LiveExchangeHubArtifactTests` (no tagged item
+in any folder the sweep covers), `T2/LiveExchangeStoreHashTests` (Q113 (b)) and, from the Q99
+follow-up branch, `T2/LiveExchangeFolderPathTests`. Three pass. **The fourth found one item tagged
+`[OutlookAI-McpTest]` in the mailbox's Sent Items** - a leftover from the workstation years, before
+this VM existed; nothing this VM ran created it (its census before and after every run is identical).
+It stays until the maintainer decides how it goes: only the tested sweep on an approved write run
+removes test items, never a hand. The count tripwire reported 0 failures and 0 notes on every run.
+
+**Q113 (b), answered**: Outlook ties a cached Exchange store to its index root by the store hash of
+the profile's `PR_MAPPING_SIGNATURE` - `outlook_health` reports `matchedBy` `storeHash`,
+`matchedInput` `profileMappingSignature` for the mailbox, `storesNotInProfile` 0 - so the name
+fallback is not what finds a cached Exchange store (`McpServer/README.md`, load-bearing fact 16).
+
+**A VSTest property this filter depends on, measured 2026-10-03.** To the filter, a test that does
+not carry a trait has the value `None` for it: `Requires=None` lists all 3,144 tests without a
+`Requires`, and `Bogus=None` lists every test. So a clause `Key=None` selects every test that never
+declared the key - the opposite of what it reads as - which is why the trait's value is `Nothing`,
+and why `T1/LiveTierInventoryTests` refuses `None` as a trait value and in any derived filter. A key
+or value spelt wrong otherwise selects nothing (`Category=Live&Bogus=Thing` lists none) - the safe
+direction: an empty run. List first (`--list-tests`) and read the list.
+
+---
 ## 5. What is in here
 
 | Path | What it is |
@@ -1140,7 +1241,9 @@ paths no automated test reaches is, by hand: `Docs/release-manual-checks.md`.
 | `guest/tier-profile.prf` | **RETIRED 2026-09-24 - not a route; `New-TierProfile.ps1` refuses it, and any template carrying a PST service or `DefaultStore`, before writing anything.** One named Unicode PST plus one POP3 account, with `[General] DefaultStore` pointing at the PST. It WAS imported - on `OutlookAI-Indexed`, 2026-09-15 - and left the account's `DeliveryStore` NULL: `DefaultStore` binds the profile's default store, not the account's. Kept as evidence rather than deleted: it is what showed a `.prf`'s `[ServiceN] Name=` carries an exact display name, `@` included (§6 item 10), and `New-OutlookProfile.ps1` builds its PST service blocks from it. |
 | `guest/New-TierProfile.ps1` | Creates the tier profile by importing that .prf, then reads the profile hive back and asserts whether Outlook honoured it. Modes: dry run, `-Execute`, `-Verify`, and (2026-09-24) `-SelfTest`. **RUN ON BOTH GUESTS 2026-09-15/16 AND IT WORKS** - first attempt on the second guest, from the committed scripts. Its `-Verify` had a bug worth knowing about: it read the legacy Windows Messaging Subsystem hive and so reported a WORKING route dead five times while its own dump contradicted it. Fixed. **2026-09-24:** the profile it built answered the `ImportPRF` question after the fact - set 19:54:37, gone ever since, Outlook removed it (§4b-i); `-Verify` now removes a lingering one naming the tier `.prf`, but only once the import has run; it carries the `vmadmin` guard it lacked (it writes the Setup key) and so needs `guest/OutlookMapiInterop.ps1` staged beside it; and its account check counts **mail** accounts, not every entry, and no longer fails the working `ForcePSTPath` route for having no `tier.pst`. **Later on 2026-09-24 it became the whole route rather than half of it:** the forcepst template is the default, `-Execute` writes `ForcePSTPath` (REG_EXPAND_SZ, read back) - which nothing under `Testbed/` set before; hand-run scratch did, and wiped part of the Outlook key doing it - a template naming a PST service or `DefaultStore` is refused before any write, and `-Verify` checks that the delivery store, read out of the account's own EntryID, is the one PST in the profile, under `ForcePSTPath`. Proven from `CP-02` in both orders, by the scripts alone (§1: tier first binds at the first start; corpus first left the account unbound until the next one, and `-Verify` said so). **And `-StoreSinkPassword` (2026-09-24):** with the sink up, Outlook holding no POP3 password PROMPTED at every start and never connected, so this seals one - `POP3 Password`, `0x02` plus a DPAPI blob of a NUL-terminated UTF-16LE value, the community-documented layout - into every account of the profile that polls the sink; proven by the sink's debug log (`read USER tier`, `read PASS any-value`, `Processing deletes mailbox=tier`) with no dialog left on screen, and `-Verify` now fails a sink account without one. `-SelfTest`: 55 assertions. See its banner and §5c. |
 | `guest/Set-AccountWizardClassic.ps1` | Restores Outlook's classic account wizard and stops AutoDiscover reaching the network. Prerequisite for the UI Automation route. **Guarded since 2026-09-24** (it wrote 18 HKCU values, half under Policies, on any machine). **The registry half ran on a guest the same day** - 18 values written and read back, idempotent, reverted - but **whether Outlook then shows the classic wizard is still unverified**: nobody has opened the Mail applet afterwards. |
-
+| `host/Get-ExchangeCredential.ps1` | **The Exchange VM's credential (Q108), and nothing else reads it.** Reads `live-fixtures/exchange-credentials.json` - the maintainer's, gitignored, DPAPI CurrentUser - in memory, at the moment of a sign-in: `-TotpCode` returns a fresh six-digit code (RFC 6238: HMAC-SHA1, 30 s, from .NET's own HMACSHA1) and never the secret; the default returns the account and the password as a SecureString. Refuses a URI asking for any other algorithm, digit count or period. `-SelfTest`: the RFC 4648, RFC 4226 and RFC 6238 test vectors, never a real secret. |
+| `host/Invoke-ExchangeSignIn.ps1` | **Signs the Exchange VM's Outlook in** - a new profile's first account (`-Mode NewProfile -StartOutlook`) or a lapsed token (`-Mode Reauth`) - by typing the address, the password and, if asked, a TOTP code through the VM's synthetic keyboard, only after the guest half reports the focus held on the right field (§1d). Declines device registration. `-Mode Preflight`, before every live run, types nothing: it brings Defender's signatures up to date - stale ones bring back Outlook's Object Model Guard prompts, which hang a run - and reads the sign-in back. Refuses any VM but `testbed.json`'s `exchangeVm`. RUN 2026-10-03: the account added from `CP-02` in 2 min 51 s, `SIGNED-IN`, cached; the preflight 0x061100, `SIGNED-IN`. |
+| `guest/Connect-ExchangeAccount.ps1` | The guest half of that sign-in, in session 1 at `-RunLevel Limited`: finds each page (Outlook's NetUI account setup through MSAA, the Microsoft sign-in's web page through UI Automation), focuses and HOLDS the one field the host types into, invokes a named control, and `-Step Verify` reads over COM whether the account is signed in and cached. Never receives, holds or writes a secret. `-Step Inspect` dumps the dialogs, never an Outlook window that can show mail. |
 ---
 
 ## 5c. The last three scripts are an EXPERIMENT, not the supported path

@@ -664,7 +664,8 @@ function New-RenderedDocument {
     param(
         $Fields, $Resolved, [string] $VMName, [string] $Provenance, [datetime] $RenderedAtUtc,
         [string] $TemplateShown = 'Testbed/live-test-settings.template.json',
-        [string] $ValuesShown = 'Testbed/testbed.json'
+        [string] $ValuesShown = 'Testbed/testbed.json',
+        [switch] $ExchangeGuest
     )
     $stamp = $RenderedAtUtc.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", $script:Invariant)
     $document = [ordered]@{}
@@ -676,7 +677,13 @@ function New-RenderedDocument {
     if ($Resolved.Omitted -contains 'corpus') {
         $document['_corpus'] = 'Absent: testbed.json declares no corpus for this guest, so the tier skips the corpus freshness check.'
     }
-    if ($Resolved.Omitted -contains 'mailSink') {
+    if ($ExchangeGuest) {
+        $document['_exchangeGuest'] = 'The Exchange test VM (Q108 to Q111): one real Exchange mailbox, which is also the hub, and read-only - machineProfile ExchangeGuest refuses every write until the maintainer approves the Phase 2 write-safety design (Testbed/README.md section 4e). No sink, no corpus and no generated population, by decision.'
+    }
+    if ($Resolved.Omitted -contains 'mailSink' -and $ExchangeGuest) {
+        $document['_mailSink'] = 'Absent: the Exchange VM has no mail sink, by decision (Q108). Its transport is Exchange itself, and on this read-only machine no test sends.'
+    }
+    elseif ($Resolved.Omitted -contains 'mailSink') {
         $document['_mailSink'] = "Absent: testbed.json declares no sink for this guest yet. The guests get one (Q71, Docs/live-tier-on-the-vm.md section 1.4), declared once Testbed/guest/Install-MailSink.ps1 -Verify has reported SINK-READY on the guest. The loader reads absent as 'this machine has real transport' - the ambiguity section 2.10 names. With no sink declared, a send would queue in the Outbox: do not send."
     }
     foreach ($field in $Fields) {
@@ -762,13 +769,94 @@ function ConvertFrom-AnchorText {
     the values that went into it - what is checked is what will be read. $Assigned is testbed.json's
     corpusIdConvention.assigned, and $Populations its corpusIdConvention.populations.assigned.
 #>
-function Add-SettingsProblems {
-    param(
+<#
+    The rules for the Exchange test VM (testbed.json's exchangeVm block; decided by the maintainer
+    2026-10-03, Q108 to Q111): ONE real Exchange mailbox, cached and indexed, which is also the hub; no
+    PST, no generated population, no mail sink; read-only until the maintainer approves its Phase 2
+    write-safety design. Every rule below is that sentence, field by field - and the address is NOT held
+    to the .invalid domain a synthetic guest's stores are, because this one is real.
+#>
+function Add-ExchangeGuestProblems {
+    param($Settings, [string] $VMName, [bool] $IsExchangeVm, [System.Collections.Generic.List[string]] $Problems)
+
+    if (-not $IsExchangeVm) {
+        $Problems.Add("machineProfile: 'ExchangeGuest' is the profile of the Exchange test VM that testbed.json's exchangeVm block names, and '$VMName' is not it. A test guest with PST stores is Portable.")
+        return
+    }
+
+    $declared = Get-FieldValue $Settings 'machineProfile'
+    if (-not ($declared.Present -and $declared.Value -is [string] -and $declared.Value -ceq 'ExchangeGuest')) {
+        $Problems.Add("machineProfile: '$VMName' is the Exchange test VM (testbed.json's exchangeVm), and its profile is the string 'ExchangeGuest' - read-only until the maintainer approves its Phase 2 write-safety design (Testbed/README.md section 4e). 'Portable' would let the suite write in a real mailbox.")
+    }
+
+    $hub = $null
+    $hubValue = Get-FieldValue $Settings 'testHubStoreDisplayName'
+    if (-not $hubValue.Present) {
+        $Problems.Add('testHubStoreDisplayName: missing. On the Exchange VM it is the one mailbox, by its address.')
+    }
+    else {
+        $problem = Test-StoreName -Name $hubValue.Value -Where 'testHubStoreDisplayName'
+        if ($null -ne $problem) { $Problems.Add($problem) }
+        elseif ($hubValue.Value -cnotmatch $script:AddressPattern) {
+            $Problems.Add("testHubStoreDisplayName: '$($hubValue.Value)' is not shaped like an SMTP address. A cached Exchange mailbox's store is named by its address, and the hub doubles as one.")
+        }
+        else { $hub = $hubValue.Value }
+    }
+
+    $expected = Get-StoreNameList -Settings $Settings -Field 'expectedStoreDisplayNames' -Problems $Problems
+    $indexed = Get-StoreNameList -Settings $Settings -Field 'indexedStoreDisplayNames' -AllowEmpty -Problems $Problems
+    $delegates = Get-StoreNameList -Settings $Settings -Field 'expectedDelegateStoreDisplayNames' -AllowEmpty -Problems $Problems
+    $bystanders = Get-StoreNameList -Settings $Settings -Field 'bystanderStoreDisplayNames' -AllowEmpty -Problems $Problems
+    if ($null -ne $hub) {
+        if ($expected.Count -ne 1 -or -not (Test-NameIn -Name $hub -List $expected)) {
+            $Problems.Add("expectedStoreDisplayNames: must name the hub '$hub' and nothing else - the Exchange VM holds that one mailbox and no other store (Q108).")
+        }
+        if ($indexed.Count -ne 1 -or -not (Test-NameIn -Name $hub -List $indexed)) {
+            $Problems.Add("indexedStoreDisplayNames: must name the hub '$hub' and nothing else - the Exchange VM indexes its one mailbox, and the cached-Exchange index tests read it there.")
+        }
+    }
+    if ($delegates.Count -gt 0) {
+        $Problems.Add('expectedDelegateStoreDisplayNames: must be empty until the shared test mailbox exists (Q109) - the six Requires=DelegateStore tests stay disabled on the Exchange VM until then.')
+    }
+    if ($bystanders.Count -gt 0) {
+        $Problems.Add('bystanderStoreDisplayNames: must be empty - the Exchange VM has no other store, and on a read-only machine the count tripwire censuses the hub itself (LiveStoreCountTripwire.ExemptHub).')
+    }
+
+    $population = Get-FieldValue $Settings 'hubPopulationManifestPath'
+    if (-not $population.Present) {
+        $Problems.Add('hubPopulationManifestPath: missing. On the Exchange VM it is null: no population is generated into a real mailbox before the maintainer approves Phase 2.')
+    }
+    elseif ($null -ne $population.Value) {
+        $Problems.Add('hubPopulationManifestPath: must be null on the Exchange VM - no population is generated into a real mailbox before the maintainer approves Phase 2.')
+    }
+
+    $probe = Get-FieldValue $Settings 'probeTerm'
+    if (-not $probe.Present) { $Problems.Add('probeTerm: missing. It is a string - empty on the Exchange VM.') }
+    elseif (-not ($probe.Value -is [string])) { $Problems.Add('probeTerm: must be a string.') }
+    elseif ($probe.Value.Length -gt 0) {
+        $Problems.Add("probeTerm: must be empty on the Exchange VM. A word 'proven to hit this machine's search index' would have to be read out of its owner's mail.")
+    }
+
+    foreach ($block in @('subjectOnlyProbe', 'corpus', 'mailSink')) {
+        $value = Get-FieldValue $Settings $block
+        if (-not $value.Present) { continue }
+        if ($null -ne $value.Value) {
+            switch ($block) {
+                'mailSink' { $Problems.Add('mailSink: must be absent on the Exchange VM - it has no sink by decision (Q108). A send there goes out through Exchange, which is what Phase 2''s recipient allowlist is for.') }
+                'corpus' { $Problems.Add('corpus: must be absent on the Exchange VM - no corpus is generated into a real mailbox.') }
+                default { $Problems.Add('subjectOnlyProbe: must be absent on the Exchange VM - its population would have to be generated into a real mailbox, or read out of one.') }
+            }
+        }
+    }
+}
+
+function Add-SettingsProblems {    param(
         $Settings,
         [string] $VMName,
         $Assigned,
         $Populations,
-        [System.Collections.Generic.List[string]] $Problems
+        [System.Collections.Generic.List[string]] $Problems,
+        [string] $ExchangeVmName
     )
 
     if (-not (Test-IsJsonObject $Settings)) {
@@ -781,6 +869,18 @@ function Add-SettingsProblems {
         if ($script:TopLevelFields -cnotcontains $property.Name) {
             $Problems.Add("$($property.Name): not a field this script has a rule for.")
         }
+    }
+
+    # The Exchange VM (testbed.json's exchangeVm; Q108 to Q111) is a different kind of machine with a
+    # rule set of its own. Branched on the record AND on the declaration, so neither can carry the
+    # other's profile: the Exchange VM may not render as Portable - which would let the suite write in
+    # a real mailbox - and no other guest may render as ExchangeGuest.
+    $declared = Get-FieldValue $Settings 'machineProfile'
+    $declaresExchange = $declared.Present -and $declared.Value -is [string] -and $declared.Value -ceq 'ExchangeGuest'
+    $isExchangeVm = (-not [string]::IsNullOrEmpty($ExchangeVmName)) -and $VMName -ceq $ExchangeVmName
+    if ($isExchangeVm -or $declaresExchange) {
+        Add-ExchangeGuestProblems -Settings $Settings -VMName $VMName -IsExchangeVm $isExchangeVm -Problems $Problems
+        return
     }
 
     # machineProfile - Portable, spelled as the documented example spells it.
@@ -1827,7 +1927,49 @@ function Invoke-SelfTest {
     Test-HasProblem 'a profile in the wrong case is refused' (Get-RuleProblems { param($s) $s.machineProfile = 'portable' }) "must be the string 'Portable'"
     Test-HasProblem 'a numeric profile is refused' (Get-RuleProblems { param($s) $s.machineProfile = 1 }) "must be the string 'Portable'"
     Test-HasProblem 'a missing profile is refused' (Get-RuleProblems { param($s) $s.PSObject.Properties.Remove('machineProfile') }) 'machineProfile: missing'
-    Test-HasProblem 'a blank hub is refused' (Get-RuleProblems { param($s) $s.testHubStoreDisplayName = ' ' }) 'empty store name'
+
+    # ---------------------------------------------------------------------------------------
+    Write-Host ''
+    Write-Host '== the Exchange VM (testbed.json exchangeVm; Q108 to Q111) =='
+    $exchangeVm = 'OutlookAI-ExchangeSynthetic'
+    $exchangeText = '{ "machineProfile": "ExchangeGuest", "testHubStoreDisplayName": "mailbox@example.test", "hubPopulationManifestPath": null, ' +
+        '"expectedStoreDisplayNames": [ "mailbox@example.test" ], "indexedStoreDisplayNames": [ "mailbox@example.test" ], ' +
+        '"expectedDelegateStoreDisplayNames": [], "bystanderStoreDisplayNames": [], "probeTerm": "", "subjectOnlyProbe": null, "corpus": null, "mailSink": null }'
+    function Get-ExchangeProblems {
+        param([scriptblock] $Change, [string] $ForVm = $exchangeVm, [string] $RecordedVm = $exchangeVm)
+        $settings = ConvertFrom-JsonText -Text $exchangeText -What 'the synthetic Exchange VM'
+        & $Change $settings
+        $found = New-Object System.Collections.Generic.List[string]
+        Add-SettingsProblems -Settings $settings -VMName $ForVm -Assigned $assigned -Populations $populations -Problems $found -ExchangeVmName $RecordedVm
+        return , $found.ToArray()
+    }
+    Test-Case 'the Exchange VM''s shape breaks no rule - no population, corpus or sink record needed' '' ((Get-ExchangeProblems { param($s) }) -join ' | ')
+    Test-Case 'and its real address is not held to the .invalid domain' '' ((Get-ExchangeProblems { param($s) $s.testHubStoreDisplayName = 'mailbox@example.com'; $s.expectedStoreDisplayNames = @('mailbox@example.com'); $s.indexedStoreDisplayNames = @('mailbox@example.com') }) -join ' | ')
+    Test-HasProblem 'Portable on the Exchange VM is refused' (Get-ExchangeProblems { param($s) $s.machineProfile = 'Portable' }) "its profile is the string 'ExchangeGuest'"
+    Test-HasProblem 'no profile on the Exchange VM is refused' (Get-ExchangeProblems { param($s) $s.PSObject.Properties.Remove('machineProfile') }) "its profile is the string 'ExchangeGuest'"
+    Test-HasProblem 'ExchangeGuest on another VM is refused' (Get-ExchangeProblems { param($s) } -ForVm $vm) "and '$vm' is not it"
+    Test-HasProblem 'ExchangeGuest with no Exchange VM on record is refused' (Get-ExchangeProblems { param($s) } -RecordedVm '') 'is not it'
+    Test-HasProblem 'a second store is refused' (Get-ExchangeProblems { param($s) $s.expectedStoreDisplayNames = @('mailbox@example.test', 'other@example.test') }) 'and nothing else - the Exchange VM holds that one mailbox'
+    Test-HasProblem 'an indexed list without the hub is refused' (Get-ExchangeProblems { param($s) $s.indexedStoreDisplayNames = @() }) 'indexes its one mailbox'
+    Test-HasProblem 'a delegate is refused until the shared mailbox exists' (Get-ExchangeProblems { param($s) $s.expectedDelegateStoreDisplayNames = @('Shared Mailbox') }) 'Q109'
+    Test-HasProblem 'a bystander is refused' (Get-ExchangeProblems { param($s) $s.bystanderStoreDisplayNames = @('other@example.test') }) 'bystanderStoreDisplayNames: must be empty'
+    Test-HasProblem 'a generated population is refused' (Get-ExchangeProblems { param($s) $s.hubPopulationManifestPath = 'C:\OutlookAI-Q5\corpus-hub-x.jsonl' }) 'must be null on the Exchange VM'
+    Test-HasProblem 'a probe term is refused' (Get-ExchangeProblems { param($s) $s.probeTerm = 'invoice' }) 'must be empty on the Exchange VM'
+    Test-HasProblem 'a sink is refused' (Get-ExchangeProblems { param($s) $s.mailSink = [pscustomobject]@{ submitHost = '127.0.0.1'; submitPort = 25; retrieveHost = '127.0.0.1'; retrievePort = 110; connectTimeoutMs = 2000 } }) 'no sink by decision'
+    Test-HasProblem 'a corpus is refused' (Get-ExchangeProblems { param($s) $s.corpus = [pscustomobject]@{ storeDisplayName = 'x' } }) 'corpus: must be absent on the Exchange VM'
+    Test-HasProblem 'a hub that is not an address is refused' (Get-ExchangeProblems { param($s) $s.testHubStoreDisplayName = 'Mailbox'; $s.expectedStoreDisplayNames = @('Mailbox'); $s.indexedStoreDisplayNames = @('Mailbox') }) 'not shaped like an SMTP address'
+    $resolved = Resolve-GuestValues -Fields $shape.Fields -Guest (ConvertFrom-JsonText -Text $exchangeText -What 'the synthetic Exchange VM') -Where 'the synthetic Exchange VM'
+    Test-Case 'the Exchange VM''s section resolves with no problem' '' ($resolved.Problems -join ' | ')
+    $text = (ConvertTo-JsonLiteral -Value (New-RenderedDocument -Fields $shape.Fields -Resolved $resolved -VMName $exchangeVm -Provenance 'a self-test' -RenderedAtUtc ([datetime]::UtcNow) -ExchangeGuest)) + "`n"
+    $parsed = ConvertFrom-JsonText -Text $text -What 'the rendered Exchange text'
+    Test-Case 'it renders its profile' 'ExchangeGuest' $parsed.machineProfile
+    Test-Case 'its population path is null in the file' $true ($null -eq $parsed.hubPopulationManifestPath)
+    Test-Case 'its blocks are absent from the file' 'False|False|False' ('{0}|{1}|{2}' -f ($null -ne (Get-ExactProperty $parsed 'corpus')), ($null -ne (Get-ExactProperty $parsed 'mailSink')), ($null -ne (Get-ExactProperty $parsed 'subjectOnlyProbe')))
+    Test-Case 'a note says why it has no sink' $true ([string]$parsed._mailSink).Contains('Q108')
+    Test-Case 'and a note says it is read-only' $true ([string]$parsed._exchangeGuest).Contains('read-only')
+    $found = New-Object System.Collections.Generic.List[string]
+    Add-SettingsProblems -Settings $parsed -VMName $exchangeVm -Assigned $assigned -Populations $populations -Problems $found -ExchangeVmName $exchangeVm
+    Test-Case 'and the rendered file breaks no rule' '' ($found -join ' | ')    Test-HasProblem 'a blank hub is refused' (Get-RuleProblems { param($s) $s.testHubStoreDisplayName = ' ' }) 'empty store name'
     Test-HasProblem 'a hub that is not an address is refused' (Get-RuleProblems { param($s) $s.testHubStoreDisplayName = 'Hub Store'; $s.expectedStoreDisplayNames = @('Hub Store', 'Synthetic Corpus', 'Synthetic Bystander') }) 'not shaped like an SMTP address'
     Test-HasProblem 'a hub with a trailing space is refused' (Get-RuleProblems { param($s) $s.testHubStoreDisplayName = 'hub@render.invalid ' }) 'leading or trailing whitespace'
     Test-HasProblem 'a hub missing from the census list is refused' (Get-RuleProblems { param($s) $s.expectedStoreDisplayNames = @('Synthetic Corpus', 'Synthetic Bystander') }) 'does not name the hub'
@@ -1981,6 +2123,15 @@ if ($null -eq $guestProperty) {
     throw "REFUSING: testbed.json's liveTestSettings has no section for '$VMName'. It has: $($known -join ', '). The name must match exactly - it is the Hyper-V VM name."
 }
 
+# The Exchange VM, if testbed.json records one: its own rule set and its own notes.
+$exchangeVmName = $null
+$exchangeRecord = Get-ExactProperty $testbed 'exchangeVm'
+if ($null -ne $exchangeRecord -and (Test-IsJsonObject $exchangeRecord.Value)) {
+    $exchangeNameProperty = Get-ExactProperty $exchangeRecord.Value 'vmName'
+    if ($null -ne $exchangeNameProperty -and $exchangeNameProperty.Value -is [string]) { $exchangeVmName = $exchangeNameProperty.Value }
+}
+$isExchangeVm = (-not [string]::IsNullOrEmpty($exchangeVmName)) -and $VMName -ceq $exchangeVmName
+
 $resolved = Resolve-GuestValues -Fields $shape.Fields -Guest $guestProperty.Value -Where "liveTestSettings.$VMName"
 if ($resolved.Problems.Count -gt 0) {
     $message = "REFUSING to render live-test settings for '$VMName': $($resolved.Problems.Count) value(s) in the liveTestSettings.$VMName section of $valuesShown are not ready:`n  - " +
@@ -1991,7 +2142,7 @@ if ($resolved.Problems.Count -gt 0) {
 
 # 4. Render.
 $provenance = Get-GitProvenance -Root $repoFull -Inputs @($valuesShown, $templateShown)
-$document = New-RenderedDocument -Fields $shape.Fields -Resolved $resolved -VMName $VMName -Provenance $provenance -RenderedAtUtc ([datetime]::UtcNow) -TemplateShown $templateShown -ValuesShown $valuesShown
+$document = New-RenderedDocument -Fields $shape.Fields -Resolved $resolved -VMName $VMName -Provenance $provenance -RenderedAtUtc ([datetime]::UtcNow) -TemplateShown $templateShown -ValuesShown $valuesShown -ExchangeGuest:$isExchangeVm
 $text = (ConvertTo-JsonLiteral -Value $document) + "`n"
 
 # 5. Check the ARTEFACT - what will be read - rather than the values that went into it.
@@ -2013,7 +2164,7 @@ if ($null -ne $convention) {
     }
 }
 $problems = New-Object System.Collections.Generic.List[string]
-Add-SettingsProblems -Settings $parsed -VMName $VMName -Assigned $assigned -Populations $populations -Problems $problems
+Add-SettingsProblems -Settings $parsed -VMName $VMName -Assigned $assigned -Populations $populations -Problems $problems -ExchangeVmName $exchangeVmName
 if ($problems.Count -gt 0) {
     $message = "REFUSING to write live-test settings for '$VMName': the rendered file breaks $($problems.Count) rule(s) the live tier or its documentation sets:`n  - " +
         ($problems -join "`n  - ") + "`nCorrect the liveTestSettings.$VMName section of $valuesShown. Nothing was written."
@@ -2033,6 +2184,28 @@ if ($readBack -cne $text) { throw "The file at $outFull does not read back as wh
 $hash = (Get-FileHash -LiteralPath $outFull -Algorithm SHA256).Hash
 
 # 7. Say what it is, what it could not check, and what to do with it.
+if ($isExchangeVm) {
+    Write-Host ''
+    Write-Host "Live-test settings for '$VMName' - the Exchange test VM:"
+    Write-Host ("  file        {0}" -f $outFull)
+    Write-Host ("  sha256      {0}" -f $hash)
+    Write-Host ("  profile     {0}   - READ-ONLY: every in-process write and every write-capable MCP tool is refused" -f $parsed.machineProfile)
+    Write-Host ("  hub         {0}   - the one mailbox; real mail, censused item by item on this read-only machine" -f $parsed.testHubStoreDisplayName)
+    Write-Host ("  indexed     {0}" -f (@($parsed.indexedStoreDisplayNames) -join ', '))
+    Write-Host '  no delegate (Q109), no bystander, no population, no probe term, no corpus, no sink'
+    Write-Host ''
+    Write-Host 'NOT CHECKED HERE - only the guest can answer these, and a wrong answer refuses the tier:'
+    Write-Host '  * that the profile Outlook runs holds exactly this one store, under exactly this name'
+    Write-Host '  * that it is cached Exchange (the CachedExchange tests read Store.IsCachedExchange) and indexed'
+    Write-Host '  * that its sign-in is still valid - Testbed/host/Invoke-ExchangeSignIn.ps1 when it is not'
+    Write-Host ''
+    Write-Host 'Next - copy it into the guest (PowerShell Direct):'
+    Write-Host ("  {0}" -f (Format-CopyToGuestLine -VMName $VMName -RenderedPath $outFull))
+    Write-Host ''
+    Write-Host 'Then run the read-only filter of Testbed/README.md section 4e in session 1, through'
+    Write-Host 'Testbed/guest/Register-InteractiveTask.ps1 -RunLevel Limited.'
+    exit 0
+}
 $hub = $parsed.testHubStoreDisplayName
 $bystanderList = @($parsed.bystanderStoreDisplayNames)
 $grant = Get-IdentityGrant -Settings $parsed

@@ -797,6 +797,21 @@ saved memory 1.6 GB, and the VM's saved state between runs another 1.6 GB - save
 written sparse, so 6 GB of RAM costs 1.6 GB of disk. A run writes into a differencing disk of
 its own, which the restore at its end discards: straight after one, it held 30 MB.
 
+## The Exchange VM - the same media, and the one VM that is online
+
+**`OutlookAI-Exchange` (`Testbed/README.md` section 1d; Q108 to Q111, 2026-10-03) needs no media
+this file does not already name.** Windows from the image above, unattended, with the same answer
+file; Office from `.work/office-odt/Testbed.xml`, unchanged; the .NET SDK pinned above. Two things
+come out differently, both because it is online (Q111):
+
+* **Office came from Microsoft's content network, so it is a later build of the same channel**:
+  16.0.17932.21000, against the other guests' 16.0.17932.20884 (`PerpetualVL2024`, x64, and updates
+  off from then on, as `Testbed.xml` says). The install took 2.3 minutes.
+* **Its licence is a KMS client in out-of-box grace, exactly as offline**: `VOLUME_KMSCLIENT`, read
+  after Outlook's first start. No KMS host answers it, so `AUTOACTIVATE=1` activated nothing and
+  consumed nothing - the key `Testbed.xml` carries behaves as a KMS client key there too.
+
+No mail sink (Q108), and no VSTO runtime: the add-in is not on this VM (`TODO.md`).
 ## The rule
 
 **Never destroy a working testbed before the replacement runs.**

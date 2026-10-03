@@ -66,12 +66,20 @@ public static class LiveWriteAccess
     public static string ReadOnlyReason(LiveMachineProfile profile)
     {
         string declared = Enum.IsDefined(profile) ? "'" + profile + "'" : "the undefined value " + (int)profile;
+        if (profile == LiveMachineProfile.ExchangeGuest)
+        {
+            return ReadOnlyMachine + ": these live-test settings declare machineProfile " + declared
+                + " - the Exchange test VM, whose one mailbox is real mail (Q108). It is read-only for live tests until "
+                + "the maintainer approves the write-safety design of its Phase 2, which no change to a settings file can "
+                + "stand in for (Testbed/README.md section 4e). On it only tests carrying Writes=Nothing are selected.";
+        }
+
         return ReadOnlyMachine + ": these live-test settings declare machineProfile " + declared
             + ", and only a machine that declares 'Portable' - a test guest - may write anything. "
             + "'Production' is the maintainer's workstation, which is read-only for live tests ALWAYS, the "
-            + "designated test mailbox included (AGENTS.md, Mailbox Safety; Q72, enforced in code since Q74). "
-            + "A test that writes runs on a test guest; on this machine only tests carrying Writes=Nothing are selected, "
-            + "through the workstation filter in Testbed/README.md section 4d.";
+            + "designated test mailbox included (AGENTS.md, Mailbox Safety; Q72, enforced in code since Q74) - and "
+            + "which, since Q116 (a), runs no live test at all: LiveTestSettings.Load refuses it before any fixture "
+            + "starts (Testbed/README.md section 4d). A test that writes runs on a test guest.";
     }
 
     /// <summary>

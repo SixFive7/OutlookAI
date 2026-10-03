@@ -17,9 +17,9 @@
     service is off. A PSSession over VMBus does both directions with one mechanism.
 
 .PARAMETER VMName
-    MANDATORY. Which guest to copy into. There is no default: THREE MACHINES COEXIST -
-    OutlookAI-Indexed, OutlookAI-Unindexed and OutlookAI-Build - and a default that silently
-    picks one of three is the exact shape of mistake this testbed keeps making. Here it would be
+    MANDATORY. Which guest to copy into. There is no default: FOUR MACHINES COEXIST -
+    OutlookAI-Indexed, OutlookAI-Unindexed, OutlookAI-Build and OutlookAI-Exchange - and a default that silently
+    picks one of four is the exact shape of mistake this testbed keeps making. Here it would be
     staging a payload on a machine you were not looking at, which then looks like a copy that
     did not happen.
 

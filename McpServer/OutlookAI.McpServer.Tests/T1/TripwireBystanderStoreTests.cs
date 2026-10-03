@@ -285,7 +285,8 @@ public sealed class TripwireBystanderStoreTests
     {
         // A Production profile needs no declaration: its delegate/shared mailboxes are already
         // denied and already watched, which is the whole property. Since Q74 its other primaries
-        // are too - the read-only machine grants nothing - so they are policed beside them.
+        // are too - the read-only machine grants nothing - so they are policed beside them, the hub
+        // included since 2026-10-03 (LiveStoreCountTripwire.ExemptHub).
         LiveTestSettings production = new()
         {
             TestHubStoreDisplayName = Hub,
@@ -299,7 +300,7 @@ public sealed class TripwireBystanderStoreTests
             production.BystanderStoreDisplayNames);
 
         Assert.Empty(report.Bystanders);
-        Assert.Equal(new[] { Identity, DelegateStore }, report.Policed);
+        Assert.Equal(new[] { Hub, Identity, DelegateStore }, report.Policed);
         Assert.Empty(report.Writable);
         Assert.False(report.ProvesNothing);
     }
@@ -313,8 +314,11 @@ public sealed class TripwireBystanderStoreTests
         // by construction, and that line then reads as coverage. TripwireVacuousCensusTests
         // owns the detail; this asserts the reversal where the old expectation lived, so nobody
         // re-derives the warning from a stale sibling test.
+        // A machine that may write in its hub - Portable. On a read-only one the same layout is a
+        // census that CAN fail, because nothing exempts the hub there (ExchangeGuestProfileTests).
         LiveTestSettings settings = new()
         {
+            MachineProfile = LiveMachineProfile.Portable,
             TestHubStoreDisplayName = Hub,
             ExpectedStoreDisplayNames = new List<string> { Hub },
         };
