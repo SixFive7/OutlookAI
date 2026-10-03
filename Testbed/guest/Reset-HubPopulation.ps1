@@ -1,21 +1,26 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    RUN ON A GUEST: OAI-UNINDEXED, 2026-10-03, TWICE. NO LIVE RUN HAS READ THE RESULT YET.
+    RUN ON BOTH GUESTS, 2026-10-03. NO LIVE RUN HAS READ THE RESULT YET.
     ============================================================================================
 
-    What ran there (Docs/live-tier-on-the-vm.md section 4.1d): -SelfTest under Windows PowerShell
+    OAI-UNINDEXED (Docs/live-tier-on-the-vm.md section 4.1d): -SelfTest under Windows PowerShell
     5.1 (79 assertions, 0 failures), the dry run, and -Execute through Register-InteractiveTask.ps1
-    -TimeoutSeconds 3600, twice, each straight after Testbed/host/Restart-Guest.ps1 -Execute and
-    about seven minutes long. Every step below the guard but the index wait ran: both profile
-    switches, the Outlook start and its 180 s, corpus-teardown (considered 112, deleted 112, 0
-    remaining), the move into hub-history\, corpus-build against now (56 of 56, census and
-    read-back clean), the one Quit (that Outlook was not in the Running Object Table, so the attach
-    went through the class factory; OUTLOOK.EXE left 2 s after the Quit), the tier profile's
-    Outlook started NOT elevated, and the margin, opt-in and filter printed.
-    What has NOT run anywhere: the index wait (corpus-indexed - that guest has no index),
-    -SkipRebuild, a first build from -Seed or from hub-history\, and every guest-side refusal. And
-    each teardown leaves the hub's two emptied subfolders in its Deleted Items (section 3b, item 7).
+    -TimeoutSeconds 3600 at its default level, twice, each straight after
+    Testbed/host/Restart-Guest.ps1 -Execute and about seven minutes long: both profile switches, the
+    Outlook start and its 180 s, corpus-teardown (considered 112, deleted 112, 0 remaining), the
+    move into hub-history\, corpus-build against now (56 of 56, census and read-back clean), the one
+    Quit (that Outlook was not in the Running Object Table, so the attach went through the class
+    factory; OUTLOOK.EXE left 2 s after the Quit), the tier profile's Outlook started NOT elevated,
+    and the margin, opt-in and filter printed.
+    OAI-INDEXED (section 4.2c), this version: -SelfTest (99 assertions, 0 failures), the dry run and
+    -Execute at -RunLevel Limited - the hub's undated contacts kept with --undated-contacts on every
+    verb (Q98 (f)), both Outlooks started directly and NOT elevated, the INDEX WAIT run for the first
+    time (68 of 68 in the index at its first ask, the 12 contacts with no received date), 110 minutes
+    of margin.
+    What has NOT run anywhere: -SkipRebuild, a first build from -Seed or from hub-history\, and every
+    guest-side refusal, the run-level one included. And each teardown leaves the hub's two emptied
+    subfolders in its Deleted Items (section 3b, item 7).
     Replace this banner once a live run has read a hub this script rebuilt.
 
 .SYNOPSIS

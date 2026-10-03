@@ -915,10 +915,33 @@
       **What is left is a live run whose census reads the bystander item by item.** The items are
       there: `corpus-build --population bystander` puts 300 tagged, deterministic items in the
       bystander - every folder inside the identity budget, two of them populated subfolders of the
-      folder its received mail is filed in - and `OutlookAI-Unindexed` has carried them since
-      2026-10-03 (runbook §4.1d, `CP-12B-POPULATIONS-V2`). `--population hub` gives the hub a
-      56-item population of its own, so the "corpus too small" early returns above no longer need
-      the corpus to be the hub. `Docs/live-tier-on-the-vm.md` §3b is the procedure.
+      folder its received mail is filed in - and both guests have carried them since 2026-10-03
+      (runbook §4.1d, `CP-12B-POPULATIONS-V2`; §4.2c, `CP-16C-POPULATIONS-V2`, where the bystander
+      also holds 42 undated contacts). `--population hub` gives the hub a population of its own, so
+      the "corpus too small" early returns above no longer need the corpus to be the hub.
+      `Docs/live-tier-on-the-vm.md` §3b is the procedure.
+
+- [ ] **Build Corpus A at 160,000 items on `OutlookAI-Indexed`, in a store the tier profile mounts.**
+      Decided 2026-09-24 (question E, option (a)): the index tier's latency bounds are timed against
+      the largest indexed store, and only a production-sized one makes them tests. Until it exists
+      the indexed guest's settings declare NO corpus and index only the hub and the bystander
+      (runbook §4.2c): today's Corpus A holds 20,000 items, anchored 2026-09-15, in the corpus
+      profile's default store, which the tier profile does not mount - and a store that already
+      holds items is never attached by script (runbook §2.6). **Planned as the next step after
+      `CP-16C-POPULATIONS-V2`, not started; estimated 2.5 to 3.5 hours** from the night's rates
+      (runbook §4.2c): a NEW store `Corpus A`, created empty in the corpus profile and attached by
+      path to the tier profile while still empty (`Add-OutlookPstStore.ps1`, both profiles, names
+      byte-identical), every Outlook start NOT elevated; the old manifest
+      `C:\OutlookAI-Q5\corpus-vm-indexed.jsonl` moved aside first (the id `vm-indexed` is this
+      guest's, and a manifest is named after its id); `corpus-probe`, then `corpus-build --corpus-id
+      vm-indexed --seed 7777 --anchor <the build day> --count 160000` dry and `--execute` - about
+      1.8 to 2.2 hours through `PostAsNote`, the one rung a non-default store allows, at the 19-24
+      items/s the populations built at; `corpus-verify`; `Set-OutlookIndexingDisabled.ps1 -Verify
+      -MinimumOutlookRows 160000`. Then `testbed.json`: `corpusIdConvention`'s vm-indexed seed,
+      anchor and itemCount 160,000; the guest's corpus block, `Corpus A` last in the indexed list
+      and in the watched and bystander lists; render, stage, `Reset-HubPopulation.ps1` and a
+      checkpoint. The PST grows to about 8.6 GB; the guest has 96 GB free. Open beside it: whether
+      the 20,000-item store is torn down or left, inert, in the corpus profile.
 
 - [ ] **Make `corpus-teardown` drain the folders it created, as it drains the items: in a PST its
       `Folder.Delete()` MOVES them into Deleted Items, so every hub rebuild leaves two more empty
