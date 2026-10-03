@@ -515,6 +515,14 @@ name; `move_mail` kept Outlook's escapes, breaking its documented undo for such 
   which seven before deciding.
 - **Recommendation.** (c) then (a). Nothing can be done here on your behalf: it is your real
   mailbox. The `TODO.md` item was corrected to say so.
+- **Answered:** leave them be, and find out why your own search showed one item, not seven.
+  Checked read-only through the installed server: the hub's Drafts and Outbox are both EMPTY - the
+  seven recorded on 2026-08-18 are gone, removed by something not recorded, most likely the sweep
+  of the next full run before Q72. Nothing anywhere carries the tag in its subject. The tag survives
+  only in the BODY of twelve "Synchronization Log" messages that Outlook itself wrote into the hub's
+  Sync Issues folder in late July, and "OutlookAI" in the body of two items in its Deleted Items -
+  so what your search showed is one of those, depending on the folder it ran in. The `TODO.md`
+  item is deleted, and its two lessons moved into `Testbed/README.md` section 4c.
 
 ### Q105 - Delete the old `OutlookAI-TestVM` now?
 - **Primer.** The original single test VM, unused since the two Outlook guests and the build VM
@@ -523,6 +531,8 @@ name; `move_mail` kept Outlook's escapes, breaking its documented undo for such 
 - **Directions.** (a) Delete it now; (b) keep it until the Q61 rebuild; (c) export it elsewhere,
   then delete.
 - **Recommendation.** (a): nothing uses it, and the Q61 rebuild deletes it anyway.
+- **Answered (a); done at about 13:40Z.** No other VM's disk chain referenced its files; the VM
+  and its folder are gone, and E: went from 114 to 292 GB free.
 
 ### Q106 - Register the testbed idle-save task? *Answered 12:53Z by your VM rule*
 Registered, with every test VM set never to start with the host and to be saved when it stops;
@@ -536,6 +546,7 @@ the rule is in `AGENTS.md`. *Undo:* `Testbed/host/Register-IdleSaveTask.ps1 -Unr
 - **Directions.** (a) Update its sections 3 and 4 with these measurements, version-tagged, after
   saving the current file beside it as its section 8 asks; (b) leave it.
 - **Recommendation.** (a).
+- **Withdrawn:** your system-level Claude settings are out of scope for this project.
 
 ## Deviations from the plan
 

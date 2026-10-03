@@ -979,6 +979,18 @@ Without the opt-in, every live collection fails at its fixture with `LIVE TEST R
 touches Outlook. `--list-tests` still discovers everything without it, because discovery never
 builds a fixture.
 
+**Two lessons from the run of 2026-08-18 that was stopped as "hung":**
+
+* **Never call a live run hung without `--logger "console;verbosity=normal"`.** At the default
+  verbosity a healthy run and a wedged one print byte-identical output: that night two "hangs" were
+  healthy runs killed early - the full tier takes about 27 minutes, and passed 107 of 107 under
+  `--blame-hang` once left alone.
+* **A stopped run has no teardown sweep.** Whatever its last test created stays in the mailbox, so
+  stopping a run is a mailbox decision as well as a time one. That run left seven tagged items in a
+  real hub (six drafts, one Outbox item). By 2026-10-03 both folders were empty, checked read-only;
+  what removed them is not recorded - most likely the sweep of the next full run, before Q72 made
+  that machine read-only.
+
 ## 4d. The maintainer's workstation: the read-only run (Q72, enforced since Q74)
 
 **The workstation is read-only for live tests, always, and runs only the tests no guest can.**
