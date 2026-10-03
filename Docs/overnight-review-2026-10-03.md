@@ -306,6 +306,10 @@ The procedure is ready (Q86) and the fix is on master, but several agents starte
 commits and their workstation test runs would still write test lines into a freshly renamed log.
 They have been told to merge master before their next run; the rename happens once they have
 (or at the end of the night), so the log you find in the morning starts clean.
+**Done at about 05:55Z**, once the build-VM runner had replaced every test run on the workstation:
+`%LOCALAPPDATA%\OutlookAI\audit.log` (8,883,282 bytes) was renamed, untouched, to
+`audit.until-2026-10-03.log` in the same folder, with no OutlookAI test process running. Your
+OutlookAI creates a fresh `audit.log` at its next write or health check.
 
 ### V8 - The session limit stopped every agent at about 02:40Z; work resumed at 05:29Z
 All five running agents (the first live run on guest two, the build VM, Q99, Q96 and Q100) were
