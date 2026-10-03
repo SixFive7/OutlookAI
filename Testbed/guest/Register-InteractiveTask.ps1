@@ -58,9 +58,11 @@
     ELEVATED Outlook does not use Windows Search at all - no crawl-scope rule, no item pushed,
     Store.IsInstantSearchEnabled False (Docs/live-tier-on-the-vm.md section 8 item 22). Highest
     stays the default because every caller written before this parameter expects it, and the
-    installers need it: Install-OutlookAIAddIn.ps1 refuses outright when not elevated (it installs
-    the VSTO runtime machine-wide), Install-DotnetSdk.ps1 installs under Program Files and writes
-    the machine environment. A default of Limited would have broken those, loudly, mid-build.
+    installers need it: Install-OutlookAIAddIn.ps1 -Phase Install refuses outright when not elevated
+    (it installs the VSTO runtime machine-wide), Install-DotnetSdk.ps1 installs under Program Files
+    and writes the machine environment. A default of Limited would have broken those, loudly,
+    mid-build. (Install-OutlookAIAddIn.ps1 -Phase FirstRun is the reverse, since 2026-10-03: it starts
+    Outlook, so it refuses an ELEVATED token and runs here at -RunLevel Limited.)
     Limited is the filtered token a user double-clicking a program gets - NOT elevated, medium
     integrity - and it is what the LIVE TIER runs at (Testbed/README.md section 4c), for three
     reasons: the index tests need an index that moves while they run, which only a non-elevated
