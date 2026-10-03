@@ -538,8 +538,11 @@ name; `move_mail` kept Outlook's escapes, breaking its documented undo for such 
 His answers: **D62 → (b)**, all three kinds; **D74 → "ensure there is no luck involved"**; **D101 →
 "measure if you think it is relevant"** (it was, and was measured and fixed). The how of each was
 decided on his behalf, below. Branch `worktree-agent-a24876cb1c1fa45f5`; evidence in
-`Docs/live-tier-on-the-vm.md` sections 3b and 4.2e. D102/D103 (the age of the data) is Q108 below -
-directions only, nothing implemented.
+`Docs/live-tier-on-the-vm.md` sections 3b, 4.1f and 4.2e. On guest one the all-kinds bystander and hub
+were built, indexed exactly as planned and run under the live tier - 16 failures, every one of them also
+failing in master's run of the same afternoon on the contacts populations, none new - and checkpointed as
+**`CP-18C-ALL-KINDS`**; the guest rests on `CP-17C-CORPUS-160K` until the branch is merged. D102/D103 (the
+age of the data) is Q108 below - measured, directions only, nothing implemented.
 - **D120 - D62 (b): an appointment and a task are DATED BY THE PLAN**, not by when they were built.
   Their delivery time is written after the first save, the way a mail item's is, to an instant one
   day older than the oldest dated item the population can hold, one hour further back per ordinal (the
@@ -580,9 +583,12 @@ directions only, nothing implemented.
   It then runs the unguarded statement itself, requires its dated rows to equal what the head of a
   wider sample of the same statement predicts (reading both again, up to twice, if the index moved
   between them), says whether the guard was load-bearing, and asserts the guarantee. A store is
-  contested from twelve undated rows. Guest one's run of the same afternoon measured the provider
-  **NULLS LAST** (hub and bystander), so there the guard is never load-bearing, and the test now says
-  so every run instead of passing on a margin. *Alternatives:* keep `Top 25` and assert the undated
+  contested from twelve undated rows. **Measured in this work's live run on guest one** (section
+  4.2e): both the hub and the bystander contested (28 undated rows each, `Top 17` fetched as `TOP 44`),
+  the unguarded statement holding exactly the dated rows the wider sample predicted (39 and 44), the
+  provider **NULLS LAST** - so the guard is never load-bearing there - and the test saying so instead of
+  passing on a margin. The undated rows are more than the contacts: folder rows carry no received date
+  either, and the contest counts whatever the index leaves undated. *Alternatives:* keep `Top 25` and assert the undated
   rows exceed the 35 rows of slack (the margin made explicit, still silent if the formula moves);
   require the guard to be load-bearing (red for ever on a NULLS-LAST provider, which is a correct one).
 - **D126 - D101: the product's sweep is right about Corpus A; the step-10 scripts were not.** Measured
@@ -877,6 +883,27 @@ self-test on the workstation before the build-VM rule reached it.
   re-staged and ran it properly.
 - Two throwaway experiment builds were staged on the guest to isolate D49's second cause; they were
   never on the branch, and their worktree is deleted.
+
+### V17 - The maintainer's answers to D62, D74, D101 and D102/D103: six departures
+- `Measure-SweepCost.ps1` failed in the first guest phase (P1) on a fault of its own, PowerShell's
+  unrolling of COM collections; it was fixed and its measurement folded into the build phase (P2) instead
+  of a phase of its own, so Corpus A was measured with the all-kinds tools staged, not the P1 ones.
+- The product's sweep of Corpus A was read by a scratch, read-only stdio driver beside
+  `Invoke-GuestMeasure.ps1` (D127), not by a committed script.
+- The clock measurements for Q108 ran on guest two, `OutlookAI-Unindexed`, once the two agents using it
+  first had released it - not on guest one: the mechanism is Hyper-V's, not the index's, and guest one
+  was busy. The first attempt lost its readings to a script fault (a function that printed into its own
+  return value) and was cleaned up by its own `finally`, then run again; a second short phase measured the
+  OS restart. Every phase ended on `CP-13B-LIVE-GREEN` with time sync on, saved, its one temporary
+  checkpoint deleted.
+- Master (`1bc6224`: the guards moved to `Tools/Checks/`, `.github/` deleted) was merged into the branch
+  mid-way; the build VM verified the merge (3,633 / 0 / 0, 23 self-tests).
+- Two TODO items closed as a by-product: running `Measure-SweepCost.ps1` once, and the index-collation
+  probe (answered on guest one: NULLS LAST, the floor literal accepted; `Docs/magic-numbers.md` and
+  `QUESTIONS.md` Q8 say so). The latter asked for "the live profile", which no longer runs those tests
+  (Q74); the guest answers both of its questions inside a mapi `SCOPE`.
+- The order-key tests' live proof covers the hub and the bystander only: they stop at Corpus A, whose
+  store discovery fails in master's suite as well - not this work's to fix.
 
 ## Notes (no decision needed)
 

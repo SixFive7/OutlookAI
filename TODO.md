@@ -433,34 +433,6 @@
   description-budget prompt written for another project; read it and act on what it asks for. Recorded
   here because auto-compaction was imminent when it was requested.
 
-- [ ] **Run the index-collation probe on the live profile** - `T2 LiveOrderKeyCollationTests`
-  (read-only, index statements only, no COM and no mailbox writes). It answers two things the
-  B3 follow-up could only reason about, both recorded in `QUESTIONS.md` under Q8 and in
-  `Docs/magic-numbers.md` beside `WsSqlBuilder.OrderKeyFloorUtc`:
-  - [ ] **Where the provider sorts a NULL under `ORDER BY System.Message.DateReceived DESC`.**
-        If last, the displacement refetch never fires and the guard is free; if first, it fires
-        on every truncated search and each one costs a second index statement. The guarantee
-        holds either way - this decides only what it costs, and it is the number that belongs
-        in the magic-numbers row, which currently says "not measured".
-  - [ ] **Whether the provider accepts the `1601-01-01 00:00:00` floor literal** and treats the
-        comparison as "has a value". If it does not, the refetch fails and searches that need it
-        return a short answer flagged with `index.candidatesExhausted` - loud, but the guarantee
-        then rests on a query that never runs.
-
-  **PARTIAL ANSWER, measured 2026-08-18 on this machine, directly against `Search.CollatorDSO`
-  (three read-only SELECTs, no Outlook, no mailbox).** Under `ORDER BY System.Message.DateReceived
-  DESC` over a predicate matching the whole index, the first 25 rows were **all dated** - and on a
-  developer machine files vastly outnumber mail, so had undated rows sorted FIRST the block would
-  have been entirely undated. Under `ASC` the first 25 were the oldest mail rather than undated
-  rows, so they are not sorting lowest either. **The `1601-01-01 00:00:00` floor literal was
-  accepted and returned rows.** So the displacement refetch should essentially never fire, and the
-  guard is free in practice. Two readings fit the data and it cannot separate them: the provider
-  may exclude rows lacking the ORDER BY property from an ordered result, or place them last in both
-  directions - both give the same answer here, but they are different facts. **This does NOT close
-  the item:** the statements carried no `SCOPE='mapi...'`, so they ran over the general SystemIndex
-  namespace rather than the one the product uses. Full write-up and the exact statements are in the
-  session trace folder under Downloads (`tmp-aitrace/nullorder-finding.md`).
-
 - [ ] **Re-run the unindexed-store probes on a MIXED profile - the one shape no machine here has.**
   Group A and E of `Docs/completeness-gaps.md` are now all closed (A1-A5, E1). Everything about
   them has been verified on two profile shapes: the fully-indexed developer profile, and the
