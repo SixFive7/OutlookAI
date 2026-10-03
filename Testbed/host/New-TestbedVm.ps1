@@ -25,6 +25,13 @@
       test machine.
     * 4 vCPU / 8 GB. The corpus build is COM round trips - one item at a time, latency-bound,
       not parallel - so more cores buy nothing. 8 GB is Outlook plus the indexer plus headroom.
+    * DYNAMIC MEMORY IS WHAT New-VM GIVES YOU, unless -StaticMemory. Measured 2026-10-03 building
+      OutlookAI-Build: New-VM on this host created the VM with dynamic memory on - startup as
+      asked, minimum 512 MB, MAXIMUM 1 TB - and the spec file recorded only the startup figure,
+      so every guest's record read as a fixed size it never had. The spec now records the memory
+      settings read back after creation. -StaticMemory turns dynamic memory off, so the VM has
+      exactly -MemoryStartupBytes: the build VM uses it, because a saved state and a restored
+      checkpoint are only as large as the memory, and a test VM with a 1 TB ceiling has no ceiling.
     * 128 GB dynamic disk. A 20,000-item corpus is ~225 MB of body text and the PST lands near
       400 MB; Windows plus Office plus a couple of checkpoints is what actually fills this.
     * STANDARD checkpoints, deliberately. Production checkpoints use VSS, which quiesces the
@@ -173,6 +180,7 @@ param(
     [Parameter(ParameterSetName = 'Create')] [int]    $Generation = 2,
     [Parameter(ParameterSetName = 'Create')] [int]    $ProcessorCount = 4,
     [Parameter(ParameterSetName = 'Create')] [int64]  $MemoryStartupBytes = 8GB,
+    [Parameter(ParameterSetName = 'Create')] [switch] $StaticMemory,
     [Parameter(ParameterSetName = 'Create')] [int64]  $VhdSizeBytes = 128GB,
     [Parameter(ParameterSetName = 'Create')] [ValidateSet('Standard', 'Production')] [string] $CheckpointType = 'Standard',
     [Parameter(ParameterSetName = 'Create')] [string] $SwitchName,
@@ -517,14 +525,33 @@ replaced; a fresh build runs -CompleteInstall BEFORE its first checkpoint, and n
                 # -Path $null empties the drive and leaves the drive itself in place.
                 Set-VMDvdDrive -VMDvdDrive $drive -Path $null
             }
-            $still = @(Get-VMDvdDrive -VM $vm | Where-Object { $_.Path })
+            # Read back by NAME, freshly, and give it a moment. The first real run of this path -
+            # OutlookAI-Build, 2026-10-03 - read the drives back through the VirtualMachine object
+            # fetched before the eject, saw both ISOs still named and refused; queried by name a
+            # minute later, both drives were empty. The object had kept the list it was read with.
+            $still = @()
+            $ejectDeadline = (Get-Date).AddSeconds(30)
+            while ($true) {
+                $still = @(Get-VMDvdDrive -VMName $Name | Where-Object { $_.Path })
+                if ($still.Count -eq 0 -or (Get-Date) -ge $ejectDeadline) { break }
+                Start-Sleep -Seconds 2
+            }
             if ($still.Count -gt 0) {
                 throw "Ejected, and a drive still holds a disc: $(($still | ForEach-Object { $_.Path }) -join ', '). No checkpoint has been taken and nothing deleted."
             }
             Write-Host "  ejected $($held.Count) disc(s); every DVD drive reads back empty"
 
             Checkpoint-VM -VM $vm -SnapshotName $FirstCheckpointName
-            $firstCheckpoint = @(Get-VMSnapshot -VM $vm | Where-Object { $_.Name -eq $FirstCheckpointName })
+            # By name too, and polled: on the same first run, Get-VMSnapshot straight after
+            # Checkpoint-VM returned listed NO checkpoint of that name, and listed it seconds later -
+            # the script refused, safely, with the checkpoint taken and the ISO kept.
+            $firstCheckpoint = @()
+            $checkpointDeadline = (Get-Date).AddSeconds(60)
+            while ($true) {
+                $firstCheckpoint = @(Get-VMSnapshot -VMName $Name | Where-Object { $_.Name -eq $FirstCheckpointName })
+                if ($firstCheckpoint.Count -ge 1 -or (Get-Date) -ge $checkpointDeadline) { break }
+                Start-Sleep -Seconds 2
+            }
             if ($firstCheckpoint.Count -ne 1) {
                 throw "Checkpoint-VM returned, and there are $($firstCheckpoint.Count) checkpoint(s) named '$FirstCheckpointName'. The answer ISO has NOT been deleted."
             }
@@ -602,6 +629,7 @@ $spec = [ordered]@{
     vtpm               = ($Generation -eq 2)
     processorCount     = $ProcessorCount
     memoryStartupBytes = $MemoryStartupBytes
+    staticMemory       = [bool] $StaticMemory
     vhdPath            = $VhdPath
     vhdSizeBytes       = $VhdSizeBytes
     checkpointType     = $CheckpointType
@@ -662,6 +690,21 @@ New-VM @newVmArgs | Out-Null
 
 Set-VM -Name $Name -ProcessorCount $ProcessorCount -CheckpointType $CheckpointType `
     -AutomaticCheckpointsEnabled $false -AutomaticStopAction ShutDown
+
+if ($StaticMemory) {
+    Set-VMMemory -VMName $Name -DynamicMemoryEnabled $false -StartupBytes $MemoryStartupBytes
+}
+# What the VM actually got, not what was asked for: New-VM left dynamic memory on with a 1 TB
+# ceiling here, and a record of the startup figure alone hid that (the banner).
+$memory = Get-VMMemory -VMName $Name
+$spec['dynamicMemory'] = [bool] $memory.DynamicMemoryEnabled
+if ($memory.DynamicMemoryEnabled) {
+    # Only then do they mean anything: with dynamic memory off, Hyper-V keeps the old figures
+    # and ignores them (measured on a throwaway VM, 2026-10-03).
+    $spec['memoryMinimumBytes'] = [int64] $memory.Minimum
+    $spec['memoryMaximumBytes'] = [int64] $memory.Maximum
+}
+Write-Host ("Memory: {0}" -f $(if ($memory.DynamicMemoryEnabled) { "DYNAMIC - startup $($memory.Startup), minimum $($memory.Minimum), maximum $($memory.Maximum). Pass -StaticMemory for a fixed size." } else { "static, $($memory.Startup) bytes" }))
 
 if ($Generation -eq 2) {
     # Order matters: the key protector has to exist before the vTPM can be enabled.
