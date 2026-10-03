@@ -840,6 +840,11 @@ finally {
     if (Test-Path -LiteralPath $tree) {
         Invoke-NativeCommand { & git -C $repo worktree remove --force $tree 2>&1 } | Out-Null
     }
+    # The payloads are the commit's, rebuilt by any later run; only what the run found is kept.
+    foreach ($built in 'payload', 'livetier') {
+        $path = Join-Path $runDir $built
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue }
+    }
 }
 
 # ---- REPORT.
