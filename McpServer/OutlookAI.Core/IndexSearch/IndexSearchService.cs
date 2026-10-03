@@ -192,7 +192,12 @@ namespace OutlookAI.Core.IndexSearch
         /// <summary>Whole-store SCOPE prefix (mapi16://{SID}/store($hash)).</summary>
         public string StorePrefix { get; }
 
-        /// <summary>Store display name parsed from the prefix - the store's OWN name, which need not be <c>Store.DisplayName</c>.</summary>
+        /// <summary>
+        /// Store display name parsed from the prefix - the store's OWN name, which need not be
+        /// <c>Store.DisplayName</c> - with the URL's percent-escapes decoded
+        /// (<see cref="OutlookAI.Core.Mapi.MapiUrlSegment"/>); <see cref="StoreSegment"/> keeps the
+        /// index's spelling.
+        /// </summary>
         public string StoreDisplayName { get; }
 
         /// <summary>The prefix's store segment as the index spells it: <c>&lt;name&gt;($hash)</c>.</summary>

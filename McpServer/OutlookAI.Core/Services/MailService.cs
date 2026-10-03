@@ -4717,11 +4717,13 @@ namespace OutlookAI.Core.Services
                 ccList, bccList, subjectOverride: null, ParseImportance(importance), requestReadReceipt,
                 files.Select(f => f.Path).ToList());
             List<string> createdFolders = new List<string>();
+            List<string> appearedFolders = new List<string>();
             ComDraftCreateResult created = _gateway.Run(s =>
             {
                 ComDraftCreateResult? r = s.TryCreateNewDraft(
                     account, toList, subject!, draftBody, display, signatureOverride, options,
-                    out string? savedEntryId, out IReadOnlyList<string>? madeFolders, out string? error);
+                    out string? savedEntryId, out IReadOnlyList<string>? madeFolders, out IReadOnlyList<string>? appearedHere,
+                    out string? error);
 
                 // REGISTERED BEFORE the call is judged, and that ordering is the fix. The
                 // draft is committed by Save() and four COM steps follow it; a failure in any
@@ -4732,15 +4734,19 @@ namespace OutlookAI.Core.Services
                 _draftRegistry.Register(savedEntryId);
 
                 // Q85, the same way round: a Drafts folder the call made is reported whether
-                // the draft then succeeded or not, because this server cannot delete folders.
+                // the draft then succeeded or not, because this server cannot delete folders -
+                // and what only appeared while a failed lookup ran, apart from it (Q96 question 1 (b)).
                 AddCreatedFolders(createdFolders, madeFolders);
-                return r ?? throw BuildDraftCreationFailure(error, account, savedEntryId, createdFolders);
+                AddAppearedFolders(appearedFolders, appearedHere);
+                return r ?? throw BuildDraftCreationFailure(error, account, savedEntryId, createdFolders, appearedFolders);
             });
 
             _draftRegistry.Register(created.Draft.EntryId);
-            AuditDraft("new_draft", created, requestedAccount: account, sourceEntryId: null, draftBody, files, createdFolders);
+            AuditDraft("new_draft", created, requestedAccount: account, sourceEntryId: null, draftBody, files, createdFolders, appearedFolders);
             return WithCreatedFolders(
-                ToDraftOutcome("new", created, hitId: null, sourceEntryId: null, draftBody, htmlAdjustments, files), createdFolders);
+                ToDraftOutcome("new", created, hitId: null, sourceEntryId: null, draftBody, htmlAdjustments, files),
+                createdFolders,
+                appearedFolders);
         }
 
         /// <summary>The optional <c>createdFolders</c> field: the list when a folder was made, absent (null) otherwise.</summary>
@@ -4852,7 +4858,7 @@ namespace OutlookAI.Core.Services
             string? bodyHtml = null,
             IReadOnlyList<string>? attachments = null)
         {
-            (string? hitId, string sourceEntryId, ComDraftCreateResult created, ComDraftBody draftBody, IReadOnlyList<string> htmlAdjustments, IReadOnlyList<DraftAttachmentFile> files, IReadOnlyList<string> createdFolders) = CreateDerived(
+            (string? hitId, string sourceEntryId, ComDraftCreateResult created, ComDraftBody draftBody, IReadOnlyList<string> htmlAdjustments, IReadOnlyList<DraftAttachmentFile> files, IReadOnlyList<string> createdFolders, IReadOnlyList<string> appearedFolders) = CreateDerived(
                 id,
                 replyAll ? ComDerivedDraftKind.ReplyAll : ComDerivedDraftKind.Reply,
                 to: null,
@@ -4868,10 +4874,11 @@ namespace OutlookAI.Core.Services
                 attachments);
             string op = replyAll ? "replyall_draft" : "reply_draft";
             _draftRegistry.Register(created.Draft.EntryId);
-            AuditDraft(op, created, requestedAccount: null, sourceEntryId, draftBody, files, createdFolders);
+            AuditDraft(op, created, requestedAccount: null, sourceEntryId, draftBody, files, createdFolders, appearedFolders);
             return WithCreatedFolders(
                 ToDraftOutcome(replyAll ? "replyall" : "reply", created, hitId, sourceEntryId, draftBody, htmlAdjustments, files),
-                createdFolders);
+                createdFolders,
+                appearedFolders);
         }
 
         /// <summary>
@@ -4899,15 +4906,17 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentException("to is required for forward_draft: one or more recipient addresses separated by ';' or ','.", nameof(to));
             }
 
-            (string? hitId, string sourceEntryId, ComDraftCreateResult created, ComDraftBody draftBody, IReadOnlyList<string> htmlAdjustments, IReadOnlyList<DraftAttachmentFile> files, IReadOnlyList<string> createdFolders) = CreateDerived(
+            (string? hitId, string sourceEntryId, ComDraftCreateResult created, ComDraftBody draftBody, IReadOnlyList<string> htmlAdjustments, IReadOnlyList<DraftAttachmentFile> files, IReadOnlyList<string> createdFolders, IReadOnlyList<string> appearedFolders) = CreateDerived(
                 id, ComDerivedDraftKind.Forward, toList, body, display, signature, cc, bcc, subject, importance, requestReadReceipt, bodyHtml, attachments);
             _draftRegistry.Register(created.Draft.EntryId);
-            AuditDraft("forward_draft", created, requestedAccount: null, sourceEntryId, draftBody, files, createdFolders);
+            AuditDraft("forward_draft", created, requestedAccount: null, sourceEntryId, draftBody, files, createdFolders, appearedFolders);
             return WithCreatedFolders(
-                ToDraftOutcome("forward", created, hitId, sourceEntryId, draftBody, htmlAdjustments, files), createdFolders);
+                ToDraftOutcome("forward", created, hitId, sourceEntryId, draftBody, htmlAdjustments, files),
+                createdFolders,
+                appearedFolders);
         }
 
-        private (string? HitId, string SourceEntryId, ComDraftCreateResult Created, ComDraftBody Body, IReadOnlyList<string> HtmlAdjustments, IReadOnlyList<DraftAttachmentFile> Files, IReadOnlyList<string> CreatedFolders) CreateDerived(
+        private (string? HitId, string SourceEntryId, ComDraftCreateResult Created, ComDraftBody Body, IReadOnlyList<string> HtmlAdjustments, IReadOnlyList<DraftAttachmentFile> Files, IReadOnlyList<string> CreatedFolders, IReadOnlyList<string> AppearedFolders) CreateDerived(
             string id,
             ComDerivedDraftKind kind,
             IReadOnlyList<string>? to,
@@ -4943,13 +4952,16 @@ namespace OutlookAI.Core.Services
             (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
             IReadOnlyList<string> toList = to ?? Array.Empty<string>();
             List<string> createdFolders = new List<string>();
+            List<string> appearedFolders = new List<string>();
             ComDraftCreateResult created = _gateway.Run(s =>
             {
                 ComDraftCreateResult? r = s.TryCreateDerivedDraft(
                     entryId, storeId, kind, toList, draftBody, display, signatureOverride, options,
-                    out string? savedEntryId, out IReadOnlyList<string>? madeFolders, out string? error);
+                    out string? savedEntryId, out IReadOnlyList<string>? madeFolders, out IReadOnlyList<string>? appearedHere,
+                    out string? error);
                 _draftRegistry.Register(savedEntryId);
                 AddCreatedFolders(createdFolders, madeFolders);
+                AddAppearedFolders(appearedFolders, appearedHere);
                 if (ShouldSearchOtherStores(storeId, r != null, error))
                 {
                     // Direct EntryID without a known store: retry across stores (same
@@ -4972,13 +4984,14 @@ namespace OutlookAI.Core.Services
                     {
                         r = s.TryCreateDerivedDraft(
                             entryId, store.StoreId, kind, toList, draftBody, display, signatureOverride, options,
-                            out savedEntryId, out madeFolders, out error);
+                            out savedEntryId, out madeFolders, out appearedHere, out error);
 
                         // Every attempt registers its own saved draft. The loop stops at the
                         // first store that opened the item, so at most one orphan is possible
                         // now - but "at most one" is still one, and it is reachable.
                         _draftRegistry.Register(savedEntryId);
                         AddCreatedFolders(createdFolders, madeFolders);
+                        AddAppearedFolders(appearedFolders, appearedHere);
                         if (!KeepSearchingStores(r != null, error))
                         {
                             // A store that opened the item and then failed answers the
@@ -4989,10 +5002,10 @@ namespace OutlookAI.Core.Services
                     }
                 }
 
-                return r ?? throw BuildDerivedDraftFailure(error, savedEntryId, createdFolders);
+                return r ?? throw BuildDerivedDraftFailure(error, savedEntryId, createdFolders, appearedFolders);
             });
 
-            return (hitId, entryId, created, draftBody, htmlAdjustments, files, createdFolders);
+            return (hitId, entryId, created, draftBody, htmlAdjustments, files, createdFolders, appearedFolders);
         }
 
         /// <summary>
@@ -5093,7 +5106,8 @@ namespace OutlookAI.Core.Services
             string? error,
             string account,
             string? savedDraftEntryId,
-            IReadOnlyList<string>? createdFolders = null)
+            IReadOnlyList<string>? createdFolders = null,
+            IReadOnlyList<string>? appearedFolders = null)
         {
             if (error == "AccountNotFound")
             {
@@ -5115,8 +5129,9 @@ namespace OutlookAI.Core.Services
                 return WithCreatedFolders(
                     new OperationOutcomeException(
                         Com.MutationOutcome.Unchanged,
-                        DescribeDraftsFolderFailure(account, lookupFailure, createdFolders, creationChecked: true)),
-                    createdFolders);
+                        DescribeDraftsFolderFailure(account, lookupFailure, createdFolders, creationChecked: true, appearedFolders)),
+                    createdFolders,
+                    appearedFolders);
             }
 
             if (Com.ComErrorTokens.TryRead(error, Com.ComErrorTokens.DraftsFolderCreationUnverified, out string uncheckedFailure))
@@ -5124,22 +5139,28 @@ namespace OutlookAI.Core.Services
                 return WithCreatedFolders(
                     new OperationOutcomeException(
                         Com.MutationOutcome.Unchanged,
-                        DescribeDraftsFolderFailure(account, uncheckedFailure, createdFolders, creationChecked: false)),
-                    createdFolders);
+                        DescribeDraftsFolderFailure(account, uncheckedFailure, createdFolders, creationChecked: false, appearedFolders)),
+                    createdFolders,
+                    appearedFolders);
             }
 
             if (Com.ComErrorTokens.TryRead(error, Com.ComErrorTokens.DraftNotStarted, out string earlyFailure))
             {
                 return WithCreatedFolders(
-                    new OperationOutcomeException(Com.MutationOutcome.Unchanged, DescribeDraftNotStarted(earlyFailure, createdFolders)),
-                    createdFolders);
+                    new OperationOutcomeException(
+                        Com.MutationOutcome.Unchanged, DescribeDraftNotStarted(earlyFailure, createdFolders, appearedFolders)),
+                    createdFolders,
+                    appearedFolders);
             }
 
             return WithCreatedFolders(
                 new OperationOutcomeException(
                     Com.MutationOutcome.Unknown,
-                    DescribeDraftCreationOutcomeUnknown(error, savedDraftEntryId) + DescribeCreatedFolderResidue(createdFolders)),
-                createdFolders);
+                    DescribeDraftCreationOutcomeUnknown(error, savedDraftEntryId)
+                    + DescribeCreatedFolderResidue(createdFolders)
+                    + DescribeAppearedFolderResidue(appearedFolders)),
+                createdFolders,
+                appearedFolders);
         }
 
         /// <summary>
@@ -5147,22 +5168,27 @@ namespace OutlookAI.Core.Services
         /// It used to share the catch-all's "a draft may have been saved", which cannot be true:
         /// the lookup comes before Outlook is given anything to save. What IS known is said
         /// instead - no draft exists - and then what became of the folder, from the lookup's own
-        /// re-check (Q96 (ii)): the folders it made before failing, named; or none, when the
-        /// re-check could prove it; or that it could not tell, when the mailbox's top-level
-        /// folders would not list. Pure and public so T1 pins every branch.
+        /// re-check (Q96 (ii)): the folders it made before failing, named; apart from them, the
+        /// folders that only appeared while it ran, never called created (Q96 question 1 (b));
+        /// or none of either, when the re-check could prove it; or that it could not tell, when
+        /// the mailbox's top-level folders would not list. Pure and public so T1 pins every branch.
         /// </summary>
         public static string DescribeDraftsFolderFailure(
             string account,
             string? comError,
             IReadOnlyList<string>? createdFolders,
-            bool creationChecked)
+            bool creationChecked,
+            IReadOnlyList<string>? appearedFolders = null)
         {
             string opening = "Outlook failed while opening the Drafts folder of account '" + account + "' ("
                 + (comError ?? "unknown") + "), so NO DRAFT WAS CREATED: the failure came before Outlook was given "
                 + "anything to save, so there is nothing to look for in Drafts.";
-            if (createdFolders != null && createdFolders.Count > 0)
+            bool created = createdFolders != null && createdFolders.Count > 0;
+            bool appeared = appearedFolders != null && appearedFolders.Count > 0;
+            if (created || appeared)
             {
-                return opening + DescribeCreatedFolderResidue(createdFolders) + RetryCannotDuplicateClause;
+                return opening + DescribeCreatedFolderResidue(createdFolders) + DescribeAppearedFolderResidue(appearedFolders)
+                    + RetryCannotDuplicateClause;
             }
 
             return creationChecked
@@ -5177,13 +5203,18 @@ namespace OutlookAI.Core.Services
         /// not make the reply or forward, or would not take the account or the new item. No
         /// draft exists, so the old "a draft may have been saved - check Drafts" is replaced by
         /// what is known. A folder the call made first (new_draft's Drafts, found before this
-        /// failed) is still named. Pure and public so T1 pins it.
+        /// failed) is still named, and so is one that only appeared (Q96 question 1 (b)). Pure
+        /// and public so T1 pins it.
         /// </summary>
-        public static string DescribeDraftNotStarted(string? comError, IReadOnlyList<string>? createdFolders)
+        public static string DescribeDraftNotStarted(
+            string? comError,
+            IReadOnlyList<string>? createdFolders,
+            IReadOnlyList<string>? appearedFolders = null)
         {
             return "The draft could not be created (" + (comError ?? "unknown") + "), and NO DRAFT WAS SAVED: the failure "
                 + "came before Outlook was given anything to save, so there is nothing to look for in Drafts."
                 + DescribeCreatedFolderResidue(createdFolders)
+                + DescribeAppearedFolderResidue(appearedFolders)
                 + RetryCannotDuplicateClause;
         }
 
@@ -5198,7 +5229,8 @@ namespace OutlookAI.Core.Services
         private static Exception BuildDerivedDraftFailure(
             string? error,
             string? savedDraftEntryId,
-            IReadOnlyList<string>? createdFolders = null)
+            IReadOnlyList<string>? createdFolders = null,
+            IReadOnlyList<string>? appearedFolders = null)
         {
             if (string.Equals(error, Com.ComErrorTokens.ItemNotFound, StringComparison.Ordinal))
             {
@@ -5213,8 +5245,10 @@ namespace OutlookAI.Core.Services
                 // Q96 (iii): Reply()/ReplyAll()/Forward(), or the account pin, failed - before the
                 // compose, so no draft exists. The same wording new_draft uses for the same moment.
                 return WithCreatedFolders(
-                    new OperationOutcomeException(Com.MutationOutcome.Unchanged, DescribeDraftNotStarted(earlyFailure, createdFolders)),
-                    createdFolders);
+                    new OperationOutcomeException(
+                        Com.MutationOutcome.Unchanged, DescribeDraftNotStarted(earlyFailure, createdFolders, appearedFolders)),
+                    createdFolders,
+                    appearedFolders);
             }
 
             return WithCreatedFolders(
@@ -5222,18 +5256,26 @@ namespace OutlookAI.Core.Services
                     Com.MutationOutcome.Unknown,
                     "The source mail could not be opened or the draft could not be created ("
                     + (error ?? "unknown") + "). " + DescribeSavedDraftResidue(savedDraftEntryId)
-                    + DescribeCreatedFolderResidue(createdFolders)),
-                createdFolders);
+                    + DescribeCreatedFolderResidue(createdFolders)
+                    + DescribeAppearedFolderResidue(appearedFolders)),
+                createdFolders,
+                appearedFolders);
         }
 
         /// <summary>
         /// Carries the folders a failed call CREATED (Q85) on its failure, so the tool's error
-        /// reports them in <c>createdFolders</c> exactly as the success result would have. The
-        /// message names them too (<see cref="DescribeCreatedFolderResidue"/>).
+        /// reports them in <c>createdFolders</c> exactly as the success result would have - and,
+        /// apart from them, what only appeared while a failed lookup ran, in
+        /// <c>appearedFolders</c> (Q96 question 1 (b)). The message names both
+        /// (<see cref="DescribeCreatedFolderResidue"/>, <see cref="DescribeAppearedFolderResidue"/>).
         /// </summary>
-        private static OperationOutcomeException WithCreatedFolders(OperationOutcomeException failure, IReadOnlyList<string>? createdFolders)
+        private static OperationOutcomeException WithCreatedFolders(
+            OperationOutcomeException failure,
+            IReadOnlyList<string>? createdFolders,
+            IReadOnlyList<string>? appearedFolders = null)
         {
             failure.CreatedFolders = CreatedFoldersField(createdFolders);
+            failure.AppearedFolders = CreatedFoldersField(appearedFolders);
             return failure;
         }
 
@@ -5268,6 +5310,12 @@ namespace OutlookAI.Core.Services
         /// Write-op audit (LIVE and load-bearing from Phase 4): the structured line is
         /// appended for every created draft; a failure surfaces with the draft's EntryID
         /// preserved in the message instead of being swallowed.
+        /// <para>
+        /// <paramref name="appearedFolders"/> is NOT written to the line: the audit log records
+        /// what this server did, and a folder that only appeared while a failed lookup ran is
+        /// exactly what it does not claim to have done (Q96 question 1 (b)). It travels on the
+        /// failure this raises instead, so a lost audit line does not lose it from the answer too.
+        /// </para>
         /// </summary>
         private static void AuditDraft(
             string operation,
@@ -5276,7 +5324,8 @@ namespace OutlookAI.Core.Services
             string? sourceEntryId,
             ComDraftBody body,
             IReadOnlyList<DraftAttachmentFile> attachments,
-            IReadOnlyList<string>? createdFolders = null)
+            IReadOnlyList<string>? createdFolders = null,
+            IReadOnlyList<string>? appearedFolders = null)
         {
             try
             {
@@ -5320,9 +5369,11 @@ namespace OutlookAI.Core.Services
                         Com.MutationOutcome.Applied,
                         "The draft was created (EntryID " + created.Draft.EntryId
                         + ") but the audit line could not be written: " + ex.Message
-                        + DescribeCreatedFolderResidue(createdFolders),
+                        + DescribeCreatedFolderResidue(createdFolders)
+                        + DescribeAppearedFolderResidue(appearedFolders),
                         ex),
-                    createdFolders);
+                    createdFolders,
+                    appearedFolders);
             }
         }
 
@@ -5385,12 +5436,17 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// Adds the Q85 report - the Drafts folder the call created, when it did - to a draft
+        /// Adds the Q85 report - the Drafts folder the call created, when it did, and apart from
+        /// it what only appeared while a failed lookup ran (Q96 question 1 (b)) - to a draft
         /// outcome. Kept apart from <see cref="ToDraftOutcome"/> so that mapping is unchanged.
         /// </summary>
-        private static DraftOutcome WithCreatedFolders(DraftOutcome outcome, IReadOnlyList<string>? createdFolders)
+        private static DraftOutcome WithCreatedFolders(
+            DraftOutcome outcome,
+            IReadOnlyList<string>? createdFolders,
+            IReadOnlyList<string>? appearedFolders = null)
         {
             outcome.CreatedFolders = CreatedFoldersField(createdFolders);
+            outcome.AppearedFolders = CreatedFoldersField(appearedFolders);
             return outcome;
         }
 
@@ -5816,11 +5872,14 @@ namespace OutlookAI.Core.Services
             }
 
             List<string> createdFolders = new List<string>();
+            List<string> appearedFolders = new List<string>();
             ComDraftDiscardResult discarded = _gateway.Run(s =>
             {
                 string? error = null;
-                ComDraftDiscardResult? r = s.TryDiscardDraft(entryId, storeId, out IReadOnlyList<string>? madeFolders, out error);
+                ComDraftDiscardResult? r = s.TryDiscardDraft(
+                    entryId, storeId, out IReadOnlyList<string>? madeFolders, out IReadOnlyList<string>? appearedHere, out error);
                 AddCreatedFolders(createdFolders, madeFolders);
+                AddAppearedFolders(appearedFolders, appearedHere);
                 if (ShouldSearchOtherStores(storeId, r != null, error))
                 {
                     // Unreachable until the COM layer began setting "ItemNotFound" here too
@@ -5829,8 +5888,9 @@ namespace OutlookAI.Core.Services
                     // that answered with a refusal has answered - the draft is not missing.
                     foreach (ComStoreDetail store in GetStoreDetails(s))
                     {
-                        r = s.TryDiscardDraft(entryId, store.StoreId, out madeFolders, out error);
+                        r = s.TryDiscardDraft(entryId, store.StoreId, out madeFolders, out appearedHere, out error);
                         AddCreatedFolders(createdFolders, madeFolders);
+                        AddAppearedFolders(appearedFolders, appearedHere);
                         if (!KeepSearchingStores(r != null, error))
                         {
                             break;
@@ -5838,10 +5898,10 @@ namespace OutlookAI.Core.Services
                     }
                 }
 
-                return r ?? throw BuildDraftRefusal("discard_draft", error, entryId, createdFolders);
+                return r ?? throw BuildDraftRefusal("discard_draft", error, entryId, createdFolders, appearedFolders);
             });
 
-            AuditDiscard(discarded, hitId, createdFolders);
+            AuditDiscard(discarded, hitId, createdFolders, appearedFolders);
             _draftRegistry.Forget(entryId);
 
             // The draft is in Deleted Items and its EntryID is dead, so any pre-image held for
@@ -5866,6 +5926,7 @@ namespace OutlookAI.Core.Services
                     : "Soft delete only - the draft was moved to " + (discarded.ToFolder ?? "Deleted Items")
                         + " and can be restored from there in Outlook.",
                 CreatedFolders = CreatedFoldersField(createdFolders),
+                AppearedFolders = CreatedFoldersField(appearedFolders),
             };
         }
 
@@ -5888,29 +5949,70 @@ namespace OutlookAI.Core.Services
         /// MAY OR MAY NOT have executed on the server. One mutating call with that semantic is
         /// enough to make "nothing was deleted" unassertable.
         /// </para>
+        /// <para>
+        /// Unassertable from the delete ON, and only from there (Q96 question 4 (b),
+        /// 2026-10-03): a failure while the discard was still reading the draft, its folder and
+        /// its store arrives as <see cref="Com.ComErrorTokens.DiscardNotStarted"/> and is refused
+        /// as <see cref="DiscardNotStartedRefusal"/> - the draft was NOT deleted, outcome
+        /// <c>unchanged</c> - instead of sending the caller to look in Deleted Items.
+        /// </para>
         /// </summary>
         private static Exception BuildDraftRefusal(
             string operation,
             string? comError,
             string entryId,
-            IReadOnlyList<string>? createdFolders = null)
+            IReadOnlyList<string>? createdFolders = null,
+            IReadOnlyList<string>? appearedFolders = null)
         {
             Exception refusal = BuildDraftRefusalCore(operation, comError, entryId);
-            if (CreatedFoldersField(createdFolders) is IReadOnlyList<string> created && refusal is DraftRefusedException refused)
+            IReadOnlyList<string>? created = CreatedFoldersField(createdFolders);
+            IReadOnlyList<string>? appeared = CreatedFoldersField(appearedFolders);
+            if ((created != null || appeared != null) && refusal is DraftRefusedException refused)
             {
                 // Q85: a folder the call made before it failed - discard_draft's Deleted Items -
-                // is reported on the refusal as well as in its message.
-                return new DraftRefusedException(refused.Reason, refused.Message + DescribeCreatedFolderResidue(created))
+                // is reported on the refusal as well as in its message; and apart from it, what
+                // only appeared while a failed lookup ran (Q96 question 1 (b)).
+                return new DraftRefusedException(
+                    refused.Reason,
+                    refused.Message + DescribeCreatedFolderResidue(created) + DescribeAppearedFolderResidue(appeared))
                 {
                     CreatedFolders = created,
+                    AppearedFolders = appeared,
                 };
             }
 
             return refusal;
         }
 
+        /// <summary>
+        /// The refusal code for a discard that failed BEFORE its delete was issued (Q96 question 4
+        /// (b), 2026-10-03): the draft was NOT deleted. A NAMED code, so the tool layer answers
+        /// <c>outcome: unchanged</c> - where the catch-all's <see cref="ComFailureRefusal"/> has to
+        /// answer <c>unknown</c>, because it also covers a failure of the delete itself.
+        /// </summary>
+        public const string DiscardNotStartedRefusal = "outlook_failed_before_delete";
+
+        /// <summary>
+        /// What discard_draft answers when Outlook failed before the delete was issued (Q96
+        /// question 4 (b)): reading the draft, its folder or its store. Nothing was deleted, so
+        /// the old "whether the draft was deleted is UNKNOWN - look in Deleted Items" is replaced
+        /// by what is known. Pure and public so T1 pins it.
+        /// </summary>
+        public static string DescribeDiscardNotStarted(string? comError)
+        {
+            return "Outlook failed while preparing to discard the draft (" + (comError ?? "unknown") + "), BEFORE the "
+                + "delete was issued - so the draft was NOT deleted: it is still where it was, unchanged, and there is "
+                + "nothing to look for in Deleted Items. Retrying is safe; check outlook_health first if Outlook may be busy.";
+        }
+
         private static Exception BuildDraftRefusalCore(string operation, string? comError, string entryId)
         {
+            if (Com.ComErrorTokens.TryRead(comError, Com.ComErrorTokens.DiscardNotStarted, out string earlyFailure))
+            {
+                // Q96 question 4 (b): set only by TryDiscardDraft, and only above its Delete().
+                return RefuseDraft(DiscardNotStartedRefusal, operation, entryId, DescribeDiscardNotStarted(earlyFailure));
+            }
+
             switch (comError)
             {
                 case "NotAMailItem":
@@ -6032,7 +6134,16 @@ namespace OutlookAI.Core.Services
             }
         }
 
-        private static void AuditDiscard(ComDraftDiscardResult discarded, string? hitId, IReadOnlyList<string>? createdFolders = null)
+        /// <summary>
+        /// The discard's audit line. As in <see cref="AuditDraft"/>, a folder that only appeared
+        /// (<paramref name="appearedFolders"/>) is not written to the line - this server does not
+        /// claim it - and travels on the failure a lost line raises instead.
+        /// </summary>
+        private static void AuditDiscard(
+            ComDraftDiscardResult discarded,
+            string? hitId,
+            IReadOnlyList<string>? createdFolders = null,
+            IReadOnlyList<string>? appearedFolders = null)
         {
             try
             {
@@ -6055,9 +6166,11 @@ namespace OutlookAI.Core.Services
                         "The draft was discarded (EntryID " + discarded.OldEntryId
                         + ", now in " + (discarded.ToFolder ?? "Deleted Items")
                         + ") but the audit line could not be written: " + ex.Message
-                        + DescribeCreatedFolderResidue(createdFolders),
+                        + DescribeCreatedFolderResidue(createdFolders)
+                        + DescribeAppearedFolderResidue(appearedFolders),
                         ex),
-                    createdFolders);
+                    createdFolders,
+                    appearedFolders);
             }
         }
 
@@ -7012,6 +7125,16 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
+        /// The same merge for the folders that only APPEARED while a failed lookup ran (Q96
+        /// question 1 (b)) - kept in a list of their own, so nothing downstream can read one as
+        /// a folder the call created.
+        /// </summary>
+        private static void AddAppearedFolders(List<string> into, IReadOnlyList<string>? appeared)
+        {
+            AddCreatedFolders(into, appeared);
+        }
+
+        /// <summary>
         /// Whether a refused or failed move left the item where it was. Every NAMED code is
         /// decided before <c>Move()</c> is called, so those are provably unchanged; the
         /// catch-all wraps the move itself and proves nothing.
@@ -7126,6 +7249,29 @@ namespace OutlookAI.Core.Services
                 + " still there: " + string.Join(", ", createdFolderPaths)
                 + ". Delete " + (createdFolderPaths.Count == 1 ? "it" : "them")
                 + " in Outlook if unwanted - this server cannot remove folders.";
+        }
+
+        /// <summary>
+        /// The clause for folders that only APPEARED while a failed lookup ran (Q96 question 1
+        /// (b), 2026-10-03), empty when there were none. It says what is known and nothing more:
+        /// they are new, they are not the folder the call asked for, and so this server does not
+        /// claim it created them. Pure, public so T1 can pin it on its own.
+        /// </summary>
+        public static string DescribeAppearedFolderResidue(IReadOnlyList<string>? appearedFolderPaths)
+        {
+            if (appearedFolderPaths == null || appearedFolderPaths.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            bool one = appearedFolderPaths.Count == 1;
+            return " NOTE: " + appearedFolderPaths.Count.ToString(CultureInfo.InvariantCulture)
+                + (one ? " folder" : " folders") + " APPEARED while the call ran: " + string.Join(", ", appearedFolderPaths)
+                + ". Outlook did not make " + (one ? "it" : "any of them")
+                + " the Drafts or Deleted Items folder this call asked for, so " + (one ? "it is" : "they are")
+                + " NOT claimed as created by this call - Outlook may have made " + (one ? "it" : "them")
+                + " before failing, or something else may have. Look at " + (one ? "it" : "them")
+                + " in Outlook; this server cannot remove folders.";
         }
 
         private static string DescribeMoveRefusal(string? comError, string targetFolder, string? requestedStore, bool createFolder)
@@ -8921,10 +9067,11 @@ namespace OutlookAI.Core.Services
             if (isDelegate)
             {
                 // Delegate items are indexed under the OWNER's /1/<delegate display name>
-                // subtree (Phase-1 fact 3).
+                // subtree (Phase-1 fact 3) - the name spelled the way the index spells names
+                // (MapiUrlSegment), which changes nothing unless it holds one of % / \ * ?.
                 foreach (StoreScopeInfo owner in catalog)
                 {
-                    if (_index.Value.ScopeHasAnyItem(owner.StorePrefix + "/1/" + displayName, timeout))
+                    if (_index.Value.ScopeHasAnyItem(DelegateScope(owner, displayName), timeout))
                     {
                         return true;
                     }
@@ -9008,7 +9155,7 @@ namespace OutlookAI.Core.Services
             // Delegate store: scope under an owner's /1/<name> subtree.
             foreach (StoreScopeInfo owner in catalog)
             {
-                string delegateScope = owner.StorePrefix + "/1/" + store;
+                string delegateScope = DelegateScope(owner, store);
                 bool exists;
                 try
                 {
@@ -9063,6 +9210,23 @@ namespace OutlookAI.Core.Services
             // tier skipped - never widened, because 'store' filters which mail may come back
             // and a widened scope would answer with another store's mail.
             return FolderScopeResolver.ForUnindexedStore(folder);
+        }
+
+        /// <summary>
+        /// The index scope of a delegate mailbox: its owner's store prefix, the delegate store
+        /// type <c>/1/</c>, and the delegate store's name spelled the way the index spells a
+        /// name (<see cref="MapiUrlSegment.Encode"/> - <c>% / \ * ?</c> percent-encoded, nothing
+        /// else). For a name without those characters this is the scope it always was.
+        /// <para>
+        /// The encoding of a NAME in a URL is documented by Microsoft for store and folder names
+        /// alike, and measured on test guests for a store and for folders; a delegate mailbox
+        /// is an Exchange shape no guest can have, so this half follows the documentation and
+        /// the measured primary-store spelling rather than a measurement of its own.
+        /// </para>
+        /// </summary>
+        internal static string DelegateScope(StoreScopeInfo owner, string delegateDisplayName)
+        {
+            return owner.StorePrefix + "/1/" + MapiUrlSegment.Encode(delegateDisplayName);
         }
 
         /// <summary>

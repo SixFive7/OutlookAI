@@ -63,6 +63,7 @@ public sealed class AtomicityClaimsTests
     [InlineData("compose_surface_unavailable")]
     [InlineData("signature_file_missing")]
     [InlineData("not_created_by_this_server")]
+    [InlineData("outlook_failed_before_delete")]
     public void ANamedRefusal_KeepsTheClaimItEarns(string reason)
     {
         // The other half, and it matters just as much: every named refusal IS decided before
@@ -360,6 +361,9 @@ public sealed class AtomicityClaimsTests
 
     private const string MadeDeletedItems = "tier@vm.invalid/Deleted Items";
 
+    /// <summary>A folder that only APPEARED while a failed lookup ran (Q96 question 1 (b)) - never one the call created.</summary>
+    private const string AppearedJunk = "tier@vm.invalid/Junk Email";
+
     [Fact]
     public void ANewDraftThatCreatedTheDraftsFolder_SaysSo_AndOneThatDidNot_SaysNothing()
     {
@@ -587,29 +591,197 @@ public sealed class AtomicityClaimsTests
     }
 
     [Fact]
-    public void AFailedLookupThatMadeTwoFolders_ReportsBoth()
+    public void AFailedLookupThatMadeItsFolder_WhileAnotherAppeared_ReportsEachForWhatItIs()
     {
-        // With no folder handed back, the re-check reports every folder that appeared; the
-        // contract carries a list for exactly this, and the failure keeps both.
+        // Q96 question 1 (b): the re-check proves the Drafts folder created - it now holds the
+        // slot - and only saw the other one appear. Each travels in its own field and sentence,
+        // and the one that only appeared is never called created.
         RecordingSession session = new RecordingSession
         {
             CreateRefusal = ComErrorTokens.With(ComErrorTokens.DraftsFolderUnavailable, "COMException 0x80004005"),
             CreatedFolder = MadeDrafts,
-            AlsoCreatedFolder = "tier@vm.invalid/Junk Email",
+            AppearedFolder = AppearedJunk,
         };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
         OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
             () => service.NewDraft("me@example.com", "them@example.com", null, "A subject", "body", display: false));
 
-        Assert.Equal(new[] { MadeDrafts, "tier@vm.invalid/Junk Email" }, failure.CreatedFolders);
-        Assert.Contains("2 folders were CREATED before this failed", failure.Message, StringComparison.Ordinal);
+        Assert.Equal(MutationOutcome.Unchanged, failure.Outcome);
+        Assert.Equal(new[] { MadeDrafts }, failure.CreatedFolders);
+        Assert.Equal(new[] { AppearedJunk }, failure.AppearedFolders);
+        Assert.Contains("1 folder was CREATED before this failed and it is still there: " + MadeDrafts, failure.Message, StringComparison.Ordinal);
+        Assert.Contains("1 folder APPEARED while the call ran: " + AppearedJunk, failure.Message, StringComparison.Ordinal);
+        Assert.Contains("NOT claimed as created by this call", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("No folder was created", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AFailedLookupThatOnlySawAFolderAppear_NeverSaysItCreatedOne_NorThatNoneAppeared()
+    {
+        // The whole point of question 1 (b): a folder nothing shows to be the call's own is
+        // reported - and only as having appeared. "No folder was created either" would be true
+        // of the created list and still hide the folder, so it is not said either.
+        RecordingSession session = new RecordingSession
+        {
+            CreateRefusal = ComErrorTokens.With(ComErrorTokens.DraftsFolderUnavailable, "COMException 0x80004005"),
+            AppearedFolder = AppearedJunk,
+        };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
+            () => service.NewDraft("me@example.com", "them@example.com", null, "A subject", "body", display: false));
+
+        Assert.Equal(MutationOutcome.Unchanged, failure.Outcome);
+        Assert.Null(failure.CreatedFolders);
+        Assert.Equal(new[] { AppearedJunk }, failure.AppearedFolders);
+        Assert.Contains("NO DRAFT WAS CREATED", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("APPEARED while the call ran", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("CREATED before this failed", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("No folder was created", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("reply")]
+    [InlineData("forward")]
+    public void AReplyOrForwardWhoseLookupFailed_StillSucceeds_AndReportsWhatAppeared_ApartFromWhatItCreated(string tool)
+    {
+        // A derived draft whose Drafts lookup failed is not a failure - the draft stays where
+        // Outlook first saved it - so the folders the lookup's re-check found ride on the SUCCESS
+        // result, each in its own field.
+        RecordingSession session = new RecordingSession { CreatedFolder = MadeDrafts, AppearedFolder = AppearedJunk };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        DraftOutcome made = tool == "reply"
+            ? service.ReplyDraft(ItemId, "body", display: false)
+            : service.ForwardDraft(ItemId, "body", "them@example.com", display: false);
+
+        Assert.Equal(new[] { MadeDrafts }, made.CreatedFolders);
+        Assert.Equal(new[] { AppearedJunk }, made.AppearedFolders);
+
+        session.CreatedFolder = null;
+        session.AppearedFolder = null;
+        DraftOutcome plain = tool == "reply"
+            ? service.ReplyDraft(ItemId, "body", display: false)
+            : service.ForwardDraft(ItemId, "body", "them@example.com", display: false);
+        Assert.Null(plain.CreatedFolders);
+        Assert.Null(plain.AppearedFolders);
+    }
+
+    [Fact]
+    public void ADiscardWhoseLookupFailed_ReportsWhatAppeared_OnSuccessAndOnFailure()
+    {
+        RecordingSession session = new RecordingSession { AppearedFolder = AppearedJunk };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        service.DraftRegistry.Register(DraftId);
+        DiscardDraftOutcome made = service.DiscardDraft(DraftId);
+        Assert.Null(made.CreatedFolders);
+        Assert.Equal(new[] { AppearedJunk }, made.AppearedFolders);
+
+        session.DiscardRefusal = "COMException 0x800706BE";
+        service.DraftRegistry.Register(DraftId);
+        DraftRefusedException refusal = Assert.Throws<DraftRefusedException>(() => service.DiscardDraft(DraftId));
+        Assert.Null(refusal.CreatedFolders);
+        Assert.Equal(new[] { AppearedJunk }, refusal.AppearedFolders);
+        Assert.Contains("APPEARED while the call ran: " + AppearedJunk, refusal.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("CREATED before this failed", refusal.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheAppearedClause_IsEmptyForNone_AndNeverCallsAFolderCreated()
+    {
+        Assert.Equal(string.Empty, MailService.DescribeAppearedFolderResidue(null));
+        Assert.Equal(string.Empty, MailService.DescribeAppearedFolderResidue(Array.Empty<string>()));
+
+        string one = MailService.DescribeAppearedFolderResidue(new[] { AppearedJunk });
+        Assert.Contains("1 folder APPEARED while the call ran: " + AppearedJunk, one, StringComparison.Ordinal);
+        Assert.Contains("did not make it the Drafts or Deleted Items folder", one, StringComparison.Ordinal);
+        Assert.DoesNotContain("CREATED", one, StringComparison.Ordinal);
+
+        string two = MailService.DescribeAppearedFolderResidue(new[] { AppearedJunk, MadeDrafts });
+        Assert.Contains("2 folders APPEARED while the call ran: " + AppearedJunk + ", " + MadeDrafts, two, StringComparison.Ordinal);
+        Assert.Contains("did not make any of them", two, StringComparison.Ordinal);
+        Assert.Contains("they are NOT claimed as created", two, StringComparison.Ordinal);
+    }
+
+    // ---------------------------------------------------------------- Q96 question 4 (b): a discard that failed before its delete
+
+    [Fact]
+    public void ADiscardThatFailedBeforeTheDelete_SaysTheDraftWasNotDeleted_AndItsOutcomeIsUnchanged()
+    {
+        // Reading the draft, its folder or its store failed - the delete was never issued, so
+        // "whether the draft was deleted is UNKNOWN - look in Deleted Items" was a claim that
+        // cannot be true there. What is known is said instead, and the outcome field agrees.
+        RecordingSession session = new RecordingSession
+        {
+            DiscardRefusal = ComErrorTokens.With(ComErrorTokens.DiscardNotStarted, "COMException 0x80004005"),
+        };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        service.DraftRegistry.Register(DraftId);
+        DraftRefusedException refusal = Assert.Throws<DraftRefusedException>(() => service.DiscardDraft(DraftId));
+
+        Assert.Equal(MailService.DiscardNotStartedRefusal, refusal.Reason);
+        Assert.Equal("outlook_failed_before_delete", refusal.Reason);
+        Assert.Contains("the draft was NOT deleted", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("COMException 0x80004005", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("BEFORE the delete was issued", refusal.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("UNKNOWN", refusal.Message, StringComparison.Ordinal);
+        Assert.Equal(MutationOutcome.Unchanged, OutlookTools.DraftRefusalOutcome(refusal.Reason));
+        Assert.Contains("Nothing was changed or deleted", OutlookTools.DraftRefusalAdvice(refusal.Reason), StringComparison.Ordinal);
+        Assert.Null(refusal.CreatedFolders);
+    }
+
+    [Fact]
+    public void ADiscardThatFailedFromTheDeleteOn_StaysUnknown()
+    {
+        // The control: a bare COM failure is the catch-all past the marker, where the delete may
+        // have run - so it keeps the UNKNOWN wording and the unknown outcome.
+        RecordingSession session = new RecordingSession { DiscardRefusal = "COMException 0x800706BE" };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        service.DraftRegistry.Register(DraftId);
+        DraftRefusedException refusal = Assert.Throws<DraftRefusedException>(() => service.DiscardDraft(DraftId));
+
+        Assert.Equal(MailService.ComFailureRefusal, refusal.Reason);
+        Assert.Contains("WHETHER THE DRAFT WAS DELETED IS UNKNOWN", refusal.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("NOT deleted", refusal.Message, StringComparison.Ordinal);
+        Assert.Equal(MutationOutcome.Unknown, OutlookTools.DraftRefusalOutcome(refusal.Reason));
+    }
+
+    [Fact]
+    public void TheDiscardNotStartedSentence_IsWhatTheRefusalCarries()
+    {
+        string sentence = MailService.DescribeDiscardNotStarted("COMException 0x80004005");
+
+        Assert.Contains("the draft was NOT deleted", sentence, StringComparison.Ordinal);
+        Assert.Contains("nothing to look for in Deleted Items", sentence, StringComparison.Ordinal);
+        Assert.Contains("Retrying is safe", sentence, StringComparison.Ordinal);
+        Assert.Contains("(unknown)", MailService.DescribeDiscardNotStarted(null), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheCatchAllHelpers_TokeniseOnlyAboveTheirMarker()
+    {
+        // The COM half that feeds the two markers (Q96 (iii) and question 4 (b)): below the
+        // marker the bare COM description, as it always was; above it the token that lets the
+        // service say nothing happened. The markers themselves are pinned in the source
+        // (ReadOnlyFolderLookupTests), because no T1 test can run the COM sequence.
+        System.Runtime.InteropServices.COMException failure =
+            new System.Runtime.InteropServices.COMException("The operation failed.", unchecked((int)0x80004005));
+
+        Assert.Equal("DiscardNotStarted:COMException 0x80004005", OutlookComSession.DiscardFailure(deleteStarted: false, failure));
+        Assert.Equal("COMException 0x80004005", OutlookComSession.DiscardFailure(deleteStarted: true, failure));
+        Assert.Equal("DraftNotStarted:COMException 0x80004005", OutlookComSession.DraftFailure(draftMayExist: false, failure));
+        Assert.Equal("COMException 0x80004005", OutlookComSession.DraftFailure(draftMayExist: true, failure));
     }
 
     [Theory]
     [InlineData(ComErrorTokens.DraftNotStarted)]
     [InlineData(ComErrorTokens.DraftsFolderUnavailable)]
     [InlineData(ComErrorTokens.DraftsFolderCreationUnverified)]
+    [InlineData(ComErrorTokens.DiscardNotStarted)]
     public void TheDraftTokens_RoundTrip_AndNeverMatchEachOtherOrTheRetryToken(string token)
     {
         string written = ComErrorTokens.With(token, "COMException 0x80004005");
@@ -618,7 +790,7 @@ public sealed class AtomicityClaimsTests
         Assert.Equal("COMException 0x80004005", detail);
         Assert.True(ComErrorTokens.TryRead(token, token, out string bare));
         Assert.Equal("unknown", bare);
-        foreach (string other in new[] { ComErrorTokens.DraftNotStarted, ComErrorTokens.DraftsFolderUnavailable, ComErrorTokens.DraftsFolderCreationUnverified, ComErrorTokens.ItemNotFound })
+        foreach (string other in new[] { ComErrorTokens.DraftNotStarted, ComErrorTokens.DraftsFolderUnavailable, ComErrorTokens.DraftsFolderCreationUnverified, ComErrorTokens.DiscardNotStarted, ComErrorTokens.ItemNotFound })
         {
             if (other != token)
             {
@@ -651,7 +823,70 @@ public sealed class AtomicityClaimsTests
         using (JsonDocument parsed = JsonDocument.Parse(without))
         {
             Assert.False(parsed.RootElement.GetProperty("error").TryGetProperty("createdFolders", out _));
+            Assert.False(parsed.RootElement.GetProperty("error").TryGetProperty("appearedFolders", out _));
         }
+    }
+
+    [Fact]
+    public void TheErrorPayload_CarriesAppearedFolders_ApartFromCreatedFolders()
+    {
+        // Q96 question 1 (b), on the wire: its own field, present only when a folder appeared,
+        // and never folded into createdFolders.
+        string with = ErrorJson(OutlookTools.Error(
+            "OperationFailed", "m", null, outcome: MutationOutcome.Unchanged, appearedFolders: new[] { AppearedJunk }));
+
+        using JsonDocument parsed = JsonDocument.Parse(with);
+        JsonElement error = parsed.RootElement.GetProperty("error");
+        Assert.Equal(AppearedJunk, Assert.Single(error.GetProperty("appearedFolders").EnumerateArray()).GetString());
+        Assert.False(error.TryGetProperty("createdFolders", out _));
+    }
+
+    [Fact]
+    public async Task AFailedNewDraft_ThroughTheToolLayer_CarriesBothFields_EachWithItsOwnFolders()
+    {
+        // The mapping the server runs (GuardAsync), in-process: the service's exception reaches
+        // the wire with created and appeared kept apart, so the arm that carries them out is
+        // proven too - not only the payload builder.
+        RecordingSession session = new RecordingSession
+        {
+            CreateRefusal = ComErrorTokens.With(ComErrorTokens.DraftsFolderUnavailable, "COMException 0x80004005"),
+            CreatedFolder = MadeDrafts,
+            AppearedFolder = AppearedJunk,
+        };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        ModelContextProtocol.Protocol.CallToolResult result = await OutlookTools.GuardAsync(
+            CancellationToken.None,
+            () => service.NewDraft("me@example.com", "them@example.com", null, "A subject", "body", display: false));
+
+        using JsonDocument parsed = JsonDocument.Parse(ErrorJson(result));
+        JsonElement error = parsed.RootElement.GetProperty("error");
+        Assert.Equal("unchanged", error.GetProperty("outcome").GetString());
+        Assert.Equal(MadeDrafts, Assert.Single(error.GetProperty("createdFolders").EnumerateArray()).GetString());
+        Assert.Equal(AppearedJunk, Assert.Single(error.GetProperty("appearedFolders").EnumerateArray()).GetString());
+    }
+
+    [Fact]
+    public async Task ADiscardThatFailedBeforeTheDelete_ReachesTheWireAsUnchanged()
+    {
+        RecordingSession session = new RecordingSession
+        {
+            DiscardRefusal = ComErrorTokens.With(ComErrorTokens.DiscardNotStarted, "COMException 0x80004005"),
+            AppearedFolder = AppearedJunk,
+        };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+        service.DraftRegistry.Register(DraftId);
+
+        ModelContextProtocol.Protocol.CallToolResult result = await OutlookTools.GuardAsync(
+            CancellationToken.None, () => service.DiscardDraft(DraftId));
+
+        using JsonDocument parsed = JsonDocument.Parse(ErrorJson(result));
+        JsonElement error = parsed.RootElement.GetProperty("error");
+        Assert.Equal("DraftRefused", error.GetProperty("type").GetString());
+        Assert.Equal("outlook_failed_before_delete", error.GetProperty("reason").GetString());
+        Assert.Equal("unchanged", error.GetProperty("outcome").GetString());
+        Assert.Contains("NOT deleted", error.GetProperty("message").GetString(), StringComparison.Ordinal);
+        Assert.Equal(AppearedJunk, Assert.Single(error.GetProperty("appearedFolders").EnumerateArray()).GetString());
     }
 
     private static string ErrorJson(ModelContextProtocol.Protocol.CallToolResult result)
@@ -973,6 +1208,25 @@ public sealed class AtomicityClaimsTests
         Assert.Contains("never silently does nothing", description, StringComparison.Ordinal);
         Assert.Contains("UNKNOWN", description, StringComparison.Ordinal);
         Assert.Contains("Deleted Items rather than assuming nothing happened", description, StringComparison.Ordinal);
+
+        // Q96 question 4 (b): the one case where the negative IS known is taught too.
+        Assert.Contains("A failure before the delete says the draft was NOT deleted", description, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("new_draft")]
+    [InlineData("reply_draft")]
+    [InlineData("replyall_draft")]
+    [InlineData("forward_draft")]
+    [InlineData("discard_draft")]
+    public void EveryToolThatCanCreateAFolder_TeachesTheAppearedFoldersField(string tool)
+    {
+        // A field nothing reads is cost with no benefit (Q96 question 1 (b)): each tool whose
+        // lookup can be re-checked says where a folder that only appeared is reported.
+        string description = DescriptionOf(tool);
+
+        Assert.Contains("appearedFolders", description, StringComparison.Ordinal);
+        Assert.Contains("not claimed as created", description, StringComparison.Ordinal);
     }
 
     private static string DescriptionOf(string toolName)
@@ -1079,11 +1333,20 @@ public sealed class AtomicityClaimsTests
         /// <summary>A second folder the same call reports - what a failed lookup's re-check can find (Q96 (ii)).</summary>
         internal string? AlsoCreatedFolder { get; set; }
 
+        /// <summary>A folder the call reports as having only APPEARED while a failed lookup ran (Q96 question 1 (b)).</summary>
+        internal string? AppearedFolder { get; set; }
+
         /// <summary>The <c>createdFolders</c> out parameter as the COM layer fills it: null when nothing was made.</summary>
         private IReadOnlyList<string>? CreatedFolders()
         {
             List<string> made = new[] { CreatedFolder, AlsoCreatedFolder }.Where(f => f != null).Select(f => f!).ToList();
             return made.Count > 0 ? made : null;
+        }
+
+        /// <summary>The <c>appearedFolders</c> out parameter as the COM layer fills it: null when none appeared.</summary>
+        private IReadOnlyList<string>? AppearedFolders()
+        {
+            return AppearedFolder == null ? null : new[] { AppearedFolder };
         }
 
         private static ComDraftInfo Snapshot()
@@ -1104,6 +1367,7 @@ public sealed class AtomicityClaimsTests
                 case nameof(IOutlookSession.TryCreateDerivedDraft):
                     SetOut(method, args, "savedDraftEntryId", SavedDraftEntryId);
                     SetOut(method, args, "createdFolders", CreatedFolders());
+                    SetOut(method, args, "appearedFolders", AppearedFolders());
                     if (CreateRefusal != null)
                     {
                         SetOut(method, args, "error", CreateRefusal);
@@ -1114,6 +1378,7 @@ public sealed class AtomicityClaimsTests
 
                 case nameof(IOutlookSession.TryDiscardDraft):
                     SetOut(method, args, "createdFolders", CreatedFolders());
+                    SetOut(method, args, "appearedFolders", AppearedFolders());
                     if (DiscardRefusal != null)
                     {
                         SetOut(method, args, "error", DiscardRefusal);

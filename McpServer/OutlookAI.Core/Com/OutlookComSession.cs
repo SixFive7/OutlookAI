@@ -3511,11 +3511,13 @@ namespace OutlookAI.Core.Com
             ComDraftOptions? options,
             out string? savedDraftEntryId,
             out IReadOnlyList<string>? createdFolders,
+            out IReadOnlyList<string>? appearedFolders,
             out string? error)
         {
             EnsureNotDisposed();
             savedDraftEntryId = null;
             createdFolders = null;
+            appearedFolders = null;
             if (string.IsNullOrWhiteSpace(accountSmtpAddress))
             {
                 throw new ArgumentException("Account SMTP address must not be blank.", nameof(accountSmtpAddress));
@@ -3539,6 +3541,7 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             string? capturedSavedEntryId = null;
             IReadOnlyList<string>? capturedCreatedFolders = null;
+            IReadOnlyList<string>? capturedAppearedFolders = null;
             ComDraftCreateResult? result = _runner.Run<ComDraftCreateResult?>(() =>
             {
                 // D49: an unpinned session kills the Outlook it composes in - see
@@ -3601,13 +3604,16 @@ namespace OutlookAI.Core.Com
                     catch (Exception ex) when (IsComCallFailure(ex))
                     {
                         // Q96 (ii)/(iii): the lookup itself failed, so no draft exists - and the
-                        // lookup re-checked whether it made the folder before failing.
+                        // lookup re-checked whether it made the folder before failing; what only
+                        // appeared meanwhile is handed back apart from it (question 1 (b)).
                         capturedCreatedFolders = CreatedFoldersOf(draftsReport, null, deliveryStoreName);
+                        capturedAppearedFolders = AppearedFoldersOf(draftsReport, deliveryStoreName);
                         capturedError = DraftsLookupFailure(draftsReport, DescribeComFailure(ex));
                         return null;
                     }
 
                     capturedCreatedFolders = CreatedFoldersOf(draftsReport, draftsFolder, deliveryStoreName);
+                    capturedAppearedFolders = AppearedFoldersOf(draftsReport, deliveryStoreName);
                     if (draftsFolder == null)
                     {
                         // The lookup answered no folder - nowhere to put a draft, and none made.
@@ -3728,6 +3734,7 @@ namespace OutlookAI.Core.Com
 
             savedDraftEntryId = capturedSavedEntryId;
             createdFolders = capturedCreatedFolders;
+            appearedFolders = capturedAppearedFolders;
             error = capturedError;
             return result;
         }
@@ -3752,11 +3759,13 @@ namespace OutlookAI.Core.Com
             ComDraftOptions? options,
             out string? savedDraftEntryId,
             out IReadOnlyList<string>? createdFolders,
+            out IReadOnlyList<string>? appearedFolders,
             out string? error)
         {
             EnsureNotDisposed();
             savedDraftEntryId = null;
             createdFolders = null;
+            appearedFolders = null;
             if (string.IsNullOrWhiteSpace(sourceEntryIdHex))
             {
                 throw new ArgumentException("Source EntryID must not be blank.", nameof(sourceEntryIdHex));
@@ -3775,6 +3784,7 @@ namespace OutlookAI.Core.Com
             string? capturedError = null;
             string? capturedSavedEntryId = null;
             IReadOnlyList<string>? capturedCreatedFolders = null;
+            IReadOnlyList<string>? capturedAppearedFolders = null;
             ComDraftCreateResult? result = _runner.Run<ComDraftCreateResult?>(() =>
             {
                 // D49: an unpinned session kills the Outlook it composes in - see
@@ -3942,8 +3952,10 @@ namespace OutlookAI.Core.Com
                             // draft stays where Outlook saved it.
                         }
 
-                        // On every path, the failed lookup's re-check included (Q96 (ii)).
+                        // On every path, the failed lookup's re-check included (Q96 (ii)) - what
+                        // it proves created, and apart from that what only appeared (question 1 (b)).
                         capturedCreatedFolders = CreatedFoldersOf(draftsReport, draftsFolder, sourceStoreName);
+                        capturedAppearedFolders = AppearedFoldersOf(draftsReport, sourceStoreName);
                     }
 
                     if (draftsFolder != null)
@@ -4014,6 +4026,7 @@ namespace OutlookAI.Core.Com
 
             savedDraftEntryId = capturedSavedEntryId;
             createdFolders = capturedCreatedFolders;
+            appearedFolders = capturedAppearedFolders;
             error = capturedError;
             return result;
         }
@@ -5420,10 +5433,16 @@ namespace OutlookAI.Core.Com
         /// A best-effort re-locate in Deleted Items returns the new EntryID so the discard
         /// stays reversible in the same way a move is (D39).
         /// </summary>
-        public ComDraftDiscardResult? TryDiscardDraft(string entryIdHex, string? storeId, out IReadOnlyList<string>? createdFolders, out string? error)
+        public ComDraftDiscardResult? TryDiscardDraft(
+            string entryIdHex,
+            string? storeId,
+            out IReadOnlyList<string>? createdFolders,
+            out IReadOnlyList<string>? appearedFolders,
+            out string? error)
         {
             EnsureNotDisposed();
             createdFolders = null;
+            appearedFolders = null;
             if (string.IsNullOrWhiteSpace(entryIdHex))
             {
                 throw new ArgumentException("EntryID must not be blank.", nameof(entryIdHex));
@@ -5431,12 +5450,18 @@ namespace OutlookAI.Core.Com
 
             string? capturedError = null;
             IReadOnlyList<string>? capturedCreatedFolders = null;
+            IReadOnlyList<string>? capturedAppearedFolders = null;
             ComDraftDiscardResult? result = _runner.Run<ComDraftDiscardResult?>(() =>
             {
                 dynamic ns = _namespace!;
                 object? item = null;
                 object? parent = null;
                 object? parentStore = null;
+
+                // Flips immediately before the delete - the one call that moves the draft - so a
+                // failure above it can say the draft was NOT deleted instead of "whether it was
+                // deleted is unknown" (Q96 question 4 (b)).
+                bool deleteStarted = false;
                 try
                 {
                     try
@@ -5501,11 +5526,12 @@ namespace OutlookAI.Core.Com
                                 {
                                 }
 
-                                // On every path, the failed lookup's re-check included (Q96 (ii)).
-                                capturedCreatedFolders = CreatedFoldersOf(
-                                    deletedReport,
-                                    deleted,
-                                    info.StoreDisplayName ?? TryGetString(() => (string?)((dynamic)parentStore!).DisplayName));
+                                // On every path, the failed lookup's re-check included (Q96 (ii)) -
+                                // what it proves created, and apart from that what only appeared.
+                                string? deletedStoreName = info.StoreDisplayName
+                                    ?? TryGetString(() => (string?)((dynamic)parentStore!).DisplayName);
+                                capturedCreatedFolders = CreatedFoldersOf(deletedReport, deleted, deletedStoreName);
+                                capturedAppearedFolders = AppearedFoldersOf(deletedReport, deletedStoreName);
                                 if (deleted != null)
                                 {
                                     deletedItemsName = TryGetString(() => (string?)((dynamic)deleted!).Name);
@@ -5520,7 +5546,8 @@ namespace OutlookAI.Core.Com
                     }
 
                     // THE soft delete. Never PermanentlyDelete - S1 v3 allows a draft to be
-                    // put in the bin, never to be destroyed.
+                    // put in the bin, never to be destroyed. From here on the draft may be gone.
+                    deleteStarted = true;
                     ((dynamic)item!).Delete();
 
                     string? newEntryId = deletedItemsEntryId == null
@@ -5537,7 +5564,7 @@ namespace OutlookAI.Core.Com
                 }
                 catch (Exception ex) when (IsComCallFailure(ex))
                 {
-                    capturedError = DescribeComFailure(ex);
+                    capturedError = DiscardFailure(deleteStarted, ex);
                     return null;
                 }
                 finally
@@ -5549,6 +5576,7 @@ namespace OutlookAI.Core.Com
             });
 
             createdFolders = capturedCreatedFolders;
+            appearedFolders = capturedAppearedFolders;
             error = capturedError;
             return result;
         }
@@ -5584,6 +5612,18 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
+        /// Every folder that only APPEARED while one must-report lookup's creating call failed -
+        /// new at the top of the store, and not the folder the call asked for - labelled like a
+        /// creation and handed back apart from them, or null when there was none (Q96 question
+        /// 1 (b)). Never merged into <see cref="CreatedFoldersOf"/>: nothing proves the call made it.
+        /// </summary>
+        private static IReadOnlyList<string>? AppearedFoldersOf(CreatingLookupReport report, string? storeDisplayName)
+        {
+            IReadOnlyList<string> labels = SpecialFolders.AppearedDuringFailedCallLabels(report, storeDisplayName);
+            return labels.Count > 0 ? labels : null;
+        }
+
+        /// <summary>
         /// The error a failed Drafts lookup leaves for new_draft (Q96): no draft exists, and the
         /// token says whether the lookup could establish what it created before failing.
         /// </summary>
@@ -5597,13 +5637,28 @@ namespace OutlookAI.Core.Com
         /// <summary>
         /// The error a draft creator's catch-all leaves: the bare COM failure once a draft may
         /// exist, as it always was, and <see cref="ComErrorTokens.DraftNotStarted"/> before then
-        /// (Q96 (iii)), so the caller is not told a draft may have been saved when none can have been.
+        /// (Q96 (iii)), so the caller is not told a draft may have been saved when none can have
+        /// been. Internal so T1 pins both halves; the marker that feeds it is pinned in the source.
         /// </summary>
-        private static string DraftFailure(bool draftMayExist, Exception failure)
+        internal static string DraftFailure(bool draftMayExist, Exception failure)
         {
             return draftMayExist
                 ? DescribeComFailure(failure)
                 : ComErrorTokens.With(ComErrorTokens.DraftNotStarted, DescribeComFailure(failure));
+        }
+
+        /// <summary>
+        /// The error discard_draft's catch-all leaves: the bare COM failure once the delete was
+        /// issued - whether the draft is gone is then unknown, as it always was - and
+        /// <see cref="ComErrorTokens.DiscardNotStarted"/> before it (Q96 question 4 (b)), so the
+        /// caller is told the draft was NOT deleted instead of being sent to look in Deleted
+        /// Items. Internal so T1 pins both halves; the marker that feeds it is pinned in the source.
+        /// </summary>
+        internal static string DiscardFailure(bool deleteStarted, Exception failure)
+        {
+            return deleteStarted
+                ? DescribeComFailure(failure)
+                : ComErrorTokens.With(ComErrorTokens.DiscardNotStarted, DescribeComFailure(failure));
         }
 
         /// <summary>

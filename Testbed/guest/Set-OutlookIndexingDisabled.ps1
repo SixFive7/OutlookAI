@@ -400,6 +400,16 @@ $MapiRuleFollowFlags = 0
 # (OutlookAI.Core/IndexSearch/IndexClients.cs, OleDbIndexClient.ConnectionString).
 $CollatorConnectionString = "Provider=Search.CollatorDSO;Extended Properties='Application=Windows';"
 
+# How long the row COUNT (Measure-MapiRows) may run, in seconds. It reads every Outlook row in the
+# catalog, and ADO's default command timeout of 30 s ends it with QUERY_E_TIMEDOUT (0x80041607) once
+# the catalog is large enough: MEASURED on OAI-INDEXED 2026-10-03, with the 160,000-item corpus in,
+# both readings of 180,989 rows failed at exactly 30 s on an IDLE catalog with nothing queued - and
+# a probe that fails is NO-INDEXER, so the verdict called a healthy index absent. Two hours earlier
+# 74,444 rows took 26 s. The product's own ceiling (OleDbIndexClient.DefaultCommandTimeoutSeconds,
+# 60 s) is for one search; this is a census of the whole catalog, so it gets room for a production
+# profile several times this size. The TOP 1 probes keep the default.
+$CountCommandTimeoutSeconds = 900
+
 # The statements, matching OutlookAI.Core/IndexSearch/WsSqlBuilder.cs.
 $ProbeControlSql = 'SELECT TOP 1 System.ItemUrl FROM SystemIndex'
 $ProbeMailSql = "SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE System.Kind='email'"
@@ -730,7 +740,9 @@ function Invoke-IndexProbe {
 
 # EVERY row under this account's Outlook scope, counted and grouped by store - the store is the
 # first path segment after mapi16://{SID}/, "<StoreDisplayName>($hash)". A few seconds for tens of
-# thousands of rows. Reached = $false when the catalog could not be read; never a silent zero.
+# thousands of rows, about a minute for 180,000 - which is why it runs under its own command
+# timeout ($CountCommandTimeoutSeconds), set on the connection the recordset opens through.
+# Reached = $false when the catalog could not be read; never a silent zero.
 function Measure-MapiRows {
     $scope = Get-MapiScopeUrl
     $connection = $null
@@ -739,6 +751,7 @@ function Measure-MapiRows {
     $total = 0
     try {
         $connection = New-Object -ComObject 'ADODB.Connection'
+        $connection.CommandTimeout = $CountCommandTimeoutSeconds
         $connection.Open($CollatorConnectionString)
         $recordset = New-Object -ComObject 'ADODB.Recordset'
         $recordset.Open("SELECT System.ItemUrl FROM SystemIndex WHERE SCOPE='" + $scope + "'", $connection)

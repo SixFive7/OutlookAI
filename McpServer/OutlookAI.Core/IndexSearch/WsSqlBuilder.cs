@@ -459,6 +459,13 @@ namespace OutlookAI.Core.IndexSearch
         /// return 0 against a real Inbox, so '=' is not LIKE), and spaces must stay
         /// literal (a %20-encoded space returns 0 - the MAPI handler already encoded its
         /// URLs at index time).
+        /// <para>
+        /// The value is a path of NAMES, never the URL's spelling of them: a folder called
+        /// <c>50% off</c> reads <c>.../50% off</c> here and <c>.../50%25 off</c> in its URL
+        /// (measured for all five percent-encoded characters, <c>McpServer/README.md</c>
+        /// load-bearing fact 17). <c>MapiItemUrl.TryBuildFolderPathDisplay</c> decodes
+        /// accordingly; nothing here encodes or decodes.
+        /// </para>
         /// </summary>
         private static string BuildFolderPathPredicate(IReadOnlyList<string> folderPaths)
         {

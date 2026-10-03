@@ -2187,6 +2187,15 @@ namespace OutlookAI.Core.Services
         /// archive_mail's <c>createdFolders</c> names an Archive folder it made.
         /// </summary>
         public IReadOnlyList<string>? CreatedFolders { get; set; }
+
+        /// <summary>
+        /// Folders that only APPEARED while a failed Drafts lookup of this call ran, as
+        /// <c>store/path</c> - absent otherwise. Never claimed as created by the call: Outlook
+        /// may have made them before failing, or something else may have (Q96 question 1 (b)).
+        /// A reply or forward whose lookup failed still succeeds, with the draft where Outlook
+        /// first saved it, so this can be present on a success.
+        /// </summary>
+        public IReadOnlyList<string>? AppearedFolders { get; set; }
     }
 
     /// <summary>
@@ -2373,6 +2382,12 @@ namespace OutlookAI.Core.Services
         /// Microsoft 365 mailbox always has one, and so does every data file Outlook makes.
         /// </summary>
         public IReadOnlyList<string>? CreatedFolders { get; set; }
+
+        /// <summary>
+        /// Folders that only APPEARED while a failed Deleted Items lookup of this call ran, as
+        /// <c>store/path</c> - absent otherwise; never claimed as created (Q96 question 1 (b)).
+        /// </summary>
+        public IReadOnlyList<string>? AppearedFolders { get; set; }
     }
 
     /// <summary>

@@ -670,4 +670,46 @@ public sealed class LiveTestSettingsTemplateTests
         Assert.Equal(generated.SubjectTerm, example["subjectOnlyProbe"]!["subjectTerm"]!.GetValue<string>());
         Assert.Equal(generated.SenderFragment, example["subjectOnlyProbe"]!["senderFragment"]!.GetValue<string>());
     }
+
+    [Fact]
+    public void TheIndexedGuestsCorpus_DeclaresOnlyThe30And60DayWindows_AndStaysFreshUntilTheDateItsNoteGives()
+    {
+        // Decided on the maintainer's behalf 2026-10-03 (D103 of Docs/overnight-review-2026-10-03.md;
+        // Docs/live-tier-on-the-vm.md section 4.2d): the indexed guest's 160,000-item corpus declares
+        // the 30- and 60-day windows, not the example's 7, 30 and 60. No live test asks that corpus a
+        // question by window, and a declared 7-day window made T2/LiveCorpusFreshness refuse the whole
+        // tier a week after every rebuild. Held here so the windows, and the expiry testbed.json's note
+        // states, cannot quietly part from the corpus they describe - the same computation the tier
+        // makes at start, against the committed seed, anchor and count, with no shift applied (a
+        // rebuilt corpus carries none).
+        JsonObject corpus = Guests()["OutlookAI-Indexed"]!["corpus"]!.AsObject();
+        int[] windows = corpus["windowDays"]!.AsArray().Select(n => n!.GetValue<int>()).ToArray();
+        Assert.Equal(new[] { 30, 60 }, windows);
+
+        DateTime anchor = CorpusManifest.ParseUtc(corpus["anchorUtc"]!.GetValue<string>())
+            ?? throw new InvalidOperationException("the indexed guest's corpus anchor is not an instant");
+        var plan = new CorpusPlan(new CorpusPlanOptions(
+            corpus["corpusId"]!.GetValue<string>(), corpus["seed"]!.GetValue<long>(), anchor));
+        int count = corpus["itemCount"]!.GetValue<int>();
+
+        // Fresh through 2026-11-01: the newest item, 2026-10-02T23:59:16Z, is still inside 30 days.
+        var lastFreshMinute = new DateTime(2026, 11, 1, 23, 59, 0, DateTimeKind.Utc);
+        Assert.Equal(
+            CorpusFreshnessVerdict.Fresh,
+            CorpusFreshness.Evaluate(plan, count, TimeSpan.Zero, lastFreshMinute, windows).Verdict);
+
+        // From 2026-11-02 the 30-day window is empty and the tier refuses until a rebuild.
+        CorpusFreshnessReport expired = CorpusFreshness.Evaluate(
+            plan, count, TimeSpan.Zero, new DateTime(2026, 11, 2, 0, 0, 0, DateTimeKind.Utc), windows);
+        Assert.Equal(CorpusFreshnessVerdict.WindowsEmptied, expired.Verdict);
+        Assert.Equal(new[] { 30 }, expired.EmptiedWindowDays);
+
+        // And what the decision avoided: the example's windows refuse from a week after the newest item.
+        int[] exampleWindows = JsonNode.Parse(File.ReadAllText(Path.Combine(RepoRoot(), "Testbed", "live-test-settings.example.json")))!
+            ["corpus"]!["windowDays"]!.AsArray().Select(n => n!.GetValue<int>()).ToArray();
+        Assert.Contains(7, exampleWindows);
+        Assert.Equal(
+            CorpusFreshnessVerdict.WindowsEmptied,
+            CorpusFreshness.Evaluate(plan, count, TimeSpan.Zero, new DateTime(2026, 10, 10, 0, 0, 0, DateTimeKind.Utc), exampleWindows).Verdict);
+    }
 }

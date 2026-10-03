@@ -22,8 +22,9 @@ namespace OutlookAI.Core.Com
     /// </para>
     /// <para>
     /// The draft tokens below it (2026-10-03, Q96) decide no control flow; they decide what a
-    /// failed draft call may CLAIM - that no draft exists, and what became of the Drafts folder
-    /// - which is the other thing a misspelt literal would silently get wrong.
+    /// failed draft call may CLAIM - that no draft exists, what became of the Drafts folder, and
+    /// that a discard which failed early deleted nothing - which is the other thing a misspelt
+    /// literal would silently get wrong.
     /// </para>
     /// </summary>
     public static class ComErrorTokens
@@ -70,6 +71,18 @@ namespace OutlookAI.Core.Com
         /// <c>DraftsFolderCreationUnverified:&lt;detail&gt;</c>.
         /// </summary>
         public const string DraftsFolderCreationUnverified = "DraftsFolderCreationUnverified";
+
+        /// <summary>
+        /// discard_draft failed BEFORE its delete was issued - so the draft was NOT deleted (Q96
+        /// question 4 (b), 2026-10-03). Written as <c>DiscardNotStarted:&lt;COM failure&gt;</c>.
+        /// <para>
+        /// The line it marks is <c>MailItem.Delete()</c>, the one call that moves the draft: above
+        /// it the discard only reads the draft, its folder and its store, and looks up Deleted
+        /// Items. A failure there used to share the catch-all's "whether the draft was deleted is
+        /// UNKNOWN", which cannot be true of it, and its advice to go looking in Deleted Items.
+        /// </para>
+        /// </summary>
+        public const string DiscardNotStarted = "DiscardNotStarted";
 
         /// <summary>
         /// A token with its detail, in the <c>Token:detail</c> shape the service layer reads back

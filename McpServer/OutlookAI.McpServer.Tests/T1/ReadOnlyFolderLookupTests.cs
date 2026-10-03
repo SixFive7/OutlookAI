@@ -1278,27 +1278,36 @@ public sealed class ReadOnlyFolderLookupTests
         Assert.False(report.Created);
         Assert.True(report.CallFailed);
         Assert.Empty(report.CreatedBeforeFailure);
+        Assert.Empty(report.AppearedDuringFailedCall);
         Assert.False(report.CreationUnverified);
         AssertCreatedNothing(dataFile);
     }
 
-    // ------------------------------------------------------------------ a creating call that fails is re-checked (Q96 (ii))
+    // ------------------------------------------------------------------ a creating call that fails is re-checked (Q96 (ii), question 1 (b))
     //
     // Outlook can make the folder and then fail - throw, or answer no folder - and Q85 reported
     // nothing then. The maintainer's decision Q96 (ii), 2026-10-03: re-check the way archive_mail
-    // does. The top level is listed again; every folder there now that was not there before the
-    // call is reported, named from what it says about itself; and with a listing missing nothing
-    // is claimed. The failure reaches the caller exactly as before either way.
+    // does. The top level is listed again, and every folder there now that was not there before
+    // the call is reported, named from what it says about itself. Refined the same day (question
+    // 1 (b)): a new folder is CREATED only when it now holds the slot the call asked for - the
+    // non-creating resolver finds that very folder there - and every other one only APPEARED
+    // while the call ran, reported apart and never as created. With a listing missing nothing is
+    // claimed. The failure reaches the caller exactly as before either way.
 
     [Theory]
     [InlineData(SpecialFolders.OlFolderDrafts)]
     [InlineData(SpecialFolders.OlFolderDeletedItems)]
-    public void ReportingCreation_TheCallMakesTheFolderThenFails_ReportsIt_AndStillThrows(int folderId)
+    public void ReportingCreation_TheCallMakesTheFolderThenFails_AndTheSlotIsNowIt_ReportsItCreated_AndStillThrows(int folderId)
     {
+        // A data file with no Inbox, so the resolver reads a Drafts designation off the store
+        // object - where this fake puts it - and SEES the made folder hold the slot. Deleted Items
+        // needs nothing: the store's folder mask proves it, and the call then hands back the
+        // folder that is there.
         FakeStore bare = FakeStore.WithoutSpecialFolders();
+        bare.DesignatedOnStore.Add(SpecialFolders.OlFolderDrafts);
         bare.DefaultFolderCallMakesThenFails.Add(folderId);
 
-        (object? folder, IReadOnlyList<string> reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(bare, folderId);
+        (object? folder, FolderReport reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(bare, folderId);
 
         COMException thrown = Assert.IsType<COMException>(failure);
         Assert.Equal(unchecked((int)0x80004005), thrown.HResult);
@@ -1306,72 +1315,140 @@ public sealed class ReadOnlyFolderLookupTests
         Assert.True(report.CallFailed);
         Assert.False(report.Created);
         Assert.False(report.CreationUnverified);
-        Assert.Equal(new[] { "Bare Data File/" + (folderId == SpecialFolders.OlFolderDrafts ? "Drafts" : "Deleted Items") }, reported);
-        AssertEveryCreationIsReported(bare, reported);
+        Assert.Equal(new[] { "Bare Data File/" + (folderId == SpecialFolders.OlFolderDrafts ? "Drafts" : "Deleted Items") }, reported.Created);
+        Assert.Empty(reported.Appeared);
+        AssertEveryGainIsReported(bare, reported);
+
+        // Finding out what holds the slot made nothing: the store gained the one folder.
+        Assert.Equal(new[] { folderId }, bare.Created);
     }
 
     [Fact]
-    public void ReportingCreation_TheCallMakesTheFolderThenAnswersNoFolder_ReportsIt()
+    public void ReportingCreation_TheCallMakesTheFolderThenAnswersNoFolder_ReportsItCreated()
     {
         FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.DesignatedOnStore.Add(SpecialFolders.OlFolderDrafts);
         dataFile.DefaultFolderCallMakesThenAnswersNull.Add(SpecialFolders.OlFolderDrafts);
 
-        (object? folder, IReadOnlyList<string> reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
+        (object? folder, FolderReport reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
 
         Assert.Null(failure);
         Assert.Null(folder);
         Assert.True(report.CallFailed);
-        Assert.Equal(new[] { "Outlook Data File/Drafts" }, reported);
-        AssertEveryCreationIsReported(dataFile, reported);
+        Assert.Equal(new[] { "Outlook Data File/Drafts" }, reported.Created);
+        Assert.Empty(reported.Appeared);
+        AssertEveryGainIsReported(dataFile, reported);
     }
 
     [Fact]
-    public void ReportingCreation_AFolderTheFailedCallLeftUndesignated_IsReported_FromTheListingAlone()
+    public void ReportingCreation_AFolderTheFailedCallLeftUndesignated_IsReportedAsAppeared_NeverAsCreated()
     {
-        // Made but not yet designated: the non-creating resolver cannot see it, and the listing
-        // still can. This is what the re-check is for - it does not depend on the designation
-        // Q85 says is still unconfirmed on real data files.
+        // Made but not yet designated: the listing sees it and the non-creating resolver does
+        // not. It is reported - but only as having APPEARED: nothing shows it is the folder the
+        // call asked for, and a sync or another program can add a top-level folder too.
         FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.DesignatedOnStore.Add(SpecialFolders.OlFolderDrafts);
         dataFile.DefaultFolderCallMakesThenFails.Add(SpecialFolders.OlFolderDrafts);
         dataFile.FailingCallLeavesFolderUndesignated = true;
 
-        (_, IReadOnlyList<string> reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
+        (_, FolderReport reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
 
         Assert.IsType<COMException>(failure);
-        Assert.Equal(new[] { "Outlook Data File/Drafts" }, reported);
+        Assert.Empty(reported.Created);
+        Assert.Equal(new[] { "Outlook Data File/Drafts" }, reported.Appeared);
+        Assert.Empty(report.CreatedBeforeFailure);
         Assert.Equal(OutlookComSession.DefaultFolderResolution.Absent, SpecialFolders.Resolve(dataFile, SpecialFolders.OlFolderDrafts, out _, out _));
         Assert.False(report.CreationUnverified);
-        AssertEveryCreationIsReported(dataFile, reported);
+        AssertEveryGainIsReported(dataFile, reported);
     }
 
     [Fact]
-    public void ReportingCreation_EveryFolderThatAppearedWhileTheFailedCallRan_IsReported_InListingOrder()
+    public void ReportingCreation_AFolderDesignatedWhereTheResolverDoesNotRead_IsReportedAsAppeared()
     {
-        // With no folder handed back there is no one folder to name, so every folder at the top
-        // now that was not there before is reported - none is guessed to be "the" one.
+        // The shape the first live run settles (Q96 question 3): a data file with NO Inbox, and
+        // the made Drafts designated on an Inbox it does not have - in the resolver's blind spot.
+        // The same answer as an undesignated folder, for the same reason: unproven is not created.
         FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.DefaultFolderCallMakesThenFails.Add(SpecialFolders.OlFolderDrafts);
+
+        (_, FolderReport reported, _, Exception? failure) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
+
+        Assert.IsType<COMException>(failure);
+        Assert.Empty(reported.Created);
+        Assert.Equal(new[] { "Outlook Data File/Drafts" }, reported.Appeared);
+        AssertEveryGainIsReported(dataFile, reported);
+    }
+
+    [Fact]
+    public void ReportingCreation_TheSlotFolder_IsCreated_AndEveryOtherFolderThatAppeared_IsOnlyAppeared()
+    {
+        // Two folders at the top that were not there before: the one now holding the Drafts slot
+        // is the one the call made, and the other is reported - apart, and never as created.
+        FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.DesignatedOnStore.Add(SpecialFolders.OlFolderDrafts);
         dataFile.DefaultFolderCallMakesThenFails.Add(SpecialFolders.OlFolderDrafts);
         dataFile.FailingCallAlsoAddsFolderNamed = "Junk Email";
 
-        (_, IReadOnlyList<string> reported, _, _) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
+        (_, FolderReport reported, _, _) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
 
-        Assert.Equal(new[] { "Outlook Data File/Drafts", "Outlook Data File/Junk Email" }, reported);
-        AssertEveryCreationIsReported(dataFile, reported);
+        Assert.Equal(new[] { "Outlook Data File/Drafts" }, reported.Created);
+        Assert.Equal(new[] { "Outlook Data File/Junk Email" }, reported.Appeared);
+        AssertEveryGainIsReported(dataFile, reported);
     }
 
     [Fact]
-    public void ReportingCreation_AFolderTheFailedCallMadeThatWillNotOpen_IsStillReported()
+    public void ReportingCreation_WhenTheSlotWentToAFolderThatWasAlreadyThere_TheNewFolderIsOnlyAppeared()
+    {
+        // The slot resolves - to an OLD folder. "Holds the slot" is a claim about the new folder
+        // itself, so the one beside it is not promoted to created just because the slot is filled.
+        FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.AddPlain("Drafts (old)");
+        dataFile.DefaultFolderCallMakesThenFails.Add(SpecialFolders.OlFolderDrafts);
+        dataFile.FailingCallDesignatesInsteadFolderNamed = "Drafts (old)";
+
+        (_, FolderReport reported, _, Exception? failure) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
+
+        Assert.IsType<COMException>(failure);
+        Assert.Equal(OutlookComSession.DefaultFolderResolution.Resolved, SpecialFolders.Resolve(dataFile, SpecialFolders.OlFolderDrafts, out _, out _));
+        Assert.Empty(reported.Created);
+        Assert.Equal(new[] { "Outlook Data File/Drafts" }, reported.Appeared);
+        AssertEveryGainIsReported(dataFile, reported);
+    }
+
+    [Fact]
+    public void ReportingCreation_WhenTheSlotWillNotReadAfterTheFailure_NothingIsCalledCreated()
+    {
+        // The resolver cannot say what holds the slot - the store's folder mask will not read -
+        // so the folder that appeared is reported as having appeared, and nothing as created.
+        FakeStore bare = FakeStore.WithoutSpecialFolders();
+        bare.DefaultFolderCallMakesThenFails.Add(SpecialFolders.OlFolderDeletedItems);
+        bare.MaskRead = PropertyReadStatus.Failed;
+
+        (_, FolderReport reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(bare, SpecialFolders.OlFolderDeletedItems);
+
+        Assert.IsType<COMException>(failure);
+        Assert.Empty(reported.Created);
+        Assert.Equal(new[] { "Bare Data File/Deleted Items" }, reported.Appeared);
+        Assert.False(report.CreationUnverified);
+        AssertEveryGainIsReported(bare, reported);
+    }
+
+    [Fact]
+    public void ReportingCreation_AFolderTheFailedCallMadeThatWillNotOpen_IsStillReported_AsAppeared()
     {
         // Proven to exist by the listing, so it must be reported - opening it by EntryID is only
-        // how it gets a name, and a folder that will not say its name is still a folder.
+        // how it gets a name, and a folder that will not say its name is still a folder. It will
+        // not open for the resolver either, so nothing shows it holds the slot: appeared.
         FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.DesignatedOnStore.Add(SpecialFolders.OlFolderDrafts);
         dataFile.DefaultFolderCallMakesThenFails.Add(SpecialFolders.OlFolderDrafts);
         dataFile.FailingCallFoldersWillNotOpen = true;
 
-        (_, IReadOnlyList<string> reported, CreatingLookupReport report, _) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
+        (_, FolderReport reported, CreatingLookupReport report, _) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
 
-        Assert.Equal(new[] { "Outlook Data File/(unnamed folder)" }, reported);
-        Assert.NotNull(Assert.Single(report.CreatedBeforeFailure).EntryId);
+        Assert.Empty(reported.Created);
+        Assert.Equal(new[] { "Outlook Data File/(unnamed folder)" }, reported.Appeared);
+        Assert.NotNull(Assert.Single(report.AppearedDuringFailedCall).EntryId);
     }
 
     [Fact]
@@ -1381,13 +1458,15 @@ public sealed class ReadOnlyFolderLookupTests
         // the folder; with the second listing missing nothing shows it, so nothing is claimed,
         // and the report says it could not tell rather than reading as "nothing was created".
         FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.DesignatedOnStore.Add(SpecialFolders.OlFolderDrafts);
         dataFile.DefaultFolderCallMakesThenFails.Add(SpecialFolders.OlFolderDrafts);
         dataFile.RootListingFailsAfterCreatingCall = true;
 
-        (_, IReadOnlyList<string> reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
+        (_, FolderReport reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
 
         Assert.IsType<COMException>(failure);
-        Assert.Empty(reported);
+        Assert.Empty(reported.Created);
+        Assert.Empty(reported.Appeared);
         Assert.True(report.CreationUnverified);
         Assert.Equal(new[] { SpecialFolders.OlFolderDrafts }, dataFile.Created);
     }
@@ -1399,13 +1478,15 @@ public sealed class ReadOnlyFolderLookupTests
         // folder back to show it present after. A failed call hands nothing back, so there is
         // nothing to show, and nothing is claimed.
         FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.DesignatedOnStore.Add(SpecialFolders.OlFolderDrafts);
         dataFile.DefaultFolderCallMakesThenFails.Add(SpecialFolders.OlFolderDrafts);
         dataFile.RootListingFails = true;
 
-        (_, IReadOnlyList<string> reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
+        (_, FolderReport reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
 
         Assert.IsType<COMException>(failure);
-        Assert.Empty(reported);
+        Assert.Empty(reported.Created);
+        Assert.Empty(reported.Appeared);
         Assert.True(report.CreationUnverified);
     }
 
@@ -1415,13 +1496,15 @@ public sealed class ReadOnlyFolderLookupTests
         // The re-check may not replace the failure the caller is about to see: it is the
         // creating call's COMException (0x80004005) that arrives, not the listing's (0x800706BA).
         FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.DesignatedOnStore.Add(SpecialFolders.OlFolderDrafts);
         dataFile.DefaultFolderCallMakesThenFails.Add(SpecialFolders.OlFolderDrafts);
         dataFile.RootListingThrowsAfterCreatingCall = true;
 
-        (_, IReadOnlyList<string> reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
+        (_, FolderReport reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(dataFile, SpecialFolders.OlFolderDrafts);
 
         Assert.Equal(unchecked((int)0x80004005), Assert.IsType<COMException>(failure).HResult);
-        Assert.Empty(reported);
+        Assert.Empty(reported.Created);
+        Assert.Empty(reported.Appeared);
         Assert.True(report.CreationUnverified);
     }
 
@@ -1431,10 +1514,11 @@ public sealed class ReadOnlyFolderLookupTests
         FakeStore mailbox = FakeStore.ExchangeMailbox();
         mailbox.DefaultFolderCallFails.Add(SpecialFolders.OlFolderDrafts);
 
-        (_, IReadOnlyList<string> reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(mailbox, SpecialFolders.OlFolderDrafts);
+        (_, FolderReport reported, CreatingLookupReport report, Exception? failure) = DestinationNowReporting(mailbox, SpecialFolders.OlFolderDrafts);
 
         Assert.IsType<COMException>(failure);
-        Assert.Empty(reported);
+        Assert.Empty(reported.Created);
+        Assert.Empty(reported.Appeared);
         Assert.False(report.CallFailed);
         Assert.False(report.CreationUnverified);
         Assert.Equal(0, mailbox.RootListings);
@@ -1446,14 +1530,19 @@ public sealed class ReadOnlyFolderLookupTests
     {
         CreatingLookupReport report = new CreatingLookupReport();
         FakeStore dataFile = FakeStore.NonDeliveryPst();
+        dataFile.DesignatedOnStore.Add(SpecialFolders.OlFolderDrafts);
         dataFile.DefaultFolderCallMakesThenFails.Add(SpecialFolders.OlFolderDrafts);
+        dataFile.FailingCallAlsoAddsFolderNamed = "Junk Email";
         Assert.Throws<COMException>(() => SpecialFolders.GetDefaultFolderReportingCreation(dataFile, SpecialFolders.OlFolderDrafts, report));
 
         // The store's own display name, or - where that would not read - the store segment of
-        // the folder's FolderPath: exactly what the success path's label uses.
+        // the folder's FolderPath: exactly what the success path's label uses, for both lists.
         Assert.Equal(new[] { "Outlook Data File/Drafts" }, SpecialFolders.CreatedBeforeFailureLabels(report, "Outlook Data File"));
         Assert.Equal(new[] { "Outlook Data File/Drafts" }, SpecialFolders.CreatedBeforeFailureLabels(report, null));
+        Assert.Equal(new[] { "Outlook Data File/Junk Email" }, SpecialFolders.AppearedDuringFailedCallLabels(report, "Outlook Data File"));
+        Assert.Equal(new[] { "Outlook Data File/Junk Email" }, SpecialFolders.AppearedDuringFailedCallLabels(report, null));
         Assert.Empty(SpecialFolders.CreatedBeforeFailureLabels(new CreatingLookupReport(), "Outlook Data File"));
+        Assert.Empty(SpecialFolders.AppearedDuringFailedCallLabels(new CreatingLookupReport(), "Outlook Data File"));
     }
 
     [Fact]
@@ -1584,6 +1673,7 @@ public sealed class ReadOnlyFolderLookupTests
         Assert.Contains("SpecialFolders.GetDefaultFolderReportingCreation(", body, StringComparison.Ordinal);
         Assert.DoesNotContain(".GetDefaultFolder(", body, StringComparison.Ordinal);
         Assert.Contains("createdFolders = capturedCreatedFolders;", body, StringComparison.Ordinal);
+        Assert.Contains("appearedFolders = capturedAppearedFolders;", body, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -1603,17 +1693,52 @@ public sealed class ReadOnlyFolderLookupTests
         int lookup = body.IndexOf("SpecialFolders.GetDefaultFolderReportingCreation(", StringComparison.Ordinal);
         int lookupCatch = body.IndexOf("catch (Exception ex) when (IsComCallFailure(ex))", lookup, StringComparison.Ordinal);
         int handedBack = body.IndexOf("CreatedFoldersOf(", lookupCatch, StringComparison.Ordinal);
+        int appearedBack = body.IndexOf("AppearedFoldersOf(", lookupCatch, StringComparison.Ordinal);
 
         Assert.True(report >= 0 && report < lookup, member + " must create its report before the lookup");
         Assert.True(lookupCatch > lookup, member + " must catch the lookup's failure");
         Assert.True(handedBack > lookupCatch, member + " must label the report at or after the lookup's catch, so a failure's folders are kept");
+        Assert.True(appearedBack > lookupCatch, member + " must hand back what only appeared, at or after the lookup's catch (Q96 question 1 (b))");
         if (member == "TryCreateNewDraft")
         {
             // new_draft ends inside that catch, so the catch itself hands the folders back.
             string catchBlock = body.Substring(lookupCatch, body.IndexOf("return null;", lookupCatch, StringComparison.Ordinal) - lookupCatch);
             Assert.Contains("CreatedFoldersOf(draftsReport, null,", catchBlock, StringComparison.Ordinal);
+            Assert.Contains("AppearedFoldersOf(draftsReport,", catchBlock, StringComparison.Ordinal);
             Assert.Contains("DraftsLookupFailure(draftsReport,", catchBlock, StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public void TheDiscard_SaysTheDraftWasNotDeleted_OnlyAboveTheDelete()
+    {
+        // Q96 question 4 (b). The marker that lets a failure say "the draft was NOT deleted" must
+        // flip IMMEDIATELY before Delete() - the one call that moves the draft - and nothing above
+        // it may delete, move, save or send anything. Moving the delete above it, or anything
+        // between them, would turn the sentence into a false claim; so the order is pinned.
+        string body = CodeOnly(MemberBody("McpServer/OutlookAI.Core/Com/OutlookComSession.cs", "TryDiscardDraft"));
+        const string Flip = "deleteStarted = true;";
+
+        int declared = body.IndexOf("bool deleteStarted = false;", StringComparison.Ordinal);
+        int flipped = body.IndexOf(Flip, StringComparison.Ordinal);
+        int delete = body.IndexOf(".Delete();", StringComparison.Ordinal);
+
+        Assert.True(declared >= 0, "TryDiscardDraft must declare the marker");
+        Assert.True(flipped > declared && flipped < delete, "TryDiscardDraft must flip the marker before the delete");
+        Assert.Equal(1, CountOccurrences(body, Flip));
+        Assert.Equal(1, CountOccurrences(body, ".Delete();"));
+        Assert.Equal("((dynamic)item!)", body.Substring(flipped + Flip.Length, delete - flipped - Flip.Length).Trim());
+
+        string aboveTheMarker = body.Substring(0, flipped);
+        foreach (string mutating in new[] { ".Delete(", ".Move(", ".Save()", ".Send(", "PermanentlyDelete" })
+        {
+            Assert.DoesNotContain(mutating, aboveTheMarker, StringComparison.Ordinal);
+        }
+
+        // The catch-all goes through the marker; a bare COM description there would say "whether
+        // the draft was deleted is unknown" whatever the marker said.
+        Assert.Contains("capturedError = DiscardFailure(deleteStarted, ex);", body, StringComparison.Ordinal);
+        Assert.Equal(0, CountOccurrences(body, "capturedError = DescribeComFailure(ex);"));
     }
 
     [Theory]
@@ -1680,10 +1805,11 @@ public sealed class ReadOnlyFolderLookupTests
     /// <summary>
     /// A destination as it is now, the failure path included: the must-report lookup, the
     /// creating call's own failure (caught, as each destination catches it), and EVERY label the
-    /// COM layer would hand back - the returned folder when it is new, and what a failed call
-    /// made before it failed (Q96 (ii)).
+    /// COM layer would hand back - as created, the returned folder when it is new and what a
+    /// failed call is proven to have made (Q96 (ii)); apart from those, what only appeared while
+    /// the failed call ran (question 1 (b)).
     /// </summary>
-    private static (object? Folder, IReadOnlyList<string> Reported, CreatingLookupReport Report, Exception? Failure) DestinationNowReporting(
+    private static (object? Folder, FolderReport Reported, CreatingLookupReport Report, Exception? Failure) DestinationNowReporting(
         FakeStore store, int folderId)
     {
         CreatingLookupReport lookup = new CreatingLookupReport();
@@ -1698,14 +1824,30 @@ public sealed class ReadOnlyFolderLookupTests
             failure = ex;
         }
 
-        List<string> reported = new List<string>();
+        List<string> created = new List<string>();
         if (lookup.Created && folder is FakeFolder made)
         {
-            reported.Add(SpecialFolders.CreatedFolderLabelFor(made.FolderPath, made.Name, store.DisplayName));
+            created.Add(SpecialFolders.CreatedFolderLabelFor(made.FolderPath, made.Name, store.DisplayName));
         }
 
-        reported.AddRange(SpecialFolders.CreatedBeforeFailureLabels(lookup, store.DisplayName));
-        return (folder, reported, lookup, failure);
+        created.AddRange(SpecialFolders.CreatedBeforeFailureLabels(lookup, store.DisplayName));
+        return (folder, new FolderReport(created, SpecialFolders.AppearedDuringFailedCallLabels(lookup, store.DisplayName)), lookup, failure);
+    }
+
+    /// <summary>What the COM layer hands back for one lookup: the folders it created, and apart from them what only appeared.</summary>
+    private sealed record FolderReport(IReadOnlyList<string> Created, IReadOnlyList<string> Appeared);
+
+    /// <summary>
+    /// Every folder the store gained is reported exactly once - as created or as having appeared,
+    /// never both - and nothing is reported that it did not gain (Q96 question 1 (b)).
+    /// </summary>
+    private static void AssertEveryGainIsReported(FakeStore store, FolderReport reported)
+    {
+        List<string> named = reported.Created.Concat(reported.Appeared).ToList();
+        Assert.True(
+            store.Gained.OrderBy(g => g, StringComparer.Ordinal).SequenceEqual(named.OrderBy(n => n, StringComparer.Ordinal), StringComparer.Ordinal),
+            "the store gained [" + string.Join(", ", store.Gained) + "] and the report named [" + string.Join(", ", named) + "]");
+        Assert.Empty(reported.Created.Intersect(reported.Appeared, StringComparer.Ordinal));
     }
 
     /// <summary>A destination as it was (the control): the creating call, and no report at all.</summary>
@@ -2146,6 +2288,13 @@ public sealed class ReadOnlyFolderLookupTests
         internal bool FailingCallFoldersWillNotOpen { get; set; }
 
         /// <summary>
+        /// A failing call that makes a NEW, undesignated folder and gives the slot to an EXISTING
+        /// top-level folder of this name instead (designated on the store object) - so the slot
+        /// resolves, and resolves to a folder that is not new (Q96 question 1 (b)).
+        /// </summary>
+        internal string? FailingCallDesignatesInsteadFolderNamed { get; set; }
+
+        /// <summary>
         /// The <see cref="SpecialFolders.CreatedFolderLabelFor"/> of every folder this store GAINED,
         /// designated or not, in the order it gained them - what a report must name.
         /// </summary>
@@ -2338,6 +2487,16 @@ public sealed class ReadOnlyFolderLookupTests
                 return PropertyRead.Found(Convert.FromHexString(archive.EntryId));
             }
 
+            // Drafts designated on the store object - where the resolver reads a data file's
+            // Drafts when it has no Inbox, and so the one place a Drafts folder made in such a
+            // store can be SEEN to hold the slot (Q96 question 1 (b)).
+            if (schemaName == SpecialFolders.DraftsEntryIdSchema
+                && DesignatedOnStore.Contains(SpecialFolders.OlFolderDrafts)
+                && _special.TryGetValue(SpecialFolders.OlFolderDrafts, out FakeFolder? drafts))
+            {
+                return PropertyRead.Found(Convert.FromHexString(drafts.EntryId));
+            }
+
             return PropertyRead.Missing();
         }
 
@@ -2421,7 +2580,8 @@ public sealed class ReadOnlyFolderLookupTests
 
             // A call for a folder the store does not have is the CREATING call; the non-creating
             // resolver's own calls (for a folder already proven present) are not.
-            _creatingCallMade |= !_special.ContainsKey(olDefaultFolderId);
+            bool missing = !_special.ContainsKey(olDefaultFolderId);
+            _creatingCallMade |= missing;
             if (DefaultFolderCallFails.Contains(olDefaultFolderId))
             {
                 throw new COMException("The operation failed.", unchecked((int)0x80004005));
@@ -2432,14 +2592,23 @@ public sealed class ReadOnlyFolderLookupTests
                 return null;
             }
 
-            bool makesThenFails = DefaultFolderCallMakesThenFails.Contains(olDefaultFolderId);
-            if (makesThenFails || DefaultFolderCallMakesThenAnswersNull.Contains(olDefaultFolderId))
+            // Only a call for a MISSING folder makes one: asked again for the folder it made - as
+            // the re-check's own resolver does for Deleted Items once the mask proves it present -
+            // Outlook hands back what is there, as on the guest.
+            bool makesThenFails = missing && DefaultFolderCallMakesThenFails.Contains(olDefaultFolderId);
+            if (makesThenFails || (missing && DefaultFolderCallMakesThenAnswersNull.Contains(olDefaultFolderId)))
             {
                 // Outlook made the folder, then the call failed: what Q96 (ii) re-checks for.
                 string madeName = NameOfSpecial(olDefaultFolderId);
-                FakeFolder beforeFailing = FailingCallLeavesFolderUndesignated
+                FakeFolder beforeFailing = FailingCallLeavesFolderUndesignated || FailingCallDesignatesInsteadFolderNamed != null
                     ? AddPlain(madeName)
                     : AddSpecial(olDefaultFolderId, madeName);
+                if (FailingCallDesignatesInsteadFolderNamed != null)
+                {
+                    _special[olDefaultFolderId] = _byEntryId.Values.First(f => f.Name == FailingCallDesignatesInsteadFolderNamed);
+                    DesignatedOnStore.Add(olDefaultFolderId);
+                }
+
                 Created.Add(olDefaultFolderId);
                 Gained.Add(SpecialFolders.CreatedFolderLabelFor(beforeFailing.FolderPath, beforeFailing.Name, _displayName));
                 if (FailingCallFoldersWillNotOpen)
