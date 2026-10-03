@@ -539,11 +539,15 @@ namespace OutlookAI.Core.Com
         /// (ii), 2026-10-03), the way archive_mail checks its own (<see
         /// cref="ArchiveFolderResolution.ResolveForMove"/>): Outlook can make the folder and then
         /// fail. The top level is listed again, and every folder that is there now and was not
-        /// there before the call is reported in <see cref="CreatingLookupReport.CreatedBeforeFailure"/>
-        /// - opened by its EntryID, which never creates anything, only so it can be named. Where
-        /// either listing is missing, nothing is claimed and <see
-        /// cref="CreatingLookupReport.CreationUnverified"/> says so. Either way the failure then
-        /// reaches the caller exactly as before: the same exception, or null.
+        /// there before the call is reported - opened by its EntryID, which never creates
+        /// anything, only so it can be named. One that now HOLDS the asked-for slot, by the
+        /// non-creating <see cref="Resolve"/>, is reported in <see
+        /// cref="CreatingLookupReport.CreatedBeforeFailure"/>; every other one only APPEARED while
+        /// the call ran (<see cref="CreatingLookupReport.AppearedDuringFailedCall"/>) and is never
+        /// claimed as created by it (Q96 question 1 (b), 2026-10-03) - another program, or an IMAP
+        /// folder sync, can add a top-level folder too. Where either listing is missing, nothing
+        /// is claimed and <see cref="CreatingLookupReport.CreationUnverified"/> says so. Either way
+        /// the failure then reaches the caller exactly as before: the same exception, or null.
         /// </para>
         /// </summary>
         /// <param name="store">The store the folder belongs to.</param>
@@ -587,13 +591,13 @@ namespace OutlookAI.Core.Com
             }
             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
             {
-                RecheckAfterFailedCreatingCall(store, topBefore, report);
+                RecheckAfterFailedCreatingCall(store, olDefaultFolderId, topBefore, report);
                 throw;
             }
 
             if (folder == null)
             {
-                RecheckAfterFailedCreatingCall(store, topBefore, report);
+                RecheckAfterFailedCreatingCall(store, olDefaultFolderId, topBefore, report);
                 return null;
             }
 
@@ -628,27 +632,58 @@ namespace OutlookAI.Core.Com
                 throw new ArgumentNullException(nameof(report));
             }
 
-            List<string> labels = new List<string>(report.CreatedBeforeFailure.Count);
-            foreach (SpecialFolderFacts made in report.CreatedBeforeFailure)
+            return LabelsOf(report.CreatedBeforeFailure, storeDisplayName);
+        }
+
+        /// <summary>
+        /// The <see cref="CreatedFolderLabelFor"/> of every folder that only APPEARED while a
+        /// failed creating call ran (<see cref="CreatingLookupReport.AppearedDuringFailedCall"/>),
+        /// in the order they were found - the same label rule, so a caller can compare the two
+        /// lists, and a different list, so no caller can mistake one for a creation (Q96
+        /// question 1 (b)). Pure, public for T1.
+        /// </summary>
+        public static IReadOnlyList<string> AppearedDuringFailedCallLabels(CreatingLookupReport report, string? storeDisplayName)
+        {
+            if (report == null)
             {
-                labels.Add(CreatedFolderLabelFor(made.FolderPath, made.Name, storeDisplayName));
+                throw new ArgumentNullException(nameof(report));
+            }
+
+            return LabelsOf(report.AppearedDuringFailedCall, storeDisplayName);
+        }
+
+        private static IReadOnlyList<string> LabelsOf(IReadOnlyList<SpecialFolderFacts> folders, string? storeDisplayName)
+        {
+            List<string> labels = new List<string>(folders.Count);
+            foreach (SpecialFolderFacts folder in folders)
+            {
+                labels.Add(CreatedFolderLabelFor(folder.FolderPath, folder.Name, storeDisplayName));
             }
 
             return labels;
         }
 
         /// <summary>
-        /// The re-check after a creating call that failed (Q96 (ii)). Every folder at the top of
-        /// the store now that was not there before the call is one the call made before it
-        /// failed - the same evidence the success path accepts, "not at the top before, at the
-        /// top after". Each is opened by EntryID (<c>GetFolderFromID</c>, which never creates)
-        /// only to be named; one that will not open is still reported, by its EntryID alone,
-        /// because it is proven to exist. Without both listings nothing is claimed, and the
-        /// report says it could not tell. Never throws: the caller is about to rethrow the
-        /// creating call's own failure, and nothing here may replace it.
+        /// The re-check after a creating call that failed (Q96 (ii), refined by Q96 question 1
+        /// (b), both 2026-10-03). Every folder at the top of the store now that was not there
+        /// before the call APPEARED while it ran. It counts as one the call CREATED only when it
+        /// now holds the very slot the call asked for - the asked-for folder resolved the
+        /// non-creating way (<see cref="Resolve"/>) is that new folder, by EntryID - which is
+        /// proof that Outlook made it as that folder. Any other one is reported as having
+        /// appeared, and never as created: a POP3 or IMAP account's sync, or another program,
+        /// can add a top-level folder in the same moment, and nothing here can tell its folder
+        /// from Outlook's. A new folder Outlook made but did not, or not yet, designate where
+        /// <see cref="Resolve"/> reads is therefore reported as having appeared too - the price
+        /// of never claiming what cannot be proven. Each folder is opened by EntryID
+        /// (<c>GetFolderFromID</c>, which never creates) only to be named; one that will not open
+        /// is still reported, by its EntryID alone, because it is proven to exist. Without both
+        /// listings nothing is claimed, and the report says it could not tell. Never throws: the
+        /// caller is about to rethrow the creating call's own failure, and nothing here may
+        /// replace it.
         /// </summary>
         private static void RecheckAfterFailedCreatingCall(
             ISpecialFolderStore store,
+            int olDefaultFolderId,
             IReadOnlyList<string>? topBefore,
             CreatingLookupReport report)
         {
@@ -668,11 +703,31 @@ namespace OutlookAI.Core.Com
                     return;
                 }
 
+                List<string> appeared = new List<string>();
                 foreach (string entryId in topAfter)
                 {
                     if (!ContainsEntryId(topBefore, entryId))
                     {
-                        report.AddCreatedBeforeFailure(DescribeByEntryId(store, entryId));
+                        appeared.Add(entryId);
+                    }
+                }
+
+                if (appeared.Count == 0)
+                {
+                    return;
+                }
+
+                string? slot = EntryIdHoldingSlot(store, olDefaultFolderId);
+                foreach (string entryId in appeared)
+                {
+                    SpecialFolderFacts facts = DescribeByEntryId(store, entryId);
+                    if (slot != null && string.Equals(slot, entryId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        report.AddCreatedBeforeFailure(facts);
+                    }
+                    else
+                    {
+                        report.AddAppearedDuringFailedCall(facts);
                     }
                 }
             }
@@ -682,6 +737,33 @@ namespace OutlookAI.Core.Com
                 // proven nothing, and the creating call's own failure must still be the one the
                 // caller sees.
                 report.CreationUnverified = true;
+            }
+        }
+
+        /// <summary>
+        /// The EntryID of the folder that holds the asked-for slot NOW, found the non-creating
+        /// way - or null when the slot is empty, cannot be read, or its folder will not say its
+        /// EntryID. Null only ever withholds the word "created"; it never adds one. Never
+        /// creates: <see cref="Resolve"/> asks Outlook for a folder only once it is proven to
+        /// exist.
+        /// </summary>
+        private static string? EntryIdHoldingSlot(ISpecialFolderStore store, int olDefaultFolderId)
+        {
+            object? holder = null;
+            try
+            {
+                return Resolve(store, olDefaultFolderId, out holder, out _) == OutlookComSession.DefaultFolderResolution.Resolved
+                    && holder != null
+                    ? store.EntryIdOf(holder)
+                    : null;
+            }
+            catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+            {
+                return null;
+            }
+            finally
+            {
+                store.Release(holder);
             }
         }
 
@@ -978,6 +1060,7 @@ namespace OutlookAI.Core.Com
     public sealed class CreatingLookupReport
     {
         private readonly List<SpecialFolderFacts> _createdBeforeFailure = new List<SpecialFolderFacts>();
+        private readonly List<SpecialFolderFacts> _appearedDuringFailedCall = new List<SpecialFolderFacts>();
 
         /// <summary>True when the folder the lookup RETURNED is one this call created (Q85).</summary>
         public bool Created { get; internal set; }
@@ -990,10 +1073,19 @@ namespace OutlookAI.Core.Com
 
         /// <summary>
         /// The folders a FAILED creating call is proven to have made before it failed: each was
-        /// not at the top of the store before the call and is there after it. Empty when there
-        /// were none, and whenever that could not be established - see <see cref="CreationUnverified"/>.
+        /// not at the top of the store before the call, is there after it, and now holds the slot
+        /// the call asked for. Empty when there were none, and whenever that could not be
+        /// established - see <see cref="CreationUnverified"/>.
         /// </summary>
         public IReadOnlyList<SpecialFolderFacts> CreatedBeforeFailure => _createdBeforeFailure;
+
+        /// <summary>
+        /// The folders that APPEARED at the top of the store while a FAILED creating call ran and
+        /// do not hold the slot it asked for (Q96 question 1 (b), 2026-10-03): Outlook may have
+        /// made them before failing, or something else may have, and nothing can tell which - so
+        /// they are reported, and never as created by the call. Empty when there were none.
+        /// </summary>
+        public IReadOnlyList<SpecialFolderFacts> AppearedDuringFailedCall => _appearedDuringFailedCall;
 
         /// <summary>
         /// True when the creating call failed and whether it made a folder first could not be
@@ -1005,6 +1097,11 @@ namespace OutlookAI.Core.Com
         internal void AddCreatedBeforeFailure(SpecialFolderFacts folder)
         {
             _createdBeforeFailure.Add(folder);
+        }
+
+        internal void AddAppearedDuringFailedCall(SpecialFolderFacts folder)
+        {
+            _appearedDuringFailedCall.Add(folder);
         }
     }
 

@@ -690,7 +690,9 @@ public static class OutlookTools
     // Q85 (may create, must report), written once for the four draft creators so the wording
     // cannot drift between them.
     private const string CreatedDraftsFolderHint = " If the mailbox the draft is saved in has no Drafts folder (POP3, IMAP, "
-        + "data files), Outlook creates one and createdFolders names it; Exchange and Microsoft 365 mailboxes always have one.";
+        + "data files), Outlook creates one and createdFolders names it; Exchange and Microsoft 365 mailboxes always have one. "
+        + "A folder that only appeared while a failed Drafts lookup ran is listed in appearedFolders instead - not claimed "
+        + "as created.";
 
     private const string DerivedSubjectHint = "Replacement subject line. Omit to keep Outlook's own RE:/FW: subject, which is "
         + "the safe default. The draft keeps threading either way (its ConversationIndex still extends the original and the "
@@ -918,10 +920,12 @@ public static class OutlookTools
         + "Items. It cannot empty anything and it cannot delete permanently.\n\n"
         + "It is a SOFT delete - exactly like pressing Delete in Outlook: the draft moves to Deleted Items and the result "
         + "carries newEntryId plus fromFolder, so it can be put back with move_mail. A mailbox with no Deleted Items folder "
-        + "gets one created by Outlook, and createdFolders names it. Anything it refuses comes back as a "
+        + "gets one created by Outlook, and createdFolders names it (one that only appeared while a failed lookup ran is "
+        + "in appearedFolders, not claimed as created). Anything it refuses comes back as a "
         + "clear error saying why - it never silently does nothing. A failure that is NOT a refusal is a different "
         + "case: if Outlook fails during the delete itself, whether the draft was deleted is UNKNOWN and the error "
-        + "says so - look in Deleted Items rather than assuming nothing happened. Every discard is audit-logged."
+        + "says so - look in Deleted Items rather than assuming nothing happened. A failure before the delete says the "
+        + "draft was NOT deleted. Every discard is audit-logged."
         + OutcomeHint)]
     public static async Task<CallToolResult> DiscardDraft(
         [Description("The draft to discard: the entryId a draft tool returned for a draft created in THIS session.")]
@@ -1231,14 +1235,17 @@ public static class OutlookTools
                 DraftRefusalAdvice(ex.Reason),
                 ex.Reason,
                 outcome: DraftRefusalOutcome(ex.Reason),
-                createdFolders: ex.CreatedFolders);
+                createdFolders: ex.CreatedFolders,
+                appearedFolders: ex.AppearedFolders);
         }
         catch (OperationOutcomeException ex)
         {
             // A service-layer failure that already knows what happened to the mail and says
             // so in its own message; this arm only carries the machine-readable half out -
-            // including any folder the failed call created (Q85).
-            return Error("OperationFailed", ex.Message, null, outcome: ex.Outcome, createdFolders: ex.CreatedFolders);
+            // including any folder the failed call created (Q85), and apart from those any
+            // that only appeared while it ran (Q96 question 1 (b)).
+            return Error("OperationFailed", ex.Message, null, outcome: ex.Outcome,
+                createdFolders: ex.CreatedFolders, appearedFolders: ex.AppearedFolders);
         }
         catch (OutlookUnavailableException ex)
         {
@@ -1301,7 +1308,8 @@ public static class OutlookTools
         string? outcome = null,
         int? retryAfterSeconds = null,
         string? writingRules = null,
-        IReadOnlyList<string>? createdFolders = null)
+        IReadOnlyList<string>? createdFolders = null,
+        IReadOnlyList<string>? appearedFolders = null)
     {
         // 'reason' is the machine-readable refusal code (send/draft refusals), and
         // 'retryAfterSeconds' is machine-readable retry guidance for the transient states
@@ -1323,7 +1331,12 @@ public static class OutlookTools
         // failure: a draft tool or discard_draft that CREATED a folder before it failed says so
         // here too (Q85: may create, must report), because this server cannot delete folders.
         // Absent on every other error, so it changes no existing shape.
-        var payload = new { error = new { type, reason, outcome, message, advice, retryAfterSeconds, createdFolders, writingRules } };
+        //
+        // 'appearedFolders' is its sibling (Q96 question 1 (b), 2026-10-03): folders that only
+        // appeared while a failed folder lookup ran, which this server does NOT claim to have
+        // created - kept out of 'createdFolders' so nothing reading that field can mistake one.
+        // Absent unless there were any.
+        var payload = new { error = new { type, reason, outcome, message, advice, retryAfterSeconds, createdFolders, appearedFolders, writingRules } };
         return new CallToolResult
         {
             IsError = true,

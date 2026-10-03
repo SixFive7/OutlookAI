@@ -920,6 +920,96 @@ public static class LiveOutlookTestMailer
     private const int OlPostItem = 6;
 
     /// <summary>
+    /// READ-ONLY: where a store says which folder is its Drafts - <c>PR_IPM_DRAFTS_ENTRYID</c> read
+    /// at the three places the object model can reach: the store object and the Inbox (where the
+    /// product's non-creating lookup reads it) and the store's top folder (where it does not) -
+    /// beside the EntryID of the folder <paramref name="draftEntryId"/> sits in. For the
+    /// created-folder proof's record (Q96 question 3, 2026-10-03): where Outlook registers a Drafts
+    /// folder it makes in a data file with no Inbox, which decides whether and where the lookup is
+    /// widened. Reads through the product's own <see cref="ComSpecialFolderStore"/>, opens the
+    /// draft and its folder by EntryID, finds the Inbox the non-creating way, and changes nothing:
+    /// no folder is asked for by default-folder id, and no item is written.
+    /// </summary>
+    public static DraftsDesignationReading ReadDraftsDesignations(string storeDisplayName, string draftEntryId)
+    {
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            object? root = null;
+            object? inbox = null;
+            dynamic? draft = null;
+            dynamic? parent = null;
+            dynamic? parentStore = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the designation read: '" + storeDisplayName + "'.");
+                string storeId = (string)store.StoreID;
+                ComSpecialFolderStore special = new((object)store, (object)ns, storeId);
+
+                // The folder the reply sits in - counted only when it is in THIS store.
+                string? draftsFolderEntryId = null;
+                try
+                {
+                    draft = ns.GetItemFromID(draftEntryId, storeId);
+                    parent = draft.Parent;
+                    parentStore = parent.Store;
+                    if (string.Equals((string)parentStore.StoreID, storeId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        draftsFolderEntryId = (string)parent.EntryID;
+                    }
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    draftsFolderEntryId = null;
+                }
+
+                List<DesignationRead> reads = new List<DesignationRead>();
+                PropertyRead onStore = special.ReadStoreProperty(SpecialFolders.DraftsEntryIdSchema);
+                reads.Add(new DesignationRead("store object", onStore.Status, onStore.Value));
+
+                root = store.GetRootFolder();
+                PropertyRead onTop = special.ReadFolderProperty(root!, SpecialFolders.DraftsEntryIdSchema);
+                reads.Add(new DesignationRead("top folder", onTop.Status, onTop.Value));
+
+                OutlookComSession.DefaultFolderResolution inboxFound =
+                    ResolveWithoutCreating((object)ns, (object)store, SpecialFolders.OlFolderInbox, out inbox, out _);
+                if (inboxFound == OutlookComSession.DefaultFolderResolution.Resolved)
+                {
+                    PropertyRead onInbox = special.ReadFolderProperty(inbox!, SpecialFolders.DraftsEntryIdSchema);
+                    reads.Add(new DesignationRead("Inbox", onInbox.Status, onInbox.Value));
+                }
+                else
+                {
+                    reads.Add(new DesignationRead(
+                        "Inbox",
+                        inboxFound == OutlookComSession.DefaultFolderResolution.Absent ? null : PropertyReadStatus.Failed,
+                        null));
+                }
+
+                return new DraftsDesignationReading(draftsFolderEntryId, reads);
+            }
+            finally
+            {
+                Release(inbox);
+                Release(root);
+                Release(parentStore);
+                Release(parent);
+                Release(draft);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
     /// READ-ONLY census for the per-store tripwire: store-relative path -&gt; what was in
     /// every MAIL folder of <paramref name="storeDisplayName"/> (mail-typed folders plus
     /// Deleted Items, Outbox and the Sync Issues subtree, which are all mail-typed).

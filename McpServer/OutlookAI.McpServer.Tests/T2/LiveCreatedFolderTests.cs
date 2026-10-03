@@ -34,6 +34,16 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// designation question can blind. The data file itself is recreated or removed by the script
 /// around the run, never by this test.
 /// </para>
+/// <para>
+/// <b>Two more answers it records</b>, decided by the maintainer on Q96's follow-up questions
+/// (2026-10-03). The data file's top-level folders before and after each call, against what the
+/// call reported (question 2 (c)): on success the product names only the folder its lookup
+/// returned, and this measures whether that is everything - judged last, so a run that fails on it
+/// has answered every other question first. And where the data file registers the Drafts folder
+/// Outlook made (question 3): the designation read at every place the object model reaches, a
+/// record and not a verdict, from which the maintainer decides whether and where the non-creating
+/// lookup is widened.
+/// </para>
 /// </summary>
 [Collection(LiveCollections.Phase4)]
 [Trait("Category", "Live")]
@@ -89,11 +99,17 @@ public sealed class LiveCreatedFolderTests
         string? sourceEntryId = null;
         DraftOutcome? reply = null;
         DiscardDraftOutcome? discarded = null;
+
+        // Q96 question 2 (c): the top level before and after each call, against what the call
+        // reported - judged LAST, after the cleanup, so one run answers every other question first.
+        string? replyComparison = null;
+        string? discardComparison = null;
         try
         {
             // The reply's source: one tagged post in the data file's Deleted Items.
             sourceEntryId = LiveOutlookTestMailer.SaveTaggedPostInDeletedItems(
                 store, Marker, _fixture.TaggedSubject("q96-created-drafts-source"), "Source of the Q96 created-folder proof.");
+            IReadOnlyList<string> beforeReply = FolderPathsOf(store);
 
             // THE CALL UNDER TEST: the product finds no Drafts folder in the source store, makes it,
             // files the reply in it, and must say so.
@@ -101,7 +117,19 @@ public sealed class LiveCreatedFolderTests
             reply = Service.ReplyDraft(sourceEntryId, "Q96 created-folder proof " + Marker, display: false);
             _output.WriteLine(
                 $"reply_draft: store='{reply.Store}' folder='{reply.Folder}' createdFolders=["
-                + string.Join(", ", reply.CreatedFolders ?? Array.Empty<string>()) + "]");
+                + string.Join(", ", reply.CreatedFolders ?? Array.Empty<string>()) + "] appearedFolders=["
+                + string.Join(", ", reply.AppearedFolders ?? Array.Empty<string>()) + "]");
+
+            // Measured straight after the call and before any verdict, so a failure below still
+            // leaves both in the record: the top-level comparison, and where Outlook registered
+            // the Drafts folder it made (Q96 question 3).
+            IReadOnlyList<string> afterReply = FolderPathsOf(store);
+            _output.WriteLine(ThrowawayStoreProof.DescribeTopLevelChange(
+                store, "reply_draft", beforeReply, afterReply, reply.CreatedFolders, reply.AppearedFolders));
+            replyComparison = ThrowawayStoreProof.TopLevelChangeReported(
+                store, "reply_draft", beforeReply, afterReply, reply.CreatedFolders, reply.AppearedFolders);
+            RecordDraftsDesignation(store, reply.EntryId);
+
             Require(ThrowawayStoreProof.ReplyReportedTheCreatedDrafts(store, reply.CreatedFolders, reply.Store, reply.Folder));
 
             // Where Outlook designated the folder it made - the question Q85 left open - read the way
@@ -116,7 +144,13 @@ public sealed class LiveCreatedFolderTests
             discarded = Service.DiscardDraft(reply.EntryId);
             _output.WriteLine(
                 $"discard_draft: discarded={discarded.Discarded} to='{discarded.ToFolder}' createdFolders=["
-                + string.Join(", ", discarded.CreatedFolders ?? Array.Empty<string>()) + "]");
+                + string.Join(", ", discarded.CreatedFolders ?? Array.Empty<string>()) + "] appearedFolders=["
+                + string.Join(", ", discarded.AppearedFolders ?? Array.Empty<string>()) + "]");
+            IReadOnlyList<string> afterDiscard = FolderPathsOf(store);
+            _output.WriteLine(ThrowawayStoreProof.DescribeTopLevelChange(
+                store, "discard_draft", afterReply, afterDiscard, discarded.CreatedFolders, discarded.AppearedFolders));
+            discardComparison = ThrowawayStoreProof.TopLevelChangeReported(
+                store, "discard_draft", afterReply, afterDiscard, discarded.CreatedFolders, discarded.AppearedFolders);
             Require(ThrowawayStoreProof.DiscardReported(store, deletedBefore != null, discarded.Discarded, discarded.CreatedFolders));
         }
         finally
@@ -125,6 +159,36 @@ public sealed class LiveCreatedFolderTests
         }
 
         AssertNothingLeft(store, sourceEntryId, reply, discarded);
+
+        // The measurement Q96 question 2 asked for, judged once everything else has been proven.
+        Require(replyComparison);
+        Require(discardComparison);
+    }
+
+    /// <summary>
+    /// Every folder path of the store, through the shipped read-only <c>list_folders</c> - which
+    /// walks from the root and creates nothing - for the top-level comparison.
+    /// </summary>
+    private IReadOnlyList<string> FolderPathsOf(string store)
+    {
+        return LiveFolderProbe.FolderTree(Service, store).Select(folder => folder.Path).ToList();
+    }
+
+    /// <summary>
+    /// Writes where the store registers its Drafts folder into the run's record (Q96 question 3).
+    /// A record, not a verdict: a read that fails is said, and the proof goes on.
+    /// </summary>
+    private void RecordDraftsDesignation(string store, string draftEntryId)
+    {
+        try
+        {
+            _output.WriteLine(ThrowawayStoreProof.DescribeDraftsDesignation(
+                store, LiveOutlookTestMailer.ReadDraftsDesignations(store, draftEntryId)));
+        }
+        catch (Exception ex)
+        {
+            _output.WriteLine("designation: could not be read (" + ex.GetType().Name + ")");
+        }
     }
 
     /// <summary>

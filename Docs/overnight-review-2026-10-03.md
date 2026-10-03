@@ -281,8 +281,9 @@ the new one searches the right root and returns none. Build VM: 3,408 / 0 / 0 on
 Merged as `a0f6310` (build VM: 3,456 / 0 / 0, 21 self-tests). The live proof is pending the first
 guest run with the new throwaway data file (runbook §8 item 25).
 - **D63 - After a failed creating call, compare the top-level folder lists before and after**, rather
-  than re-reading only the official Drafts/Deleted Items slot - it also catches a folder Outlook made
-  but did not register. Unreadable listings mean "unverified", never a claim.
+  than re-reading only the official Drafts/Deleted Items slot. Unreadable listings mean
+  "unverified", never a claim. *Refined by D81:* a new folder counts as created only if it now holds
+  the slot that was asked for; any other new folder is reported as "appeared".
 - **D64 - `createdFolders` is a list**, because a failed call can leave more than one folder.
 - **D65 - A failed Drafts lookup is outcome `unchanged`** (new tokens `DraftsFolderUnavailable`,
   `DraftsFolderCreationUnverified`, `DraftNotStarted`): no draft can exist before the compose step.
@@ -335,6 +336,83 @@ Built and checkpointed as `CP-16C-POPULATIONS-V2` (hub 68 = 56 + 12 undated cont
   (build about 2 h at the measured 19-24 items/s; the PST grows to about 8.6 GB). Guest one would
   otherwise sit idle while guest two's live run finds the fixes both guests need; running guest
   one's live run in parallel would fix the same failures twice.
+
+### D81-D87 - Q96's follow-ups, implemented
+Merged as `d62c15b` (build VM on the branch: 3,491 / 0 / 0, 21 self-tests; 16 of 16 mutants caught).
+- **D81 - "Created" means a new folder that now holds the asked-for slot**, judged by the same
+  non-creating lookup the discard and update checks use. Every other new folder is reported in a new
+  `appearedFolders` field and a separate sentence ("N folder(s) APPEARED while the call ran … NOT
+  claimed as created"). *Consequence until the item-25 run answers question 3:* in a data file with
+  no Inbox, a Drafts folder made by a FAILED call may be reported as appeared, not created.
+- **D82 - Appeared folders are not written to the audit line** - the server does not claim to have
+  made them; they still travel on the error raised when an audit line cannot be written.
+- **D83 - A discard that fails before its delete has a new reason, `outlook_failed_before_delete`**,
+  outcome `unchanged`: "the draft was NOT deleted". Failures from the delete on keep the UNKNOWN
+  answer.
+- **D84 - The live test's folder-list comparison FAILS the test** when a folder appeared that the call
+  did not report (Q85's "must report"), rather than only printing it.
+- **D85 - The test fake creates a folder only when one is missing**, as a real Outlook does.
+- **D86 - Question 3's instrumentation was added although "nothing to do now" was decided**: a
+  read-only test-side reader of where Outlook registers the Drafts folder, so the item-25 run can
+  actually answer the question. No product change.
+- **D87 - The Q96 CHANGELOG entry and the MCP server README were corrected** to the appeared/created
+  split.
+
+### D88-D92 - The build-VM runner no longer reports a finished run as "not tested"
+Found by the Q96 agent; fixed and pushed as `f64f945`..`ac4af45` (five commits; a full run on the
+fix: 3,491 / 0 / 0, 21 self-tests). Cause: on the VM, Windows PowerShell 5.1's `Add-Content` locks
+the log against readers, and the host's poll turned that into the verdict although the results had
+come back.
+- **D88 - The results decide the verdict** (`run.json` plus the TRX file); INFRA (exit 3) now means
+  nothing came back. *Alternatives:* keep INFRA and add a results field; a new exit code.
+- **D89 - A TRX file from a run that did not finish counts for the failures it shows, never for a
+  pass** - a failed test failed, but a pass needs the whole run.
+- **D90 - No zip: the host reads the result files one by one with sharing**, and the guest deletes a
+  part-written zip; this also covers a guest that died before zipping.
+- **D91 - Limits:** a busy log is tolerated while the guest lives (the 60-minute run limit still
+  applies); 10 busy polls for a dead guest; 12 failed polls with 2-20 s backoff, then up to
+  5 minutes for the guest's done-marker.
+- **D92 - Proved by fault injection on the build VM**, only inside the agent's own runs, each of
+  which restores the base checkpoint anyway.
+- *Beyond the brief (deviation):* `summary.json`'s lists are now always arrays (one failure used to
+  come out as an object and no skips as `null`), and `-SelfTestInclude 'a','b'` - which arrives
+  through `pwsh -File` as one string - is now split on commas. Seven VM runs instead of one.
+- *Still open:* if the PowerShell Direct session breaks mid-run the runner does not reconnect; it
+  now stops waiting quickly, but that run is INFRA.
+
+### The first live-tier run on a test VM (guest two) - 66 to 78 of 80, not yet green
+Eight runs on `OutlookAI-Unindexed`, each from `CP-12B` and each ending with **zero tagged
+artifacts** from run 2 on (run 1 left two move seeds and one undelivered mail, removed by the
+restore); the tripwire census never failed. Fixes found and made (on the run agent's branch, not
+yet on master - see the crash below):
+- **F1 (harness)** - the sink probe, Outbox check and delivery nudge were armed only by a fixture
+  this guest's filter never selects.
+- **F2 (product) - D93:** Outlook records a PST's Archive folder in block `0x800F` of the Inbox's
+  `PR_ADDITIONAL_REN_ENTRYIDS_EX` - undocumented, measured byte for byte - so the non-creating
+  lookup now reads it (non-Exchange stores only). *Alternatives:* `GetDefaultFolder(39)` creates the
+  folder (Q84 forbids); matching by name fails on a localised Outlook.
+- **F3 (product, settles Q11) - D94:** a table column added by its explicit name reports LOCAL
+  time, one added by its namespace reference UTC; the paged scan read both as UTC and produced a
+  duplicate. Each column is now read by its spelling.
+- **F4-F6 (test bugs) - D95:** a missing `IncludeSubfolders=false`; the cache test moved to
+  `Requires=SearchIndex` (its no-index case is pinned in T1); a health test expected advice where
+  the product reports a problem.
+- **F7 (product) - D96:** a PST keeps a draft's EntryID when it is discarded (it opens in Deleted
+  Items); the discard path now looks that up first (non-Exchange stores only).
+- **F10 (product, answers Q96's question 3) - D97:** the Drafts folder Outlook creates in a data
+  file with no Inbox is recorded only on the store's true root folder; the product now reaches it
+  through the top folder's `PR_PARENT_ENTRYID` rather than building the root's EntryID by hand.
+**Still red, being worked on overnight with the recommended directions (D98):**
+1. **Outlook crashes when the fixes are combined with tonight's master** - an access violation in
+   OUTLOOK.EXE during `new_draft` into the identity store, 2 of 2 runs; neither half crashes alone.
+   Treated as product-severity (OutlookAI must never crash a user's Outlook); being bisected. The
+   fixes are held off master until it is fixed.
+2. **D49 on Office LTSC 2024** - Outlook exits when the user closes the window OutlookAI opened,
+   although the session's lifetime pin is held. Being measured: which windows Office 2024 counts
+   as keeping Outlook open. (Your workstation's older Office is not touched.)
+3. **A renamed reply in a PST gets a different ConversationId** (the property refuses writes; three
+   attempts reverted). Being measured: whether the id is a hash of the new subject - which decides
+   between scoping that promise to Exchange and dropping it.
 
 ## Open questions only you can answer
 

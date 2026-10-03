@@ -358,6 +358,39 @@ function Invoke-SelfTest {
     Check 'it compares the whole computer name, not a prefix' $true ($guardText.Contains('[string]::Equals(') -and -not $guardText.Contains('StartsWith('))
 
     Write-Host ''
+    Write-Host '== the run log is appended with sharing, so the host can read it while it grows =='
+    $say = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Say' }, $true))
+    Check 'Say is defined once' 1 $say.Count
+    $sayText = ''
+    $sayAddContent = 0
+    if ($say.Count -eq 1) {
+        $sayText = $say[0].Body.Extent.Text
+        $sayAddContent = @($say[0].Body.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Add-Content' }, $true)).Count
+    }
+    Check 'it appends through a stream opened with FileShare.ReadWrite' $true $sayText.Contains('[System.IO.FileShare]::ReadWrite')
+    Check 'and never through Add-Content, whose handle shuts every reader out (2026-10-03)' 0 $sayAddContent
+
+    Write-Host ''
+    Write-Host '== a zip that fails part-way is not left for the host to take for the whole result =='
+    $complete = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Complete-Run' }, $true))
+    Check 'Complete-Run is defined once' 1 $complete.Count
+    $zipCatch = ''
+    if ($complete.Count -eq 1) {
+        foreach ($t in @($complete[0].Body.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] }, $true))) {
+            if ($t.Body.Extent.Text.Contains('CreateFromDirectory') -and $t.CatchClauses.Count -gt 0) { $zipCatch = $t.CatchClauses[0].Body.Extent.Text }
+        }
+    }
+    Check 'the zip''s catch removes the zip it may have left' $true ($zipCatch.Contains('Remove-Item -LiteralPath $ResultsZip'))
+    $doneAt = -1
+    $zipAt = -1
+    if ($complete.Count -eq 1) {
+        $body = $complete[0].Body.Extent.Text
+        $doneAt = $body.IndexOf('$DoneFile')
+        $zipAt = $body.IndexOf('CreateFromDirectory')
+    }
+    Check 'and done.txt is still written after it, last' $true ($zipAt -ge 0 -and $doneAt -gt $zipAt)
+
+    Write-Host ''
     Write-Host "$($script:stChecks) check(s), $($script:stFailures.Count) failure(s)."
     if ($script:stFailures.Count -gt 0) { return 1 }
     return 0
@@ -415,12 +448,21 @@ New-Item -ItemType Directory -Force -Path $ResultsDir | Out-Null
 function Say([string] $m) {
     $line = "[{0:HH:mm:ss}] {1}" -f (Get-Date), $m
     Write-Host $line
-    # Retried, because the log is read while it is written - the host follows it. On the first
-    # run (2026-10-03) the second line, a second after the file was created, never reached it and
-    # survived only in the process's stdout; why the append failed was not established.
+    # APPENDED THROUGH A STREAM THAT LETS OTHERS READ AND WRITE, NEVER Add-Content: the host
+    # follows this log while it is written, and Windows PowerShell 5.1's Add-Content opens a file
+    # so that nobody else may read it while it appends - and fails itself while anyone is reading.
+    # Measured 2026-10-03, both ways: this script lost a line to the host's read, and the host's
+    # read failed on this script's append, which ended a finished run as INFRA. UTF-8 without a
+    # byte order mark; retried, in case something else - a scanner - holds the file for a moment.
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($line + "`r`n")
     for ($attempt = 1; $attempt -le 10; $attempt++) {
-        try { Add-Content -LiteralPath $RunLog -Value $line -Encoding UTF8 -ErrorAction Stop; break }
-        catch { Start-Sleep -Milliseconds 50 }
+        try {
+            $stream = [System.IO.File]::Open($RunLog, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+            try { $stream.Write($bytes, 0, $bytes.Length) }
+            finally { $stream.Dispose() }
+            break
+        }
+        catch { Start-Sleep -Milliseconds (50 * $attempt) }
     }
 }
 
@@ -552,7 +594,15 @@ function Complete-Run([string] $Verdict) {
         if (Test-Path -LiteralPath $ResultsZip) { Remove-Item -LiteralPath $ResultsZip -Force }
         [System.IO.Compression.ZipFile]::CreateFromDirectory($ResultsDir, $ResultsZip)
     }
-    catch { Say "could not zip the results: $($_.Exception.Message)" }
+    catch {
+        # A zip that failed part-way - a results file something else holds - is closed on the way
+        # out with the files it got before it, and the host would take that for all of them: a
+        # run.json without its TRX file, say. Removed, it sends the host to read the results one
+        # by one, each with sharing (the host's fetch), and run.json and the TRX file still decide.
+        Say "could not zip the results: $($_.Exception.Message) - the host reads them one by one"
+        try { if (Test-Path -LiteralPath $ResultsZip) { Remove-Item -LiteralPath $ResultsZip -Force } }
+        catch { Say "and could not remove the partial zip: $($_.Exception.Message)" }
+    }
     # Written LAST: its existence is what the host waits for.
     Set-Content -LiteralPath $DoneFile -Value ([string]$Verdicts[$Verdict]) -Encoding ASCII
     exit $Verdicts[$Verdict]

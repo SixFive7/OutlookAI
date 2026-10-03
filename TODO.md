@@ -1,5 +1,19 @@
 # TODO
 
+- [ ] **After the created-folder proof's first live run (`Docs/live-tier-on-the-vm.md` section 8 item
+      25): finish Q96 questions 3 and 2.** Decided on the maintainer's behalf 2026-10-03. Question 3,
+      "(a) then (b)": the run's `designation:` line says where Outlook registers the Drafts folder it
+      made in a data file with no Inbox - store object, top folder or Inbox. If the non-creating lookup
+      is blind to it (the test fails at `after:`), widen `SpecialFolders.Resolve` to read that place,
+      which fixes `discard_draft` and `update_draft` refusing such drafts and lets a failed lookup's
+      re-check call that folder created; if no place the object model reaches names it, the
+      maintainer chooses among that question's other directions. Question 2 is "(c)", in the test
+      only: if a `top level of ...` line shows a folder the call did not report, the product needs the
+      top-level comparison on success too - that question's (b), the maintainer's call. Until then, a
+      Drafts folder Outlook makes in such a data file during a call that FAILS is reported as having
+      appeared, not as created (question 1 (b)) - true, and less specific than it can be once the
+      lookup sees it.
+
 - [ ] **Read which store-hash input Outlook uses for a cached Exchange store - the one half of Q99
   no test machine can measure.** The product now finds each store in the search index by Microsoft's
   store hash (`McpServer/README.md` load-bearing fact 16). For a PST that is measured; for a cached

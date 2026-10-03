@@ -3032,6 +3032,12 @@ to use it; this is the record of building it, every step from the committed scri
 | 18. A caller killed part-way | a run under Windows PowerShell 5.1, its process stopped mid-build | the lock went with the process. The VM stayed RUNNING - nothing on this host saves it, the idle-saver task not being registered here - until the next run, three hours later, restored the checkpoint over it (Running to Running), passed, and saved it | - |
 | 19. The same, with a janitor | every run now starts one (the runner's banner, A CALLER THAT DIES); a run under Windows PowerShell 5.1 stopped mid-build again | the janitor - a child of `WmiPrvSE`, not of the caller - saw the run end 9 s after the kill with no end line in `runs.log`, took the lock, restored the base checkpoint over the running VM and saved it, released the dead run's lease, and logged each step: the VM saved, holding no RAM, **22 s after the kill**. After a run that finished, its janitor exited without a word | - |
 | 20. This work, merged with master | the branch's HEAD after merging `7933c5c` | **PASS: 3,346 total, 3,346 passed, 0 failed, 0 skipped**, 20 of 20 self-tests, 3 min 44 s; the VM saved, its janitor gone, no lease left | - |
+| 21. A finished run called "not tested" | Q96's run `20261003-091919-d7e58af90183`: the mutant commit `d7e58af`, three test classes, `-SkipSelfTests` | **INFRA, exit 3** - with its suite finished, 238 total, 237 passed, 1 failed, and its `run.json` and TRX file back. The host's read of `run.log` had failed against the guest script's own append: Windows PowerShell 5.1's `Add-Content` opens a file so that nobody else may read it, and fails itself beside a reader (measured the same morning). A caller reading the exit code took a failing run for an untested one | - |
+| 22. The same, on master's runner (`8103f58`) | the same commit and arguments; a second PowerShell Direct session reading `run.log` with sharing for its cue, to hold it once the build began | **INFRA, exit 3, in 27 s** - with row 21's very error, in the restore phase, before the hold had even begun: the race is that easy to lose. Nothing came back but an empty `guest.out.txt` | - |
+| 23. The fix, with `run.log` held | this branch's runner at `028019a`, the same commit and arguments; `run.log` held with `FileShare.None` for 12 s from the build's first line | **FAIL, exit 1: 238 total, 237 passed, 1 failed** - the run row 21 reported as INFRA. The runner said the log was held at its first busy poll and that it read again after 4; 55 s in all. `summary.json`'s `failed` a one-element array, `skipped` an empty one (in row 21's, an object and null) | - |
+| 24. A results file held, on the first fix's runner (`89f27a9`) | the same commit and arguments; a file in the guest's `results\` held with `FileShare.None` from the build's first line until `done.txt` appeared | **INFRA, exit 3**, "no run.json came back": the guest's zip failed on the held file and left a zip of the two files it had reached, `build.err.txt` and `build.out.txt`, which the host took for the whole result | - |
+| 25. The same, on `028019a` | as row 24 | **FAIL, exit 1: 238 total, 237 passed, 1 failed**, 55 s - the guest removed its partial zip, and the host read `run.log`, `run.json`, `trx\suite.trx`, `restore.out.txt` and `build.out.txt` one by one, each with sharing | - |
+| 26. The whole suite again, after the fix | `Invoke-TestsOnBuildVm.ps1` at `b78d91f` - master `8103f58` and these commits, which touch no test | **PASS: 3,491 total, 3,491 passed, 0 failed, 0 skipped**, 21 of 21 self-tests, 3 min 40 s; the VM saved, no lease left | - |
 
 **No test behaves differently here than on the maintainer's workstation**, and the two that could
 were checked. The runs matched master exactly: 3,005 / 0 / 0 at `e4b00fa`, 3,346 / 0 / 0 at
@@ -3044,6 +3050,13 @@ which has no Office either; on the workstation they may take the other. Both bra
 research, decision D3 of `Docs/overnight-review-2026-10-03.md`). The suite ran in session 0, over
 PowerShell Direct: nothing in it needs a desktop. Memory, sampled every 5 s by the guest script: the
 lowest free 2,998 MB of 6,144, the highest committed 2,847 MB.
+
+**What decides a run's verdict, since rows 21 to 25.** The guest's `run.json` and the suite's TRX
+file, wherever they came back - in the guest's zip or, when it left none, read one at a time with
+sharing. An error on the host side after that is a note beside the verdict, never the verdict; a
+log or a file something else holds is waited out, not taken for a failure; and a TRX file from a run
+that stopped part-way counts for the tests it shows failing, never for a pass. INFRA, exit 3, is left
+for a run from which neither came back - one that was not tested.
 
 **Three Hyper-V behaviours the runner rests on, measured here.** A checkpoint applied to a RUNNING VM
 resumes it at once from the checkpoint's state (Running to Running, 9 s); so the runner, ending a
@@ -3815,11 +3828,28 @@ unrecorded or unverified.
       surface `MAPI_E_NOT_FOUND` as the `HResult` the script reads (the C# lookup reads the same
       property and is measured; this script's reading of it is not) - fix the reading, not the check.
     - **The test's four lines.** `before:` Drafts absent, `reply_draft:` with `createdFolders` naming
-      the throwaway's Drafts, `after:` the non-creating lookup seeing it, `discard_draft:` discarded.
-      The `after:` line answers the question Q85 left open - where Outlook designates a Drafts folder
-      it makes in a data file with no Inbox. If the lookup does not see it, the test fails there by
-      design: `discard_draft` and `update_draft` would then refuse every draft in such a mailbox, and
-      that is a product finding for the maintainer, not a test to loosen.
+      the throwaway's Drafts (and `appearedFolders` empty), `after:` the non-creating lookup seeing it,
+      `discard_draft:` discarded. If the lookup does not see the new folder, the test fails at `after:`
+      by design: `discard_draft` and `update_draft` would then refuse every draft in such a mailbox,
+      and that is a product finding for the maintainer, not a test to loosen.
+    - **The `designation:` line - WHERE Outlook registers the Drafts folder it created** (Q96 question
+      3, decided 2026-10-03: (a) this run records it, then (b) widen the non-creating lookup from
+      it). It reads `PR_IPM_DRAFTS_ENTRYID` at every place the object model reaches - the store
+      object and the Inbox, which the lookup reads, and the store's top folder, which it does not -
+      and says what each names: `THE CREATED DRAFTS FOLDER`, another folder, not set, unreadable, or
+      no such folder (a data file attached with `AddStoreEx` has no Inbox). Record it verbatim, with
+      the `after:` line beside it. It is written before the first verdict, so a run that fails at
+      `after:` still has it. If no place names the folder, Outlook registered it where only Extended
+      MAPI can read (the store's hidden root): (b) is then not reachable through the object model,
+      and the maintainer's choice is between the other directions of that question.
+    - **The two `top level of ...` lines** (Q96 question 2, decided (c) 2026-10-03: this test only).
+      Each lists the throwaway's top-level folders before and after `reply_draft` and `discard_draft`
+      beside what the call reported. Expected: `appeared [Drafts]` around the reply with exactly that
+      folder in `reported created`, and nothing around the discard. The test fails - LAST, after the
+      zero-artifact proof - if a folder appeared that the call did not report: on success the product
+      names only the folder its lookup returned, so such a failure is the measured answer that it
+      needs the top-level comparison on success too (that question's (b), for the maintainer).
+      Record both lines whichever way it goes.
     - **The zero end**: the tagged count of the throwaway and the hub at 0, and no item the proof made
       openable by EntryID.
     - **The second run's detach**, and whether the previous file was deleted or left held by Outlook
