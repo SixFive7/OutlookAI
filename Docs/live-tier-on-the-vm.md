@@ -421,8 +421,9 @@ from-scratch rebuild replaces the guests (see `Testbed/README.md` section 1b).
   `C:\OutlookAI-Q5\server\` payload stays what it is, and the two no longer have to be the same
   path.
 * **The add-in, on BOTH guests, built from a named commit - a scripted build step since
-  2026-09-24** (`Testbed/README.md` section 1, step 5b). This line used to say "install the add-in
-  and let it run once", and the script-built guests never had it: nothing in the build installed it.
+  2026-09-24, in two halves since 2026-10-03** (`Testbed/README.md` section 1, steps 5b and 7c). This
+  line used to say "install the add-in and let it run once", and the script-built guests never had
+  it: nothing in the build installed it.
 
 **Which tests need it, and exactly what they read.** Two, both through
 `McpServer/OutlookAI.Core/Services/HealthReporting.cs` (`ReadTuningState`), over
@@ -460,7 +461,21 @@ workstation identical. Its banner is the record. Since Q81 (2026-09-27) `Outlook
 stops both writers outside Visual Studio; the script keeps its guards, because it can build a commit
 from before that change.
 
-**On the guest, `Testbed/guest/Install-OutlookAIAddIn.ps1 -Execute`, through the interactive task**:
+**On the guest, `Testbed/guest/Install-OutlookAIAddIn.ps1`, in TWO PHASES at TWO RUN LEVELS, both through the
+interactive task** - decided by the maintainer 2026-10-03 (Q100, option 3):
+
+    .\Register-InteractiveTask.ps1 -Script "& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase Install -Execute"
+    .\Register-InteractiveTask.ps1 -RunLevel Limited -Script "& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase FirstRun -Execute"
+
+Until then one `-Execute` did all six steps below from the elevated task, so the Outlook of step 5
+started elevated - and an elevated Outlook never feeds Windows Search (section 8 item 22), which
+broke the indexed guest's rule that every Outlook there starts unelevated. Now `-Phase Install`
+(elevated, the task's default `RunLevel Highest`) does steps 1 to 4 and records what it installed and
+when, never starts Outlook, and ends `INSTALLED-NEVER-RAN` (exit 2) by design; `-Phase FirstRun`
+(`-RunLevel Limited`) does steps 5 and 6 and installs and writes nothing. Each refuses the other's
+token, and `-Execute` without `-Phase` is refused. `ADDIN-READY` means what it meant - the state the
+tests read, written by THIS start - and only FirstRun reaches it; `-Verify` compares the state with
+the install record, so a state older than the last `-Phase Install` reads `INSTALLED-NEVER-RAN`.
 
 1. **The VSTO runtime** from staged media (`Testbed/MEDIA.md`), because `Installer.iss` installs
    prerequisites only when it is NOT silent - and an unattended guest can only run it silently.
@@ -479,12 +494,17 @@ from before that change.
    certificate and the payload.
 4. **`VSTO_LOGALERTS=1`**, so a load failure writes `<app>\OutlookAI.vsto.log` instead of
    vanishing.
-5. **Outlook started once**, over COM, headless, in a watchdogged child job - never quit, never
-   killed.
+5. **Outlook started once, NOT elevated** (FirstRun), over COM, headless, in a watchdogged child
+   job - never quit, never killed. Before it, a preflight: installed, registered, trusted, the
+   payload's build, the runtime present and not hard-disabled - or it stops with Outlook untouched,
+   because without the trust entry the start would put the trust prompt on the console. While the
+   job still holds Outlook it reads the started OUTLOOK.EXE's token, as
+   `Start-OutlookUnelevated.ps1` does, and an elevated one is `BROKEN`.
 6. **Proof, not exit codes**: `LastReconcileUtc` written AFTER that start, `Initialized` and
    `Enabled` of the right type, `LoadBehavior` still 3, nothing in Outlook's disabled list, the
    add-in connected and answering a call into it, no Claude Code registration question pending (it
-   would surface as a modal dialog mid-tier), and the installed build the payload's.
+   would surface as a modal dialog mid-tier), no window left on screen by the run, and the installed
+   build the payload's.
 
 **It does not disturb the index exclusion or the corpora.** The add-in's tuning service
 (`Services/OutlookTuningService.cs`) writes only under HKCU - Outlook's Search key (four search-box
@@ -493,9 +513,11 @@ larger file-size cap). `Set-OutlookIndexingDisabled.ps1` writes only HKLM - the 
 `PreventIndexingOutlook` policy and the crawl-scope rule. The two sets are disjoint, none of the four
 search values decides whether a store is indexed, and nothing in the add-in's startup path touches
 an item or a store. That is read from both sources; the guest script also snapshots the exclusion
-state before and after its Outlook start and says if anything moved. **Order it before step 7b** so
-7b's own `-Verify` certifies the exclusion with the add-in present; on a guest already past 7b, re-run
-`Set-OutlookIndexingDisabled.ps1 -Verify` after it.
+state before and after its Outlook start and says if anything moved. **The order, since the
+split: the install before step 7b**, so 7b's own `-Verify` certifies the exclusion with the add-in
+present, and **the first run after it** (step 7c): its Outlook is NOT elevated, and a non-elevated
+Outlook adds itself to the index within a minute of starting, so on the unindexed guest the
+exclusion must already be there. Then `Set-OutlookIndexingDisabled.ps1 -Verify` on either guest.
 
 **Never executed on a guest yet.** Everything above that says "measured" was measured on the host.
 **Corrected 2026-09-27: executed on both guests since, and it printed `ADDIN-READY`** -
@@ -504,7 +526,23 @@ the same day and again on 2026-09-27 (section 4.2 step 4, section 4.2b step 4.4)
 first, then `ADDIN-READY` twice each time, the trust entry kept on the second run, and the index
 exclusion state unchanged by it.
 
-**Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Execute` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
+**The two phases have NOT run on a guest - PENDING (Q100, 2026-10-03).** Their proof so far is the
+script's `-SelfTest` on the host - 168 assertions under Windows PowerShell 5.1 and PowerShell 7, seven
+of them reading the script's own syntax tree (the install phase reaches no Outlook start, the first
+run no installer and no registry, environment or file write, and each refuses the wrong token
+first), and eleven rules broken on purpose in scratch copies, each caught - and the four
+`.github/scripts` guards. Both guests were busy when it was written, so the guest proof waits for the
+next guest rebuild or a free slot. On a guest, from a checkpoint with the add-in NOT installed, it
+must record: `-Verify` `NOT-INSTALLED`; `-Phase Install -Execute` from the default task ending
+`INSTALLED-NEVER-RAN` with no OUTLOOK.EXE started (the task's job output, and `Get-Process` after it)
+and the install record written; `-Verify` then `INSTALLED-NEVER-RAN` too; `-Phase FirstRun -Execute`
+at `-RunLevel Limited` printing `token NOT elevated` for its OUTLOOK.EXE and `ADDIN-READY`; a second
+`-Phase Install` over that, `INSTALLED-NEVER-RAN` again although a valid state is there; and after
+a graceful restart `Set-OutlookIndexingDisabled.ps1 -Verify` - `UNINDEXED` on the unindexed guest,
+`INDEXED` with its count unchanged on the indexed one. Also worth one look: that FirstRun refuses
+from the default (elevated) task, exit 1, before it starts anything.
+
+**Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
 survives only as the hand-built guest's history.
 
@@ -2618,6 +2656,17 @@ every close `Testbed/host/Restart-Guest.ps1`. No population, no live tier. Raw l
 Outlook closed and with it running NOT elevated on `OutlookAI-Tier`, and after the add-in
 installer's first-run Outlook (started from its elevated task; that Outlook's own token was not
 read).
+
+**That one elevated start is gone from the procedure since 2026-10-03 (Q100, option 3), and its
+guest proof is PENDING.** `Install-OutlookAIAddIn.ps1` now runs as `-Phase Install` from the
+elevated task, which never starts Outlook, and `-Phase FirstRun` from a `-RunLevel Limited` one,
+which starts Outlook NOT elevated and reads that Outlook's token (section 2.3; `Testbed/README.md`
+section 1, steps 5b and 7c). Step 4.4 above is the old single `-Execute`, and this guest still
+carries what it installed - `-Verify` reads it as before, since it has no install record. The
+two-phase form has not run here or on `OutlookAI-Unindexed`: both were busy when it was written, so
+it waits for the next rebuild of this guest or a free slot, and section 2.3 lists what that run must
+record. Until it has run, "every Outlook start on this guest NOT elevated" holds for the procedure
+as written, not yet for a build that followed it.
 
 **The guard prompt, and why Q80 came first.** CaptureStore's first attempt, about two minutes after
 the restart that closed the mint profile, raised the Object Model Guard prompt ("A program is trying

@@ -1,6 +1,50 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
+    SPLIT INTO TWO PHASES 2026-10-03 (Q100, option 3). THE SPLIT HAS NOT RUN ON A GUEST YET.
+    ============================================================================================
+
+    -Execute used to install AND start Outlook from one elevated task, so its first-run Outlook was
+    elevated - and an elevated Outlook never feeds Windows Search (Docs/live-tier-on-the-vm.md
+    section 8 item 22). On OutlookAI-Indexed that broke the rule that every Outlook there starts
+    unelevated. Decided by the maintainer 2026-10-03 (Q100, option 3): two steps.
+
+      -Phase Install -Execute    ELEVATED - Register-InteractiveTask.ps1 at its default RunLevel
+                                 Highest. Payload checks, the VSTO runtime, the product's installer,
+                                 trust, VSTO_LOGALERTS, and a record of what it installed and when.
+                                 NEVER STARTS OUTLOOK. Ends INSTALLED-NEVER-RAN, exit 2 - never
+                                 ADDIN-READY, even over the state an earlier run left.
+      -Phase FirstRun -Execute   NOT ELEVATED - Register-InteractiveTask.ps1 -RunLevel Limited - and it
+                                 refuses an elevated token. Starts Outlook once over COM, headless,
+                                 reads the started OUTLOOK.EXE's token and fails an elevated one,
+                                 waits for the tuning state, and verifies everything -Verify does,
+                                 the modal-dialog check included. The only route to ADDIN-READY,
+                                 which means what it meant before: written by THIS start.
+      -Execute with no -Phase    REFUSED, naming both phases, so an old command line cannot do half
+                                 the job and look finished.
+
+    -Verify now also reads the install record: a tuning state older than the last -Phase Install
+    is INSTALLED-NEVER-RAN, not ADDIN-READY. With no record - an install made before the split - it
+    reads exactly as before. The record is the one new write: install-addin-record.json beside the
+    log.
+
+    PROOF SO FAR, ALL ON THE HOST: -SelfTest, 168 assertions, 0 failures, under Windows PowerShell
+    5.1 and PowerShell 7 (115 before the split). Seven of them read this file's own syntax tree:
+    the install phase reaches no Outlook start, COM attach or first-run job; the first-run phase,
+    and the job it starts, reach no installer and no registry, environment or file write; each
+    phase's first command refuses the wrong token; and two controls show the first two are not
+    vacuous. Eleven rules were broken on purpose in scratch copies - an Outlook start reached from
+    the install, directly and through a shared helper; a write in the first run and in its job;
+    the token check moved down; an elevated first run let through; ADDIN-READY from the install;
+    -Execute alone accepted; the install record ignored; the Limited run level dropped; an
+    untrusted add-in started - and -SelfTest failed on each. Plus the four .github/scripts guards,
+    under both shells. That an unelevated token can read every HKLM key the first run reads (the
+    crawl-scope rules, the Search policy, VSTO Runtime Setup) was measured on the host's Windows 11,
+    not on a guest. THE GUEST PROOF IS PENDING, for the next guest rebuild or a free slot:
+    Docs/live-tier-on-the-vm.md section 2.3 says what it must record. Every run recorded below is
+    of the single -Execute this replaced.
+
+    ============================================================================================
     RUN ON OutlookAI-Unindexed 2026-09-24 (FROM CP-08): ADDIN-READY, TWICE.
     ============================================================================================
 
@@ -74,16 +118,24 @@
 
 .SYNOPSIS
     Puts the OutlookAI add-in - built from a named commit by Testbed/host/Publish-AddInPayload.ps1 -
-    onto a testbed guest, trusts it without a prompt, starts Outlook once so the add-in writes its
-    tuning state, and then PROVES the exact registry state the live tests read.
+    onto a testbed guest and trusts it without a prompt (-Phase Install, elevated); then starts
+    Outlook once, NOT elevated, so the add-in writes its tuning state, and PROVES the exact registry
+    state the live tests read (-Phase FirstRun).
 
 .DESCRIPTION
     RUN ON THE GUEST. Windows PowerShell 5.1 - no ternary, no `??`, no `-p` on mkdir.
-    -Execute STARTS OUTLOOK, so it must run in the interactive session, through
-    Testbed/guest/Register-InteractiveTask.ps1 - never over PowerShell Direct, which lands in
-    session 0 where Outlook cannot finish starting:
+    Both phases run in the interactive session, through Testbed/guest/Register-InteractiveTask.ps1 -
+    never over PowerShell Direct, which lands in session 0 where Outlook cannot finish starting -
+    and AT DIFFERENT RUN LEVELS:
 
-        .\Register-InteractiveTask.ps1 -Script "& 'C:\OutlookAI-Q5\src\Testbed\guest\Install-OutlookAIAddIn.ps1' -Execute"
+        .\Register-InteractiveTask.ps1 -Script "& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase Install -Execute"
+        .\Register-InteractiveTask.ps1 -RunLevel Limited -Script "& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase FirstRun -Execute"
+
+    Install needs elevation for the machine-wide VSTO runtime; FirstRun must not have it, because
+    the Outlook it starts inherits its token and an elevated Outlook never feeds Windows Search. Each
+    phase refuses the other's token. On the unindexed guest run FirstRun only once the index
+    exclusion is in place (Testbed/README.md section 1, steps 5b, 7b and 7c): a NON-elevated Outlook
+    adds itself to the index within a minute of starting.
 
     -Verify and -SelfTest run anywhere. NEVER on the maintainer's workstation: the guard refuses.
 
@@ -115,13 +167,16 @@
     a REG_QWORD 1 or a REG_SZ "1" reads as not-managed. -Verify mirrors that rule exactly, and
     -SelfTest checks the mirror against the source it mirrors.
 
-    WHAT -Execute DOES, IN ORDER, and every step is idempotent:
+    WHAT THE TWO PHASES DO, IN ORDER, and every step is idempotent. -Phase Install is steps 1 to
+    6 and 6a; -Phase FirstRun is steps 1, 2, 6b, 7 and 8:
 
-      1. REFUSES unless: this is a guest (two-axis guard), elevated, 64-bit, in an INTERACTIVE
-         session, and OUTLOOK.EXE is not running - the add-in loads when Outlook STARTS, and the
-         proof below needs that start to be this script's.
+      1. REFUSES unless: this is a guest (two-axis guard), 64-bit, in an INTERACTIVE session, and
+         OUTLOOK.EXE is not running - Install would replace files under a running add-in, and
+         FirstRun's proof needs the start to be this script's. And the RUN LEVEL: Install refuses a
+         token that is not elevated, FirstRun one that is.
       2. CHECKS THE PAYLOAD. addin-payload.json from the host build; the installer's SHA-256 must
-         match it before anything runs.
+         match it before anything runs. (FirstRun reads the same manifest to tie the installed
+         build to its commit, as the verify always did.)
       3. THE VSTO RUNTIME, from STAGED media - never a download - pinned by the SHA-256 and length
          .github/workflows/release.yml pins (compared against Microsoft's own download on every
          release, which is why this hash, unlike the SDK's, has a default). Skipped when
@@ -139,15 +194,27 @@
       6. VSTO_LOGALERTS=1 for this user, so a load failure writes <app>\OutlookAI.vsto.log instead
          of vanishing. [MS-DOC: "Debug Office projects".] Errors are NOT shown in a dialog - that
          is VSTO_SUPPRESSDISPLAYALERTS=0, which this never sets.
+     6a. RECORDS THE INSTALL - commit, version, the moment the installer finished, the install
+         directory - in install-addin-record.json beside the log (the old record is removed before
+         the installers run, so a failed install leaves none). Then the verify, which can only say
+         INSTALLED-NEVER-RAN or BROKEN: this phase never starts Outlook, so it never says ADDIN-READY.
+     6b. FIRSTRUN'S PREFLIGHT, before any Outlook start: the add-in must be installed, registered,
+         trusted, present on disk as the payload's build, with the runtime in place and not in
+         Outlook's hard-disable list. Any of those wrong, and a start would put the trust prompt on
+         the console or prove nothing - so it stops, BROKEN or NOT-INSTALLED, Outlook untouched.
       7. STARTS OUTLOOK ONCE, over COM, headless, in a CHILD job under a deadline - so a hang is
          reported rather than inherited, the shape the measured cold-start probe in
-         Testbed/MEDIA.md used. It waits for LastReconcileUtc to be written AFTER the start, asks
+         Testbed/MEDIA.md used. The child inherits the phase's Limited token, and so does the Outlook
+         COM starts for it - which the job proves by reading the started OUTLOOK.EXE's token while it
+         still holds Outlook, the way Start-OutlookUnelevated.ps1 does; an elevated one is BROKEN.
+         It waits for LastReconcileUtc to be written AFTER the start, asks
          Outlook whether the add-in is connected, and calls into the add-in itself
          (COMAddIn.Object.GetRestartNeeded, AddInAutomation.cs) - which only a loaded add-in can
          answer. It releases every reference and NEVER quits or kills Outlook (mailbox-safety rule
          7). Outlook may stay up headless or close by itself once the last reference goes; both
          are graceful and the script says which happened.
-      8. VERIFIES, as -Verify does, plus FRESHNESS: the state must have been written by THIS start.
+      8. VERIFIES, as -Verify does, plus FRESHNESS: the state must have been written by THIS start;
+         and no window that appeared during the run may still be on screen.
 
     TRUST, AND WHY IT IS WRITTEN. A VSTO add-in loads silently only if its manifest's signer is a
     trusted publisher CHAINING TO A TRUSTED ROOT, or an inclusion-list entry vouches for it.
@@ -182,7 +249,8 @@
     mail item, never touches a store, a profile or MAPI, and never writes the add-in's own
     Software\OutlookAI keys - the tests read what the ADD-IN wrote, or nothing. It does not touch
     the Windows Search policy or the crawl scope; it READS both before and after, and reports any
-    change (see INTERACTION).
+    change (see INTERACTION). -Phase Install never starts Outlook; -Phase FirstRun installs nothing
+    and writes nothing but its log - its one effect is the Outlook start it is there to prove.
 
     INTERACTION WITH THE INDEX EXCLUSION AND THE CORPORA. The add-in's tuning service
     (Services/OutlookTuningService.cs) writes only under HKCU: Outlook's Search key (four search-box
@@ -190,17 +258,22 @@
     key (a larger PST/OST size cap). Set-OutlookIndexingDisabled.ps1 writes only HKLM: the Windows
     Search PreventIndexingOutlook policy and the crawl-scope rule. The two sets are DISJOINT, none
     of the four search values decides whether Outlook's stores are indexed, and nothing the add-in
-    does touches an item or a store. [READ, both sources.] -Execute snapshots the exclusion state
-    before and after its Outlook start and says if anything moved; if it did, re-run
-    Set-OutlookIndexingDisabled.ps1 -Verify before trusting the guest as unindexed.
+    does touches an item or a store. [READ, both sources.] Each phase snapshots the exclusion state
+    before and after its work - FirstRun's around its Outlook start, the one that matters - and says
+    if anything moved; if it did, re-run Set-OutlookIndexingDisabled.ps1 -Verify before trusting
+    the guest as unindexed. The Outlook FirstRun starts is NOT elevated, so unlike the elevated one
+    this script used to start it is an Outlook the indexer serves: on the unindexed guest it must
+    start only once the exclusion is in place.
 
     FOUR VERDICTS, and only one exits 0:
 
       ADDIN-READY           installed, registered (LoadBehavior 3), trusted, runtime present, and
-                            the state the tests read is valid - and, under -Execute, written by
-                            THIS start. exit 0.
-      INSTALLED-NEVER-RAN   everything in place, but the add-in has not written its state yet. A
-                            real state, not a fault: run -Execute. exit 2.
+                            the state the tests read is valid - and, under -Phase FirstRun, written
+                            by THIS start. Only FirstRun and -Verify can say it. exit 0.
+      INSTALLED-NEVER-RAN   everything in place, but the installed build has not written its state
+                            yet: no state at all, or only one older than the last -Phase Install.
+                            What -Phase Install ends with. A real state, not a fault: run
+                            -Phase FirstRun. exit 2.
       NOT-INSTALLED         no add-in here. exit 3.
       BROKEN                something that should hold does not; every reason is printed. exit 1.
 
@@ -228,24 +301,36 @@
     The Office major whose Outlook hive to read. Detected the way Services/OfficeVersions.cs does
     when omitted.
 
+.PARAMETER Phase
+    Install or FirstRun - which half -Execute does, and without -Execute, which half's plan a dry
+    run prints. -Execute without it is refused.
+
+.PARAMETER InstallRecordPath
+    Where -Phase Install records what it installed and when, and where -Verify reads it from.
+
 .PARAMETER Execute
-    Install, trust, start Outlook once, verify. Session 1 only.
+    Do the -Phase named. Session 1 only: Install elevated, FirstRun NOT elevated.
 
 .PARAMETER Verify
-    Read and report. Writes nothing but its log.
+    Read and report. Writes nothing but its log. Takes no -Phase.
 
 .PARAMETER WithOutlook
     With -Verify: also ask a RUNNING Outlook in this session, over COM, whether the add-in is
-    connected. Never starts Outlook.
+    connected. Never starts Outlook. COM does not attach across integrity levels, so run it at the
+    level that Outlook runs at - -RunLevel Limited for one FirstRun or Start-OutlookUnelevated.ps1
+    started.
 
 .PARAMETER SelfTest
-    The pure decisions against synthetic inputs, plus the contract this script mirrors, read from
-    the repository source when it is reachable. No registry, no COM, no guest needed.
+    The pure decisions against synthetic inputs, the phase rules read from this script's own
+    syntax tree, and the contract this script mirrors, read from the repository source when it is
+    reachable. No registry, no COM, no guest needed.
 
 .EXAMPLE
     .\Install-OutlookAIAddIn.ps1 -SelfTest
     .\Install-OutlookAIAddIn.ps1
-    .\Register-InteractiveTask.ps1 -Script "& 'C:\OutlookAI-Q5\src\Testbed\guest\Install-OutlookAIAddIn.ps1' -Execute"
+    .\Install-OutlookAIAddIn.ps1 -Phase FirstRun
+    .\Register-InteractiveTask.ps1 -Script "& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase Install -Execute"
+    .\Register-InteractiveTask.ps1 -RunLevel Limited -Script "& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase FirstRun -Execute"
     .\Install-OutlookAIAddIn.ps1 -Verify
 #>
 [CmdletBinding()]
@@ -260,18 +345,22 @@ param(
     [string]   $ExpectedComputerNamePrefix = 'OAI-',
     [int]      $InstallTimeoutMinutes      = 15,
     [int]      $FirstRunTimeoutSeconds     = 240,
+    [ValidateSet('Install', 'FirstRun')]
+    [string]   $Phase,
     [switch]   $Execute,
     [switch]   $Verify,
     [switch]   $WithOutlook,
     [switch]   $SelfTest,
-    [string]   $LogPath                    = 'C:\OutlookAI-Q5\install-addin.log'
+    [string]   $LogPath                    = 'C:\OutlookAI-Q5\install-addin.log',
+    [string]   $InstallRecordPath          = 'C:\OutlookAI-Q5\install-addin-record.json'
 )
 
 $ErrorActionPreference = 'Stop'
 
 # ---------------------------------------------------------------------------------------------
 # Everything this script reads or writes, named in one place, so the blast radius is readable
-# without reading the code. WRITES are only the three marked; everything else is read.
+# without reading the code. WRITES are only the three marked - all three by -Phase Install, none
+# by -Phase FirstRun or -Verify - and everything else is read. (Plus the log, which is not state.)
 # ---------------------------------------------------------------------------------------------
 $AddinName               = 'OutlookAI'
 $AddinRegistrationKey    = 'Software\Microsoft\Office\Outlook\Addins\OutlookAI'   # the installer writes
@@ -279,7 +368,10 @@ $AppKey                  = 'Software\OutlookAI'                                 
 $InstallDirValue         = 'InstallDir'
 $InclusionKey            = 'Software\Microsoft\VSTO\Security\Inclusion'           # WRITES: one entry, this add-in's URL only
 $EnvironmentKey          = 'Environment'                                          # WRITES: VSTO_LOGALERTS=1
+# $InstallRecordPath, a parameter                                                 # WRITES: what was installed, and when
 $LogAlertsName           = 'VSTO_LOGALERTS'
+$PhaseInstall            = 'Install'                                              # elevated; never starts Outlook
+$PhaseFirstRun           = 'FirstRun'                                             # NOT elevated; the one Outlook start
 $TuningKey               = 'Software\OutlookAI\Tuning'                            # the ADD-IN writes; this reads
 $McpKey                  = 'Software\OutlookAI\Mcp'                               # the ADD-IN writes; this reads
 $VstoRuntimeKey          = 'SOFTWARE\Microsoft\VSTO Runtime Setup\v4R'            # HKLM, 32-bit view, as Installer.iss reads it
@@ -632,12 +724,16 @@ function Select-OfficeVersion {
     return $null
 }
 
+# $Facts.RanSinceInstall is $null when there is no install record to compare with (an install made
+# before the phases existed, or -Phase FirstRun, whose freshness test is stricter); $false when the
+# tuning state is older than the last -Phase Install. $Facts.ForbidReady is -Phase Install's: it
+# never starts Outlook, so whatever state it finds was written by something else.
 function Get-AddInVerdict {
     param($Facts)
     $problems = @()
     $notes = @()
     if (-not $Facts.Installed) {
-        return [pscustomobject]@{ Verdict = $VerdictNotInstalled; ExitCode = 3; Problems = @(); Notes = @('No InstallDir under HKCU\Software\OutlookAI and no registration: the add-in is not installed. Run -Execute.') }
+        return [pscustomobject]@{ Verdict = $VerdictNotInstalled; ExitCode = 3; Problems = @(); Notes = @("No InstallDir under HKCU\Software\OutlookAI and no registration: the add-in is not installed. Run -Phase $PhaseInstall -Execute (elevated), then -Phase $PhaseFirstRun -Execute (NOT elevated).") }
     }
     $problems += @($Facts.RegistrationProblems)
     $problems += @($Facts.FileProblems)
@@ -646,11 +742,13 @@ function Get-AddInVerdict {
     $problems += @($Facts.ContractProblems)
     if ($Facts.DisabledItemHit) { $problems += "Outlook's Resiliency\DisabledItems names the add-in: Outlook hard-disabled it after a crash." }
     if ($Facts.McpProblem) { $problems += $Facts.McpProblem }
+    if ($Facts.InstallRecordProblem) { $problems += $Facts.InstallRecordProblem }
     $problems += @($Facts.ComProblems)
     $notes += @($Facts.Notes)
 
     $readProblems = @(Get-TestReadProblems $Facts.Tuning)
-    $neverRan = (-not $Facts.Tuning.KeyPresent)
+    $notSinceInstall = ($Facts.RanSinceInstall -eq $false)
+    $neverRan = (-not $Facts.Tuning.KeyPresent) -or $notSinceInstall
     if (-not $neverRan) { $problems += $readProblems }
     if ($Facts.RequireFresh -and -not $Facts.Fresh) { $problems += $Facts.FreshReason }
 
@@ -658,10 +756,124 @@ function Get-AddInVerdict {
     if ($problems.Count -gt 0) {
         return [pscustomobject]@{ Verdict = $VerdictBroken; ExitCode = 1; Problems = $problems; Notes = $notes }
     }
-    if ($neverRan) {
-        return [pscustomobject]@{ Verdict = $VerdictNeverRan; ExitCode = 2; Problems = @(); Notes = @($notes + $readProblems) }
+    if ($neverRan -or $Facts.ForbidReady) {
+        $why = @()
+        if ($notSinceInstall -and $Facts.RanSinceInstallReason) { $why += $Facts.RanSinceInstallReason }
+        if ($Facts.ForbidReady) { $why += "-Phase $PhaseInstall never starts Outlook, so it never says $VerdictReady - whatever state it finds, it did not write. -Phase $PhaseFirstRun is what proves this build runs." }
+        return [pscustomobject]@{ Verdict = $VerdictNeverRan; ExitCode = 2; Problems = @(); Notes = @($notes + $why + $readProblems) }
     }
     return [pscustomobject]@{ Verdict = $VerdictReady; ExitCode = 0; Problems = @(); Notes = $notes }
+}
+
+# ---- The two phases (Q100, decided 2026-10-03). Which one runs, at which run level, and whether
+# it may start Outlook - each a pure decision so -SelfTest pins it.
+
+# The switches to a mode. -Execute without -Phase is REFUSED rather than defaulted: before the
+# split it did both halves, and a command line written then must not now do one and stop.
+function Resolve-RunMode {
+    param([bool] $Execute, [bool] $Verify, [string] $Phase)
+    $refusal = $null
+    if ($Execute -and $Verify) { $refusal = 'REFUSING: -Execute and -Verify together. -Verify reads; -Execute does one phase. Pick one.' }
+    elseif ($Verify -and $Phase) { $refusal = 'REFUSING: -Verify takes no -Phase - it reads what is here, whichever phase put it there.' }
+    elseif ($Execute -and -not $Phase) {
+        $refusal = "REFUSING: -Execute needs -Phase since 2026-10-03 (Q100). It used to install AND start Outlook from one " +
+                   "elevated task, and an elevated Outlook never feeds Windows Search. Run the two halves, in this order:`n" +
+                   "    $(Get-PhaseCommand -Phase $PhaseInstall)`n    $(Get-PhaseCommand -Phase $PhaseFirstRun)"
+    }
+    if ($refusal) { return [pscustomobject]@{ Mode = $null; Phase = $null; Refusal = $refusal } }
+    if ($Execute) { return [pscustomobject]@{ Mode = $Phase; Phase = $Phase; Refusal = $null } }
+    if ($Verify) { return [pscustomobject]@{ Mode = 'Verify'; Phase = $null; Refusal = $null } }
+    return [pscustomobject]@{ Mode = 'DryRun'; Phase = $Phase; Refusal = $null }
+}
+
+# The one way each phase is meant to be started, as every refusal and plan prints it.
+function Get-PhaseCommand {
+    param([string] $Phase, [string] $ScriptPath = 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1')
+    $level = ''
+    if ($Phase -eq $PhaseFirstRun) { $level = '-RunLevel Limited ' }
+    return ".\Register-InteractiveTask.ps1 $level-Script ""& '$ScriptPath' -Phase $Phase -Execute"""
+}
+
+# Install must be elevated - the VSTO runtime is a machine-wide install. FirstRun must NOT be: the
+# Outlook it starts over COM inherits its token, and an elevated Outlook never feeds Windows Search
+# (Docs/live-tier-on-the-vm.md section 8 item 22). Returns the refusal, or $null.
+function Get-ElevationRefusal {
+    param([string] $Phase, [bool] $Elevated)
+    if ($Phase -eq $PhaseInstall -and -not $Elevated) {
+        return "REFUSING TO RUN -Phase ${PhaseInstall}: this session is NOT elevated, and the VSTO runtime is a machine-wide install. Run it through Register-InteractiveTask.ps1 at its default RunLevel Highest:`n    $(Get-PhaseCommand -Phase $PhaseInstall)"
+    }
+    if ($Phase -eq $PhaseFirstRun -and $Elevated) {
+        return "REFUSING TO RUN -Phase ${PhaseFirstRun}: this session is ELEVATED, and the Outlook it would start over COM would be too - an elevated Outlook never feeds Windows Search (Docs/live-tier-on-the-vm.md section 8 item 22), and COM does not attach across integrity levels, so the live tier could not use it either. Run it through Register-InteractiveTask.ps1 -RunLevel Limited:`n    $(Get-PhaseCommand -Phase $PhaseFirstRun)"
+    }
+    return $null
+}
+
+# The record -Phase Install leaves: commit, version, when the installer finished, where it put the
+# add-in. Written as JSON with the time as a round-trip ("o") UTC string.
+function ConvertTo-InstallRecordJson {
+    param([string] $Commit, [string] $Version, [DateTime] $InstalledUtc, [string] $InstallDir)
+    $o = [ordered]@{ commit = $Commit; version = $Version; installedUtc = $InstalledUtc.ToUniversalTime().ToString('o'); installDir = $InstallDir; writtenBy = "Install-OutlookAIAddIn.ps1 -Phase $PhaseInstall" }
+    return ($o | ConvertTo-Json)
+}
+
+# Read back. PowerShell 7's ConvertFrom-Json turns an ISO timestamp into a [DateTime] by itself and
+# 5.1's leaves it a string, so both are accepted. Returns @{ Record; Problem } - one of them $null.
+function ConvertFrom-InstallRecord {
+    param([string] $Json)
+    $o = $null
+    $problem = $null
+    $when = [DateTime]::MinValue
+    try { $o = $Json | ConvertFrom-Json } catch { $problem = 'it is not JSON' }
+    if (-not $problem -and $null -eq $o) { $problem = 'it is empty' }
+    if (-not $problem -and -not ([string]$o.commit -match '^[0-9a-f]{40}$')) { $problem = 'commit: not a 40-character lower-case hex id' }
+    if (-not $problem) {
+        $raw = $o.installedUtc
+        if ($raw -is [DateTime]) {
+            $when = $raw
+            if ($when.Kind -eq [DateTimeKind]::Unspecified) { $problem = 'installedUtc: a time with no zone' }
+            elseif ($when.Kind -eq [DateTimeKind]::Local) { $when = $when.ToUniversalTime() }
+        }
+        else {
+            $ok = [DateTime]::TryParse([string]$raw, [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::RoundtripKind, [ref]$when)
+            if (-not $ok) { $problem = "installedUtc: '$raw' is not a round-trip timestamp" }
+            elseif ($when.Kind -eq [DateTimeKind]::Unspecified) { $problem = "installedUtc: '$raw' carries no zone" }
+            elseif ($when.Kind -ne [DateTimeKind]::Utc) { $when = $when.ToUniversalTime() }
+        }
+    }
+    if ($problem) { return [pscustomobject]@{ Record = $null; Problem = $problem } }
+    return [pscustomobject]@{ Problem = $null; Record = [pscustomobject]@{ Commit = [string]$o.commit; Version = [string]$o.version; InstalledUtc = $when; InstallDir = [string]$o.installDir } }
+}
+
+# Has the add-in written its state since the last -Phase Install? The same comparison as freshness,
+# against the install's time instead of an Outlook start's.
+function Test-RanSinceInstall {
+    param([string] $LastReconcileUtc, [DateTime] $InstalledUtc)
+    $f = Test-ReconcileFresh $LastReconcileUtc $InstalledUtc
+    if ($f.Fresh) { return [pscustomobject]@{ Ran = $true; Reason = '' } }
+    $why = "the add-in has not run since -Phase $PhaseInstall installed it at {0:o}" -f $InstalledUtc
+    if ($LastReconcileUtc) { $why += " - LastReconcileUtc '$LastReconcileUtc' is from before that" }
+    return [pscustomobject]@{ Ran = $false; Reason = ($why + ". Run -Phase $PhaseFirstRun -Execute.") }
+}
+
+# FirstRun's preflight: what must hold BEFORE an Outlook start, because with it wrong the start would
+# put the trust prompt on the console - a hang on an unattended guest - or load nothing and prove
+# nothing. Returns the verdict to stop with, or $null to go. A missing or stale tuning state is NOT a
+# reason to stop: writing it is what the start is for.
+function Get-FirstRunPreflight {
+    param($Facts)
+    if (-not $Facts.Installed) {
+        return [pscustomobject]@{ Verdict = $VerdictNotInstalled; ExitCode = 3; Problems = @(); Notes = @("Nothing to start: the add-in is not installed. Run -Phase $PhaseInstall -Execute first:`n    $(Get-PhaseCommand -Phase $PhaseInstall)") }
+    }
+    $blockers = @()
+    $blockers += @($Facts.RegistrationProblems)
+    $blockers += @($Facts.FileProblems)
+    $blockers += @($Facts.TrustProblems)
+    $blockers += @($Facts.RuntimeProblems)
+    if ($Facts.DisabledItemHit) { $blockers += "Outlook's Resiliency\DisabledItems names the add-in: Outlook would not load it." }
+    $blockers = @($blockers | Where-Object { $_ })
+    if ($blockers.Count -eq 0) { return $null }
+    return [pscustomobject]@{ Verdict = $VerdictBroken; ExitCode = 1; Problems = $blockers; Notes = @("Outlook was NOT started. Each of the above is something -Phase $PhaseInstall puts right; run it again, then this:`n    $(Get-PhaseCommand -Phase $PhaseInstall)") }
 }
 
 # =============================================================================================
@@ -837,6 +1049,22 @@ function Get-SessionWindows {
             ForEach-Object { "[$($_.ProcessName)] '$($_.MainWindowTitle)'" })
 }
 
+# -Phase Install's record, read back. Absent is not a problem - every install made before the
+# phases existed has none - but an unreadable one is.
+function Read-InstallRecord {
+    if (-not (Test-Path -LiteralPath $InstallRecordPath)) { return [pscustomobject]@{ Record = $null; Problem = $null } }
+    $r = ConvertFrom-InstallRecord ([System.IO.File]::ReadAllText($InstallRecordPath))
+    if ($r.Problem) { $r.Problem = "the install record $InstallRecordPath is unreadable ($($r.Problem)). Run -Phase $PhaseInstall -Execute again, which rewrites it." }
+    return $r
+}
+
+# Whether THIS process's token is elevated - the same reading Register-InteractiveTask.ps1 makes for
+# its -RunLevel Limited check.
+function Test-TokenElevated {
+    $p = New-Object System.Security.Principal.WindowsPrincipal([System.Security.Principal.WindowsIdentity]::GetCurrent())
+    return [bool]$p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
 # Start a process and wait for it with a deadline. .Handle is read before waiting because
 # Start-Process -PassThru otherwise loses the exit code (MEASURED, Install-DotnetSdk.ps1). NEVER
 # -Verb RunAs: this session is already elevated, and UAC elevation takes the foreground.
@@ -878,11 +1106,10 @@ Do not 'fix' this by widening either default. The defaults are the guard.
 "@
 }
 
-function Assert-Elevated {
-    $p = New-Object System.Security.Principal.WindowsPrincipal([System.Security.Principal.WindowsIdentity]::GetCurrent())
-    if (-not $p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw 'REFUSING TO RUN: this session is not elevated. The VSTO runtime is a machine-wide install. Register-InteractiveTask.ps1 registers its task with RunLevel Highest, which is elevated.'
-    }
+function Assert-PhaseElevation {
+    param([string] $ForPhase)
+    $refusal = Get-ElevationRefusal -Phase $ForPhase -Elevated (Test-TokenElevated)
+    if ($refusal) { throw $refusal }
 }
 
 function Assert-Bitness {
@@ -892,33 +1119,37 @@ function Assert-Bitness {
 }
 
 function Assert-InteractiveSession {
+    param([string] $ForPhase)
     $sid = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
-    if ($sid -eq 0) {
-        throw @"
-REFUSING TO RUN -Execute IN SESSION 0.
+    if ($sid -ne 0) { return }
+    $why = 'FirstRun starts Outlook, and Outlook cannot finish starting in session 0 - PowerShell Direct lands there, and the call would hang instead of failing.'
+    if ($ForPhase -eq $PhaseInstall) {
+        $why = 'Install runs where it was measured: the interactive session, through the task. Over PowerShell Direct its installers have never run, and the first-run half needs the task anyway.'
+    }
+    throw @"
+REFUSING TO RUN -Phase $ForPhase IN SESSION 0.
 
-It starts Outlook, and Outlook cannot finish starting in session 0 - PowerShell Direct lands there, and
-the call would hang instead of failing. Run it through the interactive session:
+$why Run it through the interactive session:
 
-    .\Register-InteractiveTask.ps1 -Script "& '$PSCommandPath' -Execute"
+    $(Get-PhaseCommand -Phase $ForPhase -ScriptPath $PSCommandPath)
 
 -Verify, without -WithOutlook, is fine here.
 "@
-    }
 }
 
 function Assert-OutlookClosed {
+    param([string] $ForPhase)
     $running = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
     if ($running.Count -eq 0) { return }
+    $why = 'The add-in loads when Outlook STARTS, and the proof this phase gives - the add-in wrote its state AFTER a start this script made, in an Outlook whose token it read - needs that start to be this script''s.'
+    if ($ForPhase -eq $PhaseInstall) { $why = 'The installer would be replacing files under a running add-in.' }
     throw @"
-REFUSING TO RUN: OUTLOOK.EXE is running (pid $(($running | ForEach-Object { $_.Id }) -join ', ')).
+REFUSING TO RUN -Phase ${ForPhase}: OUTLOOK.EXE is running (pid $(($running | ForEach-Object { $_.Id }) -join ', ')).
 
-The add-in loads when Outlook STARTS, and the proof this script gives - the add-in wrote its state
-AFTER a start this script made - needs that start to be this script's. The installer would also be
-replacing files under a running add-in.
+$why
 
-Restart the guest - the proven way to a clean Outlook here - and run this again. DO NOT taskkill
-OUTLOOK.EXE: mailbox-safety rule 7 forbids it outright.
+Restart the guest with Testbed/host/Restart-Guest.ps1 - the proven way to a clean Outlook here - and
+run this again. DO NOT taskkill OUTLOOK.EXE: mailbox-safety rule 7 forbids it outright.
 "@
 }
 
@@ -1104,7 +1335,8 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Write-Host ''
     Write-Host '== the verdict =='
     $installedFacts = @{ Installed = $true; RegistrationProblems = @(); FileProblems = @(); TrustProblems = @(); RuntimeProblems = @(); ContractProblems = @()
-                         DisabledItemHit = $false; McpProblem = $null; ComProblems = @(); Notes = @(); Tuning = (Get-TuningView $good); RequireFresh = $false; Fresh = $false; FreshReason = '' }
+                         DisabledItemHit = $false; McpProblem = $null; ComProblems = @(); Notes = @(); Tuning = (Get-TuningView $good); RequireFresh = $false; Fresh = $false; FreshReason = ''
+                         InstallRecordProblem = $null; RanSinceInstall = $null; RanSinceInstallReason = ''; ForbidReady = $false }
     $r = Get-AddInVerdict ([pscustomobject]$installedFacts)
     Test-Case 'everything in place is READY' $VerdictReady $r.Verdict
     Test-Case 'and exits 0' 0 $r.ExitCode
@@ -1115,7 +1347,7 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     $f = $installedFacts.Clone(); $f.Tuning = (Get-TuningView $null); $f.TrustProblems = @('no trust entry')
     Test-Case 'never ran AND untrusted is BROKEN - the first load would prompt' $VerdictBroken (Get-AddInVerdict ([pscustomobject]$f)).Verdict
     $f = $installedFacts.Clone(); $f.RequireFresh = $true; $f.Fresh = $false; $f.FreshReason = 'stale'
-    Test-Case 'under -Execute a stale state is BROKEN' $VerdictBroken (Get-AddInVerdict ([pscustomobject]$f)).Verdict
+    Test-Case 'under -Phase FirstRun a stale state is BROKEN' $VerdictBroken (Get-AddInVerdict ([pscustomobject]$f)).Verdict
     $f = $installedFacts.Clone(); $f.DisabledItemHit = $true
     Test-Case 'a hard-disabled add-in is BROKEN' $VerdictBroken (Get-AddInVerdict ([pscustomobject]$f)).Verdict
     $f = $installedFacts.Clone(); $bad = $good.Clone(); $bad['Enabled'] = (V 'DWord' 0); $f.Tuning = (Get-TuningView $bad)
@@ -1124,6 +1356,171 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     $r = Get-AddInVerdict ([pscustomobject]$f)
     Test-Case 'not installed is its own verdict' $VerdictNotInstalled $r.Verdict
     Test-Case 'exiting 3' 3 $r.ExitCode
+    Test-Case 'and naming both phases to run' $true ((($r.Notes -join ' ').Contains("-Phase $PhaseInstall")) -and (($r.Notes -join ' ').Contains("-Phase $PhaseFirstRun")))
+    $f = $installedFacts.Clone(); $f.RanSinceInstall = $false; $f.RanSinceInstallReason = 'not since the install'
+    $r = Get-AddInVerdict ([pscustomobject]$f)
+    Test-Case 'a valid state OLDER than the last -Phase Install is NEVER-RAN, not READY' $VerdictNeverRan $r.Verdict
+    Test-Case 'exiting 2, and saying why' '2|True' ('{0}|{1}' -f $r.ExitCode, ($r.Notes -join ' ').Contains('not since the install'))
+    $f = $installedFacts.Clone(); $f.RanSinceInstall = $true
+    Test-Case 'the same state written after it is READY' $VerdictReady (Get-AddInVerdict ([pscustomobject]$f)).Verdict
+    $f = $installedFacts.Clone(); $f.RanSinceInstall = $null
+    Test-Case 'no install record - an install from before the split - reads as before: READY' $VerdictReady (Get-AddInVerdict ([pscustomobject]$f)).Verdict
+    $f = $installedFacts.Clone(); $f.ForbidReady = $true
+    $r = Get-AddInVerdict ([pscustomobject]$f)
+    Test-Case '-Phase Install never says READY, even over a valid state an earlier run left' $VerdictNeverRan $r.Verdict
+    Test-Case 'and exits 2, not 0' 2 $r.ExitCode
+    Test-Case 'and says the first run is what proves it' $true (($r.Notes -join ' ').Contains("-Phase $PhaseFirstRun is what proves"))
+    $f = $installedFacts.Clone(); $f.ForbidReady = $true; $f.TrustProblems = @('no trust entry')
+    Test-Case '-Phase Install with anything wrong is BROKEN' $VerdictBroken (Get-AddInVerdict ([pscustomobject]$f)).Verdict
+    $f = $installedFacts.Clone(); $f.InstallRecordProblem = 'the install record is unreadable'
+    Test-Case 'an unreadable install record is BROKEN' $VerdictBroken (Get-AddInVerdict ([pscustomobject]$f)).Verdict
+
+    Write-Host ''
+    Write-Host '== the two phases: which one runs, and how each is started =='
+    $m = Resolve-RunMode -Execute $true -Verify $false -Phase ''
+    Test-Case '-Execute with no -Phase is refused - it used to do both halves' 'True|' ('{0}|{1}' -f [bool]$m.Refusal, $m.Mode)
+    $refusal = [string]$m.Refusal
+    $i1 = $refusal.IndexOf("-Phase $PhaseInstall -Execute"); $i2 = $refusal.IndexOf("-Phase $PhaseFirstRun -Execute")
+    Test-Case 'and the refusal gives both commands, the install first' $true ($i1 -ge 0 -and $i2 -gt $i1)
+    Test-Case '-Phase Install -Execute is the install' $PhaseInstall (Resolve-RunMode -Execute $true -Verify $false -Phase $PhaseInstall).Mode
+    Test-Case '-Phase FirstRun -Execute is the first run' $PhaseFirstRun (Resolve-RunMode -Execute $true -Verify $false -Phase $PhaseFirstRun).Mode
+    Test-Case '-Verify is a verify' 'Verify' (Resolve-RunMode -Execute $false -Verify $true -Phase '').Mode
+    Test-Case '-Verify with a -Phase is refused' $true ([bool](Resolve-RunMode -Execute $false -Verify $true -Phase $PhaseInstall).Refusal)
+    Test-Case '-Execute -Verify is refused' $true ([bool](Resolve-RunMode -Execute $true -Verify $true -Phase $PhaseInstall).Refusal)
+    $m = Resolve-RunMode -Execute $false -Verify $false -Phase ''
+    Test-Case 'no switch is a dry run of both' 'DryRun|' ('{0}|{1}' -f $m.Mode, $m.Phase)
+    $m = Resolve-RunMode -Execute $false -Verify $false -Phase $PhaseFirstRun
+    Test-Case '-Phase FirstRun alone is a dry run of it' "DryRun|$PhaseFirstRun" ('{0}|{1}' -f $m.Mode, $m.Phase)
+    Test-Case 'the install is started at the task''s default run level, Highest' ".\Register-InteractiveTask.ps1 -Script ""& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase $PhaseInstall -Execute""" (Get-PhaseCommand -Phase $PhaseInstall)
+    Test-Case 'the first run at -RunLevel Limited' ".\Register-InteractiveTask.ps1 -RunLevel Limited -Script ""& 'C:\OutlookAI-Q5\Install-OutlookAIAddIn.ps1' -Phase $PhaseFirstRun -Execute""" (Get-PhaseCommand -Phase $PhaseFirstRun)
+
+    Write-Host ''
+    Write-Host '== the run level each phase demands =='
+    Test-Case 'Install, elevated: runs' $null (Get-ElevationRefusal -Phase $PhaseInstall -Elevated $true)
+    Test-Case 'Install, NOT elevated: refused - the VSTO runtime is a machine-wide install' $true ([string](Get-ElevationRefusal -Phase $PhaseInstall -Elevated $false)).Contains('machine-wide')
+    Test-Case 'FirstRun, NOT elevated: runs' $null (Get-ElevationRefusal -Phase $PhaseFirstRun -Elevated $false)
+    $x = [string](Get-ElevationRefusal -Phase $PhaseFirstRun -Elevated $true)
+    Test-Case 'FirstRun, elevated: refused - an elevated Outlook never feeds Windows Search' $true $x.Contains('never feeds Windows Search')
+    Test-Case 'and the refusal says how to start it instead' $true $x.Contains('-RunLevel Limited -Script')
+
+    Write-Host ''
+    Write-Host '== the install record =='
+    $t1 = (New-Object DateTime(2026, 10, 3, 1, 2, 3, [DateTimeKind]::Utc)).AddTicks(1234567)
+    $rr = ConvertFrom-InstallRecord (ConvertTo-InstallRecordJson -Commit ('a' * 40) -Version '99.99.99.0' -InstalledUtc $t1 -InstallDir 'C:\x')
+    Test-Case 'a record reads back' $null $rr.Problem
+    Test-Case 'with its commit' ('a' * 40) $rr.Record.Commit
+    Test-Case 'and its time to the tick, in UTC - under either shell''s ConvertFrom-Json' ('{0}|Utc' -f $t1.Ticks) ('{0}|{1}' -f $rr.Record.InstalledUtc.Ticks, $rr.Record.InstalledUtc.Kind)
+    $rr = ConvertFrom-InstallRecord ('{"commit":"' + ('a' * 40) + '","installedUtc":"2026-10-03T03:02:03.0000000+02:00"}')
+    Test-Case 'an offset time is read as the same instant in UTC' ('{0}|Utc' -f $t1.AddTicks(-1234567).Ticks) ('{0}|{1}' -f $rr.Record.InstalledUtc.Ticks, $rr.Record.InstalledUtc.Kind)
+    Test-Case 'a short commit is refused' $true ([string](ConvertFrom-InstallRecord '{"commit":"abc","installedUtc":"2026-10-03T01:02:03.0000000Z"}').Problem).Contains('commit')
+    Test-Case 'a time with no zone is refused' $true ([string](ConvertFrom-InstallRecord ('{"commit":"' + ('a' * 40) + '","installedUtc":"2026-10-03T01:02:03"}')).Problem).Contains('zone')
+    Test-Case 'not JSON is refused' $true ([bool](ConvertFrom-InstallRecord 'not json').Problem)
+
+    Write-Host ''
+    Write-Host '== has the installed build run since -Phase Install? =='
+    $ti = New-Object DateTime(2026, 10, 3, 12, 0, 0, [DateTimeKind]::Utc)
+    Test-Case 'reconciled after the install: it has' $true (Test-RanSinceInstall '2026-10-03T12:00:05.0000000Z' $ti).Ran
+    $x = Test-RanSinceInstall '2026-10-02T12:00:00.0000000Z' $ti
+    Test-Case 'reconciled the day before: it has not' $false $x.Ran
+    Test-Case 'and the reason says so, and what to run' $true ($x.Reason.Contains('has not run since') -and $x.Reason.Contains("-Phase $PhaseFirstRun -Execute"))
+    Test-Case 'no state at all: it has not' $false (Test-RanSinceInstall '' $ti).Ran
+
+    Write-Host ''
+    Write-Host '== the first run''s preflight: what stops it before Outlook starts =='
+    $pf = $installedFacts.Clone(); $pf.Tuning = (Get-TuningView $null)
+    Test-Case 'installed and trusted, never ran: go' $null (Get-FirstRunPreflight ([pscustomobject]$pf))
+    $pf = $installedFacts.Clone(); $bad = $good.Clone(); $bad['Enabled'] = (V 'DWord' 0); $pf.Tuning = (Get-TuningView $bad)
+    Test-Case 'a state the tests would fail on does not stop it - rewriting that is the point' $null (Get-FirstRunPreflight ([pscustomobject]$pf))
+    $pf = $installedFacts.Clone(); $pf.ContractProblems = @('contract drift'); $pf.McpProblem = 'a pending question'
+    Test-Case 'nor do contract drift and a pending question - the verdict reports both' $null (Get-FirstRunPreflight ([pscustomobject]$pf))
+    $pf = $installedFacts.Clone(); $pf.TrustProblems = @('no trust entry')
+    $x = Get-FirstRunPreflight ([pscustomobject]$pf)
+    Test-Case 'untrusted stops it - the start would put the trust prompt on the console' $VerdictBroken $x.Verdict
+    Test-Case 'and says Outlook was not started' $true (($x.Notes -join ' ').Contains('Outlook was NOT started'))
+    $pf = $installedFacts.Clone(); $pf.DisabledItemHit = $true
+    Test-Case 'hard-disabled stops it' $VerdictBroken (Get-FirstRunPreflight ([pscustomobject]$pf)).Verdict
+    $pf = $installedFacts.Clone(); $pf.FileProblems = @('another build is installed')
+    Test-Case 'another build installed stops it' $VerdictBroken (Get-FirstRunPreflight ([pscustomobject]$pf)).Verdict
+    $pf = $installedFacts.Clone(); $pf.RuntimeProblems = @('no runtime')
+    Test-Case 'no runtime stops it' $VerdictBroken (Get-FirstRunPreflight ([pscustomobject]$pf)).Verdict
+    $pf = $installedFacts.Clone(); $pf.Installed = $false
+    $x = Get-FirstRunPreflight ([pscustomobject]$pf)
+    Test-Case 'not installed stops it, exiting 3' "$VerdictNotInstalled|3" ('{0}|{1}' -f $x.Verdict, $x.ExitCode)
+
+    Write-Host ''
+    Write-Host '== the two phases, read from this script''s own syntax tree =='
+    # The decision itself (Q100): Install never starts Outlook, FirstRun installs and writes nothing,
+    # and each refuses the wrong token first. Read from the code, so a later edit that moves an
+    # Outlook start back into the install fails here rather than on a guest's index.
+    $selfAst = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$null, [ref]$null)
+    $defs = @{}
+    foreach ($fd in $selfAst.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) { $defs[$fd.Name] = $fd }
+    function Get-PhaseReach([string] $from) {
+        # Every function of this file a phase can reach, itself included.
+        $seen = @{}
+        $todo = New-Object System.Collections.Queue
+        $todo.Enqueue($from)
+        while ($todo.Count -gt 0) {
+            $name = [string]$todo.Dequeue()
+            if ($seen.ContainsKey($name) -or -not $defs.ContainsKey($name)) { continue }
+            $seen[$name] = $true
+            foreach ($c in $defs[$name].Body.FindAll({ param($x) $x -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+                $cn = $c.GetCommandName()
+                if ($cn -and $defs.ContainsKey($cn)) { $todo.Enqueue($cn) }
+            }
+        }
+        return @($seen.Keys)
+    }
+    function Get-OutlookStartsIn($Ast, [string] $label) {
+        # What starts Outlook or attaches to one: a job, a COM object, GetActiveObject, the two jobs.
+        $hits = @()
+        foreach ($x in $Ast.FindAll({ param($y) $true }, $true)) {
+            if ($x -is [System.Management.Automation.Language.CommandAst]) {
+                $cn = $x.GetCommandName()
+                if ($cn -eq 'Start-Job') { $hits += ('{0}: Start-Job' -f $label) }
+                elseif ($cn -eq 'New-Object' -and $x.Extent.Text.Contains('-ComObject')) { $hits += ('{0}: New-Object -ComObject' -f $label) }
+            }
+            elseif ($x -is [System.Management.Automation.Language.VariableExpressionAst] -and @('FirstRunJob', 'AttachJob') -contains $x.VariablePath.UserPath) {
+                $hits += ('{0}: ${1}' -f $label, $x.VariablePath.UserPath)
+            }
+            elseif ($x -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $x.Member.Extent.Text -eq 'GetActiveObject') {
+                $hits += ('{0}: GetActiveObject' -f $label)
+            }
+        }
+        return $hits
+    }
+    function Get-WritesIn($Ast, [string] $label) {
+        # Installers, registry and environment writes, and files other than the log (Say's).
+        $hits = @()
+        $members = @('SetValue', 'CreateSubKey', 'DeleteSubKey', 'DeleteSubKeyTree', 'DeleteValue', 'SetEnvironmentVariable', 'WriteAllText')
+        $commands = @('Start-Process', 'Invoke-Installer', 'Set-Item', 'Remove-Item', 'Set-Content', 'New-ItemProperty', 'Set-ItemProperty', 'Remove-ItemProperty')
+        foreach ($x in $Ast.FindAll({ param($y) $true }, $true)) {
+            if ($x -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $members -contains $x.Member.Extent.Text) {
+                $hits += ('{0}: .{1}()' -f $label, $x.Member.Extent.Text)
+            }
+            elseif ($x -is [System.Management.Automation.Language.CommandAst] -and $commands -contains $x.GetCommandName()) {
+                $hits += ('{0}: {1}' -f $label, $x.GetCommandName())
+            }
+        }
+        return $hits
+    }
+    function Get-FirstCommandIn([string] $fn) {
+        $all = @($defs[$fn].Body.FindAll({ param($x) $x -is [System.Management.Automation.Language.CommandAst] }, $true) | Sort-Object { $_.Extent.StartOffset })
+        if ($all.Count -eq 0) { return '' }
+        return $all[0].Extent.Text
+    }
+    $installHits = @(); $installWrites = @()
+    foreach ($n in (Get-PhaseReach 'Invoke-InstallPhase')) { $installHits += Get-OutlookStartsIn $defs[$n].Body $n; $installWrites += Get-WritesIn $defs[$n].Body $n }
+    $firstHits = @(); $firstWrites = @()
+    foreach ($n in (Get-PhaseReach 'Invoke-FirstRunPhase')) { $firstHits += Get-OutlookStartsIn $defs[$n].Body $n; $firstWrites += Get-WritesIn $defs[$n].Body $n }
+    $jobAssign = @($selfAst.FindAll({ param($x) $x -is [System.Management.Automation.Language.AssignmentStatementAst] -and $x.Left.Extent.Text -eq '$FirstRunJob' }, $true))
+    Test-Case 'the install phase reaches no Outlook start, no COM attach and no first-run job' '' ($installHits -join '; ')
+    Test-Case 'the first-run phase does reach one - so the line above is not vacuous' $true ($firstHits.Count -gt 0)
+    Test-Case 'the first-run phase reaches no installer and no registry, environment or file write' '' ($firstWrites -join '; ')
+    Test-Case 'nor does the job it starts' '1|' ('{0}|{1}' -f $jobAssign.Count, ((@($jobAssign | ForEach-Object { Get-WritesIn $_.Right '$FirstRunJob' })) -join '; '))
+    Test-Case 'the install phase does reach them - so the line above is not vacuous' $true ($installWrites.Count -gt 0)
+    Test-Case 'the install phase refuses a token that is not elevated before anything else' 'Assert-PhaseElevation -ForPhase $PhaseInstall' (Get-FirstCommandIn 'Invoke-InstallPhase')
+    Test-Case 'the first-run phase refuses an elevated one before anything else' 'Assert-PhaseElevation -ForPhase $PhaseFirstRun' (Get-FirstCommandIn 'Invoke-FirstRunPhase')
 
     Write-Host ''
     Write-Host '== the contract this script mirrors, read from the repository =='
@@ -1147,13 +1544,18 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Write-Host ''
     Write-Host "$($script:Checks) assertion(s), $($script:Failures.Count) failure(s)."
     Write-Host ''
-    Write-Host 'NOT COVERED HERE. Only a guest can settle these, and nothing above stands in for them:'
-    Write-Host '  * that vstor_redist.exe /q /norestart installs silently in the interactive session, and what'
-    Write-Host '    Office LTSC 2024 already registers under VSTO Runtime Setup\v4R before it does'
-    Write-Host '  * that the installer, run /VERYSILENT from an elevated interactive task, installs for vmadmin'
-    Write-Host '  * that the written inclusion entry really retires the trust prompt for this build''s key'
-    Write-Host '  * that a COM-started, headless Outlook loads the add-in and it writes its tuning state'
-    Write-Host '  * whether Outlook stays up or closes by itself once the last COM reference is released'
+    Write-Host 'NOT COVERED HERE. Only a guest can settle these, and nothing above stands in for them.'
+    Write-Host 'Settled by the guest runs of the single -Execute this split (its banner), for the install half:'
+    Write-Host '  * vstor_redist.exe /q /norestart installs silently from an elevated interactive task, the'
+    Write-Host '    installer /VERYSILENT installs for vmadmin, and the written inclusion entry retires the'
+    Write-Host '    trust prompt for the build''s key'
+    Write-Host 'NOT YET RUN - the split itself (Q100, 2026-10-03), pending a guest rebuild or a free slot:'
+    Write-Host '  * that -Phase Install, with no Outlook start, ends INSTALLED-NEVER-RAN - on a fresh guest and'
+    Write-Host '    over an install that has run'
+    Write-Host '  * that -Phase FirstRun from a RunLevel Limited task starts an Outlook whose token reads NOT'
+    Write-Host '    elevated, which loads the add-in and writes its tuning state: ADDIN-READY'
+    Write-Host '  * that this start leaves the unindexed guest UNINDEXED (its exclusion in place) and the'
+    Write-Host '    indexed one INDEXED - Set-OutlookIndexingDisabled.ps1 -Verify on each, afterwards'
     Write-Host '  * that the two live tests then pass on BOTH guests, which is the claim all of this is for'
 
     if ($script:Failures.Count -gt 0) {
@@ -1170,11 +1572,12 @@ if ($SelfTest) { exit (Invoke-SelfTest) }
 # FACTS - read, never written.
 # =============================================================================================
 function Get-AddInFacts {
-    param([bool] $RequireFresh, [DateTime] $StartedUtc, $Payload)
+    param([bool] $RequireFresh, [DateTime] $StartedUtc, $Payload, $InstallRecord, [string] $InstallRecordProblem)
     $facts = [ordered]@{
         Installed = $false; RegistrationProblems = @(); FileProblems = @(); TrustProblems = @(); RuntimeProblems = @()
         ContractProblems = @(); DisabledItemHit = $false; McpProblem = $null; ComProblems = @(); Notes = @()
         Tuning = $null; RequireFresh = $RequireFresh; Fresh = $false; FreshReason = ''
+        InstallRecordProblem = $InstallRecordProblem; RanSinceInstall = $null; RanSinceInstallReason = ''; ForbidReady = $false
     }
 
     $installDir = Get-InstallDir
@@ -1214,7 +1617,11 @@ function Get-AddInFacts {
     $rt = Get-VstoRuntimeFacts
     Say "  VSTO runtime  : v4R=$($rt.V4R)  v4=$($rt.V4)"
     if ((Compare-DottedVersion $rt.V4R $VstoRuntimeVersion) -lt 0) {
-        $facts.RuntimeProblems += "VSTO Runtime Setup\v4R reports '$($rt.V4R)', below the pinned $VstoRuntimeVersion. -Execute installs it from $VstoRuntimePath."
+        $facts.RuntimeProblems += "VSTO Runtime Setup\v4R reports '$($rt.V4R)', below the pinned $VstoRuntimeVersion. -Phase $PhaseInstall -Execute installs it from $VstoRuntimePath."
+    }
+    $userEnv = Get-HkcuValues $EnvironmentKey
+    if (-not ($userEnv -and $userEnv[$LogAlertsName] -and [string]$userEnv[$LogAlertsName].Data -eq '1')) {
+        $facts.Notes += "$LogAlertsName is not 1 for this user, so a failed load would leave no OutlookAI.vsto.log. -Phase $PhaseInstall sets it."
     }
 
     # Trust.
@@ -1270,6 +1677,18 @@ function Get-AddInFacts {
         $facts.Fresh = $fresh.Fresh
         $facts.FreshReason = $fresh.Reason
     }
+    elseif ($InstallRecord) {
+        # Not under FirstRun: written by THIS start already implies written after the install.
+        $since = Test-RanSinceInstall -LastReconcileUtc ([string]$facts.Tuning.LastReconcileUtc) -InstalledUtc $InstallRecord.InstalledUtc
+        $facts.RanSinceInstall = $since.Ran
+        $facts.RanSinceInstallReason = $since.Reason
+        $ranText = 'has run since'
+        if (-not $since.Ran) { $ranText = 'has NOT run since' }
+        Say ("  install record: commit {0}, installed {1:o} - the add-in {2}" -f $InstallRecord.Commit, $InstallRecord.InstalledUtc, $ranText)
+        if ($Payload -and $InstallRecord.Commit -ne [string]$Payload.commit) {
+            $facts.Notes += "the install record names commit $($InstallRecord.Commit), and the payload staged now is $($Payload.commit): -Phase $PhaseInstall has not installed this payload yet."
+        }
+    }
 
     # The add-in's contract against the suite's.
     if ($Payload -and $Payload.contract) {
@@ -1323,36 +1742,287 @@ function Write-Verdict {
     Say 'place. The claim that matters - both tests pass on this guest - is made by running them.'
 }
 
+function Write-PhasePlan {
+    param([string] $ForPhase)
+    if (-not $ForPhase -or $ForPhase -eq $PhaseInstall) {
+        Say "DRY RUN. Nothing is written. -Phase $PhaseInstall -Execute would, in session 1, ELEVATED, with Outlook closed:"
+        Say "  1. check   $PayloadRoot\$ManifestFileName and the installer's SHA-256 against it"
+        Say "  2. install the VSTO runtime from $VstoRuntimePath (SHA-256 $VstoRuntimeSha256), unless v4R >= $VstoRuntimeVersion"
+        Say ("  3. run     the installer " + ((Get-InnoArguments -SetupLog 'C:\OutlookAI-Q5\install-addin-setup.log') -join ' '))
+        Say "  4. write   ONE entry under HKCU\$InclusionKey for the installed manifest's URL and signing key"
+        Say "  5. write   HKCU\$EnvironmentKey $LogAlertsName=1"
+        Say "  6. write   $InstallRecordPath - what it installed, and when"
+        Say "  7. verify  and stop at ${VerdictNeverRan}: it NEVER starts Outlook"
+        Say "  through:   $(Get-PhaseCommand -Phase $PhaseInstall)"
+        Say ''
+    }
+    if (-not $ForPhase -or $ForPhase -eq $PhaseFirstRun) {
+        Say "DRY RUN. Nothing is written. -Phase $PhaseFirstRun -Execute would, in session 1, NOT elevated, with Outlook closed:"
+        Say '  1. check   the add-in is installed, registered, trusted and the payload''s build - or stop, Outlook untouched'
+        Say '  2. start   Outlook once over COM, headless, in a watchdogged child job; read its token; never quit or kill it'
+        Say "  3. verify  the state the tests read under HKCU\$TuningKey, written by THAT start, and no dialog left on screen"
+        Say "  through:   $(Get-PhaseCommand -Phase $PhaseFirstRun)"
+        Say '  On the unindexed guest only once its index exclusion is in place (Testbed/README.md section 1, step 7b).'
+        Say ''
+    }
+    Say 'Run -Verify to report on what is here now.'
+}
+
+# -Phase Install: elevated, and it never starts Outlook. Ends INSTALLED-NEVER-RAN or BROKEN.
+function Invoke-InstallPhase {
+    param($Payload)
+    Assert-PhaseElevation -ForPhase $PhaseInstall
+    Assert-Bitness
+    Assert-InteractiveSession -ForPhase $PhaseInstall
+    Assert-OutlookClosed -ForPhase $PhaseInstall
+
+    $installer = Join-Path $PayloadRoot ([string]$Payload.installer.file)
+    if (-not (Test-Path -LiteralPath $installer)) { throw "REFUSING: the installer the manifest names is not at $installer." }
+    $installerHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash
+    if ($installerHash -ne [string]$Payload.installer.sha256) {
+        throw "REFUSING: $installer is not the file the manifest pins (expected $($Payload.installer.sha256), got $installerHash)."
+    }
+    Say "  installer $installer - SHA-256 matches the manifest"
+
+    $interactionBefore = Get-InteractionFacts
+    Say ("  index exclusion before: PreventIndexingOutlook={0} mapi rules=[{1}]" -f $interactionBefore.PreventIndexingOutlook, ($interactionBefore.MapiRules -join '; '))
+
+    # A record is written only once an install has completed; the old one goes first, so a run that
+    # fails part-way leaves none rather than one describing the build it replaced.
+    if (Test-Path -LiteralPath $InstallRecordPath) {
+        Remove-Item -LiteralPath $InstallRecordPath -Force
+        Say "  removed the previous install record $InstallRecordPath"
+    }
+
+    # ---- 3. The VSTO runtime -------------------------------------------------------------------
+    Say ''
+    Say '== The VSTO runtime =='
+    $rt = Get-VstoRuntimeFacts
+    if ((Compare-DottedVersion $rt.V4R $VstoRuntimeVersion) -ge 0) {
+        Say "  already registered: v4R $($rt.V4R) - not reinstalling"
+    }
+    else {
+        Say "  registered now: v4R '$($rt.V4R)', v4 '$($rt.V4)' - installing $VstoRuntimeVersion"
+        if (-not (Test-Path -LiteralPath $VstoRuntimePath)) {
+            throw "REFUSING: no VSTO runtime at $VstoRuntimePath. It is STAGED MEDIA (Testbed/MEDIA.md) - never downloaded here; the guest has no network. Copy it in with Testbed/host/Copy-ToGuest.ps1."
+        }
+        $rtHash = (Get-FileHash -LiteralPath $VstoRuntimePath -Algorithm SHA256).Hash
+        $rtLength = (Get-Item -LiteralPath $VstoRuntimePath).Length
+        if ($rtHash -ne $VstoRuntimeSha256.ToUpperInvariant() -or $rtLength -ne $VstoRuntimeBytes) {
+            throw "REFUSING: $VstoRuntimePath is not the pinned redistributable ($rtHash, $rtLength bytes; expected $VstoRuntimeSha256, $VstoRuntimeBytes bytes)."
+        }
+        # Installer.iss's own switches for it: /q /norestart.
+        $run = Invoke-Installer -FilePath $VstoRuntimePath -Arguments @('/q', '/norestart') -TimeoutMinutes $InstallTimeoutMinutes
+        if ($run.TimedOut) { throw "The VSTO runtime installer did not finish within $InstallTimeoutMinutes minutes. Its logs are in $env:TEMP." }
+        if ($null -eq $run.ExitCode) { throw 'The VSTO runtime installer exit code came back EMPTY - this script failed to read it, which is not the same as the install failing. Check v4R by hand.' }
+        if ($run.ExitCode -ne 0 -and $run.ExitCode -ne 3010) { throw "The VSTO runtime installer exited $($run.ExitCode). Its logs are in $env:TEMP." }
+        if ($run.ExitCode -eq 3010) { Say '  exit 3010: installed, and Windows wants a reboot. Not a failure; reboot before taking a checkpoint.' }
+        $rt = Get-VstoRuntimeFacts
+        if ((Compare-DottedVersion $rt.V4R $VstoRuntimeVersion) -lt 0) { throw "The VSTO runtime installer exited $($run.ExitCode) but v4R still reports '$($rt.V4R)'." }
+        Say "  installed: v4R $($rt.V4R)"
+    }
+
+    # ---- 4. The product's installer ------------------------------------------------------------
+    Say ''
+    Say '== The OutlookAI installer, silent =='
+    $setupLog = Join-Path (Split-Path -Parent $LogPath) 'install-addin-setup.log'
+    $run = Invoke-Installer -FilePath $installer -Arguments (Get-InnoArguments -SetupLog $setupLog) -TimeoutMinutes $InstallTimeoutMinutes
+    if ($run.TimedOut -or $null -eq $run.ExitCode -or $run.ExitCode -ne 0) {
+        if (Test-Path -LiteralPath $setupLog) { foreach ($l in (Get-Content -LiteralPath $setupLog -Tail 25)) { Say "      | $l" } }
+        throw "The installer exited '$($run.ExitCode)' (timed out: $($run.TimedOut)). Its log: $setupLog"
+    }
+    # From here the payload's build is what Outlook would load: any run after this moment is a run of it.
+    $installedUtc = [DateTime]::UtcNow
+    $installDir = Get-InstallDir
+    if (-not $installDir) { throw "The installer exited 0 but wrote no HKCU\$AppKey\$InstallDirValue. Its log: $setupLog" }
+    Say "  installed into $installDir (log: $setupLog)"
+
+    # ---- 5. Trust ------------------------------------------------------------------------------
+    Say ''
+    Say '== Trust: the inclusion entry the trust prompt would have written =='
+    $regValues = Get-HkcuValues $AddinRegistrationKey
+    if (-not ($regValues -and $regValues['Manifest'])) { throw "The installer exited 0 but wrote no HKCU\$AddinRegistrationKey\Manifest." }
+    $url = ConvertTo-InclusionUrl ([string]$regValues['Manifest'].Data)
+    $key = Get-ManifestSigningKeyXml -ManifestXml ([System.IO.File]::ReadAllText((Join-Path $installDir 'OutlookAI.vsto')))
+    if (-not (Test-SameRsaKey $key ([string]$Payload.signing.publicKeyXml))) { throw 'REFUSING TO TRUST: the installed manifest is not signed by the key the payload manifest names.' }
+    if (-not (Test-SameRsaKey $key (Get-CertificateKeyXml -Path (Join-Path $installDir 'OutlookAI.cer')))) { throw 'REFUSING TO TRUST: the installed manifest is not signed by the installed OutlookAI.cer.' }
+    if (-not (Test-KeyXmlParsesLikeTheRuntime $key)) { throw 'REFUSING TO TRUST: the key does not parse with FromXmlString, so the runtime would reject the entry.' }
+    $root = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($InclusionKey)
+    try {
+        $kept = $false
+        foreach ($name in $root.GetSubKeyNames()) {
+            $k = $root.OpenSubKey($name, $false)
+            $entryUrl = $null; $entryKey = $null
+            if ($null -ne $k) { try { $entryUrl = [string]$k.GetValue('Url'); $entryKey = [string]$k.GetValue('PublicKey') } finally { $k.Close() } }
+            if (-not (Test-SameInclusionUrl $entryUrl $url)) { continue }
+            if ((Test-SameRsaKey $entryKey $key) -and -not $kept) { $kept = $true; Say "  kept the existing entry $name - same URL, same key"; continue }
+            $root.DeleteSubKeyTree($name)
+            Say "  removed entry $name - same URL, a previous build's key"
+        }
+        if (-not $kept) {
+            $name = [guid]::NewGuid().ToString()
+            $entry = $root.CreateSubKey($name)
+            try {
+                $entry.SetValue('Url', $url, [Microsoft.Win32.RegistryValueKind]::String)
+                $entry.SetValue('PublicKey', $key, [Microsoft.Win32.RegistryValueKind]::String)
+            }
+            finally { $entry.Close() }
+            Say "  wrote HKCU\$InclusionKey\$name  Url=$url"
+        }
+    }
+    finally { $root.Close() }
+
+    # ---- 6. Make a failed load explain itself --------------------------------------------------
+    [Environment]::SetEnvironmentVariable($LogAlertsName, '1', 'User')
+    Set-Item -Path "Env:\$LogAlertsName" -Value '1'
+    Say "  set $LogAlertsName=1 for this user"
+
+    # ---- 6a. The record ------------------------------------------------------------------------
+    $recordJson = ConvertTo-InstallRecordJson -Commit ([string]$Payload.commit) -Version ([string]$Payload.version) -InstalledUtc $installedUtc -InstallDir $installDir
+    $recordDir = Split-Path -Parent $InstallRecordPath
+    if ($recordDir -and -not (Test-Path -LiteralPath $recordDir)) { New-Item -ItemType Directory -Path $recordDir -Force | Out-Null }
+    [System.IO.File]::WriteAllText($InstallRecordPath, $recordJson, (New-Object System.Text.UTF8Encoding($false)))
+    $readBack = ConvertFrom-InstallRecord ([System.IO.File]::ReadAllText($InstallRecordPath))
+    if ($readBack.Problem) { throw "The install record just written to $InstallRecordPath does not read back: $($readBack.Problem)." }
+    Say ("  recorded in {0}: commit {1}, installed {2:o}" -f $InstallRecordPath, $readBack.Record.Commit, $readBack.Record.InstalledUtc)
+
+    $interactionAfter = Get-InteractionFacts
+    $changes = @(Compare-InteractionFacts $interactionBefore $interactionAfter)
+
+    Say ''
+    Say '== Verify =='
+    $facts = Get-AddInFacts -RequireFresh $false -StartedUtc ([DateTime]::MinValue) -Payload $Payload -InstallRecord $readBack.Record
+    $facts.ForbidReady = $true
+    foreach ($c in $changes) {
+        $facts.Notes += "INDEX EXCLUSION STATE CHANGED during the install: $c. Nothing this phase runs writes there, and no Outlook started. Re-run Set-OutlookIndexingDisabled.ps1 -Verify and find what did."
+    }
+    if ($changes.Count -eq 0) { Say '  index exclusion state: UNCHANGED by the install (policy value and mapi crawl rules identical before and after)' }
+    Write-TestReadBlock $facts.Tuning
+    $result = Get-AddInVerdict $facts
+    Write-Verdict $result
+    if ($result.ExitCode -eq 2) {
+        Say ''
+        Say 'NEXT - NOT elevated, Outlook closed, and on the unindexed guest only once its index exclusion is in'
+        Say 'place (Testbed/README.md section 1, step 7b):'
+        Say "    $(Get-PhaseCommand -Phase $PhaseFirstRun)"
+    }
+    exit $result.ExitCode
+}
+
+# -Phase FirstRun: NOT elevated; installs nothing, writes nothing, starts Outlook once and proves it.
+function Invoke-FirstRunPhase {
+    param($Payload)
+    Assert-PhaseElevation -ForPhase $PhaseFirstRun
+    Assert-Bitness
+    Assert-InteractiveSession -ForPhase $PhaseFirstRun
+    Assert-OutlookClosed -ForPhase $PhaseFirstRun
+
+    # ---- 6b. Preflight: is a start safe, and worth making? -------------------------------------
+    Say ''
+    Say '== Before the start: installed, registered, trusted, and the payload''s build? =='
+    $pre = Get-AddInFacts -RequireFresh $false -StartedUtc ([DateTime]::MinValue) -Payload $Payload
+    $stop = Get-FirstRunPreflight $pre
+    if ($null -ne $stop) {
+        Write-Verdict $stop
+        exit $stop.ExitCode
+    }
+    Say '  yes - starting Outlook'
+
+    $interactionBefore = Get-InteractionFacts
+    Say ("  index exclusion before: PreventIndexingOutlook={0} mapi rules=[{1}]" -f $interactionBefore.PreventIndexingOutlook, ($interactionBefore.MapiRules -join '; '))
+
+    # ---- 7. The first run ----------------------------------------------------------------------
+    Say ''
+    Say '== First run: Outlook started once, NOT elevated, headless, in a watchdogged child job =='
+    $windowsBefore = Get-SessionWindows
+    $startedUtc = [DateTime]::UtcNow
+    $job = Start-Job -ScriptBlock $FirstRunJob -ArgumentList $startedUtc.Ticks, $FirstRunTimeoutSeconds, $TuningKey, $McpKey, $AddinName
+    $done = Wait-Job -Job $job -Timeout ($FirstRunTimeoutSeconds + 120)
+    $first = $null
+    if ($done) {
+        $first = Receive-Job -Job $job
+        Remove-Job -Job $job -Force
+    }
+    else {
+        Say "  *** NOTHING BACK WITHIN $($FirstRunTimeoutSeconds + 120) s - Outlook is most likely showing a MODAL DIALOG. On screen now:"
+        $onScreen = @(Get-SessionWindows)
+        foreach ($w in $onScreen) { Say "      $w" }
+        if (($onScreen -join ' ').Contains('Customization Installer')) { Say '  That is the VSTO TRUST PROMPT (or its install-error box): the inclusion entry did not match what the runtime looked for.' }
+        Stop-Job -Job $job; Remove-Job -Job $job -Force
+        Say '  The job was stopped. Outlook was NOT touched - answer the dialog on the console, or restart the guest. Never taskkill it.'
+    }
+
+    $comProblems = @()
+    if ($null -eq $first) { $comProblems += 'the first run did not finish; see above.' }
+    else {
+        Say "  COM start $($first.ComSeconds) s; MAPI $($first.MapiInit)"
+        Say "  tuning state written after $($first.TuningAfterSeconds)s; registration reconcile after $($first.McpAfterSeconds)s"
+        Say "  COMAddIns('$AddinName').Connect = $($first.Connect); the add-in answered GetRestartNeeded() = $($first.RestartNeeded)"
+        if ($first.Error) { $comProblems += "the first run reported: $($first.Error)" }
+        if ($null -eq $first.TuningAfterSeconds) { $comProblems += "the add-in did not write HKCU\$TuningKey within $FirstRunTimeoutSeconds s of Outlook starting." }
+        if ($first.Connect -ne $true) { $comProblems += "Outlook reports the add-in as NOT connected." }
+        if (-not $first.AutomationAnswered) { $comProblems += 'the add-in did not answer a call into it (COMAddIn.Object.GetRestartNeeded), so it is not demonstrably running.' }
+        # The point of this phase: the Outlook it started is NOT elevated. Read, not assumed.
+        if ($first.TokenError) { $comProblems += "the started OUTLOOK.EXE's token could not be read ($($first.TokenError)), so this start cannot be shown NOT elevated." }
+        $levels = @($first.OutlookElevation | Where-Object { $_ })
+        if ($levels.Count -eq 0 -and $null -ne $first.ComSeconds -and -not $first.TokenError) { $comProblems += 'no OUTLOOK.EXE was found to read the token of while the job held Outlook, so this start cannot be shown NOT elevated.' }
+        foreach ($l in $levels) {
+            $parts = ([string]$l).Split('=')
+            if ($parts[1] -eq '0') { Say "  OUTLOOK.EXE pid $($parts[0]): token NOT elevated" }
+            elseif ($parts[1] -eq '1') { $comProblems += "OUTLOOK.EXE pid $($parts[0]) is ELEVATED: an elevated Outlook never feeds Windows Search, which is what this phase exists to avoid. Is UAC off (EnableLUA), or was an elevated Outlook already starting?" }
+            else { $comProblems += "the token of OUTLOOK.EXE pid $($parts[0]) could not be read, so this start cannot be shown NOT elevated." }
+        }
+    }
+    $still = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
+    if ($still.Count -gt 0) { Say "  Outlook is still running (pid $(($still | ForEach-Object { $_.Id }) -join ', ')), headless. Left as it is." }
+    else { Say '  Outlook closed by itself once the last reference was released - gracefully; nothing quit or killed it.' }
+    # A window that appeared during the run and is still up is a dialog somebody has to answer -
+    # and on an unattended guest, the next step's hang.
+    $newWindows = @(Get-SessionWindows | Where-Object { $windowsBefore -notcontains $_ })
+    foreach ($w in $newWindows) { $comProblems += "a window appeared during the first run and is still on screen: $w - answer it on the console before the next step." }
+
+    $interactionAfter = Get-InteractionFacts
+    $changes = @(Compare-InteractionFacts $interactionBefore $interactionAfter)
+
+    Say ''
+    Say '== Verify =='
+    $facts = Get-AddInFacts -RequireFresh $true -StartedUtc $startedUtc -Payload $Payload
+    $facts.ComProblems = $comProblems
+    foreach ($c in $changes) {
+        $facts.Notes += "INDEX EXCLUSION STATE CHANGED during this run: $c. The add-in writes nothing there, so this is Outlook's own start. Re-run Set-OutlookIndexingDisabled.ps1 -Verify before trusting this guest as unindexed."
+    }
+    if ($changes.Count -eq 0) { Say '  index exclusion state: UNCHANGED by this run (policy value and mapi crawl rules identical before and after)' }
+    Write-TestReadBlock $facts.Tuning
+    $result = Get-AddInVerdict $facts
+    Write-Verdict $result
+    exit $result.ExitCode
+}
+
 # =============================================================================================
 # MAIN
 # =============================================================================================
-if (-not ($Execute -or $Verify)) {
-    Assert-TestbedGuestLocal
-    Say 'DRY RUN. Nothing is written. -Execute would, in session 1, elevated, with Outlook closed:'
-    Say "  1. check   $PayloadRoot\$ManifestFileName and the installer's SHA-256 against it"
-    Say "  2. install the VSTO runtime from $VstoRuntimePath (SHA-256 $VstoRuntimeSha256), unless v4R >= $VstoRuntimeVersion"
-    Say ("  3. run     the installer " + ((Get-InnoArguments -SetupLog 'C:\OutlookAI-Q5\install-addin-setup.log') -join ' '))
-    Say "  4. write   ONE entry under HKCU\$InclusionKey for the installed manifest's URL and signing key"
-    Say "  5. write   HKCU\$EnvironmentKey $LogAlertsName=1"
-    Say '  6. start   Outlook once over COM, headless, in a watchdogged child job; never quit or kill it'
-    Say "  7. verify  the state the tests read under HKCU\$TuningKey, written by THAT start"
-    Say ''
-    Say 'Run -Verify to report on what is here now, or through Register-InteractiveTask.ps1 with -Execute.'
+Assert-TestbedGuestLocal
+
+$mode = Resolve-RunMode -Execute $Execute.IsPresent -Verify $Verify.IsPresent -Phase $Phase
+if ($mode.Refusal) { throw $mode.Refusal }
+if ($mode.Mode -eq 'DryRun') {
+    Write-PhasePlan -ForPhase $mode.Phase
     exit 0
 }
 
-Assert-TestbedGuestLocal
-
 # Defined AFTER the guard on purpose: this job opens an Outlook COM session, and check 9 of
 # check-testbed-references.ps1 requires every write to come after the guest guard in file
-# order. It is only ever started on the -Execute path below, so nothing about behaviour moved.
+# order. It is only ever started by -Phase FirstRun, so nothing about behaviour moved.
 # The FIRST RUN, in a child job so a modal dialog becomes a reported timeout instead of this
 # script's hang. Everything the job holds is released in its finally; it never quits Outlook.
+# The job inherits FirstRun's Limited token, and COM starts Outlook with it - which the job then
+# proves, reading the started OUTLOOK.EXE's token while it still holds a reference, so Outlook
+# cannot have closed by itself first. (The reading is Start-OutlookUnelevated.ps1's, restated.)
 $FirstRunJob = {
     param([long] $StartedTicks, [int] $TimeoutSeconds, [string] $TuningKey, [string] $McpKey, [string] $AddinName)
     $ErrorActionPreference = 'Stop'
     $started = New-Object DateTime($StartedTicks, [DateTimeKind]::Utc)
-    $r = [ordered]@{ ComSeconds = $null; MapiInit = $null; TuningAfterSeconds = $null; McpAfterSeconds = $null; Connect = $null; RestartNeeded = $null; AutomationAnswered = $false; Error = $null }
+    $r = [ordered]@{ ComSeconds = $null; MapiInit = $null; TuningAfterSeconds = $null; McpAfterSeconds = $null; Connect = $null; RestartNeeded = $null; AutomationAnswered = $false; Error = $null; OutlookElevation = @(); TokenError = $null }
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $app = $null; $ns = $null; $addins = $null; $addin = $null; $obj = $null
     function Get-Fresh([string] $key) {
@@ -1392,6 +2062,22 @@ $FirstRunJob = {
             if ($null -ne $obj) { $r.RestartNeeded = [bool]$obj.GetRestartNeeded(); $r.AutomationAnswered = $true }
         }
         catch { $r.Error = 'COMAddIns: ' + $_.Exception.Message }
+        try {
+            if (-not ('OaiFirstRunToken' -as [type])) {
+                Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+public static class OaiFirstRunToken {
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint a, bool i, int p);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr t, int c, out int i, int l, out int r);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    public static int Elevation(int pid) { IntPtr p = OpenProcess(0x1000, false, pid); if (p == IntPtr.Zero) return -1; try { IntPtr t; if (!OpenProcessToken(p, 8, out t)) return -1; try { int e, r; if (!GetTokenInformation(t, 20, out e, 4, out r)) return -1; return e != 0 ? 1 : 0; } finally { CloseHandle(t); } } finally { CloseHandle(p); } }
+}
+'@
+            }
+            $r.OutlookElevation = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue | ForEach-Object { '{0}={1}' -f $_.Id, [OaiFirstRunToken]::Elevation($_.Id) })
+        }
+        catch { $r.TokenError = $_.Exception.Message }
     }
     catch { $r.Error = $_.Exception.GetType().Name + ': ' + $_.Exception.Message }
     finally {
@@ -1445,165 +2131,18 @@ else {
     Say "No payload manifest at $payloadPath - the installed build cannot be tied to a commit."
 }
 
-if ($Execute) {
-    Assert-Bitness
-    Assert-Elevated
-    Assert-InteractiveSession
-    Assert-OutlookClosed
-
-    $installer = Join-Path $PayloadRoot ([string]$payload.installer.file)
-    if (-not (Test-Path -LiteralPath $installer)) { throw "REFUSING: the installer the manifest names is not at $installer." }
-    $installerHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash
-    if ($installerHash -ne [string]$payload.installer.sha256) {
-        throw "REFUSING: $installer is not the file the manifest pins (expected $($payload.installer.sha256), got $installerHash)."
-    }
-    Say "  installer $installer - SHA-256 matches the manifest"
-
-    $interactionBefore = Get-InteractionFacts
-    Say ("  index exclusion before: PreventIndexingOutlook={0} mapi rules=[{1}]" -f $interactionBefore.PreventIndexingOutlook, ($interactionBefore.MapiRules -join '; '))
-
-    # ---- 3. The VSTO runtime -------------------------------------------------------------------
-    Say ''
-    Say '== The VSTO runtime =='
-    $rt = Get-VstoRuntimeFacts
-    if ((Compare-DottedVersion $rt.V4R $VstoRuntimeVersion) -ge 0) {
-        Say "  already registered: v4R $($rt.V4R) - not reinstalling"
-    }
-    else {
-        Say "  registered now: v4R '$($rt.V4R)', v4 '$($rt.V4)' - installing $VstoRuntimeVersion"
-        if (-not (Test-Path -LiteralPath $VstoRuntimePath)) {
-            throw "REFUSING: no VSTO runtime at $VstoRuntimePath. It is STAGED MEDIA (Testbed/MEDIA.md) - never downloaded here; the guest has no network. Copy it in with Testbed/host/Copy-ToGuest.ps1."
-        }
-        $rtHash = (Get-FileHash -LiteralPath $VstoRuntimePath -Algorithm SHA256).Hash
-        $rtLength = (Get-Item -LiteralPath $VstoRuntimePath).Length
-        if ($rtHash -ne $VstoRuntimeSha256.ToUpperInvariant() -or $rtLength -ne $VstoRuntimeBytes) {
-            throw "REFUSING: $VstoRuntimePath is not the pinned redistributable ($rtHash, $rtLength bytes; expected $VstoRuntimeSha256, $VstoRuntimeBytes bytes)."
-        }
-        # Installer.iss's own switches for it: /q /norestart.
-        $run = Invoke-Installer -FilePath $VstoRuntimePath -Arguments @('/q', '/norestart') -TimeoutMinutes $InstallTimeoutMinutes
-        if ($run.TimedOut) { throw "The VSTO runtime installer did not finish within $InstallTimeoutMinutes minutes. Its logs are in $env:TEMP." }
-        if ($null -eq $run.ExitCode) { throw 'The VSTO runtime installer exit code came back EMPTY - this script failed to read it, which is not the same as the install failing. Check v4R by hand.' }
-        if ($run.ExitCode -ne 0 -and $run.ExitCode -ne 3010) { throw "The VSTO runtime installer exited $($run.ExitCode). Its logs are in $env:TEMP." }
-        if ($run.ExitCode -eq 3010) { Say '  exit 3010: installed, and Windows wants a reboot. Not a failure; reboot before taking a checkpoint.' }
-        $rt = Get-VstoRuntimeFacts
-        if ((Compare-DottedVersion $rt.V4R $VstoRuntimeVersion) -lt 0) { throw "The VSTO runtime installer exited $($run.ExitCode) but v4R still reports '$($rt.V4R)'." }
-        Say "  installed: v4R $($rt.V4R)"
-    }
-
-    # ---- 4. The product's installer ------------------------------------------------------------
-    Say ''
-    Say '== The OutlookAI installer, silent =='
-    $setupLog = Join-Path (Split-Path -Parent $LogPath) 'install-addin-setup.log'
-    $run = Invoke-Installer -FilePath $installer -Arguments (Get-InnoArguments -SetupLog $setupLog) -TimeoutMinutes $InstallTimeoutMinutes
-    if ($run.TimedOut -or $null -eq $run.ExitCode -or $run.ExitCode -ne 0) {
-        if (Test-Path -LiteralPath $setupLog) { foreach ($l in (Get-Content -LiteralPath $setupLog -Tail 25)) { Say "      | $l" } }
-        throw "The installer exited '$($run.ExitCode)' (timed out: $($run.TimedOut)). Its log: $setupLog"
-    }
-    $installDir = Get-InstallDir
-    if (-not $installDir) { throw "The installer exited 0 but wrote no HKCU\$AppKey\$InstallDirValue. Its log: $setupLog" }
-    Say "  installed into $installDir (log: $setupLog)"
-
-    # ---- 5. Trust ------------------------------------------------------------------------------
-    Say ''
-    Say '== Trust: the inclusion entry the trust prompt would have written =='
-    $regValues = Get-HkcuValues $AddinRegistrationKey
-    if (-not ($regValues -and $regValues['Manifest'])) { throw "The installer exited 0 but wrote no HKCU\$AddinRegistrationKey\Manifest." }
-    $url = ConvertTo-InclusionUrl ([string]$regValues['Manifest'].Data)
-    $key = Get-ManifestSigningKeyXml -ManifestXml ([System.IO.File]::ReadAllText((Join-Path $installDir 'OutlookAI.vsto')))
-    if (-not (Test-SameRsaKey $key ([string]$payload.signing.publicKeyXml))) { throw 'REFUSING TO TRUST: the installed manifest is not signed by the key the payload manifest names.' }
-    if (-not (Test-SameRsaKey $key (Get-CertificateKeyXml -Path (Join-Path $installDir 'OutlookAI.cer')))) { throw 'REFUSING TO TRUST: the installed manifest is not signed by the installed OutlookAI.cer.' }
-    if (-not (Test-KeyXmlParsesLikeTheRuntime $key)) { throw 'REFUSING TO TRUST: the key does not parse with FromXmlString, so the runtime would reject the entry.' }
-    $root = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($InclusionKey)
-    try {
-        $kept = $false
-        foreach ($name in $root.GetSubKeyNames()) {
-            $k = $root.OpenSubKey($name, $false)
-            $entryUrl = $null; $entryKey = $null
-            if ($null -ne $k) { try { $entryUrl = [string]$k.GetValue('Url'); $entryKey = [string]$k.GetValue('PublicKey') } finally { $k.Close() } }
-            if (-not (Test-SameInclusionUrl $entryUrl $url)) { continue }
-            if ((Test-SameRsaKey $entryKey $key) -and -not $kept) { $kept = $true; Say "  kept the existing entry $name - same URL, same key"; continue }
-            $root.DeleteSubKeyTree($name)
-            Say "  removed entry $name - same URL, a previous build's key"
-        }
-        if (-not $kept) {
-            $name = [guid]::NewGuid().ToString()
-            $entry = $root.CreateSubKey($name)
-            try {
-                $entry.SetValue('Url', $url, [Microsoft.Win32.RegistryValueKind]::String)
-                $entry.SetValue('PublicKey', $key, [Microsoft.Win32.RegistryValueKind]::String)
-            }
-            finally { $entry.Close() }
-            Say "  wrote HKCU\$InclusionKey\$name  Url=$url"
-        }
-    }
-    finally { $root.Close() }
-
-    # ---- 6. Make a failed load explain itself --------------------------------------------------
-    [Environment]::SetEnvironmentVariable($LogAlertsName, '1', 'User')
-    Set-Item -Path "Env:\$LogAlertsName" -Value '1'
-    Say "  set $LogAlertsName=1 for this user"
-
-    # ---- 7. The first run ----------------------------------------------------------------------
-    Say ''
-    Say '== First run: Outlook started once, headless, in a watchdogged child job =='
-    $windowsBefore = Get-SessionWindows
-    $startedUtc = [DateTime]::UtcNow
-    $job = Start-Job -ScriptBlock $FirstRunJob -ArgumentList $startedUtc.Ticks, $FirstRunTimeoutSeconds, $TuningKey, $McpKey, $AddinName
-    $done = Wait-Job -Job $job -Timeout ($FirstRunTimeoutSeconds + 120)
-    $first = $null
-    if ($done) {
-        $first = Receive-Job -Job $job
-        Remove-Job -Job $job -Force
-    }
-    else {
-        Say "  *** NOTHING BACK WITHIN $($FirstRunTimeoutSeconds + 120) s - Outlook is most likely showing a MODAL DIALOG. On screen now:"
-        $onScreen = @(Get-SessionWindows)
-        foreach ($w in $onScreen) { Say "      $w" }
-        if (($onScreen -join ' ').Contains('Customization Installer')) { Say '  That is the VSTO TRUST PROMPT (or its install-error box): the inclusion entry did not match what the runtime looked for.' }
-        Stop-Job -Job $job; Remove-Job -Job $job -Force
-        Say '  The job was stopped. Outlook was NOT touched - answer the dialog on the console, or restart the guest. Never taskkill it.'
-    }
-
-    $comProblems = @()
-    if ($null -eq $first) { $comProblems += 'the first run did not finish; see above.' }
-    else {
-        Say "  COM start $($first.ComSeconds) s; MAPI $($first.MapiInit)"
-        Say "  tuning state written after $($first.TuningAfterSeconds)s; registration reconcile after $($first.McpAfterSeconds)s"
-        Say "  COMAddIns('$AddinName').Connect = $($first.Connect); the add-in answered GetRestartNeeded() = $($first.RestartNeeded)"
-        if ($first.Error) { $comProblems += "the first run reported: $($first.Error)" }
-        if ($null -eq $first.TuningAfterSeconds) { $comProblems += "the add-in did not write HKCU\$TuningKey within $FirstRunTimeoutSeconds s of Outlook starting." }
-        if ($first.Connect -ne $true) { $comProblems += "Outlook reports the add-in as NOT connected." }
-        if (-not $first.AutomationAnswered) { $comProblems += 'the add-in did not answer a call into it (COMAddIn.Object.GetRestartNeeded), so it is not demonstrably running.' }
-    }
-    $still = @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue)
-    if ($still.Count -gt 0) { Say "  Outlook is still running (pid $(($still | ForEach-Object { $_.Id }) -join ', ')), headless. Left as it is." }
-    else { Say '  Outlook closed by itself once the last reference was released - gracefully; nothing quit or killed it.' }
-    # A window that appeared during the run and is still up is a dialog somebody has to answer -
-    # and on an unattended guest, the next step's hang.
-    $newWindows = @(Get-SessionWindows | Where-Object { $windowsBefore -notcontains $_ })
-    foreach ($w in $newWindows) { $comProblems += "a window appeared during the first run and is still on screen: $w - answer it on the console before the next step." }
-
-    $interactionAfter = Get-InteractionFacts
-    $changes = @(Compare-InteractionFacts $interactionBefore $interactionAfter)
-
-    Say ''
-    Say '== Verify =='
-    $facts = Get-AddInFacts -RequireFresh $true -StartedUtc $startedUtc -Payload $payload
-    $facts.ComProblems = $comProblems
-    foreach ($c in $changes) {
-        $facts.Notes += "INDEX EXCLUSION STATE CHANGED during this run: $c. The add-in writes nothing there, so this is Outlook's own start. Re-run Set-OutlookIndexingDisabled.ps1 -Verify before trusting this guest as unindexed."
-    }
-    if ($changes.Count -eq 0) { Say '  index exclusion state: UNCHANGED by this run (policy value and mapi crawl rules identical before and after)' }
-    Write-TestReadBlock $facts.Tuning
-    $result = Get-AddInVerdict $facts
-    Write-Verdict $result
-    exit $result.ExitCode
-}
+# The two phases. Each refuses the other's run level, and each ends the script with its verdict.
+if ($mode.Mode -eq $PhaseInstall) { Invoke-InstallPhase -Payload $payload }
+if ($mode.Mode -eq $PhaseFirstRun) { Invoke-FirstRunPhase -Payload $payload }
 
 # -Verify
 Say ''
 Say '== Verify =='
-$facts = Get-AddInFacts -RequireFresh $false -StartedUtc ([DateTime]::MinValue) -Payload $payload
+$installRecord = Read-InstallRecord
+$facts = Get-AddInFacts -RequireFresh $false -StartedUtc ([DateTime]::MinValue) -Payload $payload -InstallRecord $installRecord.Record -InstallRecordProblem $installRecord.Problem
+if (-not $installRecord.Record -and -not $installRecord.Problem) {
+    $facts.Notes += "no install record at $InstallRecordPath - an install made before -Phase existed, or none at all - so whether the installed build has run since it was installed is not asked; the state is read as before the split."
+}
 $ix = Get-InteractionFacts
 Say ("  index exclusion now: PreventIndexingOutlook={0} mapi rules=[{1}]  (read only; the add-in writes neither)" -f $ix.PreventIndexingOutlook, ($ix.MapiRules -join '; '))
 if ($WithOutlook) {
