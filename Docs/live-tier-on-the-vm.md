@@ -1899,7 +1899,12 @@ depends on anyone remembering: the frontier test reads the manifest and FAILS, n
 hub too old to catch a local-time frontier with.
 
 `-SelfTest` covers every decision above (79 assertions, Windows PowerShell 5.1 and 7), and the guest
-guard refuses the script on the workstation. **Nothing below its guard has run on a guest.**
+guard refuses the script on the workstation. **It has run on a guest since 2026-10-03** - on
+`OutlookAI-Unindexed`, twice, every step above but the index wait, which that guest skips (section
+4.1d): each teardown `0 corpus item(s) remaining`, each build 56 of 56 censused and read back, each
+quit 2 s, Outlook back on the tier profile NOT elevated, and a margin of 110 minutes printed with the
+opt-in and the filter. No live run has read the result yet. What the teardown leaves in Deleted Items
+is section 3b's item 7.
 
 The bystander and identity populations have no such clock: no test reads their dates, so they are
 built once and left alone. A checkpoint restored from before they were built needs them built again.
@@ -2058,8 +2063,9 @@ maintainer). **Run 2026-09-27, and it passed** - section 4.1b has the lines and 
 bystander and the identity store in the account-less profile; sender, correspondent recipients,
 attachment and conversation index all land; the store computes one conversation id per conversation;
 and the four faults above. **Answered by v2's probes on the same guest, 2026-09-27 (section 4.1a):**
-items 1, 2, 3 and 8. **Still open:** 4 to 7 - each settled by the first v2 build or run, which waits on
-"The undated kinds are dated in a PST", above.
+items 1, 2, 3 and 8. **Answered by v2's build and the first two hub rebuilds there, 2026-10-03
+(section 4.1d):** item 7, and the half of item 8 the probes left. **Still open:** 4 and 6, which only
+the indexed guest can answer, and 5, a two-profile mount nobody has made.
 
 1. **ANSWERED: `PostAsNote` does; `InPlaceReceived` does NOT.** In a store that is not the profile's
    default, `PostAsNote` kept its first save in the target, parented it in the target folder and showed
@@ -2075,11 +2081,11 @@ items 1, 2, 3 and 8. **Still open:** 4 to 7 - each settled by the first v2 build
 3. **ANSWERED: they stay - and they are dated.** On the hub (its own Calendar, Contacts and Tasks) and
    the bystander (stand-ins), every kind `folder=True inFolder=True tag=True class=True
    inTargetStore=True`; but `undated=False tableUndated=False`, and Outlook refused to remove the date.
-   Open, above.
+   Decided 2026-10-03, above: built without them (Q98 (a)).
 4. **Does the index carry what the tests read** - `FromAddress`/`FromName`, `ToAddress` (the owner's
    now), one attachment row per attachment, a `ConversationID` shared by each conversation's members,
    and the undated rows with NO `System.Message.DateReceived`? The indexed guest only - and the last
-   part is now the question above.
+   part is Q98 (f), above.
 5. **Does a store mounted in two profiles give the index two scopes?** The per-store scope URL is
    `mapi16://{SID}/StoreDisplayName($Hash)/`. Corpus A has always been in the same position, so the
    answer - whatever it is - is not new to the populations. **Half answered 2026-09-27 (Q92, section
@@ -2089,16 +2095,52 @@ items 1, 2, 3 and 8. **Still open:** 4 to 7 - each settled by the first v2 build
    rule; the two-profile mount itself was not made.
 6. **How long does the indexer take over a fresh hub?** It bounds how soon after the rebuild the run
    can start, and so how much of the UTC-offset margin is left for the run itself.
-7. **Does teardown leave the emptied subfolders behind in the hub's Deleted Items?** It removes a
-   created folder with `Folder.Delete()`, which in a PST is very likely a move into Deleted Items like
-   an item's - so every rebuild may add two empty `OutlookAI-Corpus-Folder-*` folders there. Look after
-   the first `Reset-HubPopulation.ps1` run; not measured, not changed.
+7. **ANSWERED: yes - and they pile up, two per rebuild.** Teardown removes a created folder with
+   `Folder.Delete()`, and in a PST that MOVES the emptied folder into the store's Deleted Items. Measured
+   on `OutlookAI-Unindexed`, 2026-10-03, with `corpus-folders` of the hub after each of the first two
+   `Reset-HubPopulation.ps1` runs (section 4.1d). After the first:
+
+   ```
+   Deleted Items  items=0  mail
+     OutlookAI-Corpus-Folder-Projects  items=0  mail  [made by the corpus tool]
+     OutlookAI-Corpus-Folder-Notices  items=0  mail  [made by the corpus tool]
+   ```
+
+   After the second, the same two and `OutlookAI-Corpus-Folder-Projects (2)` and
+   `OutlookAI-Corpus-Folder-Notices (2)`, also empty: Outlook renames a moved folder whose name is taken,
+   so nothing collides and nothing stops them accumulating. Both teardowns printed `folders removed 2`,
+   which counts `Delete()` calls that did not throw - not folders gone from the store. The items are
+   drained (`considered 112, deleted 112`: each of the 56 deleted, then deleted again from Deleted
+   Items, and the hub's Deleted Items reads `items=0`); the folders are not. **Harmless to the tests**:
+   the live tier's own test folders are `OutlookAI-McpTest-Folder*`, a different string that neither
+   contains nor is contained in `OutlookAI-Corpus-Folder` (`CountLiveTestFolders` would not count these),
+   the subject-only probe names its folder by path (`Inbox/OutlookAI-Corpus-Folder-Notices`), and the
+   count tripwire exempts the hub. What it costs: the hub's tree grows by two folders per run, and the
+   teardown's count says something that did not happen. **Decided overnight on the maintainer's behalf,
+   2026-10-03, for his review: (a), and not built yet** - nothing about it blocks a live run, and building
+   it starts with a measurement (below). The directions:
+
+   | Direction | How | For | Against |
+   | --- | --- | --- | --- |
+   | **(a) Drain the folders as the items are drained** | After `Folder.Delete()`, look the folder up again by its manifest EntryID; if it now sits directly in the store's Deleted Items and its name still ordinal-contains `OutlookAI-Corpus-Folder`, `Delete()` it again - from Deleted Items that is permanent. Count "removed" only when the second lookup fails, and print "moved to Deleted Items" otherwise | Both keys, as for every deletion here; mirrors the item drain the teardown already does; the count becomes true | Rests on a PST folder KEEPING its EntryID across the move - unmeasured (an item's does not); if it does not, the folder must be found by name under Deleted Items, which is one key, not two |
+   | (b) Keep the folders, empty them only | The hub teardown deletes the items and leaves its two subfolders in place; the build's code already adopts an existing child of that name, as item 8 measured for a stand-in | Nothing moves, nothing piles up, no second delete | A teardown for good leaves two empty folders under the Inbox; "torn down" stops meaning "gone", which the bystander and identity teardowns would have to say differently |
+   | (c) Leave it, and say so | Change only the printed line - `folders moved to Deleted Items 2` - and let `Reset-HubPopulation.ps1` report how many corpus folders the hub's Deleted Items holds | No deletion logic changes | The pile grows on any guest not restored from a checkpoint between runs |
+   | (d) A separate sweep of old corpus folders | `Reset-HubPopulation.ps1` hands the torn-down manifests in `hub-history\` to a verb that deletes those folders from Deleted Items, by their recorded EntryIDs and the prefix | Clears the pile left by every past run, not just the current one | A second deletion path to keep correct; same EntryID question as (a) |
+
+   **Why (a)**: it is the only direction that both stops the pile and keeps two keys on every deletion.
+   Its EntryID question comes first, read-only and through the corpus tool rather than ad-hoc COM:
+   `corpus-folders` prints no EntryIDs, so it needs an option that resolves a manifest's recorded folder
+   EntryIDs and prints where each one sits now. The four folders in the hub's Deleted Items came from
+   the two torn-down manifests in `hub-history\`, and `CP-12B-POPULATIONS-V2` holds both - the
+   measurement is ready to run. Nothing was changed here.
 8. **ANSWERED: a probe that makes a stand-in and a build that then refuses leave that stand-in, empty,
    in the target store.** The bystander, before its probe: `Deleted Items  items=0` and nothing else.
    After it, and after the undated probe refused: `OutlookAI-Corpus-Folder-6  items=0  mail`, `-9
    calendar`, `-10 contacts`, `-13 tasks`, every one `items=0` and `[made by the corpus tool]`, under
-   the store root - and no Inbox, Drafts or Junk Email created. That the next build adopts them by name
-   is still inferred from the code; the build has not run.
+   the store root - and no Inbox, Drafts or Junk Email created. **And the next build adopts a stand-in by
+   name - measured 2026-10-03 (section 4.1d):** on a new, empty bystander the probe made
+   `OutlookAI-Corpus-Folder-6`, and the build's own placement probe and its 172 items used it - one `-6`
+   in the tree afterwards, beside the `-5` the build made for the sent items.
 
 ---
 
@@ -2382,7 +2424,108 @@ identity account's signature, the .NET SDK and the suite. From `CP-10B-IDENTITY-
 `NuGet.config` into `src` and builds the suite from it, so `TEST-READY` needs both there first.
 
 **Not on this line yet, and not asked for:** the live-test settings file (`Testbed/README.md` step 9 -
-the old `CP-13` had one), any population (Q98), and a live run.
+the old `CP-13` had one), any population (Q98), and a live run. *(2026-10-03: the settings and the
+populations are on it now - section 4.1d. The live run is not.)*
+
+### 4.1d The populations built - `OutlookAI-Unindexed`, 2026-10-03 (Q98 (a))
+
+**Why this section exists.** Q98 decided (a): the populations are built without their undated items
+(section 3b). From `CP-11B-SIGNATURE-SDK-SUITE`, on this guest only: the three populations, the hub
+rebuild, the settings, a checkpoint - and no live run, which another agent runs. The tools were
+published from this work's branch - master `ea40cc8` plus the Q98 switch (`ace34e0`) and the Corpus B
+record (`c256817`), because master alone did not have the switch yet. Every mailbox write went through
+the corpus tool; every Outlook close was a graceful quit (`Restart-Guest.ps1 -Execute`, or the hub
+rebuild's own); every step that starts or drives Outlook ran in session 1. Raw logs:
+`.work\g2-cp12b\` in the main checkout.
+
+| Step | What ran | Verdict |
+| --- | --- | --- |
+| Restore and restage | `Restore-VMSnapshot CP-11B-SIGNATURE-SDK-SUITE` (the VM was Off, so the restore left it Saved and `Start-VM` resumed it); `Publish-GuestPayload.ps1` at `c256817` on the host and only the tools expanded on the guest - the old ones kept as `tools.af56efc`, the server left at `af56efc`'s; the branch's 17 guest files copied (scripts, `.prf` templates, `SearchCrawlScope.cs`) | tools `99.99.99.0+c2568171867b04d1c0f2dfd7e0357ca48e8d237e`; the eight scripts this run calls hash the same on the guest as on the host (`Reset-HubPopulation.ps1` `52445BBBFC8255AB`, `Register-InteractiveTask.ps1` `82B07836611D97E3`, ...) |
+| 1. The bystander | Outlook on the tier profile; `Add-OutlookPstStore.ps1 -ProfileName OutlookAI-Tier -DisplayName bystander@vm.invalid -Path C:\OutlookAI-Tier\bystander.pst -Execute`, then `-ListOnly` | `before : Store.DisplayName='Outlook Data File'`, `after : Store.DisplayName='bystander@vm.invalid'`; the tier profile holds 3 stores - `tier@vm.invalid` (`Outlook.pst`), `identity@vm.invalid` (`Outlook Data File - IdentityMint.pst`), `bystander@vm.invalid` (`bystander.pst`) - and 2 accounts |
+| 2. The corpus profile | `Restart-Guest.ps1 -Execute`; `Set-DefaultOutlookProfile.ps1 -Name CorpusProfile -Execute`; Outlook started (elevated, as the corpus tool is), 180 s; the three stores attached by path while empty; `corpus-folders` of all four | every name byte-identical; hub every default folder, all `items=0`; the bystander `Deleted Items` only; the identity store every default folder but Junk Email, all `items=0`; Corpus B `Inbox 10912`, `Sent Items 4964`, `Deleted Items 2461`, `Junk Email 1663`, `Drafts 0` |
+| 3. Hub | `corpus-probe`, `corpus-build` dry, `--execute` - `hub-unindexed` 8181, anchor `2026-10-03T01:16:19Z` | below |
+| 4. Bystander | the same - `bystander-unindexed` 8282, anchor `2026-10-03T01:17:22Z` | below |
+| 5. Identity | the same - `identity-unindexed` 8383, anchor `2026-10-03T01:18:26Z`, into the store's real Inbox | below |
+| 6. After the builds | `corpus-folders` of all four | hub `Inbox 24` (`-Projects 6`, `-Notices 12`), `Sent Items 14`, `Deleted Items 0`; bystander `OutlookAI-Corpus-Folder-6 172` (`-Projects 40`, `-Suppliers 32`), `-5 56`, `Deleted Items 0`, still no Inbox, Drafts or Junk Email; identity `Inbox 5`, `Sent Items 3`; Corpus B unchanged, `Drafts 0` |
+| 7. Settings | `New-LiveTestSettings.ps1 -VMName OutlookAI-Unindexed` on the host; `Copy-ToGuest.ps1` with the line it printed | rendered and admitted - Portable, hub `tier@vm.invalid`, 3 watched, bystander `bystander@vm.invalid`, no index, no corpus, the sink on loopback; SHA-256 `7AC0A324AAAD8117501AA908997B66A0BA9D2B77B3ABCC75D82AD84A8A32186D` on host and guest alike |
+| 8. Hub rebuild | `Restart-Guest.ps1 -Execute`; `Reset-HubPopulation.ps1 -SelfTest` (Windows PowerShell 5.1.26100 - the guest has no PowerShell 7), the dry run, then `-Execute` through `Register-InteractiveTask.ps1 -TimeoutSeconds 3600` | `79 assertion(s), 0 failure(s)`; the dry run's plan sheet `items : 56` and the command lines; `-Execute` below |
+| 9. Item 7 | `Restart-Guest.ps1 -Execute`, the corpus profile, `corpus-folders` of all four; the restart, `Reset-HubPopulation.ps1 -Execute` a SECOND time, and the same again | section 3b, item 7: two emptied folders in the hub's Deleted Items after the first rebuild, four after the second; bystander, identity store and Corpus B unchanged both times |
+| 10. State | `Restart-Guest.ps1 -Execute`; `Set-DefaultOutlookProfile.ps1 -Name OutlookAI-Tier -Execute`; the state read; `Set-OutlookIndexingDisabled.ps1 -Verify`, Outlook closed - after the two rebuilds' NOT elevated Outlooks, the kind that registers itself where nothing excludes it; then this section's banner-only edit of `Reset-HubPopulation.ps1` copied in | `outlook processes: 0`, `ImportPRF: ''`, `DefaultProfile: 'OutlookAI-Tier'`; `the service says: included=False reason=USER`, `mapiRows=0 ... outlookRowsTotal=0` at both readings, ten minutes apart, `VERDICT: UNINDEXED`; the copied script's SHA-256 the same on guest and host (`2754193F...`) |
+
+**What each build printed** - the probes and the build of every population in one run, the same lines
+for all three but the target folder and the counts:
+
+```
+Cross-store residue sweep (before the probes): no probe item of 'hub-unindexed' in any other store.
+  target folder: 'Inbox' - the store's own Inbox
+  PostAsNote                   target=Inbox visible=True store=target landedIn=Inbox parentMatches=True inFolderTable=True sentFlag=True usable=True
+Date fidelity: VERIFIED via PropertyAccessorDates. Received dates drive DASL selection.
+  sender=True recipients=True attachment=True conversationIndex=True conversationId=(computed)
+Undated probe: this population carries no undated item; nothing to probe.
+Cross-store residue sweep (after the probes): no probe item of 'hub-unindexed' in any other store.
+  undated items         : none - switched off since 2026-10-03 (Q98 (a)): in a PST these kinds are dated, and Outlook will not remove it
+Build finished: created 56, already present 0, failed 0, 40,286 body bytes in 00:00:02 (20.9 items/s).
+Census: 56 item(s) found for 56 planned; per folder found/planned: Sent Items=14/14, Inbox=24/24, Inbox/OutlookAI-Corpus-Folder-Projects=6/6, Inbox/OutlookAI-Corpus-Folder-Notices=12/12. Every ordinal exists exactly once, in the folder the plan names.
+Population read-back: 56 of 56 item(s) read; 4 of 4 conversation(s) grouped by the store under one id. Every item carries the sender, recipients, attachments and conversation the plan names.
+
+bystander:
+  target folder: 'OutlookAI-Corpus-Folder-6' - a STAND-IN: the store has no visible Inbox of its own, and keeps none
+Build finished: created 300, already present 0, failed 0, 260,041 body bytes in 00:00:13 (22.2 items/s).
+Census: 300 item(s) found for 300 planned; per folder found/planned: Sent Items=56/56, Inbox=172/172, Inbox/OutlookAI-Corpus-Folder-Projects=40/40, Inbox/OutlookAI-Corpus-Folder-Suppliers=32/32. Every ordinal exists exactly once, in the folder the plan names.
+Population read-back: 300 of 300 item(s) read; 6 of 6 conversation(s) grouped by the store under one id. ...
+
+identity:
+  target folder: 'Inbox' - the store's own Inbox
+Build finished: created 8, already present 0, failed 0, 5,501 body bytes in 00:00:00 (21.1 items/s).
+Census: 8 item(s) found for 8 planned; per folder found/planned: Sent Items=3/3, Inbox=5/5. Every ordinal exists exactly once, in the folder the plan names.
+Population read-back: 8 of 8 item(s) read; 0 of 0 conversation(s) grouped by the store under one id. ...
+```
+
+Every probe and build exited 0, and no sweep - before the probes, after them, or after a teardown -
+found a probe item in any other store. The bystander's census labels its folders by the plan's names
+(`Inbox=172/172`); the items are in the stand-ins `corpus-folders` lists. The manifests:
+`corpus-hub-unindexed.jsonl` 59 lines (header, 56 items, 2 folders), `corpus-bystander-unindexed.jsonl`
+305 (header, 300 items, 4 folders - `-6`, `-5` and the two subfolders), `corpus-identity-unindexed.jsonl`
+9 (header and 8 items: the store has every folder its population needs).
+
+**The hub rebuild's first run** (the second printed the same lines, with anchor `2026-10-03T01:43:20Z`):
+
+```
+Manifest records 56 item(s) and 2 created folder(s).
+Teardown: considered 112, deleted 112, refused by rule 0, already gone 0, failed 0, folders removed 2.
+Post-teardown scan finds 0 corpus item(s) remaining (expected 0).
+Cross-store residue sweep (teardown): no probe item of 'hub-unindexed' in any other store.
+  torn-down manifest kept as C:\OutlookAI-Q5\hub-history\hub-unindexed.20261003T011619Z.jsonl
+=== corpus-build ... --anchor 2026-10-03T01:29:52Z ... --execute
+Build finished: created 56, already present 0, failed 0, 40,286 body bytes in 00:00:02 (21.4 items/s).
+Census: 56 item(s) found for 56 planned; ... Every ordinal exists exactly once, in the folder the plan names.
+Population read-back: 56 of 56 item(s) read; 4 of 4 conversation(s) grouped by the store under one id. ...
+=== quitting the Outlook this script started (pid 1440), under mailbox-safety rule 7
+  not in the Running Object Table - attached through the class factory
+  profile 'CorpusProfile', item windows open: 0
+  OUTLOOK.EXE left 2s after the Quit.
+OK: OUTLOOK.EXE pid 544 in session 1, NOT elevated, profile 'OutlookAI-Tier'. Left running - close it with Testbed/host/Restart-Guest.ps1.
+Hub population 'hub-unindexed' in 'tier@vm.invalid' is anchored 2026-10-03T01:29:52Z; its newest item is 2026-10-03T01:28:52Z.
+The frontier test can catch a local-time misreading until 2026-10-03T03:23:52Z - 110 min from now (115 min on this guest's UTC offset of 02:00:00). START THE RUN NOW, by Testbed/README.md section 4c, with:
+  the opt-in   $env:OUTLOOKAI_LIVE_OPT_IN = 'OAI-UNINDEXED'
+  the filter   --filter "Category=Live&Requires!=DelegateStore&Requires!=SearchIndex"
+```
+
+**Why it ran twice.** Section 3b's item 7 asked what the teardown leaves in the hub's Deleted Items; the
+first run answered "two emptied folders", and only a second could say whether a second pair collides,
+fails or piles up. It piles up. The checkpoint therefore holds the hub as the SECOND rebuild left it -
+anchor `2026-10-03T01:43:20Z`, four empty corpus folders in its Deleted Items, both torn-down manifests
+in `hub-history\`. A run from the checkpoint starts with a third rebuild in any case.
+
+| Checkpoint | State |
+| --- | --- |
+| `CP-12B-POPULATIONS-V2` (parent `CP-11B-SIGNATURE-SDK-SUITE`; taken with the guest running, 2026-10-03 04:04 local) | Outlook not running; default profile `OutlookAI-Tier`; no `ImportPRF`; `UNINDEXED`, reason `USER`; the three populations built; the hub at anchor `2026-10-03T01:43:20Z` (manifest SHA-256 `86141A7E...`), the bystander at `01:17:22Z`, the identity store at `01:18:26Z`; Corpus B untouched (manifest SHA-256 `B7373BA0...`, 20,001 lines); the live-test settings staged; the tools from `c256817`, the server and the suite still `af56efc`'s from `CP-11B` |
+
+**For the run, which is not part of this:** the suite on the guest is `af56efc`'s, staged at `CP-11B`.
+It predates the Q98 switch, and master has changed several live test files since; re-stage it from
+master before the run (`Testbed/README.md` step 8b). The one live check that reads the hub
+population's plan - the frontier test's `LiveHubPopulationFreshness` - judges the newest DATED item,
+which is the same with or without the undated items, so the old suite would not misread this hub.
 
 ### 4.2 The indexed guest's build-out - `OutlookAI-Indexed`, 2026-09-24 and 2026-09-27
 
@@ -2392,7 +2535,8 @@ at a time, each checkpointed, with `Set-OutlookIndexingDisabled.ps1 -Verify -Set
 -MinimumOutlookRows 20000` after every step that started Outlook or installed something. No
 population was built and the live tier did not run: both wait on the generator and harness fixes.
 *(2026-09-27: both have landed - the harness's on 2026-09-24 (Q84, `4f82004`), generator v2 and its
-guest fixes by 2026-09-27 (section 4.1a). What is still missing here is a population - Q98, open -
+guest fixes by 2026-09-27 (section 4.1a). What is still missing here is a population - Q98, decided
+2026-10-03: built without the undated items, as the other guest's were in section 4.1d -
 this guest's settings, whose store names are still placeholders in `Testbed/testbed.json`, and a
 live run; section 4.2b's rebuild ran neither a population nor the tier.)*
 Raw logs: `.work\g1-buildout\` in the main checkout.

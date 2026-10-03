@@ -45,12 +45,6 @@
         are different facts and only the second happened: the per-account index assumption was NOT
         disproved - the design stopped depending on it, which also retired the riskiest unverified
         assumption in the whole layout.
-  - [ ] **Rebuild the fixture populations with generator v2 on a guest, and run the hub rebuild
-        once (2026-09-24).** v1's build on `OutlookAI-Unindexed` was not clean (runbook §4.1 step 6).
-        **v2 PROBED there 2026-09-27, NOT BUILT** (runbook §4.1a, `CP-14A-POPULATIONS-V2-PROBED`):
-        `PostAsNote` keeps its first save in a non-default store (`InPlaceReceived` does not, and is
-        retired), the owner resolves, and the dates and enrichment verify - but the undated items
-        refuse, which blocks the hub and the bystander on both guests. Waits on the item below.
   - [ ] **Run `Testbed/guest/Measure-SweepCost.ps1` once.** It is the reconstruction of
         `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1`, which is gitignored and gone with its
         scratch directory. Written from the shipped `SweepFolder` source, read-only by
@@ -884,13 +878,28 @@
       the scans and sweeps that need nothing but an Outlook all target the hub and take a "corpus
       too small" early return against an empty one - so the second store is the only one the
       tripwire can watch anyway.
-      **TOOLING DONE 2026-09-24 (Q70); the build is a guest step and has not run.** The generator
-      now builds it: `corpus-build --population bystander` puts 300 tagged, deterministic items in
-      the bystander - every folder inside the identity budget, two of them populated subfolders of
-      the Inbox - and `--population hub` gives the hub a 56-item population of its own, so the
-      "corpus too small" early returns above no longer need the corpus to be the hub.
-      `Docs/live-tier-on-the-vm.md` §3b is the procedure. Close this once a guest's census reads the
-      bystander item by item.
+      **What is left is a live run whose census reads the bystander item by item.** The items are
+      there: `corpus-build --population bystander` puts 300 tagged, deterministic items in the
+      bystander - every folder inside the identity budget, two of them populated subfolders of the
+      folder its received mail is filed in - and `OutlookAI-Unindexed` has carried them since
+      2026-10-03 (runbook §4.1d, `CP-12B-POPULATIONS-V2`). `--population hub` gives the hub a
+      56-item population of its own, so the "corpus too small" early returns above no longer need
+      the corpus to be the hub. `Docs/live-tier-on-the-vm.md` §3b is the procedure.
+
+- [ ] **Make `corpus-teardown` drain the folders it created, as it drains the items: in a PST its
+      `Folder.Delete()` MOVES them into Deleted Items, so every hub rebuild leaves two more empty
+      ones there.** Measured on `OutlookAI-Unindexed`, 2026-10-03 (runbook §3b item 7, §4.1d):
+      after the first `Reset-HubPopulation.ps1` run the hub's Deleted Items held
+      `OutlookAI-Corpus-Folder-Projects` and `-Notices`, empty; after the second, also `... (2)` of
+      each - Outlook renames on collision, so they pile up - and both teardowns printed
+      `folders removed 2`. Harmless to the tests (the live tier's test folders are a different
+      string), but the hub grows by two folders a run and the count says something that did not
+      happen. Direction (a) of §3b item 7 was chosen overnight on the maintainer's behalf, for his
+      review: first a read-only corpus-tool option that resolves a manifest's recorded folder
+      EntryIDs and says where each sits now - `CP-12B-POPULATIONS-V2` holds two torn-down manifests
+      and their four folders to run it on - then, if a folder keeps its EntryID across the move, a
+      second `Delete()` from Deleted Items by EntryID AND prefix, and a count that says which
+      happened.
 
 - [ ] **UNTESTED: what an ADVISED EVENT SINK leaves inside Outlook when its COM host is killed.
       Two of the three nominated mechanisms were measured on 2026-09-15 and both came back
