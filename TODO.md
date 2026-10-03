@@ -1,12 +1,21 @@
 # TODO
 
+- [ ] **Make the test guests keep a crash dump of `OUTLOOK.EXE`, then find what crashed it inside Word**
+  (seen once, 2026-10-03, `OutlookAI-Indexed`, runbook 4.2f run 4; `QUESTIONS.md` decision log, the
+  indexed guest's first live runs, item 7). `wwlib.dll`, `0xc0000005`, during
+  `LiveDraftOptionsTests.NewDraft_Hub_SignatureOverride_BodyAboveTheSignature_OutsideTheSignatureBookmark`,
+  in one of five full runs; the same commit passed the next run. The guests keep no dump, so there is
+  nothing to read. Directions: (1) Windows Error Reporting's `LocalDumps` key for `OUTLOOK.EXE` on both
+  guests (a full dump into a guest folder the runner fetches with the results), then wait for the next
+  crash; (2) loop the draft-options class on a guest until it reproduces; (3) review Word's threading in
+  the signature path without a fault site. Recommended: (1).
 - [ ] **Find out why `LiveMoveArchiveTests.MoveChain` could not resolve the hub's new Archive folder
   on a guest that was not restarted** (seen once, 2026-10-03, `OutlookAI-Indexed`; `QUESTIONS.md`
   decision log, the indexed guest's first live runs, item 6). `archive_mail` created the hub's
   Archive folder and the test's own verify session then read "NoDesignatedArchiveFolder"; the item
   left in Archive failed five later tests' hub check. The run had staged the suite onto
   `CP-17C`'s running Outlook - no graceful restart, no step 9a. Every run since through
-  `Testbed/host/Invoke-LiveTierOnGuest.ps1`, which always restarts, passed it (three of three). If a
+  `Testbed/host/Invoke-LiveTierOnGuest.ps1`, which always restarts, passed it (six of six). If a
   user's long-running Outlook can hit the same, a second `archive_mail` could miss the folder the
   first one made. Directions: (1) reproduce with a run that skips the restart; (2) re-read the
   designation from a freshly opened store in the verify session; (3) read it in the product the way

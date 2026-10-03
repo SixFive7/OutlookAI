@@ -3372,6 +3372,106 @@ populations stay its resting state until this branch is merged. **After the merg
 then on), and its bystander is the one that needs the all-kinds build. The same date applies: **before
 2026-11-01 23:59 UTC** for Corpus A's 30-day window (Q108).
 
+### 4.2f The live tier's first runs - `OutlookAI-Indexed`, 2026-10-03
+
+**Why this section exists.** The indexed guest's first full live runs: the index tier
+(`Requires=SearchIndex`) on a guest for the first time, with the 160,000-item Corpus A mounted, and the
+first runs through `Testbed/host/Invoke-LiveTierOnGuest.ps1` (`Testbed/README.md` section 4c), written
+after run 1 had been driven by hand. Every run: the start checkpoint restored, the commit's payloads,
+settings (30/60) and guest scripts staged, TEST-READY, `Restart-Guest.ps1 -Execute`, step 9a at
+`-RunLevel Limited` (and 9a-ii while it existed), the suite at `-RunLevel Limited` with
+`OUTLOOKAI_LIVE_OPT_IN = 'OAI-INDEXED'` and
+`--filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"`, then the resting
+checkpoint restored, the settings staged on it, the guest saved, the lease released. Every fix went
+in on the host first with T1 tests and was proven on the build VM (`Invoke-TestsOnBuildVm.ps1`: 3,613
+of 3,613 at `d6b8f89`, 3,619 at `19e6021`, 3,558 at the merge `dc1b5c5`, every self-test each time).
+Results: `.work\g1-live-green\` (run 1) and `.work\guest-live-runs\<run>\` (the rest) in worktree
+`agent-a634a99d582147265`.
+
+| Run | Revision | From | Total | Passed | Failed | Suite | Outlook |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `d4e31fe` (master), by hand | `CP-17C` | 123 | 106 | 17 | 10.9 min | no crash |
+| 2 | `e5bec94` (fixes 1-4 below) | `CP-17C` | 123 | 122 | 1 | 11.5 min | no crash |
+| diag | `2ff9e4f`, `-FilterSuffix` two tests, `-SkipHubReset` | `CP-17C` | 2 | 1 | 1 | - | no crash |
+| 3 | `19e6021` (fix 5) | `CP-17C` | **123** | **123** | 0 | 11.4 min | no crash |
+| 4 | `dc1b5c5` - master `af1fd3f` merged | `CP-18C-ALL-KINDS` | 122 | 119 | 3 | 15.8 min | **crashed** (`wwlib.dll`) |
+| 5 | `dc1b5c5` again | `CP-18C-ALL-KINDS` | **122** | **122** | 0 | 11.1 min | no crash - **GREEN**, `CP-19C-LIVE-GREEN` |
+
+**Run 1's seventeen, and what answered them** (each decided in `QUESTIONS.md`'s decision log, "the
+indexed guest's first live runs"):
+
+1. **Thirteen tests: "Store 'Corpus A' not found among 3 discovered index scopes".** The 2000-row
+   discovery sample held `Outlook Data File(1941)` - the account-less profile's 20,000-item store -
+   `tier@vm.invalid(59)` and `bystander@vm.invalid(1)`, and none of Corpus A's 160,006 rows; no
+   address names Corpus A. `T2/LiveIndexScopes` adds the store-root listing as the third step. Run 2:
+   all thirteen ran, and passed.
+2. **`LiveFreshModeTests`**: the index served the arrival with its frontier at `16:02:34.0000000Z` for a
+   send at `16:02:34.3804579Z` - whole seconds. Compared at that precision; run 2:
+   `sweptLive=False indexCaughtUp=True inboxFindMs=3343`.
+3. **`LiveDisconnectRecoveryTests`**: closing the parked window quit Outlook (D49's Office 2024
+   finding), and the pin release then reconnected into it (`0x800706BA`). Released only on a live
+   session now; run 2: "no live session left to release a pin on - Outlook quit as its last visible
+   window closed (gone signal: quit event)", passed.
+4. **`LiveFolderScopeTests.ApostropheInAFolderName`** asserted the zero-row guard's pre-G5 contract.
+   Held to G5; run 2: "zero-row guard=spoke (the folder is new to the index)", passed.
+5. **`Phase7LiveMcpToolShapeTests.Search_TopOne_OnHubStore`: 100 hits for a hub of 68 - a product
+   defect.** Counted by store, tier, folder and class (run 2, then the diag run): 67 mail items, 12
+   contact cards and **21 folder rows** (`kind:folder` - every folder of the hub, its root, Calendar,
+   Quick Step Settings, the emptied subfolders in Deleted Items). `IndexRowFilter.IsFolderRow` drops a
+   row of kind `folder` with no item segment (`19e6021`, T1 `IndexRowFilterTests`). Run 3: passed, and
+   the whole tier with it - **123 of 123, the indexed guest green on `CP-17C`.** Its checkpoint
+   (`CP-18C-LIVE-GREEN`) was deleted again: the coordinator moved guest one to `CP-18C-ALL-KINDS`
+   while it ran.
+
+**What the brief asked to confirm.**
+
+* **Q74 C3's PST half** - `LiveDecodeVerifyTests.ShortDecodedId_OpensAsTheItemItself_OnAPstStore`
+  passed in runs 1 to 3: "short-id open on a PST: result=opened ... decoded=00000000CD4732829AAD7048B384708E60CA19F2241D2000
+  opened=00000000CD4732829AAD7048B384708E60CA19F2241D2000" - the 24-byte id decoded from the index URL
+  opens as the item itself on a PST. Its `TODO.md` item is gone.
+* **The order-key tests with undated contacts (D62, D74)** - all three passed in runs 2 and 3. NULL
+  collation measured under `DateReceived DESC`: the hub 103 rows, 36 undated (its 12 contacts and the
+  folder rows above), **NULLS LAST**; the bystander 373 rows, 49 undated, NULLS LAST; Corpus A 500
+  rows, none undated.
+* **Corpus A's census inside the tripwire's time** - counted, never identified (4 folders measured, 0
+  identified) and never swept (a declared bystander): baseline 543 / 643 / 1,114 ms (runs 1, 2, 4),
+  post-run 597 / 509 ms; the whole post-run census 1,331 to 3,024 ms, every one `0 failure(s)`.
+
+**Safety, every run:** the artifact sweep ran and every store ended at `taggedArtifacts=0` (Corpus A
+and the bystander counted, not swept); the post-run census reported 0 failures; one PROVED NOTHING a
+run - the retry-guidance check, which has no transient Outlook state to report on an idle guest.
+
+**The three failures another agent saw here (coordinator heads-up).** A folder-path run staged its
+suite onto `CP-17C`'s running Outlook - no graceful restart, no step 9a - and failed
+`LiveMoveArchiveTests.MoveChain` ("NoDesignatedArchiveFolder", then five later hub checks),
+`LiveSweepScopeTests.ControlledCorpus` (its self-sent mail never arrived) and the apostrophe test
+(item 4). Here MoveChain passed in all five runs and in the diag run, which restarted the guest but
+skipped 9a; ControlledCorpus in all five. Not reproduced under the procedure, whose graceful restart
+the runner makes unconditional; MoveChain's is kept open in `TODO.md`.
+
+**Run 4 - Outlook crashed, in Word.** On the new base and the merged master, `OUTLOOK.EXE` died at
+20:56:49 local inside `LiveDraftOptionsTests.NewDraft_Hub_SignatureOverride_BodyAboveTheSignature_OutsideTheSignatureBookmark`
+- `Faulting module name: wwlib.dll, version: 16.0.17932.20996 ... Exception code: 0xc0000005 Fault
+offset: 0x000000000007ba1a` - and the next two tests of the class failed on `0x800706BA` and
+`CO_E_SERVER_EXEC_FAILURE` while it went. The guest-two crash (section 4.1e) faulted in `ntdll.dll` and
+`OLMAPI32.DLL` and stopped when every COM child object was released; the signature path this test
+drives captures and releases every Word object it touches. Run 5, the same commit from the same
+checkpoint, did not crash. One crash in five full runs here, none in the guest-two runs since the
+release fix; no dump was written (the guests do not keep any), which is the first thing to change
+(`TODO.md`).
+
+**Green, and where guest one rests.** Run 5 is the indexed guest green on the merged master: 122 of 122,
+artifacts 0, census 0 failures, no crash. Its checkpoint:
+
+| Checkpoint | State |
+| --- | --- |
+| `CP-19C-LIVE-GREEN` (parent `CP-18C-ALL-KINDS`; taken with the guest running, 2026-10-03 21:35 local, by `Invoke-LiveTierOnGuest.ps1 -GreenCheckpoint`) | The green run's end state: `dc1b5c5` staged (server, tools, suite, 30/60 settings), the hub as the run left it after its rebuild and sweep, Outlook as the suite left it |
+
+**Guest one RESTS on `CP-18C-ALL-KINDS`** with the 30/60 settings staged (the runner leaves it so after
+every run), not on the green checkpoint: `CP-18C-ALL-KINDS` is the base every agent's phase restores
+(the coordinator moved guest one there during this work), and the green state is a run's end, with a
+hub the next run tears down and rebuilds anyway. `CP-19C-LIVE-GREEN` is the evidence, kept beside it.
+
 ### 4.3 The build VM - `OutlookAI-Build`, 2026-10-03 (Q94, Q102)
 
 **Why this section exists.** The third machine, and not a live-tier guest: it runs the non-live
@@ -4286,9 +4386,13 @@ unrecorded or unverified.
   checkpoint `CP-13B-LIVE-GREEN`.** Green includes two decisions taken on the maintainer's behalf, each
   in `QUESTIONS.md`: a renamed derived draft's ConversationId is held to Exchange's promise on Exchange
   and to the kept topic's hash elsewhere (F8), and on Office LTSC 2024 the user's close of the last
-  window may end an Outlook OutlookAI started (F9). The index tier (`Requires=SearchIndex`) has not run
-  on a guest yet; `OutlookAI-Indexed` is where it can. The count moved from 31 to 121 by re-reading what
+  window may end an Outlook OutlookAI started (F9). The count moved from 31 to 121 by re-reading what
   each test needs method by method - no test was changed to make it fit.
+* **And on `OutlookAI-Indexed`, the index tier included, it is GREEN too: 122 of 122 on the merged
+  master (`dc1b5c5`, from `CP-18C-ALL-KINDS`), checkpoint `CP-19C-LIVE-GREEN` (section 4.2f)** -
+  after one product fix (a folder's own index row was being returned as a search hit) and four tests
+  brought up to the indexed guest. One of its five full runs crashed Outlook inside Word (`wwlib.dll`)
+  during a signature-override draft and left no dump; that crash is open in `TODO.md`.
 
 * **The VM runs a different Office from the maintainer's machine, by 3,598 builds, and that is
   accepted rather than fixed.** Measured 2026-09-15: the guest is `ProPlus2024Volume` on

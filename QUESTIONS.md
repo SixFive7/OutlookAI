@@ -375,7 +375,8 @@ spelling".** See the decision log below.
 tests. Thirteen stopped at "Store 'Corpus A' not found among 3 discovered index scopes", and four
 failed on their own. Sixteen were tests that had never met an indexed guest with a 160,000-item
 store, or an Office 2024 behaviour; the seventeenth found a product defect (item 5). Each is decided
-here, with three failures another agent saw on the same guest (item 6).
+here, with three failures another agent saw on the same guest (item 6), the crash in run 4 (item 7) and where
+the guest rests (item 8).
 
 **1. A store the discovery sample cannot reach.** The live tier found a store's index scope in a
 2000-row unordered sample of mail rows, then, for an address-named store the sample missed, by the
@@ -440,13 +441,30 @@ folder-path run from `CP-17C` (coordinator heads-up) failed `LiveMoveArchiveTest
 the hub's Archive and failed five later tests' hub check), `LiveSweepScopeTests.ControlledCorpus`
 (its self-sent mail never arrived through the mail sink) and the apostrophe test (item 4). That run
 staged the suite onto the checkpoint's running Outlook: no graceful restart, no step 9a or 9a-ii.
-Here MoveChain passed in both full runs and in a narrowed run that restarted the guest but skipped
-9a and 9a-ii; ControlledCorpus passed in both full runs. *Options:* (a) no code change - the one
+Here MoveChain passed in all five full runs and in a narrowed run that restarted the guest but
+skipped 9a; ControlledCorpus passed in all five. *Options:* (a) no code change - the one
 condition every pass shares and the failing run lacked is the graceful restart, which
 `Invoke-LiveTierOnGuest.ps1` makes unconditional - and keep the question open until it recurs under
 the procedure; (b) re-read the Archive designation from a fresh store object in the test's verify
 session, unproven against a failure nobody can reproduce; (c) reproduce it with a run that skips the
 restart. **Decided: (a)**, with the question kept in `TODO.md`; (c) is the way to close it.
+
+**7. Outlook crashed inside Word once, after master's all-kinds data was merged.** Run 4 (the merged
+master on `CP-18C-ALL-KINDS`) lost `OUTLOOK.EXE` in `LiveDraftOptionsTests.NewDraft_Hub_SignatureOverride_*`:
+`wwlib.dll`, `0xc0000005`, and the class's next two tests failed while it went. Run 5, the same commit
+and checkpoint, passed 122 of 122 with no crash. The signature path that test drives captures and
+releases every Word object it touches, unlike the guest-two crash, which stopped once every COM child
+object was released; and the guests keep no crash dumps, so there is nothing to read. *Options:* (a)
+take the green run, and make the next crash leave a dump - Windows Error Reporting's LocalDumps for
+`OUTLOOK.EXE` on both guests - before chasing it; (b) rerun the draft-options class in a loop until it
+reproduces; (c) review Word's threading in the signature path now, without evidence of where it
+faulted; (d) call it Office's. **Decided: (a)** (`TODO.md`); (b) costs guest hours for a 1-in-5 event
+with nothing to read when it hits, (c) has no fault site to start from, (d) is unearned.
+
+**8. Where guest one rests.** The green run's checkpoint is `CP-19C-LIVE-GREEN` (child of
+`CP-18C-ALL-KINDS`). *Options:* rest on it, or on `CP-18C-ALL-KINDS` with the 30/60 settings.
+**Decided: `CP-18C-ALL-KINDS`** - the base the coordinator named and every agent's phase restores; the
+green state is a run's end, with a hub the next run rebuilds anyway, and stays beside it as evidence.
 
 ### 2026-10-03, autonomous - D49 on Office LTSC 2024: the show-me window was the lifetime pin itself
 
