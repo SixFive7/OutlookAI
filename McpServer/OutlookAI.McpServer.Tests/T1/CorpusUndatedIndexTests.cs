@@ -120,6 +120,41 @@ public sealed class CorpusUndatedIndexTests
     }
 
     [Fact]
+    public void TheReader_GivenAWrittenInstant_WaitsPastTheFirstSaveUntilTheIndexDatesItAsWritten()
+    {
+        // D62 (b): the index takes an item's first save first - dated at its creation - and the probe's written
+        // delivery time only when it re-reads the item. So a written instant is waited for, not just a row.
+        DateTime written = new(2026, 8, 2, 9, 32, 50, DateTimeKind.Utc);
+        DateTime created = new(2026, 10, 3, 16, 40, 0, DateTimeKind.Utc);
+        Dictionary<string, object?> Dated(DateTime at)
+        {
+            Dictionary<string, object?> row = Row(MapiUrl, subject: AppointmentSubject);
+            row["System.Message.DateReceived"] = at;
+            return row;
+        }
+
+        var client = new ScriptedClient(
+            _ => new IReadOnlyDictionary<string, object?>[] { Dated(created) },
+            _ => new IReadOnlyDictionary<string, object?>[] { Dated(created) },
+            _ => new IReadOnlyDictionary<string, object?>[] { Dated(written) });
+        var clock = new FakeClock();
+        using var output = new StringWriter(CultureInfo.InvariantCulture);
+
+        CorpusUndatedIndex.CreateReader(output, TimeSpan.FromSeconds(60), client, clock.Start, clock.Sleep, _ => written)(CorpusItemKind.Appointment, AppointmentSubject);
+
+        string text = output.ToString();
+        Assert.Equal(1, CountOf(text, ": in the index after"));
+        Assert.Contains("appointment: DATED AS WRITTEN after 6 s - System.Message.DateReceived 2026-08-02T09:32:50Z", text, StringComparison.Ordinal);
+
+        // And one the index keeps at its creation is said to be so when the wait runs out.
+        var stuck = new ScriptedClient(_ => new IReadOnlyDictionary<string, object?>[] { Dated(created) });
+        using var stuckOutput = new StringWriter(CultureInfo.InvariantCulture);
+        var stuckClock = new FakeClock();
+        CorpusUndatedIndex.CreateReader(stuckOutput, TimeSpan.FromSeconds(9), stuck, stuckClock.Start, stuckClock.Sleep, _ => written)(CorpusItemKind.Appointment, AppointmentSubject);
+        Assert.Contains("NOT DATED AS WRITTEN after 9 s - the probe wrote 2026-08-02T09:32:50Z and the index still says 2026-10-03T16:40:00Z", stuckOutput.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheReader_GivesUpAtItsWait_AndSaysWhatToCheck()
     {
         var client = new ScriptedClient(_ => Array.Empty<IReadOnlyDictionary<string, object?>>());

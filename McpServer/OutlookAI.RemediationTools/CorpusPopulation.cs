@@ -331,15 +331,22 @@ public sealed record CorpusPopulationFolder(int FolderId, int ParentFolderId, st
 public sealed record CorpusSubjectOnlyProbe(int FolderId, string FolderPath, string SubjectTerm, string SenderFragment);
 
 /// <summary>
-/// What an UNDATED population item carries beyond its subject and body. Every one of them has no
-/// received date and no sender; what differs is kind-specific.
+/// What an UNDATED population item - a non-mail kind - carries beyond its subject and body. None of
+/// them has a sender; what differs is kind-specific, and on the indexed guest's all-kinds populations
+/// an appointment and a task also carry a PLANNED delivery time.
 /// </summary>
 /// <param name="Kind">Which undated kind.</param>
 /// <param name="AppointmentStartUtc">An appointment's start, in UTC; null for every other kind.</param>
 /// <param name="AppointmentMinutes">An appointment's length; null for every other kind.</param>
 /// <param name="ContactFullName">A contact's full name - the tagged subject; null for every other kind.</param>
+/// <param name="DeliveryUtc">
+/// The delivery time the write path gives the item after its first save, which the store must read back
+/// and the index must date it at - set only for an appointment or a task of an all-kinds population
+/// (<see cref="CorpusPlanOptions.IncludeAllKinds"/>, <see cref="CorpusPopulation.PlannedDeliveryUtc"/>).
+/// Null everywhere else: the item keeps whatever the store gives it, or has it removed.
+/// </param>
 public sealed record CorpusUndatedDetail(
-    CorpusItemKind Kind, DateTime? AppointmentStartUtc, int? AppointmentMinutes, string? ContactFullName);
+    CorpusItemKind Kind, DateTime? AppointmentStartUtc, int? AppointmentMinutes, string? ContactFullName, DateTime? DeliveryUtc = null);
 
 /// <summary>
 /// A CURATED fixture population: the small, tagged mini-corpora the generator builds into the
@@ -401,6 +408,13 @@ public sealed class CorpusPopulation
     /// forty-two undated rows, every one a contact, after the dated items. Still version 2: nothing
     /// built before changes, and the option is in the shape key, so neither population can be
     /// continued as the other.
+    /// </para>
+    /// <para>
+    /// And since the maintainer's answer to D62 the same day - (b), "all three kinds" - the indexed
+    /// guest's hub and bystander carry version 2's full set again, at its ordinals and counts, as
+    /// <see cref="CorpusPlanOptions.IncludeAllKinds"/>: the contacts undated in the index, the
+    /// appointments and tasks dated at planned instants older than every dated item
+    /// (<see cref="PlannedDeliveryUtc"/>). Still version 2, and in the shape key like the contacts.
     /// </para>
     /// </summary>
     public const int Version = 2;
@@ -601,7 +615,43 @@ public sealed class CorpusPopulation
     public CorpusUndatedCriterion UndatedCriterion
         => UndatedKinds.Count == 0
             ? CorpusUndatedCriterion.None
-            : _options.IncludeUndatedContacts ? CorpusUndatedCriterion.IndexHoldsNoDate : CorpusUndatedCriterion.StoreHoldsNoDate;
+            : _options.IncludeAllKinds ? CorpusUndatedCriterion.IndexDatesAsPlanned
+            : _options.IncludeUndatedContacts ? CorpusUndatedCriterion.IndexHoldsNoDate
+            : CorpusUndatedCriterion.StoreHoldsNoDate;
+
+    /// <summary>
+    /// The age, in seconds before the anchor, of the OLDEST dated item this population can hold: the
+    /// upper end of every dated slot's band, or its fixed age. Every planned delivery time
+    /// (<see cref="PlannedDeliveryUtc"/>) sits beyond it.
+    /// </summary>
+    public long OldestDatedAgeSeconds
+        => _slots.Where(s => !CorpusItemKinds.IsUndated(s.Kind))
+            .Select(s => s.FixedAgeSeconds > 0 ? s.FixedAgeSeconds : s.AgeToSeconds)
+            .DefaultIfEmpty(0L)
+            .Max();
+
+    /// <summary>
+    /// The delivery time an APPOINTMENT or a TASK of an all-kinds population is given
+    /// (<see cref="CorpusPlanOptions.IncludeAllKinds"/>), or null for every other item. Decided on the
+    /// maintainer's behalf 2026-10-03 (D126): one day older than the oldest dated item the population can
+    /// hold (<see cref="OldestDatedAgeSeconds"/>), then one hour further back per ordinal - the hub's at 61
+    /// days and up, the bystander's at 731. So in the index's <c>DateReceived DESC</c> order every one of
+    /// them sorts after every dated mail item and before the undated contacts: never the frontier, never a
+    /// "most recent" hit, never inside a date window a test can ask the population about without reaching
+    /// all of its mail first - and fixed by the seed and the anchor alone, like every mail date.
+    /// </summary>
+    public DateTime? PlannedDeliveryUtc(int ordinal)
+    {
+        Slot slot = SlotOf(ordinal);
+        if (!_options.IncludeAllKinds || slot.Kind is not (CorpusItemKind.Appointment or CorpusItemKind.Task))
+        {
+            return null;
+        }
+
+        int firstUndated = Array.FindIndex(_slots, s => CorpusItemKinds.IsUndated(s.Kind)) + 1;
+        long ageSeconds = OldestDatedAgeSeconds + 86_400L + ((ordinal - firstUndated) * 3_600L);
+        return DateTime.SpecifyKind(_options.AnchorUtc, DateTimeKind.Utc).AddSeconds(-ageSeconds);
+    }
 
     /// <summary>The shape-key fragment that makes a population's manifest unmistakable for any other.</summary>
     public string ShapeKeySuffix => ShapeKeySuffixFor(Kind, Owner);
@@ -667,14 +717,33 @@ public sealed class CorpusPopulation
                 nameof(options));
         }
 
+        if (options.IncludeAllKinds && (options.IncludeUndatedItems || options.IncludeUndatedContacts))
+        {
+            throw new ArgumentException(
+                "A population carries one undated set: version 2's store-undated one (IncludeUndatedItems), the indexed guest's "
+                + "contacts (IncludeUndatedContacts, Q98 (f)) or its all three kinds (IncludeAllKinds, D62 (b)) - not two of them: "
+                + "they give the same ordinals different kinds or different dates.",
+                nameof(options));
+        }
+
+        if (options.IncludeAllKinds && kind == CorpusPopulationKind.Identity)
+        {
+            throw new ArgumentException(
+                "The identity population carries no undated item, so --all-kinds describes nothing there. Only the hub and the "
+                + "bystander carry the indexed guest's appointments, contacts and tasks (D62 (b)).",
+                nameof(options));
+        }
+
         // The undated items are switched OFF unless the plan asks for them - Q98 (a), 2026-10-03, see
         // CorpusPlanOptions.IncludeUndatedItems - or carries the indexed guest's undated CONTACTS, Q98 (f),
-        // CorpusPlanOptions.IncludeUndatedContacts. Either way they are each layout's last ordinals, so
-        // leaving them out changes no other item.
+        // CorpusPlanOptions.IncludeUndatedContacts, or its ALL THREE KINDS, D62 (b), which are version 2's
+        // full set at its own ordinals, CorpusPlanOptions.IncludeAllKinds. Every way they are each layout's
+        // last ordinals, so leaving them out changes no other item.
+        bool fullSet = options.IncludeUndatedItems || options.IncludeAllKinds;
         (Slot[] slots, IReadOnlyList<CorpusPopulationFolder> folders) = kind switch
         {
-            CorpusPopulationKind.Hub => HubLayout(options.IncludeUndatedItems, options.IncludeUndatedContacts),
-            CorpusPopulationKind.Bystander => BystanderLayout(options.IncludeUndatedItems, options.IncludeUndatedContacts),
+            CorpusPopulationKind.Hub => HubLayout(fullSet, options.IncludeUndatedContacts),
+            CorpusPopulationKind.Bystander => BystanderLayout(fullSet, options.IncludeUndatedContacts),
             CorpusPopulationKind.Identity => IdentityLayout(),
             _ => throw new ArgumentOutOfRangeException(nameof(options), "Unknown population kind."),
         };
@@ -944,7 +1013,7 @@ public sealed class CorpusPopulation
                 DateTime anchorDay = DateTime.SpecifyKind(_options.AnchorUtc.Date, DateTimeKind.Utc);
                 DateTime start = anchorDay.AddDays(-(slot.Index + 2)).AddHours(9 + (int)(Draw(ordinal, StreamUndated) % 6UL));
                 int minutes = Draw(ordinal, StreamUndated + 1) % 2UL == 0UL ? 30 : 60;
-                return new CorpusUndatedDetail(slot.Kind, start, minutes, null);
+                return new CorpusUndatedDetail(slot.Kind, start, minutes, null, PlannedDeliveryUtc(ordinal));
             case CorpusItemKind.Contact:
                 // The name carries the subject, tags included. Which of a contact's name fields
                 // Outlook derives PR_SUBJECT from is not something to lean on, so every field it
@@ -952,7 +1021,7 @@ public sealed class CorpusPopulation
                 // survives on this store before a single contact is built.
                 return new CorpusUndatedDetail(slot.Kind, null, null, BuildSubject(ordinal));
             default:
-                return new CorpusUndatedDetail(slot.Kind, null, null, null);
+                return new CorpusUndatedDetail(slot.Kind, null, null, null, PlannedDeliveryUtc(ordinal));
         }
     }
 
@@ -1050,7 +1119,9 @@ public sealed class CorpusPopulation
         // contacts and four tasks. Twelve, not more: every one is a search hit (gap B3 admits every
         // item class), and Phase7's top-100 search over the hub must stay under 100 with room for
         // what a run writes. The bystander carries the volume. No drafts: see Version. Only when the
-        // plan asks for them - off since 2026-10-03 (Q98 (a)); CorpusPlanOptions.IncludeUndatedItems.
+        // plan asks for them - off since 2026-10-03 (Q98 (a)); CorpusPlanOptions.IncludeUndatedItems -
+        // or carries all three kinds the indexed guest's way (D62 (b)): the same twelve, the
+        // appointments and tasks dated older than every mail item; CorpusPlanOptions.IncludeAllKinds.
         if (includeUndated)
         {
             AddUndated(slots, HubUndatedRows / CorpusItemKinds.Undated.Count, CorpusItemKinds.Undated);
@@ -1158,13 +1229,18 @@ public sealed class CorpusPopulation
         }
 
         // 301-342: forty-two UNDATED non-mail rows - fourteen appointments, contacts and tasks.
-        // LiveOrderKeyCollationTests.WidenedSearch compares a TOP 25 search that admits every item
-        // class, over-fetched to TOP 60, against the old mail-only shape; the order-key refetch it
-        // guards can only be told apart from its absence when more undated rows sort ahead of the
-        // cut than the over-fetch leaves room for (60 - 25 = 35). The hub cannot carry that many
-        // (its search must stay under 100 hits); the bystander, which no test writes and nothing
-        // pages, can. No drafts here: a bystander has no business holding unsent mail. Only when the
-        // plan asks for them - off since 2026-10-03 (Q98 (a)); CorpusPlanOptions.IncludeUndatedItems.
+        // LiveOrderKeyCollationTests.WidenedSearch compares a search that admits every item class
+        // against the old mail-only shape; the order-key refetch it guards can only be told apart from
+        // its absence when more undated rows sort ahead of the cut than the over-fetch leaves room for.
+        // Since 2026-10-03 (D74) that test SIZES its search from the undated rows it counts
+        // (T2/OrderKeyContest) instead of leaning on a margin over a fixed TOP 25, so a store needs at
+        // least twelve rows the index leaves undated to be contested at all. The hub cannot carry them
+        // all as undated rows (its search must stay under 100 hits); the bystander, which no test
+        // writes and nothing pages, can. No drafts here: a bystander has no business holding unsent
+        // mail. Only when the plan asks for them - off since 2026-10-03 (Q98 (a));
+        // CorpusPlanOptions.IncludeUndatedItems - or carries all three kinds the indexed guest's way
+        // (D62 (b)): fourteen contacts the index leaves undated, fourteen appointments and fourteen
+        // tasks dated older than every mail item; CorpusPlanOptions.IncludeAllKinds.
         if (includeUndated)
         {
             AddUndated(slots, BystanderUndatedRows / 3, new[] { CorpusItemKind.Appointment, CorpusItemKind.Contact, CorpusItemKind.Task });

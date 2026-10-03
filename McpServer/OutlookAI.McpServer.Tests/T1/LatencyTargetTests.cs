@@ -150,13 +150,14 @@ public sealed class LatencyTargetTests
     private static readonly DateTime Anchor = new(2026, 9, 24, 9, 0, 0, DateTimeKind.Utc);
 
     private static string[] HubManifest(
-        string store = "tier@vm.invalid", CorpusPopulationKind kind = CorpusPopulationKind.Hub, string? shapeKey = null, bool contacts = false)
+        string store = "tier@vm.invalid", CorpusPopulationKind kind = CorpusPopulationKind.Hub, string? shapeKey = null, bool contacts = false, bool allKinds = false)
     {
         var options = new CorpusPlanOptions("hub-indexed", 8181, Anchor)
         {
             Population = kind,
             Owner = CorpusMailboxOwner.ForStore(store),
             IncludeUndatedContacts = contacts,
+            IncludeAllKinds = allKinds,
         };
         var header = new CorpusManifestHeader(
             CorpusManifest.CurrentVersion, "hub-indexed", 8181, CorpusManifest.FormatUtc(Anchor),
@@ -172,6 +173,21 @@ public sealed class LatencyTargetTests
         Assert.Equal("tier@vm.invalid", fact.Store);
         Assert.Equal(Anchor, fact.AnchorUtc);
         Assert.Equal(Anchor.AddMinutes(-1), fact.NewestDatedUtc);
+    }
+
+    [Fact]
+    public void TheIndexedGuestsAllKindsHubManifest_ReadsBackTheSameNewestDatedItem()
+    {
+        // D62 (b): the indexed guest's hub carries appointments, contacts and tasks, and its shape key says so. The
+        // appointments and tasks are DATED - older than every mail item - so the newest dated item the frontier is
+        // judged on is still the mail one minute before the anchor.
+        string[] allKinds = HubManifest(allKinds: true);
+        Assert.True(CorpusPlanOptions.ShapeKeyCarriesAllKinds(CorpusManifest.Parse(allKinds).Header.ShapeKey));
+
+        HubPopulationFact fact = LiveHubPopulationFreshness.Read(allKinds);
+        Assert.Equal(Anchor, fact.AnchorUtc);
+        Assert.Equal(Anchor.AddMinutes(-1), fact.NewestDatedUtc);
+        Assert.Equal(LiveHubPopulationFreshness.Read(HubManifest()).NewestDatedUtc, fact.NewestDatedUtc);
     }
 
     [Fact]

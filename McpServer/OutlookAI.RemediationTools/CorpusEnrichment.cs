@@ -35,7 +35,14 @@ public sealed record CorpusEnrichmentObservation(
     string? ConversationId,
     string? Error = null,
     string? MessageClass = null,
-    bool? HasDeliveryTime = null);
+    bool? HasDeliveryTime = null)
+{
+    /// <summary>
+    /// The delivery time an UNDATED item carries, in UTC, when it carries one that could be read - what an
+    /// all-kinds appointment or task (D62 (b)) is compared with its planned instant on. Null otherwise.
+    /// </summary>
+    public DateTime? DeliveryUtc { get; init; }
+}
 
 /// <summary>What an undated item's message class is judged on. Pure.</summary>
 public static class CorpusMessageFlags
@@ -103,6 +110,18 @@ public sealed record CorpusEnrichmentReport(
     /// delivery time - every one, on a PST. An observation; <c>corpus-indexed</c> checks the index.
     /// </summary>
     public int UndatedDatedInTheStore { get; init; }
+
+    /// <summary>
+    /// Under <see cref="CorpusUndatedCriterion.IndexDatesAsPlanned"/>: appointments and tasks the plan dates
+    /// (<see cref="CorpusUndatedDetail.DeliveryUtc"/>) that read back carrying exactly that instant.
+    /// </summary>
+    public int UndatedDatedAsPlanned { get; init; }
+
+    /// <summary>
+    /// Appointments and tasks the plan dates that read back with ANOTHER delivery time, or none - so where
+    /// they sort in the index is no longer the plan's to say. A fault.
+    /// </summary>
+    public int UndatedDeliveryMismatches { get; init; }
 }
 
 /// <summary>
@@ -155,8 +174,10 @@ public static class CorpusEnrichmentCheck
         int undatedDated = 0;
         int undatedUnknownDate = 0;
         int undatedStoreDated = 0;
+        int undatedAsPlanned = 0;
+        int undatedDeliveryMismatches = 0;
         CorpusUndatedCriterion criterion = plan.Population.UndatedCriterion;
-        bool storeMustHoldNoDate = criterion != CorpusUndatedCriterion.IndexHoldsNoDate;
+        bool storeMustHoldNoDate = CorpusUndatedCriteria.StoreMustHoldNoDate(criterion);
         var idsByThread = new SortedDictionary<int, List<string?>>();
         for (int ordinal = 1; ordinal <= itemCount; ordinal++)
         {
@@ -186,7 +207,21 @@ public static class CorpusEnrichmentCheck
                     undatedClass++;
                 }
 
-                if (!storeMustHoldNoDate)
+                DateTime? planned = plan.UndatedDetail(ordinal)?.DeliveryUtc;
+                if (planned != null)
+                {
+                    // An all-kinds appointment or task (D62 (b)): dated by the plan, and judged on it.
+                    if (seen.DeliveryUtc is DateTime readBack
+                        && Math.Abs((readBack - planned.Value).TotalSeconds) <= CorpusIndexCoverage.DateTolerance.TotalSeconds)
+                    {
+                        undatedAsPlanned++;
+                    }
+                    else
+                    {
+                        undatedDeliveryMismatches++;
+                    }
+                }
+                else if (!storeMustHoldNoDate)
                 {
                     if (seen.HasDeliveryTime == true)
                     {
@@ -277,6 +312,8 @@ public static class CorpusEnrichmentCheck
             UndatedDateUnestablished = undatedUnknownDate,
             UndatedCriterion = criterion,
             UndatedDatedInTheStore = undatedStoreDated,
+            UndatedDatedAsPlanned = undatedAsPlanned,
+            UndatedDeliveryMismatches = undatedDeliveryMismatches,
         };
     }
 
@@ -351,6 +388,12 @@ public static class CorpusEnrichmentCheck
                 + "carry a delivery time, so their being undated is not established");
         }
 
+        if (report.UndatedDeliveryMismatches > 0)
+        {
+            faults.Add($"{report.UndatedDeliveryMismatches.ToString(invariant)} appointment(s) or task(s) do not carry their PLANNED "
+                + "delivery time, so where they sort in the index is no longer the plan's to say (D62 (b))");
+        }
+
         string head = $"Population read-back: {report.Observed.ToString(invariant)} of {report.Planned.ToString(invariant)} "
             + $"item(s) read; {report.ThreadsGroupedByStore.ToString(invariant)} of {report.Threads.ToString(invariant)} "
             + "conversation(s) grouped by the store under one id.";
@@ -362,6 +405,11 @@ public static class CorpusEnrichmentCheck
 
         string undated = report.UndatedPlanned == 0
             ? string.Empty
+            : report.UndatedCriterion == CorpusUndatedCriterion.IndexDatesAsPlanned
+                ? $" {report.UndatedPlanned.ToString(invariant)} of them non-mail kinds held to the INDEX (D62 (b)) - the right kind "
+                    + $"of item; {report.UndatedDatedAsPlanned.ToString(invariant)} appointment(s) and task(s) carry their planned "
+                    + $"delivery time, and the store gives the {(report.UndatedPlanned - report.UndatedDatedAsPlanned - report.UndatedDeliveryMismatches).ToString(invariant)} "
+                    + "contact(s) one Outlook will not remove, which the index does not use for a contact - corpus-indexed checks the index."
             : report.UndatedCriterion == CorpusUndatedCriterion.IndexHoldsNoDate
                 ? $" {report.UndatedPlanned.ToString(invariant)} of them UNDATED IN THE INDEX - the right kind of item; the store gives "
                     + $"{report.UndatedDatedInTheStore.ToString(invariant)} of them a delivery time Outlook will not remove, which the "
@@ -528,7 +576,26 @@ public sealed record CorpusUndatedProbe(
     bool InTheTargetStore,
     string? Error,
     string? DeliveryTimeRemovalRefused = null,
-    bool? StoreTableSaysUndated = null);
+    bool? StoreTableSaysUndated = null)
+{
+    /// <summary>
+    /// The delivery time the probe WROTE on its item - an all-kinds appointment or task (D62 (b)), as the
+    /// build writes each one's planned instant - or null when it wrote none.
+    /// </summary>
+    public DateTime? PlannedDeliveryUtc { get; init; }
+
+    /// <summary>What the re-opened item reads back as its delivery time, in UTC, when the probe wrote one; null when none reads.</summary>
+    public DateTime? DeliveryReadBackUtc { get; init; }
+
+    /// <summary>Why Outlook refused the delivery-time write, or null when it took it (or none was attempted).</summary>
+    public string? DeliveryWriteRefused { get; init; }
+
+    /// <summary>Whether a written delivery time landed: none was asked for, or it reads back within the index tolerance.</summary>
+    public bool PlannedDeliveryLanded
+        => PlannedDeliveryUtc == null
+            || (DeliveryWriteRefused == null && DeliveryReadBackUtc is DateTime readBack
+                && Math.Abs((readBack - PlannedDeliveryUtc.Value).TotalSeconds) <= CorpusIndexCoverage.DateTolerance.TotalSeconds);
+}
 
 /// <summary>
 /// The undated probe's second read of the received date: the folder's own table, restricted by the
@@ -596,6 +663,11 @@ public static class CorpusUndatedFidelity
         return $"  {p.Kind.ToString().ToLowerInvariant(),-12} folder={p.FolderReachable} inFolder={p.InTheFolder}"
             + $" tag={p.SubjectTagParses} undated={p.HasNoDeliveryTime} tableUndated={table} class={p.ClassMatches}"
             + $" inTargetStore={p.InTheTargetStore}"
+            + (p.PlannedDeliveryUtc == null
+                ? string.Empty
+                : $" plannedDelivery={CorpusManifest.FormatUtc(p.PlannedDeliveryUtc.Value)} readBack="
+                    + (p.DeliveryReadBackUtc == null ? "(none)" : CorpusManifest.FormatUtc(p.DeliveryReadBackUtc.Value)))
+            + (p.DeliveryWriteRefused == null ? string.Empty : $" deliveryRefused={p.DeliveryWriteRefused}")
             + (p.DeliveryTimeRemovalRefused == null ? string.Empty : $" removalRefused={p.DeliveryTimeRemovalRefused}")
             + (p.Error == null ? string.Empty : $" error={p.Error}");
     }
@@ -629,7 +701,7 @@ public static class CorpusUndatedFidelity
             return (true, "Undated probe: this population carries no undated item; nothing to probe.");
         }
 
-        bool storeMustHoldNoDate = criterion != CorpusUndatedCriterion.IndexHoldsNoDate;
+        bool storeMustHoldNoDate = CorpusUndatedCriteria.StoreMustHoldNoDate(criterion);
 
         var failed = new List<string>();
         foreach (CorpusItemKind kind in required)
@@ -695,6 +767,24 @@ public static class CorpusUndatedFidelity
                 why.Add("it read back as another kind of item");
             }
 
+            if (criterion == CorpusUndatedCriterion.IndexDatesAsPlanned
+                && kind is CorpusItemKind.Appointment or CorpusItemKind.Task
+                && probe.PlannedDeliveryUtc == null)
+            {
+                why.Add("the probe wrote it no planned delivery time, so it proves nothing about the write the build makes");
+            }
+            else if (!probe.PlannedDeliveryLanded)
+            {
+                why.Add("its PLANNED delivery time did not land ("
+                    + (probe.DeliveryWriteRefused != null
+                        ? "Outlook refused the write: " + probe.DeliveryWriteRefused
+                        : probe.DeliveryReadBackUtc == null
+                            ? "it reads back no delivery time"
+                            : "it reads back " + CorpusManifest.FormatUtc(probe.DeliveryReadBackUtc.Value) + ", not "
+                                + CorpusManifest.FormatUtc(probe.PlannedDeliveryUtc!.Value))
+                    + "), so the build could not date it where the plan puts it");
+            }
+
             if (why.Count > 0)
             {
                 failed.Add(name + ": " + string.Join(", ", why));
@@ -709,6 +799,15 @@ public static class CorpusUndatedFidelity
         }
 
         string kinds = string.Join(", ", required.Select(k => k.ToString().ToLowerInvariant()));
+        if (criterion == CorpusUndatedCriterion.IndexDatesAsPlanned)
+        {
+            return (true, "Undated probe verified for " + kinds
+                + ": each lands in its own folder of the target store, keeps its tag and its class; the appointment and the "
+                + "task took the delivery time written to them and read it back, as the build will date each one at its "
+                + "planned instant, and the contact keeps the delivery time a PST gives it, which the index does not use for "
+                + "a contact (D62 (b)) - corpus-indexed checks both in the index on every built item.");
+        }
+
         return storeMustHoldNoDate
             ? (true, "Undated probe verified for " + kinds
                 + ": each lands in its own folder of the target store, keeps its tag, and carries no delivery time.")
