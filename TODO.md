@@ -23,6 +23,15 @@
   until then a root the hash did not tie may still be this profile's own Exchange store, so (2), (3)
   and (4) would misjudge exactly the stores whose input is unmeasured.
 
+- [ ] **Check whether a FOLDER name with `% / \ * ?` in it can be searched by folder (Q99 finding).**
+  Microsoft's MAPI-URL page lists those five characters as percent-encoded in an index URL, and a
+  STORE name is - measured: `q99 50% off*?x` is filed as `q99 50%25 off%2A%3Fx`. The store half of a
+  scope now comes from the index's own listing, so it is spelled right; the folder half is still the
+  raw name (`FolderScopeResolver.ForPrimaryStore`: `storePrefix + "/0/" + folder`). So a folder named
+  `50% off` would be scoped as `.../0/50% off` against an index that may spell it `.../0/50%25 off`.
+  Not measured for folders. Measure it on a guest (a folder of that name, one item, a folder-scoped
+  search); if the index encodes it, encode the folder segments the same way when building the scope.
+
 - [ ] **Put a release candidate's MCP server in front of one session on the workstation, without installing it.**
   The manual pre-release checks (`Docs/release-manual-checks.md`, Q74 D2) exercise the Exchange-only
   write paths through the MCP server, by hand, on the maintainer's own profile - and nothing can put a
