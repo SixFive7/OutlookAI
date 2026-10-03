@@ -19,13 +19,17 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// the id's layout (<see cref="FolderEntryIdLayout"/>), that <c>GetFolderFromID</c> opens it with
 /// and without the store id and from either case of hex, and what a rename, a move within the
 /// store, a soft delete and a delete-and-recreate under the same name each do to it.</item>
-/// <item><see cref="IndexRows_NameAFolderByItsPath_AndCarryNoFolderId"/>: whether the search index
-/// keeps anything that could turn a folder id into an index scope without Outlook - every property
-/// the property system can name, read off a folder's own row and an item row, searched for the
-/// folder's id in every spelling (Q115).</item>
+/// <item><see cref="IndexRows_CarryTheirOwnNodeId_SoAPstFolderIdFindsItsScopeWithoutOutlook"/>: what the
+/// search index keeps that could turn a folder id into an index scope without Outlook (Q115) - every
+/// property the property system can name, read off a folder's own row and an item row. Measured: no
+/// row holds a folder's whole id, but every row holds its OWN node id in <c>System.ProviderItemID</c>
+/// (<c>N</c> + ten decimal digits), so a PST folder id's scope is found from the index alone - the root
+/// by the store UID in its items' URLs, the folder's row by its node id - which this test does end to
+/// end and compares with the scope built from the folder's names.</item>
 /// <item><see cref="IndexRefilesAFolderRenameAndMove_WithinTheCeiling"/>: how long the index takes
-/// to file a folder's items under its new path after a rename and after a move, and whether the
-/// old and new paths overlap or leave a gap - what bounds a cached id-to-path map's staleness.</item>
+/// to file a folder's items, and the folder's own row, under its new path after a rename and after a
+/// move, and whether the old and new paths overlap or leave a gap - what bounds how stale an id-to-scope
+/// lookup can be, and whether a folder's row keeps its node id through both.</item>
 /// </list>
 /// <para>
 /// SAFETY: every write targets the hub (S2), every item carries the tag and this run's marker (S3),
@@ -111,6 +115,12 @@ public sealed class LiveFolderIdentityTests
                 Assert.True(
                     FolderEntryIdLayout.SameBytes(layout.ProviderUidHex, store.Properties["PR_RECORD_KEY"]),
                     "a PST folder id's provider UID is not its store's PR_RECORD_KEY");
+
+                // A PST folder's own record key is its node id alone - store-scoped, so every PST's Inbox
+                // shares it (MAPI: "the scope of a record key for folders and messages is the message store").
+                Assert.True(
+                    FolderEntryIdLayout.SameBytes(layout.FolderPartHex, a0.Properties["PR_RECORD_KEY"]),
+                    "a PST folder's PR_RECORD_KEY is not its node id");
             }
 
             Assert.True(a0.OpensWithoutStoreId == true, "GetFolderFromID without the store id did not open the same folder: " + a0.WithoutStoreIdError);
@@ -179,7 +189,7 @@ public sealed class LiveFolderIdentityTests
 
     [Fact]
     [Trait("Requires", "SearchIndex")]
-    public void IndexRows_NameAFolderByItsPath_AndCarryNoFolderId()
+    public void IndexRows_CarryTheirOwnNodeId_SoAPstFolderIdFindsItsScopeWithoutOutlook()
     {
         IIndexClient client = IndexClientFactory.CreateAuto(out string providerReport);
         _output.WriteLine("index client: " + providerReport);
@@ -192,6 +202,7 @@ public sealed class LiveFolderIdentityTests
         int foldersCompared = 0;
         int itemRowsCompared = 0;
         int propertiesRead = 0;
+        int mappedEndToEnd = 0;
         foreach (string storeName in _fixture.Settings.IndexedStores)
         {
             StoreIdentity store = LiveOutlookTestMailer.ReadStoreIdentity(storeName);
@@ -245,7 +256,28 @@ public sealed class LiveFolderIdentityTests
                 }
 
                 ReportRow("folder row", folderRow);
-                AssertCarriesNot(folderRow, folderId, "the folder's own row");
+                FolderEntryIdLayout layout = Assert.IsType<FolderEntryIdLayout>(FolderEntryIdLayout.Parse(folder.EntryId));
+                string? folderProviderItemId = Text(folderRow, "System.ProviderItemID");
+                _output.WriteLine(
+                    "  folder row: carries the whole folder id in " + Carriers(folderRow, folderId) + "; System.ProviderItemID "
+                    + (folderProviderItemId ?? "(none)") + "; the id's node part " + (layout.PstProviderItemId ?? "(not a PST id)"));
+                if (layout.Kind == FolderEntryIdKind.Pst)
+                {
+                    Assert.Equal(layout.PstProviderItemId, folderProviderItemId);
+
+                    // End to end, with NO Outlook call: the folder id alone -> its store's index root (by the
+                    // store UID its items' URLs carry) -> its own row (by System.ProviderItemID) -> the scope.
+                    Stopwatch mapping = Stopwatch.StartNew();
+                    string? mapped = FolderScopeFromIndexOnly(client, roots, folder.EntryId, out string how);
+                    mapping.Stop();
+                    int underMapped = mapped == null ? -1 : CountUnder(client, mapped);
+                    _output.WriteLine(
+                        "  id -> scope from the index alone: " + (mapped ?? "(none)") + " in " + mapping.ElapsedMilliseconds + " ms (" + how
+                        + "); rows under it " + underMapped + " for " + folder.ItemCount + " item(s) in Outlook");
+                    Assert.Equal(folderUrl.TrimEnd('/'), mapped?.TrimEnd('/'));
+                    mappedEndToEnd++;
+                }
+
                 foldersCompared++;
 
                 string? itemUrl = itemUrls.FirstOrDefault(u => MapiItemUrl.TryParse(u, out MapiItemUrl? p) && p!.EncodedItemSegment != null && !p.IsAttachment);
@@ -258,22 +290,30 @@ public sealed class LiveFolderIdentityTests
                 propertiesRead += readItem;
                 Assert.NotNull(itemRow);
                 ReportRow("item row", itemRow!);
-                AssertCarriesNot(itemRow!, folderId, "an item row of the folder");
                 itemRowsCompared++;
 
                 DecodedEntryId? decoded = null;
                 Assert.True(MapiItemUrl.TryParse(itemUrl, out MapiItemUrl? parsed) && parsed!.TryDecodeEntryId(out decoded));
-                FolderEntryIdLayout? layout = FolderEntryIdLayout.Parse(folder.EntryId);
+                string itemProviderItemId = FolderEntryIdLayout.ProviderItemIdOf(
+                    BitConverter.ToUInt32(Convert.FromHexString(decoded!.NidHex), 0));
+                string? itemRowProviderItemId = Text(itemRow!, "System.ProviderItemID");
                 _output.WriteLine(
-                    "  item URL id: 24 bytes, store UID equal to the folder id's " + string.Equals(decoded!.StoreUidHex, layout?.ProviderUidHex, StringComparison.OrdinalIgnoreCase)
+                    "  item row: carries the whole folder id in " + Carriers(itemRow!, folderId) + "; its URL id is 24 bytes, store UID equal to the folder id's "
+                    + string.Equals(decoded.StoreUidHex, layout.ProviderUidHex, StringComparison.OrdinalIgnoreCase)
                     + ", node id type 0x" + decoded.NidLowFiveBits.ToString("X2", CultureInfo.InvariantCulture)
-                    + " - an item's own id; the folder's id is " + layout?.Describe());
+                    + "; System.ProviderItemID " + (itemRowProviderItemId ?? "(none)") + " is its OWN node id "
+                    + string.Equals(itemRowProviderItemId, itemProviderItemId, StringComparison.Ordinal)
+                    + " - an item row names its folder only by its URL path");
+                if (layout.Kind == FolderEntryIdKind.Pst)
+                {
+                    Assert.Equal(itemProviderItemId, itemRowProviderItemId);
+                }
             }
         }
 
         _output.WriteLine(
-            "compared " + foldersCompared + " folder row(s) and " + itemRowsCompared + " item row(s); " + propertiesRead
-            + " property values read in all");
+            "compared " + foldersCompared + " folder row(s) and " + itemRowsCompared + " item row(s), " + mappedEndToEnd
+            + " PST folder id(s) mapped to their scope from the index alone; " + propertiesRead + " property values read in all");
         Assert.True(foldersCompared > 0, "no folder of any indexed store was compared - this run proves nothing");
     }
 
@@ -308,13 +348,23 @@ public sealed class LiveFolderIdentityTests
             string urlRenamed = hubPrefix + "/0/" + parent + "/" + renamedX;
             string urlMoved = hubPrefix + "/0/" + parent + "/" + nameY + "/" + renamedX;
 
+            // The folder's own row, and the node id it carries: what an id-to-scope lookup reads (Q115).
+            FolderEntryIdLayout? layoutX = FolderEntryIdLayout.Parse(idX);
+            string? pid = layoutX?.PstProviderItemId;
+            string? rowBefore = pid == null ? null : UrlByProviderItemId(client, hubPrefix!, pid);
+            _output.WriteLine("folder row by System.ProviderItemID " + (pid ?? "(not a PST id)") + ": " + (rowBefore ?? "(none)"));
+            if (pid != null)
+            {
+                Assert.Equal(urlX, rowBefore);
+            }
+
             LiveOutlookTestMailer.RenameTestFolder(Hub, idX, renamedX);
-            Timeline rename = Follow(client, term, urlX, urlRenamed);
+            Timeline rename = Follow(client, term, urlX, urlRenamed, hubPrefix!, pid);
             _output.WriteLine("rename: " + rename);
 
             TestFolderChange move = LiveOutlookTestMailer.MoveTestFolder(Hub, idX, idY);
             Assert.False(string.IsNullOrEmpty(move.EntryIdAfter));
-            Timeline moved = Follow(client, term, urlRenamed, urlMoved);
+            Timeline moved = Follow(client, term, urlRenamed, urlMoved, hubPrefix!, pid);
             _output.WriteLine("move: " + moved);
 
             Assert.True(rename.Settled, "after a rename the index did not settle on the new path within " + IndexWaitSeconds + " s: " + rename);
@@ -564,10 +614,76 @@ public sealed class LiveFolderIdentityTests
         return found ? values : null;
     }
 
-    private void AssertCarriesNot(Dictionary<string, object?> row, byte[] folderId, string what)
+    /// <summary>The properties of a row that hold the folder's whole id in any spelling - reported, not asserted.</summary>
+    private static string Carriers(Dictionary<string, object?> row, byte[] folderId)
     {
         List<string> carriers = row.Where(p => FolderEntryIdLayout.ValueCarries(p.Value, folderId)).Select(p => p.Key).ToList();
-        Assert.True(carriers.Count == 0, what + " carries the folder's id in " + string.Join(", ", carriers));
+        return carriers.Count == 0 ? "no property" : string.Join(", ", carriers);
+    }
+
+    private static string? Text(IReadOnlyDictionary<string, object?> row, string column)
+    {
+        return row.TryGetValue(column, out object? value) && value is string s ? s : null;
+    }
+
+    /// <summary>
+    /// A PST folder id's index scope, found WITHOUT Outlook (Q115): the root whose item URLs carry the
+    /// id's store UID (bytes 4..19), then the one row under it whose <c>System.ProviderItemID</c> is the
+    /// id's node id. Null when the id is not a PST id or nothing matches - never a guess by name.
+    /// </summary>
+    private string? FolderScopeFromIndexOnly(IIndexClient client, List<IndexRoot> roots, string folderEntryIdHex, out string how)
+    {
+        FolderEntryIdLayout? layout = FolderEntryIdLayout.Parse(folderEntryIdHex);
+        if (layout?.Kind != FolderEntryIdKind.Pst)
+        {
+            how = "not a PST-format id";
+            return null;
+        }
+
+        foreach (IndexRoot root in roots)
+        {
+            string rootUrl = root.Url.TrimEnd('/');
+            if (!string.Equals(StoreUidUnder(client, rootUrl), layout.ProviderUidHex, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string sql = "SELECT TOP 5 System.ItemUrl FROM SystemIndex WHERE SCOPE='" + rootUrl.Replace("'", "''", StringComparison.Ordinal)
+                + "/' AND System.ProviderItemID='" + layout.PstProviderItemId + "'";
+            List<string> urls = client.ExecuteRows(sql, 5, StatementTimeoutSeconds)
+                .Select(r => Text(r, "System.ItemUrl"))
+                .Where(u => u != null)
+                .Select(u => u!)
+                .ToList();
+            how = "root by its items' store UID, then " + urls.Count + " row(s) with System.ProviderItemID " + layout.PstProviderItemId;
+            return urls.Count == 1 ? urls[0] : null;
+        }
+
+        how = "no index root carries the id's store UID";
+        return null;
+    }
+
+    /// <summary>The store UID (bytes 4..19 of an item id) the first item URL under a root carries, or null.</summary>
+    private string? StoreUidUnder(IIndexClient client, string rootUrl)
+    {
+        string sql = "SELECT TOP 200 System.ItemUrl FROM SystemIndex WHERE SCOPE='" + rootUrl.Replace("'", "''", StringComparison.Ordinal) + "/'";
+        foreach (IReadOnlyDictionary<string, object?> row in client.ExecuteRows(sql, 200, StatementTimeoutSeconds))
+        {
+            if (MapiItemUrl.TryParse(Text(row, "System.ItemUrl"), out MapiItemUrl? parsed) && parsed!.TryDecodeEntryId(out DecodedEntryId? decoded))
+            {
+                return decoded!.StoreUidHex;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>How many rows lie under a scope (TOP-bounded).</summary>
+    private int CountUnder(IIndexClient client, string scopeUrl)
+    {
+        string sql = "SELECT TOP " + (MaxItemsPerFolder + 100).ToString(CultureInfo.InvariantCulture) + " System.ItemUrl FROM SystemIndex WHERE SCOPE='"
+            + scopeUrl.TrimEnd('/').Replace("'", "''", StringComparison.Ordinal) + "/'";
+        return client.ExecuteRows(sql, MaxItemsPerFolder + 100, StatementTimeoutSeconds).Count;
     }
 
     private void ReportRow(string label, Dictionary<string, object?> row)
@@ -618,8 +734,11 @@ public sealed class LiveFolderIdentityTests
         return null;
     }
 
-    /// <summary>When the item's row left the old path, reached the new one, and whether the two ever overlapped or both stood empty.</summary>
-    private Timeline Follow(IIndexClient client, string term, string oldUrl, string newUrl)
+    /// <summary>
+    /// When the item's row left the old path, reached the new one, whether the two ever overlapped or both
+    /// stood empty - and, for a PST folder, when its own row (found by its node id) showed the new path.
+    /// </summary>
+    private Timeline Follow(IIndexClient client, string term, string oldUrl, string newUrl, string hubPrefix, string? pid)
     {
         Stopwatch clock = Stopwatch.StartNew();
         Timeline t = new();
@@ -649,7 +768,13 @@ public sealed class LiveFolderIdentityTests
                 t.GapSeen = true;
             }
 
-            if (before == 0 && after > 0)
+            if (pid != null && t.FolderRowAt == null
+                && string.Equals(UrlByProviderItemId(client, hubPrefix, pid), newUrl, StringComparison.Ordinal))
+            {
+                t.FolderRowAt = clock.Elapsed.TotalSeconds;
+            }
+
+            if (before == 0 && after > 0 && (pid == null || t.FolderRowAt != null))
             {
                 t.Settled = true;
                 break;
@@ -660,6 +785,26 @@ public sealed class LiveFolderIdentityTests
 
         t.Elapsed = clock.Elapsed.TotalSeconds;
         return t;
+    }
+
+    /// <summary>The URL of the one row under the hub whose System.ProviderItemID is <paramref name="pid"/>, or null.</summary>
+    private string? UrlByProviderItemId(IIndexClient client, string hubPrefix, string pid)
+    {
+        string sql = "SELECT TOP 5 System.ItemUrl FROM SystemIndex WHERE SCOPE='" + hubPrefix.Replace("'", "''", StringComparison.Ordinal)
+            + "/' AND System.ProviderItemID='" + pid + "'";
+        try
+        {
+            List<string> urls = client.ExecuteRows(sql, 5, StatementTimeoutSeconds)
+                .Select(r => Text(r, "System.ItemUrl"))
+                .Where(u => u != null)
+                .Select(u => u!)
+                .ToList();
+            return urls.Count == 1 ? urls[0] : null;
+        }
+        catch (System.Data.OleDb.OleDbException)
+        {
+            return null;
+        }
     }
 
     private int? CountUnder(IIndexClient client, string scopeUrl, string term)
@@ -690,6 +835,8 @@ public sealed class LiveFolderIdentityTests
 
         public bool Settled { get; set; }
 
+        public double? FolderRowAt { get; set; }
+
         public double Elapsed { get; set; }
 
         public override string ToString()
@@ -697,7 +844,8 @@ public sealed class LiveFolderIdentityTests
             return "settled " + Settled + " after " + Elapsed.ToString("F0", CultureInfo.InvariantCulture) + " s (" + Polls + " polls); old path empty from "
                 + (OldGoneAt?.ToString("F0", CultureInfo.InvariantCulture) ?? "never") + " s, new path seen from "
                 + (NewSeenAt?.ToString("F0", CultureInfo.InvariantCulture) ?? "never") + " s; both at once " + Overlapped
-                + ", neither " + GapSeen;
+                + ", neither " + GapSeen + "; the folder's own row at the new path (by its node id) from "
+                + (FolderRowAt?.ToString("F0", CultureInfo.InvariantCulture) ?? "never/not a PST") + " s";
         }
     }
 

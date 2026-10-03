@@ -11,9 +11,11 @@ public enum FolderEntryIdKind
     Unknown = 0,
 
     /// <summary>
-    /// [MS-PST] 2.2.2.8 (EntryID): 24 bytes - four flag bytes, the 16-byte provider UID that is the
-    /// store's <c>PR_RECORD_KEY</c>, and the folder's 4-byte node id, little-endian. Every PST, and every
-    /// OST that Outlook keeps in that format (IMAP, the older Outlook.com connector).
+    /// [MS-PST] 2.4.3.2 (Mapping between EntryID and NID): 24 bytes - four flag bytes, the 16-byte
+    /// provider UID that is the store's <c>PidTagRecordKey</c>, and the folder's 4-byte node id,
+    /// little-endian. Every PST, and every OST that Outlook keeps in that format (IMAP, the older
+    /// Outlook.com connector). [MS-PST] 2.2.2.6 (HEADER, <c>rgnid</c>): node ids are allocated by
+    /// incrementing a per-type counter, so a deleted folder's node id is not handed out again.
     /// </summary>
     Pst = 1,
 
@@ -85,6 +87,25 @@ public sealed class FolderEntryIdLayout
 
     /// <summary>An Exchange id's folder type (little-endian word at bytes 20..21); null for any other layout.</summary>
     public int? ExchangeFolderType => Kind == FolderEntryIdKind.ExchangeFolder ? Bytes[20] | (Bytes[21] << 8) : null;
+
+    /// <summary>A PST id's node id as a number (little-endian at bytes 20..23); null for any other layout.</summary>
+    public uint? Nid => Kind == FolderEntryIdKind.Pst ? BitConverter.ToUInt32(Bytes, 20) : null;
+
+    /// <summary>
+    /// The value the Windows Search index keeps in <c>System.ProviderItemID</c> for the object a PST id
+    /// names: <c>N</c> and its node id in ten decimal digits (<c>N0000032898</c> for node 0x8082) - MEASURED
+    /// 2026-10-03 (Q114/Q115) on every folder row and item row compared on the indexed test guest. It is
+    /// the "provider item ID" Microsoft documents in the blob a store pushes with each MAPI URL ("send only
+    /// the provider item ID for folders"). Unique only within its store: two PSTs' Inboxes share it. Null
+    /// for any other layout.
+    /// </summary>
+    public string? PstProviderItemId => Nid is uint nid ? ProviderItemIdOf(nid) : null;
+
+    /// <summary>The <c>System.ProviderItemID</c> spelling of a node id: <c>N</c> and ten decimal digits.</summary>
+    public static string ProviderItemIdOf(uint nid)
+    {
+        return "N" + nid.ToString("D10", CultureInfo.InvariantCulture);
+    }
 
     /// <summary>
     /// Parses a hex entry id. Null for anything that is not even-length hex. A string that is hex but fits

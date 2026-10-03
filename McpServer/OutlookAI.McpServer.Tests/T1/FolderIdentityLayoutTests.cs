@@ -52,6 +52,12 @@ public sealed class FolderIdentityLayoutTests
         Assert.Equal("22800000", layout.FolderPartHex);
         Assert.Equal(FolderEntryIdLayout.NidTypeNormalFolder, layout.NidType);
         Assert.Null(layout.ExchangeFolderType);
+
+        // The index spells the same node id in System.ProviderItemID: N and ten decimal digits
+        // (0x8022 = 32802), measured on every row of the indexed guest (Q115).
+        Assert.Equal(0x8022u, layout.Nid);
+        Assert.Equal("N0000032802", layout.PstProviderItemId);
+        Assert.Equal("N0002102180", FolderEntryIdLayout.ProviderItemIdOf(0x2013A4));
     }
 
     [Fact]
@@ -67,6 +73,8 @@ public sealed class FolderIdentityLayoutTests
         Assert.Equal(44, layout.FolderPartHex!.Length); // database GUID + global counter: 22 bytes
         Assert.EndsWith("2A", layout.FolderPartHex, StringComparison.Ordinal);
         Assert.Null(layout.NidType);
+        Assert.Null(layout.Nid);
+        Assert.Null(layout.PstProviderItemId);
     }
 
     [Fact]
