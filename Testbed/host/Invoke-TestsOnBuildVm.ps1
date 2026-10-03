@@ -117,7 +117,10 @@
 
 .PARAMETER SelfTestInclude
     Run only the self-tests of scripts matching these wildcards on repository-relative paths, for
-    example 'Testbed/host/Restart-Guest.ps1' or 'Testbed/guest/*'.
+    example 'Testbed/host/Restart-Guest.ps1' or 'Testbed/guest/*'. Several, comma-separated in one
+    string: `pwsh -File` hands 'a','b' over as the single string "a,b" (measured 2026-10-03 - the
+    run matched nothing and, rightly, failed as "nothing was tested"), so every value is split on
+    commas here.
 
 .PARAMETER ResultsRoot
     Where run directories go. Default <RepoPath>\.work\build-vm-runs, gitignored.
@@ -417,6 +420,13 @@ function Get-HostVerdict {
     return [pscustomobject]@{ Verdict = 'PASS'; Why = '' }
 }
 
+# -SelfTestInclude's patterns, one each: every value split on commas, trimmed, empties dropped.
+# `pwsh -File` hands a list written 'a','b' over as the one string "a,b" (the parameter's help).
+function Split-IncludeList {
+    param([string[]] $Values)
+    return @($Values | ForEach-Object { ([string]$_) -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
 function Format-Seconds {
     param([double] $Seconds)
     if ($Seconds -lt 60) { return ('{0:N0} s' -f $Seconds) }
@@ -518,6 +528,9 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
     Check 'a guest refusal is REFUSED' 'REFUSED' (Get-HostVerdict -GuestVerdict 'REFUSED' -InfraError '' -Trx $null -SuiteRequested $true -SelfTestsRun 0 -SelfTestsFailed 0).Verdict
     Check 'PASS alone exits 0' 'PASS' (@($ExitCodes.Keys | Where-Object { $ExitCodes[$_] -eq 0 }) -join ',')
     Check 'durations read as minutes and seconds' '4 m 05 s' (Format-Seconds 245)
+    Check 'an include list arriving as one comma-joined string is split' 'Testbed/host/a.ps1 | Testbed/guest/*' (Split-IncludeList @('Testbed/host/a.ps1,Testbed/guest/*'))
+    Check 'a real list is kept, spaces and empties dropped' 'x | y | z' (Split-IncludeList @('x', ' y ,', 'z'))
+    Check 'no list stays no list' 0 @(Split-IncludeList @()).Count
 
     Write-Host ''
     Write-Host '== the guest log is read with sharing, and a locked one is Busy, never an error =='
@@ -814,6 +827,7 @@ $requestFilter = $Filter.Trim()
 $filterShown = 'Category!=Live'
 if ($requestFilter) { $filterShown = "Category!=Live&($requestFilter)" }
 if ($SkipSuite) { Say '  suite     skipped (-SkipSuite)' } else { Say "  suite     dotnet test --filter $filterShown" }
+$SelfTestInclude = @(Split-IncludeList $SelfTestInclude)
 if ($SkipSelfTests) { Say '  selftests skipped (-SkipSelfTests)' }
 elseif (@($SelfTestInclude).Count -gt 0) { Say "  selftests only $(@($SelfTestInclude) -join ', ')" }
 else { Say '  selftests every script under Testbed\ and Tools\ that has -SelfTest' }
