@@ -2606,7 +2606,32 @@ Six guards arm themselves; none needs remembering.
   anything is queued, and on a guest nothing but a test ever queues mail, so a count above zero
   there is residue that guard 4 above exists to refuse: find out what was not delivered before
   re-running. On a working profile it may be the user's own unsent mail. An unreadable count
-  fails the same way.
+  fails the same way. **Since 2026-10-03 (Q101) the Outbox and Inspector counts are taken before
+  the test looks at windows at all**, so a run that starts with no Outlook window open is covered
+  too - it used to make Outlook exit with neither count taken.
+* **Since 2026-10-03 (Q101) the `PROVED NOTHING:` handful also includes** `T3/OutlookAvailabilityLiveTests`
+  - its retry-guidance check whenever Outlook is healthy, and its freshness contract when this
+  machine's Windows Search index cannot be reached at all - `T3/ComHostSupervisionLiveTests.NoComHostSurvivesTheServer`
+  when no COM host was started (Outlook not running), `LiveUiSearchBackendTests` when a policy-hive
+  `DisableServerAssistedSearch` overrides the value it flips, and `LiveHeadlessGuaranteeTests`' read
+  and thread window checks when no hub hit opens or the one that did carries no conversation. Each
+  used to pass green, most without a line. On a `Production` profile each now FAILS instead - and
+  **read the first one before trusting a Production run**: the retry-guidance check can only run
+  while Outlook is starting, hung or unavailable, so on a machine whose Outlook is healthy that test
+  now fails by design. Its search test also FAILS on any `search` error other than an unreachable
+  index (outlook_health reporting `index.provider` as `unavailable: ...`); it used to pass on every
+  error, the one thing "search must degrade, never fail" is there to catch.
+* `SKIP (user protection):` - `LiveDisconnectRecoveryTests` standing aside for a person: recent
+  keyboard or mouse input with Outlook windows open, an open Inspector, a window appearing while
+  Outlook restarts headless, a second window beside the one the test opened, or the installer mutex
+  already held (that one skips step 3b only). **Only on a `Production` profile** (Q101, 2026-10-03),
+  where a real user may be at the keyboard. On a `Portable` profile - and on any profile value not
+  yet classified - each of those FAILS, naming what it saw: nobody uses a test guest during a run, so
+  the same state there is residue or interference, never a person.
+* `COM leaf matches after N walk(s) over T s` - `LiveStaleIndexRowTests` re-walks the delegate folder
+  tree every 15 s for up to five minutes before it refuses (Q101, 2026-10-03), because Exchange syncs
+  that hierarchy lazily. A run that needed most of the five minutes is the evidence for moving the
+  bound.
 
 **And check that a verification happened at all.** A run that prints a `baseline` line and no
 `post-run census` line did not compare anything.
@@ -2879,15 +2904,21 @@ unrecorded or unverified.
     one-page hub compared two sets that agree by construction - and the delegate-tree return of
     `LiveStaleIndexRowTests`, pinned by `T1/LiveEarlyReturnGuardTests`; the same decision made
     `LiveDisconnectRecoveryTests`' non-empty Outbox a FAILURE on every profile rather than an
-    announcement (section 6 says why). **Early returns that still end green on a `SKIP:` line,
-    or on none, are known and are the maintainer's to decide**: the rest of
-    `LiveDisconnectRecoveryTests`' guards (a user active in the last three minutes, an open
-    Inspector, a window appearing mid-scenario), `LiveUiSearchBackendTests`' policy-hive skip,
-    `T3/OutlookAvailabilityLiveTests` (both tests) and `T3/ComHostSupervisionLiveTests`' no-host
-    branch - plus `LiveHeadlessGuaranteeTests`' read/thread checks, which skip without returning.
-    `LiveAttachmentKindRecallTests`' two `SKIP (the parent-open assertion ONLY ...)` returns were
-    kept on purpose on 2026-09-15: that line is accurate, and the test has asserted recall above
-    them.
+    announcement (section 6 says why). **The maintainer decided the rest on 2026-10-03 (Q101)**,
+    case by case. `T3/OutlookAvailabilityLiveTests` (both tests), `T3/ComHostSupervisionLiveTests`'
+    no-host branch, `LiveUiSearchBackendTests`' policy-hive skip and `LiveHeadlessGuaranteeTests`'
+    read/thread checks went through `T2/LivePopulationCoverage` the same way - and the search test
+    now FAILS on every error but an unreachable index, which it used to pass on whatever went wrong.
+    `LiveDisconnectRecoveryTests`' user-protection stops (a user active in the last three minutes, an
+    open Inspector, a window appearing mid-scenario, a second window beside its own, the installer
+    mutex) took the INVERSE: a `SKIP (user protection):` line on `Production`, where a person may be
+    at the keyboard, and a failure on `Portable`, where nobody is
+    (`LivePopulationCoverage.StandAsideForAUser`). The same decision moved that test's Inspector and
+    Outbox counts ahead of its window check, and gave `LiveStaleIndexRowTests` a bounded wait for the
+    delegate tree. All pinned by `T1/LiveEarlyReturnGuardTests`. What still passes on a skip:
+    `LiveAttachmentKindRecallTests`' two `SKIP (the parent-open assertion ONLY ...)` returns, kept on
+    purpose on 2026-09-15 - that line is accurate, and the test has asserted recall above them - and
+    `T3/OutlookHealthLiveToolShapeTests`' advice assertion, skipped where the index is unreachable.
 20. **CLOSED 2026-08-24 - and worth reading how, because the obvious fix was the wrong one.** The
     grant was NOT narrowed: two live tests legitimately need draft-create in a non-hub store.
     Instead a store is now **declared** a bystander in `bystanderStoreDisplayNames`, the write

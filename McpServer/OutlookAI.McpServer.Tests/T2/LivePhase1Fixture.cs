@@ -429,6 +429,44 @@ public sealed class LiveTestSettings
             + "what it does not have.");
     }
 
+    /// <summary>
+    /// True where a PERSON may be using this machine while the live tier runs - the one profile
+    /// question a user-protection stop asks (Q101, 2026-10-03), answered here beside
+    /// <see cref="RequireProductionPopulation"/> so that what each profile means lives in one place.
+    /// <para>
+    /// Only a declared <see cref="LiveMachineProfile.Production"/> profile says yes: the
+    /// maintainer's own workstation, where a real user may be at the keyboard. A
+    /// <see cref="LiveMachineProfile.Portable"/> one is a test guest nobody uses during a run, and an
+    /// unclassified value says no as well - the answer decides whether a stop FAILS or merely
+    /// skips, and a machine nobody has classified gets the louder of the two, the rule
+    /// <c>TripwireRetryPolicy.For</c> keeps for the same reason.
+    /// </para>
+    /// </summary>
+    [JsonIgnore]
+    public bool AUserMayBeAtTheKeyboard => MachineProfile == LiveMachineProfile.Production;
+
+    /// <summary>
+    /// The inverse of <see cref="RequireProductionPopulation"/>, for a test that has stopped to
+    /// protect a person (Q101): returns where <see cref="AUserMayBeAtTheKeyboard"/>, so the caller
+    /// can stand aside and say so, and throws everywhere else. Nobody is at a test guest's keyboard
+    /// during a run, so whatever made the test stop there is something else holding Outlook - and a
+    /// green result would hide it.
+    /// </summary>
+    /// <param name="what">What the test saw that made it stop, and what that means on such a machine.</param>
+    public void RequireAUserMayBePresent(string what)
+    {
+        if (AUserMayBeAtTheKeyboard)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "This machine declares machineProfile '" + MachineProfile + "', where nobody uses the machine while the "
+            + "live tier runs - yet " + what + " A test stands aside for a person only on a 'Production' profile; "
+            + "on this one the same state means something other than a person is holding Outlook, so the test "
+            + "FAILS instead of skipping (Q101).");
+    }
+
     /// <summary>One line naming what this machine claims to be, printed at the start of a live run.</summary>
     public string Describe()
     {

@@ -28,10 +28,15 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// Safety: pre-existing windows (normally the show-me tests' parked hub Explorer -
 /// this collection runs last) are closed gracefully ONLY under the S7 quit-when-safe
 /// counts (user idle >= 3 min, zero open Inspectors, every Outbox empty) - otherwise
-/// the test stops without closing anything; never kill. A recently active user or an open
-/// Inspector still ends it with a SKIP line; an Outbox that is not provably empty FAILS it,
-/// on every machine profile (Q76 - <see cref="OutboxRefusal"/> says why that one is not a
-/// skip). Side benefit: a full-suite run now ENDS with Outlook
+/// the test stops without closing anything; never kill. The Inspector and Outbox counts are
+/// taken FIRST, whether or not any window is open (Q101 3(a), 2026-10-03), because the scenario
+/// makes Outlook exit on both paths. An Outbox that is not provably empty FAILS the test on every
+/// machine profile (Q76 - <see cref="OutboxRefusal"/> says why that one is not a skip). Every
+/// other stop - a recently active user, an open Inspector, a window appearing mid-scenario, the
+/// installer mutex already held - is a user-protection stop (Q101): a <c>SKIP (user
+/// protection):</c> line on a Production profile, where a person may be at the keyboard, and a
+/// FAILURE on any other, where nobody should be (<see cref="LivePopulationCoverage.StandAsideForAUser"/>).
+/// Side benefit: a full-suite run now ENDS with Outlook
 /// headless (D33) instead of leaving the show-me Explorer open.
 ///
 /// EVERY WAIT IN HERE IS BOUNDED, and that is a safety property rather than a tidiness
@@ -50,6 +55,36 @@ namespace OutlookAI.McpServer.Tests.T2;
 [Trait("Category", "Live")]
 public sealed class LiveDisconnectRecoveryTests
 {
+    /// <summary>What a user-protection stop before the scenario leaves unexercised.</summary>
+    internal const string Scenario = "the disconnect-recovery scenario";
+
+    /// <summary>What a stop for recent input means on a machine nobody uses during a run.</summary>
+    internal const string RecentInputOnAnUnattendedMachine =
+        "Nothing in the suite synthesizes input, so on a test guest recent keyboard or mouse input means a person, or "
+        + "a console session left connected, was using the guest during the run - which the live tier assumes never "
+        + "happens. Disconnect from the guest's console and re-run.";
+
+    /// <summary>What a stop for an open Inspector means on a machine nobody uses during a run.</summary>
+    internal const string OpenInspectorOnAnUnattendedMachine =
+        "Nobody composes mail on a test guest, so an open Inspector is one an earlier test or step left open - and "
+        + "making Outlook exit would throw away whatever it holds. Find what opened it before re-running.";
+
+    /// <summary>What a stop for a window appearing during the re-autostart means on such a machine.</summary>
+    internal const string WindowDuringRestartOnAnUnattendedMachine =
+        "On a test guest nothing but this test starts Outlook at this point, and it starts it headless, so a window "
+        + "appearing then was opened by something else - a guest script, or a test that broke D33's rule that no "
+        + "tool outside the show-me set may open one.";
+
+    /// <summary>What a stop for a second window beside ours means on such a machine.</summary>
+    internal const string ExtraWindowOnAnUnattendedMachine =
+        "On a test guest the only Outlook window at this point should be the one this test opened, so the others were "
+        + "left open or opened mid-scenario by something else; find what, before re-running.";
+
+    /// <summary>What a stop for the installer mutex means on such a machine.</summary>
+    internal const string InstallerMutexOnAnUnattendedMachine =
+        "No installer runs on a test guest during a live run, so a held OutlookAISetup mutex is an add-in install or "
+        + "update started mid-run, or one that never released it. Let it finish, or restart the guest, and re-run.";
+
     private readonly LiveLifecycleFixture _fixture;
     private readonly ITestOutputHelper _output;
 
@@ -92,39 +127,57 @@ public sealed class LiveDisconnectRecoveryTests
         Assert.True(before.Outlook.Running);
         Assert.True(before.Outlook.ComConnected, "probed comConnected must be true with a live session");
 
-        // Guard chain (S7 v2 graceful protocol + user protection): pre-existing visible
-        // windows are usually the show-me tests' parked hub-store Explorer (Phase-3
-        // fact 3 - every full-suite run leaves one; this collection runs last). Those
-        // may be closed gracefully ONLY when the user is not recently active, no
-        // Inspector (potential compose) window is open, and every Outbox is empty.
+        // Guard chain (S7 v2 graceful protocol + user protection).
+        //
+        // The two S7 safety counts come FIRST, whatever windows exist (Q101 3(a), 2026-10-03).
+        // Every path below ends with Outlook EXITING - by closing the parked windows here, or by
+        // closing the one window this test promotes and releasing the pin - so they guard both.
+        // They used to be taken only on the path with windows, and a start with none drove Outlook
+        // to exit with neither an Inspector count nor an Outbox count.
+        IReadOnlyList<ComInspectorInfo> inspectors = clock.Step(
+            "count open Inspector windows (S7 safety count)",
+            () => independentGateway.Run(s => ((OutlookComSession)s).GetOpenInspectors()));
+        if (inspectors.Count > 0)
+        {
+            LivePopulationCoverage.StandAsideForAUser(
+                _fixture.Settings,
+                $"{inspectors.Count} Inspector window(s) are open (possibly an unsent compose)",
+                Scenario,
+                OpenInspectorOnAnUnattendedMachine,
+                _output.WriteLine);
+            return;
+        }
+
+        int outboxItems = clock.Step(
+            "count Outbox items (S7 safety count)",
+            () => independentGateway.Run(s => ((OutlookComSession)s).CountOutboxItems()));
+        string? outboxRefusal = OutboxRefusal(outboxItems);
+        if (outboxRefusal != null)
+        {
+            // Not a skip, and not a Portable announcement either (Q76) - see OutboxRefusal.
+            _output.WriteLine(outboxRefusal);
+            Assert.Fail(outboxRefusal);
+        }
+
         IReadOnlyList<IntPtr> baselineWindows = WindowProbe.VisibleOutlookWindows();
+
+        // Pre-existing visible windows are usually the show-me tests' parked hub-store Explorer
+        // (Phase-3 fact 3 - every full-suite run leaves one; this collection runs last). Those may
+        // be closed gracefully ONLY when, on top of the two counts above, the user is not recently
+        // active. Every stop from here on is a user-protection stop (Q101): a SKIP line where a person
+        // may be at the keyboard, a failure where nobody should be - LivePopulationCoverage.StandAsideForAUser.
         if (baselineWindows.Count > 0)
         {
             double idleSeconds = WindowProbe.UserIdleSeconds();
             if (idleSeconds < 180)
             {
-                _output.WriteLine($"SKIP: Outlook windows exist and the user was active {idleSeconds:F0} s ago - not closing anything.");
+                LivePopulationCoverage.StandAsideForAUser(
+                    _fixture.Settings,
+                    $"Outlook windows are open and the user was active {idleSeconds:F0} s ago",
+                    Scenario,
+                    RecentInputOnAnUnattendedMachine,
+                    _output.WriteLine);
                 return;
-            }
-
-            IReadOnlyList<ComInspectorInfo> inspectors = clock.Step(
-                "count open Inspector windows (S7 safety count)",
-                () => independentGateway.Run(s => ((OutlookComSession)s).GetOpenInspectors()));
-            if (inspectors.Count > 0)
-            {
-                _output.WriteLine($"SKIP: {inspectors.Count} open Inspector window(s) (possible unsent compose) - not closing anything.");
-                return;
-            }
-
-            int outboxItems = clock.Step(
-                "count Outbox items (S7 safety count)",
-                () => independentGateway.Run(s => ((OutlookComSession)s).CountOutboxItems()));
-            string? outboxRefusal = OutboxRefusal(outboxItems);
-            if (outboxRefusal != null)
-            {
-                // Not a skip, and not a Portable announcement either (Q76) - see OutboxRefusal.
-                _output.WriteLine(outboxRefusal);
-                Assert.Fail(outboxRefusal);
             }
 
             _output.WriteLine($"closing {baselineWindows.Count} parked Explorer window(s) gracefully (idle {idleSeconds:F0} s, no inspectors, outbox empty)");
@@ -159,7 +212,12 @@ public sealed class LiveDisconnectRecoveryTests
             baselineWindows = WindowProbe.VisibleOutlookWindows();
             if (baselineWindows.Count != 0)
             {
-                _output.WriteLine("SKIP: a window appeared during re-autostart (user activity?) - stopping here.");
+                LivePopulationCoverage.StandAsideForAUser(
+                    _fixture.Settings,
+                    $"{baselineWindows.Count} Outlook window(s) appeared while Outlook re-autostarted headless",
+                    Scenario,
+                    WindowDuringRestartOnAnUnattendedMachine,
+                    _output.WriteLine);
                 return;
             }
         }
@@ -189,8 +247,14 @@ public sealed class LiveDisconnectRecoveryTests
         IReadOnlyList<IntPtr> beforeClose = WindowProbe.VisibleOutlookWindows();
         if (beforeClose.Count != 1)
         {
-            _output.WriteLine($"SKIP: expected exactly our window before close, saw {beforeClose.Count} (user activity?) - closing ours and stopping.");
+            // Ours is closed either way: this test opened it, and a stop must not leave it behind.
             WindowProbe.PostClose(ourWindow);
+            LivePopulationCoverage.StandAsideForAUser(
+                _fixture.Settings,
+                $"{beforeClose.Count} Outlook windows were visible where only the one this test opened should be (ours has been closed)",
+                Scenario,
+                ExtraWindowOnAnUnattendedMachine,
+                _output.WriteLine);
             return;
         }
 
@@ -259,7 +323,13 @@ public sealed class LiveDisconnectRecoveryTests
             {
                 if (!createdNew)
                 {
-                    _output.WriteLine("SKIP(3b): a real OutlookAISetup mutex already exists (installer running?) - not simulating.");
+                    // Step (3b) only - the scenario carries on to (4) on a machine where it stands aside.
+                    LivePopulationCoverage.StandAsideForAUser(
+                        _fixture.Settings,
+                        "a real OutlookAISetup mutex is already held (an add-in install or update is running)",
+                        "the degraded-search check (3b), which has to hold that mutex itself",
+                        InstallerMutexOnAnUnattendedMachine,
+                        _output.WriteLine);
                 }
                 else
                 {

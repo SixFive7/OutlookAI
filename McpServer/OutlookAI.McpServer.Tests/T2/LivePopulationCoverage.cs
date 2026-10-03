@@ -36,6 +36,13 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// lives here where every branch of it is reachable from a runner with no Outlook, and the live
 /// side is one call.
 /// </para>
+/// <para>
+/// <b>And the inverse, <see cref="StandAsideForAUser"/> (Q101, 2026-10-03)</b>, for a test that
+/// stops to protect a person rather than for want of a population: it skips with a line where a
+/// person may be at the keyboard and fails where nobody should be. Both decisions read the
+/// profile only through <see cref="LiveTestSettings"/>, so what Production and Portable MEAN is
+/// decided there and nowhere else.
+/// </para>
 /// </summary>
 public static class LivePopulationCoverage
 {
@@ -104,6 +111,60 @@ public static class LivePopulationCoverage
         settings.RequireProductionPopulation(populationName);
         report(coverage.ProvedNothing());
         return found;
+    }
+
+    /// <summary>
+    /// A USER-PROTECTION stop, decided in one place - the inverse of <see cref="Require{T}"/>
+    /// (Q101, 2026-10-03).
+    /// <para>
+    /// Some live tests stop on purpose when continuing could disturb a person: a user active a
+    /// moment ago, an open compose window, a window appearing mid-scenario, an installer running.
+    /// Where a person may be at the keyboard - <see cref="LiveTestSettings.AUserMayBeAtTheKeyboard"/>,
+    /// the maintainer's workstation - standing aside is right, and the run gets one
+    /// <c>SKIP (user protection):</c> line saying what was seen and what did not run. Everywhere else
+    /// it FAILS: nobody is at a test guest's keyboard during a run, so the same observation there is
+    /// residue or interference - a window or compose an earlier step left open, an install started
+    /// mid-run, a console someone was using - and a green result would hide it for good.
+    /// </para>
+    /// <para>
+    /// The refusal comes BEFORE any line, the order <see cref="Require{T}"/> keeps: nothing on a
+    /// machine nobody uses may read as an acceptable skip. On return the caller stops what it
+    /// skipped - a <c>return</c>, or carrying on past the one step it could not take.
+    /// </para>
+    /// </summary>
+    /// <param name="settings">The machine's live-test settings; only its profile is read.</param>
+    /// <param name="observed">What made the test stop, as a clause: "the user was active 12 s ago".</param>
+    /// <param name="whatDidNotRun">What the stop leaves unexercised.</param>
+    /// <param name="onAnUnattendedMachine">
+    /// What the same observation means on a machine nobody uses, and what to do about it - the text
+    /// of the failure there. Required for the reason a remedy is required in <see cref="Assess"/>.
+    /// </param>
+    /// <param name="report">Where the line goes - normally <c>ITestOutputHelper.WriteLine</c>.</param>
+    public static void StandAsideForAUser(
+        LiveTestSettings settings,
+        string observed,
+        string whatDidNotRun,
+        string onAnUnattendedMachine,
+        Action<string> report)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(report);
+        RequireSpelledOut(observed, nameof(observed));
+        RequireSpelledOut(whatDidNotRun, nameof(whatDidNotRun));
+        RequireSpelledOut(onAnUnattendedMachine, nameof(onAnUnattendedMachine));
+
+        settings.RequireAUserMayBePresent(observed + ", so " + whatDidNotRun + " did not run. " + onAnUnattendedMachine);
+        report("SKIP (user protection): " + observed + ", so " + whatDidNotRun + " did not run. A person may be using "
+            + "this machine (machineProfile=" + settings.MachineProfile + "), so the test stands aside rather than "
+            + "fail; on a machine nobody uses during a run the same state fails it.");
+    }
+
+    private static void RequireSpelledOut(string value, string name)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException("a user-protection stop needs " + name + " spelled out.", name);
+        }
     }
 }
 

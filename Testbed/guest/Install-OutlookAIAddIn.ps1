@@ -699,7 +699,7 @@ function Get-ContractChecks {
         @{ File = 'McpServer\OutlookAI.McpServer.Tests\T2\LiveHealthTests.cs'; Needle = 'Assert.True(report.Tuning.Managed);'; Why = 'what LiveHealthTests asserts' }
         @{ File = 'McpServer\OutlookAI.McpServer.Tests\T2\LiveHealthTests.cs'; Needle = 'Assert.True(report.Tuning.Enabled);'; Why = 'what LiveHealthTests asserts' }
         @{ File = 'McpServer\OutlookAI.McpServer.Tests\T2\LiveHealthTests.cs'; Needle = 'Assert.NotNull(report.Tuning.LastReconcileUtc);'; Why = 'what LiveHealthTests asserts' }
-        @{ File = 'McpServer\OutlookAI.McpServer.Tests\T2\LiveUiSearchBackendTests.cs'; Needle = 'SKIP: policy-hive DisableServerAssistedSearch='; Why = 'a POLICY value makes that test return green having proved nothing' }
+        @{ File = 'McpServer\OutlookAI.McpServer.Tests\T2\LiveUiSearchBackendTests.cs'; Needle = 'policyValue.HasValue ? Array.Empty<string>() : new[] { HealthReporting.OutlookSearchUserKeyPath },'; Why = 'a POLICY value leaves that test nothing to flip: PROVED NOTHING on this guest, a failure on a Production profile' }
     )
 }
 
@@ -1257,10 +1257,10 @@ function Get-AddInFacts {
     Say "  registration question status: $mcpStatus"
     $facts.McpProblem = Get-McpStatusProblem $mcpStatus
 
-    # The Search POLICY value that turns LiveUiSearchBackendTests into a green that proves nothing.
+    # The Search POLICY value that leaves LiveUiSearchBackendTests nothing to flip.
     $sp = Get-HkcuValues "Software\Policies\Microsoft\Office\$office\Outlook\Search"
     if ($sp -and $sp['DisableServerAssistedSearch']) {
-        $facts.Notes += "a POLICY DisableServerAssistedSearch exists: T2 LiveUiSearchBackendTests will print SKIP and pass having proved nothing. Nothing in the add-in writes it; find what did."
+        $facts.Notes += "a POLICY DisableServerAssistedSearch exists: T2 LiveUiSearchBackendTests cannot flip both states and will print PROVED NOTHING on this guest (it fails on a Production profile). Nothing in the add-in writes it; find what did."
     }
 
     # The state the tests read.

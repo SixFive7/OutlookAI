@@ -2471,6 +2471,15 @@
         `OutlookHealthLiveToolShapeTests.OutlookHealth_CarriesTheFreshnessBlock_WithOrWithoutAnIndex`
         (skips the advice assertion when the index provider is unavailable). All four are now
         `Category=Live`, so the question is what the VM run should assert INSTEAD of returning.
+        **The first three were decided and converted on 2026-10-03 (Q101)**: each return goes
+        through `T2/LivePopulationCoverage` - a refusal on `Production`, a `PROVED NOTHING:` line on
+        `Portable` - and the search test now fails on any error but an unreachable index, which it
+        recognises by `outlook_health`'s own `index.provider` verdict. **The fourth is still as
+        described**, and is the one left in this entry. Worth knowing before the next Production run:
+        the transient-state test can only exercise its check while Outlook is starting, hung or
+        unavailable, so on a workstation with a healthy Outlook it now FAILS by design; the server's
+        `OUTLOOKAI_COMHOST_LIVENESS` override could make it force such a state instead, if that is
+        ever preferred to the Q57 answer.
   - [ ] **The pin reads tool NAMES, not arguments.** `search`, `read`, `thread`, the draft
         tools, `move_mail` and the show-me tools all have a refusal that fires before any COM
         work, which is what the protocol-only half of T3 is built on - so they cannot be
