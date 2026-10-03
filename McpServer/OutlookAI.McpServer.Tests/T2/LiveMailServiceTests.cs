@@ -35,6 +35,52 @@ public sealed class LiveMailServiceTests
     /// </summary>
     private List<string> Indexed => _fixture.Settings.RequireIndexedStores().ToList();
 
+    /// <summary>
+    /// Q113 (a) on a real index: every indexed store of this profile - all of them data files on a
+    /// test guest, none Exchange - is tied to its index store by its OWN name AND its hash, and a
+    /// search scoped to it reaches that index store and comes back with its mail under its own
+    /// name. Read-only: health and index-only searches. A store the rule could not tie would read
+    /// <c>none</c> here and <c>storeNotIndexed</c> in its search - which is what a root-folder name
+    /// that differs from the index's spelling would do, the one input this rule adds that no
+    /// earlier guest run read.
+    /// </summary>
+    [Fact]
+    [Trait("Requires", "SearchIndex")]
+    [Trait("Writes", "Nothing")]
+    public void StoreMap_EveryIndexedStore_IsMatchedByItsOwnNameAndHash_InHealthAndInAScopedSearch()
+    {
+        _ = Service.ListAccounts(); // Outlook up, as the health test makes sure of
+        HealthOutcome report = Service.Health();
+        IReadOnlyList<StoreStaleness> rows = report.Index.PerStore ?? Array.Empty<StoreStaleness>();
+        Assert.True(rows.Count > 0, "outlook_health returned no per-store rows (no store map was built)");
+        Assert.DoesNotContain(rows, r => r.MatchedBy == "ambiguous");
+
+        for (int i = 0; i < Indexed.Count; i++)
+        {
+            string store = Indexed[i];
+            StoreStaleness row = Assert.Single(rows, r => string.Equals(r.Store, store, StringComparison.OrdinalIgnoreCase));
+            _output.WriteLine("indexed store #" + i + ": matchedBy=" + row.MatchedBy + " matchedInput=" + row.MatchedInput
+                + " inLocalIndex=" + row.InLocalIndex + " note=" + (row.MatchNote == null ? "none" : "present"));
+            Assert.Equal("nameAndHash", row.MatchedBy);
+            Assert.Equal("entryId", row.MatchedInput);
+            Assert.False(string.IsNullOrEmpty(row.IndexStore));
+            Assert.True(row.InLocalIndex);
+
+            SearchOutcome outcome = Service.Search(new SearchRequest
+            {
+                IndexOnly = true,
+                Store = store,
+                IncludeAttachmentHits = false,
+                Top = 3,
+            });
+            _output.WriteLine("indexed store #" + i + ": scoped search hits=" + outcome.Hits.Count
+                + " storeNotIndexed=" + outcome.Index?.StoreNotIndexed);
+            Assert.NotEqual(true, outcome.Index?.StoreNotIndexed);
+            Assert.NotEmpty(outcome.Hits);
+            Assert.All(outcome.Hits, h => Assert.Equal(store, h.Store, ignoreCase: true));
+        }
+    }
+
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "MultipleStores")]

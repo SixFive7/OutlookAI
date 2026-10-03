@@ -1305,8 +1305,18 @@ namespace OutlookAI.Core.Com
                             {
                             }
 
+                            // The store's OWN name - its root folder's, the name the index files it
+                            // under (Q92/Q99) - which the name-and-hash rule matches on (Q113 (a)).
+                            // Only for a store Outlook reports as not Exchange: the rule applies to
+                            // those alone (an Exchange store keeps its pre-Q113 match until Q113 (b)
+                            // is measured), and an Exchange store's root folder can cost a round trip
+                            // to the server. Optional like the rest: a store whose root folder will
+                            // not answer is still listed, and is then tied to no index store.
+                            string? ownName = exchangeType == OlNotExchange ? TryGetRootFolderName((object)store) : null;
+
                             result.Add(new ComStoreDetail(
-                                displayName, storeId, exchangeType, cached, nameUnreadable, filePath, mappingSignature, profileSection));
+                                displayName, storeId, exchangeType, cached, nameUnreadable, filePath, mappingSignature, profileSection,
+                                ownName));
                         }
                         catch (Exception ex) when (IsComCallFailure(ex))
                         {
@@ -1325,6 +1335,29 @@ namespace OutlookAI.Core.Com
 
                 return (IReadOnlyList<ComStoreDetail>)result;
             });
+        }
+
+        /// <summary>
+        /// <c>Store.GetRootFolder().Name</c> - the store's own name, which the search index files it
+        /// under - or null when the root folder or its name would not read. Read-only.
+        /// </summary>
+        private static string? TryGetRootFolderName(object store)
+        {
+            object? root = null;
+            try
+            {
+                root = ((dynamic)store).GetRootFolder();
+                string? name = root == null ? null : TryGetString(() => (string?)((dynamic)root).Name);
+                return string.IsNullOrEmpty(name) ? null : name;
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return null;
+            }
+            finally
+            {
+                Release(root);
+            }
         }
 
         /// <summary>
@@ -4970,7 +5003,8 @@ namespace OutlookAI.Core.Com
         /// <summary>
         /// The <c>SentOnBehalfOfName</c> a confirmed send writes onto the draft - null to write
         /// none - and, because it is the same decision, the on-behalf value the send result
-        /// reports. Pure and public so T1 pins it (Q74 D1): send-on-behalf needs an Exchange
+        /// reports. Pure, and internal - T1 reaches it through Core's InternalsVisibleTo (V5) - so T1
+        /// pins it (Q74 D1): send-on-behalf needs an Exchange
         /// mailbox and a delegate permission on it, so no live tier ever reaches this line - the
         /// test VMs have no Exchange, and the live tests that may run on the maintainer's
         /// workstation are read-only.
@@ -4981,7 +5015,7 @@ namespace OutlookAI.Core.Com
         /// spelling is the caller's and is not this layer's to change.
         /// </para>
         /// </summary>
-        public static string? OnBehalfOfToApply(string? requested)
+        internal static string? OnBehalfOfToApply(string? requested)
         {
             return string.IsNullOrWhiteSpace(requested) ? null : requested;
         }
@@ -7825,7 +7859,8 @@ namespace OutlookAI.Core.Com
         /// forward is pinned to. It is also why a draft in a delegate or shared mailbox that is
         /// not itself an account of the profile cannot be sent (send refuses it as
         /// <c>no_sending_account</c>) and why a reply to mail there reports
-        /// <c>accountResolved: false</c>. Pure and public so T1 pins it (Q74 D1): delegate
+        /// <c>accountResolved: false</c>. Pure, and internal - T1 reaches it through Core's
+        /// InternalsVisibleTo (V5) - so T1 pins it (Q74 D1): delegate
         /// mailboxes exist only on Exchange, so no live tier can write into one.
         /// <para>
         /// StoreID first, display name as the fallback, because store EntryID wrappings can
@@ -7835,7 +7870,7 @@ namespace OutlookAI.Core.Com
         /// from whichever such account the profile happens to list first.
         /// </para>
         /// </summary>
-        public static bool IsDeliveryStoreFor(
+        internal static bool IsDeliveryStoreFor(
             string? storeId,
             string? storeDisplayName,
             string? deliveryStoreId,

@@ -204,6 +204,16 @@ namespace OutlookAI.Core.IndexSearch
         /// </summary>
         public IReadOnlyList<string>? FolderPathsAnyOf { get; set; }
 
+        /// <summary>
+        /// Whole-store prefixes (<c>mapi16://{SID}/name($hash)</c>) whose rows are NOT admitted:
+        /// index stores two Outlook stores share by name and hash, whose mail the index cannot
+        /// attribute to either (Q113 (a)). Applied in code over the over-fetched candidates, like the
+        /// kind filter - counted in <see cref="IndexSearchResult.RowsDropped"/>, and a candidate list
+        /// it runs dry is <see cref="IndexSearchResult.CandidatesExhausted"/> - so <see cref="Top"/>
+        /// still means admitted rows. Null or empty excludes nothing.
+        /// </summary>
+        public IReadOnlyList<string>? ExcludedStorePrefixes { get; set; }
+
         /// <summary>Free-text terms, ANDed. Each may end in '*' for prefix matching.</summary>
         public IReadOnlyList<string>? Terms { get; set; }
 

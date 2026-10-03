@@ -1080,6 +1080,19 @@ namespace OutlookAI.Core.Services
         /// </summary>
         public bool? FolderNotIndexed { get; set; }
 
+        /// <summary>
+        /// Stores of this profile whose indexed mail an UNSCOPED search left out, because the index
+        /// cannot tell them apart from another store: they share both the name and the hash of one
+        /// index store (Q113 (a): matched by name and hash, never by a guess). Only the freshness
+        /// sweep's window covers them in this answer, which is therefore <c>degraded</c>; a search
+        /// scoped to one of them is refused instead, and outlook_health shows them as
+        /// <c>matchedBy: "ambiguous"</c>. Null when there are none - on every scoped search and on
+        /// every profile whose stores the index tells apart. Capped like
+        /// <see cref="SweepInfo.StoresWithoutIndex"/> (<see cref="MailService.UnindexedStoreListCap"/>);
+        /// the advice sentence carries the whole count.
+        /// </summary>
+        public IReadOnlyList<string>? StoresUnmatched { get; set; }
+
         /// <summary>Rows the SQL statement returned, before admission (the denominator of <see cref="RowsDropped"/>).</summary>
         public int RowsScanned { get; set; }
 
@@ -1090,9 +1103,10 @@ namespace OutlookAI.Core.Services
         /// <para>
         /// A DIAGNOSTIC, not a coverage hole: it raises nothing and never degrades a search.
         /// What lands here is rows outside the mapi namespace (only reachable when the
-        /// statement has no SCOPE) and rows of the wrong shape for what was asked - an
+        /// statement has no SCOPE), rows of the wrong shape for what was asked - an
         /// attachment row under <c>include_attachment_hits: false</c>, a message row under
-        /// <c>attachment_hits_only</c>. Since gap B3 no message row is dropped for its item
+        /// <c>attachment_hits_only</c> - and the rows of the stores in
+        /// <see cref="StoresUnmatched"/>. Since gap B3 no message row is dropped for its item
         /// class, in this tier or any other.
         /// </para>
         /// </summary>
@@ -1704,42 +1718,54 @@ namespace OutlookAI.Core.Services
         /// it are served by the freshness sweep alone, over a fixed fallback window: mail
         /// older than that is not findable through this server at all until the store is
         /// indexed (or an <c>exhaustive:true</c> search names it). Null when the store was
-        /// not probed - never guessed.
+        /// not probed - never guessed - and for an <c>ambiguous</c> store, whose mail the index
+        /// may hold under an index store it shares with another.
         /// </summary>
         public bool? InLocalIndex { get; set; }
 
         /// <summary>
-        /// How the store was tied to its slice of the index (Q92/Q99): <c>storeHash</c> - the
-        /// index store's <c>($hash)</c> is the one Microsoft's algorithm gives this store, so no
-        /// name was involved; <c>displayName</c> - the hash did not decide (an Exchange, IMAP or
-        /// other store whose hash input is unmeasured, or a hash claimed twice - see
-        /// <see cref="MatchNote"/>) and the name rule used before found an index store of this
-        /// name; <c>delegateFolder</c> - a delegate store, looked for under its owner's
-        /// <c>/1/</c> subtree; <c>none</c> - nothing in the index is this store's (for a PST
-        /// that is final: no index store carries its hash). Null when the store list came from
-        /// the index alone (Outlook not running), as before this existed.
+        /// How the store was tied to its slice of the index (Q92/Q99, Q113). THE RULE, for every
+        /// store Outlook reports as not Exchange (a PST, an IMAP or Outlook.com <c>.ost</c>):
+        /// <c>nameAndHash</c> - the index store's name is this store's own name and its
+        /// <c>($hash)</c> is this store's, so the match is certain; <c>none</c> - no index store
+        /// carries both, so nothing in the index is this store's (for a PST that is final; never
+        /// widened to a store of the same name); <c>ambiguous</c> - another store of this profile
+        /// shares both the name and the hash of its index store, so the index cannot tell their mail
+        /// apart: searches scoped to it are refused and unscoped searches leave that index store
+        /// out (<see cref="MatchNote"/> names the other store). THE ONE OPEN EXCEPTION, for an
+        /// Exchange store until Q113 (b) is measured: <c>storeHash</c> - tied by its hash alone
+        /// (<see cref="MatchedInput"/> names the input); <c>displayName</c> - the hash did not
+        /// decide (no documented input matched, or a hash claimed twice - see <see cref="MatchNote"/>)
+        /// and the name rule found an index store of this name; <c>none</c> - nor did the name
+        /// rule. <c>delegateFolder</c> - a delegate store, looked for under its owner's <c>/1/</c>
+        /// subtree. Null when the store list came from the index alone (Outlook not running), as
+        /// before this existed.
         /// </summary>
         public string? MatchedBy { get; set; }
 
         /// <summary>
-        /// For <c>storeHash</c>: which documented input's hash the index carries - <c>entryId</c>
-        /// (every non-Exchange store), <c>profileMappingSignature</c>, <c>mappingSignature</c> or
-        /// <c>entryIdAndPath</c> (the cached-Exchange inputs). On an Exchange profile this is
-        /// the first measurement of which input Outlook used.
+        /// For <c>nameAndHash</c> and <c>storeHash</c>: which documented input's hash the index
+        /// carries - <c>entryId</c> (every non-Exchange store), <c>profileMappingSignature</c>,
+        /// <c>mappingSignature</c> or <c>entryIdAndPath</c> (the cached-Exchange inputs). On an
+        /// Exchange profile this is the first measurement of which input Outlook used.
         /// </summary>
         public string? MatchedInput { get; set; }
 
         /// <summary>
         /// The store's segment in the index - its own name and hash, <c>name($hash)</c> - when it
-        /// was tied to one. The name is the store's OWN (its root folder's), which can differ from
-        /// <see cref="Store"/>, the name its profile gives it.
+        /// was tied to one, and for <c>ambiguous</c> the index store it shares. The name is the
+        /// store's OWN (its root folder's), which can differ from <see cref="Store"/>, the name its
+        /// profile gives it.
         /// </summary>
         public string? IndexStore { get; set; }
 
         /// <summary>
-        /// Why a hash that was present could not be used - two stores claiming one index store,
-        /// or one store's hash on two index stores - when that happened; the store then took the
-        /// name rule.
+        /// Why the store was not tied, when there is something to say: for <c>ambiguous</c>, the
+        /// other store it cannot be told apart from; for <c>none</c>, the near misses - its hash on
+        /// an index store of another name (a rename the index has not caught up with), an index
+        /// store of its name with another hash (another store's) - and, for a store that is not a
+        /// <c>.pst</c> file, that its hash input is documented but not measured; for the Exchange
+        /// exception, a hash claimed twice, after which the store took the name rule.
         /// </summary>
         public string? MatchNote { get; set; }
     }
