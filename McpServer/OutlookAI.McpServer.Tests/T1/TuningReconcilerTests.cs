@@ -249,6 +249,7 @@ public sealed class TuningReconcilerTests
         // What OutlookAI.PolicyWriter.exe does, elevated, from outside this token's reach.
         foreach (string name in CachedModePolicy.ValueNames)
             store.Set(PolicyKey, name, CachedModePolicy.ShippedDefault(name));
+        store.WriteAttempts.Clear();
 
         TuningReconcileResult second = TuningReconciler.Reconcile(store, Catalog(), isStartup: true, Now.AddMinutes(5));
 
