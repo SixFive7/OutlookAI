@@ -46,6 +46,21 @@
   Exchange tests stay disabled on the Exchange test VM. Once it does: enable them there, and move
   test writes from telefonie into the shared mailbox wherever a test allows it (Q110).
 
+- [ ] **Find what crashes OUTLOOK.EXE in the compose tests on master - twice on 2026-10-03.** The
+  first live run from guest two's frozen checkpoint (`Docs/live-tier-on-the-vm.md` section 4.5, run 1:
+  `OLMAPI32.DLL`, `0xc0000005`, 3.5 minutes in, then 25 compose tests failing on `RPC server is
+  unavailable`) and the runner's run of the same hour on guest one on the real clock
+  (`20261003-202603-indexed-dc1b5c5d51cd`, section 4.2f: three `LiveDraftOptionsTests` failing the same
+  way). The next run from the same frozen checkpoint was green, 79 of 79, so it is intermittent, and it
+  is not the clock: later the same evening `af3ba68` failed the same way through the runner from the
+  frozen checkpoint, then passed 81 of 81 from it and 81 of 81 on the real clock from the same disk state,
+  and guest one failed once frozen and then passed 127 of 127 (section 4.5 has the runs). Section 4.1e's
+  crashes were heap damage from COM children left unreleased (`9664aa0`).
+  Directions: (1) count it - the frozen checkpoints make every run start identical, so N runs of the
+  compose collection alone give a rate; (2) bisect `fd2c58b` (80 of 80 three times) to `af1fd3f` with
+  that rate; (3) a crash dump - excluded: no debugger on the guests (Dependencies). Recommended: (1),
+  then (2) if the rate is high enough to bisect on.
+
 - [ ] **Approve, amend or refuse the Exchange VM's Phase 2 write-safety design** (proposed
   2026-10-03, `Docs/live-tier-on-the-vm.md` section 4.4). Until then `OutlookAI-Exchange` is
   read-only - profile `ExchangeGuest` - and runs only `Writes=Nothing` tests (`Testbed/README.md`
@@ -753,18 +768,6 @@
     the cap is reported as INCONCLUSIVE rather than as "not there", with a refusal that blames
     the measurement instead of the store. The date probe's exclusion half had the same defect
     and is fixed the same way.
-
-  - **A corpus expires silently, and now it does not (2026-08-24).** Anchored on a fixed instant,
-    it stops filling the narrow measurement windows within weeks, and every test asking about
-    them keeps PASSING because selecting nothing is a valid answer about an empty window.
-    `corpus-verify` is pure - no Outlook, no store - derives the shift already applied from the
-    manifest and refuses when any window under test has emptied; the live tier runs it
-    fail-closed at fixture time from a new `corpus` settings block. `corpus-reanchor --to now`
-    was the repair: an ABSOLUTE target, so it is idempotent and resumable, never creating, moving
-    or removing an item, guarded by EntryID allowlist AND subject tags AND the expected ordinal.
-    The manifest header's anchor is deliberately not rewritten - it is half the corpus's
-    identity - so the shift is derived from the item lines and the re-anchor appends a
-    replacement line per item. **Superseded 2026-08-25: the repair is a REBUILD - see below.**
 
   - [ ] **Move `T2/CorpusFreshnessTests.cs` to T1.** It is pure - no Outlook, no COM, no settings
     file, no `Category=Live` - and belongs beside `CorpusGeneratorTests`. It sits in T2 only

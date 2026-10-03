@@ -82,11 +82,33 @@
          last one is what everything in session 1 depends on - Register-InteractiveTask.ps1 has
          nowhere to land until it is true.
 
+    A FROZEN GUEST IS NOT RESTARTED - decided by the maintainer 2026-10-03 (Q130 (a)). The two
+    Outlook guests run with Hyper-V time synchronisation OFF, from a checkpoint whose clock stands just
+    after their test data's anchor (Testbed/host/Set-GuestClockFrozen.ps1, Testbed/testbed.json
+    frozenClocks). A restart brings such a guest back at the host's time plus the offset it last wrote
+    to its clock - measured, Docs/live-tier-on-the-vm.md section 4.1f - not where its clock stood, and
+    the data is then as stale as the real date makes it. So when the VM's time synchronisation is off
+    this script REFUSES in its preflight, exit 2, before anything changes - and inside a live run that
+    is the only answer: a run never restarts a frozen guest. Outside a run - work on a frozen guest
+    that needs a restart before a new frozen checkpoint is taken - -Refreeze restarts it and carries the
+    guest's OWN time across: it reads the guest's clock and the host's right before the restart, and
+    once the guest is usable it sets the clock to where the guest's time would have run to had it not
+    restarted - the time before the restart plus the host's elapsed time - and checks it to 5 s. The
+    boot itself cannot be made to come back there: measured 2026-10-03 on OutlookAI-Unindexed restored
+    to CP-08-MAIL-SINK (runbook section 4.5), the guest came back 610,668 s (7.07 days) ahead of its
+    own time even with its present written to its clock (Set-Date) just before the restart, so that
+    write was taken out again; the correction after the boot left it 0.2 s off. In the 20-odd seconds
+    between the boot and the correction the guest runs on that other clock - harmless outside a run,
+    with Outlook not started. -Refreeze on a guest whose time sync is on is refused: there is no frozen
+    time to carry.
+
     EXIT CODES. 0 restarted and usable. 2 refused before anything changed (Outlook state - an
     Inspector, a dialog, an Outbox item, the installer mutex - a COM client attached, the VM not
-    ready). 3 Outlook was asked to quit and did not exit - the guest was NOT restarted. 4 the
-    restart was requested and did not happen. 5 the guest restarted but did not come back to a
-    usable state within the deadline. 1 anything unexpected.
+    ready, a frozen guest without -Refreeze, -Refreeze on a guest that is not frozen). 3 Outlook was
+    asked to quit and did not exit - the guest was NOT restarted. 4 the restart was requested and did
+    not happen. 5 the guest restarted but did not come back to a usable state within the deadline.
+    6 -Refreeze: the guest restarted and is usable, but its clock could not be put back where its
+    own time had run to - do not take a frozen checkpoint of it. 1 anything unexpected.
 
     WHAT IT NEVER DOES. It never kills a process, never passes /f, never uses Stop-VM,
     Restart-VM or a Hyper-V reset (each is a power operation, not a graceful OS restart), never
@@ -126,6 +148,11 @@
     after it: a round that finds no prompt ends the cancelling. Cancelling sends nothing and stores
     nothing. Nothing else is ever clicked: a security prompt is a refusal whatever this says.
 
+.PARAMETER Refreeze
+    Restart a FROZEN guest - one whose Hyper-V time synchronisation is off - and carry its own time
+    across the restart (A FROZEN GUEST, above). Never inside a live run. Refused on a guest whose time
+    sync is on.
+
 .PARAMETER RestartTimeoutMinutes
     How long each wait in phase 4 may take.
 
@@ -157,6 +184,7 @@ param(
     [string] $RepoRoot,
     [string] $LogPath,
     [switch] $CancelLogonPrompt,
+    [switch] $Refreeze,
     [switch] $SelfTest
 )
 
@@ -223,6 +251,26 @@ function Get-QuitMeaning {
     param([int] $Code)
     if ($script:QuitCodes.ContainsKey($Code)) { return $script:QuitCodes[$Code] }
     return "UNEXPECTED($Code)"
+}
+
+# Hyper-V's Time Synchronization integration service, by its component id - the display name is
+# localised, the id is not (Testbed/host/Set-GuestClockFrozen.ps1 reads it the same way).
+$script:TimeSyncComponentId = '2497F4DE-E9FA-4204-80E4-4B75C46419C0'
+
+# Whether a restart may go ahead on a guest whose time sync is on or off, with or without -Refreeze.
+# Pure, so -SelfTest pins the table: a frozen guest is restarted only when told to carry its time.
+function Get-FrozenRestartDecision {
+    param([bool] $TimeSyncEnabled, [bool] $Refreeze)
+    if ($TimeSyncEnabled -and $Refreeze) { return 'REFUSE-NOT-FROZEN' }
+    if ($TimeSyncEnabled) { return 'RESTART' }
+    if ($Refreeze) { return 'RESTART-REFREEZE' }
+    return 'REFUSE-FROZEN'
+}
+
+# Where a re-frozen guest's clock must stand: its time before the restart plus the host's time since.
+function Get-RefreezeTarget {
+    param([DateTime] $GuestBeforeUtc, [DateTime] $HostBeforeUtc, [DateTime] $HostNowUtc)
+    return $GuestBeforeUtc + ($HostNowUtc - $HostBeforeUtc)
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -484,6 +532,14 @@ function Invoke-SelfTest {
     Check 'query session: the caller''s own console row (leading >) is read' $mine.Usable $true
     Check 'query session: no console row at all -> null' ($null -eq (Get-ConsoleSessionState -QueryText ">services  0  Disc" -ExpectedUser 'vmadmin')) $true
 
+    Check 'frozen: time sync on, no -Refreeze -> an ordinary restart' (Get-FrozenRestartDecision -TimeSyncEnabled $true -Refreeze $false) 'RESTART'
+    Check 'frozen: time sync off, no -Refreeze -> refused before anything changes' (Get-FrozenRestartDecision -TimeSyncEnabled $false -Refreeze $false) 'REFUSE-FROZEN'
+    Check 'frozen: time sync off, -Refreeze -> restarted with its own time carried across' (Get-FrozenRestartDecision -TimeSyncEnabled $false -Refreeze $true) 'RESTART-REFREEZE'
+    Check 'frozen: -Refreeze on a guest whose time sync is on -> refused' (Get-FrozenRestartDecision -TimeSyncEnabled $true -Refreeze $true) 'REFUSE-NOT-FROZEN'
+    $gb = [DateTime]::SpecifyKind([DateTime]::new(2026, 10, 3, 17, 42, 0), [DateTimeKind]::Utc)
+    $hb0 = [DateTime]::SpecifyKind([DateTime]::new(2026, 11, 20, 9, 0, 0), [DateTimeKind]::Utc)
+    Check 'refreeze: the guest''s time runs on by the host''s elapsed time, never jumps to the host''s' ((Get-RefreezeTarget -GuestBeforeUtc $gb -HostBeforeUtc $hb0 -HostNowUtc $hb0.AddSeconds(95)).ToString('o')) ($gb.AddSeconds(95).ToString('o'))
+
     Check 'run level: elevated Outlook -> Highest only' ((Get-QuitRunLevels -Elevation 1) -join ',') 'Highest'
     Check 'run level: non-elevated Outlook -> Limited only' ((Get-QuitRunLevels -Elevation 0) -join ',') 'Limited'
     Check 'run level: unknown elevation -> Highest then Limited' ((Get-QuitRunLevels -Elevation -1) -join ',') 'Highest,Limited'
@@ -681,6 +737,22 @@ if ($vm.State -ne 'Running') { Say "REFUSING: '$VMName' is $($vm.State), not Run
 $hb = Get-Heartbeat
 if ($hb -ne 'OK') { Say "REFUSING: the heartbeat reads '$hb', not OK - the guest is not in a state to be restarted cleanly."; exit 2 }
 
+# A frozen guest (time sync off, Q130 (a)) is not restarted unless told to carry its time across.
+$timeSyncService = @(Get-VMIntegrationService -VMName $VMName -ErrorAction Stop | Where-Object { ([string]$_.Id).ToUpperInvariant().EndsWith($script:TimeSyncComponentId) -or $_.Name -eq 'Time Synchronization' })
+if ($timeSyncService.Count -lt 1) { Say "REFUSING: '$VMName' has no Time Synchronization integration service this script can find, so it cannot tell whether its clock is frozen."; exit 2 }
+$timeSyncOn = [bool]$timeSyncService[0].Enabled
+$frozenDecision = Get-FrozenRestartDecision -TimeSyncEnabled $timeSyncOn -Refreeze ([bool]$Refreeze)
+if ($frozenDecision -eq 'REFUSE-FROZEN') {
+    Say "REFUSING: $VMName's clock is FROZEN - its Hyper-V time synchronisation is off (Q130 (a); Testbed/testbed.json frozenClocks)."
+    Say '  A restart brings it back at the host''s time plus the offset it last wrote, not where its clock stood, and its'
+    Say '  test data is then as old as the real date makes it (Docs/live-tier-on-the-vm.md section 4.1f). A live run never'
+    Say '  restarts a frozen guest: restore its frozen checkpoint instead. Work outside a run that needs a restart before'
+    Say '  a new frozen checkpoint: -Refreeze, which carries the guest''s own time across. Nothing was changed.'
+    exit 2
+}
+if ($frozenDecision -eq 'REFUSE-NOT-FROZEN') { Say "REFUSING: -Refreeze, and $VMName's time synchronisation is ON - there is no frozen time to carry across. Nothing was changed."; exit 2 }
+if ($frozenDecision -eq 'RESTART-REFREEZE') { Say "  time sync: OFF - a frozen guest; -Refreeze carries its own time across the restart" }
+
 try {
     . (Join-Path $PSScriptRoot 'TestbedLeasePath.ps1')
     if (-not (Get-TestbedLease -VMName $VMName)) { Say "WARNING: no live lease on $VMName. The idle-saver may save it mid-restart (Testbed/README.md section 5b)." }
@@ -715,8 +787,10 @@ if (-not $Execute) {
         Say "     wait up to $OutlookExitTimeoutSeconds s for OUTLOOK.EXE to exit, and never kill it"
     }
     else { Say '  1. skip the Outlook quit - it is not running' }
+    if ($frozenDecision -eq 'RESTART-REFREEZE') { Say '  1b. read the guest''s clock and the host''s, side by side' }
     Say '  2. shutdown.exe /r /t 0 - no /f, and a timeout of 0 is the only one that does not imply it'
     Say '  3. wait for the heartbeat to drop and return, a later boot time, and the console session Active'
+    if ($frozenDecision -eq 'RESTART-REFREEZE') { Say '  4. set the guest''s clock to its time before the restart plus the host''s elapsed time, and check it to 5 s' }
     exit 0
 }
 
@@ -764,6 +838,18 @@ if ($outlookRunning) {
 # ---------------------------------------------------------------------------------------------
 # Phase 3: restart, unforced
 # ---------------------------------------------------------------------------------------------
+$refreezeFrom = $null
+if ($frozenDecision -eq 'RESTART-REFREEZE') {
+    # The guest's own time, and the host's beside it. Not written back to the guest's clock first:
+    # that was tried, and the boot still came back days away (runbook section 4.5) - the correction
+    # after the boot is what carries the time.
+    Say '== frozen guest: reading its clock and the host''s =='
+    $h0 = [DateTime]::UtcNow
+    $g0Ticks = Invoke-InGuest -Block { [DateTime]::UtcNow.Ticks }
+    $h1 = [DateTime]::UtcNow
+    $refreezeFrom = [pscustomobject]@{ GuestUtc = [DateTime]::new([long]$g0Ticks, [DateTimeKind]::Utc); HostUtc = $h0.AddTicks([long](($h1 - $h0).Ticks / 2)) }
+    Say ("  guest {0:yyyy-MM-ddTHH:mm:ss}Z, host {1:yyyy-MM-ddTHH:mm:ss}Z" -f $refreezeFrom.GuestUtc, $refreezeFrom.HostUtc)
+}
 Say '== restarting Windows: shutdown.exe /r /t 0 (no /f) =='
 $reasonText = $Reason
 if ($reasonText.Length -gt 500) { $reasonText = $reasonText.Substring(0, 500) }
@@ -855,6 +941,27 @@ if (-not $usable) {
     Say "STOPPING: the guest did not reach a usable state within $RestartTimeoutMinutes min (restarted=$restarted)."
     if ($last) { Say "  last query session: $($last.Sessions -replace "`n", ' | ')" }
     exit 5
+}
+
+if ($refreezeFrom) {
+    # Phase 5, -Refreeze only: the clock back where the guest's own time has run to.
+    Say '== frozen guest: putting its clock where its own time has run to =='
+    $h0 = [DateTime]::UtcNow
+    $gTicks = Invoke-InGuest -Block { [DateTime]::UtcNow.Ticks }
+    $h1 = [DateTime]::UtcNow
+    $hostMid = $h0.AddTicks([long](($h1 - $h0).Ticks / 2))
+    $target = Get-RefreezeTarget -GuestBeforeUtc $refreezeFrom.GuestUtc -HostBeforeUtc $refreezeFrom.HostUtc -HostNowUtc $hostMid
+    $came = [DateTime]::new([long]$gTicks, [DateTimeKind]::Utc) - $target
+    Say ("  it came back {0:N1} s from where its own time had run to" -f $came.TotalSeconds)
+    try { Invoke-InGuest -Block { param($ticks) Set-Date -Adjust ([TimeSpan]::FromTicks([long]$ticks)) | Out-Null } -ArgumentList @(-$came.Ticks) }
+    catch { Say "STOPPING: Set-Date in the guest failed: $($_.Exception.Message)"; exit 6 }
+    $h0 = [DateTime]::UtcNow
+    $gTicks = Invoke-InGuest -Block { [DateTime]::UtcNow.Ticks }
+    $h1 = [DateTime]::UtcNow
+    $hostMid = $h0.AddTicks([long](($h1 - $h0).Ticks / 2))
+    $left = [DateTime]::new([long]$gTicks, [DateTimeKind]::Utc) - (Get-RefreezeTarget -GuestBeforeUtc $refreezeFrom.GuestUtc -HostBeforeUtc $refreezeFrom.HostUtc -HostNowUtc $hostMid)
+    if ([Math]::Abs($left.TotalSeconds) -gt 5) { Say ("STOPPING: after the correction the guest's clock is still {0:N1} s off. Do not take a frozen checkpoint of it." -f $left.TotalSeconds); exit 6 }
+    Say ("  re-frozen: the guest's clock reads {0:yyyy-MM-ddTHH:mm:ss}Z, {1:N1} s from where its own time had run to; time sync still off" -f [DateTime]::new([long]$gTicks, [DateTimeKind]::Utc), $left.TotalSeconds)
 }
 
 Say ("== DONE: $VMName restarted, boot time {0} (was {1}), console Active as '{2}', {3:N0} s in total ==" -f $last.LastBoot, $before.LastBoot, $expectedUser, ((Get-Date) - $t0).TotalSeconds)

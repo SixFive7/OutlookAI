@@ -2115,6 +2115,12 @@ carries, and the fourth is the hub's own name.
 
 ### The hub is rebuilt before every run
 
+**On a frozen guest it is not - Q130 (a), decided 2026-10-03 (section 4.5).** There the frozen
+checkpoint holds the hub as it was built and every run restores it at the same instant, so the hub's
+newest item is exactly as old on every run as on the first - minutes, well inside the frontier margin.
+The rebuild below is how a NEW frozen checkpoint's hub is made. The frontier test still reads the
+manifest and still fails on a hub older than the margin, which on a frozen guest means its clock moved.
+
 `LiveIndexSearchTests.Staleness_SelfReportsPlausibleFrontier` asserts that the index frontier is not
 in the future. On a guest whose newest item is weeks old, a product that misread local time as UTC
 would still pass it; with the newest item one minute old, the same misreading puts the frontier an
@@ -2452,6 +2458,15 @@ see section 5. It is not typed anywhere either: `McpServer/OutlookAI.McpServer.T
 derives it from the vocabulary, and `T1/LiveTierInventoryTests` fails the build if a copy of it - this
 one included - stops short of the derived string. `CachedExchange` joined `DelegateStore` on
 2026-10-03 (Q74 C1).
+
+**On a FROZEN guest the run starts with the restore of its frozen checkpoint instead - decided by the
+maintainer 2026-10-03 (Q130 (a); section 4.5).** Both Outlook guests are frozen once that work is
+merged: time synchronisation off, every run restoring the checkpoint `Testbed/testbed.json` names
+under `frozenClocks`, staging, passing `Testbed/host/Set-GuestClockFrozen.ps1 -Verify` and starting
+Outlook NOT elevated on the tier profile before the suite - with no restart and no hub rebuild after the
+restore (`Testbed/README.md` section 4c has the
+order). The hub rebuild below is then the first step of making a NEW frozen checkpoint, not of a run;
+until the merge it stays the first step of every run on the unfrozen checkpoints.
 
 **On a test guest, every run starts with the hub rebuild - a script step, decided 2026-09-24
 (question D, option (a)).** Restart the guest gracefully - Testbed/host/Restart-Guest.ps1 -VMName <guest>
@@ -3013,7 +3028,8 @@ and saving or resuming does not move it - the mechanism (a) needs is real. Two r
 must not restart or cold-boot the guest after the restore (both leave the frozen instant - the restart case
 after a restore inferred from the cold boot, not measured), and the build VM can never be frozen (its runner
 requires the host's clock within 2 s). Not measured: installing a freshly built add-in on a frozen guest,
-and MSBuild with files the host dated after the guest's clock.
+and MSBuild with files the host dated after the guest's clock. *Both measured since, and the restart after
+a restore too - section 4.5.*
 
 ### 4.2 The indexed guest's build-out - `OutlookAI-Indexed`, 2026-09-24 and 2026-09-27
 
@@ -3439,7 +3455,9 @@ now says so every run. The frontier test and the completeness oracle passed on t
 populations stay its resting state until this branch is merged. **After the merge**, restore
 `CP-18C-ALL-KINDS` instead - its hub is rebuilt by every run anyway (the rebuild keeps all three kinds from
 then on), and its bystander is the one that needs the all-kinds build. The same date applies: **before
-2026-11-01 23:59 UTC** for Corpus A's 30-day window (Q108).
+2026-11-01 23:59 UTC** for Corpus A's 30-day window (Q108). *Once Q130 (a) is merged, runs restore
+`CP-20C-FROZEN-CLOCK` instead (section 4.5): CP-18C-ALL-KINDS frozen at its own instant, whose clock never
+reaches that date.*
 
 ### 4.2f The live tier's first runs - `OutlookAI-Indexed`, 2026-10-03
 
@@ -3540,6 +3558,10 @@ artifacts 0, census 0 failures, no crash. Its checkpoint:
 every run), not on the green checkpoint: `CP-18C-ALL-KINDS` is the base every agent's phase restores
 (the coordinator moved guest one there during this work), and the green state is a run's end, with a
 hub the next run tears down and rebuilds anyway. `CP-19C-LIVE-GREEN` is the evidence, kept beside it.
+*Since Q130 (a) (section 4.5) the runner's default for guest one is `CP-20C-FROZEN-CLOCK` - a second
+child of `CP-18C-ALL-KINDS`, taken three minutes after `CP-19C-LIVE-GREEN` and holding CP-18C's own state
+frozen at its own instant; it was made as `CP-19C-FROZEN-CLOCK` and renamed the same evening so no two
+checkpoints share a number.*
 
 ### 4.3 The build VM - `OutlookAI-Build`, 2026-10-03 (Q94, Q102)
 
@@ -3604,8 +3626,6 @@ resumes it at once from the checkpoint's state (Running to Running, 9 s); so the
 run, restores the base and then saves it - restoring alone would leave it running and holding its
 RAM. A `VirtualMachine` object keeps the state it was read with and has no `Refresh()`, so every
 wait re-reads the VM by name. And a running checkpoint's memory is stored sparse: 1.6 GB for 6 GB.
-
----
 
 ### 4.4 The Exchange VM - `OutlookAI-Exchange`, 2026-10-03 (Q108 to Q111, Q113 (b), Q116 (a))
 
@@ -3724,6 +3744,166 @@ account has that store, `SendUsingAccount` is left to Outlook, and whether the d
 shared mailbox's Drafts is exactly what the first run there must read. `move_mail` and `archive_mail`
 move items wherever they are, so a population built in the shared mailbox can stay there.
 `manage_signature` writes no mailbox at all.
+
+### 4.5 The frozen guest clocks - both Outlook guests, 2026-10-03 (Q130 (a) and (b))
+
+**Why this section exists.** The maintainer's answer of 2026-10-03 to Q130
+(`Docs/overnight-review-2026-10-03.md`): (a) freeze the clocks of `OutlookAI-Indexed` and
+`OutlookAI-Unindexed` - time synchronisation off, every run from a checkpoint whose clock stands just after
+the guest's data was built, so the data never ages; (b) anchor the one corpus-dependent timing test's window
+to the data; and first, a 20-minute measurement of the one step that could stop (a): installing the add-in
+on a frozen guest. Not the build VM (its runner needs the host's clock within 2 s) and not `OutlookAI-Exchange`
+(Microsoft 365 sign-in needs real time). Raw logs: `.work\frozen-clock\` of the agent worktree `a5fd1dc3`.
+
+**1. The measurement: the two-phase add-in install on a frozen guest - it does not block (a).** On
+`OutlookAI-Unindexed`, from `CP-08-MAIL-SINK` - the checkpoint before `CP-09-ADDIN-READY`, which section 2.3's
+unfrozen run of the same day started from - with the payload built on the host from `af1fd3f` by
+`Testbed/host/Publish-AddInPayload.ps1` (guard 3 `UNCHANGED` over 305 host lines; its throwaway signing
+certificate `8C328F09...` valid from 2026-10-03T18:13:17Z). Every phase through `Register-InteractiveTask.ps1`,
+as section 2.3 runs them:
+
+| Step | What ran | Result |
+| --- | --- | --- |
+| restore | `CP-08` restored onto the saved VM, time sync turned OFF while it was saved, started | `Disable-VMIntegrationService` accepts a saved VM. The guest resumed at 2026-09-24T15:19:34.3Z - 1.8 s before `CP-08` was taken, 790,668 s (9.15 days) behind the host - and held that offset to 0.1 s over 20 s, and to the second through every step below |
+| signatures | `Get-AuthenticodeSignature` in the guest | `vstor_redist.exe` `Valid` (its signer 2023-11-16 to 2024-11-14, timestamped); the product's installer `NotSigned` - a testbed build stops at the unsigned installer by design (`Publish-AddInPayload.ps1`, THE RELEASE BUILD) |
+| Install | `-Phase Install -Execute`, default task (elevated) | **`INSTALLED-NEVER-RAN`, exit 2** - the VSTO runtime installed (`v4R` 10.0.60917), the trust entry and the install record written: as unfrozen (section 2.3 row 3) |
+| manifest | the installed `OutlookAI.vsto`'s certificate against the guest's clock | `CN=OutlookAI Testbed`, notBefore 2026-10-03T18:13:17Z - **NOT YET VALID on the guest's clock, by 9.1 days** |
+| FirstRun | `-Phase FirstRun -Execute`, `-RunLevel Limited` | **`BROKEN`, exit 1**, 250 s: COM start 3.4 s, `Connect = True`, the add-in answered `GetRestartNeeded()`, OUTLOOK.EXE NOT elevated, its registration reconcile wrote `Mcp\LastReconcileUtc` 3.6 s in, the tuning walk 4 of 13 - the product defect section 2.3 recorded that day, exactly as unfrozen (rows 6 and 8); this payload was `af1fd3f`'s, from before Q128 fixed it (section 2.3, "The defect, fixed"). No window appeared during the run (the script's own check), no VSTO or Office event in the Application log, no VSTO alert log (`VSTO_LOGALERTS` is 1) |
+| control | the five Cached Mode policy values from session 0, elevated, as row 9 there | - |
+| FirstRun | again, Limited | **`ADDIN-READY`, exit 0**, 8 s: `LastReconcileUtc` 2.2 s in (written as the frozen clock's 2026-09-24T15:26:12Z), 13 of 13, token NOT elevated: as unfrozen (row 10) |
+| `-Verify` | session 0 | `ADDIN-READY`, exit 0 - "the add-in has run since" |
+
+So the VSTO runtime trusted and loaded an add-in whose manifests are signed by a certificate that is not valid
+on the guest's clock for another nine days - the trust the installer writes is the inclusion list, keyed on the
+public key - and raised no trust prompt; both phases reached the verdicts they reach unfrozen. **The future
+risk the question named - a certificate renewed later, with a notBefore after the frozen date - is this case**:
+every testbed build signs with a throwaway certificate made at build time, so every add-in installed on a frozen
+guest from now on is "newer than its clock", and nothing in its trust path read the dates. It does not block (a).
+**Not measured:** an Authenticode-signed installer whose certificate starts after the frozen date - a release
+installer signed after a renewal of the maintainer's certificate, or a future SDK or VSTO redistributable. The
+testbed installs none of those on a frozen guest today; `vstor_redist.exe` is timestamped, and section 4.1f found
+two months of clock lag harmless to the SDK's signatures.
+
+**2. A restart of a frozen guest, measured on the same guest.** `Testbed/host/Restart-Guest.ps1` without
+`-Refreeze` refused, exit 2, dry run and `-Execute` alike, nothing changed. With `-Refreeze` it restarted the
+guest in 27 s and **the guest came back 610,668 s (7.07 days) ahead of its own time** - at the host's time less
+about 50 hours, whatever offset its clock last held - even with its present written to its clock (`Set-Date`)
+just before the restart, so that write was taken out again; the correction after the boot left it -0.2 s off.
+The shipped version, once more: the same 610,668.6 s, corrected to -0.0 s, and the guest's offset from the host
+afterwards what it had been before both restarts. So a restart after a restore does not come back to the frozen
+instant - measured now, where section 4.1f inferred it - and the only way to keep a frozen guest's time across one
+is to set it after the boot, which is what `-Refreeze` does, for work outside a run only.
+
+**3. The frozen checkpoints**, both made by `Testbed/host/Set-GuestClockFrozen.ps1 -FromCheckpoint
+<base> -NewCheckpoint <name> -Execute`: the VM saved, the base restored onto it (Saved), time sync turned off
+while saved, started - it resumes at the base's own instant - its offset from the host held to 0.1 s over 20 s,
+OUTLOOK.EXE not running, the checkpoint taken between two clock readings, a proving restore, and the VM left
+saved on it. `Testbed/testbed.json`, `frozenClocks`, records both:
+
+| Guest | Frozen checkpoint | Made from | Frozen instant | The data at that instant (read off the frozen guest) |
+| --- | --- | --- | --- | --- |
+| `OutlookAI-Unindexed` | `CP-14B-FROZEN-CLOCK` | `CP-13B-LIVE-GREEN` (14:49:51Z, after green run 18) | **2026-10-03T14:50:12Z** (1791039012); the proving restore came back 0.3 s before it | the hub at anchor 14:37:29Z (`39EAB0AC...`, 56 items) - its newest item 13.7 min old; the bystander 01:17:22Z (`C0A5B75C...`), the identity store 01:18:26Z (`A14EAE6E...`); no corpus declared |
+| `OutlookAI-Indexed` | `CP-20C-FROZEN-CLOCK` | `CP-18C-ALL-KINDS` (17:42:43Z) | **2026-10-03T17:43:06Z** (1791049386); the proving restore came back 2.2 s before it | the hub all-kinds at anchor 17:26:22Z (`D08B4C19...`) - its newest dated item 17.7 min old; the bystander all-kinds 06:38:42Z (`259A0F27...`), the identity store 06:39:44Z (`EB2F0B06...`), Corpus A `AB395B81...`, its newest item 2026-10-02T23:59:16Z |
+
+**Why these instants hold for every run.** A run's suite must start within 45 minutes of the frozen instant -
+`Set-GuestClockFrozen.ps1 -Verify` refuses later - and `T1/FrozenGuestClockTests` proves, from the records and
+with the tier's own code, that every date check holds to 90 minutes after it, which leaves the suite 45 minutes
+(guest one's full suite took 16 minutes in the runner's unfrozen run of the same hour): the guest's UTC offset is
++2 h at both ends - no run can reach 2026-10-25 - so the frontier margin is 115 minutes, and the hub's newest item
+is 107.7 (guest one) and 103.7 (guest two) minutes old at the end; Corpus A's 30- and 60-day windows are fresh at
+both ends, where a real clock would have refused the tier from 2026-11-02; and the unindexed guest's hub has the
+same items inside its seven-day reach at its anchor and at the end. **Why each base's own instant** (decided on the
+maintainer's behalf): it moves nothing the guest wrote. A clock set back nearer the hub's anchor would put the
+base's own writes - the live run's index entries, the PSTs' times, the logs - in the guest's future, which
+nothing measured; and a fresh hub rebuild before freezing would have given guest one a hub its resting checkpoint
+never had. The cost is the 14 to 18 minutes already on each hub, which the 90-minute proof includes.
+
+**4. What keeps a run on the frozen instant.**
+
+* **The order of a run** - `Testbed/README.md` section 4c: lease, restore the frozen checkpoint, stage,
+  `Testbed/host/Set-GuestClockFrozen.ps1 -VMName <guest> -Verify` (exit 0 `FROZEN` or no suite), Outlook started
+  NOT elevated on the tier profile (`Testbed/guest/Start-OutlookUnelevated.ps1`), the suite, rest. No restart and
+  no hub rebuild after the restore: the restore puts the hub back as it was built and wipes every artifact, which
+  is why the per-run rebuild (section 3b) goes. The Outlook start is the other thing step 9a used to hand the
+  suite, besides its rebuild; section 5 says why it is there.
+* **The guard**, `-Verify`, read-only: time sync off, the guest restored from the recorded checkpoint, and its
+  clock no more than 2 minutes before the frozen instant and no more than 45 minutes after it. A restart or cold
+  boot after the restore, time sync turned back on, or a hand-set clock each fail it, naming the cause.
+* **`Restart-Guest.ps1` refuses a frozen guest** (time sync off), exit 2, before anything changes; `-Refreeze` is
+  for work outside a run. It is the only script here that restarts a guest - audited: the installers pass
+  `/norestart` (the product's installer `/NORESTART`, `vstor_redist.exe` `/norestart`, the SDK's `/norestart`,
+  whose 3010 leaves the reboot to the operator), `Set-OutlookIndexingDisabled.ps1` restarts the `WSearch` service,
+  not the guest, and every guest script that needs Outlook closed or a reboot says to use `Restart-Guest.ps1`. The
+  idle-saver only saves, and a saved guest's clock stops (section 4.1f); a host restart saves every testbed VM. So
+  what is left - a cold boot by hand, or time sync re-enabled - is what the guard catches.
+* **The freshness and frontier checks stay as guards**, unchanged in what they check: on a frozen guest a hub that
+  reads stale or future, or an emptied corpus window, now means the clock moved, and their refusals say so and name
+  the restore and the guard (`T1/FrozenGuestClockTests`).
+* **Making a new frozen checkpoint** - after changing a frozen guest: restore its frozen checkpoint, do the work
+  (`Restart-Guest.ps1 -Refreeze` if it needs a restart), rebuild the hub if it should be fresh (step 9a), close
+  Outlook with a restart, take an ordinary running checkpoint, `Set-GuestClockFrozen.ps1 -FromCheckpoint` it,
+  record it in `frozenClocks` - the T1 pins then prove its instant - and make it the resting checkpoint.
+* **`Testbed/host/Invoke-LiveTierOnGuest.ps1`**, the guest runner (merged from the guest-one work at `3e0ad4f`,
+  while this was being done): its default start and resting checkpoints are now the frozen ones, and its
+  `-SelfTest` holds them to `frozenClocks`; a start checkpoint whose time sync is off - read off the checkpoint
+  itself - makes its PREPARE step the clock guard and the Outlook start alone: no `Restart-Guest.ps1`, no hub
+  rebuild, and `Set-GuestClockFrozen.ps1 -Verify` must say `FROZEN` or the run stops as not tested; it reads the
+  guest's crash events from the guest's own clock (section 5 says why); `-RestOnGreen` from a
+  frozen checkpoint is refused, because a green checkpoint stands a run later than the recorded instant; and
+  `-Checkpoint` with an unfrozen checkpoint still runs the old way, restart and step 9a included. Had it run a
+  frozen checkpoint unchanged, its PREPARE's restart would have been refused (exit 2) and the run stopped -
+  loudly, not on a moved clock.
+
+**5. The first runs from the frozen checkpoints** - this branch's suite, first (`3fb921e` on guest two, `a6e90de`
+on guest one) staged and run in README section 4c's order by a scratch driver that does what the runner's STAGE and
+RUN do, with the guard between them; then, once the runner was merged, through `Invoke-LiveTierOnGuest.ps1` with the
+section 4 changes (`1b5da1e`, `af3ba68`, `2f42c74`) - from the second on with `-RestingCheckpoint` naming the
+guest's unfrozen resting checkpoint, which stays the resting one until this work is merged;
+and X and Y, the scratch driver again, to compare the frozen and the real clock on one commit:
+
+| Guest | Run | Guard before the suite | Suite | Safety |
+| --- | --- | --- | --- | --- |
+| `OutlookAI-Unindexed` | 1 | `FROZEN`, 110 s after the instant | 79: 54 passed, 25 failed - OUTLOOK.EXE crashed 3.5 min in (`OLMAPI32.DLL`, `0xc0000005`) and every later compose test met `RPC server is unavailable` | 0 tagged artifacts (2 late sent copies purged); tripwire 0 failures, 0 notes |
+| `OutlookAI-Unindexed` | 2 | `FROZEN` | **79 of 79 passed**, no crash | 0 tagged artifacts; tripwire 0 failures, 0 notes |
+| `OutlookAI-Indexed` | 1 (`a6e90de`, before master's guest-one fixes) | `FROZEN`, 2 min after the instant | 122: 101 passed, 21 failed - 13 `Store 'Corpus A' not found among 3 discovered index scopes` (and one `store scope not discoverable`), 7 `0x80041607` (`QUERY_E_TIMEDOUT`) on folder-scoped searches and `Search_TopOne` at exactly 100: the failures section 4.2e met on the real clock and master fixed at `3e0ad4f` (section 4.2f) - none a date check, and none `RPC server is unavailable`. The frontier test passed - `Hub population fresh ... its newest item is 26 min old ... under 115 min` - the corpus gate said `Freshness: OK`, and the date-range test asked for `the 30 days before corpus 'vm-indexed''s anchor`, 10 rows in 208 ms | 0 tagged artifacts; tripwire 0 failures, 0 notes |
+| `OutlookAI-Unindexed` | runner A (`1b5da1e`, master merged; Outlook not started before the suite) | `FROZEN`, 99 s after the instant | 81: 55 passed, 26 failed - Outlook lost from `UpdateDraft_AddsAndRemovesAttachments` on, every later compose test `RPC server is unavailable`; the runner counted 0 crashes because it searched the guest's log from the HOST's clock (fixed, below) | 0 tagged artifacts; tripwire 0 failures |
+| `OutlookAI-Unindexed` | runner B (`af3ba68`, Outlook started NOT elevated before the suite) | `FROZEN` | 81: 55 passed, 26 failed - the same, from the same test | 0 tagged artifacts; tripwire 0 failures |
+| `OutlookAI-Unindexed` | X (`af3ba68`, the scratch driver, Outlook started, the guest's events read before the rest) | `FROZEN` | **81 of 81**, no crash event | 0 tagged artifacts; tripwire 0 failures |
+| `OutlookAI-Unindexed` | Y (`af3ba68`, the same state on the REAL clock: `CP-13B-LIVE-GREEN`, time sync on, no restart, no rebuild, Outlook started) | - | **81 of 81** | 0 tagged artifacts; tripwire 0 failures |
+| `OutlookAI-Indexed` | runner (`af3ba68`) | `FROZEN`, 85 s after | 127: 114 passed, 13 failed - 12 compose tests on `RPC server is unavailable`, and `LiveFolderIdentityTests.FolderId_Survives...` (a moved folder not yet found under its new parent - COM folder calls, no clock in them) | 0 tagged artifacts; tripwire 0 failures; frontier `24 min old`, corpus `OK` |
+| `OutlookAI-Indexed` | runner (`2f42c74`), alone on the host | `FROZEN`, 77 s after | **127 of 127**, 0 crashes searched from the guest's clock | 0 tagged artifacts; tripwire 0 failures, 0 notes; frontier `24 min old ... under 115 min`, corpus `Freshness: OK`, the window from the data, 10 rows in 42 ms |
+| `OutlookAI-Unindexed` | runner (`2f42c74`), alone on the host | `FROZEN`, 77 s after | **81 of 81**, 0 crashes searched from the guest's clock; the two `PROVED NOTHING` lines this guest always prints | 0 tagged artifacts; tripwire 0 failures |
+
+**The compose failures are intermittent, and nothing ties them to the clock.** The same commit failed through the
+runner from the frozen checkpoint (B) and passed 81 of 81 from it 25 minutes later (X), and 81 of 81 on the real clock
+from the same disk state (Y); on guest one one frozen run failed and the next was 127 of 127; and the runner's run of
+master on guest one on the real clock with the hub rebuilt, the same hour (`20261003-202603-indexed-dc1b5c5d51cd`,
+section 4.2f), failed the same way with an OUTLOOK.EXE crash. In every failing run Outlook went away mid-compose; in
+run 1 the guest's log recorded the crash (`OLMAPI32.DLL`, `0xc0000005`). Neither host load nor the runner separates
+the failing runs from the green ones. Its rate is not measured; `TODO.md` carries it.
+
+**Two things the first runner runs taught, both fixed here.** (1) On a frozen guest the runner's crash count was
+blind: it searched the guest's Application log from the HOST's clock, hours ahead of every event the guest wrote -
+`Get-CrashEventsSince` now reads the guest's own clock before the suite, and `-SelfTest` pins it. Any other script
+that hands a host instant to a frozen guest has the same trap; none does today. (2) A frozen start must still hand
+the suite the state step 9a used to: Outlook running NOT elevated on the tier profile, its window up - the frozen
+checkpoint holds Outlook closed so that staging can swap the commit in, and the suite then started Outlook itself, by
+COM and without a window. The runner now starts it with `Testbed/guest/Start-OutlookUnelevated.ps1` after the guard.
+(It did not stop runner B's failure; it restores the established hand-over, which every green run before Q130 had.)
+
+**MSBuild with files the host dated after the guest's clock** - the other unmeasured item of section 4.1f: every run
+above staged the commit's source with the host's file times, hours after the frozen clock, and every one built it,
+proved it `TEST-READY` and ran it. Whether `dotnet test` then rebuilds every run - its outputs can never be newer
+than those inputs - was not read off a build log, and the suite times do not say (7 min 37 s to 8 min 56 s frozen,
+7 min 55 s on the real clock).
+
+**6. Q130 (b), the window.** `LiveIndexSearchTests.ProbeParity_DateRangeQuery_HitsUnder2s` now asks for the 30
+days BEFORE the declared corpus's anchor - `[2026-09-03, 2026-10-03)` for Corpus A, which select the same 24,596
+of its items on every run - and, only where no corpus is declared, the last 30 days of the clock
+(`T2/LiveDataWindow.cs`; `T1/LiveDataWindowTests` pins both branches, the 24,596, and from the compiled IL that the
+test computes no window of its own). On a frozen guest the two coincide; on a real clock the test now keeps timing
+a date predicate over the big store after 2026-11-01.
+
 ---
 ## 5. Which tests are in which bucket, and how to find out
 

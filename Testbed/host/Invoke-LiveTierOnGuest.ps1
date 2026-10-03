@@ -22,9 +22,14 @@
       3. STAGE   - restores the start checkpoint, copies the payloads, the settings and the commit's
                    Testbed/guest scripts in, swaps the server, tools, source and feed, and proves the
                    suite TEST-READY (Install-DotnetSdk.ps1 -Execute, then -Verify).
-      4. PREPARE - Restart-Guest.ps1 -Execute (graceful, or it refuses), then Reset-HubPopulation.ps1
-                   -Execute (Testbed/README.md step 9a) at RunLevel Limited: every Outlook start NOT
-                   elevated (D77).
+      4. PREPARE - FROM A FROZEN CHECKPOINT (the default since Q130 (a)): Set-GuestClockFrozen.ps1
+                   -Verify - the run stops unless it says FROZEN - then Outlook started NOT elevated on
+                   the tier profile (Start-OutlookUnelevated.ps1), the state step 9a hands the suite
+                   over in; no restart and no hub rebuild, which would leave the frozen instant the
+                   guest's data was built for.
+                   From any other checkpoint (time sync on): Restart-Guest.ps1 -Execute (graceful, or
+                   it refuses), then Reset-HubPopulation.ps1 -Execute (Testbed/README.md step 9a) at
+                   RunLevel Limited: every Outlook start NOT elevated (D77).
       5. RUN     - the suite through Register-InteractiveTask.ps1 -RunLevel Limited, with
                    OUTLOOKAI_LIVE_OPT_IN set to the guest's computer name INSIDE the task's script,
                    for this run only, and the guest's derived filter (T2/LiveRunFilters.cs).
@@ -40,6 +45,9 @@
       * Only the two test guests. The build VM, the retired OutlookAI-TestVM and anything else are
         refused, and nothing runs on this workstation: the suite runs inside the guest.
       * The opt-in exists only inside the guest task of this run; it is never set here.
+      * A frozen guest's clock stays where its checkpoint put it (Q130 (a), AGENTS.md): a run from a
+        checkpoint whose time sync is off never restarts the guest or rebuilds its hub, the clock is
+        verified before the suite, and such a run cannot make its green checkpoint the resting one.
       * Outlook is never killed. The guest restarts only through Restart-Guest.ps1, which quits it
         gracefully or refuses; otherwise only checkpoints are restored.
       * The credential only through Get-GuestCredential.ps1, and it is never printed.
@@ -132,9 +140,16 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
 # The test guests and their layout, as constants. -SelfTest holds them to the files they copy.
 # ---------------------------------------------------------------------------------------------
 $Guests = [ordered]@{
-    'OutlookAI-Indexed'   = [ordered]@{ ComputerName = 'OAI-INDEXED'; Indexed = $true; Checkpoint = 'CP-18C-ALL-KINDS' }
-    'OutlookAI-Unindexed' = [ordered]@{ ComputerName = 'OAI-UNINDEXED'; Indexed = $false; Checkpoint = 'CP-12B-POPULATIONS-V2' }
+    # The resting checkpoints are the FROZEN ones (Q130 (a), decided 2026-10-03): testbed.json's
+    # frozenClocks records them, and -SelfTest holds these two names to that record.
+    'OutlookAI-Indexed'   = [ordered]@{ ComputerName = 'OAI-INDEXED'; Indexed = $true; Checkpoint = 'CP-20C-FROZEN-CLOCK' }
+    'OutlookAI-Unindexed' = [ordered]@{ ComputerName = 'OAI-UNINDEXED'; Indexed = $false; Checkpoint = 'CP-14B-FROZEN-CLOCK' }
 }
+# Hyper-V's Time Synchronization integration service, by component id (Set-GuestClockFrozen.ps1).
+$TimeSyncComponentId = '2497F4DE-E9FA-4204-80E4-4B75C46419C0'
+# The profile the suite runs on, which a frozen start opens NOT elevated before the suite, as step 9a
+# leaves it (Reset-HubPopulation.ps1's default; -SelfTest holds the two equal).
+$TierProfileName = 'OutlookAI-Tier'
 $GuestRoot = 'C:\OutlookAI-Q5'
 $GuestPayloadDir = 'C:\OutlookAI-Q5\g4-payload'
 $GuestRunsRoot = 'C:\OutlookAI-Q5\live-runs'
@@ -166,6 +181,28 @@ function Invoke-NativeCommand {
 # =============================================================================================
 # PURE DECISIONS. No Hyper-V, no git, no guest. -SelfTest pins them.
 # =============================================================================================
+
+# From when the guest's Application log is searched for an OUTLOOK.EXE crash: a minute before the suite
+# started BY THE GUEST'S CLOCK, which is what its events carry - the host's only when the guest's could not
+# be read. On a frozen guest the two differ by hours or days (Q130 (a)).
+function Get-CrashEventsSince {
+    param([string] $GuestRunStartUtc, [DateTime] $HostRunStartUtc)
+    $start = [DateTime]::SpecifyKind($HostRunStartUtc, [DateTimeKind]::Utc)
+    $parsed = [DateTime]::MinValue
+    if ($GuestRunStartUtc -and [DateTime]::TryParse($GuestRunStartUtc, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$parsed)) {
+        $start = [DateTime]::SpecifyKind($parsed, [DateTimeKind]::Utc)
+    }
+    return $start.AddMinutes(-1).ToString('o')
+}
+
+# What PREPARE does, by whether the start checkpoint is frozen (its time sync off, Q130 (a)). A frozen
+# start is verified, never restarted or rebuilt: either would leave the instant its data was built for.
+function Get-PrepareSteps {
+    param([bool] $StartIsFrozen, [bool] $SkipHubReset)
+    if ($StartIsFrozen) { return @('frozen-clock guard', 'Outlook NOT elevated') }
+    if ($SkipHubReset) { return @('restart') }
+    return @('restart', 'hub rebuild')
+}
 
 # The guest's facts, or $null for anything that is not one of the two test guests - compared whole
 # and ignoring case, as Hyper-V compares names.
@@ -394,9 +431,23 @@ function Invoke-SelfTest {
 
     Write-Host '== the guests =='
     $i = Get-GuestFacts 'OutlookAI-Indexed'
-    Check 'the indexed guest is a test guest, resting on CP-18C-ALL-KINDS' 'OAI-INDEXED|True|CP-18C-ALL-KINDS' @($i.ComputerName, $i.Indexed, $i.Checkpoint)
+    Check 'the indexed guest is a test guest, resting on its frozen checkpoint' 'OAI-INDEXED|True|CP-20C-FROZEN-CLOCK' @($i.ComputerName, $i.Indexed, $i.Checkpoint)
     $u = Get-GuestFacts 'outlookai-unindexed'
     Check 'the unindexed guest is one, in any case' 'OutlookAI-Unindexed|OAI-UNINDEXED|False' @($u.Name, $u.ComputerName, $u.Indexed)
+    Check 'the unindexed guest rests on its frozen checkpoint' 'CP-14B-FROZEN-CLOCK' $u.Checkpoint
+    Write-Host '== a frozen start (Q130 (a)) =='
+    Check 'a frozen start is verified and handed Outlook as 9a would, not restarted or rebuilt' 'frozen-clock guard|Outlook NOT elevated' (Get-PrepareSteps -StartIsFrozen $true -SkipHubReset $false)
+    Check 'and -SkipHubReset changes nothing there' 'frozen-clock guard|Outlook NOT elevated' (Get-PrepareSteps -StartIsFrozen $true -SkipHubReset $true)
+    $hubReset = [System.IO.File]::ReadAllText((Join-Path $repo 'Testbed\guest\Reset-HubPopulation.ps1'))
+    Check 'the profile a frozen start opens is the one step 9a opens' $true $hubReset.Contains("[string] `$TierProfileName = '$TierProfileName'")
+    Check 'an unfrozen start is restarted and its hub rebuilt' 'restart|hub rebuild' (Get-PrepareSteps -StartIsFrozen $false -SkipHubReset $false)
+    Check 'an unfrozen start with -SkipHubReset is only restarted' 'restart' (Get-PrepareSteps -StartIsFrozen $false -SkipHubReset $true)
+    $hostStart = [DateTime]::SpecifyKind([DateTime]::new(2026, 10, 3, 21, 0, 0), [DateTimeKind]::Utc)
+    Check 'crash events are searched from the GUEST''s clock - a frozen guest''s is hours behind the host''s' '2026-10-03T14:50:00.0000000Z' (Get-CrashEventsSince -GuestRunStartUtc '2026-10-03T14:51:00.0000000Z' -HostRunStartUtc $hostStart)
+    Check 'and from the host''s only when the guest''s could not be read' '2026-10-03T20:59:00.0000000Z' (Get-CrashEventsSince -GuestRunStartUtc '' -HostRunStartUtc $hostStart)
+    $own = [System.IO.File]::ReadAllText($PSCommandPath)
+    Check 'the crash search takes the guest''s clock read before the suite' $true $own.Contains("`$since = Get-CrashEventsSince -GuestRunStartUtc `$guestRunStartUtc")
+    Check 'the frozen branch calls the guard with -Verify' $true $own.Contains("'Set-GuestClockFrozen.ps1') -VMName `$facts.Name -Verify")
     Check 'the build VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Build'))
     Check 'the retired test VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-TestVM'))
     Check 'a padded name is refused' $true ($null -eq (Get-GuestFacts ' OutlookAI-Indexed'))
@@ -508,6 +559,9 @@ function Invoke-SelfTest {
     Check 'Install-DotnetSdk.ps1 builds the source this stages' $true $sdk.Contains("'$GuestRoot\src'")
     $testbed = [System.IO.File]::ReadAllText((Join-Path $repo 'Testbed\testbed.json')) | ConvertFrom-Json
     foreach ($name in $Guests.Keys) {
+        Check "$name rests on the frozen checkpoint testbed.json records" ([string]$testbed.frozenClocks.$name.checkpoint) $Guests[$name].Checkpoint
+    }
+    foreach ($name in $Guests.Keys) {
         $section = $testbed.liveTestSettings.$name
         $indexed = @(@($section.indexedStoreDisplayNames) | Where-Object { $_ }).Count -gt 0
         Check "$name is indexed exactly when testbed.json indexes its stores" $Guests[$name].Indexed $indexed
@@ -549,6 +603,10 @@ $narrowed = $filterDecision.Narrowed
 if (-not $Checkpoint) { $Checkpoint = $facts.Checkpoint }
 if (-not $RestingCheckpoint) { $RestingCheckpoint = $facts.Checkpoint }
 if ($RestOnGreen -and -not $GreenCheckpoint) { Stop-Refused '-RestOnGreen needs -GreenCheckpoint.' }
+# A checkpoint whose time sync is off is a FROZEN one (Q130 (a)): the setting travels with it.
+$startTimeSync = @(Get-VMSnapshot -VMName $facts.Name -Name $Checkpoint -ErrorAction SilentlyContinue | Get-VMIntegrationService -ErrorAction SilentlyContinue | Where-Object { ([string]$_.Id).ToUpperInvariant().EndsWith($TimeSyncComponentId) -or $_.Name -eq 'Time Synchronization' })
+$startIsFrozen = ($startTimeSync.Count -gt 0 -and -not $startTimeSync[0].Enabled)
+if ($startIsFrozen -and $RestOnGreen) { Stop-Refused "-RestOnGreen from the frozen checkpoint '$Checkpoint': a green checkpoint of this run would stand a run later than the frozen instant testbed.json records, and every later run would start there. Make a new frozen checkpoint with Set-GuestClockFrozen.ps1 and record it instead." }
 if (-not $RepoPath) { $RepoPath = Split-Path -Parent (Split-Path -Parent $PSScriptRoot) }
 $repo = [System.IO.Path]::GetFullPath($RepoPath)
 if (-not $CredentialRepoRoot) {
@@ -582,6 +640,7 @@ $kind = 'unindexed'
 if ($facts.Indexed) { $kind = 'indexed' }
 Say "== Invoke-LiveTierOnGuest: run $runId =="
 Say "  guest     $($facts.Name) ($($facts.ComputerName), $kind), from $Checkpoint, resting on $RestingCheckpoint"
+if ($startIsFrozen) { Say "  clock     FROZEN - '$Checkpoint' has time sync off: no restart and no hub rebuild; Set-GuestClockFrozen.ps1 -Verify before the suite" }
 Say "  revision  $($sha.Substring(0, 12)) - $subject"
 if ($dirtyCount -gt 0) { Say "  NOTE      $dirtyCount uncommitted change(s) in $repo are NOT in this run - it tests the commit. Commit first to test them." }
 Say "  filter    $runFilter"
@@ -723,22 +782,32 @@ Copy-Item -LiteralPath '$GuestPayloadDir\live-test-settings.json' -Destination '
     $timings['stage'] = Format-Seconds ((Get-Date) - $t0).TotalSeconds
     Say "staged: TEST-READY ($($timings['stage']))"
 
-    # ---- PREPARE: a graceful restart and the hub rebuild.
+    # ---- PREPARE: from a frozen checkpoint the clock guard only; otherwise a graceful restart and the hub rebuild.
     $t0 = Get-Date
+    $prepared = @(Get-PrepareSteps -StartIsFrozen $startIsFrozen -SkipHubReset ([bool]$SkipHubReset))
     try {
         Use-Lease 30
-        # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
-        & (Join-Path $PSScriptRoot 'Restart-Guest.ps1') -VMName $facts.Name -Execute -CancelLogonPrompt -RepoRoot $CredentialRepoRoot -LogPath (Join-Path $runDir 'restart.log') *> (Join-Path $runDir 'restart.out.log')
-        if ($LASTEXITCODE -ne 0) { throw "Restart-Guest.ps1 did not complete ($LASTEXITCODE) - restart.log" }
-        if (-not $SkipHubReset) {
-            $o = Invoke-Guest 'reset-hub' "& '$GuestRoot\Reset-HubPopulation.ps1' -Execute; exit `$LASTEXITCODE" 3600
-            if ((Get-TaskExit $o) -ne 0) { throw 'the hub rebuild did not succeed - guest\reset-hub.log' }
+        if ($startIsFrozen) {
+            # ps51-native-stderr-ok: a PowerShell script, not a program - it starts no program at all
+            & (Join-Path $PSScriptRoot 'Set-GuestClockFrozen.ps1') -VMName $facts.Name -Verify -RepoRoot $CredentialRepoRoot -LogPath (Join-Path $runDir 'frozen-clock.log') *> (Join-Path $runDir 'frozen-clock.out.log')
+            if ($LASTEXITCODE -ne 0) { throw "the frozen-clock guard did not say FROZEN (exit $LASTEXITCODE) - the guest's clock left its frozen instant, or this is not its frozen checkpoint: frozen-clock.log" }
+            # The state step 9a hands the suite over in, without its rebuild: Outlook running NOT elevated on
+            # the tier profile, its window up. The frozen checkpoint holds Outlook closed so STAGE could swap.
+            $o = Invoke-Guest 'start-outlook' "& '$GuestRoot\Start-OutlookUnelevated.ps1' -Profile '$TierProfileName'; `"START-OUTLOOK-EXIT `$LASTEXITCODE`"" 900 -Session0
+            if ($o -notmatch 'START-OUTLOOK-EXIT 0') { throw 'Start-OutlookUnelevated.ps1 did not start Outlook NOT elevated on the tier profile - guest\start-outlook.log' }
+        }
+        else {
+            # ps51-native-stderr-ok: a PowerShell script, not a program - every program it starts goes through its own Invoke-NativeCommand, under 'Continue' inside a try
+            & (Join-Path $PSScriptRoot 'Restart-Guest.ps1') -VMName $facts.Name -Execute -CancelLogonPrompt -RepoRoot $CredentialRepoRoot -LogPath (Join-Path $runDir 'restart.log') *> (Join-Path $runDir 'restart.out.log')
+            if ($LASTEXITCODE -ne 0) { throw "Restart-Guest.ps1 did not complete ($LASTEXITCODE) - restart.log" }
+            if (-not $SkipHubReset) {
+                $o = Invoke-Guest 'reset-hub' "& '$GuestRoot\Reset-HubPopulation.ps1' -Execute; exit `$LASTEXITCODE" 3600
+                if ((Get-TaskExit $o) -ne 0) { throw 'the hub rebuild did not succeed - guest\reset-hub.log' }
+            }
         }
     }
     catch { if (-not $stage) { $stage = 'INFRA'; $stageWhy = "preparing the guest failed: $($_.Exception.Message)" }; throw }
     $timings['prepare'] = Format-Seconds ((Get-Date) - $t0).TotalSeconds
-    $prepared = @('restart')
-    if (-not $SkipHubReset) { $prepared += 'hub rebuild' }
     Say "prepared: $($prepared -join ', ') ($($timings['prepare']))"
 
     # ---- RUN: the suite, NOT elevated, opted in for this run only.
@@ -752,6 +821,12 @@ Set-Location '$GuestRoot\src'
 exit `$LASTEXITCODE
 "@
     $runStartUtc = [DateTime]::UtcNow
+    # The GUEST's clock at the start, for the crash events below, which carry the guest's time: on a
+    # frozen guest (Q130 (a)) the host's clock is hours or days ahead of it, and filtering the guest's
+    # Application log from the host's time found no crash at all (measured 2026-10-03).
+    $guestRunStartUtc = ''
+    try { $guestRunStartUtc = [string](Invoke-Command -VMName $facts.Name -Credential $credential -ErrorAction Stop -ScriptBlock { [DateTime]::UtcNow.ToString('o') }) }
+    catch { Say "  (the guest's clock could not be read before the suite - the crash count falls back to the host's: $($_.Exception.Message))" }
     $o = Invoke-Guest 'live' $liveScript ($RunTimeoutMinutes * 60)
     $suiteExit = Get-TaskExit $o
     $suiteSeconds = ((Get-Date) - $t0).TotalSeconds
@@ -768,7 +843,7 @@ exit `$LASTEXITCODE
     if ($trxFile) { $trx = ConvertFrom-TrxText ([System.IO.File]::ReadAllText($trxFile.FullName)) }
     $consoleFile = Get-ChildItem -LiteralPath $resultsDir -Filter 'console.txt' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($consoleFile) { $consoleFacts = Read-ConsoleFacts ([System.IO.File]::ReadAllText($consoleFile.FullName)) }
-    $since = $runStartUtc.AddMinutes(-1).ToString('o')
+    $since = Get-CrashEventsSince -GuestRunStartUtc $guestRunStartUtc -HostRunStartUtc $runStartUtc
     $o = Invoke-Guest 'crash-events' "`$s = ([datetime]'$since').ToLocalTime(); `$e = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = `$s; Id = 1000 } -ErrorAction SilentlyContinue | Where-Object { `$_.Message -match 'OUTLOOK\.EXE' }); `"CRASHES `$(`$e.Count)`"; `$e | ForEach-Object { `$_.TimeCreated.ToString('o') + ' ' + ((`$_.Message -split [char]10 | Select-Object -First 4) -join ' | ') }" 300 -Session0
     $cm = [regex]::Match($o, 'CRASHES (\d+)')
     if ($cm.Success) { $crashes = [int]$cm.Groups[1].Value }

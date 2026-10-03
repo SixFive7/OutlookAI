@@ -104,7 +104,11 @@ public static class LiveCorpusFreshness
                 throw new InvalidOperationException(
                     "The live tier refuses to run against this corpus. " + message
                     + " Nothing was read from the mailbox to reach this conclusion - it is derived from the "
-                    + "manifest at '" + corpus.ManifestPath + "' and the plan the corpus was generated from.");
+                    + "manifest at '" + corpus.ManifestPath + "' and the plan the corpus was generated from."
+                    + " On a FROZEN Outlook guest (Testbed/testbed.json frozenClocks) its windows never empty, so this "
+                    + "means the guest's clock left its frozen instant - a restart or cold boot after the restore, or time "
+                    + "sync turned back on: restore its frozen checkpoint rather than rebuilding the corpus "
+                    + "(Testbed/host/Set-GuestClockFrozen.ps1 -Verify says how far the clock moved).");
             }
 
             _checked = true;

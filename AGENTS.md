@@ -202,6 +202,17 @@ I will forget and lose performance the coming months."*
   in the startup info, as the build-VM runner's janitor does) - never `powershell.exe
   -WindowStyle Hidden`, which hides a console window only after it has already taken focus.
 
+## The Outlook test guests' clocks are frozen (Q130)
+
+**`OutlookAI-Indexed` and `OutlookAI-Unindexed` run with Hyper-V time synchronisation OFF, and
+every live run restores the frozen checkpoint `Testbed/testbed.json` records under `frozenClocks`,
+whose clock stands just after the guest's test data was built.** Decided by the maintainer
+2026-10-03 (Q130 (a)), so the test data never ages. Never re-enable time synchronisation on either
+guest, and never restart or cold-boot one during a run - both bring its clock back at the real
+date. `Testbed/host/Restart-Guest.ps1` refuses a frozen guest; `-Refreeze` is for work outside a
+run, before a new frozen checkpoint (`Docs/live-tier-on-the-vm.md` section 4.5). The build VM and
+`OutlookAI-Exchange` are never frozen: both need real time.
+
 ## Dependencies
 
 **No external applications and no licensed components. Ever.** Decided 2026-09-15, standing.
