@@ -56,8 +56,11 @@ public sealed class MoveArchiveLiveMcpToolTests
             // pre-index arrivals, the cache TTL is absorbed by the deadline).
             string? hitId = null;
             LiveWaitBudget wait = LiveWaitBudget.OfSeconds(SeedVisibleSeconds);
+            int polls = 0;
             while (hitId == null && wait.HasTimeLeft)
             {
+                // A local sink delivers only when Outlook is asked to fetch (2026-10-03).
+                LiveInboxArrival.NudgeIfDue(polls++);
                 JsonElement search = await client.CallToolAsync("search", new
                 {
                     query = Marker,

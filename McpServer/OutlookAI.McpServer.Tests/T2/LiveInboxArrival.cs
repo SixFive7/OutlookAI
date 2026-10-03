@@ -47,7 +47,26 @@ internal static class LiveInboxArrival
     /// enough that a missed window costs seconds rather than Outlook's own thirty-minute
     /// schedule, rare enough that the wait is still mostly a read.
     /// </summary>
-    private const int NudgeEveryPolls = 5;
+    internal const int NudgeEveryPolls = 5;
+
+    /// <summary>
+    /// The delivery nudge every wait for mail to come back makes, on ONE cadence: on the first
+    /// poll and every <see cref="NudgeEveryPolls"/> after it. For the waits that cannot use
+    /// <see cref="WaitFor"/> itself - the stdio searches and the fresh-mode probe, which look for
+    /// the arrival through the product rather than through a COM sweep - so that no wait for a
+    /// round trip through a local sink depends on the one <c>SendAndReceive</c> fired at send
+    /// time winning its race (measured 2026-10-03 on the first guest live run: the POP3 fetch it
+    /// triggered closed before the submission was stored, three times). A no-op on a machine
+    /// that declares no sink.
+    /// </summary>
+    /// <param name="pollsSoFar">Polls made before this one, starting at zero.</param>
+    internal static void NudgeIfDue(int pollsSoFar)
+    {
+        if (pollsSoFar % NudgeEveryPolls == 0)
+        {
+            LiveMailSink.NudgeDelivery();
+        }
+    }
 
     /// <summary>
     /// Waits for <paramref name="subject"/> to land in <paramref name="hubStore"/>'s Inbox,
@@ -64,10 +83,7 @@ internal static class LiveInboxArrival
             // can complete its fetch before the submission reaches the sink - and then
             // nothing asks again inside this deadline. A no-op on a profile with real
             // transport, which needs no prompting.
-            if (polls % NudgeEveryPolls == 0)
-            {
-                LiveMailSink.NudgeDelivery();
-            }
+            NudgeIfDue(polls);
 
             polls++;
             ComSweepResult sweep = session.SweepFoldersNewerThan(

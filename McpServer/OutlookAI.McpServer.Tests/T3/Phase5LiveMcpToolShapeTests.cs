@@ -118,7 +118,7 @@ public sealed class Phase5LiveMcpToolShapeTests
 
             // --- ARRIVAL: Inbox side via independent COM read-back (Phase-2 fact 4:
             // never verify a send via Sent Items). From identity = hub (Phase-4 lesson).
-            ComMailBrief arrived = WaitForInboxArrival(sendSubject, sentUtc);
+            ComMailBrief arrived = LiveInboxArrival.WaitFor(_fixture.VerifySession, Hub, sendSubject, sentUtc);
             double arrivalSeconds = (DateTime.UtcNow - sentUtc).TotalSeconds;
             Assert.True(arrived.SenderAddress != null
                 && string.Equals(arrived.SenderAddress, Hub, StringComparison.OrdinalIgnoreCase),
@@ -181,28 +181,10 @@ public sealed class Phase5LiveMcpToolShapeTests
 
     // ------------------------------------------------------------------ helpers
 
-    private ComMailBrief WaitForInboxArrival(string subject, DateTime sentUtc)
-    {
-        LiveWaitBudget wait = LiveWaitBudget.OfSeconds(ArrivalSeconds);
-        while (wait.HasTimeLeft)
-        {
-            ComSweepResult sweep = _fixture.VerifySession.SweepFoldersNewerThan(
-                sentUtc.AddMinutes(-2), perFolderCap: 100, includeBodies: false, onlyStoreDisplayName: Hub);
-            ComMailBrief? hit = sweep.Items.FirstOrDefault(i =>
-                i.FolderKind == "inbox" && string.Equals(i.Subject, subject, StringComparison.Ordinal));
-            if (hit != null)
-            {
-                return hit;
-            }
-
-            Thread.Sleep(3000);
-        }
-
-        // The bound and the number in the message come from one constant: a failure that
-        // states the wrong wait is worse than one that states none.
-        throw new TimeoutException(
-            $"Sent mail did not arrive in the hub Inbox within {ArrivalSeconds} s (D20 round trip).");
-    }
+    // The Inbox-arrival wait is LiveInboxArrival.WaitFor (2026-10-03), not a private copy: this
+    // file's own loop swept the hub every three seconds and never asked Outlook to deliver, and
+    // on the first guest live run the sent mail sat in the local sink for the whole deadline -
+    // the send had triggered no fetch at all - while the shared wait would have nudged.
 
     /// <summary>
     /// Polls search(fresh) over stdio for the subject and returns the first hit that
