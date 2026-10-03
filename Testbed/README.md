@@ -1202,6 +1202,7 @@ taken its lease yet is not immediately put back to sleep.
 | `host/TestbedLeasePath.ps1` | Where leases live, and how one is read. Dot-sourced by both sides so they cannot disagree. |
 | `host/Invoke-TestbedIdleSave.ps1` | The saver. `-WhatIf` reports without changing anything. The one script here that keeps a VM-name default, because its `-VMName` is an allowlist rather than a target (§4a). |
 | `host/Register-IdleSaveTask.ps1` | Registers it as the invoking user at ordinary privilege, every 15 minutes. Needs local `Hyper-V Administrators` membership, **not** elevation - `Save-VM` does not require it, and a standing elevated task would outlive the reason it was created. |
+| `host/Invoke-TestbedIdleSave.vbs` | The task's action: `wscript.exe` starts the saver with its window hidden from creation and waits for it. The task started `powershell.exe` directly until 2026-10-03, and every run opened a console window that took the maintainer's focus for 1-2 s. |
 
 **Deliberate failure directions**, each chosen so the wrong answer is visible rather than silent:
 

@@ -178,6 +178,11 @@ I will forget and lose performance the coming months."*
   any running testbed VM that has no live lease and has been up ten minutes, every fifteen
   minutes (`Testbed/README.md` section 5b); and no test VM starts with the host
   (`AutomaticStartAction Nothing`, `AutomaticStopAction Save`).
+- **No scheduled task on this workstation may start `powershell.exe`, `pwsh.exe` or any other
+  console program directly.** Each run opens a console window - a Windows Terminal window here -
+  that takes the maintainer's keyboard focus; the idle-save task did that every 15 minutes until
+  2026-10-03. Start it through a GUI-subsystem launcher instead, as
+  `Testbed/host/Invoke-TestbedIdleSave.vbs` does (`wscript.exe`, the window hidden from creation).
 
 ## Dependencies
 

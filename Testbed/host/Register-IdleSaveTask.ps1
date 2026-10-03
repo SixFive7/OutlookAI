@@ -60,8 +60,16 @@ if (-not (Test-Path -LiteralPath $script)) {
     throw "Cannot find the saver beside this script at $script."
 }
 
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-    -Argument ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}"' -f $script)
+# NEVER powershell.exe directly. It is a console program, so every run opened a console window -
+# a Windows Terminal window on the maintainer's workstation - that took keyboard focus for 1-2 s
+# every 15 minutes (2026-10-03). wscript.exe is a GUI-subsystem host; the .vbs beside this script
+# starts PowerShell hidden from creation and waits for it, so the task's result stays the saver's.
+$launcher = Join-Path $PSScriptRoot 'Invoke-TestbedIdleSave.vbs'
+if (-not (Test-Path -LiteralPath $launcher)) {
+    throw "Cannot find the hidden launcher beside this script at $launcher."
+}
+$action = New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\wscript.exe') `
+    -Argument ('//B //NoLogo "{0}"' -f $launcher)
 
 # The invoking user, ordinary privilege. Hyper-V group membership is what makes Save-VM work;
 # no elevation is involved, and the task has no rights beyond what the account already has.
