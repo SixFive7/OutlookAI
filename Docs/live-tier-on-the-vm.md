@@ -3095,6 +3095,59 @@ unrecorded or unverified.
     own name, and a new hash because its file is a new path; the host reproduces `be889d8b` from its
     `StoreID`. `DIRECTORY` lists the three roots in 2 ms, and no two stores share a name any more.
 
+    **Extended 2026-10-03 (Q99) - every edge case a PST can take, and what the product now does
+    with it.** Same guest from `CP-15C-SIGNATURE-SUITE-STAGED` (own checkpoint `CP-15C-q99-A-base`,
+    restored to `CP-15C` afterwards), Outlook NOT elevated, stores attached only through
+    `guest/Add-OutlookPstStore.ps1` (which gained `-Format Ansi` for this), items created only by the
+    corpus tool, the index read only through `SELECT` statements. Ten stores in all, every one filed
+    under exactly `ComputeHash(Store.StoreID)`, four of them predicted on the host from the file path
+    before Outlook was asked:
+
+    - **ANSI PST** (`q99-ansi.pst`, an 84-byte 8-bit entry ID): `($54556ee0)` = the hash of its
+      `StoreID`. Its `Store.DisplayName` came back ONE CHARACTER SHORT (`q99ansi@vm.invali`) while
+      the root folder and the index say `q99ansi@vm.invalid` - a name lookup cannot find it at all.
+      `IsInstantSearchEnabled` read False for it while its items were indexed within seconds, so that
+      flag is no evidence either way.
+    - **A copy at another path is another store**: `moved\q98-scratch.pst` filed as `($befbe850)`
+      beside the original's `($65d10200)`, both under the name `q98scratch@vm.invalid` - two roots of
+      one name that only the hash tells apart. Attached to ONE profile together, Outlook re-keyed the
+      second (`PR_RECORD_KEY` `C4B808E7...` instead of the copy's `44616A9B...`); the hash, which is
+      over the path, did not move. The original's root stayed listed while the store was in no open
+      profile.
+    - **One PST in two profiles is one root** (`identity@vm.invalid($be889d8b)` from `OutlookAI-Tier`
+      and from `IdentityMint`): the hash is over the file, not the profile.
+    - **The URL spelling**: the hash is lowercase hex WITHOUT leading zeros - `($ce9d6e4)` for
+      `0x0CE9D6E4` (`q99-lz-12.pst`, whose path was searched for that property) - so it is compared as
+      a number. A store named `q99 50% off*?x` is filed `q99 50%25 off%2A%3Fx($5159380d)`: `%`, `*`
+      and `?` are percent-encoded, a space is not.
+    - **A catalog reset** (`ISearchCatalogManager::Reset`, elevated, with the tier profile open): all
+      three roots were listed again within 30 s and the open profile's folders re-pushed (464 items);
+      the corpus store, whose profile was not open, kept only its ROOT - `SCOPE` on it matched nothing,
+      because `SCOPE` matches what lies below a URL and never the URL's own row. Opening its profile
+      (non-elevated) re-pushed it under the same name and hash: 8,877 rows nine minutes later, still
+      climbing. A non-elevated reader can read the catalog's status, counters, crawl-scope rules and
+      the roots.
+
+    **What the product does with it** (`StoreIndexMatcher`, `MailService.TryGetStoreIndexMap`): it
+    lists the roots with one `DIRECTORY` statement, computes each store's candidate hashes, and ties a
+    store to the root that carries one of them and that no other store claims. A PST no root carries
+    the hash of is NOT INDEXED - never searched through a same-named root of another store or profile.
+    Every store whose hash input is not measured - cached Exchange (the documented input is the
+    profile's `PR_MAPPING_SIGNATURE`; the product reads it from the store and from the profile section
+    named by `PR_EMSMDB_SECTION_UID`, and also tries the documented entry-ID-plus-`.ost`-path variant),
+    an IMAP or Outlook.com `.ost`, a store whose id would not read - is tied by its hash when one fits,
+    and otherwise resolved by the name rule exactly as before, as are delegates (under the owner's
+    `/1/<name>`) and every store when no map can be built. `outlook_health` says which, per store.
+
+    **Q98(f), measured the same day** with the corpus tool's undated-item probe
+    (`--undated-index-wait`), in a scratch Unicode PST and in the ANSI one: an appointment, a contact
+    and a task saved into a PST were in the index within 3-6 s. The APPOINTMENT and the TASK carry
+    `System.Message.DateReceived` - their creation time - and so sort and window like mail (the
+    appointment's `System.ItemDate` is its start); the CONTACT has NO `DateReceived` (NULL), only
+    `DateCreated`/`DateModified`/`ItemDate`, all its creation time. Every column the product's
+    `ORDER BY` reads was present for all three except the contact's `DateReceived`. Kinds:
+    `calendar|communication`, `contact|communication`, `task|communication`.
+
 ---
 
 ## 9. Known limits, honestly
