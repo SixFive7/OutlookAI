@@ -456,10 +456,10 @@ them. Merged as `60fba07` (build VM: 3,568 / 0 / 0, 21 self-tests); guest one wa
 - **D104 - A folder with `/` in its name stays reachable only through its parent**, because the
   `folder` argument splits on `/`: asked for by name, the search says the path matched nothing.
   *Alternatives:* an escape inside `folder`; a segment-array argument; resolving the path against
-  the folders' real names. Being reworked overnight, with three requirements set on the
-  maintainer's behalf: a folder path the product itself prints is accepted back verbatim; every
-  input that resolves today resolves the same way; an input that could mean two folders is
-  refused, naming both.
+  the folders' real names. Reworked with three requirements set on the maintainer's behalf: a
+  folder path the product itself prints is accepted back verbatim; every input that resolves today
+  resolves the same way; an input that could mean two folders is refused, naming both. *Superseded
+  by D109* once that branch is merged.
 - **D105 - Store names are decoded too**, in hit names, name lookups and derived display paths.
   The display-path half is inferred from the folder measurement: no guest store currently has
   such a name. *Undo:* remove the decode in `MapiItemUrl.SplitStoreSegment`.
@@ -471,6 +471,38 @@ them. Merged as `60fba07` (build VM: 3,568 / 0 / 0, 21 self-tests); guest one wa
 - **D108 - A new guarded test helper, `LiveOutlookTestMailer.FileTaggedItemInNewTestFolder`**, the
   only way a test can make a folder whose name holds `/`: it creates folders only inside an
   existing test folder, requires the tag and the run marker, and its guard is pinned in T1.
+
+### D109-D114 - The rest of the name-encoding subject: `/` in folder names, attachment and store names
+Branch `q99-name-encoding-followup` (`dda955a`): build VM 3,609 / 0 / 0 and 21 self-tests; on guest
+one 5 of 5 live tests, tripwire clean, zero artifacts, guest left on `CP-17C-CORPUS-160K` plus the
+30/60 settings and saved. **Not merged yet: under an independent code review first**, because it
+changes how `move_mail` - a write - resolves its target folder. Measured on master's code first:
+three printed forms could not be passed back to `folder` even for ordinary names (`read` printed
+Outlook's `\\store\...` path; exhaustive, sweep and conversation hits printed only the folder's own
+name; `move_mail` kept Outlook's escapes, breaking its documented undo for such names).
+- **D109 - One printed form, one reader.** Every folder path is printed as names from the top of
+  the store joined by `/` (as `list_folders` already printed), and one shared resolver reads it:
+  split on `/`, and at each level every run of the remaining parts joined by `/` is tried against
+  the real child folders - one reading resolves, two or more are refused naming each, none falls
+  back to the plain split so a missing folder fails exactly as before. *Alternatives:* an escape
+  inside `folder` (changes what a literal `\` or `%2F` means); a segment-array argument (an agent
+  copies a printed string, not an array); accepting Outlook's `\\store\...` form as a second syntax;
+  retrying joins only after a failed split. *Undo:* revert the resolver calls to the plain split.
+- **D110 - Refusing ambiguity outranks "resolves as before"**: a path naming both a `/`-named folder
+  and a nested twin used to reach the twin and is now refused - the only input whose result changed.
+- **D111 - A search that cannot reach Outlook reads a multi-part path the old way**, and its advice
+  says so, rather than refusing; a single-part path costs no lookup.
+- **D112 - Left as they are:** `explorerFolderPath` keeps Outlook's spelling (it reports the window,
+  store included); delegate index hits still name their folder flat (Exchange, untestable here);
+  `read`'s last-resort locate fallback still splits on `/` (the URL route opens these items first).
+- **D113 - Attachment names are not decoded**: the index writes them as they are (measured:
+  `OutlookAI 50% off.txt`, `OutlookAI %2A look-alike.txt`), so decoding would corrupt the second.
+  `/ \ * ?` in an attachment name cannot be produced through any route Outlook leaves open; that
+  half stays open in `TODO.md`, recommended next step a raw-MIME route through a guest's mail sink.
+- **D114 - Store names in display paths, measured** through the tested route (the throwaway store
+  rendered with the name `q99 throwaway 50% off*?x`): the URL encodes, the display path does not,
+  folder searches find the item - D105 stands. Guest one's throwaway keeps its ordinary name in
+  `testbed.json`; *alternative:* give it such a name so every run re-measures D105.
 
 ## Open questions only you can answer
 
@@ -643,6 +675,14 @@ self-test on the workstation before the build-VM rule reached it.
 - A process-scoped `Set-ExecutionPolicy Bypass` was used in the guest's PowerShell Direct sessions;
   the first staging attempt had stopped on the guest's Restricted policy after its source was
   swapped, and only the SDK steps were re-run.
+
+### V15 - The name-encoding follow-up: four small departures
+- An extra guest phase was needed: Outlook refused the first attachment helper's write.
+- The new live tests ran against master's code first, on purpose, as the "before" evidence.
+- Master was merged into the branch to settle a CHANGELOG conflict; that merge also put back on its
+  own line an entry an earlier commit of the branch had run into another.
+- The now-false last sentence of the first folder-name CHANGELOG entry ("can still only be
+  searched through the folder above it") was removed.
 
 ## Notes (no decision needed)
 
