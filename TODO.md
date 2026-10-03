@@ -25,18 +25,26 @@
   values in the testbed's elevated install phase, which hides the defect the way the old elevated
   `-Execute` did. Recommended: (1), then the proof again from `CP-08`, for `ADDIN-READY` with no
   control.
-- [ ] **Recognise ANOTHER server session's lifetime pin on the show-me path's `ActiveExplorer()`
-  branch (D49, found 2026-10-03, not measured).** `EnsureVisibleExplorer` refuses to display an
-  Explorer `ActiveExplorer()` hands back only when `ComposeSurface.IsPin` knows it, and the pin
-  registry holds IUnknown pointers - which for an out-of-process server are per-apartment proxies, so
-  a pin another session made on another STA thread is very likely not recognised, whatever the
-  registry's remarks say about being process-wide. The `Explorers.Add` branch no longer depends on it
-  (the count check in `ComposeSurface.AddShowMeExplorer`, after the D49 probes of 2026-10-03), but if
-  `ActiveExplorer()` can return a hidden Explorer at all, a second session would display that pin and
-  the user's close would end Outlook again. Directions: (1) measure on a guest whether
-  `ActiveExplorer()` ever returns a non-displayed Explorer; (2) if it does, recognise a pin by its
-  window instead (`IOleWindow`, `IsWindowVisible`); (3) keep one pin per process, owned by the
-  gateway rather than by a session. Recommended: (1) first - it is one probe on a guest.
+- [ ] **Stop D49's lifetime pins being left behind - and decide whether S6 needs anything of its own
+  (Q118, measured 2026-10-03 on `OAI-UNINDEXED`; `McpServer/Docs/com-host.md`, "Pins left behind,
+  measured").** A session pins only when it finds no Explorer, so against a user's open Outlook no
+  pin is ever made (11 sessions, 0 pins). A pin is LEFT when its maker did not start Outlook - sessions
+  that connect while Outlook is starting or running window-less all pin, and none of them closes its
+  own (2 at once left 1, 3 at once left 3) - or when the maker's COM host is killed. A pin left keeps a
+  window-less OUTLOOK.EXE up: `Application.Quit()` did not end it (3 of 3), nor did the user's close of
+  the window they had opened over it (2 of 2); File > Exit did. **S6 is true in one state:** after
+  that close, `ActiveExplorer()` returns the hidden pin, the show-me path's `Activate()` makes it
+  visible, and the user's close of it ends Outlook - harmless there, because the close raised Quit
+  and dropped every attached session, so the pin had no live owner. Directions: (1) a pin lives as
+  long as the session that made it, closed on exit whether or not that session started Outlook;
+  (2) one pin per Outlook, made under a machine-wide mutex, so a cold-start race makes one;
+  (3) a per-user registry of live sessions and the pins they made, by owner PID and pin window
+  handle: the last session out closes the pins, and a session that finds a pin whose owner is dead
+  closes it - which also lets `outlook_health` name the other sessions and lets the show-me path
+  recognise a pin by its window (S6); (4) document it and leave the code. Recommended: (3) - (1)
+  alone makes a session's exit end Outlook under every other session, the cost measured for starters
+  today (the next call answers `OutlookStarting` and restarts it), and (2) alone still leaves the
+  winner's pin when the winner did not start Outlook.
 
 - [ ] **Run the PST half of Q74 C3 on the indexed guest.** `LiveDecodeVerifyTests.ShortDecodedId_OpensAsTheItemItself_OnAPstStore`
   carries `Requires=SearchIndex`, so `OutlookAI-Unindexed`'s filter never selects it and the first

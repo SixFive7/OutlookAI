@@ -314,10 +314,59 @@ from a cold boot, a client terminated with `TerminateProcess` while holding `App
 `GetDefaultFolder` at 0.37 / 0.02 / 0.05 s, and repeating it with an unclosed pin `Explorer`
 changed nothing. Windows does tear a dead client's references down. What the same run showed
 surviving is the **pin `Explorer` itself** (`explorers=1` against the live Outlook
-afterwards), whose consequence this repo has already measured: an `Explorer` left in
-Outlook's collection stops a later `Application.Quit` ending the process, and they
-accumulate. So the orderly exit buys a `Close()` on the pin and an `Unadvise` of the event
-sink — the one reference only we can retract, and the one nobody has managed to test.
+afterwards). What a pin left behind costs, and when one is left at all, was measured with the
+product on 2026-10-03 - next section. So the orderly exit buys a `Close()` on the pin (for the
+session that started Outlook) and an `Unadvise` of the event sink — the one reference only we can
+retract, and the one nobody has managed to test.
+
+### Pins left behind, measured (Q118, 2026-10-03)
+
+Measured on `OAI-UNINDEXED` (Office LTSC 2024 16.0.17932.20996; the staged server at `fd2c58b`,
+whose pin code is unchanged since) by `Testbed/guest/Measure-PinWindows.ps1`, which drives real
+server processes - each with its own COM host - over stdio with `list_folders` only, and counts
+`Application.Explorers` with each one's window (`IOleWindow`, `IsWindowVisible`) around every step.
+Raw logs: `.work\q118-pin-measure\` of the worktree that ran it.
+
+**Where a pin is made.** Only by a session that finds NO Explorer (`ComposeSurface.TryPinProcess`'s
+count guard) - not by every session, as an earlier reading of `Connect` had it:
+
+| Outlook when the sessions connected | Pins made | Pins left after every session had ended |
+| --- | --- | --- |
+| the user's visible window | 0 - 11 sessions: 4 one at a time, 3 and 2 at once, 2 whose COM host was killed | 0 |
+| not running; one session starts it | 1, the starter's | 0 - its normal exit closed it, and OUTLOOK.EXE left at once |
+| not running; a second session attached 0.5 s after the starter's first call answered `OutlookStarting` | 2 - both found no Explorer | **1** - the starter closed its own; the second had not started Outlook and kept its |
+| not running; the starter's COM host killed after it pinned | 1 | **1** |
+| headless, started by a plain COM client with no pin; three sessions at once | 3 | **3** - none of them had started Outlook |
+
+A pin that exists stops the next session from making one, so pins do not pile up over sessions one
+after another - the later sessions, one at a time and at once (five in the race row, three in the
+killed row, one in the last), added none. They multiply only in a race: sessions that connect while
+Outlook has no Explorer yet.
+
+**What a pin left behind does.** No Outlook here was killed: each one a pin kept up was ended in the
+end by closing its hidden Explorers (4 times, each within 0.3 s) or, once, by the user's close of the
+pin the show-me path had made visible (S6 below).
+
+| | No pin left (control, and after the 11 sessions) | A pin left |
+| --- | --- | --- |
+| Outlook on its own | exits the moment the starter's pin closes | **stays up**, window-less, with nothing attached |
+| `Application.Quit()`, no window open | - | **OUTLOOK.EXE still running 120 s later** (3 of 3) |
+| the user opens Outlook | a normal window | a normal window, in the same process, beside the hidden pin |
+| then File > Exit | exits in 0.3 s (2 of 2) | exits in 0.3 s (2 of 2) |
+| then `Application.Quit()` | exits in 0-0.3 s (3 of 3) | exits in 0.3 s (1 of 1) |
+| then the window's close button | exits in 0.2 s (1 of 1) | **OUTLOOK.EXE still running 120 s later**, invisible (2 of 2) |
+
+**S6, measured.** `ActiveExplorer()` returned null whenever only hidden pins were there in an Outlook
+that had never shown a window (every such reading, with 1, 2 or 3 pins), and the user's window
+whenever one was open. But once the user had opened a window over a pin left behind and closed it,
+`ActiveExplorer()` returned **the hidden pin** (2 of 2). The two calls `EnsureVisibleExplorer` makes
+on such an Explorer - un-minimise, `Activate()` - made the pin's window visible (1 of 1), and the
+user's close of it then ended OUTLOOK.EXE in 0.5 s. `ComposeSurface.IsPin` cannot stop that: its
+registry is per process, and each server is its own process.
+
+**One session ending another's Outlook.** With A the starter and B attached, A's normal exit closed
+A's pin and OUTLOOK.EXE left at once, under B; B's next call answered `OutlookStarting` in 10 ms and
+went through 3.1 s later against a new OUTLOOK.EXE that B had started and pinned.
 
 ## Error contract
 

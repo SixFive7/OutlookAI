@@ -46,6 +46,8 @@
                      normally; then, while it lingers, three at once and two one at a time; Quit.
       Sequential     no Outlook: a session starts it, waits until it is ready and ends normally;
                      a second arrives while it lingers and ends normally; a third; Quit.
+      StarterLeaves  no Outlook: A starts it, B attaches; A ends normally while B is still
+                     connected; B calls again, then ends; Quit if anything is left.
       Killed         no Outlook: a session starts it and its COM host is killed; more sessions; Quit.
       KilledVisible  as Killed, then the user opens Outlook's window; File > Exit. Then the same
                      twice more, ended by Quit and by the window's close button.
@@ -54,6 +56,8 @@
                      Activate() - and the user's close of whatever that showed. A UI change only.
       Headless       a plain COM client (this script, -Mode Hold) starts Outlook headless and holds
                      it; three sessions at once, then one; the holder lets go; Quit.
+      End            not a measurement: ends a running Outlook - Quit, then its hidden Explorers if
+                     Quit leaves them - so the next scenario can start from none.
     A scenario that leaves Outlook running tries to close the hidden Explorers last, under the same
     preconditions, and says whether that ended it.
 
@@ -92,7 +96,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Scenario', 'State', 'Quit', 'CloseHidden', 'Hold', 'ShowActive')] [string] $Mode = 'Scenario',
-    [ValidateSet('', 'Control', 'ControlClose', 'Visible', 'Started', 'Sequential', 'Killed', 'KilledVisible', 'ShowMe', 'Headless')] [string] $Scenario = '',
+    [ValidateSet('', 'Control', 'ControlClose', 'Visible', 'Started', 'Sequential', 'StarterLeaves', 'Killed', 'KilledVisible', 'ShowMe', 'Headless', 'End')] [string] $Scenario = '',
     [string]   $OutFile,
     [string]   $ReleaseFlag,
     [string]   $ServerExe = 'C:\OutlookAI-Q5\server\OutlookAI.McpServer.exe',
@@ -543,8 +547,9 @@ function Invoke-SelfTest {
     foreach ($fd in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) { $defined[$fd.Name] = $true }
     $declared = @((Get-Command -Name $PSCommandPath).Parameters['Scenario'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] } | ForEach-Object { $_.ValidValues } | Where-Object { $_ })
     $missing = @($declared | Where-Object { -not $defined.ContainsKey("Invoke-Scenario$_") })
-    Check 'every -Scenario value has its Invoke-Scenario function' ($declared.Count -eq 9 -and $missing.Count -eq 0)
-    $dispatch = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.SwitchStatementAst] -and $n.Condition.Extent.Text -eq '($Scenario)' }, $true))
+    Check 'every -Scenario value has its Invoke-Scenario function' ($declared.Count -eq 11 -and $missing.Count -eq 0)
+    # The condition's extent is the expression inside the parentheses; trimmed either way.
+    $dispatch = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.SwitchStatementAst] -and $n.Condition.Extent.Text.Trim('(', ')', ' ') -eq '$Scenario' }, $true))
     $clauses = @()
     if ($dispatch.Count -eq 1) { $clauses = @($dispatch[0].Clauses | ForEach-Object { $_.Item1.Value }) }
     Check 'the dispatcher has one clause per scenario' (($dispatch.Count -eq 1) -and (@($declared | Where-Object { $clauses -notcontains $_ }).Count -eq 0))
@@ -597,7 +602,7 @@ if ($Mode -ne 'Scenario') {
     exit 0
 }
 
-if (-not $Scenario) { throw '-Scenario is required: Control, ControlClose, Visible, Started, Sequential, Killed, KilledVisible, ShowMe or Headless.' }
+if (-not $Scenario) { throw '-Scenario is required: Control, ControlClose, Visible, Started, Sequential, StarterLeaves, Killed, KilledVisible, ShowMe, Headless or End.' }
 if (-not (Test-Path -LiteralPath $ServerExe)) { throw "The staged server is not at $ServerExe." }
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $script:Stamp = (Get-Date).ToString('yyyyMMddTHHmmss')
@@ -988,6 +993,28 @@ function Invoke-ScenarioSequential {
     if (-not (Invoke-OutlookEnd -How Quit -Label 'sequential')) { Close-Leftover 'sequential' }
 }
 
+function Invoke-ScenarioStarterLeaves {
+    # The commonest two-session shape: A starts Outlook, B attaches and is still working when A ends.
+    if (-not (Assert-NoOutlook 'starterleaves')) { return }
+    $a = Start-Session 'A'; Invoke-ListFolders @($a) -UntilReady
+    $b = Start-Session 'B'; Invoke-ListFolders @($b)
+    Measure-PinState 'starterleaves: A started Outlook, B attached (both alive)' | Out-Null
+    $pidBefore = @(Get-OutlookPids)
+    Stop-SessionNormally @($a)
+    $gone = Wait-OutlookExit 30
+    Write-Event 'end-ol' ("starterleaves: A ended normally while B was attached -> OUTLOOK.EXE {0}" -f $(if ($null -ne $gone) { "EXITED $gone s later" } else { 'still running 30 s later' })) $null
+    Measure-PinState 'starterleaves: after A ended (B alive)' | Out-Null
+    Invoke-ListFolders @($b) -UntilReady
+    $pidAfter = @(Get-OutlookPids)
+    Write-Event 'note' ("starterleaves: B's next list_folders ran against OUTLOOK.EXE pid {0} (before A ended: {1})" -f ($pidAfter -join ','), ($pidBefore -join ',')) $null
+    Measure-PinState 'starterleaves: after B called again' | Out-Null
+    Stop-SessionNormally @($b)
+    Measure-PinState 'starterleaves: B ended normally' | Out-Null
+    if ((Get-OutlookPids).Count -gt 0) {
+        if (-not (Invoke-OutlookEnd -How Quit -Label 'starterleaves')) { Close-Leftover 'starterleaves' }
+    }
+}
+
 function Invoke-KilledStart([string] $Label) {
     $a = Start-Session 'A'; Invoke-ListFolders @($a) -UntilReady
     Measure-PinState "${Label}: A started Outlook (A alive)" | Out-Null
@@ -1046,6 +1073,14 @@ function Invoke-ScenarioShowMe {
     else { Close-Leftover $label }
 }
 
+function Invoke-ScenarioEnd {
+    # Not a measurement: ends whatever Outlook is running, the graceful way and under rule 7, so the
+    # next scenario can start from none. Quit first; hidden Explorers closed only if Quit leaves them.
+    if ((Get-OutlookPids).Count -eq 0) { Write-Event 'note' 'end: no Outlook running' $null; return }
+    Measure-PinState 'end: before' | Out-Null
+    if (-not (Invoke-OutlookEnd -How Quit -Label 'end')) { Close-Leftover 'end' }
+}
+
 function Invoke-ScenarioControlClose {
     if (-not (Start-OutlookVisible)) { return }
     Measure-PinState 'controlclose: baseline, no OutlookAI session in this Outlook' | Out-Null
@@ -1087,10 +1122,12 @@ switch ($Scenario) {
     'Visible' { Invoke-ScenarioVisible }
     'Started' { Invoke-ScenarioStarted }
     'Sequential' { Invoke-ScenarioSequential }
+    'StarterLeaves' { Invoke-ScenarioStarterLeaves }
     'Killed' { Invoke-ScenarioKilled }
     'KilledVisible' { Invoke-ScenarioKilledVisible }
     'ControlClose' { Invoke-ScenarioControlClose }
     'ShowMe' { Invoke-ScenarioShowMe }
+    'End' { Invoke-ScenarioEnd }
     'Headless' { Invoke-ScenarioHeadless }
 }
 Write-Event 'done' ("scenario {0}; OUTLOOK.EXE {1}" -f $Scenario, $(if ((Get-OutlookPids).Count -gt 0) { 'running (pid ' + ((Get-OutlookPids) -join ',') + ')' } else { 'not running' })) $null
