@@ -1810,11 +1810,14 @@ Names in use: `CP-01-WIN-CLEAN`, `CP-02-INSTALLER-STAGED`, `CP-03-OUTLOOKAI-INST
 and another after the sink and dummy account exist, because those two are the steps most likely
 to need redoing.
 
-The build VM, `OutlookAI-Build`, has two (section 4.3): `CP-01-WIN-CLEAN`, and
-`CP-02-SDK-TEST-READY` - taken RUNNING, because `Testbed/host/Invoke-TestsOnBuildVm.ps1` restores
-it before and after every run and a running checkpoint resumes in seconds. Never take a checkpoint
-of that VM by hand while a run might be using it, and never delete `CP-02-SDK-TEST-READY` without
-taking its replacement in the same sitting: the runner refuses without it.
+The build VM, `OutlookAI-Build`, has three (sections 4.3 and 4.3a): `CP-01-WIN-CLEAN`,
+`CP-02-SDK-TEST-READY` - the base until Q126 (a), in W. Europe Standard Time - and its child
+`CP-03-SDK-TEST-READY-UTC`, the same machine in UTC, which `Testbed/host/Invoke-TestsOnBuildVm.ps1`
+restores before and after every run. Both bases were taken RUNNING, because a running checkpoint
+resumes in seconds. Never take a checkpoint of that VM by hand while a run might be using it - hold
+its lease, as section 4.3a did - and never delete `CP-03-SDK-TEST-READY-UTC` without taking its
+replacement in the same sitting: the runner refuses without it. `CP-02` is kept: a branch whose
+runner still names it runs from it, in W. Europe.
 
 ---
 
@@ -3606,8 +3609,8 @@ to use it; this is the record of building it, every step from the committed scri
 were checked. The runs matched master exactly: 3,005 / 0 / 0 at `e4b00fa`, 3,346 / 0 / 0 at
 `3e7b861`. `T1.SweepSortWiringTests.AnAbsentTableDateFallsBackToTheItemValueCONVERTED`
 failed on GitHub CI at this commit and passes here: at `e4b00fa` it still read the machine's own time
-zone, CI's runners are UTC and this VM is W. Europe Standard Time like the workstation (fixed on master
-since, Q95 `3cd62c0`, by giving the test a zone of its own). And about 200 tests take an "Outlook is
+zone, CI's runners are UTC and this VM was W. Europe Standard Time like the workstation (fixed on master
+since, Q95 `3cd62c0`, by giving the test a zone of its own; the VM is UTC since Q126 (a), section 4.3a). And about 200 tests take an "Outlook is
 not running" branch through `ComGateway.IsOutlookRunning` and the installer mutex - here as on CI,
 which has no Office either; on the workstation they may take the other. Both branches pass (Q94's
 research, decision D3 of `Docs/overnight-review-2026-10-03.md`). The suite ran in session 0, over
@@ -3626,6 +3629,44 @@ resumes it at once from the checkpoint's state (Running to Running, 9 s); so the
 run, restores the base and then saves it - restoring alone would leave it running and holding its
 RAM. A `VirtualMachine` object keeps the state it was read with and has no `Refresh()`, so every
 wait re-reads the VM by name. And a running checkpoint's memory is stored sparse: 1.6 GB for 6 GB.
+
+### 4.3a The build VM in UTC - `OutlookAI-Build`, 2026-10-03 (Q126 (a))
+
+**Why this section exists.** Decision D4 (`Docs/overnight-review-2026-10-03.md`) built the build VM
+in W. Europe Standard Time, like the workstation and the two Outlook guests, while GitHub CI's UTC
+runners covered the other zone - which is how Q95's bug was found, a test that only passed where the
+local zone was not UTC. CI was removed the same day, and with it every run outside W. Europe, so the
+maintainer moved the build VM to UTC (Q126 (a)): the non-live suite now runs in a zone other than
+the workstation's. `Testbed/README.md` section 1c, row B9, is the procedure; this is the record.
+Every step under one lease, with nothing else on the VM.
+
+| Step | What ran | Verdict | Checkpoint |
+| --- | --- | --- | --- |
+| 1. Lease | read first: no live lease on `OutlookAI-Build`, and the runner's lock opened (no run going); then `Set-TestbedLease.ps1 -VMName OutlookAI-Build -Minutes 60` at 22:03:24Z | read again 20 s later: still this lease, the lock still free - so no run had passed its lease check in between, and every later run queues | - |
+| 2. Restore | `Restore-VMSnapshot` `CP-02-SDK-TEST-READY` (Saved to Saved), `Start-VM` | heartbeat OK 11 s after the restore. Read over PowerShell Direct: `W. Europe Standard Time`, daylight saving on, `tzutil /g` and the registry's `TimeZoneKeyName` the same; the automatic time zone service `tzautoupdate` Stopped and Disabled, so nothing on the guest sets the zone back | - |
+| 3. The zone | `Set-TimeZone -Id UTC`, 22:04:50Z | read from a NEW session, a new process with nothing cached: `UTC`, "(UTC) Co-ordinated Universal Time", offset 0, no daylight saving; `tzutil /g` `UTC`; `TimeZoneKeyName` `UTC`, `Bias` and `ActiveTimeBias` 0; `TimeZoneInfo.Local` `UTC`; local time minus UTC, 0 min | - |
+| 4. Restart | `Restart-Guest.ps1 -VMName OutlookAI-Build -Execute` - so that no process keeps the old zone cached, as a .NET process does | 26 s, no Outlook to quit; booted 22:05:25Z; `UTC` again from a new session | - |
+| 5. Verify | `Install-DotnetSdk.ps1 -Verify` over PowerShell Direct, as B6 | `TEST-READY`: SDK 10.0.401, the probe built and ran, 3,137 tests discovered, 17 executed and passed; its log stamped in UTC (22:06:21 to 22:06:48) | - |
+| 6. Base checkpoint | the VM's CPU sampled every 10 s until 18 samples in a row read 0 % (211 s: one read 3 %), no PowerShell Direct session open; `Checkpoint-VM` with the VM running | 3.1 s, 22:10:40Z, a child of `CP-02-SDK-TEST-READY`; its saved memory 1,620 MB on disk | `CP-03-SDK-TEST-READY-UTC` |
+| 7. Proving restore | `Restore-VMSnapshot` `CP-03-SDK-TEST-READY-UTC` over the running VM; then the runner's way of resting - restore it again, `Save-VM` | running again in 6.5 s, `UTC`, its clock 0.1 s from the host's; then saved. The lease released at 22:11:44Z | - |
+| 8. First run in UTC | `Invoke-TestsOnBuildVm.ps1` at `e5bbb4b` (the runner and `testbed.json` pointed at the new base; no test changed), run `20261004-001535-e5bbb4bd0bc3` | **PASS, exit 0: 3,818 total, 3,818 passed, 0 failed, 0 skipped**, 27 of 27 self-tests - exactly the W. Europe run of `289030e` (no test differs between the two commits), whose test phase took 3 min 23 s to this one's 4 min 35 s; the W. Europe runs of the same evening took 2 min 12 s to 4 min 53 s, and the extra seconds sit mostly in the classes that start processes (`AuditLogStressTests`, `AuditLogTests`, the T3 server tests), not in any one test. The runner's line: `VM: OAI-BUILD as vmadmin, time zone UTC, clock within 0 s`; the summary's `machine` line: `UTC` | - |
+
+**No test failed in UTC**, so Q126 found no time-zone bug on its first run: the suite at `e5bbb4b`
+passes in both zones. What UTC cannot do is stand in for W. Europe. Tests that use the machine's own
+zone as the "other" zone - converting a `Local` value and comparing it with the `Utc` one - prove
+only the identity on a UTC machine, and since Q94 nothing else runs the non-live suite: some of them
+were written knowing it (`T1.ComDateValueTests` pins its conversion in a zone of its own and reads
+its overload's IL for the same reason), others were not. That is an open question, not a defect of
+this switch - recorded with the decision (`Docs/overnight-review-2026-10-03.md`, Q126).
+
+**What enforces the zone.** The base checkpoint holds it - Windows keeps the zone on the disk and
+in the saved memory alike - and the runner refuses a guest that reads otherwise: its identity check
+asks for `(Get-TimeZone).Id` beside the computer and the account, and `Get-GuestRefusal` turns
+anything but `testbed.json`'s `buildVm.timeZone` into a refusal before a byte is copied in, INFRA,
+exit 3. `-SelfTest` holds that value equal to the runner's `$BuildVmTimeZone` and checks the
+refusal, `GMT Standard Time` included - the zone that reads like UTC and keeps British summer time.
+`CP-02-SDK-TEST-READY` keeps W. Europe and stays: a branch whose runner still names it runs from it
+as before, until it merges this.
 
 ### 4.4 The Exchange VM - `OutlookAI-Exchange`, 2026-10-03 (Q108 to Q111, Q113 (b), Q116 (a))
 

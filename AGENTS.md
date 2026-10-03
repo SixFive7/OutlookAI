@@ -143,6 +143,10 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSuite -SelfTestInclude 'T
 - **One run at a time; callers queue.** Run it in the background or with a timeout of 20 minutes
   or more. Never use the VM by hand while runs may happen; to hold runs off, take a lease on it
   with `Testbed/host/Set-TestbedLease.ps1 -VMName OutlookAI-Build` and release it after.
+- **It runs in UTC** (Q126 (a), decided by the maintainer 2026-10-03), not in this workstation's
+  W. Europe: with GitHub's UTC runner gone, it is where a zone-dependent test fails. A failure
+  there that W. Europe would not show is a time-zone bug until shown otherwise - fix it with a T1
+  test that pins it in both zones, never by moving the VM back (`Testbed/README.md` section 1c).
 
 **Live runs on the two test guests go through `Testbed/host/Invoke-LiveTierOnGuest.ps1`, one call
 per run** (2026-10-03, `Testbed/README.md` section 4c) - never driven by hand:
