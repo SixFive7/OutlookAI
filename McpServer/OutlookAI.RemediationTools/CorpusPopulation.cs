@@ -395,6 +395,13 @@ public sealed class CorpusPopulation
     /// shape key are the same either way: the undated items are the last ordinals, so a population
     /// without them is a prefix of one with them.
     /// </para>
+    /// <para>
+    /// And on the indexed guest since 2026-10-03 (Q98 (f)) a hub or bystander may carry undated
+    /// CONTACTS alone - <see cref="CorpusPlanOptions.IncludeUndatedContacts"/>: the same twelve and
+    /// forty-two undated rows, every one a contact, after the dated items. Still version 2: nothing
+    /// built before changes, and the option is in the shape key, so neither population can be
+    /// continued as the other.
+    /// </para>
     /// </summary>
     public const int Version = 2;
 
@@ -583,6 +590,19 @@ public sealed class CorpusPopulation
     /// </summary>
     public IReadOnlyList<int> UndatedFolderIds => UndatedKinds.Select(CorpusItemKinds.FolderIdOf).ToList();
 
+    /// <summary>
+    /// Where this population's undated items must be undated: nowhere when it carries none; in the
+    /// STORE for version 2's full set (<see cref="CorpusPlanOptions.IncludeUndatedItems"/> - the write
+    /// path removes the delivery time, and the probe and read-back require it gone); in the INDEX for
+    /// the indexed guest's contacts (<see cref="CorpusPlanOptions.IncludeUndatedContacts"/> - the
+    /// store keeps the delivery time Outlook will not remove, nothing tries to, and <c>corpus-indexed</c>
+    /// checks that the index gives them no received date).
+    /// </summary>
+    public CorpusUndatedCriterion UndatedCriterion
+        => UndatedKinds.Count == 0
+            ? CorpusUndatedCriterion.None
+            : _options.IncludeUndatedContacts ? CorpusUndatedCriterion.IndexHoldsNoDate : CorpusUndatedCriterion.StoreHoldsNoDate;
+
     /// <summary>The shape-key fragment that makes a population's manifest unmistakable for any other.</summary>
     public string ShapeKeySuffix => ShapeKeySuffixFor(Kind, Owner);
 
@@ -631,13 +651,30 @@ public sealed class CorpusPopulation
             }
         }
 
+        if (options.IncludeUndatedItems && options.IncludeUndatedContacts)
+        {
+            throw new ArgumentException(
+                "A population carries either version 2's full undated set (IncludeUndatedItems) or the indexed guest's "
+                + "undated contacts (IncludeUndatedContacts, Q98 (f)) - not both: the two put different kinds at the same ordinals.",
+                nameof(options));
+        }
+
+        if (options.IncludeUndatedContacts && kind == CorpusPopulationKind.Identity)
+        {
+            throw new ArgumentException(
+                "The identity population carries no undated item, so --undated-contacts describes nothing there. Only the hub "
+                + "and the bystander carry the indexed guest's undated contacts (Q98 (f)).",
+                nameof(options));
+        }
+
         // The undated items are switched OFF unless the plan asks for them - Q98 (a), 2026-10-03, see
-        // CorpusPlanOptions.IncludeUndatedItems. They are each layout's last ordinals, so leaving them
-        // out changes no other item.
+        // CorpusPlanOptions.IncludeUndatedItems - or carries the indexed guest's undated CONTACTS, Q98 (f),
+        // CorpusPlanOptions.IncludeUndatedContacts. Either way they are each layout's last ordinals, so
+        // leaving them out changes no other item.
         (Slot[] slots, IReadOnlyList<CorpusPopulationFolder> folders) = kind switch
         {
-            CorpusPopulationKind.Hub => HubLayout(options.IncludeUndatedItems),
-            CorpusPopulationKind.Bystander => BystanderLayout(options.IncludeUndatedItems),
+            CorpusPopulationKind.Hub => HubLayout(options.IncludeUndatedItems, options.IncludeUndatedContacts),
+            CorpusPopulationKind.Bystander => BystanderLayout(options.IncludeUndatedItems, options.IncludeUndatedContacts),
             CorpusPopulationKind.Identity => IdentityLayout(),
             _ => throw new ArgumentOutOfRangeException(nameof(options), "Unknown population kind."),
         };
@@ -930,7 +967,13 @@ public sealed class CorpusPopulation
     private const int Inbox = 6;
     private const int SentItems = 5;
 
-    private static (Slot[] Slots, IReadOnlyList<CorpusPopulationFolder> Folders) HubLayout(bool includeUndated)
+    /// <summary>How many undated rows the hub carries when it carries any: twelve - see the layout's last block.</summary>
+    internal const int HubUndatedRows = 12;
+
+    /// <summary>How many undated rows the bystander carries when it carries any: forty-two - see the layout's last block.</summary>
+    internal const int BystanderUndatedRows = 42;
+
+    private static (Slot[] Slots, IReadOnlyList<CorpusPopulationFolder> Folders) HubLayout(bool includeUndated, bool includeContacts)
     {
         var projects = new CorpusPopulationFolder(SubfolderIdBase + 1, Inbox, CorpusManifest.CreatedFolderPrefix + "-Projects", "Inbox");
         var notices = new CorpusPopulationFolder(HubNoticesFolderId, Inbox, CorpusManifest.CreatedFolderPrefix + "-Notices", "Inbox");
@@ -1010,7 +1053,16 @@ public sealed class CorpusPopulation
         // plan asks for them - off since 2026-10-03 (Q98 (a)); CorpusPlanOptions.IncludeUndatedItems.
         if (includeUndated)
         {
-            AddUndated(slots, 4, CorpusItemKinds.Undated);
+            AddUndated(slots, HubUndatedRows / CorpusItemKinds.Undated.Count, CorpusItemKinds.Undated);
+        }
+
+        // 57-68 on the INDEXED guest: the same twelve undated rows, every one a CONTACT - the one kind
+        // the index leaves without a received date (Q98 (f), 2026-10-03); an appointment or a task would
+        // be indexed as dated at build time and become the hub's newest row, under the frontier.
+        // CorpusPlanOptions.IncludeUndatedContacts.
+        if (includeContacts)
+        {
+            AddUndated(slots, HubUndatedRows, new[] { CorpusItemKind.Contact });
         }
 
         return (slots.ToArray(), new[] { projects, notices });
@@ -1043,7 +1095,7 @@ public sealed class CorpusPopulation
         }
     }
 
-    private static (Slot[] Slots, IReadOnlyList<CorpusPopulationFolder> Folders) BystanderLayout(bool includeUndated)
+    private static (Slot[] Slots, IReadOnlyList<CorpusPopulationFolder> Folders) BystanderLayout(bool includeUndated, bool includeContacts)
     {
         var projects = new CorpusPopulationFolder(SubfolderIdBase + 1, Inbox, CorpusManifest.CreatedFolderPrefix + "-Projects", "Inbox");
         var suppliers = new CorpusPopulationFolder(SubfolderIdBase + 2, Inbox, CorpusManifest.CreatedFolderPrefix + "-Suppliers", "Inbox");
@@ -1115,7 +1167,15 @@ public sealed class CorpusPopulation
         // plan asks for them - off since 2026-10-03 (Q98 (a)); CorpusPlanOptions.IncludeUndatedItems.
         if (includeUndated)
         {
-            AddUndated(slots, 14, new[] { CorpusItemKind.Appointment, CorpusItemKind.Contact, CorpusItemKind.Task });
+            AddUndated(slots, BystanderUndatedRows / 3, new[] { CorpusItemKind.Appointment, CorpusItemKind.Contact, CorpusItemKind.Task });
+        }
+
+        // 301-342 on the INDEXED guest: the same forty-two, every one a CONTACT (Q98 (f)) - forty-two
+        // and not fourteen, because the over-fetch argument above is about how many undated rows there
+        // are, whatever their kind. CorpusPlanOptions.IncludeUndatedContacts.
+        if (includeContacts)
+        {
+            AddUndated(slots, BystanderUndatedRows, new[] { CorpusItemKind.Contact });
         }
 
         return (slots.ToArray(), new[] { projects, suppliers });

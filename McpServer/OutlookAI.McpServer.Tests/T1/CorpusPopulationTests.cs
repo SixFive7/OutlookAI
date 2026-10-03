@@ -50,12 +50,16 @@ public sealed class CorpusPopulationTests
     /// <see cref="CorpusPlanOptions.IncludeUndatedItems"/>). Every test about those items asks for
     /// them, so the machinery they test stays pinned for the day they come back.
     /// </param>
-    private static CorpusPlan Plan(CorpusPopulationKind kind, string store, long seed = 8181, string? id = null, bool undated = false)
+    /// <param name="contacts">
+    /// The indexed guest's undated CONTACTS (Q98 (f), <see cref="CorpusPlanOptions.IncludeUndatedContacts"/>).
+    /// </param>
+    private static CorpusPlan Plan(CorpusPopulationKind kind, string store, long seed = 8181, string? id = null, bool undated = false, bool contacts = false)
         => new(new CorpusPlanOptions(id ?? kind.ToString().ToLowerInvariant() + "-synthetic", seed, Anchor)
         {
             Population = kind,
             Owner = CorpusMailboxOwner.ForStore(store),
             IncludeUndatedItems = undated,
+            IncludeUndatedContacts = contacts,
         });
 
     private static CorpusPlan Hub(bool undated = false) => Plan(CorpusPopulationKind.Hub, HubStore, undated: undated);
@@ -261,6 +265,213 @@ public sealed class CorpusPopulationTests
 
         Assert.Equal(Enumerable.Range(1, 56), Dated(hub));
         Assert.Equal("D9B4032E9EF1C84264834E29C52E23921E9F1EB33548F057655D5ED70A972EC0", Sha256(sb.ToString()));
+    }
+
+    // ================================================================ the indexed guest's undated contacts (Q98 (f))
+
+    [Fact]
+    public void TheIndexedGuestsContacts_AreTheSameUndatedRowCounts_EveryOneAContact_AfterUnchangedDatedItems()
+    {
+        // Measured on the indexed guest 2026-10-03: an appointment and a task saved into a PST are indexed with
+        // a received date (their creation time); a contact is not. So the indexed guest's hub and bystander carry
+        // CONTACTS alone - as many as version 2 sized its undated rows for: twelve, and forty-two.
+        foreach ((CorpusPlan built, CorpusPlan withContacts, int dated, int contacts) in new[]
+        {
+            (Hub(), Plan(CorpusPopulationKind.Hub, HubStore, contacts: true), 56, 12),
+            (Bystander(), Plan(CorpusPopulationKind.Bystander, BystanderStore, 8282, contacts: true), 300, 42),
+        })
+        {
+            string kind = built.Population!.Kind.ToString();
+            Assert.Equal(dated + contacts, withContacts.FixedItemCount);
+            Assert.Equal(Enumerable.Range(dated + 1, contacts), Undated(withContacts));
+            Assert.All(Undated(withContacts), o => Assert.Equal(CorpusItemKind.Contact, withContacts.Describe(o).Kind));
+            Assert.Equal(new[] { CorpusItemKind.Contact }, withContacts.Population!.UndatedKinds);
+            Assert.Equal(new[] { CorpusItemKinds.ContactsFolderId }, withContacts.Population.UndatedFolderIds);
+            Assert.Equal(CorpusUndatedCriterion.IndexHoldsNoDate, withContacts.Population.UndatedCriterion);
+            Assert.Equal(CorpusUndatedCriterion.None, built.Population.UndatedCriterion);
+
+            // Every dated item is the one the default builds - the contacts only come after them.
+            foreach (int o in Ordinals(built))
+            {
+                Assert.True(withContacts.Describe(o) == built.Describe(o), $"{kind} ordinal {o} differs");
+                Assert.Equal(Body(withContacts, o), Body(built, o));
+                Assert.Equal(withContacts.Enrich(o), built.Enrich(o));
+            }
+
+            // Each contact is tagged, parses back to its ordinal, and carries the undated vocabulary only; its name
+            // carries the subject (the undated probe proves the tag survives on the store before a contact is built).
+            foreach (int o in Undated(withContacts))
+            {
+                CorpusItemSpec spec = withContacts.Describe(o);
+                Assert.True(CorpusPlan.TryParseOrdinal(spec.Subject, withContacts.Options.CorpusId, out int parsed));
+                Assert.Equal(o, parsed);
+                Assert.Equal(spec.Subject, withContacts.UndatedDetail(o)!.ContactFullName);
+                Assert.Null(withContacts.Enrich(o));
+            }
+
+            // IN THE SHAPE KEY, unlike version 2's switch: the contacts take the ordinals where the full undated set
+            // puts appointments, so no tool may continue one as the other.
+            Assert.Equal(built.Options.ShapeKey + CorpusPlanOptions.UndatedContactsShapeKeyMarker, withContacts.Options.ShapeKey);
+            Assert.True(CorpusPlanOptions.ShapeKeyCarriesUndatedContacts(withContacts.Options.ShapeKey));
+            Assert.False(CorpusPlanOptions.ShapeKeyCarriesUndatedContacts(built.Options.ShapeKey));
+            CorpusPlan full = built.Population.Kind == CorpusPopulationKind.Hub ? Hub(undated: true) : Bystander(undated: true);
+            Assert.Equal(withContacts.FixedItemCount, full.FixedItemCount);
+            Assert.NotEqual(full.Options.ShapeKey, withContacts.Options.ShapeKey);
+            Assert.Equal(CorpusItemKind.Appointment, full.Describe(dated + 1).Kind);
+            Assert.Equal(CorpusItemKind.Contact, withContacts.Describe(dated + 1).Kind);
+            Assert.Equal(CorpusUndatedCriterion.StoreHoldsNoDate, full.Population!.UndatedCriterion);
+        }
+    }
+
+    [Fact]
+    public void TheContactsHub_ContentDigestIsPinned()
+    {
+        // The indexed guest's hub (Q98 (f)): the fifty-six dated items of PinnedHubDigest, then twelve contacts.
+        Assert.Equal(PinnedHubDigestWithUndatedContacts, Sha256(Render(Plan(CorpusPopulationKind.Hub, HubStore, contacts: true))));
+    }
+
+    /// <summary>
+    /// Recorded 2026-10-03 from population format version 2 with <see cref="CorpusPlanOptions.IncludeUndatedContacts"/>:
+    /// ordinals 1-56 as <see cref="PinnedHubDigest"/>, then twelve undated contacts, 57-68.
+    /// </summary>
+    private const string PinnedHubDigestWithUndatedContacts = "26D9CD681651D582ACEFE8BDDDA4C40842093F7C6B9A91099EEE49A83EEB8CE1";
+
+    [Fact]
+    public void TheContactsOption_IsRefusedWhereItDescribesNothing_OrBesideTheFullUndatedSet()
+    {
+        // The identity population carries no undated item, and the two switches put different kinds at the same ordinals.
+        ArgumentException identity = Assert.Throws<ArgumentException>(
+            () => Plan(CorpusPopulationKind.Identity, IdentityStore, 8383, contacts: true));
+        Assert.Contains("identity", identity.Message, StringComparison.OrdinalIgnoreCase);
+        ArgumentException both = Assert.Throws<ArgumentException>(
+            () => Plan(CorpusPopulationKind.Hub, HubStore, undated: true, contacts: true));
+        Assert.Contains("not both", both.Message, StringComparison.Ordinal);
+
+        // The command line: --undated-contacts reaches the plan, and needs a population.
+        CorpusOptions hub = CorpusOptions.Parse(new[] { "--population", "hub", "--store", HubStore, "--corpus-id", "hub-x", "--seed", "1", "--anchor", "2026-10-03T08:00:00Z", "--undated-contacts" });
+        Assert.True(hub.UndatedContacts);
+        Assert.True(hub.ToPlanOptions().IncludeUndatedContacts);
+        Assert.False(hub.ToPlanOptions().IncludeUndatedItems);
+        Assert.Equal(68, new CorpusPlan(hub.ToPlanOptions()).FixedItemCount);
+        CorpusOptions bystander = CorpusOptions.Parse(new[] { "--population", "bystander", "--store", BystanderStore, "--corpus-id", "bystander-x", "--seed", "1", "--anchor", "2026-10-03T08:00:00Z", "--undated-contacts" });
+        Assert.Equal(342, new CorpusPlan(bystander.ToPlanOptions()).FixedItemCount);
+        Assert.False(CorpusOptions.Parse(new[] { "--population", "hub", "--store", HubStore, "--corpus-id", "hub-x", "--seed", "1", "--anchor", "2026-10-03T08:00:00Z" }).ToPlanOptions().IncludeUndatedContacts);
+        CorpusOptions corpus = CorpusOptions.Parse(new[] { "--corpus-id", "vm-x", "--seed", "1", "--anchor", "2026-10-03", "--undated-contacts" });
+        Assert.Contains("--population", Assert.Throws<ArgumentException>(() => corpus.ToPlanOptions()).Message, StringComparison.Ordinal);
+        CorpusOptions identityCli = CorpusOptions.Parse(new[] { "--population", "identity", "--store", IdentityStore, "--corpus-id", "identity-x", "--seed", "1", "--anchor", "2026-10-03T08:00:00Z", "--undated-contacts" });
+        Assert.Throws<ArgumentException>(() => new CorpusPlan(identityCli.ToPlanOptions()));
+    }
+
+    [Fact]
+    public void TheContactsProbe_AcceptsADeliveryTimeInTheStore_AndRefusesEverythingElseAsBefore()
+    {
+        // What the guest measured for a contact saved into a PST: in its folder, tagged, its class - and DATED in
+        // the store (the PropertyAccessor and the folder's table agree). With nothing trying to remove the date,
+        // no removal is refused either.
+        IReadOnlyList<CorpusItemKind> kinds = new[] { CorpusItemKind.Contact };
+        var measured = new CorpusUndatedProbe(CorpusItemKind.Contact, true, true, true, HasNoDeliveryTime: false, true, true, null, null, StoreTableSaysUndated: false);
+
+        (bool proceed, string message) = CorpusUndatedFidelity.Decide(kinds, new[] { measured }, CorpusUndatedCriterion.IndexHoldsNoDate);
+        Assert.True(proceed, message);
+        Assert.Contains("UNDATED is the index", message, StringComparison.Ordinal);
+        Assert.Contains("corpus-indexed", message, StringComparison.Ordinal);
+
+        // The control: the same probe judged as version 2's full set - undated in the STORE - is refused, as it was.
+        (bool storeCriterion, string storeWhy) = CorpusUndatedFidelity.Decide(kinds, new[] { measured });
+        Assert.False(storeCriterion);
+        Assert.Contains("CARRIES a delivery time", storeWhy, StringComparison.Ordinal);
+        Assert.False(CorpusUndatedFidelity.Decide(kinds, new[] { measured }, CorpusUndatedCriterion.StoreHoldsNoDate).Proceed);
+
+        // Everything else still refuses a contact: a lost tag, a save outside the target, the wrong folder or class.
+        foreach (Func<CorpusUndatedProbe, CorpusUndatedProbe> spoil in new Func<CorpusUndatedProbe, CorpusUndatedProbe>[]
+        {
+            p => p with { FolderReachable = false },
+            p => p with { InTheFolder = false },
+            p => p with { SubjectTagParses = false },
+            p => p with { ClassMatches = false },
+            p => p with { InTheTargetStore = false },
+            p => p with { Error = "boom" },
+        })
+        {
+            (bool refused, string why) = CorpusUndatedFidelity.Decide(kinds, new[] { spoil(measured) }, CorpusUndatedCriterion.IndexHoldsNoDate);
+            Assert.False(refused);
+            Assert.Contains("CONTACT", why, StringComparison.Ordinal);
+        }
+
+        Assert.False(CorpusUndatedFidelity.Decide(kinds, Array.Empty<CorpusUndatedProbe>(), CorpusUndatedCriterion.IndexHoldsNoDate).Proceed);
+    }
+
+    [Fact]
+    public void TheContactsReadBack_CountsTheStoresDeliveryTime_WithoutFailingOnIt_AndStillCatchesTheWrongKind()
+    {
+        CorpusPlan hub = Plan(CorpusPopulationKind.Hub, HubStore, contacts: true);
+        int count = hub.FixedItemCount!.Value;
+
+        // As a PST gives them: every contact WITH a delivery time Outlook will not remove.
+        List<CorpusEnrichmentObservation> seen = PerfectReadBack(hub)
+            .Select(o => hub.Describe(o.Ordinal).IsUndated ? o with { HasDeliveryTime = true } : o).ToList();
+        CorpusEnrichmentReport report = CorpusEnrichmentCheck.Compare(hub, count, seen);
+        Assert.Equal(12, report.UndatedPlanned);
+        Assert.Equal(0, report.UndatedCarryingADate);
+        Assert.Equal(12, report.UndatedDatedInTheStore);
+        Assert.Equal(CorpusUndatedCriterion.IndexHoldsNoDate, report.UndatedCriterion);
+        (bool clean, string message) = CorpusEnrichmentCheck.Decide(report);
+        Assert.True(clean, message);
+        Assert.Contains("12 of them UNDATED IN THE INDEX", message, StringComparison.Ordinal);
+
+        // The same observations under version 2's full set would be twelve faults - the control.
+        CorpusPlan full = Hub(undated: true);
+        List<CorpusEnrichmentObservation> fullSeen = PerfectReadBack(full)
+            .Select(o => full.Describe(o.Ordinal).IsUndated ? o with { HasDeliveryTime = true } : o).ToList();
+        Assert.Equal(12, CorpusEnrichmentCheck.Compare(full, full.FixedItemCount!.Value, fullSeen).UndatedCarryingADate);
+
+        // And a contact that reads back as another kind is still a fault.
+        int contact = Undated(hub).First();
+        seen[contact - 1] = seen[contact - 1] with { MessageClass = "IPM.Note" };
+        (bool wrongKind, string why) = CorpusEnrichmentCheck.Decide(CorpusEnrichmentCheck.Compare(hub, count, seen));
+        Assert.False(wrongKind);
+        Assert.Contains("message class", why, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheContactsIndexCoverage_SaysHowManyContactsTheIndexHoldsUndated()
+    {
+        CorpusPlan hub = Plan(CorpusPopulationKind.Hub, HubStore, contacts: true);
+        int count = hub.FixedItemCount!.Value;
+        CorpusIndexCoverageReport all = CorpusIndexCoverage.Compare(hub, count, PerfectIndex(hub), null);
+        (bool complete, string message) = CorpusIndexCoverage.Decide(all);
+        Assert.True(complete, message);
+        Assert.Equal(12, all.UndatedPlanned);
+        Assert.Equal(12, all.UndatedIndexed);
+        Assert.Equal(0, all.UndatedIndexedWithADate);
+        Assert.Contains("(12 of them undated; 12 of those in the index, 12 with no received date)", message, StringComparison.Ordinal);
+        Assert.Equal(Anchor.AddMinutes(-1), all.NewestIndexedUtc);
+
+        // A contact the index DID date is counted out of the undated rows, and said so.
+        List<CorpusIndexedRow> rows = PerfectIndex(hub);
+        int contact = Undated(hub).First();
+        rows[contact - 1] = rows[contact - 1] with { DateReceivedUtc = Anchor };
+        (bool stillComplete, string dated) = CorpusIndexCoverage.Decide(CorpusIndexCoverage.Compare(hub, count, rows, null));
+        Assert.True(stillComplete, dated);
+        Assert.Contains("12 of those in the index, 11 with no received date", dated, StringComparison.Ordinal);
+        Assert.Contains("UNDATED item(s) a received date anyway", dated, StringComparison.Ordinal);
+
+        // And a population with no undated row keeps the line it always printed.
+        CorpusPlan built = Hub();
+        (_, string plain) = CorpusIndexCoverage.Decide(CorpusIndexCoverage.Compare(built, 56, PerfectIndex(built), null));
+        Assert.Contains("(0 of them undated)", plain, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ThePlanSheet_SaysTheContactsAreDatedInTheStoreAndUndatedInTheIndex()
+    {
+        CorpusOptions cli = CorpusOptions.Parse(new[] { "--population", "hub", "--store", HubStore, "--corpus-id", "hub-x", "--seed", "8181", "--anchor", "2026-10-03T08:00:00Z", "--undated-contacts" });
+        using var output = new StringWriter(CultureInfo.InvariantCulture);
+        Assert.Equal(0, CorpusCommands.RunPlan(cli, output));
+        string sheet = output.ToString();
+        Assert.Contains("  items                 : 68", sheet, StringComparison.Ordinal);
+        Assert.Contains("undated items         : contact=12 - dated in the store, UNDATED in the index (Q98 (f))", sheet, StringComparison.Ordinal);
+        Assert.Contains("  undated               : 12", sheet, StringComparison.Ordinal);
     }
 
     private static string Render(CorpusPlan plan)

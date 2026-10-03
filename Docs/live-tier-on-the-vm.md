@@ -1783,8 +1783,8 @@ to or sent from the store's owner, which is what lets the index find a small sto
 
 | Population | Built into | Items | What it carries, and for whom |
 | --- | --- | --- | --- |
-| `hub` | the hub, `testHubStoreDisplayName` | 56 | Four conversations of four, alternating Inbox and Sent Items, whose newest member is the newest item in the store - one minute before the anchor. Sixteen received and six sent singles; six items in `Inbox/OutlookAI-Corpus-Folder-Projects`. Eleven attachments - PNG, `.ics`, `.eml` and text, and one mail carrying three - with the probe term `invoice` in one text attachment and in its parent's body. Read and unread mail. The SF-6 subject-only population: twelve items in `Inbox/OutlookAI-Corpus-Folder-Notices`, all from `Noticebot Relay <noticebot@alerts.invalid>` and nobody else, `bulletin` in every subject and in no body. (Generator v2 also defines **twelve UNDATED items** for it - four appointments in the Calendar, four contacts, four tasks, ordinals 57-68 - **switched off since 2026-10-03**, Q98 (a), below.) For the tests that read, page, cap or walk the hub; the index tests that read the first indexed store; SF-6; the attachment-kind recall; the conversation walk; the staleness frontier. |
-| `bystander` | the plain bystander | 300 | Six conversations of three; 160 received and 50 sent singles spread over two years, one in eight received with an attachment; two populated subfolders, `-Projects` (40) and `-Suppliers` (32), of the folder its received mail is filed in. Every folder inside the census identity budget. (Generator v2 also defines **42 undated items** for it, fourteen each of appointments, contacts and tasks, ordinals 301-342 - switched off, Q98 (a).) It has no Inbox, Sent Items, Calendar, Contacts or Tasks and gets none: each folder it is built into is a visible **stand-in** under the store root - `OutlookAI-Corpus-Folder-6` and `-5`, and `-9`, `-10`, `-13` only while the undated items are switched on. For the count tripwire's item-by-item path and the exclude-subfolders measurement. |
+| `hub` | the hub, `testHubStoreDisplayName` | 56 | Four conversations of four, alternating Inbox and Sent Items, whose newest member is the newest item in the store - one minute before the anchor. Sixteen received and six sent singles; six items in `Inbox/OutlookAI-Corpus-Folder-Projects`. Eleven attachments - PNG, `.ics`, `.eml` and text, and one mail carrying three - with the probe term `invoice` in one text attachment and in its parent's body. Read and unread mail. The SF-6 subject-only population: twelve items in `Inbox/OutlookAI-Corpus-Folder-Notices`, all from `Noticebot Relay <noticebot@alerts.invalid>` and nobody else, `bulletin` in every subject and in no body. **On the INDEXED guest, plus twelve undated CONTACTS, ordinals 57-68, in its Contacts folder - 68 items** (Q98 (f), below). (Generator v2 also defines twelve undated items of three kinds - four appointments, four contacts, four tasks at 57-68 - **switched off since 2026-10-03**, Q98 (a).) For the tests that read, page, cap or walk the hub; the index tests that read the first indexed store; SF-6; the attachment-kind recall; the conversation walk; the staleness frontier. |
+| `bystander` | the plain bystander | 300 | Six conversations of three; 160 received and 50 sent singles spread over two years, one in eight received with an attachment; two populated subfolders, `-Projects` (40) and `-Suppliers` (32), of the folder its received mail is filed in. Every folder inside the census identity budget. **On the INDEXED guest, plus 42 undated CONTACTS, ordinals 301-342 - 342 items** (Q98 (f), below). (Generator v2 also defines 42 undated items of three kinds, fourteen each - switched off, Q98 (a).) It has no Inbox, Sent Items, Calendar, Contacts or Tasks and gets none: each folder it is built into is a visible **stand-in** under the store root - `OutlookAI-Corpus-Folder-6` and `-5`, and on the indexed guest `-10`, a contacts folder, for the contacts (`-9` and `-13` only while version 2's full set is switched on). For the count tripwire's item-by-item path and the exclude-subfolders measurement. |
 | `identity` | the identity account's delivery store (section 2.8b) | 8 | Five received, three sent, all to or from its owner - so the index knows the store exists and `outlook_health` does not report it missing. Its received items go into the store's real Inbox, since the store is minted (Q87 (a), 2026-09-27). |
 
 **The undated items (decided 2026-09-24, question A, option (a)).** The index tier sorts by
@@ -1809,10 +1809,42 @@ The undated items are each population's LAST ordinals and every other item is th
 a population without them is a prefix of one with them, under the same shape key - T1 pins both, and
 keeps the undated probe, the census's undated checks and their tests running on plans that switch
 them on. They come back only if the measurement on the indexed guest - Q98 (f) - says it is worth it.
-Until then the three `LiveOrderKeyCollationTests` are where they were before v2: on a guest every
-store prints `verdict=no-undated-rows-in-sample` (or `undated=0`), then `coverage: 0 ... on this
-machine` and a `PROVED NOTHING:` line naming Q98 - green on a Portable profile, a refusal on a
-Production one, exactly as before.
+
+**It said so for CONTACTS alone - decided on the maintainer's behalf 2026-10-03 (Q98 (f); D62 of
+`Docs/overnight-review-2026-10-03.md`): undated contacts, on the indexed guest only.** Measured that
+night on `OutlookAI-Indexed` (section 8 item 24, Q99's `corpus-probe --undated-index-wait`): an
+appointment and a task saved into a PST are indexed WITH `System.Message.DateReceived` - their creation
+time - and a contact WITHOUT one (`<null>`), though the store gives all three a delivery time Outlook
+will not remove. So a contact is the one undated row `LiveOrderKeyCollationTests` can have, and those
+tests are `Requires=SearchIndex`: they run only on the indexed guest. Appointments and tasks stay out
+there too - indexed as dated at build time, they would become the hub's newest rows, under the
+frontier the staleness test reads. The plan option is `CorpusPlanOptions.IncludeUndatedContacts`,
+`--undated-contacts` on the command line:
+
+* **the same undated row counts version 2 sized, every one a contact:** the hub twelve (57-68 - every
+  one a search hit, and the hub's top-100 search must stay under 100), the bystander forty-two (301-342 -
+  more than the 35 rows of over-fetch room a scoped `TOP 25` has, so the widened-search guarantee can be
+  told apart from luck). Fourteen, the bystander's contacts in the full set, would not be. The dated
+  items are untouched - each population with them is the default plus its contacts, T1-pinned
+  (digest `26D9CD68...`, and the dated half equal ordinal for ordinal);
+* **IN the shape key**, as `|u:contacts` at its end - unlike `IncludeUndatedItems`: the contacts take
+  the ordinals where the full set puts appointments, so neither population may be continued as the
+  other. Every verb on such a manifest needs the option - teardown, census, the index wait - and is
+  refused as another population without it;
+* **undated in the INDEX, not the store** (`CorpusUndatedCriterion.IndexHoldsNoDate`): the write path
+  does not try to remove the delivery time (a PST refuses it, measured), the undated probe requires the
+  folder, the target store, the tag and the class but not the store's date, the read-back counts the
+  store's delivery time instead of failing on it, and `corpus-indexed` - the index wait - says how
+  many undated rows the index holds with no received date;
+* **`Reset-HubPopulation.ps1` keeps what it tears down**: it reads `|u:contacts` off the manifest's
+  header and passes `--undated-contacts` to every verb; a first build gives an indexed hub its contacts
+  and an unindexed one none; and on a guest whose hub is indexed it refuses to `-Execute` ELEVATED -
+  every Outlook start there is NOT elevated, the rebuild's own included (`-RunLevel Limited`).
+
+On the UNINDEXED guest nothing changes: its populations are built without them, and the three tests are
+deselected there (`Requires!=SearchIndex`). Where they run without undated rows - a hub built without
+the option - they still print `verdict=no-undated-rows-in-sample`, `coverage: 0 ... on this machine`
+and a `PROVED NOTHING:` line, which now says to rebuild with `--undated-contacts`.
 
 **It costs nothing to look at one.** `corpus-plan` is pure - no Outlook, runnable on the host - and
 for a hub population it also prints the values a settings file must carry:
@@ -1877,10 +1909,13 @@ the addition written out there). So the order is:
    * **`== enrichment probe ==` reporting sender, recipients, attachment and conversation index all
      written** - and the recipient it checks is now the store's OWNER, the one v1 left unresolved;
    * the undated probe: with the undated items switched off (Q98 (a)) it probes nothing and prints
-     `Undated probe: this population carries no undated item; nothing to probe.` With them switched
-     on, an `== undated probe ==` block where each kind must show `inFolder=True`, `undated=True`,
-     `tableUndated=True`, `inTargetStore=True`, and no `removalRefused=` - which on a PST no kind
-     does (measured 2026-09-27, below).
+     `Undated probe: this population carries no undated item; nothing to probe.` On the indexed guest,
+     with `--undated-contacts` (Q98 (f)), one line for the contact, with `folder=True inFolder=True
+     tag=True class=True inTargetStore=True` - and `undated=False tableUndated=False`, the store's own
+     date, reported and not judged - then `Undated probe verified for contact: ...`. With version 2's
+     full set switched on, an `== undated probe ==` block where each kind must show `inFolder=True`,
+     `undated=True`, `tableUndated=True`, `inTargetStore=True`, and no `removalRefused=` - which on a
+     PST no kind does (measured 2026-09-27, below).
 
    A population is built only where one throwaway item proved every write it depends on, with no
    override. After the build, the census reads every item back - sender, recipients (the owner
@@ -1931,8 +1966,14 @@ and the seed and the old anchor from the manifest's header, and then:
 8. prints the newest item's instant, the minutes the frontier test has left, and this guest's
    opt-in value and `dotnet test` filter for the run (`Testbed/README.md` section 4c).
 
-Its own Outlook, the one the build runs against in step 2, stays elevated: the corpus tool runs in
-the same elevated task and attaches only to an Outlook at its own integrity level.
+Its own Outlook, the one the build runs against in step 2, is at the task's level: the corpus tool
+runs in the same task and attaches only to an Outlook at its own integrity level. **On the indexed
+guest that level is NOT elevated** - run it through `Register-InteractiveTask.ps1 -RunLevel Limited`,
+and it refuses to `-Execute` elevated there - because an elevated Outlook never feeds the index, and
+every Outlook start on that guest is unelevated; it then starts both Outlooks directly, at its own
+level. On the unindexed guest either level works. **And on the indexed guest it keeps the hub's undated
+contacts** (Q98 (f), above): the manifest's shape key says the hub carries them, and every verb gets
+`--undated-contacts`.
 
 Teardown removes the population's items AND the folders it created, and drains Deleted Items behind
 itself: a delete in a PST is a soft one that re-issues the EntryID, so teardown re-scans and deletes
@@ -2017,6 +2058,13 @@ undated items now - `CorpusPlanOptions.IncludeUndatedItems`, off (above). (f), a
 below by the decision: another agent measures on the indexed guest whether the index dates those kinds;
 they come back only if that says it is worth it. The question, the guest's lines and the directions
 stay below as the record.
+
+**(f) measured the same night, and decided on the maintainer's behalf: undated CONTACTS, on the
+indexed guest only** (D62; "The undated items", above, has the option and what it changes). The index
+dates an appointment and a task at their creation time and leaves a contact with no
+`System.Message.DateReceived`, so the indexed guest's hub carries twelve contacts and its bystander
+forty-two; `OutlookAI-Indexed` was built that way the same morning, and `corpus-indexed` found every
+one of the 54 in the index with no received date (section 4.2c).
 
 **The question.** The hub's 12 and the bystander's 42 undated items exist so the three
 `LiveOrderKeyCollationTests` have index rows with NO `System.Message.DateReceived` to measure (question
@@ -2108,8 +2156,9 @@ bystander and the identity store in the account-less profile; sender, correspond
 attachment and conversation index all land; the store computes one conversation id per conversation;
 and the four faults above. **Answered by v2's probes on the same guest, 2026-09-27 (section 4.1a):**
 items 1, 2, 3 and 8. **Answered by v2's build and the first two hub rebuilds there, 2026-10-03
-(section 4.1d):** item 7, and the half of item 8 the probes left. **Still open:** 4 and 6, which only
-the indexed guest can answer, and 5, a two-profile mount nobody has made.
+(section 4.1d):** item 7, and the half of item 8 the probes left. **Answered on the indexed guest the
+same morning (section 4.2c):** item 6, and item 4's undated rows. **Still open:** the rest of item 4,
+which the first live run there answers, and 5, a two-profile mount nobody has made.
 
 1. **ANSWERED: `PostAsNote` does; `InPlaceReceived` does NOT.** In a store that is not the profile's
    default, `PostAsNote` kept its first save in the target, parented it in the target folder and showed
@@ -2128,8 +2177,10 @@ the indexed guest can answer, and 5, a two-profile mount nobody has made.
    Decided 2026-10-03, above: built without them (Q98 (a)).
 4. **Does the index carry what the tests read** - `FromAddress`/`FromName`, `ToAddress` (the owner's
    now), one attachment row per attachment, a `ConversationID` shared by each conversation's members,
-   and the undated rows with NO `System.Message.DateReceived`? The indexed guest only - and the last
-   part is Q98 (f), above.
+   and the undated rows with NO `System.Message.DateReceived`? The indexed guest only. **The last part
+   ANSWERED 2026-10-03** (Q98 (f); section 8 item 24, and section 4.2c): a contact is indexed with no
+   received date, an appointment and a task with one - and every one of the indexed guest's 54 built
+   contacts reads back that way through `corpus-indexed`. The rest waits for the first live run there.
 5. **Does a store mounted in two profiles give the index two scopes?** The per-store scope URL is
    `mapi16://{SID}/StoreDisplayName($Hash)/`. Corpus A has always been in the same position, so the
    answer - whatever it is - is not new to the populations. **Half answered 2026-09-27 (Q92, section
@@ -2137,8 +2188,13 @@ the indexed guest can answer, and 5, a two-profile mount nobody has made.
    and nothing else that varies, and the name is the store's own, not the profile's - so one file
    mounted from the same path in two profiles should give ONE scope. Predicted from the measured
    rule; the two-profile mount itself was not made.
-6. **How long does the indexer take over a fresh hub?** It bounds how soon after the rebuild the run
-   can start, and so how much of the UTC-offset margin is left for the run itself.
+6. **ANSWERED 2026-10-03: no time at all, when the rebuild's Outlook is NOT elevated.** It bounds how
+   soon after the rebuild the run can start, and so how much of the UTC-offset margin is left for the run
+   itself. On `OutlookAI-Indexed` (section 4.2c) the rebuild ran at `-RunLevel Limited`, so its own Outlook
+   pushed every item to the index as it was created: `corpus-indexed` asked once, `[0 s]`, and found all 68
+   - and the same held for the first builds of all three populations (hub 68, bystander 342, identity 8,
+   each complete at its first ask). The whole rebuild took about six and a half minutes - six of them its
+   two 180-second Outlook warm-ups - and left 110 minutes of margin.
 7. **ANSWERED: yes - and they pile up, two per rebuild.** Teardown removes a created folder with
    `Folder.Delete()`, and in a PST that MOVES the emptied folder into the store's Deleted Items. Measured
    on `OutlookAI-Unindexed`, 2026-10-03, with `corpus-folders` of the hub after each of the first two
@@ -2616,10 +2672,9 @@ at a time, each checkpointed, with `Set-OutlookIndexingDisabled.ps1 -Verify -Set
 -MinimumOutlookRows 20000` after every step that started Outlook or installed something. No
 population was built and the live tier did not run: both wait on the generator and harness fixes.
 *(2026-09-27: both have landed - the harness's on 2026-09-24 (Q84, `4f82004`), generator v2 and its
-guest fixes by 2026-09-27 (section 4.1a). What is still missing here is a population - Q98, decided
-2026-10-03: built without the undated items, as the other guest's were in section 4.1d -
-this guest's settings, whose store names are still placeholders in `Testbed/testbed.json`, and a
-live run; section 4.2b's rebuild ran neither a population nor the tier.)*
+guest fixes by 2026-09-27 (section 4.1a). Section 4.2b's rebuild ran neither a population nor the
+tier. **2026-10-03: the populations - with undated contacts, Q98 (f) - and this guest's settings are
+built, section 4.2c; the live run is not.**)*
 Raw logs: `.work\g1-buildout\` in the main checkout.
 
 **Every COM caller ran at Outlook's own integrity level.** Outlook on this guest is started NOT
@@ -2729,6 +2784,108 @@ from their profile `PR_ENTRYID`s, which item 24 found equal to `Store.StoreID` f
 identity store and the corpus were both `Outlook Data File`. The mint profile mounts the same file, so
 it adds no fourth root. The identity store's 15 rows are all folders; the product's discovery sample
 (`TOP 2000 ... Kind='email'`) saw only the corpus, as section 8 item 24 found.
+
+### 4.2c The populations built - `OutlookAI-Indexed`, 2026-10-03 (Q98 (f))
+
+**Why this section exists.** The indexed guest's populations, the morning Q98 (f) was measured and
+decided (section 3b): undated CONTACTS, on this guest only. From `CP-15C-SIGNATURE-SUITE-STAGED`, on
+this guest only: the bystander, the three populations, the store names read off the tier profile, the
+settings, the hub rebuild with its index wait, a checkpoint - and no live run, which another agent runs.
+**Every Outlook start NOT elevated** and every step that attaches to Outlook in a `RunLevel Limited` job
+(each printed `run level: Limited - this token is NOT elevated`), every close
+`Testbed/host/Restart-Guest.ps1 -Execute`, every mailbox write through the corpus tool or
+`Add-OutlookPstStore.ps1`. The tools were published from this work's branch (`6d01e72`, the
+contacts option); master had not got it yet. Raw logs: `.work\g1-cp16c\` in the main checkout.
+
+| Step | What ran | Verdict |
+| --- | --- | --- |
+| Restage | `Publish-GuestPayload.ps1` at `6d01e72` on the host, the tools expanded on the guest (the old ones kept as `tools.2b5e2c6`, the server left at `af56efc`'s), ten guest scripts copied | tools `99.99.99.0+6d01e7288f9d46bab8bebd956eac31c18dacfa90`; every script's hash the same on guest and host (`Reset-HubPopulation.ps1` `BFBE3B7B56FB43E5`, `6d01e72`'s; the committed one differs from it in its banner comment alone, rewritten after the run) |
+| Baseline | `Set-OutlookIndexingDisabled.ps1 -Verify -SettleMinutes 1 -MinimumOutlookRows 20000`, Outlook closed | `INDEXED`, 20,059 rows: Corpus A 20,028, tier 16, identity 15 |
+| 1. The bystander | `Start-OutlookUnelevated.ps1 -Profile OutlookAI-Tier`; `Add-OutlookPstStore.ps1 -ProfileName OutlookAI-Tier -DisplayName bystander@vm.invalid -Path C:\OutlookAI-Tier\bystander.pst -Execute`, then `-ListOnly` | `before : Store.DisplayName='Outlook Data File'`, `after : Store.DisplayName='bystander@vm.invalid'`; the tier profile holds 3 stores - `tier@vm.invalid` (`Outlook.pst`), `identity@vm.invalid` (`Outlook Data File - IdentityMint.pst`), `bystander@vm.invalid` (`bystander.pst`) - and 2 accounts. **Not Corpus A**, which only the corpus profile mounts |
+| 2. The corpus profile | `Restart-Guest.ps1`; `Set-DefaultOutlookProfile.ps1 -Name CorpusProfile -Execute`; `Start-OutlookUnelevated.ps1 -Profile CorpusProfile`; the three stores attached by path while empty; `corpus-folders` of all four | every name byte-identical; 4 stores, 0 accounts; hub every default folder, all `items=0`; the bystander `Deleted Items` only; the identity store all but Junk Email, all `items=0`; Corpus A `Inbox 10912`, `Sent Items 4964`, `Deleted Items 2473`, `Junk Email 1663`, `Drafts 0` - its Deleted Items twelve over its plan's 2,461, at `CP-15C` already |
+| 3-5. Builds | `corpus-probe`, `corpus-build` dry, `--execute`: `hub-indexed` 8181 and `bystander-indexed` 8282 with `--undated-contacts`, `identity-indexed` 8383 without | below |
+| 6. After | `corpus-folders` of all four | hub `Inbox 24` (`-Projects 6`, `-Notices 12`), `Sent Items 14`, `Contacts 12`; bystander `OutlookAI-Corpus-Folder-6 172` (`-Projects 40`, `-Suppliers 32`), `OutlookAI-Corpus-Folder-10 42 contacts`, `-5 56`, still no Inbox, Drafts or Junk Email; identity `Inbox 5`, `Sent Items 3`; Corpus A unchanged |
+| 7. The index | `corpus-indexed` for each, `--wait-seconds 900`, Outlook still up NOT elevated; then `-Verify` | each complete at its first ask - below; `INDEXED`, 20,522 rows: bystander 374, tier 97, identity 23, Corpus A 20,028 |
+| 8. Settings | `Restart-Guest.ps1`; `testbed.json`'s section filled from step 1's read; `New-LiveTestSettings.ps1 -VMName OutlookAI-Indexed`; `Copy-ToGuest.ps1` | rendered and admitted - Portable, hub `tier@vm.invalid`, 3 watched, indexed `tier@vm.invalid, bystander@vm.invalid`, bystander `bystander@vm.invalid`, throwaway `throwaway@vm.invalid`, probe term `invoice`, the SF-6 probe on the hub, **no corpus**, the sink on loopback; SHA-256 `BBC18D92A050847B53547A2989569B3EF980C8486DEEDFAA4D1B84034B2697AE` on host and guest |
+| 9. Hub rebuild | `Reset-HubPopulation.ps1 -SelfTest` (Windows PowerShell 5.1), the dry run, then `-Execute` through `Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 3600` | `99 assertion(s), 0 failure(s)`; the dry run's `undated     the hub carries undated CONTACTS (Q98 (f)) - every verb gets --undated-contacts` and `run level   NOT elevated`; `-Execute` below |
+| 10. State | `Restart-Guest.ps1`; the state read; `-Verify` | `outlook processes: 0`, `DefaultProfile: 'OutlookAI-Tier'`, `ImportPRF: ''`; `INDEXED`, 20,524 rows - the tier store's 99 two more than before, the folder rows of the two emptied subfolders the teardown moved into its Deleted Items (section 3b item 7) |
+
+**What the builds printed** - the hub's whole run; the bystander and the identity store printed the same
+lines but their own target folders and counts:
+
+```
+== undated probe ==
+  undated in the INDEX, not the store (Q98 (f)): no delivery-time removal is attempted, and the store's date is reported, not judged - corpus-indexed checks the index
+  contact      folder=True inFolder=True tag=True undated=False tableUndated=False class=True inTargetStore=True
+Undated probe verified for contact: each lands in its own folder of the target store, keeps its tag and its class. ...
+  undated items         : contact=12 - dated in the store, UNDATED in the index (Q98 (f)), for LiveOrderKeyCollationTests on the indexed guest
+Build finished: created 68, already present 0, failed 0, 41,316 body bytes in 00:00:03 (19.4 items/s).
+Census: 68 item(s) found for 68 planned; per folder found/planned: Sent Items=14/14, Inbox=24/24, Contacts=12/12, Inbox/OutlookAI-Corpus-Folder-Projects=6/6, Inbox/OutlookAI-Corpus-Folder-Notices=12/12. Every ordinal exists exactly once, in the folder the plan names.
+Population read-back: 68 of 68 item(s) read; 4 of 4 conversation(s) grouped by the store under one id. ... 12 of them UNDATED IN THE INDEX - the right kind of item; the store gives 12 of them a delivery time Outlook will not remove, which the index does not use for this kind (Q98 (f)) - corpus-indexed checks the index.
+
+bystander (anchor 2026-10-03T06:38:42Z):
+Build finished: created 342, already present 0, failed 0, 263,818 body bytes in 00:00:14 (24.4 items/s).
+Census: 342 item(s) found for 342 planned; per folder found/planned: Sent Items=56/56, Inbox=172/172, Contacts=42/42, Inbox/OutlookAI-Corpus-Folder-Projects=40/40, Inbox/OutlookAI-Corpus-Folder-Suppliers=32/32. ...
+Population read-back: 342 of 342 item(s) read; 6 of 6 conversation(s) grouped by the store under one id. ... 42 of them UNDATED IN THE INDEX ...
+
+identity (anchor 2026-10-03T06:39:44Z):
+Undated probe: this population carries no undated item; nothing to probe.
+Build finished: created 8, already present 0, failed 0, 5,501 body bytes in 00:00:00 (22.3 items/s).
+Census: 8 item(s) found for 8 planned; per folder found/planned: Sent Items=3/3, Inbox=5/5. ...
+
+corpus-indexed:
+[    1 s] Index coverage: 68 of 68 population item(s) indexed (12 of them undated; 12 of those in the index, 12 with no received date); newest planned 2026-10-03T06:36:52Z, newest indexed 2026-10-03T06:36:52Z.
+[    0 s] Index coverage: 342 of 342 population item(s) indexed (42 of them undated; 42 of those in the index, 42 with no received date); newest planned 2026-10-02T06:38:42Z, newest indexed 2026-10-02T06:38:42Z.
+[    0 s] Index coverage: 8 of 8 population item(s) indexed (0 of them undated); newest planned 2026-09-27T23:13:42Z, newest indexed 2026-09-27T23:13:42Z.
+```
+
+No sweep found a probe item in any other store, before the probes, after them or after the teardown. The
+bystander's contacts went into a typed stand-in, `OutlookAI-Corpus-Folder-10`, recorded in its manifest
+(348 lines: the header, 342 items, 5 folders); the hub's into its own Contacts folder.
+
+**The hub rebuild** (`Reset-HubPopulation.ps1 -Execute`, NOT elevated):
+
+```
+  undated     the hub carries undated CONTACTS (Q98 (f)) - every verb gets --undated-contacts
+  run level   NOT elevated - the rebuild's Outlook starts at this level
+=== corpus-teardown ... --anchor 2026-10-03T06:37:52Z --undated-contacts --manifest C:\OutlookAI-Q5\corpus-hub-indexed.jsonl --execute
+Manifest records 68 item(s) and 2 created folder(s).
+Teardown: considered 136, deleted 136, refused by rule 0, already gone 0, failed 0, folders removed 2.
+Post-teardown scan finds 0 corpus item(s) remaining (expected 0).
+=== corpus-build ... --anchor 2026-10-03T06:48:34Z --undated-contacts ... --execute
+Build finished: created 68, already present 0, failed 0, 41,316 body bytes in 00:00:03 (22.6 items/s).
+  OUTLOOK.EXE left 2s after the Quit.
+=== starting Outlook for the live run, on 'OutlookAI-Tier', NOT elevated - this script runs NOT elevated, so directly: ...OUTLOOK.EXE /profile OutlookAI-Tier
+[    0 s] Index coverage: 68 of 68 population item(s) indexed (12 of them undated; 12 of those in the index, 12 with no received date); newest planned 2026-10-03T06:47:34Z, newest indexed 2026-10-03T06:47:34Z.
+The frontier test can catch a local-time misreading until 2026-10-03T08:42:34Z - 110 min from now (115 min on this guest's UTC offset of 02:00:00). START THE RUN NOW, by Testbed/README.md section 4c, with:
+  the opt-in   $env:OUTLOOKAI_LIVE_OPT_IN = 'OAI-INDEXED'
+  the filter   --filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"
+```
+
+| Checkpoint | State |
+| --- | --- |
+| `CP-16C-POPULATIONS-V2` (parent `CP-15C-SIGNATURE-SUITE-STAGED`; taken with the guest running, 2026-10-03 08:55 local) | Outlook not running; default profile `OutlookAI-Tier`; no `ImportPRF`; `INDEXED`, 20,524 rows; the hub at anchor `2026-10-03T06:48:34Z` with its twelve contacts (manifest SHA-256 `7A999122...`, its predecessor in `hub-history\`), the bystander at `06:38:42Z` with its forty-two (`E0D55AFB...`), the identity store at `06:39:44Z` (`EB2F0B06...`); Corpus A untouched (`0BCFA3DA...`, 20,001 lines); the live-test settings staged; the tools from `6d01e72`, the server and the suite still `af56efc`'s |
+
+**For the run, which is not part of this:** the suite on the guest is `af56efc`'s; re-stage it from
+master first (`Testbed/README.md` step 8b). The run starts with step 9a at `-RunLevel Limited` and 9a-ii
+(`Reset-ThrowawayStore.ps1`, never yet run). With no corpus declared, the corpus tests print that they
+have none, and the index tests measure the hub and the bystander - where `LiveOrderKeyCollationTests`
+should now find the 12 and 42 undated rows `corpus-indexed` counted; that run is what shows they do.
+
+**Next, planned and NOT started: Corpus A at 160,000 items** (the decision of 2026-09-24, question E).
+Estimated from tonight's rates: **about 2.5 to 3.5 hours in all**, within the 6-hour bar. The route the
+rules leave (section 2.9): a NEW store, `Corpus A`, created empty in the corpus profile and attached to
+the tier profile by path while still empty, then `corpus-build --count 160000` into it with a fresh
+anchor - not an extension of the 20,000 in `Outlook Data File`, which no script may attach to the tier
+profile now that it holds items, and whose 2026-09-15 anchor has left its 7-day window empty anyway.
+A store that is not the profile's default builds through `PostAsNote` alone: 19-24 items/s tonight on
+the populations' small items (the 2026-09-15 default-store build ran about 36 items/s through
+Drafts-then-Move), so **about 1.8 to 2.2 hours of build**. The index keeps up with an unelevated
+Outlook as it goes (tonight: every population complete at the first ask; the earlier crawl rate about
+2,000 rows a minute, 80 minutes for 160,000 should it lag). The PST grows to about 8.6 GB (Corpus A is
+1.07 GB for 20,000); the guest has 96 GB free, the host 284 GB. Then the settings gain the corpus block
+and the indexed list its third entry, `corpusIdConvention` records the new seed, anchor and 160,000,
+and a checkpoint follows. `TODO.md` carries the steps.
 
 ### 4.3 The build VM - `OutlookAI-Build`, 2026-10-03 (Q94, Q102)
 

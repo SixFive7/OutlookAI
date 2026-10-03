@@ -28,7 +28,15 @@ public sealed record CorpusIndexCoverageReport(
     int DatedMismatched,
     long? ModalMismatchSeconds,
     DateTime? NewestIndexedUtc,
-    DateTime? NewestPlannedUtc);
+    DateTime? NewestPlannedUtc)
+{
+    /// <summary>
+    /// Planned UNDATED ordinals the index returned a row for - with <see cref="UndatedIndexedWithADate"/>,
+    /// how many of the undated rows the order-key tests will actually find undated
+    /// (the indexed guest's contacts, Q98 (f)).
+    /// </summary>
+    public int UndatedIndexed { get; init; }
+}
 
 /// <summary>
 /// Whether the Windows Search index has taken a freshly built population in - the question the
@@ -83,6 +91,7 @@ public static class CorpusIndexCoverage
 
         var missing = new List<int>();
         int undatedPlanned = 0;
+        int undatedIndexed = 0;
         int undatedDated = 0;
         int compared = 0;
         int mismatched = 0;
@@ -109,6 +118,7 @@ public static class CorpusIndexCoverage
 
             if (spec.IsUndated)
             {
+                undatedIndexed++;
                 if (seen.Any(r => r.DateReceivedUtc != null))
                 {
                     undatedDated++;
@@ -149,7 +159,10 @@ public static class CorpusIndexCoverage
             : offsets.OrderByDescending(kv => kv.Value).ThenBy(kv => Math.Abs(kv.Key)).First().Key;
         return new CorpusIndexCoverageReport(
             itemCount, itemCount - missing.Count, missing, undatedPlanned, undatedDated,
-            compared, mismatched, modal, newestIndexed, newestPlanned);
+            compared, mismatched, modal, newestIndexed, newestPlanned)
+        {
+            UndatedIndexed = undatedIndexed,
+        };
     }
 
     /// <summary>Whether the index holds the whole population, and what to print either way.</summary>
@@ -157,8 +170,14 @@ public static class CorpusIndexCoverage
     {
         ArgumentNullException.ThrowIfNull(report);
         CultureInfo invariant = CultureInfo.InvariantCulture;
+        // How many undated rows the index HOLDS undated - the number LiveOrderKeyCollationTests can
+        // measure - said in so many words whenever the population plans any (Q98 (f)).
+        string undatedRows = report.UndatedPlanned == 0
+            ? string.Empty
+            : $"; {report.UndatedIndexed.ToString(invariant)} of those in the index, "
+                + $"{(report.UndatedIndexed - report.UndatedIndexedWithADate).ToString(invariant)} with no received date";
         string head = $"Index coverage: {report.Indexed.ToString(invariant)} of {report.Planned.ToString(invariant)} "
-            + $"population item(s) indexed ({report.UndatedPlanned.ToString(invariant)} of them undated)";
+            + $"population item(s) indexed ({report.UndatedPlanned.ToString(invariant)} of them undated{undatedRows})";
         string newest = report.NewestPlannedUtc == null
             ? string.Empty
             : $"; newest planned {CorpusManifest.FormatUtc(report.NewestPlannedUtc.Value)}, newest indexed "
