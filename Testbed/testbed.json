@@ -50,10 +50,11 @@
         "corpusId": "vm-unindexed",
         "guest": "OutlookAI-Unindexed",
         "indexed": false,
-        "status": "BUILT - 20,000 items, census clean, by the records in Docs/live-tier-on-the-vm.md: section 2.9 (Testbed/guest/Build-Corpus.ps1 run against this guest's existing corpus from checkpoint CP-05-CORPUS-B-CLEAN-UNINDEXED: 'already present 20,000', every ordinal exactly once, in the folder the plan names) and section 4.1a step 5 (Inbox 10,912, Sent Items 4,964, Deleted Items 2,461, Junk Email 1,663). It lives in the corpus profile only; the tier profile does not mount it. The runbook does not record its seed or anchor (Build-Corpus.ps1's own banner quotes the ones that run was given), so seed, anchor and itemCount stay null here - null means NOT RECORDED, not 'not built' (liveTestSettings._blocks). Corrected 2026-09-27; it said 'NOT BUILT - reserved name only'.",
-        "seed": null,
-        "anchor": null,
-        "itemCount": null,
+        "status": "BUILT - 20,000 items, census clean, by the records in Docs/live-tier-on-the-vm.md: section 2.9 (Testbed/guest/Build-Corpus.ps1 run against this guest's existing corpus from checkpoint CP-05-CORPUS-B-CLEAN-UNINDEXED: 'already present 20,000', every ordinal exactly once, in the folder the plan names) and section 4.1a step 5 (Inbox 10,912, Sent Items 4,964, Deleted Items 2,461, Junk Email 1,663). It lives in the corpus profile only; the tier profile does not mount it. Corrected 2026-09-27; it said 'NOT BUILT - reserved name only'.",
+        "seed": 7777,
+        "anchor": "2026-09-16",
+        "itemCount": 20000,
+        "_filled": "FILLED 2026-10-03 (Q101 item 4) from the corpus's own build record on the guest, read-only: C:\\OutlookAI-Q5\\corpus-vm-unindexed.jsonl on OutlookAI-Unindexed, as checkpoint CP-11B-SIGNATURE-SDK-SUITE holds it (written 2026-09-16 02:05:51 guest time, 2,927,845 bytes, SHA-256 B7373BA01976DE0BCF151915A9731661CB342E3181C1942DC26901D1563DEF0D). Its header line: Version 1, CorpusId vm-unindexed, Seed 7777, AnchorUtc 2026-09-16T00:00:00Z, the default shape key, store 'Outlook Data File' at C:\\OutlookAI-Tier\\Outlook Data File - CorpusProfile.pst, PlacementMethod DraftsThenMoveWithSentFlag, DateWriteMethod PropertyAccessorDates. The header carries no count: itemCount is its 20,000 item lines, ordinals 1 to 20,000, each exactly once. Until then these three were null - not recorded (liveTestSettings._blocks). Docs/live-tier-on-the-vm.md section 2.9.",
         "_note": "Corpus B: the degraded path, no index frontier, the seven-day fallback window and the sweep and frame measurements."
       }
     ],
@@ -74,7 +75,7 @@
   },
 
   "expectedPlan": {
-    "_note": "What 'corpus-plan' prints for the four parameters in the 'corpus' block - NOT for anything in 'corpusIdConvention', whose corpora have no plan recorded here (the two guests' corpora exist, but nobody has read their parameters off their manifests). Committed so a rebuilder can tell a correct rebuild from a subtly different one without having the old store to compare against. check-testbed-references.ps1 does not recompute these - running the tool needs a toolchain - but Testbed/guest/Build-Corpus.ps1 prints them beside the live plan.",
+    "_note": "What 'corpus-plan' prints for the four parameters in the 'corpus' block - NOT for anything in 'corpusIdConvention', whose corpora have no plan recorded here (the two guests' corpora exist; Corpus B's seed, anchor and itemCount were read off its manifest on 2026-10-03 and are recorded there, Corpus A's have not been read). Committed so a rebuilder can tell a correct rebuild from a subtly different one without having the old store to compare against. check-testbed-references.ps1 does not recompute these - running the tool needs a toolchain - but Testbed/guest/Build-Corpus.ps1 prints them beside the live plan.",
     "bodyBytesTotal": 225282619,
     "bodyBytesMean": 11264,
     "bodiesOver24KB": 1428,
@@ -180,7 +181,7 @@
     },
 
     "OutlookAI-Unindexed": {
-      "_readOffTheGuest": "READ, NOT TYPED: every store name below is what Outlook reported over COM in the TIER profile on OAI-UNINDEXED, 2026-09-24 18:20, after the step-6 populations (Docs/live-tier-on-the-vm.md section 4.1): exactly three stores - tier@vm.invalid (C:\\OutlookAI-Tier\\Outlook.pst, the tier account's delivery store), identity@vm.invalid (identity.pst, the identity account's) and bystander@vm.invalid (bystander.pst, no account). The identity store is watched and deliberately NOT a bystander (section 2.8b). corpus is null because this tier profile does not mount Corpus B - it lives in CorpusProfile only - and corpusIdConvention does not hold vm-unindexed's seed, anchor and itemCount. mailSink is filled because Testbed/guest/Install-MailSink.ps1 reported SINK-READY on this guest the same day, loopback, on its default ports.",
+      "_readOffTheGuest": "READ, NOT TYPED: every store name below is what Outlook reported over COM in the TIER profile on OAI-UNINDEXED, 2026-09-24 18:20, after the step-6 populations (Docs/live-tier-on-the-vm.md section 4.1): exactly three stores - tier@vm.invalid (C:\\OutlookAI-Tier\\Outlook.pst, the tier account's delivery store), identity@vm.invalid (identity.pst, the identity account's) and bystander@vm.invalid (bystander.pst, no account). The identity store is watched and deliberately NOT a bystander (section 2.8b). corpus is null because this tier profile does not mount Corpus B - it lives in CorpusProfile only. (corpusIdConvention has held vm-unindexed's seed, anchor and itemCount since 2026-10-03, read off its manifest; that alone does not declare it here.) mailSink is filled because Testbed/guest/Install-MailSink.ps1 reported SINK-READY on this guest the same day, loopback, on its default ports.",
       "machineProfile": "Portable",
       "testHubStoreDisplayName": "tier@vm.invalid",
       "hubPopulationManifestPath": "C:\\OutlookAI-Q5\\corpus-hub-unindexed.jsonl",
