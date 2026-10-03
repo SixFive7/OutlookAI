@@ -39,6 +39,7 @@ using OutlookAI.RemediationTools;
 ///       band, and how many items each measurement window selects. No Outlook.
 ///
 ///   corpus-probe    --store ... --allow-store ... --corpus-id ... --seed N --anchor ...
+///                   [--population ... --undated-index-wait N]
 ///       Settles two things empirically, by writing throwaway items and reading them back,
 ///       and deletes every probe it creates. PLACEMENT first: whether an item can be made to
 ///       live in the folder the plan names and appear in that folder's table, which is what
@@ -544,6 +545,8 @@ internal static class Program
         Console.WriteLine("          its count is fixed (--count optional), --store is required even by corpus-plan,");
         Console.WriteLine("          and every verb that reads its manifest needs the same --population");
         Console.WriteLine("Indexed:  corpus-indexed --population ... [--manifest <path>] [--wait-seconds <n>]   (read-only, no Outlook)");
+        Console.WriteLine("          corpus-probe --population ... --undated-index-wait <n>   holds each undated probe item up to");
+        Console.WriteLine("          n s and prints the index's columns for it before deleting it (a NOT elevated Outlook must run)");
         Console.WriteLine("Folders:  corpus-folders --store <name> --allow-store <name>   (read-only: default folders + visible tree)");
         Console.WriteLine("Verify:   --count <n> --manifest <path> [--window <days> (repeatable)]   (pure - no Outlook)");
         Console.WriteLine("Stale:    rebuild - corpus-teardown --execute (or delete the .pst), then corpus-build");

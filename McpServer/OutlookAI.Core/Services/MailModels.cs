@@ -1707,6 +1707,41 @@ namespace OutlookAI.Core.Services
         /// not probed - never guessed.
         /// </summary>
         public bool? InLocalIndex { get; set; }
+
+        /// <summary>
+        /// How the store was tied to its slice of the index (Q92/Q99): <c>storeHash</c> - the
+        /// index store's <c>($hash)</c> is the one Microsoft's algorithm gives this store, so no
+        /// name was involved; <c>displayName</c> - the hash did not decide (an Exchange, IMAP or
+        /// other store whose hash input is unmeasured, or a hash claimed twice - see
+        /// <see cref="MatchNote"/>) and the name rule used before found an index store of this
+        /// name; <c>delegateFolder</c> - a delegate store, looked for under its owner's
+        /// <c>/1/</c> subtree; <c>none</c> - nothing in the index is this store's (for a PST
+        /// that is final: no index store carries its hash). Null when the store list came from
+        /// the index alone (Outlook not running), as before this existed.
+        /// </summary>
+        public string? MatchedBy { get; set; }
+
+        /// <summary>
+        /// For <c>storeHash</c>: which documented input's hash the index carries - <c>entryId</c>
+        /// (every non-Exchange store), <c>profileMappingSignature</c>, <c>mappingSignature</c> or
+        /// <c>entryIdAndPath</c> (the cached-Exchange inputs). On an Exchange profile this is
+        /// the first measurement of which input Outlook used.
+        /// </summary>
+        public string? MatchedInput { get; set; }
+
+        /// <summary>
+        /// The store's segment in the index - its own name and hash, <c>name($hash)</c> - when it
+        /// was tied to one. The name is the store's OWN (its root folder's), which can differ from
+        /// <see cref="Store"/>, the name its profile gives it.
+        /// </summary>
+        public string? IndexStore { get; set; }
+
+        /// <summary>
+        /// Why a hash that was present could not be used - two stores claiming one index store,
+        /// or one store's hash on two index stores - when that happened; the store then took the
+        /// name rule.
+        /// </summary>
+        public string? MatchNote { get; set; }
     }
 
     /// <summary>Account view for list_accounts.</summary>
@@ -2467,6 +2502,17 @@ namespace OutlookAI.Core.Services
 
         /// <summary>Per-store newest-indexed timestamps (absent when the index is unreachable).</summary>
         public IReadOnlyList<StoreStaleness>? PerStore { get; set; }
+
+        /// <summary>
+        /// Stores the index holds that no store of this Outlook profile is - claimed by no store's
+        /// hash, and not the one a store the hash did not decide was found under by name: stores
+        /// of the user's OTHER Outlook profiles (one Windows user has one index for all of them)
+        /// and stores moved or removed since their rows were pushed. Their segments,
+        /// <c>name($hash)</c>. A store-scoped search never reaches them; an unscoped search is
+        /// not scoped by store and still can, as it always could. Null when no store map could
+        /// be built (Outlook not running).
+        /// </summary>
+        public IReadOnlyList<string>? StoresNotInProfile { get; set; }
 
         /// <summary>WSearch service start mode from the registry: automatic|manual|disabled|unknown.</summary>
         public string WSearchStartMode { get; set; } = "unknown";

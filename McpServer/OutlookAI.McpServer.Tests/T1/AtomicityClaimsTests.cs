@@ -461,6 +461,179 @@ public sealed class AtomicityClaimsTests
         Assert.Contains("WHETHER THE DRAFT WAS DELETED IS UNKNOWN", refusal.Message, StringComparison.Ordinal);
     }
 
+    // ---------------------------------------------------------------- Q96: what a failed draft call may claim
+
+    [Fact]
+    public void ANewDraftWhoseDraftsLookupFailed_SaysNoDraftWasCreated_NotThatOneMayHaveBeenSaved()
+    {
+        // Q96 (iii). The Drafts lookup comes before Outlook is given anything to save, so "a
+        // draft may have been saved - check Drafts before retrying" was a claim that cannot be
+        // true there. What is known is said instead: no draft, and - the lookup's own re-check
+        // having found the top level as it was - no folder either.
+        RecordingSession session = new RecordingSession
+        {
+            CreateRefusal = ComErrorTokens.With(ComErrorTokens.DraftsFolderUnavailable, "COMException 0x80004005"),
+        };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
+            () => service.NewDraft("me@example.com", "them@example.com", null, "A subject", "body", display: false));
+
+        Assert.Equal(MutationOutcome.Unchanged, failure.Outcome);
+        Assert.Contains("NO DRAFT WAS CREATED", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("COMException 0x80004005", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("me@example.com", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("No folder was created either", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("MAY HAVE BEEN SAVED", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("check Drafts", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(failure.CreatedFolders);
+    }
+
+    [Fact]
+    public void ANewDraftWhoseDraftsLookupMadeTheFolderThenFailed_ReportsIt_InTheFieldAndTheSentence()
+    {
+        // Q96 (ii): the re-check found the folder the failed call made, and it travels exactly as
+        // a folder made on any other failure does - and "no folder was created" is not said.
+        RecordingSession session = new RecordingSession
+        {
+            CreateRefusal = ComErrorTokens.With(ComErrorTokens.DraftsFolderUnavailable, "COMException 0x80004005"),
+            CreatedFolder = MadeDrafts,
+        };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
+            () => service.NewDraft("me@example.com", "them@example.com", null, "A subject", "body", display: false));
+
+        Assert.Equal(MutationOutcome.Unchanged, failure.Outcome);
+        Assert.Equal(new[] { MadeDrafts }, failure.CreatedFolders);
+        Assert.Contains("NO DRAFT WAS CREATED", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("CREATED before this failed", failure.Message, StringComparison.Ordinal);
+        Assert.Contains(MadeDrafts, failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("No folder was created", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ANewDraftWhoseDraftsLookupCouldNotBeReChecked_SaysItCouldNotTell_AndClaimsNoFolder()
+    {
+        // Never claim what cannot be proven, in either direction: not "created", and not
+        // "nothing was created" either.
+        RecordingSession session = new RecordingSession
+        {
+            CreateRefusal = ComErrorTokens.With(ComErrorTokens.DraftsFolderCreationUnverified, "COMException 0x800706BA"),
+        };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
+            () => service.NewDraft("me@example.com", "them@example.com", null, "A subject", "body", display: false));
+
+        Assert.Equal(MutationOutcome.Unchanged, failure.Outcome);
+        Assert.Contains("NO DRAFT WAS CREATED", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("could NOT be checked", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("No folder was created", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("CREATED before this failed", failure.Message, StringComparison.Ordinal);
+        Assert.Null(failure.CreatedFolders);
+    }
+
+    [Theory]
+    [InlineData("new")]
+    [InlineData("reply")]
+    [InlineData("forward")]
+    public void ADraftThatFailedBeforeTheCompose_SaysNoDraftWasSaved(string tool)
+    {
+        // Q96 (iii), "check the other draft tools for the same wording": Reply()/Forward()
+        // failing, or the account pin, came before anything that can save a draft, and the
+        // reply and forward tools said "a draft may have been saved" over it too.
+        RecordingSession session = new RecordingSession
+        {
+            CreateRefusal = ComErrorTokens.With(ComErrorTokens.DraftNotStarted, "COMException 0x80004005"),
+        };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(() =>
+        {
+            _ = tool switch
+            {
+                "new" => service.NewDraft("me@example.com", "them@example.com", null, "A subject", "body", display: false),
+                "reply" => service.ReplyDraft(ItemId, "body", display: false),
+                _ => service.ForwardDraft(ItemId, "body", "them@example.com", display: false),
+            };
+        });
+
+        Assert.Equal(MutationOutcome.Unchanged, failure.Outcome);
+        Assert.Contains("NO DRAFT WAS SAVED", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("COMException 0x80004005", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("MAY HAVE BEEN SAVED", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ALREADY SAVED", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ANewDraftThatFailedBeforeTheCompose_AfterItsLookupMadeTheFolder_StillNamesTheFolder()
+    {
+        // No draft, and still a folder: the lookup succeeded, made Drafts, and the next step
+        // failed. "No draft was saved" must not swallow the residue sentence.
+        RecordingSession session = new RecordingSession
+        {
+            CreateRefusal = ComErrorTokens.With(ComErrorTokens.DraftNotStarted, "COMException 0x80004005"),
+            CreatedFolder = MadeDrafts,
+        };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
+            () => service.NewDraft("me@example.com", "them@example.com", null, "A subject", "body", display: false));
+
+        Assert.Equal(new[] { MadeDrafts }, failure.CreatedFolders);
+        Assert.Contains("NO DRAFT WAS SAVED", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("CREATED before this failed", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AFailedLookupThatMadeTwoFolders_ReportsBoth()
+    {
+        // With no folder handed back, the re-check reports every folder that appeared; the
+        // contract carries a list for exactly this, and the failure keeps both.
+        RecordingSession session = new RecordingSession
+        {
+            CreateRefusal = ComErrorTokens.With(ComErrorTokens.DraftsFolderUnavailable, "COMException 0x80004005"),
+            CreatedFolder = MadeDrafts,
+            AlsoCreatedFolder = "tier@vm.invalid/Junk Email",
+        };
+        using MailService service = new MailService(new DirectGateway(session.AsSession));
+
+        OperationOutcomeException failure = Assert.Throws<OperationOutcomeException>(
+            () => service.NewDraft("me@example.com", "them@example.com", null, "A subject", "body", display: false));
+
+        Assert.Equal(new[] { MadeDrafts, "tier@vm.invalid/Junk Email" }, failure.CreatedFolders);
+        Assert.Contains("2 folders were CREATED before this failed", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(ComErrorTokens.DraftNotStarted)]
+    [InlineData(ComErrorTokens.DraftsFolderUnavailable)]
+    [InlineData(ComErrorTokens.DraftsFolderCreationUnverified)]
+    public void TheDraftTokens_RoundTrip_AndNeverMatchEachOtherOrTheRetryToken(string token)
+    {
+        string written = ComErrorTokens.With(token, "COMException 0x80004005");
+
+        Assert.True(ComErrorTokens.TryRead(written, token, out string detail));
+        Assert.Equal("COMException 0x80004005", detail);
+        Assert.True(ComErrorTokens.TryRead(token, token, out string bare));
+        Assert.Equal("unknown", bare);
+        foreach (string other in new[] { ComErrorTokens.DraftNotStarted, ComErrorTokens.DraftsFolderUnavailable, ComErrorTokens.DraftsFolderCreationUnverified, ComErrorTokens.ItemNotFound })
+        {
+            if (other != token)
+            {
+                Assert.False(ComErrorTokens.TryRead(written, other, out _), token + " was read as " + other);
+            }
+        }
+
+        // The cross-store retry keys on ItemNotFound by exact match; a draft token must never
+        // look like "the item was not opened", or a failure after a draft was made would fan out.
+        Assert.NotEqual(ComErrorTokens.ItemNotFound, written);
+        Assert.False(ComErrorTokens.TryRead(token + "X:detail", token, out _));
+        Assert.False(ComErrorTokens.TryRead(null, token, out _));
+        Assert.False(ComErrorTokens.TryRead("COMException 0x80004005", token, out _));
+    }
+
     [Fact]
     public void TheErrorPayload_CarriesCreatedFolders_OnlyWhenAFolderWasMade()
     {
@@ -640,9 +813,9 @@ public sealed class AtomicityClaimsTests
     [Fact]
     public void ADerivedDraftWhoseSourceWasNeverOpened_ProvesNothingWasCreated()
     {
-        // ItemNotFound is set at GetItemFromID and nowhere else, so it is the one derived-draft
-        // failure that really does prove the negative. Everything else wraps a sequence that
-        // has already saved a draft by the time it can fail.
+        // ItemNotFound is set at GetItemFromID and nowhere else, so it proves the negative - and
+        // since Q96 (iii) it is not the only one: DraftNotStarted marks every failure before the
+        // compose. Everything after that may have saved a draft by the time it fails.
         RecordingSession session = new RecordingSession { CreateRefusal = ComErrorTokens.ItemNotFound };
         using MailService service = new MailService(new DirectGateway(session.AsSession));
 
@@ -903,6 +1076,16 @@ public sealed class AtomicityClaimsTests
         /// <summary>The folder the draft/discard call reports CREATING (Q85), in the COM layer's <c>store/path</c> form.</summary>
         internal string? CreatedFolder { get; set; }
 
+        /// <summary>A second folder the same call reports - what a failed lookup's re-check can find (Q96 (ii)).</summary>
+        internal string? AlsoCreatedFolder { get; set; }
+
+        /// <summary>The <c>createdFolders</c> out parameter as the COM layer fills it: null when nothing was made.</summary>
+        private IReadOnlyList<string>? CreatedFolders()
+        {
+            List<string> made = new[] { CreatedFolder, AlsoCreatedFolder }.Where(f => f != null).Select(f => f!).ToList();
+            return made.Count > 0 ? made : null;
+        }
+
         private static ComDraftInfo Snapshot()
         {
             return new ComDraftInfo(
@@ -920,7 +1103,7 @@ public sealed class AtomicityClaimsTests
                 case nameof(IOutlookSession.TryCreateNewDraft):
                 case nameof(IOutlookSession.TryCreateDerivedDraft):
                     SetOut(method, args, "savedDraftEntryId", SavedDraftEntryId);
-                    SetOut(method, args, "createdFolder", CreatedFolder);
+                    SetOut(method, args, "createdFolders", CreatedFolders());
                     if (CreateRefusal != null)
                     {
                         SetOut(method, args, "error", CreateRefusal);
@@ -930,7 +1113,7 @@ public sealed class AtomicityClaimsTests
                     return new ComDraftCreateResult(Snapshot(), true, false, 0, 0, false, null, false);
 
                 case nameof(IOutlookSession.TryDiscardDraft):
-                    SetOut(method, args, "createdFolder", CreatedFolder);
+                    SetOut(method, args, "createdFolders", CreatedFolders());
                     if (DiscardRefusal != null)
                     {
                         SetOut(method, args, "error", DiscardRefusal);

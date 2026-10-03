@@ -380,6 +380,24 @@ namespace OutlookAI.Core.IndexSearch
                 + " System.ItemUrl FROM SystemIndex WHERE System.Kind='email'";
         }
 
+        /// <summary>
+        /// Statement listing the store roots one Windows user's index holds: a SHALLOW traversal
+        /// (<c>DIRECTORY</c>) of the user's MAPI root, <c>mapi16://{SID}/</c>, which returns
+        /// exactly one row per store - <c>mapi16://{SID}/&lt;name&gt;($hash)</c> - whatever the
+        /// store holds (Q92/Q99: 2-3 ms on a 20,000-row index, stores without a single mail item
+        /// included). It replaces sampling mail rows, which a big store dominates: the 2000-row
+        /// sample saw one of three stores on the test guest, every time.
+        /// <para>
+        /// Microsoft documents DIRECTORY as "a shallow traversal of only the folder specified"
+        /// and the URL grammar as <c>Mapi://SID/StoreDisplayName ($HashNumber)/...</c>, so the
+        /// children of the SID root are the stores by construction.
+        /// </para>
+        /// </summary>
+        public static string BuildStoreRootListing(string userRoot)
+        {
+            return "SELECT System.ItemUrl FROM SystemIndex WHERE DIRECTORY='" + ValidateScope(userRoot) + "'";
+        }
+
         /// <summary>Statement probing whether any item exists under a scope (TOP 1, URL only).</summary>
         public static string BuildScopeExistenceProbe(string scope)
         {

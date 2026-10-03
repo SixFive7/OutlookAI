@@ -1,5 +1,37 @@
 # TODO
 
+- [ ] **Read which store-hash input Outlook uses for a cached Exchange store - the one half of Q99
+  no test machine can measure.** The product now finds each store in the search index by Microsoft's
+  store hash (`McpServer/README.md` load-bearing fact 16). For a PST that is measured; for a cached
+  Exchange store Microsoft documents the input (the profile's `PR_MAPPING_SIGNATURE`) and the product
+  computes it, plus the store's own signature and the entry-ID-plus-`.ost` variant, but no guest can
+  have Exchange, and agents never query the maintainer's Outlook. His own first `outlook_health` on a
+  build with Q99 (a release, or a dev build put on through `Tools/Switch-AddInBuild.ps1` when he asks)
+  answers it, read-only: each Exchange row's `matchedBy` and `matchedInput`. `storeHash` with an input
+  settles which one; `displayName` means no documented input matched and the store is still found by
+  its name, exactly as before - then look at why. Delegate rows stay `delegateFolder` either way.
+
+- [ ] **Decide what an UNSCOPED search does with hits from another Outlook profile's stores (Q99
+  finding).** One Windows user has one search index for all of their Outlook profiles, so a search
+  without `store` returns index hits from every profile - measured on `OutlookAI-Indexed`, where the
+  tier profile's unscoped search returned the corpus store of `CorpusProfile`, under the name
+  `Outlook Data File` that the tier profile's own store also had (`Docs/live-tier-on-the-vm.md`
+  section 8 item 24). Such a hit cannot be opened from the open profile. Unchanged by Q99, and harmless
+  on a one-profile machine. Directions: (1) leave it, and document it; (2) FLAG such hits from the
+  store map (a hit whose store root no store of this profile claimed); (3) DROP them; (4) scope an
+  unscoped search to this profile's roots. Recommended: (2) once the Exchange half above is measured -
+  until then a root the hash did not tie may still be this profile's own Exchange store, so (2), (3)
+  and (4) would misjudge exactly the stores whose input is unmeasured.
+
+- [ ] **Check whether a FOLDER name with `% / \ * ?` in it can be searched by folder (Q99 finding).**
+  Microsoft's MAPI-URL page lists those five characters as percent-encoded in an index URL, and a
+  STORE name is - measured: `q99 50% off*?x` is filed as `q99 50%25 off%2A%3Fx`. The store half of a
+  scope now comes from the index's own listing, so it is spelled right; the folder half is still the
+  raw name (`FolderScopeResolver.ForPrimaryStore`: `storePrefix + "/0/" + folder`). So a folder named
+  `50% off` would be scoped as `.../0/50% off` against an index that may spell it `.../0/50%25 off`.
+  Not measured for folders. Measure it on a guest (a folder of that name, one item, a folder-scoped
+  search); if the index encodes it, encode the folder segments the same way when building the scope.
+
 - [ ] **Put a release candidate's MCP server in front of one session on the workstation, without installing it.**
   The manual pre-release checks (`Docs/release-manual-checks.md`, Q74 D2) exercise the Exchange-only
   write paths through the MCP server, by hand, on the maintainer's own profile - and nothing can put a

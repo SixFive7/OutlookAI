@@ -234,6 +234,84 @@ every script self-test in about 4 minutes. Decided along the way:
   measurement gate's suite timings now come from the VM, so the next release run sets a new
   baseline rather than comparing with the workstation's.
 
+### D54-D61 - Q99: matching stores to the index by Microsoft's store hash
+Built, because a correct and deterministic method exists for PSTs (your condition): every index URL
+is `mapi16://{SID}/<own name>($hash)/...`, and `$hash` is Microsoft's documented store hash of the
+store's `PR_ENTRYID` (= `Store.StoreID`); measured on 11 PSTs (Unicode, ANSI, renamed, copied,
+re-keyed, one PST in two profiles, after a catalog reset, a leading-zero hash, `% * ?` in a name,
+an empty decoy). End to end on the indexed guest, the OLD server answered a search scoped to an
+empty store named `Outlook Data File` with 3 hits from ANOTHER profile's corpus, reported as live;
+the new one searches the right root and returns none. Build VM: 3,408 / 0 / 0 on its branch.
+- **D54 - Scope:** only a PST is declared "not indexed" by a missing hash - only PSTs are measured,
+  so nothing can get worse for Exchange. *Alternatives:* the hash rule everywhere; the name rule only.
+- **D55 - What counts as a PST:** not Exchange, a `.pst` path, and a readable store ID; IMAP and
+  Outlook.com `.ost` stores keep the name rule.
+- **D56 - Exchange:** every documented hash input is tried (the profile section's mapping
+  signature, read-only from HKCU; the store's own; the entry ID; the entry ID plus the `.ost` path).
+  A single unambiguous match is used and reported in `outlook_health` as `matchedInput`; otherwise
+  today's name rule applies, reported as `matchedBy: displayName`. Your first run on your own
+  profile is the measurement.
+- **D57 - A hash claimed twice** is refused and falls back to the name rule (reason in `matchNote`)
+  rather than guessed - guessing risks the wrong mail.
+- **D58 - Health rows:** `perStore` lists this profile's stores under Outlook's names with
+  `matchedBy`, `matchedInput`, `indexStore`, `matchNote`; other profiles' stores move to a new
+  `storesNotInProfile`; an empty-but-indexed store is no longer reported as "holding nothing".
+- **D59 - The old catalog is kept unchanged as the fallback**, so the name rule behaves byte for
+  byte as before wherever the hash cannot decide.
+- **D60 - Search hits carry Outlook's store name** when the map ties them, so the name in results is
+  the one the other tools accept.
+- **D61 - Q99's three follow-up questions, answered with their recommendations** (all in `TODO.md`):
+  (1) which hash input a cached Exchange store uses - read it from your own `outlook_health` once a
+  build with this change runs on your profile (free, read-only); (2) what an unscoped search should
+  do with another profile's hits (one Windows user has one index across all profiles) - flag them,
+  but only after (1) is answered; (3) whether folders with `% / \ * ?` in their names can be
+  searched by folder - measure on a guest first, then encode if needed.
+
+### D62 - Q98 (f): contacts are the undated rows; build them on the indexed guest only
+- **Measured tonight on the indexed guest** (scratch PSTs, Unicode and ANSI): an appointment and a
+  task get `System.Message.DateReceived` = their creation time; a contact gets **NULL**.
+- **Chosen.** Include undated **contacts only**, and only on `OutlookAI-Indexed` - the three
+  order-key tests that need undated rows are `Requires=SearchIndex`, so they run only there.
+  Appointments and tasks are left out: indexed as dated at build time, they would become the hub's
+  newest rows and break the frontier design.
+- **Alternatives:** all three kinds; none (the tests keep printing `PROVED NOTHING`).
+- **Undo.** Build without the new plan option.
+
+### D63-D73 - Q96: folder-creation reporting, finished
+Merged as `a0f6310` (build VM: 3,456 / 0 / 0, 21 self-tests). The live proof is pending the first
+guest run with the new throwaway data file (runbook §8 item 25).
+- **D63 - After a failed creating call, compare the top-level folder lists before and after**, rather
+  than re-reading only the official Drafts/Deleted Items slot - it also catches a folder Outlook made
+  but did not register. Unreadable listings mean "unverified", never a claim.
+- **D64 - `createdFolders` is a list**, because a failed call can leave more than one folder.
+- **D65 - A failed Drafts lookup is outcome `unchanged`** (new tokens `DraftsFolderUnavailable`,
+  `DraftsFolderCreationUnverified`, `DraftNotStarted`): no draft can exist before the compose step.
+  "A DRAFT MAY HAVE BEEN SAVED" now appears only after the compose has started, where it is true.
+- **D66 - The live proof uses `reply_draft`, not `new_draft`:** new drafts file into an account's
+  mailbox, and no account delivers into the throwaway data file.
+- **D67 - The reply's source is a tagged post saved in the throwaway's Deleted Items**: a post's first
+  save stays in that file (a mail's would land in the default mailbox's Drafts).
+- **D68 - The throwaway file is not watched by the mail-loss tripwire or the sweep**: the proof
+  creates a folder there on purpose; the test proves its own clean end by EntryID instead.
+- **D69 - The new settings field `throwawayStoreDisplayName` is optional for the loader but required
+  by the renderer**, value `throwaway@vm.invalid`; without it the test prints `PROVED NOTHING`.
+- **D70 - A separate script, `Reset-ThrowawayStore.ps1`** (run step 9a-ii), not a bigger
+  `Reset-HubPopulation.ps1`; it detaches only `throwaway-*.pst` files in its own folder, uses a new
+  file name each run (Outlook can hold a detached file until it restarts), and refuses if Outlook
+  is not running or the session is elevated.
+- **D71 - Q96's four follow-up questions, answered with their recommendations and being
+  implemented:** (1) report CREATED only for a new folder that now holds the slot that was asked for,
+  anything else as "appeared while the call ran" (a syncing IMAP store could otherwise be
+  misreported); (2) compare folder lists on success too, but in the live test only, to measure
+  whether the product needs it; (3) where Outlook registers a Drafts folder it creates in a data
+  file with no Inbox - wait for the item-25 run, then widen the non-creating lookup if it is blind;
+  (4) give `discard_draft` a "delete started" marker, so a failure before the delete says the draft
+  was NOT deleted, outcome `unchanged`.
+- **D72 - A CHANGELOG entry for the live-proof machinery**, following the Unreleased section's habit.
+- **D73 - Noted, not changed:** `LiveMailServiceTests.ListAccounts_ExactAccountsDelegatesAndFlags`
+  asserts an exact store count; it needs a delegate store so it never runs on a test machine today,
+  but if it ever does, the throwaway store will break that count.
+
 ## Open questions only you can answer
 
 ### Q104 - Seven tagged test leftovers in your workstation's hub mailbox
@@ -335,7 +413,28 @@ the add-in and were left unchanged). The split adds a new row 7c for the first r
 - The build VM sat running with 6 GB from 02:35Z to 05:30Z across the session limit, after a
   deliberate kill test; the watcher (D50) now prevents that.
 
+### V11 - Q99: test runs on the workstation before the rules reached it
+Before the host-test and build-VM instructions arrived, the Q99 agent ran the full non-live suite
+on the workstation twice (01:09Z, before Q86's isolation, so its write-path tests appended lines to
+the real audit log since renamed; and 05:51Z), plus mutation and targeted runs. One targeted filter
+lacked `Category!=Live` and selected 4 live tests, which all refused at the opt-in check - nothing
+touched a mailbox.
+
+### V12 - Q96: test runs on the workstation before the rules reached it
+Before Q86 was merged, the Q96 agent's workstation test runs (02:21Z-02:27Z) appended about 149
+fake-ID lines to the real audit log; they are the last lines of the now-renamed
+`audit.until-2026-10-03.log`, and nothing has been written there since. It also ran one script
+self-test on the workstation before the build-VM rule reached it.
+
 ## Notes (no decision needed)
+
+- **Script self-tests now run only under Windows PowerShell 5.1** (on the build VM), so nothing
+  exercises them under PowerShell 7 any more; and the build VM's summary does not report compiler
+  warnings, so "0 warnings" still needs a workstation build.
+
+- **An ANSI PST's `Store.DisplayName` comes back one character short**, so a name lookup cannot find
+  it at all (Q99 finding); and `IsInstantSearchEnabled` read False for an ANSI store whose items were
+  indexed, so it is not a reliable signal.
 
 - **Both Outlook test guests also have dynamic memory with a 1 TB ceiling**, and their records do
   not say so (read only, nothing changed).

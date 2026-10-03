@@ -164,6 +164,12 @@
 .PARAMETER Path
     Where the .pst is, or goes. AddStoreEx creates the file; the DIRECTORY must already exist.
 
+.PARAMETER Format
+    The file format AddStoreEx creates a NEW .pst in: Unicode (the default, olStoreUnicode) or Ansi
+    (olStoreANSI, the Outlook 97-2002 format, capped at 2 GB). It decides nothing for a file that
+    already exists. Ansi exists for Q99 (2026-10-03), which measured how the Windows Search index
+    keys an ANSI store; every store this testbed builds is Unicode.
+
 .PARAMETER ListOnly
     Report the current profile's stores and account count over COM, and change nothing.
 
@@ -183,6 +189,7 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Add')] [string] $ProfileName,
     [Parameter(Mandatory = $true, ParameterSetName = 'Add')] [string] $DisplayName,
     [Parameter(Mandatory = $true, ParameterSetName = 'Add')] [string] $Path,
+    [Parameter(ParameterSetName = 'Add')] [ValidateSet('Unicode', 'Ansi')] [string] $Format = 'Unicode',
     [Parameter(Mandatory = $true, ParameterSetName = 'List')] [switch] $ListOnly,
     [Parameter(Mandatory = $true, ParameterSetName = 'SelfTest')] [switch] $SelfTest,
     [string[]] $ExpectedUser = @('vmadmin'),
@@ -196,6 +203,10 @@ $ErrorActionPreference = 'Stop'
 # a good idea at all.
 $script:OlStoreUnicode = 2
 
+# olStoreANSI - only ever by -Format Ansi, for the Q99 measurement of how the index keys an ANSI
+# store. Outlook still creates and opens these; they are capped at 2 GB.
+$script:OlStoreAnsi = 3
+
 # How long to let the rename settle before re-reading the store. Rename-OutlookStore.ps1 uses the
 # same two seconds, and that is the run this route's evidence comes from.
 $script:RenameSettleSeconds = 2
@@ -204,6 +215,18 @@ $script:RenameSettleSeconds = 2
 # PURE DECISIONS. No COM, no registry, no files, no output. Everything this script decides is
 # decided here, so -SelfTest can decide it too without a guest.
 # =============================================================================================
+
+<#
+    The OlStoreType that NameSpace.AddStoreEx is given for -Format: Unicode (2) unless Ansi (3) was
+    asked for by name. Anything else - including nothing - is Unicode, the format every store this
+    testbed builds is in.
+#>
+function Get-AddStoreExType {
+    param([string] $Format)
+
+    if ($Format -ceq 'Ansi') { return $script:OlStoreAnsi }
+    return $script:OlStoreUnicode
+}
 
 <#
     Whether a string is usable as a store display name. Returns the refusal text, or $null.
@@ -484,6 +507,11 @@ function Invoke-SelfTest {
     $listing = Format-StoreListing -Stores $null -ProfileName 'Empty' -AccountCount $null
     Test-Case 'a null store list does not throw' '  <none>' $listing[1]
 
+    Test-Case '-Format Unicode is AddStoreEx type 2 (olStoreUnicode)' 2 (Get-AddStoreExType -Format 'Unicode')
+    Test-Case '-Format Ansi is AddStoreEx type 3 (olStoreANSI)' 3 (Get-AddStoreExType -Format 'Ansi')
+    Test-Case 'no -Format is Unicode' 2 (Get-AddStoreExType -Format '')
+    Test-Case 'only the exact word Ansi asks for ANSI' 2 (Get-AddStoreExType -Format 'ansi ')
+
     Write-Host ''
     Write-Host "$($script:SelfTestChecks) assertion(s), $($script:SelfTestFailures.Count) failure(s)."
     Write-Host ''
@@ -649,12 +677,13 @@ Make '$ProfileName' the default, close Outlook, and run this again:
 
     if ($decision.Decision -eq 'AddThenRename') {
         Write-Host ''
-        Write-Host "  calling NameSpace.AddStoreEx('$resolved', $script:OlStoreUnicode) ..."
+        $storeType = Get-AddStoreExType -Format $Format
+        Write-Host "  calling NameSpace.AddStoreEx('$resolved', $storeType) ..."
         Write-Host '  IF THIS LINE IS THE LAST THING IN THE TRANSCRIPT, AddStoreEx IS SPINNING. It has done'
         Write-Host '  that once on this project, unexplained (Docs/autonomous-session-log.md). Nothing here'
         Write-Host '  can time out a COM call on its own thread. Wait. DO NOT taskkill OUTLOOK.EXE -'
         Write-Host '  mailbox-safety rule 7 forbids it outright. If it never returns, revert the checkpoint.'
-        $ns.AddStoreEx($resolved, $script:OlStoreUnicode)
+        $ns.AddStoreEx($resolved, $storeType)
         Write-Host '  AddStoreEx returned.'
     }
 

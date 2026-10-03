@@ -192,16 +192,30 @@ namespace OutlookAI.Core.Com
             string storeId,
             int? exchangeStoreType,
             bool? isCachedExchange,
-            bool nameUnreadable = false)
+            bool nameUnreadable = false,
+            string? filePath = null,
+            string? mappingSignatureHex = null,
+            string? exchangeProfileSectionHex = null)
         {
             DisplayName = displayName;
             StoreId = storeId;
             ExchangeStoreType = exchangeStoreType;
             IsCachedExchange = isCachedExchange;
             NameUnreadable = nameUnreadable;
+            FilePath = filePath;
+            MappingSignatureHex = mappingSignatureHex;
+            ExchangeProfileSectionHex = exchangeProfileSectionHex;
         }
 
-        /// <summary>Store display name (matches the index URL store segment, Phase-1 fact).</summary>
+        /// <summary>
+        /// Store display name - <c>Store.DisplayName</c>, the name the PROFILE gives the store. NOT
+        /// necessarily the name in the store's index URL: that one is the store's own
+        /// <c>PR_DISPLAY_NAME</c> (its root folder's name), and the two differ for a store named in
+        /// the profile only, and for an ANSI PST, whose <c>Store.DisplayName</c> Outlook reports one
+        /// character short (both measured, Q92/Q99). The index is matched by hash
+        /// (<see cref="OutlookAI.Core.IndexSearch.StoreIndexMatcher"/>); this name is used only
+        /// where the hash does not decide, by the name rule that preceded it.
+        /// </summary>
         public string DisplayName { get; }
 
         /// <summary>StoreID for GetItemFromID.</summary>
@@ -220,6 +234,28 @@ namespace OutlookAI.Core.Com
         /// what stops the label being read as a name that can be passed back as a scope.
         /// </summary>
         public bool NameUnreadable { get; }
+
+        /// <summary>
+        /// <c>Store.FilePath</c> - the .pst, or the .ost of a cached Exchange, IMAP or Outlook.com
+        /// store; null when the store has no file or the path would not read. A <c>.pst</c> is what
+        /// makes a store's index hash authoritative (the measured case), and a cached Exchange
+        /// store's entry-ID hash variant hashes its .ost path in.
+        /// </summary>
+        public string? FilePath { get; }
+
+        /// <summary>
+        /// The Exchange store's own <c>PR_MAPPING_SIGNATURE</c> as hex - one route to the input
+        /// Microsoft documents for a cached Exchange store's index hash. Null for every
+        /// non-Exchange store (whose hash input is <see cref="StoreId"/>) and when it would not read.
+        /// </summary>
+        public string? MappingSignatureHex { get; }
+
+        /// <summary>
+        /// The Exchange store's <c>PR_EMSMDB_SECTION_UID</c> as hex: the profile section that holds
+        /// the account's settings, including the <c>PR_MAPPING_SIGNATURE</c> Microsoft's
+        /// store-hash code reads. Null for every non-Exchange store and when it would not read.
+        /// </summary>
+        public string? ExchangeProfileSectionHex { get; }
     }
 
     /// <summary>
