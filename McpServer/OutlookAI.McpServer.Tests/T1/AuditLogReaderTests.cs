@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 using OutlookAI.Core.Audit;
 using Xunit;
 
@@ -445,9 +446,10 @@ public sealed class AuditLogReaderTests : IDisposable
         WriteLine(Ts, "old");
         string archive = Path.Combine(_dir, "audit.until-test.log");
 
-        // 1. A handle opened exactly the way an append opens one - which shares read and write,
-        //    NOT delete - makes the rename fail instead of interleaving with the write.
-        using (OpenLikeTheWriter())
+        // 1. The handle an append really holds (AuditLogFile, since Q117) - which shares read and
+        //    write, NOT delete - makes the rename fail instead of interleaving with the write.
+        Assert.True(AuditLogFile.TryOpenForAppend(LogPath, AuditLog.WriteThrough, out SafeFileHandle? held, out int error), "open failed: " + error);
+        using (held!)
         {
             Assert.ThrowsAny<IOException>(() => File.Move(LogPath, archive));
         }
@@ -505,6 +507,9 @@ public sealed class AuditLogReaderTests : IDisposable
         stream.Write(bytes, 0, bytes.Length);
     }
 
-    /// <summary>The open <see cref="AuditLog.AppendTo"/> performs, so a test can hold one where the writer would.</summary>
+    /// <summary>
+    /// A writer-like handle for planting raw bytes: read and write sharing, no delete, like the product's.
+    /// The product's own handle is <see cref="AuditLogFile.TryOpenForAppend"/> (append-only, since Q117).
+    /// </summary>
     private FileStream OpenLikeTheWriter() => new(LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
 }

@@ -29,6 +29,13 @@
          decision rules stay pinned by T1 RemediationRulesTests and the project keeps
          compiling in CI. -->
     <ProjectReference Include="..\OutlookAI.RemediationTools\OutlookAI.RemediationTools.csproj" />
+    <!-- The audit log's multi-process stress writer (Q117). Referenced for build ORDER only - the
+         stress tests start its two executables, they do not load its assembly - and as an outer
+         build (SkipGetTargetFrameworkProperties), which is what builds its net48 target as well as
+         its net10.0-windows one. -->
+    <ProjectReference Include="..\OutlookAI.AuditLogStress\OutlookAI.AuditLogStress.csproj"
+                      ReferenceOutputAssembly="false"
+                      SkipGetTargetFrameworkProperties="true" />
   </ItemGroup>
 
   <ItemGroup>
@@ -54,6 +61,10 @@
          T1 suite can pin the code that actually ships rather than a re-implementation.
          The add-in itself is net48/VSTO and cannot be referenced from here. -->
     <Compile Include="..\..\Services\McpConfigEditor.cs" Link="Linked\McpConfigEditor.cs" />
+    <!-- The stress writer's payload rule (Q117), so the stress tests recompute every line they
+         expect from the same code that wrote it. Its assembly is not referenced, so no type is
+         compiled twice in front of one compilation. -->
+    <Compile Include="..\OutlookAI.AuditLogStress\StressLines.cs" Link="Linked\StressLines.cs" />
     <!-- McpConfigEditor takes its `mcpServers` / `outlookai` / `command` names from the shared
          add-in-to-server contract, Services\AddInServerContract.cs. That file is deliberately NOT
          linked here any more: OutlookAI.Core compiles it, and since Q86 (2026-10-03) Core opens its
@@ -106,6 +117,11 @@
     </AssemblyAttribute>
     <!-- Test project directory, so T2 live tests can locate the gitignored
          live-fixtures/ folder (machine-local settings; never committed - v3.MD S6). -->
+    <!-- Where the stress writer's builds land: <this>\net10.0-windows and <this>\net48 (Q117). -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>AuditLogStressBinDir</_Parameter1>
+      <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\OutlookAI.AuditLogStress\bin\$(Configuration)'))</_Parameter2>
+    </AssemblyAttribute>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>TestProjectDir</_Parameter1>
       <_Parameter2>$(MSBuildThisFileDirectory)</_Parameter2>

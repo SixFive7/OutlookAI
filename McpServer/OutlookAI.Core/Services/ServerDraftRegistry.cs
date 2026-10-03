@@ -8,10 +8,14 @@ namespace OutlookAI.Core.Services
     /// PER-PROCESS record of the draft EntryIDs THIS SERVER produced - every item
     /// created by new_draft / reply_draft / replyall_draft / forward_draft and every
     /// draft update_draft touched. <c>discard_draft</c> refuses anything that is not in
-    /// here, so the one deletion-capable tool in the product can only ever reach mail
-    /// the agent itself authored in this session; a mail the user wrote, an incoming
-    /// mail, a sent item and a draft from a previous server process are all structurally
-    /// out of reach, not merely policy-protected.
+    /// here, so the one deletion-capable tool in the product can only ever reach a draft
+    /// this session authored or revised. Revised includes the user's own: update_draft
+    /// may rewrite ANY unsent draft in a Drafts folder, and the draft it rewrote is
+    /// registered like one the agent made (Q121, 2026-10-03 - the earlier wording here
+    /// said a mail the user wrote was out of reach, which this registration contradicts).
+    /// An incoming mail, a sent item, a draft this session never created or revised and a
+    /// draft from a previous server process are all structurally out of reach, not merely
+    /// policy-protected.
     /// <para>
     /// EntryIDs are NOT stable (v3.MD section 12: any move or relocate mints a new one),
     /// so <see cref="Replace"/> re-keys an entry when an operation changes the id, and

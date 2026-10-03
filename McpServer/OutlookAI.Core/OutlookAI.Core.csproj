@@ -44,6 +44,15 @@
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>OutlookAI.McpServer.Tests</_Parameter1>
     </AssemblyAttribute>
+    <!--
+      And to the audit log's stress writer (Q117), test tooling that is never shipped: its
+      lock-disabled run and its writer that dies mid-append reach AuditLog's internal overload
+      and writer lock, which no shipped caller may. It links no file of Core's, so the CS0436
+      rule above does not arise.
+    -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>OutlookAI.AuditLogStress</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <ItemGroup>

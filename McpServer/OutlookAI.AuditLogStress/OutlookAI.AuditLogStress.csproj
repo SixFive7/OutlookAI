@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      The audit log's multi-process stress writer (Q117, 2026-10-03). Test tooling, never shipped
+      and never published: T1/AuditLogStressTests starts copies of both builds at once against one
+      throwaway log under %TEMP%. Two target frameworks because the add-in is going to write this
+      same log from .NET Framework 4.8 - so the stress run proves the SAME writer code from both
+      runtimes appending to one file, under one lock, rather than only that it compiles for net48.
+    -->
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net48;net10.0-windows</TargetFrameworks>
+    <RootNamespace>OutlookAI.AuditLogStress</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Lets `dotnet build` compile the net48 target without a Visual Studio install, as for Core. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Core opens its internals to this assembly (the lock-disabled run and the torn write need them). -->
+    <ProjectReference Include="..\OutlookAI.Core\OutlookAI.Core.csproj" />
+  </ItemGroup>
+
+</Project>

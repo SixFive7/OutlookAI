@@ -5733,7 +5733,7 @@ namespace OutlookAI.Core.Services
             if (string.IsNullOrWhiteSpace(id))
             {
                 throw new ArgumentException(
-                    "id is required (the entryId a draft tool returned for a draft created in THIS session).", nameof(id));
+                    "id is required (the entryId a draft tool returned for a draft created or revised in THIS session).", nameof(id));
             }
 
             (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
@@ -5748,10 +5748,11 @@ namespace OutlookAI.Core.Services
                     "discard_draft",
                     entryId,
                     "This draft was not created or last updated by this server session, so it cannot be discarded. "
-                    + "discard_draft exists only to clean up drafts the assistant itself just made: it can reach a draft "
-                    + "returned by new_draft / reply_draft / replyall_draft / forward_draft / update_draft in THIS session, "
-                    + "and nothing else - not mail you received, not anything you wrote yourself, not a sent item, and not a "
-                    + "draft from an earlier session (a server restart clears the list). Delete it in Outlook instead.");
+                    + "discard_draft exists only to clean up drafts the assistant itself just made or revised: it can reach a "
+                    + "draft returned by new_draft / reply_draft / replyall_draft / forward_draft / update_draft in THIS "
+                    + "session, and nothing else - not mail you received, not a draft of yours this session has not revised, "
+                    + "not a sent item, and not a draft from an earlier session (a server restart clears the list). Delete it "
+                    + "in Outlook instead.");
             }
 
             ComDraftDiscardResult discarded = _gateway.Run(s =>
@@ -7264,20 +7265,10 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentNullException(nameof(fullBody));
             }
 
-            if (offset < 0)
-            {
-                offset = 0;
-            }
-
-            if (maxChars < 0)
-            {
-                maxChars = 0;
-            }
-
-            int start = Math.Min(offset, fullBody.Length);
-            int length = Math.Min(maxChars, fullBody.Length - start);
-            string window = length > 0 ? fullBody.Substring(start, length) : string.Empty;
-            return (start, window, start + length < fullBody.Length);
+            // The shared window (Q119): offset clamped into the body, a negative size read as 0.
+            PageWindow window = PageWindow.Of(fullBody.Length, offset, maxChars);
+            string text = window.Count > 0 ? fullBody.Substring(window.Start, window.Count) : string.Empty;
+            return (window.Start, text, window.HasMore);
         }
 
         public static IReadOnlyList<AttachmentView> CapAttachments(
@@ -7649,29 +7640,46 @@ namespace OutlookAI.Core.Services
                 ? null
                 : "The audit log is not writable (" + (error ?? "unknown") + ") - draft/save/send operations will fail.";
 
+            long unavailable = Audit.AuditLog.WriterLockUnavailable;
+            long abandoned = Audit.AuditLog.WriterLockAbandoned;
             return new AuditHealthView
             {
                 Path = Audit.AuditLog.EffectiveLogPath,
                 Writable = writable,
                 Error = error,
+                LockTimeouts = Audit.AuditLog.WriterLockTimeouts,
+                LockUnavailable = unavailable > 0 ? unavailable : (long?)null,
+                LockAbandoned = abandoned > 0 ? abandoned : (long?)null,
             };
         }
 
         // ------------------------------------------------------------------ audit_log (Q93)
 
+        /// <summary>The kind <see cref="Paging"/> tokens of audit_log carry, so another tool's token is told apart.</summary>
+        internal const string AuditLogTokenKind = "audit_log";
+
+        /// <summary>How many of a scan's missing runs the payload spells out; missingLines counts them all.</summary>
+        internal const int AuditLogGapsShown = 10;
+
         /// <summary>
         /// audit_log (Q93): the newest entries of the audit log this process appends to, filtered,
-        /// newest first, with what the read could not use reported beside them.
+        /// newest first, with what the read could not use reported beside them - and, since Q119, a
+        /// page at a time: <paramref name="resumeToken"/> continues from where the previous page
+        /// stopped, by byte position, so entries that share a millisecond are neither skipped nor
+        /// repeated (the after/before "paging" an agent had to improvise skipped 122 such lines over
+        /// the old log at page size 25).
         /// <para>
         /// Read-only and Outlook-free, and STATIC on purpose: answering never builds the COM
-        /// gateway, so it works with Outlook closed, wedged or uninstalled. Every argument is
-        /// validated before the log is opened, so a bad call costs no I/O at all.
+        /// gateway, so it works with Outlook closed, wedged or uninstalled. Every argument - the token
+        /// included - is validated before the log is opened, so a bad call costs no I/O at all.
         /// </para>
         /// <para>
         /// Only the live log is read - <c>AuditLog.EffectiveLogPath</c>, which is
         /// <c>%LOCALAPPDATA%\OutlookAI\audit.log</c> in every shipped process. A renamed or archived
         /// log beside it is never opened: the one archived when the log was cleaned up (Q86) is
-        /// mostly test noise, and an agent reading it would report the tests' drafts as the user's.
+        /// mostly test noise, and an agent reading it would report the tests' drafts as the user's
+        /// (Q120 kept it that way). A token issued before the live log was archived is therefore
+        /// refused rather than followed into the archive.
         /// The read never blocks the server's own appends (see <see cref="Audit.AuditLogReader"/>).
         /// </para>
         /// </summary>
@@ -7680,7 +7688,8 @@ namespace OutlookAI.Core.Services
             DateTime? beforeUtc = null,
             string? operation = null,
             string? entryId = null,
-            int top = AuditLogTopDefault)
+            int top = AuditLogTopDefault,
+            string? resumeToken = null)
         {
             if (afterUtc.HasValue && beforeUtc.HasValue && afterUtc.Value >= beforeUtc.Value)
             {
@@ -7693,39 +7702,147 @@ namespace OutlookAI.Core.Services
             IReadOnlyList<string>? operations = ParseAuditOperations(operation);
             string? entryIdFilter = ParseAuditEntryId(entryId);
             int effectiveTop = Clamp(top, 1, AuditLogTopCap);
+            string fingerprint = AuditLogFingerprint(afterUtc, beforeUtc, operations, entryIdFilter);
+            Audit.AuditLogPosition? resumeFrom = string.IsNullOrWhiteSpace(resumeToken)
+                ? null
+                : ResolveAuditResumeToken(resumeToken!.Trim(), fingerprint);
 
             string path = Audit.AuditLog.EffectiveLogPath;
             Audit.AuditLogScan scan = Audit.AuditLogReader.Read(
-                path, new Audit.AuditLogFilter(afterUtc, beforeUtc, operations, entryIdFilter), effectiveTop);
+                path, new Audit.AuditLogFilter(afterUtc, beforeUtc, operations, entryIdFilter), effectiveTop, resumeFrom);
+            if (resumeFrom != null && scan.Resume != Audit.AuditLogResumeStatus.Resumed)
+            {
+                throw new ArgumentException(DescribeAuditResumeRefusal(scan.Resume));
+            }
 
-            return DescribeAuditLogScan(path, scan, top, operations != null);
+            string? nextToken = scan.NextPosition == null ? null : IssueAuditResumeToken(fingerprint, scan.NextPosition);
+            return DescribeAuditLogScan(path, scan, top, operations != null, nextToken);
+        }
+
+        /// <summary>
+        /// The arguments that decide WHICH entries an audit_log chain pages through, in the shared
+        /// presence-first form (<see cref="PagingFingerprint"/>), normalised the way the filter compares
+        /// them: operations case-insensitively and in any order, the EntryID case-insensitively, the
+        /// instants to the tick. <c>top</c> is left out - it may change from page to page.
+        /// </summary>
+        internal static string AuditLogFingerprint(
+            DateTime? afterUtc, DateTime? beforeUtc, IReadOnlyList<string>? operations, string? entryId)
+        {
+            List<string>? normalized = operations?
+                .Select(o => o.ToLowerInvariant())
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(o => o, StringComparer.Ordinal)
+                .ToList();
+            return new PagingFingerprint()
+                .Add("after", afterUtc?.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture))
+                .Add("before", beforeUtc?.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture))
+                .AddList("operation", normalized)
+                .Add("entry_id", entryId?.ToUpperInvariant())
+                .ToString();
+        }
+
+        /// <summary>The nextToken for a page that stopped at <paramref name="next"/>.</summary>
+        internal static string IssueAuditResumeToken(string fingerprint, Audit.AuditLogPosition next)
+        {
+            return Paging.IssueToken(AuditLogTokenKind, fingerprint, new[]
+            {
+                next.FileIdentity ?? string.Empty,
+                next.Offset.ToString(CultureInfo.InvariantCulture),
+                Audit.AuditCrc32.ToHex(next.Anchor),
+            });
+        }
+
+        /// <summary>
+        /// The position a resume_token names, or an <see cref="ArgumentException"/> saying why it names
+        /// none - before anything is opened. The filters must be the ones the chain began with; top
+        /// may differ.
+        /// </summary>
+        internal static Audit.AuditLogPosition ResolveAuditResumeToken(string token, string fingerprint)
+        {
+            PageTokenDecision decision = Paging.ResolveToken(
+                token, AuditLogTokenKind, fingerprint, out IReadOnlyList<string> position, out IReadOnlyList<string> changed);
+            if (decision == PageTokenDecision.RequestChanged)
+            {
+                throw new ArgumentException(
+                    "resume_token continues an audit_log listing made with different filters: "
+                    + (changed.Count > 0 ? string.Join(", ", changed) : "a filter") + " changed. Repeat every filter of the "
+                    + "call that returned it (top may differ), or leave resume_token out to start again from the newest entry.");
+            }
+
+            if (decision == PageTokenDecision.Valid && position.Count == 3
+                && long.TryParse(position[1], NumberStyles.None, CultureInfo.InvariantCulture, out long offset)
+                && Audit.AuditCrc32.TryParseHex(position[2], out uint anchor))
+            {
+                return new Audit.AuditLogPosition(position[0].Length > 0 ? position[0] : null, offset, anchor);
+            }
+
+            throw new ArgumentException(
+                "resume_token is not a token audit_log issued"
+                + (decision == PageTokenDecision.OtherKind || ExhaustiveScanCursors.LooksLikeToken(token)
+                    ? " - it belongs to another tool's paging (search's exhaustive.nextToken does not work here)"
+                    : string.Empty)
+                + ". Pass the nextToken of a previous audit_log result exactly as it was returned, or leave resume_token "
+                + "out to start from the newest entry.");
+        }
+
+        /// <summary>Why a well-formed resume_token could not be continued from (pure, T1-pinned).</summary>
+        internal static string DescribeAuditResumeRefusal(Audit.AuditLogResumeStatus status)
+        {
+            const string StartAgain = " Leave resume_token out to read the live log again from its newest entry.";
+            switch (status)
+            {
+                case Audit.AuditLogResumeStatus.FileMissing:
+                    return "The audit log was archived after this resume_token was issued and no new log has been started "
+                        + "since, so there is nothing left to continue - an archived log is not readable through this tool."
+                        + StartAgain;
+                case Audit.AuditLogResumeStatus.FileReplaced:
+                    return "The audit log was archived or replaced after this resume_token was issued: the live log is now "
+                        + "a different file, and the entries the token pointed into are not in it - an archived log is not "
+                        + "readable through this tool." + StartAgain;
+                default:
+                    return "The audit log no longer matches this resume_token - it was truncated or edited after the token "
+                        + "was issued, so where the next page starts is unknown." + StartAgain;
+            }
         }
 
         /// <summary>
         /// The audit_log payload for one scan, advice included. Split out so T1 can pin every
-        /// branch - a missing log, a cut, a filter that matched nothing, malformed and incomplete
-        /// lines - from a scan it builds, rather than from whatever state the run's log is in.
+        /// branch - a missing log, a cut, a filter that matched nothing, malformed, damaged, missing
+        /// and incomplete lines - from a scan it builds, rather than from whatever state the run's
+        /// log is in.
         /// </summary>
-        internal static AuditLogOutcome DescribeAuditLogScan(string path, Audit.AuditLogScan scan, int requestedTop, bool operationFiltered)
+        internal static AuditLogOutcome DescribeAuditLogScan(
+            string path, Audit.AuditLogScan scan, int requestedTop, bool operationFiltered, string? nextToken = null)
         {
             List<string> advice = new List<string>();
             if (requestedTop > AuditLogTopCap)
             {
                 advice.Add("top=" + requestedTop.ToString(CultureInfo.InvariantCulture) + " was reduced to "
-                    + AuditLogTopCap.ToString(CultureInfo.InvariantCulture) + " (the hard cap). Narrow with after/before/"
-                    + "operation/entry_id instead.");
+                    + AuditLogTopCap.ToString(CultureInfo.InvariantCulture) + " (the hard cap). Page through the rest with "
+                    + "resume_token=nextToken, or narrow with after/before/operation/entry_id.");
             }
 
+            bool resumed = scan.Resume == Audit.AuditLogResumeStatus.Resumed;
             if (!scan.FileFound)
             {
                 advice.Add("There is no audit log at this path yet, so nothing has been recorded since it was started "
                     + "(or since it was last archived). Every change this server makes adds a line.");
             }
-            else if (scan.Matched > scan.Entries.Count)
+            else if (scan.OlderMatches > 0)
             {
-                advice.Add("These are the newest " + scan.Entries.Count.ToString(CultureInfo.InvariantCulture) + " of "
-                    + scan.Matched.ToString(CultureInfo.InvariantCulture) + " matching entries. To see older ones, "
-                    + "narrow with after/before/operation/entry_id.");
+                string older = scan.OlderMatches.ToString(CultureInfo.InvariantCulture);
+                advice.Add((resumed
+                        ? "This page continues the previous one with " + scan.Entries.Count.ToString(CultureInfo.InvariantCulture)
+                            + " older matching entries; " + older + " older still remain."
+                        : "These are the newest " + scan.Entries.Count.ToString(CultureInfo.InvariantCulture) + " of "
+                            + scan.Matched.ToString(CultureInfo.InvariantCulture) + " matching entries; " + older
+                            + " older ones remain.")
+                    + " For the next page call again with resume_token=nextToken and the same filters, and page until "
+                    + "nextToken is absent.");
+            }
+            else if (resumed)
+            {
+                advice.Add("This is the last page: no older entry matches.");
             }
             else if (scan.Matched == 0 && scan.LinesScanned > 0)
             {
@@ -7734,11 +7851,40 @@ namespace OutlookAI.Core.Services
                     : "No entry matched these filters.");
             }
 
-            if (scan.MalformedLines > 0)
+            long unparsable = scan.MalformedLines - scan.ChecksumFailures;
+            if (unparsable > 0)
             {
-                advice.Add(scan.MalformedLines.ToString(CultureInfo.InvariantCulture) + " line(s) of the log are not in the "
+                advice.Add(unparsable.ToString(CultureInfo.InvariantCulture) + " line(s) of the log are not in the "
                     + "format this server writes and were skipped - an older version's unstructured lines, or a line "
                     + "damaged by a crash. They are counted, never guessed at.");
+            }
+
+            if (scan.ChecksumFailures > 0)
+            {
+                advice.Add(scan.ChecksumFailures.ToString(CultureInfo.InvariantCulture) + " line(s) failed their checksum - "
+                    + "cut short by a crash and joined to the next line, overwritten, or edited - and were left out "
+                    + "(damagedLines). Whatever they recorded cannot be trusted.");
+            }
+
+            if (scan.MissingLines > 0)
+            {
+                advice.Add(scan.MissingLines.ToString(CultureInfo.InvariantCulture) + " line(s) are MISSING from the log by "
+                    + "the writers' own numbering (sequenceGaps): every writer numbers its lines in this file from 1, and "
+                    + "these numbers never arrived - a write that failed, or a crash. Whatever they recorded is not in this "
+                    + "answer, so do not read an absence here as proof that something did not happen.");
+            }
+
+            if (scan.UnverifiedLines > 0)
+            {
+                advice.Add(scan.UnverifiedLines.ToString(CultureInfo.InvariantCulture) + " line(s) were written before lines "
+                    + "carried a checksum, so they are returned unverified.");
+            }
+
+            if (scan.LinesWithoutWriterLock > 0)
+            {
+                advice.Add(scan.LinesWithoutWriterLock.ToString(CultureInfo.InvariantCulture) + " line(s) were written "
+                    + "without the writers' lock (it timed out or could not be taken), so their place in the order is not "
+                    + "guaranteed; their content is checksummed like any other line.");
             }
 
             if (scan.IncompleteLastLine)
@@ -7765,6 +7911,7 @@ namespace OutlookAI.Core.Services
                 {
                     Utc = entry.TimestampUtc,
                     Operation = entry.Operation,
+                    Pid = entry.Pid,
                     Fields = fields,
                 });
             }
@@ -7775,13 +7922,48 @@ namespace OutlookAI.Core.Services
                 Entries = entries,
                 Returned = entries.Count,
                 Matched = scan.Matched,
-                Truncated = scan.Matched > entries.Count,
+                Truncated = scan.OlderMatches > 0,
+                OlderMatches = scan.OlderMatches > 0 ? scan.OlderMatches : (long?)null,
+                NextToken = nextToken,
                 LinesScanned = scan.LinesScanned,
                 MalformedLines = scan.MalformedLines > 0 ? scan.MalformedLines : (long?)null,
+                DamagedLines = scan.ChecksumFailures > 0 ? scan.ChecksumFailures : (long?)null,
+                MissingLines = scan.MissingLines > 0 ? scan.MissingLines : (long?)null,
+                SequenceGaps = DescribeAuditGaps(scan),
+                UnverifiedLines = scan.UnverifiedLines > 0 ? scan.UnverifiedLines : (long?)null,
+                LinesWithoutWriterLock = scan.LinesWithoutWriterLock > 0 ? scan.LinesWithoutWriterLock : (long?)null,
                 IncompleteLastLine = scan.IncompleteLastLine ? true : (bool?)null,
                 LogMissing = scan.FileFound ? (bool?)null : true,
                 Advice = advice.Count > 0 ? advice : null,
             };
+        }
+
+        /// <summary>
+        /// The missing runs in words, one per run - "pid 4242 run 0a1b2c3d: seq 17-19 (3 lines)" - at most
+        /// <see cref="AuditLogGapsShown"/> of them, and a last line saying when there are more. Null when none.
+        /// </summary>
+        internal static IReadOnlyList<string>? DescribeAuditGaps(Audit.AuditLogScan scan)
+        {
+            if (scan.Gaps.Count == 0)
+            {
+                return null;
+            }
+
+            List<string> gaps = new List<string>();
+            foreach (Audit.AuditLogGap gap in scan.Gaps.Take(AuditLogGapsShown))
+            {
+                gaps.Add("pid " + gap.Pid.ToString(CultureInfo.InvariantCulture) + " run " + gap.Run + ": seq "
+                    + gap.FirstMissing.ToString(CultureInfo.InvariantCulture)
+                    + (gap.Count > 1 ? "-" + gap.LastMissing.ToString(CultureInfo.InvariantCulture) : string.Empty)
+                    + " (" + gap.Count.ToString(CultureInfo.InvariantCulture) + (gap.Count == 1 ? " line)" : " lines)"));
+            }
+
+            if (scan.Gaps.Count > AuditLogGapsShown || scan.Gaps.Count >= Audit.AuditLogReader.GapsCap)
+            {
+                gaps.Add("more runs are missing than are listed here; missingLines counts every missing line");
+            }
+
+            return gaps;
         }
 
         /// <summary>
@@ -8189,10 +8371,11 @@ namespace OutlookAI.Core.Services
                 offset = 0;
             }
 
+            // The shared window (Q119): the same clamping and has-more rule read's body window uses.
             IReadOnlyList<ComFolderInfo> folders = tree.Folders;
-            int end = (int)Math.Min((long)offset + FoldersPerCallCap, folders.Count);
-            List<ComFolderInfo> page = new List<ComFolderInfo>(Math.Max(0, end - offset));
-            for (int i = offset; i < end; i++)
+            PageWindow window = PageWindow.Of(folders.Count, offset, FoldersPerCallCap);
+            List<ComFolderInfo> page = new List<ComFolderInfo>(window.Count);
+            for (int i = window.Start; i < window.End; i++)
             {
                 page.Add(folders[i]);
             }
@@ -8219,7 +8402,7 @@ namespace OutlookAI.Core.Services
             // Gap G3. This was `end < folders.Count` alone - computed against the list the
             // WALK had already truncated, so the one truncation it could never see was the
             // one that lost whole folders rather than merely deferring them to a later page.
-            bool morePages = end < folders.Count;
+            bool morePages = window.HasMore;
             bool walkCut = tree.WalkCapReached || tree.DepthLimitReached;
             return new FoldersOutcome
             {
@@ -8231,7 +8414,7 @@ namespace OutlookAI.Core.Services
                 // Only the pageable half gets a continuation: the next call re-walks and
                 // stops at the same cap, so offering an offset past a walk cut would be an
                 // instruction that cannot work.
-                NextOffset = morePages ? end : (int?)null,
+                NextOffset = window.NextOffset,
                 WalkCapReached = tree.WalkCapReached ? true : (bool?)null,
                 DepthLimitReached = tree.DepthLimitReached ? true : (bool?)null,
                 StoresUnnamed = tree.StoresUnnamed > 0 ? tree.StoresUnnamed : (int?)null,
