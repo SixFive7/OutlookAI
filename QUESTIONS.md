@@ -362,7 +362,35 @@ settles the `Table.Sort` question.
 **Default if nobody answers.** Both stay as they are. The census is safe; the scan carries an
 unquantified resume gap of at most one UTC offset.
 
+**ANSWERED 2026-10-03 by measurement - option (a), and the answer is "it depends on the column's
+spelling".** See the decision log below.
+
 ## Decision log
+
+### 2026-10-03, autonomous - Q11 ANSWERED by measurement: a table reports a date in the zone its column spelling asks for
+
+**The measurement.** The first live runs on a test guest (`OutlookAI-Unindexed`, Office LTSC 2024
+16.0.17932, W. Europe at UTC+2) ran `T2/LiveTableSortProbeTests`, which reads the same rows through a
+table and through the opened items. Under the EXPLICIT built-in name `ReceivedTime` the raw table
+value equalled the opened item's own LOCAL `ReceivedTime` (13:44:18 for an item received 11:44:18Z),
+on both stores read; under the NAMESPACE reference `urn:schemas:httpmail:datereceived` the same
+folder's rows read in UTC. So neither "UTC" nor "local" was right for every column.
+
+**What it cost.** The exhaustive scan adds the explicit name first, and `ComDateValue.FromTableValue`
+took every table value as UTC, so its resume cursor sat one offset LATE at UTC+2: run 1's
+`LiveResumableScanTests.APagedScan` got ordinal 24 again on a page after one that had ended at
+ordinal 7. West of UTC the same misreading moves the cursor EARLY, which skips mail and reports the
+scan complete - the failure the question was raised about.
+
+**What was done** (commit `b09041b`, on the maintainer's behalf, for review):
+`ComDateValue.FromTableValue(value, columnProperty)` decides by the spelling - a namespace reference
+(`urn:`, `http://`, `https://`) reads as UTC, an explicit name converts as an item value - and the
+scan, the sort probe and the date-kind probe pass the spelling they added. The census
+(`CensusTableRow.ReadUtc`) still reads every value as UTC: it compares its own readings with each
+other, so a fingerprint taken through the explicit column is offset but consistent, and only the
+instant it would print is wrong (`TODO.md`). Undo: revert `b09041b`; the old one-argument reading is
+still there for namespace columns.
+
 
 Answers move here with the date and the reasoning, so a future reader sees not just what was chosen
 but why, and what the alternative was.

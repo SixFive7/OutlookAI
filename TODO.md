@@ -1,5 +1,37 @@
 # TODO
 
+- [ ] **Decide what keeps Outlook alive on Office LTSC 2024 when the user closes the window
+  OutlookAI opened (D49, first guest live runs, 2026-10-03).** `LiveDisconnectRecoveryTests` fails
+  on `OutlookAI-Unindexed` (Office LTSC 2024, 16.0.17932) with "D49 regression: Outlook exited when
+  its last window closed": Outlook started headless through COM, one show-me Explorer promoted by
+  `goto_folder`, `WM_CLOSE` to it, and OUTLOOK.EXE gone. Run 2 logged the session's lifetime pin -
+  the non-displayed Explorer `ComposeSurface.TryPinProcess` makes - as `pinned=True` both before and
+  after the promotion, so the pin is HELD on that build and does not hold Outlook when a displayed
+  Explorer closes (`ComposeSurface`'s remarks record it measured against an Inspector closing). An
+  attempt that re-ensured the pin on the show-me path was reverted (`9359f34`) because the session
+  was pinned all along. Directions: (1) measure on the guest which surfaces Office 2024 counts as
+  keeping it open - a hidden Explorer, a DISPLAYED Explorer parked off-screen and hidden the way the
+  compose promotion hides its Inspector, an Inspector of a scratch item - and pin with that; (2) have
+  the show-me path reuse a displayed-but-parked pin instead of adding a second Explorer; (3) accept
+  that on Office 2024 closing the last window ends Outlook, rely on the gateway re-attach the same
+  test proves, and record the D49 promise as build-dependent - a change to what the test asserts, so
+  the maintainer's call; (4) measure the same sequence on the maintainer's 2021 build too, read-only
+  apart from the window, before choosing. Recommended: (1), then (4) - the cure has to be one both
+  builds honour. Until then the test stays red on the guests, by design.
+
+- [ ] **Run the PST half of Q74 C3 on the indexed guest.** `LiveDecodeVerifyTests.ShortDecodedId_OpensAsTheItemItself_OnAPstStore`
+  carries `Requires=SearchIndex`, so `OutlookAI-Unindexed`'s filter never selects it and the first
+  guest live runs (2026-10-03) could not confirm it. It needs `OutlookAI-Indexed`, which was busy with
+  Q99 that night.
+
+- [ ] **Let the count tripwire's census read a table date by its column spelling too.**
+  `CensusTableRow.ReadUtc` still calls the one-argument `ComDateValue.FromTableValue`, which takes every
+  value as UTC; Q11's measurement (2026-10-03) showed the explicit `ReceivedTime` column - the census's
+  first spelling - reports LOCAL time. The census only compares its own readings with each other, so
+  the fingerprints stay consistent and nothing is mis-judged; only the instant it would print beside a
+  departed item is off by the UTC offset. Pass the spelling (`CensusColumnMap` knows the index, the
+  names list the spelling) when the census is next touched.
+
 - [ ] **Read which store-hash input Outlook uses for a cached Exchange store - the one half of Q99
   no test machine can measure.** The product now finds each store in the search index by Microsoft's
   store hash (`McpServer/README.md` load-bearing fact 16). For a PST that is measured; for a cached
@@ -903,22 +935,6 @@
       gets the generator's bystander population (next item). Adding it by script has been permitted
       on a guest since 2026-09-15, and attaching it to the second profile while still empty since
       2026-09-24 - `Docs/live-tier-on-the-vm.md` §2.6 draws both lines.
-
-- [ ] **Put a few hundred items in the SECOND store, not the corpus, or the identity half of the
-      count tripwire is never exercised.** The identity budget is 500 items per folder and 3,000
-      per store, so a small store is walked item by item and a corpus is not: all four populated
-      corpus folders (Inbox 10,912 / Sent 4,964 / Deleted 2,467 / Junk 1,663) are above the
-      per-folder limit and fall back to counts. Note also that the corpus store must be the HUB -
-      the scans and sweeps that need nothing but an Outlook all target the hub and take a "corpus
-      too small" early return against an empty one - so the second store is the only one the
-      tripwire can watch anyway.
-      **What is left is a live run whose census reads the bystander item by item.** The items are
-      there: `corpus-build --population bystander` puts 300 tagged, deterministic items in the
-      bystander - every folder inside the identity budget, two of them populated subfolders of the
-      folder its received mail is filed in - and `OutlookAI-Unindexed` has carried them since
-      2026-10-03 (runbook §4.1d, `CP-12B-POPULATIONS-V2`). `--population hub` gives the hub a
-      56-item population of its own, so the "corpus too small" early returns above no longer need
-      the corpus to be the hub. `Docs/live-tier-on-the-vm.md` §3b is the procedure.
 
 - [ ] **Make `corpus-teardown` drain the folders it created, as it drains the items: in a PST its
       `Folder.Delete()` MOVES them into Deleted Items, so every hub rebuild leaves two more empty
