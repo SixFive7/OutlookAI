@@ -2720,6 +2720,35 @@ F1 to F10, which confirms each of those diagnoses a second time. So the crash co
 two together, and the branch tip was put back to `c1b67d9`, the last state the guest ran clean; the
 merge needs that interaction found before it lands (`TODO.md`).
 
+**The crash, found (same day, later runs; every one from `CP-12B`, restaged).**
+
+| Run | Revision | Total | Passed | Failed | Outlook |
+| --- | --- | --- | --- | --- | --- |
+| E1 | `f0cc4a2` + timing diagnostics, `LiveDraftTests` only | 5 | 5 | 0 | no crash |
+| E2 | the same, whole filter | 80 | 69 | 11 | crashed (`IdentityDrafts`) |
+| E3 | without the true-root read (`5ac1d85`) | 80 | 51 | 29 | crashed, `OLMAPI32.DLL` `0x2e411` (`NewDraft_WithAttachments`) |
+| E4b | without the snapshot's `PR_CONVERSATION_INDEX_TRACKING` read | 80 | 76 | 4 | no crash |
+| 9 | `5d94851` - master `60fba07` merged, tracking read removed (`3f8cfc3`) | 80 | 54 | 26 | crashed, `OLMAPI32.DLL` `0x2e411` |
+| 10 | `c1b67d9` - the branch alone, a control | 80 | 78 | 2 | no crash |
+| 11b | `e0cbe0a` - merged, after the host's restart | 80 | 72 | 8 | crashed, `OUTLOOK.EXE` `0x1571e5` |
+| 13 | `ace09f9` - merged, COM child objects released (`9664aa0`) | 80 | 79 | 1 | no crash |
+
+E4b's one clean run made the tracking read look like the trigger, and `3f8cfc3` took it out; run 9
+crashed anyway, so it was not. The control (run 10, the branch alone, after the host had been
+restarted) made it five clean runs of five without master and six crashes in seven with it - and
+master's whole product delta since `cd8a984` (`59fad08`, Q96's follow-ups) adds no COM call on any
+path that succeeds: it was compared line by line, and the hub rebuild's logs were identical. **What
+differs between two builds whose COM calls are identical is when the .NET garbage collector runs**, and
+three things in this process were left for it to release: the `Column` that `Table.Columns.Add`
+returns (the scan's and the sweep's date columns, and the tripwire census's - which runs first, on 30
+folders), the `Bookmark` that `Bookmarks.Add` returns in the compose paths (and a `bm.Parent` document
+reference), and the `Attachment` that `Attachments.Add` returns in the test mailer - each released,
+whenever a collection happened, after the table, the document or the mail it belongs to was gone,
+inside Outlook. The faults moved with every run (`ntdll.dll`, `OLMAPI32.DLL`, `OUTLOOK.EXE` itself),
+which is what a damaged heap looks like. `9664aa0` holds and releases every one of them and
+`T1/ComChildObjectReleaseTests` pins it from the sources. **Run 13 was the first merged run without a
+crash**; runs 18 and 19 below are the other two of the three the coordinator asked for.
+
 **Every run, the guards.** The sink probe answered from run 2 on (`[sink] submission 127.0.0.1:25 and
 retrieval 127.0.0.1:110 both answering` - run 1 never armed it, F1). The count tripwire's baseline:
 `3 stores, 30 mail folders, identified 11 folder(s)/308 item(s)` - the bystander's 300 items read item by
@@ -2745,8 +2774,10 @@ responding or unavailable) for list_accounts to report".
 | F5 | `LiveSweepCacheTests.RapidSearches` | the sweep cache is keyed on the index frontier, so with no indexed mail it never hits - by design (`T1/SweepCacheKeyTests`) | test trait | `7bb4626` - `Requires=SearchIndex` |
 | F6 | `OutlookHealthLiveToolShapeTests.CarriesTheFreshnessBlock` | required advice whenever the index is reachable; a reachable index with no mail is reported as a problem | test | `7bb4626` |
 | F7 | `LiveUpdateDiscardTests.DiscardDraft` | a PST keeps a draft's EntryID across the soft delete (run 2: `parent='Deleted Items', re-located id is the same id`); the re-locate scan excluded the old id | product | `593e668` |
-| F8 | `LiveDraftOptionsTests.DerivedDrafts` | the renamed reply's ConversationId differs from the seed's and the plain reply's; run 3: index tracking `true` on all three, the same index header, the seed's and plain reply's id that header's GUID and the renamed reply's not - a stale id from the header the subject write regenerated | product, open | three attempts, all taken out again: restoring the tracking flag (`67c4afb`; run 3 read it `true` on all three anyway), writing `PR_CONVERSATION_ID` back (`6bd9d60`; run 4: "The property ... 0x30130102 does not support this operation", and the unguarded write failed `ForwardDraft` too) and setting the subject as `PR_SUBJECT` instead of through the setter (`0f4bbfa`; run 5: the renamed reply's id still not its header GUID). Still red; `TODO.md` has the directions |
-| F9 | `LiveDisconnectRecoveryTests` | "D49 regression: Outlook exited when its last window closed"; runs 2 and 3: the lifetime pin `pinned=True` before and after the promotion, and Outlook still exited when the promoted Explorer closed | product, Office LTSC 2024 | none - an attempt (`01d81ec`) was reverted (`9359f34`); `TODO.md` has the directions |
+| F8 | `LiveDraftOptionsTests.DerivedDrafts` | the renamed reply's ConversationId differs from the seed's and the plain reply's. Measured in E4b (`T2/ConversationIdHashes`): it is MD5 over the upper-cased KEPT topic in UTF-16LE - not a hash of the new subject - while the seed's and the plain reply's are their index header's GUID; `PR_CONVERSATION_ID` refuses a write | product, decided | three attempts were taken out again first (`67c4afb`, `6bd9d60`, `0f4bbfa`). DECIDED (coordinator, on the maintainer's behalf; `QUESTIONS.md`): the same-id promise is Exchange's; elsewhere the test holds the renamed reply - and now the renamed forward - to the kept topic's hash, and the subject hint says so (`b4aa28f`). Passed from run 13 on |
+| F9 | `LiveDisconnectRecoveryTests` | "D49 regression: Outlook exited when its last window closed". Two causes, measured with Explorer-only probes and a 90-second subset run: Office 2024's `Explorers.Add` on the folder the hidden lifetime pin shows hands back THE PIN, so the promotion displayed it (`explorers=1`); and Office 2024 raises `Application.Quit` when the user closes the last visible window, so a session that started Outlook drops and closes its pin as it leaves (two scratch builds: without the Quit sink the test passed, with only the first fix it failed) | product, Office LTSC 2024; decided | `ffc6529` - the show-me path never returns an Explorer that already existed (`T1/ShowMeExplorerPinTests`); DECIDED for the Quit (`QUESTIONS.md`): keep honouring it - it is what lets the user's own Exit end an Outlook OutlookAI started - and `fd2c58b` holds the test to exactly that: an exit passes only if the promoting session started Outlook, two Explorers stood before the close and the quit event, not a process exit, ended the session; the reattach must still work. The earlier attempt (`01d81ec`) stays reverted |
+| F11 | (none - the hub rebuild before run 11, and E4's first attempt) | `corpus-teardown` finished cleanly, then the move of its manifest into `hub-history\` met "being used by another process"; the run stopped with the hub torn down | test bed | `292dbd8` - the move is retried for up to 60 s on a sharing or lock violation only |
+| F12 | `LiveDisconnectRecoveryTests`, step 3b (first reached in a D49-only run) | the degraded-search check needs index results to fall back to; with no catalog the search failed with `0x80041820` | test | `58d3707` - the step goes through `LivePopulationCoverage.Require` over the indexed stores: `PROVED NOTHING` here, refused on a Production profile, unchanged where the hub is indexed |
 | F10 | `LiveCreatedFolderTests` (run 2, its first run anywhere) | the Drafts folder a reply made in the throwaway data file is designated in `PR_IPM_DRAFTS_ENTRYID` on the store's TRUE root folder (NID `0x122`, the parent of the IPM subtree) and nowhere the lookup read | product | `5ac1d85` - passed in run 3 |
 
 **Section 8 item 25, the created-folder proof's first runs.** `Reset-ThrowawayStore.ps1 -Execute`,
@@ -3986,6 +4017,15 @@ unrecorded or unverified.
       check that walks the profile's stores - the table probes, `outlook_health`, `list_accounts` -
       now meets one more; on the code as it stands each either names its stores or tolerates one it
       cannot probe. A run that says otherwise belongs here.
+    **Both of Q96's remaining questions answered by the merged runs (2026-10-03, section 4.1e).**
+    The bisect run E4b - the first run of master's version of this test - printed `designation: ...
+    store object = not set; top folder = not set; Inbox = no such folder in this store`, the three
+    places the object model hands out; since `5d94851` the record reads the TRUE root too, and run 13
+    printed `... true root = THE CREATED DRAFTS FOLDER` beside `after: the non-creating lookup sees
+    Drafts='Drafts'` - question 3, answered where F10 (`5ac1d85`) had already widened the lookup. And
+    both `top level of ...` lines came back as expected in every run since: `appeared [Drafts]` with
+    `reported created [throwaway@vm.invalid/Drafts]` around the reply, nothing around the discard -
+    question 2: nothing appeared that the call did not report, so its (b) is not needed.
 26. **MEASURED 2026-10-03 (the Q99 folder finding) - how the index spells a FOLDER name holding
     `% / \ * ?`, and what a folder-scoped search does with it.** Microsoft documents those five as
     percent-encoded "if they are in the store or folder display name" (*About MAPI URLs for
