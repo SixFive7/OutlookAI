@@ -545,8 +545,8 @@ payload built on the host from `883ec5f` by `Testbed/host/Publish-AddInPayload.p
 `UNCHANGED` over 305 host lines), staged with the pinned `vstor_redist.exe` and `883ec5f`'s guest
 scripts. Every phase through `Register-InteractiveTask.ps1` in session 1 and every plain `-Verify`
 over PowerShell Direct, while a READ-ONLY poller in session 0 sampled OUTLOOK.EXE every 0.5 s: its token
-(TokenElevation, TokenElevationType, integrity level), command line, parent and modules. Raw logs:
-`.work\q100-proof\` in the agent worktree that ran it.
+(TokenElevation, TokenElevationType, integrity level), command line, parent and modules. Raw logs,
+one file per step below, the poller and both build-VM runs: `.work\q100-proof\` in the main checkout.
 
 | # | What ran | Verdict, exit code, and what else was seen |
 | --- | --- | --- |
@@ -604,7 +604,10 @@ the registration reconcile at every start, failed or not - and an add-in that st
 install without finishing a tuning reconcile is `BROKEN`, with when it started and how far its walk
 got (`Tuning\Applied` against `Tuning\Desired`, printed as `tuning walk`). FirstRun watches that marker
 during its wait, so a tuning state that never comes says which failure it was, and its timing is no
-longer read after the 240 s wait (step 6 printed "registration reconcile after 245.4s").
+longer read after the 240 s wait (step 6 printed "registration reconcile after 245.4s"). `-SelfTest`:
+187 assertions, 0 failures, on the build VM under Windows PowerShell 5.1, with all 21 scripts'
+self-tests passing (`Testbed/host/Invoke-TestsOnBuildVm.ps1 9bfc135 -SkipSuite`); 151 on the guest,
+whose copy has no repository for the contract section.
 
 **Not settled by it:** `ADDIN-READY` on a fresh guest, which waits on the defect; the indexed guest -
 that an unelevated first run there feeds the index and leaves it `INDEXED`; `-Verify -WithOutlook`

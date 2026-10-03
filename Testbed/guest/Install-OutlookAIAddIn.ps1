@@ -48,7 +48,10 @@
     failure it was - and its timing is no longer read after the 240 s wait. On the guest the fixed
     script then said BROKEN with the reason from -Verify, and from a FirstRun "tuning state ...
     written NEVER, in 240 s; registration reconcile ... written after 2.4 s". -SelfTest: 151
-    assertions, 0 failures there (the contract section needs the repository).
+    assertions, 0 failures there (the contract section needs the repository); and 187, 0 failures,
+    on the build VM under Windows PowerShell 5.1 with every other script's -SelfTest, 21 of 21
+    (Testbed/host/Invoke-TestsOnBuildVm.ps1 9bfc135 -SkipSuite, run 20261003-184239-9bfc1353c5eb).
+    The four .github/scripts guards pass under both shells.
 
     NOT SETTLED BY IT: the defect - a product decision, open in TODO.md; the indexed guest, whose
     index an unelevated first run feeds; and -Verify -WithOutlook, whose Outlook had closed by itself
