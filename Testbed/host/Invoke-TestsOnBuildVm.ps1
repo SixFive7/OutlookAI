@@ -530,7 +530,6 @@ function Invoke-SelfTest {
     Check 'in any case, as Hyper-V compares names' $true (Test-IsBuildVmName 'outlookai-build')
     Check 'OutlookAI-Indexed is not' $false (Test-IsBuildVmName 'OutlookAI-Indexed')
     Check 'OutlookAI-Unindexed is not' $false (Test-IsBuildVmName 'OutlookAI-Unindexed')
-    Check 'OutlookAI-TestVM is not' $false (Test-IsBuildVmName 'OutlookAI-TestVM')
     Check 'a name that merely starts the same way is not' $false (Test-IsBuildVmName 'OutlookAI-Build2')
     Check 'nor one padded with a space' $false (Test-IsBuildVmName 'OutlookAI-Build ')
     Check 'nor an empty one' $false (Test-IsBuildVmName '')

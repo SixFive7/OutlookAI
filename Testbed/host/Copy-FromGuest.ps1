@@ -77,10 +77,10 @@
     machine has moved on. -Force means "yes, this is the newer copy of the same thing".
 
 .PARAMETER VMName
-    MANDATORY. Which guest to pull from. There is no default: THREE MACHINES COEXIST during the
-    changeover - OutlookAI-Indexed, OutlookAI-Unindexed and the outgoing OutlookAI-TestVM - and a
-    default that silently picks one of three is the exact shape of mistake this testbed keeps
-    making. Here it would be pulling one guest's manifest and landing it on top of another's.
+    MANDATORY. Which guest to pull from. There is no default: THREE MACHINES COEXIST -
+    OutlookAI-Indexed, OutlookAI-Unindexed and OutlookAI-Build - and a default that silently
+    picks one of three is the exact shape of mistake this testbed keeps making. Here it would be
+    pulling one guest's manifest and landing it on top of another's.
 
     It also NAMES THE SUBDIRECTORY the results land in, so it must be a single path segment. A
     Hyper-V VM name is free text and may legally contain a separator; one that does is rejected

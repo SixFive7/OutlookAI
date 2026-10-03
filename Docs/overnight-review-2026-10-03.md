@@ -516,13 +516,18 @@ name; `move_mail` kept Outlook's escapes, breaking its documented undo for such 
 - **Recommendation.** (c) then (a). Nothing can be done here on your behalf: it is your real
   mailbox. The `TODO.md` item was corrected to say so.
 
-### Q105 - Delete the old `OutlookAI-TestVM` now?
+### Q105 - Delete the old `OutlookAI-TestVM` now? *Answered (a) - deleted at about 13:40Z*
 - **Primer.** The original single test VM, unused since the two Outlook guests and the build VM
   took over. It holds 120 GB on E: (10 checkpoints); E: had 122 GB free, and guest work stops at a
   60 GB floor.
 - **Directions.** (a) Delete it now; (b) keep it until the Q61 rebuild; (c) export it elsewhere,
   then delete.
 - **Recommendation.** (a): nothing uses it, and the Q61 rebuild deletes it anyway.
+- **Done.** Removed from Hyper-V with its folder, `E:\Hyper-V\VMs\OutlookAI-TestVM`, after a check
+  that no other VM's disk chain referred to any file of it. The repository no longer offers it as a
+  machine - the idle-saver's allowlist and the scripts' help name the three VMs in use - and
+  `Testbed/testbed.json` keeps its record, marked retired, as the provenance of the published
+  measurements.
 
 ### Q106 - Register the testbed idle-save task? *Answered 12:53Z by your VM rule*
 Registered, with every test VM set never to start with the host and to be saved when it stops;

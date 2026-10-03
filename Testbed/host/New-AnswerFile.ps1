@@ -88,12 +88,11 @@
     refuses a credential pinned to a different VM, and used to name the ISO and derive the
     computer name.
 
-    NO DEFAULT, DELIBERATELY. THREE MACHINES COEXIST during the changeover - OutlookAI-Indexed,
-    OutlookAI-Unindexed and the outgoing OutlookAI-TestVM - and a default that silently picks
-    one of three is the exact shape of mistake this testbed keeps making. Here it would be worse
-    than usual: the name also decides the computer name baked into the answer file and the
-    directory the ISO lands in, so a wrong default produces a guest that installs cleanly under
-    somebody else's identity.
+    NO DEFAULT, DELIBERATELY. THREE MACHINES COEXIST - OutlookAI-Indexed, OutlookAI-Unindexed
+    and OutlookAI-Build - and a default that silently picks one of three is the exact shape of
+    mistake this testbed keeps making. Here it would be worse than usual: the name also decides
+    the computer name baked into the answer file and the directory the ISO lands in, so a wrong
+    default produces a guest that installs cleanly under somebody else's identity.
 
     THREE GUESTS, ONE CREDENTIAL FILE. The loader's refusal is per-name, so building answer
     volumes for all of them from a single vm-credentials.json needs its `vmName` left empty -
@@ -179,7 +178,7 @@ if (-not $ComputerName) {
     # NetBIOS caps a computer name at 15 characters and Setup fails the specialize pass on a
     # longer one rather than truncating for you. Every testbed VM name starts 'OutlookAI-',
     # which alone is two thirds of the budget, so abbreviate that prefix rather than chop the
-    # end off - 'OutlookAI-TestVM' truncated is 'OutlookAI-TestV', which reads like a typo
+    # end off - 'OutlookAI-Unindexed' truncated is 'OutlookAI-Unind', which reads like a typo
     # forever afterwards.
     $ComputerName = $VMName -replace '^OutlookAI-', 'OAI-'
     if ($ComputerName.Length -gt 15) {

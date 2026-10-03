@@ -34,7 +34,8 @@ as Windows 11 Enterprise LTSC Evaluation, build 26100, a `TIMEBASED_EVAL` channe
 90-day clock (`7cceb1d`); the build number was lost when this section was rewritten for the staged
 image that afternoon (`9a627fa`), and is put back here. The licence clocks below were measured on
 it the same day. `Testbed/README.md` section 6 item 2 had all of this as unknown; it now points
-here*). An unactivated consumer Pro install has **no expiry at all** — it watermarks,
+here. Noted 2026-10-03: that guest was retired and deleted that day, Q105 (a)*). An unactivated
+consumer Pro install has **no expiry at all** — it watermarks,
 blocks personalisation and nags, but it does not stop. Since the decided rebuild cadence is
 driven by Office's 30-day grace, the Windows clock was doing no useful work, and removing it
 means one fewer way for the testbed to die silently. The evaluation route also needed a
@@ -133,7 +134,8 @@ maintainer and nowhere else. The Windows ISO in `.work/media/` has exactly the s
 **existing** guest was built with — `VoIPFabric.xml`, the workstation configuration, because at
 the time there was no other (*noted 2026-09-27: "existing" is the original guest, `OutlookAI-TestVM`,
 the one the published measurements were taken on - the only guest when this was written, on
-2026-08-24. `Testbed/README.md` section 6 item 3 had it as unrecorded; it now points here*):
+2026-08-24, and retired and deleted on 2026-10-03. `Testbed/README.md` section 6 item 3 had it as
+unrecorded; it now points here*):
 
 | Setting | Value |
 | --- | --- |
@@ -802,3 +804,8 @@ its own, which the restore at its end discards: straight after one, it held 30 M
 Build the new machine alongside the old one, prove it, and only then remove the old. The overlap
 costs disk; the alternative cost, on a machine with no staged media, is the testbed itself. This
 is not hypothetical caution — it is what the survey on 2026-08-24 prevented.
+
+**Followed to the end for the original guest.** `OutlookAI-TestVM` was deleted on 2026-10-03
+(Q105 (a)) - only once both script-built guests and the build VM were in service in its place, and
+after a check that no disk chain of the VMs that remain referred to any file of it, repeated
+after the deletion.
