@@ -118,6 +118,27 @@ public sealed record CorpusPlanOptions(string CorpusId, long Seed, DateTime Anch
     public CorpusMailboxOwner? Owner { get; init; }
 
     /// <summary>
+    /// Whether a population carries its UNDATED items - the hub's twelve and the bystander's
+    /// forty-two appointments, contacts and tasks (population version 2). <b>THE switch for them, and
+    /// it is OFF</b>: decided by the maintainer 2026-10-03 (Q98 (a)), after the first guest run showed
+    /// that every one of those kinds is DATED once it is saved into a PST - the store holds a
+    /// <c>PR_MESSAGE_DELIVERY_TIME</c>, and Outlook refuses to remove it (Docs/live-tier-on-the-vm.md
+    /// section 3b). So a population is built from its dated items alone: the hub 56, the bystander
+    /// 300, the identity store 8, as it always was. They come back only if a measurement on the
+    /// indexed guest shows the index leaves those kinds undated after all (Q98 (f)); to bring them
+    /// back, change this default - the undated probe, the census's undated checks and their T1 tests
+    /// are kept for that, and run on any plan that sets it.
+    /// <para>
+    /// NOT part of <see cref="ShapeKey"/>, on purpose. The undated items are a population's LAST
+    /// ordinals and every item's description is the same either way, so a population without them is
+    /// a prefix of one with them - the same relation the key already allows between a corpus and its
+    /// extension. A hub built without them can be torn down, re-anchored or extended by a tool that
+    /// has the switch on, and T1 holds the prefix.
+    /// </para>
+    /// </summary>
+    public bool IncludeUndatedItems { get; init; }
+
+    /// <summary>
     /// A stable digest of everything except the item COUNT, so a resumed or extended run
     /// can prove it is adding to the same corpus. The count is excluded on purpose: item
     /// N's description never depends on how many items were asked for, which is what

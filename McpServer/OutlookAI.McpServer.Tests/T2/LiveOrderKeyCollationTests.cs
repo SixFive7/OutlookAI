@@ -110,9 +110,10 @@ public sealed class LiveOrderKeyCollationTests
         }
 
         // A sample with no undated row - or with nothing BUT undated rows - has no NULL collation to
-        // report, and "no-undated-rows-in-sample" is not a measurement. That was every store on a test
-        // guest until the fixture populations carried undated items (2026-09-24); saying so out loud
-        // keeps it from quietly becoming true again.
+        // report, and "no-undated-rows-in-sample" is not a measurement. That is every store on a test
+        // guest: the fixture populations were to carry undated items (2026-09-24), but in a PST those
+        // kinds are dated, so they are built without them (Q98 (a), 2026-10-03). Saying so out loud
+        // keeps it from passing as a measurement.
         LivePopulationCoverage.Require(
             _fixture.Settings,
             measured,
@@ -124,9 +125,10 @@ public sealed class LiveOrderKeyCollationTests
 
     /// <summary>What every order-key test prints when there was nothing undated to measure.</summary>
     private const string UndatedRemedy =
-        "On a test guest the hub and bystander populations carry undated appointments, contacts and tasks "
-        + "(corpus-build --population hub|bystander, generator v2; Docs/live-tier-on-the-vm.md section 3b) - rebuild "
-        + "them, and wait for corpus-indexed to report them indexed, before the run.";
+        "On a test guest this is expected: the hub and bystander populations are built WITHOUT their undated "
+        + "appointments, contacts and tasks since 2026-10-03 (Q98 (a)), because in a PST those kinds carry a "
+        + "received date and Outlook will not remove it. They come back only if the indexed guest shows the index "
+        + "leaves those kinds undated after all (Q98 (f); Docs/live-tier-on-the-vm.md section 3b).";
 
     /// <summary>How many rows of <paramref name="scope"/>'s widest sample carry no received date - the order-key tests' population.</summary>
     private static int CountUndatedRows(IIndexClient client, string scope)

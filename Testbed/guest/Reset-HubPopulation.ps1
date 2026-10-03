@@ -1,21 +1,22 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
-    WRITTEN 2026-09-24 AND NEVER RUN ON A GUEST. WHAT HAS RUN IS -SelfTest, ON THE HOST, UNDER
-    WINDOWS POWERSHELL 5.1 AND POWERSHELL 7 - AND THE GUEST GUARD'S REFUSAL ON THE HOST.
+    RUN ON A GUEST: OAI-UNINDEXED, 2026-10-03, TWICE. NO LIVE RUN HAS READ THE RESULT YET.
     ============================================================================================
 
-    Nothing below the guard has executed anywhere: not the profile switches, not the Outlook
-    starts, not the one Quit, not a single corpus verb against a store. Every step it drives is a
-    step that has run by hand on a guest - Set-DefaultOutlookProfile.ps1 (measured end to end,
-    2026-09-24), OUTLOOK.EXE started in session 1, corpus-teardown and corpus-build, and a
-    graceful Quit attached through the Running Object Table (the build-out's own scratch script,
-    OAI-UNINDEXED 2026-09-24: Outlook left in about 2 s, each time) - except corpus-indexed, written
-    the same day, and this script's own Quit. And the population it rebuilds is v2, whose probes and
-    build were changed after that guest's build (placement off the default store, visible folders,
-    the owner as a resolved recipient): the first run of this script is also their first run.
-    Replace this banner with what it did once it has rebuilt a real hub and a live run has read the
-    result.
+    What ran there (Docs/live-tier-on-the-vm.md section 4.1d): -SelfTest under Windows PowerShell
+    5.1 (79 assertions, 0 failures), the dry run, and -Execute through Register-InteractiveTask.ps1
+    -TimeoutSeconds 3600, twice, each straight after Testbed/host/Restart-Guest.ps1 -Execute and
+    about seven minutes long. Every step below the guard but the index wait ran: both profile
+    switches, the Outlook start and its 180 s, corpus-teardown (considered 112, deleted 112, 0
+    remaining), the move into hub-history\, corpus-build against now (56 of 56, census and
+    read-back clean), the one Quit (that Outlook was not in the Running Object Table, so the attach
+    went through the class factory; OUTLOOK.EXE left 2 s after the Quit), the tier profile's
+    Outlook started NOT elevated, and the margin, opt-in and filter printed.
+    What has NOT run anywhere: the index wait (corpus-indexed - that guest has no index),
+    -SkipRebuild, a first build from -Seed or from hub-history\, and every guest-side refusal. And
+    each teardown leaves the hub's two emptied subfolders in its Deleted Items (section 3b, item 7).
+    Replace this banner once a live run has read a hub this script rebuilt.
 
 .SYNOPSIS
     Rebuilds the hub's generated population against NOW, before a live run. Guest only, in session
@@ -116,7 +117,7 @@
     refuses on its own (its census does not find the tier profile's stores as named), and the
     frontier test refuses a stale hub - but do not rely on that: re-run this script.
 
-    TIMING. Two Outlook starts at 180 s each, a teardown and a build of 68 items with their probes,
+    TIMING. Two Outlook starts at 180 s each, a teardown and a build of 56 items with their probes,
     one quit, and the indexer's crawl - budget 15 to 25 minutes, hence -TimeoutSeconds 3600 on the
     interactive task. The frontier test must then run within the margin this script prints at the
     end - 55 minutes after the newest item in a W. Europe winter - or it refuses the run as STALE.
@@ -750,8 +751,8 @@ function Invoke-SelfTest {
     Test-Case 'in summer: 115' 115 (Get-FrontierWindow -NewestUtc $newest -UtcOffset ([timespan]::FromHours(2)) -NowUtc $newest).MarginMinutes
     Test-Case 'west of UTC the size of the offset counts, not its sign' 295 (Get-FrontierWindow -NewestUtc $newest -UtcOffset ([timespan]::FromHours(-5)) -NowUtc $newest).MarginMinutes
     Test-Case 'on UTC it cannot tell at all' $false (Get-FrontierWindow -NewestUtc $newest -UtcOffset ([timespan]::Zero) -NowUtc $newest).Discriminates
-    Test-Case 'the newest item comes off the plan sheet' '2026-09-24T09:14:42Z' (Get-NewestFromPlanText "  items                 : 68`r`n  received range        : 2024-10-02T11:00:00Z .. 2026-09-24T09:14:42Z`r`n")
-    Test-Case 'and a sheet without one gives nothing' '<null>' (Get-NewestFromPlanText 'items : 68')
+    Test-Case 'the newest item comes off the plan sheet' '2026-09-24T09:14:42Z' (Get-NewestFromPlanText "  items                 : 56`r`n  received range        : 2024-10-02T11:00:00Z .. 2026-09-24T09:14:42Z`r`n")
+    Test-Case 'and a sheet without one gives nothing' '<null>' (Get-NewestFromPlanText 'items : 56')
 
     Write-Host ''
     Write-Host '== what it says when Outlook is in the way =='
