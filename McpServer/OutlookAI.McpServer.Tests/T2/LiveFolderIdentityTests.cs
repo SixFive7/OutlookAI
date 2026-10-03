@@ -121,6 +121,28 @@ public sealed class LiveFolderIdentityTests
                 Assert.True(
                     FolderEntryIdLayout.SameBytes(layout.FolderPartHex, a0.Properties["PR_RECORD_KEY"]),
                     "a PST folder's PR_RECORD_KEY is not its node id");
+                _output.WriteLine(
+                    "pst: the store's PR_MAPPING_SIGNATURE is the id's provider UID "
+                    + FolderEntryIdLayout.SameBytes(store.Properties.GetValueOrDefault("PR_MAPPING_SIGNATURE"), layout.ProviderUidHex));
+            }
+            else if (layout.Kind == FolderEntryIdKind.ExchangeFolder)
+            {
+                // Reported, for the Exchange guest: which store property each part of the 46-byte id comes
+                // from ([MS-OXCDATA] 2.2.4.1 - the mailbox GUID at 4..19, the FID's database GUID at 22..37),
+                // whether every folder of the mailbox shares one database GUID, and whether the source key
+                // is the FID part. A compact id that leaves the per-store parts out rests on these.
+                string databaseGuid = Convert.ToHexString(layout.Bytes, 22, 16);
+                foreach (KeyValuePair<string, string?> p in store.Properties)
+                {
+                    _output.WriteLine(
+                        "exchange: store " + p.Key + " is the id's provider UID " + FolderEntryIdLayout.SameBytes(p.Value, layout.ProviderUidHex)
+                        + ", its database GUID " + FolderEntryIdLayout.SameBytes(p.Value, databaseGuid));
+                }
+
+                _output.WriteLine(
+                    "exchange: the root's id has the same database GUID "
+                    + string.Equals(Convert.ToHexString(rootLayout.Bytes, 22, 16), databaseGuid, StringComparison.Ordinal)
+                    + "; PR_SOURCE_KEY is the id's FID part " + FolderEntryIdLayout.SameBytes(a0.Properties["PR_SOURCE_KEY"], layout.FolderPartHex));
             }
 
             Assert.True(a0.OpensWithoutStoreId == true, "GetFolderFromID without the store id did not open the same folder: " + a0.WithoutStoreIdError);
