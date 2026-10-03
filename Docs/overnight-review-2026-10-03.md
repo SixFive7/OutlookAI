@@ -558,6 +558,16 @@ lost while it was stopped (the folder was left without its `.git` file; its bran
 A fresh agent restarted that run from `CP-12B-POPULATIONS-V2`, restaging from master. The orphaned
 folder `.claude/worktrees/agent-a87151b711b18a939` is left in place for now; it holds only scratch.
 
+### V8b - The host restart at 12:06Z stopped everything; work resumed at 12:16Z
+The workstation was restarted at 12:06:02Z from the Start menu, under your account (System log,
+event 1074; no agent initiated it). The restart ended this session's process, both running
+agents (the live run on guest two, the folder-path follow-up on guest one), every background
+command and the session-only watchdog. Hyper-V shut both Outlook guests down cleanly and booted
+them again at about 12:08Z; the build VM stayed saved. At 12:16Z the watchdog was re-created (now
+`1db82c81`), the heartbeat re-armed, and both agents resumed with their context intact. Each was
+told to restore its guest's checkpoint before its next run. The command cut off was the guest-two
+agent staging a control build.
+
 ### V9 - Q100: README rows
 The brief said the add-in step was README rows 8b and 8c; it is row 5b (8b and 8c do not mention
 the add-in and were left unchanged). The split adds a new row 7c for the first run.
