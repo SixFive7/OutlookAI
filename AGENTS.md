@@ -16,6 +16,13 @@ Rules:
 - Never modify released sections (any `## v...` heading). Only add to `## Unreleased`.
 - If the Unreleased section already has entries from earlier in the session, add to it rather than replacing it.
 
+## TODO.md
+
+**An item is either open or gone.** Decided by the maintainer 2026-10-03. When an item is done -
+or decided, if it was a decision - delete it from `TODO.md`. Never tick it (`- [x]`), and never
+leave a DONE, CLOSED or RESOLVED note behind. The record of what was done lives in git history,
+the CHANGELOG and the runbook, not in the TODO list.
+
 ## Pushing
 
 **Push every commit individually, as it is made.** Decided 2026-09-17, standing. Do not
@@ -84,7 +91,7 @@ licence key, and anything a rebuilder would have to download and install beyond 
 `Testbed/MEDIA.md` already names as preconditions.
 
 **Do not re-litigate this per task.** If a route appears blocked without a paid component, the
-answer is to question the requirement, not the rule — see `TODO.md` for how the POP3 account
+answer is to question the requirement, not the rule — see `Testbed/README.md` and `Docs/research/profile-automation-research.md` for how the POP3 account
 question was reframed rather than bought.
 
 **One exception, decided by the maintainer 2026-09-24 (Q71): a loopback mail sink for the test
