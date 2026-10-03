@@ -208,6 +208,7 @@ public sealed class LiveTableSortProbeTests
         int saysLocal = 0;
         int saysNeither = 0;
         int inconclusive = 0;
+        int helperWrong = 0;
 
         foreach (ComStoreDetail store in stores)
         {
@@ -254,28 +255,38 @@ public sealed class LiveTableSortProbeTests
             }
 
             // The object model is documented to return LOCAL wall time, so the item's own
-            // value is the reference and the table value is what is being classified.
+            // value is the reference and the RAW table value is what is being classified - and,
+            // separately, whether the shipped helper turns that raw value into the item's UTC
+            // instant. The two used to be one test: "the helper agrees" stood in for "the table
+            // is UTC", which was only ever true while the helper relabelled. Since Q11 was settled
+            // (2026-10-03: the explicit name this probe adds reports LOCAL) the helper converts by
+            // spelling, so a LOCAL table and an agreeing helper are now the expected pair.
             bool tableIsLocal = probe.TableRawValue!.Value == probe.ItemRawValue!.Value;
-            bool tableIsUtc = probe.TableThroughSharedHelper.HasValue
+            bool tableIsUtc = probe.ItemThroughSharedHelper.HasValue
+                && probe.TableRawValue.Value == probe.ItemThroughSharedHelper.Value;
+            bool helperAgrees = probe.TableThroughSharedHelper.HasValue
                 && probe.ItemThroughSharedHelper.HasValue
                 && probe.TableThroughSharedHelper.Value == probe.ItemThroughSharedHelper.Value;
+            if (!helperAgrees)
+            {
+                helperWrong++;
+            }
 
+            string helperLine = helperAgrees
+                ? " The shipped helper reads it as the item's own UTC instant (ComDateValue.FromTableValue by column spelling)."
+                : " The shipped helper does NOT read it as the item's own UTC instant - it is wrong by the difference above.";
             if (tableIsLocal && !tableIsUtc)
             {
                 saysLocal++;
-                _ = summary.AppendLine("  VERDICT: TABLE REPORTS LOCAL TIME on this store. The raw table value equals "
-                    + "the opened item's own ReceivedTime, which the object model documents as local. The shipped "
-                    + "helper is wrong by the offset above: ComDateValue.FromTableValue must convert from local "
-                    + "instead of relabelling as UTC, and the tripwire census's fingerprints shift with it (harmless "
-                    + "- both ends of every census comparison move together).");
+                _ = summary.AppendLine("  VERDICT: TABLE REPORTS LOCAL TIME on this store for the column this probe added. "
+                    + "The raw table value equals the opened item's own ReceivedTime, which the object model documents "
+                    + "as local." + helperLine);
             }
             else if (tableIsUtc && !tableIsLocal)
             {
                 saysUtc++;
-                _ = summary.AppendLine("  VERDICT: TABLE REPORTS UTC on this store. The raw table value equals the "
-                    + "item's ReceivedTime converted to UTC. The shipped helper is correct and needs no change - and "
-                    + "the PREVIOUS ReadRowDate, which converted again, was putting a resumed scan's date bound one "
-                    + "offset early and skipping the mail in that window.");
+                _ = summary.AppendLine("  VERDICT: TABLE REPORTS UTC on this store for the column this probe added. "
+                    + "The raw table value equals the item's ReceivedTime converted to UTC." + helperLine);
             }
             else
             {
@@ -283,7 +294,7 @@ public sealed class LiveTableSortProbeTests
                 _ = summary.AppendLine("  VERDICT: NEITHER - the two values differ by something other than this "
                     + "machine's UTC offset, so the table is not simply one zone or the other. Read the four numbers "
                     + "above before changing anything: a daylight-saving boundary, a provider that rounds, or an item "
-                    + "whose delivery time was rewritten are all live possibilities.");
+                    + "whose delivery time was rewritten are all live possibilities." + helperLine);
             }
         }
 
@@ -299,8 +310,10 @@ public sealed class LiveTableSortProbeTests
             + saysNeither.ToString(System.Globalization.CultureInfo.InvariantCulture));
         _ = summary.AppendLine(" inconclusive (machine at UTC) .. "
             + inconclusive.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        _ = summary.AppendLine(" helper reads it wrongly ........ "
+            + helperWrong.ToString(System.Globalization.CultureInfo.InvariantCulture));
         _ = summary.AppendLine();
-        _ = summary.AppendLine(" ANSWER: " + DateKindAnswer(read, saysUtc, saysLocal, saysNeither, inconclusive));
+        _ = summary.AppendLine(" ANSWER: " + DateKindAnswer(read, saysUtc, saysLocal, saysNeither, inconclusive, helperWrong));
         _ = summary.AppendLine("-----------------------------------------------------------------");
 
         _output.WriteLine(summary.ToString());
@@ -309,9 +322,19 @@ public sealed class LiveTableSortProbeTests
             read > 0,
             "the date-kind probe could not read a single item two ways, so this run answers nothing. Check that "
             + "Outlook is running and that at least one store has a dated item in its Inbox.");
+
+        // Since Q11 was settled (2026-10-03) the question has an answer the product relies on: the
+        // shipped helper must turn the table's value into the item's own UTC instant on every
+        // store that could be read with a non-zero offset. A wrong reading puts a resumed
+        // exhaustive scan's bound one offset off - a duplicate east of UTC, SKIPPED mail west of it.
+        int conclusive = read - inconclusive;
+        Assert.True(
+            conclusive == 0 || helperWrong == 0,
+            helperWrong + " of " + conclusive + " store(s) read the table date wrongly through the shipped helper - "
+            + "see the per-store verdicts above");
     }
 
-    private static string DateKindAnswer(int read, int saysUtc, int saysLocal, int saysNeither, int inconclusive)
+    private static string DateKindAnswer(int read, int saysUtc, int saysLocal, int saysNeither, int inconclusive, int helperWrong)
     {
         if (read == 0)
         {
@@ -324,24 +347,26 @@ public sealed class LiveTableSortProbeTests
                 + "only be settled where the offset is non-zero.";
         }
 
+        string helper = helperWrong == 0
+            ? " The shipped helper (ComDateValue.FromTableValue, by column spelling) reads every one correctly."
+            : " The shipped helper reads " + helperWrong.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + " of them WRONGLY - a resumed exhaustive scan's bound is one offset off there.";
         if (saysUtc > 0 && saysLocal == 0 && saysNeither == 0)
         {
-            return "a Table reports UTC. ComDateValue.FromTableValue is correct as shipped, QUESTIONS.md Q11 closes "
-                + "in favour of the census's reading, and the exhaustive scan's OLD behaviour (converting again) was "
-                + "putting a resumed page's date bound one offset early - skipping mail and calling the scan "
-                + "complete.";
+            return "a Table reports UTC for the column this probe added (the explicit name ReceivedTime) - which "
+                + "contradicts the 2026-10-03 measurement that settled QUESTIONS.md Q11 the other way; find out "
+                + "what differs on this machine." + helper;
         }
 
         if (saysLocal > 0 && saysUtc == 0 && saysNeither == 0)
         {
-            return "a Table reports LOCAL time. ComDateValue.FromTableValue is the ONE line to change (convert from "
-                + "local rather than relabel as UTC) and both call sites follow it. Nothing else needs editing, "
-                + "which is the point of having made them share it.";
+            return "a Table reports LOCAL time for the explicit name ReceivedTime, as measured when QUESTIONS.md Q11 "
+                + "was settled (2026-10-03)." + helper;
         }
 
         return "MIXED or unexplained - read the per-store verdicts above. A table's zone is a property of the "
-            + "provider, so a per-store difference means something other than the zone is in play and no single "
-            + "helper change is safe until that is understood.";
+            + "provider and the column spelling, so a per-store difference means something other than the zone is "
+            + "in play." + helper;
     }
 
     private static string Describe(string label, ComTableSortAttempt attempt)

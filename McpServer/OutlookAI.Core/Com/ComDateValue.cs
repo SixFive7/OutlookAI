@@ -26,28 +26,30 @@ namespace OutlookAI.Core.Com
     public static class ComDateValue
     {
         /// <summary>
-        /// A value read out of an Outlook <c>Table</c> row, as UTC. Returns null for
-        /// anything that is not a date, which is the ordinary reading for a row whose date
-        /// property was never set.
+        /// A value read out of an Outlook <c>Table</c> column that was added by its NAMESPACE
+        /// reference (<c>urn:schemas:...</c>, <c>http://schemas.microsoft.com/mapi/...</c>), as
+        /// UTC. Returns null for anything that is not a date, which is the ordinary reading for
+        /// a row whose date property was never set. A column added by its EXPLICIT built-in name
+        /// reads differently - use <see cref="FromTableValue(object?, string)"/>, which decides by
+        /// the column.
         /// <para>
-        /// An <see cref="DateTimeKind.Unspecified"/> kind is taken as ALREADY UTC. Three
-        /// things point the same way: Microsoft documents the <c>Table</c> object as
-        /// returning date-time values in UTC (unlike the object model, which returns local
-        /// time); <see cref="DaslDateLiteral.FormatUtc"/> already treats an unspecified kind
-        /// as UTC, so the restriction that selected the row and the value read back out of
-        /// it agree; and it is the SAFE direction for the one caller where being wrong
-        /// costs mail. A resumed exhaustive scan uses this value as an inclusive "at or
-        /// before" bound, so reading a UTC instant as local moves the bound EARLIER by the
-        /// local offset and silently skips the mail in that window, while reading a local
-        /// instant as UTC moves it LATER and merely re-reads rows the chain already
-        /// suppresses by EntryID.
+        /// An <see cref="DateTimeKind.Unspecified"/> kind is taken as ALREADY UTC, which is what
+        /// a namespace-referenced column holds: measured 2026-10-03 (below), and what
+        /// <see cref="DaslDateLiteral.FormatUtc"/> assumes of the restriction that selected the
+        /// row.
         /// </para>
         /// <para>
-        /// <b>Still to be confirmed by measurement</b> (QUESTIONS.md Q11): the
-        /// <c>T2/LiveTableDateKindProbe</c> reading settles it against a real profile by
-        /// comparing this value with the same item's <c>MailItem.ReceivedTime</c>. If that
-        /// run shows tables reporting LOCAL time, this method is the single line to change
-        /// and every caller follows.
+        /// <b>QUESTIONS.md Q11, settled by measurement 2026-10-03</b> (the first live run on a test
+        /// guest, <c>OutlookAI-Unindexed</c>, Office LTSC 2024 16.0.17932, machine at UTC+2,
+        /// <c>T2/LiveTableSortProbeTests</c>): a table reports a date in the zone its COLUMN
+        /// SPELLING asks for, not one zone for every column. Under the explicit name
+        /// <c>ReceivedTime</c> the raw value equalled the opened item's own local
+        /// <c>ReceivedTime</c> (13:44:18 for an item received 11:44:18Z) on both stores read;
+        /// under <c>urn:schemas:httpmail:datereceived</c> the same folder's rows read in UTC
+        /// (11:44:18). The exhaustive scan adds the explicit name first, so treating every table
+        /// value as UTC put its resume cursor one offset LATE east of UTC - which re-admitted a
+        /// row the cursor's tie set does not suppress, and produced a duplicate on that run - and
+        /// one offset EARLY west of it, which skips mail and calls the scan complete.
         /// </para>
         /// </summary>
         public static DateTime? FromTableValue(object? value)
@@ -68,6 +70,68 @@ namespace OutlookAI.Core.Com
             }
 
             return DateTime.SpecifyKind(moment, DateTimeKind.Utc);
+        }
+
+        /// <summary>
+        /// A value read out of an Outlook <c>Table</c> row, as UTC, read in the zone the column
+        /// it came from was added in: a NAMESPACE reference holds UTC
+        /// (<see cref="FromTableValue(object?)"/>), an EXPLICIT built-in name such as
+        /// <c>ReceivedTime</c> holds LOCAL wall time and is converted as an item value
+        /// (<see cref="FromItemValue(DateTime?, TimeZoneInfo)"/>). Measured 2026-10-03 - see
+        /// <see cref="FromTableValue(object?)"/> for the run and the numbers.
+        /// </summary>
+        /// <param name="value">The row's value for the column.</param>
+        /// <param name="columnProperty">The spelling the column was added under, exactly as passed to <c>Columns.Add</c>.</param>
+        public static DateTime? FromTableValue(object? value, string columnProperty)
+        {
+            return FromTableValue(value, columnProperty, TimeZoneInfo.Local);
+        }
+
+        /// <summary>
+        /// <see cref="FromTableValue(object?, string)"/> with the zone an explicit-name column's
+        /// wall time is in passed in rather than taken from the machine. The product passes
+        /// <see cref="TimeZoneInfo.Local"/> and nothing else; the parameter exists so a test can
+        /// hold the zone still (the Q95 seam <see cref="FromItemValue(DateTime?, TimeZoneInfo)"/>
+        /// already has).
+        /// </summary>
+        public static DateTime? FromTableValue(object? value, string columnProperty, TimeZoneInfo localZone)
+        {
+            if (columnProperty == null)
+            {
+                throw new ArgumentNullException(nameof(columnProperty));
+            }
+
+            if (localZone == null)
+            {
+                throw new ArgumentNullException(nameof(localZone));
+            }
+
+            if (!(value is DateTime moment))
+            {
+                return null;
+            }
+
+            return IsNamespaceReference(columnProperty)
+                ? FromTableValue(moment)
+                : FromItemValue(moment, localZone);
+        }
+
+        /// <summary>
+        /// True when a table column's spelling is a NAMESPACE reference - a DAV <c>urn:</c> name
+        /// or a MAPI <c>http://schemas.microsoft.com/...</c> proptag - rather than an explicit
+        /// built-in property name. It is the spelling, not the property, that decides the zone a
+        /// table reports a date in (Q11, measured 2026-10-03).
+        /// </summary>
+        public static bool IsNamespaceReference(string columnProperty)
+        {
+            if (columnProperty == null)
+            {
+                throw new ArgumentNullException(nameof(columnProperty));
+            }
+
+            return columnProperty.StartsWith("urn:", StringComparison.OrdinalIgnoreCase)
+                || columnProperty.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                || columnProperty.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

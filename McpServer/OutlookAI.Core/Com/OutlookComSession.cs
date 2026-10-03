@@ -8313,7 +8313,7 @@ namespace OutlookAI.Core.Com
                 // column, so a resumed page without it is not obviously the same table, and
                 // the watermark would fail on every resume for a reason that is this code's
                 // own doing rather than the provider's.
-                int dateIndex = TryAddDateColumn(t);
+                int dateIndex = TryAddDateColumn(t, out string? dateProperty);
                 bool sorted = plan.MaySort && dateIndex >= 0 && TrySortNewestFirst(t);
 
                 int entryIdIndex = FindTableColumn(t, "EntryID");
@@ -8325,7 +8325,7 @@ namespace OutlookAI.Core.Com
 
                 if (dateIndex < 0)
                 {
-                    dateIndex = FindDateColumn(t);
+                    dateIndex = FindDateColumn(t, out dateProperty);
                 }
 
                 bool ordinalPositionHeld = false;
@@ -8405,7 +8405,7 @@ namespace OutlookAI.Core.Com
                             continue;
                         }
 
-                        DateTime? received = ReadRowDate(values, dateIndex);
+                        DateTime? received = ReadRowDate(values, dateIndex, dateProperty);
 
                         try
                         {
@@ -8472,8 +8472,9 @@ namespace OutlookAI.Core.Com
         /// failed - which is precisely the fact needed to explain why its sort has never
         /// applied.
         /// </summary>
-        private int TryAddDateColumn(dynamic table)
+        private int TryAddDateColumn(dynamic table, out string? property)
         {
+            property = null;
             for (int i = 0; i < DateSortProperties.Length; i++)
             {
                 object? columns = null;
@@ -8494,6 +8495,9 @@ namespace OutlookAI.Core.Com
                 int index = FindTableColumn(table, DateSortProperties[i]);
                 if (index >= 0)
                 {
+                    // The spelling travels with the index: it decides the zone the column's values
+                    // are in (ComDateValue.FromTableValue, Q11, measured 2026-10-03).
+                    property = DateSortProperties[i];
                     return index;
                 }
             }
@@ -8564,14 +8568,16 @@ namespace OutlookAI.Core.Com
             }
         }
 
-        /// <summary>The date column's position when it is already on the table, or -1.</summary>
-        private int FindDateColumn(dynamic table)
+        /// <summary>The date column's position when it is already on the table, or -1, and the spelling it is under.</summary>
+        private int FindDateColumn(dynamic table, out string? property)
         {
+            property = null;
             for (int i = 0; i < DateSortProperties.Length; i++)
             {
                 int index = FindTableColumn(table, DateSortProperties[i]);
                 if (index >= 0)
                 {
+                    property = DateSortProperties[i];
                     return index;
                 }
             }
@@ -8661,23 +8667,32 @@ namespace OutlookAI.Core.Com
         /// Reads a row's received date as UTC, or null when the column is absent or
         /// unusable. The BOUNDS check is the only decision left here.
         /// <para>
-        /// The time-zone reading moved to <see cref="ComDateValue.FromTableValue"/> because
-        /// this method and the live tripwire census used to derive the same table value in
-        /// OPPOSITE directions - one treating an unspecified kind as local, the other as UTC
+        /// The time-zone reading lives in <see cref="ComDateValue.FromTableValue(object?, string)"/>
+        /// because this method and the live tripwire census used to derive the same table value
+        /// in OPPOSITE directions - one treating an unspecified kind as local, the other as UTC
         /// - and neither could see the other. This value becomes a resumed exhaustive scan's
         /// inclusive "at or before" bound, so a reading one offset too early skips the mail
         /// in that window and reports the scan complete, in the one mode a caller picks
         /// because completeness matters.
         /// </para>
+        /// <para>
+        /// <b>The column's spelling is part of the reading</b> (Q11, measured 2026-10-03 on the
+        /// first guest live run): under the explicit name <c>ReceivedTime</c> - the spelling the
+        /// scan adds first - a table reports LOCAL wall time, and under the namespace reference
+        /// UTC. Read as UTC regardless, the scan's cursor sat one offset late at UTC+2 and the
+        /// next page re-admitted a row: a duplicate the acceptance test caught.
+        /// </para>
         /// </summary>
-        private static DateTime? ReadRowDate(object[] values, int dateIndex)
+        private static DateTime? ReadRowDate(object[] values, int dateIndex, string? dateProperty)
         {
             if (dateIndex < 0 || dateIndex >= values.Length)
             {
                 return null;
             }
 
-            return ComDateValue.FromTableValue(values[dateIndex]);
+            return dateProperty == null
+                ? ComDateValue.FromTableValue(values[dateIndex])
+                : ComDateValue.FromTableValue(values[dateIndex], dateProperty);
         }
 
         /// <summary>What a folder's resume state says to do when its turn comes.</summary>
@@ -10443,7 +10458,7 @@ namespace OutlookAI.Core.Com
                 }
 
                 int entryIdIndex = FindTableColumn(t, "EntryID");
-                int dateIndex = FindDateColumn(t);
+                int dateIndex = FindDateColumn(t, out string? dateProperty);
                 if (!(bool)t.EndOfTable)
                 {
                     object? row = null;
@@ -10456,7 +10471,7 @@ namespace OutlookAI.Core.Com
                             firstRowEntryId = values[entryIdIndex] as string;
                         }
 
-                        firstRowUtc = ReadRowDate(values, dateIndex);
+                        firstRowUtc = ReadRowDate(values, dateIndex, dateProperty);
                     }
                     finally
                     {
@@ -10589,7 +10604,7 @@ namespace OutlookAI.Core.Com
                     table = folder.GetTable(filter);
                     dynamic t = (dynamic)table!;
 
-                    int dateIndex = TryAddDateColumn(t);
+                    int dateIndex = TryAddDateColumn(t, out string? dateProperty);
                     int entryIdIndex = FindTableColumn(t, "EntryID");
                     if (dateIndex < 0 || entryIdIndex < 0)
                     {
@@ -10621,7 +10636,7 @@ namespace OutlookAI.Core.Com
 
                             return ReadItemBothWays(
                                 storeDisplayName, folderLabel, storeId, entryId, rawTableValue,
-                                ReadRowDate(values, dateIndex), examined);
+                                ReadRowDate(values, dateIndex, dateProperty), examined);
                         }
                         finally
                         {

@@ -115,6 +115,63 @@ public sealed class ComDateValueTests
     }
 
     /// <summary>
+    /// Q11, settled by measurement 2026-10-03 (first live run on a test guest, Office LTSC 2024,
+    /// UTC+2): the zone a table reports a date in follows the SPELLING its column was added
+    /// under. <c>ReceivedTime</c> read 13:44:18 for an item received 11:44:18Z - the item's own
+    /// local wall time - and <c>urn:schemas:httpmail:datereceived</c> read the same folder in
+    /// UTC. So an explicit name converts as local wall time and a namespace reference does not.
+    /// The zone is held still (<see cref="OddFixedZone"/>) so the answer is the same on a UTC
+    /// runner as anywhere else.
+    /// </summary>
+    [Fact]
+    public void ATableValue_IsReadInTheZoneItsColumnSpellingReportsIn()
+    {
+        DateTime expectedFromLocal = new DateTime(2026, 6, 22, 6, 51, 23, DateTimeKind.Utc); // 14:04:23 - 07:13
+
+        Assert.Equal(expectedFromLocal, ComDateValue.FromTableValue(Unspecified, "ReceivedTime", OddFixedZone));
+        Assert.Equal(expectedFromLocal, ComDateValue.FromTableValue(Unspecified, "SentOn", OddFixedZone));
+
+        DateTime asUtc = DateTime.SpecifyKind(Unspecified, DateTimeKind.Utc);
+        Assert.Equal(asUtc, ComDateValue.FromTableValue(Unspecified, "urn:schemas:httpmail:datereceived", OddFixedZone));
+        Assert.Equal(
+            asUtc,
+            ComDateValue.FromTableValue(Unspecified, "http://schemas.microsoft.com/mapi/proptag/0x0E060040", OddFixedZone));
+
+        // Exactly the item reading for an explicit name, exactly the old table reading otherwise.
+        Assert.Equal(ComDateValue.FromItemValue(Unspecified, OddFixedZone), ComDateValue.FromTableValue(Unspecified, "ReceivedTime", OddFixedZone));
+        Assert.Equal(ComDateValue.FromTableValue(Unspecified), ComDateValue.FromTableValue(Unspecified, "urn:schemas:httpmail:datereceived", OddFixedZone));
+    }
+
+    /// <summary>
+    /// The measured row itself, as a control that fails against the code it replaced: the
+    /// duplicate the paged-scan acceptance caught on 2026-10-03 came from reading the explicit
+    /// column's 15:29:46 local as 15:29:46Z, a bound two hours late, which re-admitted an item
+    /// received 13:29:46Z. Read by spelling, the bound is the item's own instant.
+    /// </summary>
+    [Fact]
+    public void TheMeasuredDuplicate_IsGoneWhenTheExplicitColumnIsReadAsLocal()
+    {
+        TimeZoneInfo utcPlusTwo = TimeZoneInfo.CreateCustomTimeZone("OutlookAI-Test-UTC+2", TimeSpan.FromHours(2), "UTC+2", "UTC+2");
+        DateTime tableValue = new DateTime(2026, 9, 30, 15, 29, 46, DateTimeKind.Unspecified);
+        DateTime received = new DateTime(2026, 9, 30, 13, 29, 46, DateTimeKind.Utc);
+
+        Assert.Equal(received, ComDateValue.FromTableValue(tableValue, "ReceivedTime", utcPlusTwo));
+        Assert.NotEqual(received, ComDateValue.FromTableValue(tableValue)); // the old reading: two hours late
+    }
+
+    [Theory]
+    [InlineData("ReceivedTime", false)]
+    [InlineData("SentOn", false)]
+    [InlineData("urn:schemas:httpmail:datereceived", true)]
+    [InlineData("URN:schemas:httpmail:date", true)]
+    [InlineData("http://schemas.microsoft.com/mapi/proptag/0x0E060040", true)]
+    [InlineData("https://schemas.example/whatever", true)]
+    public void AColumnSpelling_IsANamespaceReference_OnlyWhenItLooksLikeOne(string spelling, bool expected)
+    {
+        Assert.Equal(expected, ComDateValue.IsNamespaceReference(spelling));
+    }
+
+    /// <summary>
     /// The item reading is the OPPOSITE default, because the object model returns local wall
     /// time. Same input, same absent kind, different answer - which is why these are two
     /// named methods and not one call that inspects the kind.
