@@ -234,6 +234,49 @@ every script self-test in about 4 minutes. Decided along the way:
   measurement gate's suite timings now come from the VM, so the next release run sets a new
   baseline rather than comparing with the workstation's.
 
+### D54-D61 - Q99: matching stores to the index by Microsoft's store hash
+Built, because a correct and deterministic method exists for PSTs (your condition): every index URL
+is `mapi16://{SID}/<own name>($hash)/...`, and `$hash` is Microsoft's documented store hash of the
+store's `PR_ENTRYID` (= `Store.StoreID`); measured on 11 PSTs (Unicode, ANSI, renamed, copied,
+re-keyed, one PST in two profiles, after a catalog reset, a leading-zero hash, `% * ?` in a name,
+an empty decoy). End to end on the indexed guest, the OLD server answered a search scoped to an
+empty store named `Outlook Data File` with 3 hits from ANOTHER profile's corpus, reported as live;
+the new one searches the right root and returns none. Build VM: 3,408 / 0 / 0 on its branch.
+- **D54 - Scope:** only a PST is declared "not indexed" by a missing hash - only PSTs are measured,
+  so nothing can get worse for Exchange. *Alternatives:* the hash rule everywhere; the name rule only.
+- **D55 - What counts as a PST:** not Exchange, a `.pst` path, and a readable store ID; IMAP and
+  Outlook.com `.ost` stores keep the name rule.
+- **D56 - Exchange:** every documented hash input is tried (the profile section's mapping
+  signature, read-only from HKCU; the store's own; the entry ID; the entry ID plus the `.ost` path).
+  A single unambiguous match is used and reported in `outlook_health` as `matchedInput`; otherwise
+  today's name rule applies, reported as `matchedBy: displayName`. Your first run on your own
+  profile is the measurement.
+- **D57 - A hash claimed twice** is refused and falls back to the name rule (reason in `matchNote`)
+  rather than guessed - guessing risks the wrong mail.
+- **D58 - Health rows:** `perStore` lists this profile's stores under Outlook's names with
+  `matchedBy`, `matchedInput`, `indexStore`, `matchNote`; other profiles' stores move to a new
+  `storesNotInProfile`; an empty-but-indexed store is no longer reported as "holding nothing".
+- **D59 - The old catalog is kept unchanged as the fallback**, so the name rule behaves byte for
+  byte as before wherever the hash cannot decide.
+- **D60 - Search hits carry Outlook's store name** when the map ties them, so the name in results is
+  the one the other tools accept.
+- **D61 - Q99's three follow-up questions, answered with their recommendations** (all in `TODO.md`):
+  (1) which hash input a cached Exchange store uses - read it from your own `outlook_health` once a
+  build with this change runs on your profile (free, read-only); (2) what an unscoped search should
+  do with another profile's hits (one Windows user has one index across all profiles) - flag them,
+  but only after (1) is answered; (3) whether folders with `% / \ * ?` in their names can be
+  searched by folder - measure on a guest first, then encode if needed.
+
+### D62 - Q98 (f): contacts are the undated rows; build them on the indexed guest only
+- **Measured tonight on the indexed guest** (scratch PSTs, Unicode and ANSI): an appointment and a
+  task get `System.Message.DateReceived` = their creation time; a contact gets **NULL**.
+- **Chosen.** Include undated **contacts only**, and only on `OutlookAI-Indexed` - the three
+  order-key tests that need undated rows are `Requires=SearchIndex`, so they run only there.
+  Appointments and tasks are left out: indexed as dated at build time, they would become the hub's
+  newest rows and break the frontier design.
+- **Alternatives:** all three kinds; none (the tests keep printing `PROVED NOTHING`).
+- **Undo.** Build without the new plan option.
+
 ## Open questions only you can answer
 
 ### Q104 - Seven tagged test leftovers in your workstation's hub mailbox
@@ -335,7 +378,18 @@ the add-in and were left unchanged). The split adds a new row 7c for the first r
 - The build VM sat running with 6 GB from 02:35Z to 05:30Z across the session limit, after a
   deliberate kill test; the watcher (D50) now prevents that.
 
+### V11 - Q99: test runs on the workstation before the rules reached it
+Before the host-test and build-VM instructions arrived, the Q99 agent ran the full non-live suite
+on the workstation twice (01:09Z, before Q86's isolation, so its write-path tests appended lines to
+the real audit log since renamed; and 05:51Z), plus mutation and targeted runs. One targeted filter
+lacked `Category!=Live` and selected 4 live tests, which all refused at the opt-in check - nothing
+touched a mailbox.
+
 ## Notes (no decision needed)
+
+- **An ANSI PST's `Store.DisplayName` comes back one character short**, so a name lookup cannot find
+  it at all (Q99 finding); and `IsInstantSearchEnabled` read False for an ANSI store whose items were
+  indexed, so it is not a reliable signal.
 
 - **Both Outlook test guests also have dynamic memory with a 1 TB ceiling**, and their records do
   not say so (read only, nothing changed).
