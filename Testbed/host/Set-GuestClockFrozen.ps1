@@ -54,13 +54,18 @@
     Without -Execute it prints what it would do and changes nothing. In order:
       1. refuses unless the VM is one of the two Outlook guests, -FromCheckpoint exists and was taken
          RUNNING (only a saved memory image carries a clock; a cold boot comes up at host time), and no
-         checkpoint is named -NewCheckpoint - it never deletes or overwrites a checkpoint;
+         checkpoint is named -NewCheckpoint - it never deletes or overwrites a checkpoint. The base
+         should stand just after the guest's data was built, with Outlook closed: to freeze a freshly
+         rebuilt hub (step 9a), close Outlook with Restart-Guest.ps1 -Execute, take an ordinary running
+         checkpoint, and freeze that;
       2. saves the VM if it is running (a checkpoint applied to a RUNNING VM resumes it at once, before
          time sync could be turned off - runbook section 4.3), restores -FromCheckpoint, which leaves
          it Saved, and turns time synchronisation OFF while it is saved;
       3. starts it - it resumes at -FromCheckpoint's own instant, with nothing to set it to the host's
          time - and reads the guest's clock three times, 10 s apart: the offset from the host must hold
-         to 2 s (nothing re-syncs it), and time sync must still read off;
+         to 2 s (nothing re-syncs it), and time sync must still read off - and stops if OUTLOOK.EXE
+         runs in it: every run stages the commit into the restored guest, staging refuses while Outlook
+         runs, and a run may not restart the guest to close it;
       4. takes -NewCheckpoint (a standard checkpoint of the running guest) and reads the clock right
          before and right after it: the frozen instant is the midpoint;
       5. proves it: saves, restores -NewCheckpoint, checks time sync is off in it, starts it, and reads
@@ -233,7 +238,7 @@ function Get-FrozenClockVerdict {
     }
     if ($elapsed.TotalSeconds -lt -$Tolerance) {
         if ($verdict -eq 'FROZEN') { $verdict = 'CLOCK-MOVED' }
-        $reasons += "the guest's clock is $(Format-Span $elapsed.Duration()) BEFORE the frozen instant $(Format-Utc $Record.FrozenUtc): somebody set it by hand, or this is not the recorded checkpoint."
+        $reasons += "the guest's clock is $(Format-Span $elapsed.Duration()) BEFORE the frozen instant $(Format-Utc $Record.FrozenUtc): the guest restarted or cold-booted after the restore (it comes back at the host's time plus whatever offset its clock last held - on OutlookAI-Unindexed that was 50 hours behind the host, runbook section 4.4), somebody set the clock by hand, or this is not the recorded checkpoint. Restore '$($Record.Checkpoint)' and stage again."
     }
     elseif ($elapsed.TotalMinutes -gt $Record.SuiteStartWithinMinutes) {
         if ($verdict -eq 'FROZEN') { $verdict = 'CLOCK-MOVED' }
@@ -318,6 +323,8 @@ function Invoke-SelfTest {
     $v = Get-FrozenClockVerdict -Record $rec -TimeSyncEnabled $false -ParentCheckpointName 'CP-X' -GuestUtc $f.AddMinutes(-5)
     Check 'five minutes before the instant: CLOCK-MOVED' $v.Verdict 'CLOCK-MOVED'
     Check 'and it says BEFORE' ([string]$v.Reasons[0]).Contains('BEFORE the frozen instant') $true
+    $v = Get-FrozenClockVerdict -Record $rec -TimeSyncEnabled $false -ParentCheckpointName 'CP-X' -GuestUtc $f.AddHours(-50)
+    Check 'fifty hours before it - a restart, as measured on guest two: CLOCK-MOVED, naming the restart' (($v.Verdict -eq 'CLOCK-MOVED') -and ([string]$v.Reasons[0]).Contains('restarted or cold-booted')) $true
     $v = Get-FrozenClockVerdict -Record $rec -TimeSyncEnabled $true -ParentCheckpointName 'CP-X' -GuestUtc $f
     Check 'time sync on: NOT-FROZEN, whatever the clock reads' $v.Verdict 'NOT-FROZEN'
     $v = Get-FrozenClockVerdict -Record $rec -TimeSyncEnabled $false -ParentCheckpointName 'CP-W' -GuestUtc $f
@@ -511,6 +518,12 @@ try {
     if ($drift -gt 2) { throw "the guest's offset from the host moved $drift s in 20 s - something is setting its clock" }
     if ((Get-TimeSyncService $VMName).Enabled) { throw 'time synchronisation reads ON again after the start' }
     Say "  zone $($c3.Zone), UTC offset $($c3.OffsetMinutes) min"
+    # Every run stages the commit's server, tools and suite into the restored guest, that swap refuses
+    # while Outlook runs, and a run may not restart the guest to close it: so no running Outlook in a
+    # frozen checkpoint. Close it in the base first (Restart-Guest.ps1 -Execute), then checkpoint that.
+    $outlooks = Invoke-Command -VMName $VMName -Credential $script:Cred -ErrorAction Stop -ScriptBlock { @(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue).Count }
+    if ([int]$outlooks -gt 0) { throw "OUTLOOK.EXE runs in '$FromCheckpoint'. Every run stages into the restored guest, staging refuses while Outlook runs, and a run may not restart the guest - freeze a checkpoint taken with Outlook closed" }
+    Say '  OUTLOOK.EXE not running - a run can stage into it'
 
     # 3. The frozen checkpoint, bracketed by two clock readings.
     Say "== taking '$NewCheckpoint' =="

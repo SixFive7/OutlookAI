@@ -2049,6 +2049,12 @@ carries, and the fourth is the hub's own name.
 
 ### The hub is rebuilt before every run
 
+**On a frozen guest it is not - Q130 (a), decided 2026-10-03 (section 4.4).** There the frozen
+checkpoint holds the hub as it was built and every run restores it at the same instant, so the hub's
+newest item is exactly as old on every run as on the first - minutes, well inside the frontier margin.
+The rebuild below is how a NEW frozen checkpoint's hub is made. The frontier test still reads the
+manifest and still fails on a hub older than the margin, which on a frozen guest means its clock moved.
+
 `LiveIndexSearchTests.Staleness_SelfReportsPlausibleFrontier` asserts that the index frontier is not
 in the future. On a guest whose newest item is weeks old, a product that misread local time as UTC
 would still pass it; with the newest item one minute old, the same misreading puts the frontier an
@@ -2386,6 +2392,14 @@ see section 5. It is not typed anywhere either: `McpServer/OutlookAI.McpServer.T
 derives it from the vocabulary, and `T1/LiveTierInventoryTests` fails the build if a copy of it - this
 one included - stops short of the derived string. `CachedExchange` joined `DelegateStore` on
 2026-10-03 (Q74 C1).
+
+**On a FROZEN guest the run starts with the restore of its frozen checkpoint instead - decided by the
+maintainer 2026-10-03 (Q130 (a); section 4.4).** Both Outlook guests are frozen once that work is
+merged: time synchronisation off, every run restoring the checkpoint `Testbed/testbed.json` names
+under `frozenClocks`, staging, and passing `Testbed/host/Set-GuestClockFrozen.ps1 -Verify` before the
+suite - with no restart and no hub rebuild after the restore (`Testbed/README.md` section 4c has the
+order). The hub rebuild below is then the first step of making a NEW frozen checkpoint, not of a run;
+until the merge it stays the first step of every run on the unfrozen checkpoints.
 
 **On a test guest, every run starts with the hub rebuild - a script step, decided 2026-09-24
 (question D, option (a)).** Restart the guest gracefully - Testbed/host/Restart-Guest.ps1 -VMName <guest>
@@ -2944,7 +2958,8 @@ and saving or resuming does not move it - the mechanism (a) needs is real. Two r
 must not restart or cold-boot the guest after the restore (both leave the frozen instant - the restart case
 after a restore inferred from the cold boot, not measured), and the build VM can never be frozen (its runner
 requires the host's clock within 2 s). Not measured: installing a freshly built add-in on a frozen guest,
-and MSBuild with files the host dated after the guest's clock.
+and MSBuild with files the host dated after the guest's clock. *Both measured since, and the restart after
+a restore too - section 4.4.*
 
 ### 4.2 The indexed guest's build-out - `OutlookAI-Indexed`, 2026-09-24 and 2026-09-27
 
@@ -3370,7 +3385,9 @@ now says so every run. The frontier test and the completeness oracle passed on t
 populations stay its resting state until this branch is merged. **After the merge**, restore
 `CP-18C-ALL-KINDS` instead - its hub is rebuilt by every run anyway (the rebuild keeps all three kinds from
 then on), and its bystander is the one that needs the all-kinds build. The same date applies: **before
-2026-11-01 23:59 UTC** for Corpus A's 30-day window (Q108).
+2026-11-01 23:59 UTC** for Corpus A's 30-day window (Q108). *Once Q130 (a) is merged, runs restore
+`CP-19C-FROZEN-CLOCK` instead (section 4.4): CP-18C-ALL-KINDS frozen at its own instant, whose clock never
+reaches that date.*
 
 ### 4.3 The build VM - `OutlookAI-Build`, 2026-10-03 (Q94, Q102)
 
