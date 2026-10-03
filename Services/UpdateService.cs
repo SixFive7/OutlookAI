@@ -355,6 +355,14 @@ namespace OutlookAI.Services
             return $"checked {(int)ago.TotalDays}d ago";
         }
 
+        // Q125 triage of CA5386, 2026-10-04: the analyser's fix - SecurityProtocolType.SystemDefault -
+        // is the one that breaks here, so the line stays and the finding is suppressed on this method.
+        // Measured with a .NET Framework 4.8 process in the add-in's legacy TLS state (default "Ssl3,
+        // Tls", the state af2f4f2 found the add-in in): the default fails against api.github.com with
+        // "Could not create SSL/TLS secure channel"; |= Tls12 gets 200; = SystemDefault fails with
+        // "The specified value is not valid in the 'SslProtocolType' enumeration".
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5386:Avoid hardcoding SecurityProtocolType value",
+            Justification = "In the VSTO host the runtime starts on its legacy list (Ssl3, Tls), which GitHub refuses, and there it rejects SystemDefault outright; adding TLS 1.2 is the only setting measured to reach GitHub. The installer that comes down is Authenticode-verified and signer-pinned whatever the transport.")]
         private static HttpClient CreateHttpClient()
         {
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;

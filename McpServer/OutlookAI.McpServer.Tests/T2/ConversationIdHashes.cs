@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -17,6 +18,8 @@ public static class ConversationIdHashes
     /// The hex MD5 of <paramref name="text"/> under one of <see cref="Variants"/>, upper-case like
     /// Outlook's ConversationID.
     /// </summary>
+    [SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms",
+        Justification = "Not cryptography: MD5 is the derivation MS-OXOMSG specifies for a ConversationId, and this test reproduces Outlook's own value to compare with it. Nothing is protected by the hash.")]
     public static string Md5Hex(string text, string variant)
     {
         ArgumentNullException.ThrowIfNull(text);

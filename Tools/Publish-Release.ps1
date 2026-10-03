@@ -5,10 +5,11 @@
     -Execute, WHICH PUBLISHES, HAS NEVER RUN.
     ============================================================================================
 
-    The first dry run (from edc9dfd) stopped at step 8, and rightly: Get-AuthenticodeSignature
-    calls every signature by the self-signed release key UnknownError, because its root is not
-    trusted, so step 8 now asks WinVerifyTrust exactly as the shipped updater does. The second
-    (from 4d9d353, 2026-10-03 18:25-18:32, 7 minutes) ran steps 1-10 through: the four guards under
+    The first dry run (from edc9dfd) stopped at the signature (then step 8, now 9), and rightly:
+    Get-AuthenticodeSignature calls every signature by the self-signed release key UnknownError,
+    because its root is not trusted, so that step now asks WinVerifyTrust exactly as the shipped
+    updater does. The second (from 4d9d353, 2026-10-03 18:25-18:32, 7 minutes) ran every step but
+    publishing - there was no step 7 yet (Q125 added it on 2026-10-04): the four guards under
     PowerShell 7.6.6 and 5.1; D7 (c) 8/0 and 3/0 against Visual Studio Community 2026 18.10.3's
     targets; the release build of 3.1.1.825, guard 3 UNCHANGED over 305 host lines, the add-in DLL
     and both server executables stamped 3.1.1.825; the installer signed, WinVerifyTrust 0x800B0109
@@ -72,33 +73,39 @@
           self-tests skip it there, and a Visual Studio update could reopen that hole without a
           word. Decided by the maintainer 2026-10-03: they run here before every release, the one
           exception to "no self-test on the workstation". Either failing refuses the release.
-       7. BUILD (release.yml's "Stamp assembly version" through "Create installer"):
+       7. SECURITY (Q125, 2026-10-04 - what CodeQL and the dependency review did on GitHub until
+          2026-10-03): Tools/Test-VulnerablePackages.ps1 - no NuGet package of the MCP server's
+          projects, direct or transitive, with a known vulnerability, from nuget.org's advisories -
+          then Tools/Invoke-CodeQL.ps1 on HEAD - CodeQL's C# security queries, with no result that
+          is not triaged in Tools/codeql-accepted.json. Anything but exit 0 from either refuses.
+          Both need the internet; the first CodeQL run on a machine fetches its 700 MB bundle.
+       8. BUILD (release.yml's "Stamp assembly version" through "Create installer"):
           Testbed/host/Publish-AddInPayload.ps1 -ReleaseSigningThumbprint, from a `git archive`
           of HEAD - the Q81 guards included, the manifests signed with the release key, the MCP
           server published into the payload, the VSTO runtime compiled in.
-       8. SIZE AND SIGNATURE (release.yml's size gate and "Sign installer"): signtool with the
+       9. SIZE AND SIGNATURE (release.yml's size gate and "Sign installer"): signtool with the
           pinned certificate BY THUMBPRINT and an RFC 3161 timestamp from the first server that
           answers; the signature read back the way the shipped updater reads it (WinVerifyTrust,
           accepting the self-signed key's untrusted root, and the signer's thumbprint pinned); and
           the signed file no larger than the updater's 50 MB cap.
-       9. TESTS: Testbed/host/Invoke-TestsOnBuildVm.ps1 <HEAD> - the whole non-live suite and
+      10. TESTS: Testbed/host/Invoke-TestsOnBuildVm.ps1 <HEAD> - the whole non-live suite and
           every script self-test, on the build VM. Anything but exit 0 refuses. Last before the
           stamp because it is the slow one: the cheap failures come first.
-      10. STAMP COMMIT (release.yml's "Stamp changelog" and "Commit stamped changelog"): HEAD's
+      11. STAMP COMMIT (release.yml's "Stamp changelog" and "Commit stamped changelog"): HEAD's
           tree with only CHANGELOG.md changed - "## Unreleased", a blank line, "## v<version> -
           <date>" - committed with git plumbing, so neither the working tree nor a branch moves.
           The diff is checked: two lines added to CHANGELOG.md and nothing else; and the committed
           CHANGELOG.md is read back, because the body's line ranges are true of that text only.
-      11. PUBLISH - ONLY WITH -Execute. origin/master must still be HEAD; the stamp commit is pushed
+      12. PUBLISH - ONLY WITH -Execute. origin/master must still be HEAD; the stamp commit is pushed
           to master (a fast-forward, never forced - if master moved, the push is refused and
           nothing is released, as in the workflow); `gh release create v<version>` with the
           signed installer, targeting that commit, notes from step 3; the release is read back;
           and a local master that sits on HEAD is fast-forwarded to the stamp commit.
 
     WITHOUT -Execute IT IS A DRY RUN, AND A DRY RUN IS THE WHOLE RELEASE EXCEPT PUBLISHING: steps
-    1-10 run for real - the guards, D7 (c), the build, the signature, the build VM's tests, the
-    stamp commit object - and it ends by printing the push and the gh release create it would have
-    run. No tag, no release, no push.
+    1-11 run for real - the guards, D7 (c), the security step, the build, the signature, the build
+    VM's tests, the stamp commit object - and it ends by printing the push and the gh release
+    create it would have run. No tag, no release, no push.
 
     WHAT THE WORKFLOW DID THAT THIS DOES NOT, ON PURPOSE:
       * the build-provenance attestation (actions/attest-build-provenance). It needs the OIDC token
@@ -108,10 +115,11 @@
       * downloading the VSTO runtime on every release. It is staged media here (Testbed/MEDIA.md)
         and Publish-AddInPayload.ps1 holds it to the same SHA-256 and length.
 
-    WHAT THIS DOES THAT THE WORKFLOW DID NOT: the four guards, D7 (c) and the build VM's suite gate
-    the release; signtool picks the certificate by thumbprint, where the runner's `/a` took the
-    only one it had and this machine can hold more; the signature and the stamp diff are read
-    back; the tag targets the exact commit that was pushed.
+    WHAT THIS DOES THAT THE WORKFLOW DID NOT: the four guards, D7 (c), the security step and the
+    build VM's suite gate the release (CodeQL and the dependency review ran on GitHub, but beside a
+    release, never in its way); signtool picks the certificate by thumbprint, where the runner's
+    `/a` took the only one it had and this machine can hold more; the signature and the stamp diff
+    are read back; the tag targets the exact commit that was pushed.
 
     WINDOWS POWERSHELL 5.1 AND POWERSHELL 7 BOTH. No ternary, no `??`, and ASCII apart from the
     changelog palette's twelve icons, which is why the file is saved as UTF-8 WITH a byte order mark:
@@ -264,12 +272,12 @@ $ChangelogCheckDirectory = 'changelog-check'
 
 # CERT_E_UNTRUSTEDROOT, 0x800B0109. The certificate is SELF-SIGNED (CN=OutlookAI), so WinVerifyTrust
 # ends a perfectly good signature in an untrusted root, and the shipped updater accepts exactly that
-# result and 0, then pins the signer (Services/UpdateService.cs, VerifySignature). So does step 8.
+# result and 0, then pins the signer (Services/UpdateService.cs, VerifySignature). So does step 9.
 $CertEUntrustedRoot = [int]-2146762487
 
 # The updater's WinVerifyTrust call (Services/UpdateService.cs, WinVerifyTrustFile), restated in the
 # C# that Windows PowerShell 5.1's Add-Type compiles: the same action, the same flags - no UI, no
-# revocation check, WTD_SAFER_FLAG - so step 8 asks the question every installed copy will ask.
+# revocation check, WTD_SAFER_FLAG - so step 9 asks the question every installed copy will ask.
 $InstallerTrustSource = @'
 using System;
 using System.Runtime.InteropServices;
@@ -353,6 +361,11 @@ $D7Comparisons = @('Testbed\host\Publish-AddInPayload.ps1', 'Tools\Switch-AddInB
 $D7Switch = 'CompareInstalledTargets'
 $BuildScript = 'Testbed\host\Publish-AddInPayload.ps1'
 $TestRunner = 'Testbed\host\Invoke-TestsOnBuildVm.ps1'
+
+# Step 7, the security gates (Q125). Each takes -OutDir, so its record lands with the release's.
+$VulnerablePackagesScript = 'Tools\Test-VulnerablePackages.ps1'
+$CodeQLScript = 'Tools\Invoke-CodeQL.ps1'
+$CodeQLTimeoutMinutes = 120
 
 function Say([string] $m) { Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $m) }
 
@@ -1211,6 +1224,9 @@ function Invoke-SelfTest {
     }
     Test-Case 'the build script takes the release certificate' 'String' (Get-ScriptParameterType -Path (Join-Path $RepoRoot $BuildScript) -Name 'ReleaseSigningThumbprint')
     Test-Case 'the build VM runner takes a revision' 'String' (Get-ScriptParameterType -Path (Join-Path $RepoRoot $TestRunner) -Name 'Ref')
+    Test-Case 'step 7: the vulnerable-package check takes an output folder' 'String' (Get-ScriptParameterType -Path (Join-Path $RepoRoot $VulnerablePackagesScript) -Name 'OutDir')
+    Test-Case 'step 7: the CodeQL run takes a revision' 'String' (Get-ScriptParameterType -Path (Join-Path $RepoRoot $CodeQLScript) -Name 'Ref')
+    Test-Case 'step 7: and an output folder' 'String' (Get-ScriptParameterType -Path (Join-Path $RepoRoot $CodeQLScript) -Name 'OutDir')
     Test-Case 'a parameter nobody declares is nothing' $true ($null -eq (Get-ScriptParameterType -Path (Join-Path $RepoRoot $BuildScript) -Name 'NoSuchParameter'))
     Write-Host '  SKIP D7 (c) itself: it needs Visual Studio, so it runs in a release, on the workstation (AGENTS.md).'
 
@@ -1236,6 +1252,7 @@ function Invoke-SelfTest {
     Write-Host ''
     Write-Host 'NOT COVERED HERE. Only a run on the workstation can settle these - its dry run does, all but the last:'
     Write-Host '  * that gh, git, signtool, the certificate and the build VM answer as assumed'
+    Write-Host '  * that nuget.org answers step 7''s package check, and CodeQL''s bundle fetches and analyses'
     Write-Host '  * that D7 (c) passes against the Visual Studio installed there'
     Write-Host '  * that GitHub renders release-notes.md as written, and highlights each read-more range on github.com'
     Write-Host '  * that the push and gh release create succeed - which only -Execute does'
@@ -1556,7 +1573,30 @@ $record.d7 = $d7Results
 
 # ---------------------------------------------------------------------------------------------
 Say ''
-Say '== 7. Build (Testbed/host/Publish-AddInPayload.ps1, the release build) =='
+Say '== 7. Security: known-vulnerable packages, then CodeQL (Q125) =='
+$vulnDir = Join-Path $outDir 'vulnerable-packages'
+$r = Invoke-ScriptStep -ShellExe $pwshExe -ScriptPath (Join-Path $RepoRoot $VulnerablePackagesScript) -ScriptArguments @('-OutDir', (Format-Argument $vulnDir)) -LogStem (Join-Path $logDir 'vulnerable-packages') -TimeoutMinutes 30
+$record.vulnerablePackages = [ordered]@{ exitCode = $r.ExitCode; timedOut = $r.TimedOut; summary = (Join-Path $vulnDir 'summary.txt') }
+if ($r.TimedOut -or $r.ExitCode -ne 0) {
+    Show-LogTail $r.Out 25
+    throw "REFUSING TO RELEASE: $($VulnerablePackagesScript.Replace('\', '/')) exit $($r.ExitCode) (timed out: $($r.TimedOut)) - 1 a NuGet package with a known vulnerability, 3 not checked, 4 refused. Log: $($r.Out)"
+}
+Say '  OK  no known vulnerability in any NuGet package of the MCP server''s projects (nuget.org''s advisories)'
+$codeqlDir = Join-Path $outDir 'codeql'
+$r = Invoke-ScriptStep -ShellExe $pwshExe -ScriptPath (Join-Path $RepoRoot $CodeQLScript) -ScriptArguments @('-Ref', $head, '-OutDir', (Format-Argument $codeqlDir)) -LogStem (Join-Path $logDir 'codeql') -TimeoutMinutes $CodeQLTimeoutMinutes
+$record.codeql = [ordered]@{ exitCode = $r.ExitCode; timedOut = $r.TimedOut; summary = (Join-Path $codeqlDir 'summary.txt') }
+if (Test-Path -LiteralPath (Join-Path $codeqlDir 'summary.txt')) {
+    foreach ($l in (Get-Content -LiteralPath (Join-Path $codeqlDir 'summary.txt'))) { Write-Host "      | $l" }
+}
+else { Show-LogTail $r.Out 25 }
+if ($r.TimedOut -or $r.ExitCode -ne 0) {
+    throw "REFUSING TO RELEASE: $($CodeQLScript.Replace('\', '/')) exit $($r.ExitCode) (timed out: $($r.TimedOut)) - 1 a result nobody has triaged, 2 the analysis failed, 3 the bundle could not be fetched or verified, 4 refused. Log: $($r.Out)"
+}
+Say '  OK  CodeQL: no untriaged result'
+
+# ---------------------------------------------------------------------------------------------
+Say ''
+Say '== 8. Build (Testbed/host/Publish-AddInPayload.ps1, the release build) =='
 $vsto = $VstoRuntimePath
 if (-not $vsto) {
     foreach ($c in @((Join-Path $RepoRoot '.work\media\vstor_redist.exe'), (Join-Path $RepoRoot 'Redist\vstor_redist.exe'))) {
@@ -1581,7 +1621,7 @@ if (-not (Test-Path -LiteralPath $unsigned)) { throw "The build reported success
 
 # ---------------------------------------------------------------------------------------------
 Say ''
-Say '== 8. Sign the installer, read the signature back, hold it to the cap =='
+Say '== 9. Sign the installer, read the signature back, hold it to the cap =='
 $installer = Join-Path $outDir "OutlookAI-$tag.exe"
 Copy-Item -LiteralPath $unsigned -Destination $installer -Force
 $signtool = Resolve-SignTool
@@ -1615,7 +1655,7 @@ $record.installer = [ordered]@{ file = $installer; bytes = $installerItem.Length
 
 # ---------------------------------------------------------------------------------------------
 Say ''
-Say "== 9. Tests: the non-live suite and every self-test of $($head.Substring(0, 12)), on the build VM =="
+Say "== 10. Tests: the non-live suite and every self-test of $($head.Substring(0, 12)), on the build VM =="
 $r = Invoke-ScriptStep -ShellExe $pwshExe -ScriptPath (Join-Path $RepoRoot $TestRunner) -ScriptArguments @($head) -LogStem (Join-Path $logDir 'build-vm') -TimeoutMinutes $TestTimeoutMinutes
 $runDir = Get-TestRunDirectory @(Get-Content -LiteralPath $r.Out -ErrorAction SilentlyContinue)
 $record.tests = [ordered]@{ exitCode = $r.ExitCode; timedOut = $r.TimedOut; runDirectory = $runDir }
@@ -1630,7 +1670,7 @@ Say '  exit 0: the whole non-live suite and every self-test passed'
 
 # ---------------------------------------------------------------------------------------------
 Say ''
-Say '== 10. The stamp commit - made, not pushed =='
+Say '== 11. The stamp commit - made, not pushed =='
 # $stampedText and $date are step 3's: the release body was made from this very text.
 $stampedPath = Join-Path $outDir 'CHANGELOG.stamped.md'
 [System.IO.File]::WriteAllText($stampedPath, $stampedText, (New-Object System.Text.UTF8Encoding($changelogHasBom)))
@@ -1672,7 +1712,7 @@ if (-not $Execute) {
     $record.published = $false
     Set-Content -LiteralPath $recordPath -Value ($record | ConvertTo-Json -Depth 6) -Encoding UTF8
     Say ''
-    Say "DRY RUN COMPLETE in $([int]((Get-Date) - $started).TotalMinutes) minute(s). Steps 1-10 ran for real; nothing was published. -Execute would now run:"
+    Say "DRY RUN COMPLETE in $([int]((Get-Date) - $started).TotalMinutes) minute(s). Steps 1-11 ran for real; nothing was published. -Execute would now run:"
     Say "  git $($pushArgs -join ' ')"
     Say "  gh $($ghArgs -join ' ')"
     Say "  and fast-forward a local $ReleaseBranch that sits on $($head.Substring(0, 12))."
@@ -1682,7 +1722,7 @@ if (-not $Execute) {
 
 # ---------------------------------------------------------------------------------------------
 Say ''
-Say '== 11. PUBLISH =='
+Say '== 12. PUBLISH =='
 $null = Invoke-Git -Arguments @('fetch', '--quiet', $Remote, $ReleaseBranch)
 $remoteNow = (Invoke-Git -Arguments @('rev-parse', '--verify', "refs/remotes/$Remote/$ReleaseBranch^{commit}")).Text
 if ($remoteNow -ne $head) { throw "REFUSING: $Remote/$ReleaseBranch moved to $remoteNow while the release was built from $head. Nothing was published; run the release again." }

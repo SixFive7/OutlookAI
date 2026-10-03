@@ -289,6 +289,8 @@
     <ManifestCertificateThumbprint>2578F7B869383572E751DD6B61B5374C55C6E995</ManifestCertificateThumbprint>
   </PropertyGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <!-- The .NET SDK's security analysers, every finding an error (Q125). The file says how and why. -->
+  <Import Project="NetSecurityAnalyzers.targets" />
   <!--
     A BUILD OUTSIDE VISUAL STUDIO NEVER REGISTERS THE ADD-IN ON THE MACHINE THAT BUILT IT.
     Decided by the maintainer 2026-09-27 (Q81); AGENTS.md, "The add-in on the maintainer's

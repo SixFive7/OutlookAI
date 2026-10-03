@@ -22,5 +22,29 @@
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!--
+      The .NET SDK's security analysers (Q125, decided by the maintainer 2026-10-03): every rule in
+      the Security category that .NET 10 ships, and under TreatWarningsAsErrors every finding is a
+      build error. The level and the reasons for it are written once, in the add-in's
+      NetSecurityAnalyzers.targets at the repository root, which runs the same rules at the same
+      level in the two old-style projects; keep the two numbers equal. EnableNETAnalyzers because a
+      net48 target (OutlookAI.Core, OutlookAI.AuditLogStress) does not run the analysers otherwise.
+      A false positive is suppressed at its site with a written Justification, never here.
+    -->
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevelSecurity>10.0-all</AnalysisLevelSecurity>
   </PropertyGroup>
+  <ItemGroup>
+    <!--
+      Every [DllImport] in these assemblies loads its DLL from System32 and nowhere else (CA5392,
+      Q125). Each one names a Windows DLL - kernel32, user32, ole32, and in the tests dwmapi and
+      propsys - and without this the search starts in the program's own folder, which for an
+      installed server is the user-writable install folder under %LOCALAPPDATA%. Properties\
+      AssemblyInfo.cs does the same for the add-in and its elevated helper.
+    -->
+    <AssemblyAttribute Include="System.Runtime.InteropServices.DefaultDllImportSearchPathsAttribute">
+      <_Parameter1>System.Runtime.InteropServices.DllImportSearchPath.System32</_Parameter1>
+      <_Parameter1_IsLiteral>true</_Parameter1_IsLiteral>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>
