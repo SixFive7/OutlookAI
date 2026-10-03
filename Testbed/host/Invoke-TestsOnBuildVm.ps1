@@ -150,10 +150,12 @@
     Internal: the id of the run the janitor watches.
 
 .PARAMETER SelfTest
-    Pure. The run-id format, the TRX reader, the verdict table, the VM-name allowlist, that every
-    Hyper-V call targets the build VM's variables and none stops, removes or checkpoints a VM, and
-    that this file, the guest script and Testbed/testbed.json agree on the VM's names and paths.
-    No Hyper-V, no git, no VM, no credential: it runs on the build VM's own self-test pass.
+    The run-id format, the TRX reader, the verdict table, summary.json's shape, the VM-name
+    allowlist, that every Hyper-V call targets the build VM's variables and none stops, removes or
+    checkpoints a VM, that this file, the guest script and Testbed/testbed.json agree on the VM's
+    names and paths, and - on scratch files under %TEMP% that it locks itself and removes after -
+    that a held guest log reads as Busy and never throws. No Hyper-V, no git, no VM, no
+    credential: it runs on the build VM's own self-test pass.
 
 .EXAMPLE
     # From an agent's worktree: test its HEAD, the whole non-live suite and every self-test.
