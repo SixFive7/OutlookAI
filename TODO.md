@@ -935,27 +935,22 @@
       the "corpus too small" early returns above no longer need the corpus to be the hub.
       `Docs/live-tier-on-the-vm.md` §3b is the procedure.
 
-- [ ] **Build Corpus A at 160,000 items on `OutlookAI-Indexed`, in a store the tier profile mounts.**
-      Decided 2026-09-24 (question E, option (a)): the index tier's latency bounds are timed against
-      the largest indexed store, and only a production-sized one makes them tests. Until it exists
-      the indexed guest's settings declare NO corpus and index only the hub and the bystander
-      (runbook §4.2c): today's Corpus A holds 20,000 items, anchored 2026-09-15, in the corpus
-      profile's default store, which the tier profile does not mount - and a store that already
-      holds items is never attached by script (runbook §2.6). **Planned as the next step after
-      `CP-16C-POPULATIONS-V2`, not started; estimated 2.5 to 3.5 hours** from the night's rates
-      (runbook §4.2c): a NEW store `Corpus A`, created empty in the corpus profile and attached by
-      path to the tier profile while still empty (`Add-OutlookPstStore.ps1`, both profiles, names
-      byte-identical), every Outlook start NOT elevated; the old manifest
-      `C:\OutlookAI-Q5\corpus-vm-indexed.jsonl` moved aside first (the id `vm-indexed` is this
-      guest's, and a manifest is named after its id); `corpus-probe`, then `corpus-build --corpus-id
-      vm-indexed --seed 7777 --anchor <the build day> --count 160000` dry and `--execute` - about
-      1.8 to 2.2 hours through `PostAsNote`, the one rung a non-default store allows, at the 19-24
-      items/s the populations built at; `corpus-verify`; `Set-OutlookIndexingDisabled.ps1 -Verify
-      -MinimumOutlookRows 160000`. Then `testbed.json`: `corpusIdConvention`'s vm-indexed seed,
-      anchor and itemCount 160,000; the guest's corpus block, `Corpus A` last in the indexed list
-      and in the watched and bystander lists; render, stage, `Reset-HubPopulation.ps1` and a
-      checkpoint. The PST grows to about 8.6 GB; the guest has 96 GB free. Open beside it: whether
-      the 20,000-item store is torn down or left, inert, in the corpus profile.
+- [ ] **Decide how the indexed guest's 160,000-item Corpus A stays fresh: its 7-day window empties
+      on 2026-10-09 at 23:59 UTC, and from then on the live tier refuses to start on that guest
+      until the corpus is rebuilt.** Built 2026-10-03 (runbook §4.2d, `CP-17C-CORPUS-160K`) and
+      anchored that day; the guest's settings declare the windows 7, 30 and 60 days (`windowDays`,
+      copied from the example - `Testbed/testbed.json` `_decided`), and `T2/LiveCorpusFreshness`
+      refuses as soon as any declared window selects nothing. A rebuild is a teardown of 160,000
+      items (or a fresh store, attached to both profiles while still empty) plus about 1 h 35 min of
+      `Build-Corpus.ps1`, with the index filling behind it. No live test reads that corpus by window:
+      it is the largest indexed store the latency bounds are timed against, and a bystander the
+      tripwire censuses - `Settings.Corpus` is read only by the freshness check - so the 7-day
+      declaration costs a weekly rebuild there and buys the index tier nothing. Options: (a) rebuild
+      before every indexed-guest run once the window has emptied; (b) declare `[30, 60]` on that guest
+      (fresh to 2026-11-01) or `[60]` (to 2026-12-01); (c) a rebuild script that swaps in a fresh
+      store instead of tearing 160,000 items down. Recommended: (b) with `[30, 60]` - unless the
+      measurement scripts of `Testbed/README.md` step 10, which do ask about the 7-day window, are
+      meant to run on that guest.
 
 - [ ] **Make `corpus-teardown` drain the folders it created, as it drains the items: in a PST its
       `Folder.Delete()` MOVES them into Deleted Items, so every hub rebuild leaves two more empty
