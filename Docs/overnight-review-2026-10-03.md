@@ -256,6 +256,15 @@ commits and their workstation test runs would still write test lines into a fres
 They have been told to merge master before their next run; the rename happens once they have
 (or at the end of the night), so the log you find in the morning starts clean.
 
+### V8 - The session limit stopped every agent at about 02:40Z; work resumed at 05:29Z
+All five running agents (the first live run on guest two, the build VM, Q99, Q96 and Q100) were
+stopped by the account's session limit at about 02:40Z ("resets 7:10am"). The recurring watchdog
+prompt fired after the reset, and at 05:29Z four of them were resumed with their context intact.
+The fifth - the first live run on guest two - could not be: its worktree's registration had been
+lost while it was stopped (the folder was left without its `.git` file; its branch had no commits).
+A fresh agent restarted that run from `CP-12B-POPULATIONS-V2`, restaging from master. The orphaned
+folder `.claude/worktrees/agent-a87151b711b18a939` is left in place for now; it holds only scratch.
+
 ## Notes (no decision needed)
 
 - **The "other checkout" writing test noise into your audit log was ours.** Q86's agent saw non-live
