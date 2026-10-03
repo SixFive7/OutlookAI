@@ -985,6 +985,677 @@ public static class LiveOutlookTestMailer
         return null;
     }
 
+    // ------------------------------------------------------------------ folder identity (Q114)
+
+    /// <summary>
+    /// The identity candidates read off a FOLDER (Q114, 2026-10-03): every property the MAPI
+    /// documentation offers as a folder's id, as the proptag URL <c>PropertyAccessor</c> takes. A
+    /// property the store does not keep is recorded as absent, never guessed.
+    /// </summary>
+    internal static readonly IReadOnlyList<(string Name, string Tag)> FolderIdentityProperties = new[]
+    {
+        ("PR_ENTRYID", "http://schemas.microsoft.com/mapi/proptag/0x0FFF0102"),
+        ("PR_RECORD_KEY", "http://schemas.microsoft.com/mapi/proptag/0x0FF90102"),
+        ("PR_SOURCE_KEY", "http://schemas.microsoft.com/mapi/proptag/0x65E00102"),
+        ("PR_PARENT_ENTRYID", "http://schemas.microsoft.com/mapi/proptag/0x0E090102"),
+        ("PR_PARENT_SOURCE_KEY", "http://schemas.microsoft.com/mapi/proptag/0x65E10102"),
+        ("PR_LONGTERM_ENTRYID_FROM_TABLE", "http://schemas.microsoft.com/mapi/proptag/0x66700102"),
+        ("PR_STORE_RECORD_KEY", "http://schemas.microsoft.com/mapi/proptag/0x0FFA0102"),
+        ("PR_STORE_ENTRYID", "http://schemas.microsoft.com/mapi/proptag/0x0FFB0102"),
+    };
+
+    /// <summary>The same for a STORE: what its folders' ids are built from, and what names it.</summary>
+    internal static readonly IReadOnlyList<(string Name, string Tag)> StoreIdentityProperties = new[]
+    {
+        ("PR_ENTRYID", "http://schemas.microsoft.com/mapi/proptag/0x0FFF0102"),
+        ("PR_RECORD_KEY", "http://schemas.microsoft.com/mapi/proptag/0x0FF90102"),
+        ("PR_STORE_RECORD_KEY", "http://schemas.microsoft.com/mapi/proptag/0x0FFA0102"),
+        ("PR_MAPPING_SIGNATURE", "http://schemas.microsoft.com/mapi/proptag/0x0FF80102"),
+        ("PR_MDB_PROVIDER", "http://schemas.microsoft.com/mapi/proptag/0x34140102"),
+        ("PR_IPM_SUBTREE_ENTRYID", "http://schemas.microsoft.com/mapi/proptag/0x35E00102"),
+    };
+
+    /// <summary>
+    /// READ-ONLY. What a store is called and what its folders' ids are built from (Q114): its
+    /// <c>StoreID</c>, type, file, root folder id and <see cref="StoreIdentityProperties"/>.
+    /// </summary>
+    public static StoreIdentity ReadStoreIdentity(string storeDisplayName)
+    {
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? root = null;
+            dynamic? accessor = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the identity read.");
+                root = store.GetRootFolder();
+                accessor = store.PropertyAccessor;
+                ReadBinaryProperties((object)accessor, StoreIdentityProperties, out Dictionary<string, string?> values, out Dictionary<string, string> errors);
+                return new StoreIdentity(
+                    (string)store.StoreID,
+                    TryRead(() => (string?)store.FilePath),
+                    TryRead(() => (int?)store.ExchangeStoreType),
+                    TryRead(() => (bool?)store.IsCachedExchange),
+                    (string)root.EntryID,
+                    values,
+                    errors);
+            }
+            finally
+            {
+                Release(accessor);
+                Release(root);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// READ-ONLY. A folder's identity, opened by its id (Q114): its <c>EntryID</c>, <c>StoreID</c>,
+    /// name, <c>FolderPath</c>, its parent's id, <see cref="FolderIdentityProperties"/>, and whether
+    /// <c>GetFolderFromID</c> also opens it WITHOUT the store id and from the id spelled in lower case
+    /// - the two shortcuts a folder-id parameter could lean on. Throws when the id does not open.
+    /// </summary>
+    public static FolderIdentity ReadFolderIdentity(string storeDisplayName, string folderEntryId)
+    {
+        if (string.IsNullOrWhiteSpace(folderEntryId))
+        {
+            throw new ArgumentException("Folder EntryID required.", nameof(folderEntryId));
+        }
+
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? folder = null;
+            dynamic? parent = null;
+            dynamic? accessor = null;
+            dynamic? withoutStore = null;
+            dynamic? lowercase = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the identity read.");
+                string storeId = (string)store.StoreID;
+                folder = ns.GetFolderFromID(folderEntryId, storeId);
+                string entryId = (string)folder.EntryID;
+                string? parentEntryId = null;
+                try
+                {
+                    parent = folder.Parent;
+                    parentEntryId = (string?)parent.EntryID;
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                }
+
+                accessor = folder.PropertyAccessor;
+                ReadBinaryProperties((object)accessor, FolderIdentityProperties, out Dictionary<string, string?> values, out Dictionary<string, string> errors);
+
+                bool? opensWithoutStore = null;
+                string? withoutStoreError = null;
+                try
+                {
+                    withoutStore = ns.GetFolderFromID(folderEntryId);
+                    opensWithoutStore = string.Equals((string)withoutStore.EntryID, entryId, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals((string)withoutStore.StoreID, storeId, StringComparison.OrdinalIgnoreCase);
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    opensWithoutStore = false;
+                    withoutStoreError = ex.GetType().Name + ": " + ex.Message;
+                }
+
+                bool? opensLowercase = null;
+                try
+                {
+                    lowercase = ns.GetFolderFromID(folderEntryId.ToLowerInvariant(), storeId);
+                    opensLowercase = string.Equals((string)lowercase.EntryID, entryId, StringComparison.OrdinalIgnoreCase);
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    opensLowercase = false;
+                }
+
+                return new FolderIdentity(
+                    entryId,
+                    storeId,
+                    (string)folder.Name,
+                    TryRead(() => (string?)folder.FolderPath) ?? string.Empty,
+                    parentEntryId,
+                    values,
+                    errors,
+                    opensWithoutStore,
+                    withoutStoreError,
+                    opensLowercase);
+            }
+            finally
+            {
+                Release(lowercase);
+                Release(withoutStore);
+                Release(accessor);
+                Release(parent);
+                Release(folder);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// READ-ONLY. Whether <paramref name="folderEntryId"/> still opens, and if so where it opens
+    /// now: its name and <c>FolderPath</c>, or Outlook's refusal. For an id kept after its folder
+    /// was deleted or recreated, where a throwing read would hide the answer.
+    /// </summary>
+    public static (bool Opens, string? Name, string? FolderPath, string? Error) TryOpenFolder(string storeDisplayName, string folderEntryId)
+    {
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? folder = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the open.");
+                try
+                {
+                    folder = ns.GetFolderFromID(folderEntryId, (string)store.StoreID);
+                    return (true, (string?)folder.Name, TryRead(() => (string?)folder.FolderPath), (string?)null);
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    return (false, (string?)null, (string?)null, ex.GetType().Name + ": " + ex.Message);
+                }
+            }
+            finally
+            {
+                Release(folder);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// READ-ONLY. The id of the child of <paramref name="parentEntryId"/> named exactly
+    /// <paramref name="childName"/> (ordinal), or null when there is none. Nothing is created.
+    /// </summary>
+    public static string? FindChildFolderEntryId(string storeDisplayName, string parentEntryId, string childName)
+    {
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? parent = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the child lookup.");
+                parent = ns.GetFolderFromID(parentEntryId, (string)store.StoreID);
+                return FindChildEntryId((object)parent, childName);
+            }
+            finally
+            {
+                Release(parent);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// READ-ONLY. The id of the store's Deleted Items folder - where a soft-deleted folder goes.
+    /// </summary>
+    public static string ReadDeletedItemsEntryId(string storeDisplayName)
+    {
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? deletedItems = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the Deleted Items read.");
+                deletedItems = store.GetDefaultFolder(3); // olFolderDeletedItems: every mail store has one
+                return (string)deletedItems.EntryID;
+            }
+            finally
+            {
+                Release(deletedItems);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// READ-ONLY. Whether an item's id still opens, and the id of the folder it opens in - for an
+    /// item whose FOLDER was renamed or moved, to show whether the item's own id moved with it.
+    /// </summary>
+    public static (bool Opens, string? ParentEntryId, string? Error) ReadItemParent(string storeDisplayName, string itemEntryId)
+    {
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? item = null;
+            dynamic? parent = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the item read.");
+                try
+                {
+                    item = ns.GetItemFromID(itemEntryId, (string)store.StoreID);
+                    parent = item.Parent;
+                    return (true, (string?)parent.EntryID, (string?)null);
+                }
+                catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+                {
+                    return (false, (string?)null, ex.GetType().Name + ": " + ex.Message);
+                }
+            }
+            finally
+            {
+                Release(parent);
+                Release(item);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// READ-ONLY. Up to <paramref name="maxFolders"/> folders of a store, depth first from its root,
+    /// each with its id, name, <c>FolderPath</c>, depth, item count and the id of its first item -
+    /// for comparing a folder's id with what the search index keeps about the same folder (Q114/Q115).
+    /// </summary>
+    public static IReadOnlyList<FolderListing> ListFolderIdentities(string storeDisplayName, int maxFolders, int maxDepth)
+    {
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? root = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the folder listing.");
+                root = store.GetRootFolder();
+                List<FolderListing> listing = new();
+                CollectFolderListing(root, listing, 1, maxFolders, maxDepth);
+                return (IReadOnlyList<FolderListing>)listing;
+            }
+            finally
+            {
+                Release(root);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        }, TimeSpan.FromMinutes(5));
+    }
+
+    /// <summary>
+    /// RENAMES one test folder (Q114: does a folder's id survive a rename?). Refused before Outlook
+    /// is asked anything unless the new name carries <see cref="TestFolderNamePrefix"/>, and refused
+    /// before anything changes unless the folder the id opens carries it too
+    /// (<see cref="RefuseTestFolderChange"/>). The store must be granted folder writes (the hub).
+    /// Returns the folder's id as read back after the rename, and the name Outlook kept.
+    /// </summary>
+    public static TestFolderChange RenameTestFolder(string storeDisplayName, string folderEntryId, string newName)
+    {
+        string? refusal = RefuseTestFolderChange(TestFolderNamePrefix, newName, null);
+        if (refusal != null)
+        {
+            throw new ArgumentException(refusal, nameof(newName));
+        }
+
+        LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Folder, nameof(RenameTestFolder));
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? folder = null;
+            dynamic? reopened = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the test-folder rename.");
+                string storeId = (string)store.StoreID;
+                folder = ns.GetFolderFromID(folderEntryId, storeId);
+                string? live = RefuseTestFolderChange((string?)folder.Name, newName, null);
+                if (live != null)
+                {
+                    throw new InvalidOperationException(live);
+                }
+
+                folder.Name = newName;
+                reopened = ns.GetFolderFromID(folderEntryId, storeId);
+                return new TestFolderChange(
+                    folderEntryId, (string)folder.EntryID, (string)reopened.EntryID, (string)reopened.Name, null);
+            }
+            finally
+            {
+                Release(reopened);
+                Release(folder);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// MOVES one test folder under another test folder in the same store (Q114: does a folder's
+    /// id survive a move within its store?). Both must carry <see cref="TestFolderNamePrefix"/>, as
+    /// Outlook names them at the moment of the move (<see cref="RefuseTestFolderChange"/>), so no
+    /// real folder gains or loses a child. Returns the id read off the same object after
+    /// <c>MoveTo</c> and the id of the folder found by name under the new parent afterwards - the
+    /// second is the one that counts, since <c>MoveTo</c> returns nothing.
+    /// </summary>
+    public static TestFolderChange MoveTestFolder(string storeDisplayName, string folderEntryId, string newParentEntryId)
+    {
+        LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Folder, nameof(MoveTestFolder));
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? folder = null;
+            dynamic? newParent = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the test-folder move.");
+                string storeId = (string)store.StoreID;
+                folder = ns.GetFolderFromID(folderEntryId, storeId);
+                newParent = ns.GetFolderFromID(newParentEntryId, storeId);
+                string name = (string)folder.Name;
+                string? live = RefuseTestFolderChange(name, null, (string?)newParent.Name);
+                if (live != null)
+                {
+                    throw new InvalidOperationException(live);
+                }
+
+                folder.MoveTo(newParent);
+                string? sameObject = TryRead(() => (string?)folder.EntryID);
+                string? underNewParent = FindChildEntryId((object)newParent, name);
+                return new TestFolderChange(folderEntryId, sameObject, underNewParent, name, null);
+            }
+            finally
+            {
+                Release(newParent);
+                Release(folder);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// SOFT-DELETES one test folder - <c>Folder.Delete</c>, which moves it into the store's Deleted
+    /// Items, exactly what pressing Delete on a folder in Outlook does - and returns the id of the
+    /// folder found by name under Deleted Items afterwards (Q114: what does a deleted folder's id
+    /// open, and is it still the same id?). Refused unless the folder carries
+    /// <see cref="TestFolderNamePrefix"/> and holds only tagged items, the S3 rule
+    /// <see cref="DeleteTestFolders"/> applies; <see cref="DeleteTestFolders"/> removes it from
+    /// Deleted Items afterwards.
+    /// </summary>
+    public static TestFolderChange SoftDeleteTestFolder(string storeDisplayName, string folderEntryId)
+    {
+        LiveStoreWriteGuard.Assert(storeDisplayName, StoreWriteKind.Folder, nameof(SoftDeleteTestFolder));
+        return RunSta(() =>
+        {
+            dynamic app = CreateOutlookApplication();
+            dynamic? ns = null;
+            dynamic? stores = null;
+            dynamic? store = null;
+            dynamic? folder = null;
+            dynamic? deletedItems = null;
+            try
+            {
+                ns = app.GetNamespace("MAPI");
+                stores = ns.Stores;
+                store = FindStore(stores, storeDisplayName)
+                    ?? throw new InvalidOperationException("Store not found for the test-folder delete.");
+                folder = ns.GetFolderFromID(folderEntryId, (string)store.StoreID);
+                string name = (string)folder.Name;
+                string? live = RefuseTestFolderChange(name, null, null);
+                if (live != null)
+                {
+                    throw new InvalidOperationException(live);
+                }
+
+                EnsureFolderContainsOnlyTaggedItems(folder!);
+                folder.Delete();
+                deletedItems = store.GetDefaultFolder(3); // olFolderDeletedItems
+                return new TestFolderChange(folderEntryId, null, FindChildEntryId((object)deletedItems, name), name, null);
+            }
+            finally
+            {
+                Release(deletedItems);
+                Release(folder);
+                Release(store);
+                Release(stores);
+                Release(ns);
+                Release(app);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Why a test-folder rename, move or delete is refused, or null when it may run. Pure, so T1
+    /// drives every branch (<c>T1/FolderIdentityLayoutTests</c>): the folder being changed must be a
+    /// test folder by its name as Outlook has it, a new name must keep the prefix so
+    /// <see cref="DeleteTestFolders"/> still finds it, and a new parent must be a test folder, so a
+    /// real folder never gains a child.
+    /// </summary>
+    internal static string? RefuseTestFolderChange(string? currentName, string? newName, string? newParentName)
+    {
+        if (string.IsNullOrWhiteSpace(currentName) || !currentName.Contains(TestFolderNamePrefix, StringComparison.Ordinal))
+        {
+            return "Only a test folder - a name carrying '" + TestFolderNamePrefix + "' - is renamed, moved or deleted here.";
+        }
+
+        if (newName != null && (string.IsNullOrWhiteSpace(newName) || !newName.Contains(TestFolderNamePrefix, StringComparison.Ordinal)))
+        {
+            return "A test folder's new name must keep '" + TestFolderNamePrefix + "', so the test-folder cleanup still finds it.";
+        }
+
+        if (newParentName != null && (string.IsNullOrWhiteSpace(newParentName) || !newParentName.Contains(TestFolderNamePrefix, StringComparison.Ordinal)))
+        {
+            return "A test folder moves only into another test folder - a real folder never gains a child here.";
+        }
+
+        return null;
+    }
+
+    private static void ReadBinaryProperties(
+        object accessorObject,
+        IReadOnlyList<(string Name, string Tag)> properties,
+        out Dictionary<string, string?> values,
+        out Dictionary<string, string> errors)
+    {
+        dynamic accessor = accessorObject;
+        values = new Dictionary<string, string?>(StringComparer.Ordinal);
+        errors = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach ((string name, string tag) in properties)
+        {
+            try
+            {
+                object? raw = accessor.GetProperty(tag);
+                values[name] = raw is byte[] bytes ? Convert.ToHexString(bytes) : Convert.ToString(raw, CultureInfo.InvariantCulture);
+            }
+            catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+            {
+                values[name] = null;
+                errors[name] = ex is COMException com
+                    ? "0x" + com.HResult.ToString("X8", CultureInfo.InvariantCulture)
+                    : ex.GetType().Name;
+            }
+        }
+    }
+
+    private static string? FindChildEntryId(object parentObject, string childName)
+    {
+        dynamic parent = parentObject;
+        dynamic? children = null;
+        try
+        {
+            children = parent.Folders;
+            int count = children.Count;
+            for (int i = 1; i <= count; i++)
+            {
+                dynamic? child = null;
+                try
+                {
+                    child = children[i];
+                    if (string.Equals((string?)child.Name, childName, StringComparison.Ordinal))
+                    {
+                        return (string)child.EntryID;
+                    }
+                }
+                catch (COMException)
+                {
+                }
+                finally
+                {
+                    Release(child);
+                }
+            }
+
+            return null;
+        }
+        finally
+        {
+            Release(children);
+        }
+    }
+
+    private static void CollectFolderListing(dynamic folder, List<FolderListing> listing, int depth, int maxFolders, int maxDepth)
+    {
+        if (depth > maxDepth || listing.Count >= maxFolders)
+        {
+            return;
+        }
+
+        dynamic? children = null;
+        try
+        {
+            children = folder.Folders;
+            int count = children.Count;
+            for (int i = 1; i <= count && listing.Count < maxFolders; i++)
+            {
+                dynamic? child = null;
+                dynamic? items = null;
+                dynamic? first = null;
+                try
+                {
+                    child = children[i];
+                    items = child.Items;
+                    int itemCount = items.Count;
+                    string? firstItemEntryId = null;
+                    if (itemCount > 0)
+                    {
+                        first = items.GetFirst();
+                        firstItemEntryId = TryRead(() => (string?)first.EntryID);
+                    }
+
+                    listing.Add(new FolderListing(
+                        (string)child.EntryID,
+                        (string)child.Name,
+                        TryRead(() => (string?)child.FolderPath) ?? string.Empty,
+                        depth,
+                        itemCount,
+                        firstItemEntryId));
+                    CollectFolderListing(child, listing, depth + 1, maxFolders, maxDepth);
+                }
+                catch (COMException)
+                {
+                }
+                finally
+                {
+                    Release(first);
+                    Release(items);
+                    Release(child);
+                }
+            }
+        }
+        finally
+        {
+            Release(children);
+        }
+    }
+
+    private static T? TryRead<T>(Func<T?> read)
+    {
+        try
+        {
+            return read();
+        }
+        catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
+        {
+            return default;
+        }
+    }
+
     /// <summary>
     /// READ-ONLY census for the per-store tripwire: store-relative path -&gt; what was in
     /// every MAIL folder of <paramref name="storeDisplayName"/> (mail-typed folders plus
@@ -2264,3 +2935,46 @@ public static class LiveOutlookTestMailer
 /// </summary>
 public sealed record TestFolderFiling(
     bool FolderCreated, string? FolderName, string? FolderEntryId, string? NewItemEntryId, string? Error);
+
+/// <summary>
+/// What <see cref="LiveOutlookTestMailer.ReadStoreIdentity"/> read off a store (Q114): its
+/// <c>StoreID</c>, file, Exchange type, root folder id and the binary identity properties as hex -
+/// null where the store does not keep one, with Outlook's hresult in <see cref="PropertyErrors"/>.
+/// </summary>
+public sealed record StoreIdentity(
+    string StoreId,
+    string? FilePath,
+    int? ExchangeStoreType,
+    bool? IsCachedExchange,
+    string RootFolderEntryId,
+    IReadOnlyDictionary<string, string?> Properties,
+    IReadOnlyDictionary<string, string> PropertyErrors);
+
+/// <summary>
+/// What <see cref="LiveOutlookTestMailer.ReadFolderIdentity"/> read off a folder (Q114): its ids, its
+/// name and path as Outlook has them now, the binary identity properties as hex (null when absent),
+/// and whether <c>GetFolderFromID</c> opened it without a store id and from lower-case hex.
+/// </summary>
+public sealed record FolderIdentity(
+    string EntryId,
+    string StoreId,
+    string Name,
+    string FolderPath,
+    string? ParentEntryId,
+    IReadOnlyDictionary<string, string?> Properties,
+    IReadOnlyDictionary<string, string> PropertyErrors,
+    bool? OpensWithoutStoreId,
+    string? WithoutStoreIdError,
+    bool? OpensFromLowercaseHex);
+
+/// <summary>One folder of <see cref="LiveOutlookTestMailer.ListFolderIdentities"/>: read only, never created.</summary>
+public sealed record FolderListing(
+    string EntryId, string Name, string FolderPath, int Depth, int ItemCount, string? FirstItemEntryId);
+
+/// <summary>
+/// What a test-folder rename, move or soft delete did to the folder's id (Q114): the id it was
+/// changed by, the id the same COM object reported afterwards, the id found or re-opened afterwards,
+/// and the name - or the refusal.
+/// </summary>
+public sealed record TestFolderChange(
+    string EntryIdBefore, string? EntryIdOnSameObject, string? EntryIdAfter, string? Name, string? Error);
