@@ -1291,6 +1291,12 @@ that was left out.
     **Half answered (noted 2026-09-27):** both guests have the SDK and the suite - `TEST-READY`,
     3,105 tests discovered and 17 run, offline, on each (runbook §4.1c, §4.2b step 4.6) - but the
     LIVE tier has still not run on any guest (runbook §4.1 step 9, §8 item 22).
+    **When it does, read one result first (Q74 C3, 2026-10-03):**
+    `LiveDecodeVerifyTests.ShortDecodedId_OpensAsTheItemItself_OnAPstStore` asserts an INFERENCE - that
+    the 24-byte id decoded from an index URL opens on a PST, as the item itself, because on a PST those
+    bytes are the entry id (`McpServer/OutlookAI.Core/Mapi/EntryIdCodec.cs`, runbook §8 item 24). No run
+    has tried it. A pass confirms it; a failure is a finding about PSTs to record before anything is
+    changed, not a test to loosen. It runs on the indexed guest only (`Requires=SearchIndex`).
 
 **Things nobody can put in a repository**
 

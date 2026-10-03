@@ -784,7 +784,7 @@ function Add-SettingsProblems {
     }
     elseif ($machineProfile.Value -is [string] -and $machineProfile.Value -ceq 'Portable') { }
     elseif ($machineProfile.Value -is [string] -and $machineProfile.Value -ceq 'Production') {
-        $Problems.Add("machineProfile: 'Production' is the maintainer's own machine, whose missing populations REFUSE a run. A test guest is Portable - recorded as a decision in testbed.json's _decided - so a population it lacks is announced as PROVED NOTHING instead, and its probe values come from the generator rather than from real mail.")
+        $Problems.Add("machineProfile: 'Production' is the maintainer's own machine, which is read-only for live tests (Q74) and whose missing populations REFUSE a run. A test guest is Portable - recorded as a decision in testbed.json's _decided - so a population it lacks is announced as PROVED NOTHING instead, and its probe values come from the generator rather than from real mail.")
     }
     else {
         $Problems.Add("machineProfile: must be the string 'Portable' (or 'Production', which this template cannot carry). Spell it exactly.")

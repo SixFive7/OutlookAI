@@ -161,7 +161,8 @@ public static class LiveRunOptIn
             + "machine opens nothing, and it must never be saved with setx or in the user or machine environment."
             + " THE MAINTAINER'S WORKSTATION IS READ-ONLY FOR LIVE TESTS, ALWAYS (AGENTS.md, Mailbox Safety): this "
             + "variable only says a run was intended - it makes no test read-only, and it must never be set there to "
-            + "run a test that can write.";
+            + "run a test that can write. The workstation's one live run is the read-only one in Testbed/README.md, "
+            + "section 4d, with the filter " + LiveRunFilters.Workstation + ".";
     }
 
     /// <summary>
