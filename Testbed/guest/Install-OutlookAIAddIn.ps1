@@ -1,6 +1,22 @@
 #Requires -Version 5.1
 <#
     ============================================================================================
+    RUN AGAIN ON OutlookAI-Unindexed 2026-10-03, FROM CP-08, WITH THE DEFECT BELOW FIXED (Q128):
+    FirstRun REACHES ADDIN-READY WITH NO REGISTRY STEP. Docs/live-tier-on-the-vm.md section 2.3.
+    ============================================================================================
+
+    Payload 94f115f. -SelfTest 158 assertions, 0 failures, on the guest; -Verify NOT-INSTALLED, 3.
+
+      Install          INSTALLED-NEVER-RAN, exit 2, in 99.6 s (v4R 10.0.60917 installed). No OUTLOOK.EXE.
+      FirstRun         ADDIN-READY, exit 0, in 16.6 s: LastReconcileUtc 7.2 s after the COM start,
+                       token NOT elevated, Tuning\Applied 8 of 13, and the five Cached Mode policy
+                       values the add-in may not write listed in Tuning\NeedsAdministrator - printed
+                       as a note ("needs an administrator: ..."), not a problem.
+      then             OutlookAI Settings' "Apply as administrator" wrote them through UAC
+                       (OutlookAI.PolicyWriter.exe, started with OUTLOOK.EXE as its parent), and
+                       FirstRun again: ADDIN-READY, exit 0, 13 of 13, nothing needing an administrator.
+
+    ============================================================================================
     RUN ON OutlookAI-Unindexed 2026-10-03, FROM CP-08 (NO ADD-IN): THE TWO PHASES WORK AS DESIGNED.
     THEIR FIRST RUN FOUND A PRODUCT DEFECT: IN A NOT ELEVATED OUTLOOK THE ADD-IN'S TUNING RECONCILE
     NEVER FINISHES, SO A FRESH GUEST ENDS BROKEN, NOT ADDIN-READY. Docs/live-tier-on-the-vm.md
@@ -53,7 +69,8 @@
     (Testbed/host/Invoke-TestsOnBuildVm.ps1 9bfc135 -SkipSuite, run 20261003-184239-9bfc1353c5eb).
     The four Tools/Checks guards pass under both shells.
 
-    NOT SETTLED BY IT: the defect - a product decision, open in TODO.md; the indexed guest, whose
+    NOT SETTLED BY IT: the defect - a product decision, decided and fixed the same day (Q128, the
+    banner above); the indexed guest, whose
     index an unelevated first run feeds; and -Verify -WithOutlook, whose Outlook had closed by itself
     before the attach was tried. No checkpoint was kept: the guest went back to CP-13B-LIVE-GREEN.
 
@@ -1736,10 +1753,9 @@ AwQ=</Modulus><Exponent>AQAB</Exponent></RSAKeyValue></KeyValue></KeyInfo></Sign
     Write-Host '  * -Phase FirstRun from a RunLevel Limited task starts an Outlook whose token reads NOT'
     Write-Host '    elevated, and the add-in loads in it, connected and answering'
     Write-Host '  * the unindexed guest is still UNINDEXED after it'
+    Write-Host '  * ADDIN-READY on a fresh guest, once the add-in skips what it may not write (Q128): the five'
+    Write-Host '    Cached Mode policy values are listed as needing an administrator, and the reconcile finishes'
     Write-Host 'NOT SETTLED:'
-    Write-Host '  * ADDIN-READY on a fresh guest. There the add-in''s tuning reconcile cannot finish NOT'
-    Write-Host '    elevated - it writes under HKCU\Software\Policies - so FirstRun ends BROKEN: a product'
-    Write-Host '    defect, open in TODO.md. ADDIN-READY came only with those values set first, as a GPO would'
     Write-Host '  * that the indexed guest stays INDEXED, its index taking the first run''s Outlook'
     Write-Host '  * that the two live tests then pass on BOTH guests, which is the claim all of this is for'
 

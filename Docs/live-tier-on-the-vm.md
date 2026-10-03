@@ -532,7 +532,9 @@ exclusion state unchanged by it.
 
 **The two phases RAN on a guest - `OutlookAI-Unindexed`, 2026-10-03 - and work as designed. Their
 first run found a PRODUCT DEFECT: in a NOT elevated Outlook the add-in's tuning reconcile never
-finishes, so on a fresh guest step 7c ends `BROKEN`, not `ADDIN-READY` (below; open in `TODO.md`).**
+finishes, so on a fresh guest step 7c ends `BROKEN`, not `ADDIN-READY` (below). Fixed the same day (Q128,
+the last record of this section): the same proof from `CP-08` now ends `ADDIN-READY` with no registry
+step.**
 Until that day their proof was the host's: `-SelfTest`, 168 assertions under Windows PowerShell 5.1
 and PowerShell 7 - seven reading the script's own syntax tree - eleven rules broken on purpose in
 scratch copies, each caught, and the four `Tools/Checks` guards.
@@ -608,10 +610,74 @@ longer read after the 240 s wait (step 6 printed "registration reconcile after 2
 self-tests passing (`Testbed/host/Invoke-TestsOnBuildVm.ps1 9bfc135 -SkipSuite`); 151 on the guest,
 whose copy has no repository for the contract section.
 
-**Not settled by it:** `ADDIN-READY` on a fresh guest, which waits on the defect; the indexed guest -
+**Not settled by it:** `ADDIN-READY` on a fresh guest, which waited on the defect - settled by the Q128 run
+below; the indexed guest -
 that an unelevated first run there feeds the index and leaves it `INDEXED`; `-Verify -WithOutlook`
 against a running Outlook, which had closed each time before the attach was tried; and the two live
 tests on a guest installed this way.
+
+**The defect, fixed (Q128), and the proof again from `CP-08` - `OutlookAI-Unindexed`, 2026-10-03.**
+Decided by the maintainer the same day (Q128): *"Allow reading it and changing it from the gui. If
+the change requires admin and the user is not admin generate a uac prompt."* What changed:
+
+* **The reconcile never stops early** (`Services/TuningReconciler.cs`, split out of
+  `OutlookTuningService` so the test project can pin it - T1 `TuningReconcilerTests`). A value Windows
+  refuses to write for lack of rights is skipped and listed in `Tuning\NeedsAdministrator` - a REG_SZ
+  of `;`-joined entry ids, `Services/AddInServerContract.cs` - which `outlook_health` reports as
+  `tuning.needsAdministrator`; every other value is still applied; any other failed write is skipped
+  too; and the bookkeeping - `RestartNeeded`, `PolicyConflicts`, `NeedsAdministrator`, then
+  `LastReconcileUtc` - is written in a `finally`, each write on its own.
+* **OutlookAI Settings shows the five policy values**, one row each: current, desired (a list - the
+  choice is stored at once as the desired value), and whether it is in effect or needs an
+  administrator. **Apply as administrator** starts `OutlookAI.PolicyWriter.exe` through ShellExecuteEx
+  `runas` - one UAC prompt for every value that needs it.
+* **The helper** (`PolicyWriter/`) is the one program in the product that runs elevated, and a
+  privilege boundary: it accepts `--sid <SID> --office <major>` and some of the five value names with
+  the values the dialog offers (`Services/CachedModePolicy.cs`, `Services/PolicyWriterRequest.cs`),
+  refuses anything else whole before writing, refuses unless the SID is the user of the process that
+  started it - read from the session manager, in the helper's own session - and writes
+  `HKEY_USERS\<SID>\Software\Policies\Microsoft\Office\<major>\Outlook\Cached Mode`, never HKCU: a
+  standard user who approves the prompt with an ADMINISTRATOR's credentials gets a helper running as
+  that administrator, whose HKCU is the administrator's hive. It never loads a hive. It is built by the
+  add-in's own build (a ProjectReference), listed with its SHA-256 in the signed
+  `OutlookAI.dll.manifest`, flattened beside `OutlookAI.dll` and installed to `{app}` by the
+  installer's `publish\*` rule; `requireAdministrator` in its manifest, so it cannot run with a
+  filtered token at all.
+
+*The run.* `CP-08-MAIL-SINK` restored and started; the payload built on the host from `94f115f` by
+`Testbed/host/Publish-AddInPayload.ps1` (guard 3 `UNCHANGED` over 305 host lines, no build warning;
+`publish\OutlookAI.PolicyWriter.exe` 26,624 bytes, SHA-256 `AEC67A1B...`, a `<file>` with that hash in
+the signed manifest) and staged with the pinned `vstor_redist.exe` and `94f115f`'s guest scripts. Every
+phase through `Register-InteractiveTask.ps1` in session 1; in session 0, read-only, a poller sampled
+OUTLOOK.EXE every 0.5 s and a WMI process-start trace recorded every `OutlookAI.PolicyWriter.exe` and
+`consent.exe` with its PARENT process id. Raw logs, one file per step, the harness and the build-VM
+runs: `.work\q128-proof\` in the main checkout (the second pass in `second-pass\`).
+
+| # | What ran | Verdict, exit code, and what else was seen |
+| --- | --- | --- |
+| 1 | `-SelfTest` (guest), `-Verify` | 158 assertions, 0 failures (the contract section SKIPs off the repository); `NOT-INSTALLED`, 3 |
+| 2 | `-Phase Install -Execute`, default task (elevated) | **`INSTALLED-NEVER-RAN`, 2**, 99.6 s: `v4R` 10.0.60917 installed, the installer, the trust entry and the record written; no OUTLOOK.EXE at any sample |
+| 3 | `-Phase FirstRun -Execute`, `-RunLevel Limited` | **`ADDIN-READY`, 0**, 16.6 s, **with no registry step of any kind**: COM 6.4 s, `LastReconcileUtc` 7.2 s after the start, `token NOT elevated`, `Connect = True`, `GetRestartNeeded() = True`, `tuning walk: 8 of the 13`, and the note *"the add-in skipped 5 value(s) it may not write without an administrator, and finished its reconcile"* - `Tuning\NeedsAdministrator` = the five `caching.policy.*` ids; the policy key absent; the user Cached Mode values 0/0 and the PST values 102400/96256 written; exclusion `UNCHANGED` |
+| 4 | OutlookAI Settings, opened through the add-in's automation hook (`OpenSettings`) and read with UI Automation, Limited | the five rows: current `(not set)`, desired `All (0)`, `Not used (0)`, `On (1)` three times, state `Needs administrator`; **Apply as administrator...** enabled. (A second Outlook start meanwhile: its startup reconcile wrote nothing, cleared `RestartNeeded`, and listed the five again) |
+| 5 | the helper, `CreateProcess` from a Limited task, a valid request | did not start: *"The requested operation requires elevation"*; nothing written |
+| 6 | the helper from the elevated task: 14 requests it must refuse | 12 refused **exit 2** (arguments): none at all, a sixth name, a name in other case, `SyncWindowSetting=2`, `DownloadSharedFolders=2`, `0x0`, `--office 18.0`, `--hive HKLM`, a value twice, no `--sid`, `S-1-5-18`, `<SID>_Classes`; 2 refused **exit 3** (user): this machine's built-in Administrator (`...-500`) and `S-1-5-21-1-2-3-4` - *"the process that started this helper runs as ...-1000"*. Afterwards the policy key in no loaded hive under `HKEY_USERS` |
+| 7 | the helper elevated, valid: `SyncWindowSetting=0 SyncWindowSettingDays=0` for vmadmin's SID | **exit 0**, *"WRITTEN under HKEY_USERS\S-1-5-21-...-1000\Software\Policies\Microsoft\Office\16.0\Outlook\Cached Mode"*; of every loaded hive under `HKEY_USERS` only that one holds the key, both values REG_DWORD |
+| 8 | **Apply as administrator...** pressed (UI Automation), the UAC prompt ended from session 0 by `Stop-Process` | *"Windows did not start the administrator helper: Unknown error (0xffffffff) (-1)."* ShellExecuteEx hands back the consent process's own exit code, and `Stop-Process` ends it with -1 - not what a user's No does. Nothing changed |
+| 9 | the same, the prompt ended with `ERROR_CANCELLED` (1223) - the code `consent.exe` ends with on No | **"Cancelled at the administrator prompt. Nothing was changed."**, 3.5 s after the press, in the dialog's secondary colour, not as an error; no helper started; the three values still `Needs administrator` |
+| 10 | the same with `ConsentPromptBehaviorAdmin` 0 ("elevate without prompting") for the step, 5 restored after | **"The values were written to your Outlook policy settings. Restart Outlook for them to take effect."** 0.6 s after the press, and the restart line. The trace: **`OutlookAI.PolicyWriter.exe` started with parent `OUTLOOK.EXE -Embedding`** - AppInfo makes the requester the elevated process's parent, which the helper's user check relies on. All five rows `In effect`, the button disabled, `NeedsAdministrator` empty, `Applied` 13 of 13 |
+| 11 | `-Phase FirstRun -Execute` again, Limited | **`ADDIN-READY`, 0**, 8 s: `LastReconcileUtc` 2.4 s in, `tuning walk: 13 of the 13`, `needsAdministrator=` empty, `GetRestartNeeded() = False`, token NOT elevated, exclusion `UNCHANGED`; `-Verify` `ADDIN-READY`, 0 |
+| 12 | a probe: one byte appended to `{app}\OutlookAI.PolicyWriter.exe`, then FirstRun | `ADDIN-READY`, `Connect = True`: **the VSTO runtime does not check that file's manifest hash when it loads the add-in** - the signed manifest records the helper, it does not guard it on disk |
+| 13 | `Restore-VMSnapshot CP-13B-LIVE-GREEN`, saved, lease released | no checkpoint kept from this run |
+| 14 | a second pass from `CP-08`, the same payload: `-Phase Install`, then FirstRun at Limited | `INSTALLED-NEVER-RAN`, 2, in 115.6 s; then `ADDIN-READY`, 0, in 14.4 s, the five listed again |
+| 15 | in OutlookAI Settings, **12 months** chosen in `SyncWindowSetting`'s list - by the list's own `CB_SETCURSEL` and the `CBN_SELCHANGE` a pick sends - then **Apply as administrator...**, prompt-free consent | the row read desired `12 months (12)`, still `Needs administrator` (the reconcile tried and was refused); then *"The values were written..."* in 1.3 s, all five `In effect`, `SyncWindowSetting` 12 in the registry, the helper's parent `OUTLOOK.EXE` again |
+| 16 | **All** chosen again, Apply as administrator | that row alone `Needs administrator`, then written: `SyncWindowSetting` 0, all five `In effect`; restored to `CP-13B-LIVE-GREEN`, saved, lease released |
+
+**Not settled by it:** a standard user approving the prompt with ANOTHER account's credentials - every
+guest has one account, so step 10's requester and helper were the same user; the helper's check and
+its `HKEY_USERS\<SID>` target are what make that case right, pinned by T1 `PolicyWriterRunTests`, not
+measured. The prompt itself was never clicked: steps 8 to 10 and 15 to 16 stood in for it from
+session 0, and steps 15 and 16 chose from the list by its own messages, not by a mouse. And, as before,
+the indexed guest and the two live tests on a guest installed this way.
 
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
