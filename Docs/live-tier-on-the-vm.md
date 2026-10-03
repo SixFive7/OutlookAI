@@ -3376,6 +3376,30 @@ unrecorded or unverified.
     `ORDER BY` reads was present for all three except the contact's `DateReceived`. Kinds:
     `calendar|communication`, `contact|communication`, `task|communication`.
 
+    **End to end, through the product's own server, before and after** (same day, same guest
+    state). The server built from this change, and the guest's own staged server of 2026-09-27 (the
+    name rule it replaces), were driven with the same read-only calls - `outlook_health`,
+    `list_accounts`, `search` - over raw stdio from the console session at the Outlook's own level,
+    the way `guest/Invoke-GuestMeasure.ps1` drives it. Every outcome was written down before the run.
+    - **On `CorpusProfile`** (the corpus store, `q99lz@vm.invalid($ce9d6e4)` and
+      `q99 50%25 off%2A%3Fx($5159380d)`): the new server tied all three by `storeHash` / `entryId` to
+      exactly those segments and listed the tier profile's two stores under `storesNotInProfile`. The
+      old one called the two empty stores "the local index holds nothing for", with advice to
+      add them to Indexing Options, listed them `onlineOnly` in `list_accounts`, and answered a search
+      scoped to either with `storeNotIndexed: true` - all three false: both stores were indexed, they
+      just held no mail. Results for the corpus store, scoped or not, were identical.
+    - **The decoy, on `OutlookAI-Tier`**, after a new empty PST named `Outlook Data File` was attached
+      there (filed as `Outlook Data File($580470ed)`, the hash predicted from its path): a search
+      scoped to `Outlook Data File` was answered by the old server with three hits from the CORPUS
+      store of `CorpusProfile` - another profile's mail, under this profile's store name, as
+      `freshness: "live"` - and its `outlook_health` gave that store the corpus's frontier. The new
+      server searched the decoy's own root (no hits; no mail frontier, so the widest sweep window and
+      `degraded: true`) and listed `Outlook Data File($23a27f0d)` under `storesNotInProfile`.
+    - **Unchanged, and still open**: an UNSCOPED search is not scoped by store, so on both servers it
+      returned the corpus hits too - another profile's mail, under a name this profile also uses, and
+      not openable from this profile. Whether to drop or flag such hits is open (`TODO.md`); doing
+      either from the map alone would also catch an Exchange store the hash did not decide.
+
 ---
 
 ## 9. Known limits, honestly
