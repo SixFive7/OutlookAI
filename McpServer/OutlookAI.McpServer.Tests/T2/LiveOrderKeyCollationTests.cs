@@ -111,9 +111,9 @@ public sealed class LiveOrderKeyCollationTests
         }
 
         // A sample with no undated row - or with nothing BUT undated rows - has no NULL collation to
-        // report, and "no-undated-rows-in-sample" is not a measurement. That is every store on a test
-        // guest: the fixture populations were to carry undated items (2026-09-24), but in a PST those
-        // kinds are dated, so they are built without them (Q98 (a), 2026-10-03). Saying so out loud
+        // report, and "no-undated-rows-in-sample" is not a measurement. On the indexed guest the hub and
+        // the bystander carry undated CONTACTS since 2026-10-03 (Q98 (f)) - the one kind the index leaves
+        // without a received date - so this measures there; anywhere they are missing, saying so out loud
         // keeps it from passing as a measurement.
         LivePopulationCoverage.Require(
             _fixture.Settings,
@@ -126,10 +126,11 @@ public sealed class LiveOrderKeyCollationTests
 
     /// <summary>What every order-key test prints when there was nothing undated to measure.</summary>
     private const string UndatedRemedy =
-        "On a test guest this is expected: the hub and bystander populations are built WITHOUT their undated "
-        + "appointments, contacts and tasks since 2026-10-03 (Q98 (a)), because in a PST those kinds carry a "
-        + "received date and Outlook will not remove it. They come back only if the indexed guest shows the index "
-        + "leaves those kinds undated after all (Q98 (f); Docs/live-tier-on-the-vm.md section 3b).";
+        "On the INDEXED test guest the hub and bystander populations carry undated CONTACTS - twelve and forty-two - "
+        + "since 2026-10-03 (Q98 (f)): a contact saved into a PST is the one kind the index gives no "
+        + "System.Message.DateReceived (an appointment and a task are dated at their creation time). None found means "
+        + "they were built without --undated-contacts, or the index dated them after all - rebuild them with it, and "
+        + "read corpus-indexed's 'with no received date' count (Docs/live-tier-on-the-vm.md section 3b).";
 
     /// <summary>How many rows of <paramref name="scope"/>'s widest sample carry no received date - the order-key tests' population.</summary>
     private static int CountUndatedRows(IIndexClient client, string scope)

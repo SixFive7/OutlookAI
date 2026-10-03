@@ -127,7 +127,9 @@ public sealed record CorpusPlanOptions(string CorpusId, long Seed, DateTime Anch
     /// 300, the identity store 8, as it always was. They come back only if a measurement on the
     /// indexed guest shows the index leaves those kinds undated after all (Q98 (f)); to bring them
     /// back, change this default - the undated probe, the census's undated checks and their T1 tests
-    /// are kept for that, and run on any plan that sets it.
+    /// are kept for that, and run on any plan that sets it. (Measured 2026-10-03: the index dates an
+    /// appointment and a task, and leaves only a CONTACT undated - so what came back is
+    /// <see cref="IncludeUndatedContacts"/>, on the indexed guest, and this switch stays off.)
     /// <para>
     /// NOT part of <see cref="ShapeKey"/>, on purpose. The undated items are a population's LAST
     /// ordinals and every item's description is the same either way, so a population without them is
@@ -139,6 +141,45 @@ public sealed record CorpusPlanOptions(string CorpusId, long Seed, DateTime Anch
     public bool IncludeUndatedItems { get; init; }
 
     /// <summary>
+    /// Whether a hub or bystander population carries UNDATED CONTACTS - and of the undated kinds,
+    /// contacts alone: the hub twelve, the bystander forty-two, the counts version 2 sized its undated
+    /// rows for. <b>For the INDEXED guest only</b> - decided on the maintainer's behalf 2026-10-03
+    /// (Q98 (f), D62 of Docs/overnight-review-2026-10-03.md), after the indexed guest measured what the
+    /// Windows Search index makes of each kind saved into a PST: an appointment and a task get
+    /// <c>System.Message.DateReceived</c> = their creation time, a contact gets NONE. So a contact is
+    /// the one undated row <c>LiveOrderKeyCollationTests</c> can have, and those tests run only where
+    /// there is an index (<c>Requires=SearchIndex</c>). Appointments and tasks stay out: dated at build
+    /// time, they would become the hub's newest indexed rows and break the frontier design.
+    /// <para>
+    /// A contact is undated IN THE INDEX, not in the store: the PST gives it a delivery time on its
+    /// first save and Outlook refuses to remove it (measured 2026-09-27). So these contacts are built
+    /// without the removal attempt, the probe and the read-back do not ask the store for "no delivery
+    /// time", and <c>corpus-indexed</c> is where their being undated is checked
+    /// (<see cref="CorpusPopulation.UndatedCriterion"/>).
+    /// </para>
+    /// <para>
+    /// PART of <see cref="ShapeKey"/> (<see cref="UndatedContactsShapeKeyMarker"/>), unlike
+    /// <see cref="IncludeUndatedItems"/>: the contacts take the ordinals after the dated items, where
+    /// the full undated set puts appointments, so the two are different populations and no tool may
+    /// continue one as the other. Exclusive with <see cref="IncludeUndatedItems"/>; refused for the
+    /// identity population, which carries no undated item.
+    /// </para>
+    /// </summary>
+    public bool IncludeUndatedContacts { get; init; }
+
+    /// <summary>
+    /// What a population's shape key carries after its kind, version and owner when it holds undated
+    /// contacts (<see cref="IncludeUndatedContacts"/>). <c>Testbed/guest/Reset-HubPopulation.ps1</c> and
+    /// the frontier test read it off a manifest's header, so a rebuild reproduces the population it
+    /// tears down.
+    /// </summary>
+    public const string UndatedContactsShapeKeyMarker = "|u:contacts";
+
+    /// <summary>Whether <paramref name="shapeKey"/> - a manifest header's - is a population's that holds undated contacts.</summary>
+    public static bool ShapeKeyCarriesUndatedContacts(string? shapeKey)
+        => shapeKey != null && shapeKey.EndsWith(UndatedContactsShapeKeyMarker, StringComparison.Ordinal);
+
+    /// <summary>
     /// A stable digest of everything except the item COUNT, so a resumed or extended run
     /// can prove it is adding to the same corpus. The count is excluded on purpose: item
     /// N's description never depends on how many items were asked for, which is what
@@ -147,11 +188,15 @@ public sealed record CorpusPlanOptions(string CorpusId, long Seed, DateTime Anch
     /// <para>
     /// A population appends its kind, its format version and its owner, so a population's
     /// manifest can never be continued as a corpus's or as another store's population. Without
-    /// one the key is byte-identical to what it has always been.
+    /// one the key is byte-identical to what it has always been. A population carrying undated
+    /// contacts appends <see cref="UndatedContactsShapeKeyMarker"/> after that.
     /// </para>
     /// </summary>
     public string ShapeKey => BaseShapeKey
-        + (Population == null || Owner == null ? string.Empty : CorpusPopulation.ShapeKeySuffixFor(Population.Value, Owner));
+        + (Population == null || Owner == null
+            ? string.Empty
+            : CorpusPopulation.ShapeKeySuffixFor(Population.Value, Owner)
+                + (IncludeUndatedContacts ? UndatedContactsShapeKeyMarker : string.Empty));
 
     private string BaseShapeKey
     {
@@ -219,6 +264,33 @@ public enum CorpusItemKind
 
     /// <summary>A task in Tasks, with no due date and no reminder.</summary>
     Task = 4,
+}
+
+/// <summary>
+/// WHERE a population's undated items must be undated - which decides what its write path does,
+/// what its probe and read-back require, and what <c>corpus-indexed</c> reports. See
+/// <see cref="CorpusPopulation.UndatedCriterion"/>.
+/// </summary>
+public enum CorpusUndatedCriterion
+{
+    /// <summary>The population carries no undated item.</summary>
+    None = 0,
+
+    /// <summary>
+    /// In the STORE: no <c>PR_MESSAGE_DELIVERY_TIME</c>, removed after the first save and checked by the
+    /// probe and the read-back - version 2's design, <see cref="CorpusPlanOptions.IncludeUndatedItems"/>.
+    /// A PST refuses it for every kind (measured 2026-09-27), which is why that switch is off.
+    /// </summary>
+    StoreHoldsNoDate = 1,
+
+    /// <summary>
+    /// In the INDEX: no <c>System.Message.DateReceived</c> - true of a contact saved into a PST although
+    /// the store gives it a delivery time Outlook will not remove (measured on the indexed guest
+    /// 2026-10-03, Q98 (f)). Nothing tries to remove that delivery time, the probe and the read-back
+    /// do not ask for its absence, and <c>corpus-indexed</c> checks the index's own column -
+    /// <see cref="CorpusPlanOptions.IncludeUndatedContacts"/>.
+    /// </summary>
+    IndexHoldsNoDate = 2,
 }
 
 /// <summary>The fixed Outlook facts about each <see cref="CorpusItemKind"/>. Pure.</summary>

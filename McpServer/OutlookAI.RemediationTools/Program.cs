@@ -59,7 +59,9 @@ using OutlookAI.RemediationTools;
 ///       senders, recipients, attachments, conversations and subfolders, each proved by a probe
 ///       before the build and read back after it. Its item count is fixed by the kind, and
 ///       --store is required even by corpus-plan, because the population is addressed to the
-///       store's owner.
+///       store's owner. --undated-contacts gives the hub or bystander its undated CONTACTS (the
+///       indexed guest's populations, Q98 (f)); it is part of the shape key, so every verb that
+///       reads such a manifest needs it as well.
 ///
 ///   corpus-census   --store ... --allow-store ... --corpus-id ... --count N [--manifest ...]
 ///       READ-ONLY. Says whether the corpus in the store is the corpus the plan describes:
@@ -544,6 +546,8 @@ internal static class Program
         Console.WriteLine("Fixture:  --population hub|bystander|identity   a curated test-guest population, not the corpus:");
         Console.WriteLine("          its count is fixed (--count optional), --store is required even by corpus-plan,");
         Console.WriteLine("          and every verb that reads its manifest needs the same --population");
+        Console.WriteLine("          [--undated-contacts]  the hub or bystander WITH its undated contacts - the indexed guest's");
+        Console.WriteLine("          populations (Q98 f); part of the shape, so every verb on such a manifest needs it too");
         Console.WriteLine("Indexed:  corpus-indexed --population ... [--manifest <path>] [--wait-seconds <n>]   (read-only, no Outlook)");
         Console.WriteLine("          corpus-probe --population ... --undated-index-wait <n>   holds each undated probe item up to");
         Console.WriteLine("          n s and prints the index's columns for it before deleting it (a NOT elevated Outlook must run)");

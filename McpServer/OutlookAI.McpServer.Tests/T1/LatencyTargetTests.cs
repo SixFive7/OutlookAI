@@ -149,12 +149,14 @@ public sealed class LatencyTargetTests
 
     private static readonly DateTime Anchor = new(2026, 9, 24, 9, 0, 0, DateTimeKind.Utc);
 
-    private static string[] HubManifest(string store = "tier@vm.invalid", CorpusPopulationKind kind = CorpusPopulationKind.Hub, string? shapeKey = null)
+    private static string[] HubManifest(
+        string store = "tier@vm.invalid", CorpusPopulationKind kind = CorpusPopulationKind.Hub, string? shapeKey = null, bool contacts = false)
     {
         var options = new CorpusPlanOptions("hub-indexed", 8181, Anchor)
         {
             Population = kind,
             Owner = CorpusMailboxOwner.ForStore(store),
+            IncludeUndatedContacts = contacts,
         };
         var header = new CorpusManifestHeader(
             CorpusManifest.CurrentVersion, "hub-indexed", 8181, CorpusManifest.FormatUtc(Anchor),
@@ -170,6 +172,32 @@ public sealed class LatencyTargetTests
         Assert.Equal("tier@vm.invalid", fact.Store);
         Assert.Equal(Anchor, fact.AnchorUtc);
         Assert.Equal(Anchor.AddMinutes(-1), fact.NewestDatedUtc);
+    }
+
+    [Fact]
+    public void TheIndexedGuestsHubManifest_WithItsUndatedContacts_ReadsBackTheSameNewestDatedItem()
+    {
+        // Q98 (f): the indexed guest's hub carries twelve undated contacts after its dated mail, and its
+        // shape key says so. The frontier is judged on the newest DATED item, which the contacts do not move.
+        string[] withContacts = HubManifest(contacts: true);
+        Assert.True(CorpusPlanOptions.ShapeKeyCarriesUndatedContacts(CorpusManifest.Parse(withContacts).Header.ShapeKey));
+        Assert.False(CorpusPlanOptions.ShapeKeyCarriesUndatedContacts(CorpusManifest.Parse(HubManifest()).Header.ShapeKey));
+
+        HubPopulationFact fact = LiveHubPopulationFreshness.Read(withContacts);
+        Assert.Equal("hub-indexed", fact.CorpusId);
+        Assert.Equal(Anchor, fact.AnchorUtc);
+        Assert.Equal(Anchor.AddMinutes(-1), fact.NewestDatedUtc);
+        Assert.Equal(LiveHubPopulationFreshness.Read(HubManifest()).NewestDatedUtc, fact.NewestDatedUtc);
+
+        // And the key is compared, not ignored: a manifest claiming contacts its key does not carry, or the
+        // reverse, is a population this generator would not reproduce.
+        string without = new CorpusPlanOptions("hub-indexed", 8181, Anchor)
+        {
+            Population = CorpusPopulationKind.Hub,
+            Owner = CorpusMailboxOwner.ForStore("tier@vm.invalid"),
+        }.ShapeKey;
+        Assert.Throws<InvalidOperationException>(
+            () => LiveHubPopulationFreshness.Read(HubManifest(shapeKey: without + "|u:contactz")));
     }
 
     [Fact]
