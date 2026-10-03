@@ -1,5 +1,12 @@
 # TODO
 
+- [ ] **On or after 2026-10-05, ask the maintainer whether the shared test mailbox exists (Q109).**
+  He requested a free shared mailbox in his Microsoft 365 tenant on 2026-10-03 (for example
+  `outlookai-test@xxlnet.nl`, with full access for `telefonie@xxlnet.nl`); creating it takes a few
+  days, and he asked to be reminded after 48 hours. Until it exists, the six `Requires=DelegateStore`
+  Exchange tests stay disabled on the Exchange test VM. Once it does: enable them there, and move
+  test writes from telefonie into the shared mailbox wherever a test allows it (Q110).
+
 - [ ] **Decide what the add-in's tuning reconcile does with the five Cached Mode values it writes
   under `HKCU\Software\Policies` (found 2026-10-03 by the first guest run of the two-phase add-in
   install).** `OutlookTuningService.Reconcile` writes D25's five `caching.policy.*` values there, and
