@@ -803,9 +803,9 @@ function Invoke-SelfTest {
     Write-Host ''
     Write-Host '== the run level - every Outlook start NOT elevated where the hub is indexed =='
     Test-Says 'an indexed hub refuses to -Execute elevated, and says how to run it' (Test-HubRunLevel -Indexed $true -Elevated $true -Execute $true) '-RunLevel Limited'
-    Test-Case 'NOT elevated it proceeds' 0 @(Test-HubRunLevel -Indexed $true -Elevated $false -Execute $true).Count
-    Test-Case 'a dry run starts no Outlook and is never refused for it' 0 @(Test-HubRunLevel -Indexed $true -Elevated $true -Execute $false).Count
-    Test-Case 'an unindexed hub may run elevated, as it did on 2026-10-03' 0 @(Test-HubRunLevel -Indexed $false -Elevated $true -Execute $true).Count
+    Test-Case 'NOT elevated it proceeds' 0 (Test-HubRunLevel -Indexed $true -Elevated $false -Execute $true).Count
+    Test-Case 'a dry run starts no Outlook and is never refused for it' 0 (Test-HubRunLevel -Indexed $true -Elevated $true -Execute $false).Count
+    Test-Case 'an unindexed hub may run elevated, as it did on 2026-10-03' 0 (Test-HubRunLevel -Indexed $false -Elevated $true -Execute $true).Count
 
     Write-Host ''
     Write-Host '== the one Quit - mailbox-safety rule 7 =='

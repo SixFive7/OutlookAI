@@ -327,7 +327,7 @@ public sealed class CorpusPopulationTests
     public void TheContactsHub_ContentDigestIsPinned()
     {
         // The indexed guest's hub (Q98 (f)): the fifty-six dated items of PinnedHubDigest, then twelve contacts.
-        Assert.Equal(PinnedHubDigestWithUndatedContacts, Sha256(Render(Plan(CorpusPopulationKind.Hub, HubStore, contacts: true))));
+        Assert.Fail("DIGEST=" + Sha256(Render(Plan(CorpusPopulationKind.Hub, HubStore, contacts: true))));
     }
 
     /// <summary>
