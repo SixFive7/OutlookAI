@@ -35,6 +35,13 @@ git push origin <sha>:refs/heads/master      # for each, in that order
 Each step advances `master` by exactly one mainline commit, and a merge carries its whole
 branch with it. Measured 2026-09-17 on a 16-commit backlog: 12 mainline steps, all clean.
 
+**Check CI after every push, and treat a failed run as a bug.** Decided by the maintainer
+2026-10-03 (Q95). Once the last push of a batch is done, read the runs it triggered
+(`gh run list --limit 5`) when they finish, and fix or report any failure before moving on - a
+local green suite does not stand in for it. The `McpServer` workflow last passed on 2026-09-15
+and failed on every push checked from 2026-09-24 to 2026-09-27, on a test that only passed outside
+UTC, and nobody looked: every merge had been verified locally, never on the runner.
+
 ## Build and Release
 
 - **Build** runs automatically on every pull request (`.github/workflows/build.yml`), and can be triggered on demand. It only compiles — no releases, no tags, no changelog changes. On pull requests it also runs a dependency review.
