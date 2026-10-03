@@ -260,6 +260,7 @@ public sealed class LiveDisconnectRecoveryTests
         // on screen IS the pin. Read before WM_CLOSE only: a read afterwards could start the very
         // Outlook this test is watching exit. Folder names only (S4). Diagnostic, never asserted.
         _output.WriteLine("explorers once the promoted window is up: " + LiveOutlookTestMailer.DescribeExplorers());
+        _output.WriteLine("lifetime pin right before WM_CLOSE: " + DescribePin(independentGateway));
 
         IReadOnlyList<IntPtr> beforeClose = WindowProbe.VisibleOutlookWindows();
         if (beforeClose.Count != 1)
@@ -453,7 +454,9 @@ public sealed class LiveDisconnectRecoveryTests
             return gateway.Run(s =>
             {
                 OutlookComSession session = (OutlookComSession)s;
-                return "pinned=" + session.ComposeSurfacePinned + " error=" + (session.ComposeSurfacePinError ?? "-");
+                return "pinned=" + session.ComposeSurfacePinned + " error=" + (session.ComposeSurfacePinError ?? "-")
+                    + " pinReference=" + session.DescribeLifetimePin()
+                    + " startedOutlook=" + session.StartedOutlook;
             });
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)

@@ -163,6 +163,39 @@ namespace OutlookAI.Core.Com
         public string? ComposeSurfacePinError { get; private set; }
 
         /// <summary>
+        /// D49 diagnostic for the live tests (2026-10-03): whether this session's lifetime pin is
+        /// still a USABLE reference, which <see cref="ComposeSurfacePinned"/> - a flag set once - cannot
+        /// say. "none"; "held" (its Caption read back); "separated" (the wrapper was released to zero
+        /// under the session, so Outlook's Explorer has lost this reference); or "unreachable (...)".
+        /// Read-only; nothing in the product decides by it.
+        /// </summary>
+        public string DescribeLifetimePin()
+        {
+            EnsureNotDisposed();
+            return _runner.Run(() =>
+            {
+                if (_composeSurfacePin == null)
+                {
+                    return "none";
+                }
+
+                try
+                {
+                    _ = (string?)((dynamic)_composeSurfacePin).Caption;
+                    return "held";
+                }
+                catch (InvalidComObjectException)
+                {
+                    return "separated";
+                }
+                catch (Exception ex) when (IsComCallFailure(ex))
+                {
+                    return "unreachable (" + ex.GetType().Name + ")";
+                }
+            });
+        }
+
+        /// <summary>
         /// D49: relinquishes the lifetime pin - closes every Explorer when NONE of them
         /// has a visible window, i.e. when the only thing keeping Outlook alive is the
         /// invisible surface this server holds. Returns how many were closed.
