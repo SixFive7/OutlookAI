@@ -2052,7 +2052,12 @@
   is now `OutlookComSession.ScanCursorDate(received, brief.ReceivedTime)` - pure, public, and driven
   directly by CI. Dropping the conversion, which was the defect the line was added to fix, now fails
   a test whichever end it is dropped at: inside the function (the value is wrong) or at the call
-  site (the call is gone).
+  site (the call is gone). **Corrected 2026-10-03 (Q95): that held only off UTC.** The test read the
+  machine's own zone, where the conversion is the identity on a UTC machine - so on GitHub's runners,
+  which are UTC, it failed against a correct product from the day it was added, and could not have
+  seen a dropped conversion there either. The zone is a parameter now (`ComDateValue.FromItemValue(value, zone)`,
+  `ScanCursorDate(table, item, zone)`, the old overloads passing `TimeZoneInfo.Local` and pinned by
+  an IL read to do so), and the test names a zone of its own, UTC+07:13.
 
   **The two counter call sites - killed by an IL read, because moving them was not available.** A
   stand-in harness for the whole of `SweepFolder` was considered and REFUSED on 2026-08-24, and that
