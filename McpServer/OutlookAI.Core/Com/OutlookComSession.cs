@@ -123,6 +123,34 @@ namespace OutlookAI.Core.Com
         private const string ConversationIndexTrackingDasl = "http://schemas.microsoft.com/mapi/proptag/0x3016000B";
 
         /// <summary>
+        /// PR_CONVERSATION_ID (PidTagConversationId, 0x3013, PT_BINARY, 16 bytes). With
+        /// <see cref="ConversationIndexTrackingDasl"/> set, MS-OXOMSG makes it the GUID in the
+        /// conversation-index header (bytes 6-21).
+        /// </summary>
+        private const string ConversationIdDasl = "http://schemas.microsoft.com/mapi/proptag/0x30130102";
+
+        /// <summary>
+        /// True for an Exchange store, and for one whose <c>ExchangeStoreType</c> will not read - the
+        /// fail-safe side for a write that only a non-Exchange store may get.
+        /// </summary>
+        private static bool IsExchangeStoreOrUnknown(object? store)
+        {
+            if (store == null)
+            {
+                return true;
+            }
+
+            try
+            {
+                return SpecialFolders.IsExchangeStore((int)((dynamic)store).ExchangeStoreType);
+            }
+            catch (Exception ex) when (IsComCallFailure(ex))
+            {
+                return true;
+            }
+        }
+
+        /// <summary>
         /// PR_CONVERSATION_INDEX (PT_BINARY). LIVE-PROVEN on this build (batch A - A3):
         /// assigning <c>MailItem.Subject</c> on a derived draft makes Outlook REGENERATE
         /// the conversation index header, which detaches the draft from its thread. The
@@ -3924,6 +3952,24 @@ namespace OutlookAI.Core.Com
                             && TryGetPropertyBool(draft, ConversationIndexTrackingDasl) != trackingBefore)
                         {
                             trackingKept = TrySetProperty(draft, ConversationIndexTrackingDasl, trackingBefore.Value);
+                        }
+
+                        // And the ConversationId itself, on a store that is not Exchange. MEASURED on a
+                        // PST (third guest live run, 2026-10-03): seed, plain reply and renamed reply all
+                        // carried index tracking = true and the SAME index header, and the seed's and
+                        // the plain reply's ConversationId were that header's GUID (bytes 6-21) - but the
+                        // renamed reply's was another value, kept from when the subject write had
+                        // regenerated the header. With tracking set, MS-OXOMSG makes the id that GUID,
+                        // so it is written back from the restored index. Exchange computes the id on the
+                        // server and is left alone; a store whose kind will not read counts as Exchange.
+                        if (indexRestored
+                            && indexBytes!.Length >= 22
+                            && !IsExchangeStoreOrUnknown(sourceStore)
+                            && TryGetPropertyBool(draft, ConversationIndexTrackingDasl) == true)
+                        {
+                            byte[] conversationGuid = new byte[16];
+                            Array.Copy(indexBytes!, 6, conversationGuid, 0, 16);
+                            _ = TrySetPropertyBinary(draft, ConversationIdDasl, conversationGuid);
                         }
 
                         topicPreserved = indexRestored && topicRestored && trackingKept;
