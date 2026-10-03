@@ -221,11 +221,13 @@ namespace OutlookAI.Core.Com
         /// reach, because its registry gate only knows ids the caller was told. It is
         /// re-read after the relocate, since a move mints a new one.
         /// </param>
-        /// <param name="createdFolder">
-        /// The Drafts folder this call CREATED, as <c>store/path</c>, reported whether the
-        /// call then succeeded or failed; null when it created nothing (Q85: may create, must
-        /// report). A POP3, IMAP or data-file store without a Drafts folder gets one when a
-        /// draft is saved into it; an Exchange mailbox always has one.
+        /// <param name="createdFolders">
+        /// The folders this call CREATED, as <c>store/path</c>, reported whether the call then
+        /// succeeded or failed; null when it created nothing (Q85: may create, must report). A
+        /// POP3, IMAP or data-file store without a Drafts folder gets one when a draft is saved
+        /// into it; an Exchange mailbox always has one. A list, because a Drafts lookup that
+        /// FAILS is re-checked (Q96 (ii)) and reports every folder that appeared at the top of
+        /// the store while it ran - with no folder handed back, there is no one folder to name.
         /// </param>
         ComDraftCreateResult? TryCreateNewDraft(
             string accountSmtpAddress,
@@ -236,7 +238,7 @@ namespace OutlookAI.Core.Com
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
             out string? savedDraftEntryId,
-            out string? createdFolder,
+            out IReadOnlyList<string>? createdFolders,
             out string? error);
 
         /// <summary>Creates a reply, reply-all or forward draft via Outlook's own derivation.</summary>
@@ -245,9 +247,10 @@ namespace OutlookAI.Core.Com
         /// reported even when a later step fails, so a failed derivation cannot leave an
         /// orphan out of the cleanup tool's reach.
         /// </param>
-        /// <param name="createdFolder">
-        /// The Drafts folder this call CREATED in the SOURCE item's store - where the draft is
-        /// filed - as <c>store/path</c>, reported whether the call then succeeded or failed;
+        /// <param name="createdFolders">
+        /// The folders this call CREATED in the SOURCE item's store - its Drafts, where the
+        /// draft is filed - as <c>store/path</c>, reported whether the call then succeeded or
+        /// failed, and including what a failed Drafts lookup made before it failed (Q96 (ii));
         /// null when it created nothing (Q85).
         /// </param>
         ComDraftCreateResult? TryCreateDerivedDraft(
@@ -260,7 +263,7 @@ namespace OutlookAI.Core.Com
             ComSignatureOverride? signatureOverride,
             ComDraftOptions? options,
             out string? savedDraftEntryId,
-            out string? createdFolder,
+            out IReadOnlyList<string>? createdFolders,
             out string? error);
 
         /// <summary>
@@ -286,12 +289,13 @@ namespace OutlookAI.Core.Com
             out string? error);
 
         /// <summary>Deletes a draft this server created.</summary>
-        /// <param name="createdFolder">
-        /// The Deleted Items folder this call CREATED - the discard moves the draft into it -
-        /// as <c>store/path</c>, reported whether the call then succeeded or failed; null when
-        /// it created nothing (Q85).
+        /// <param name="createdFolders">
+        /// The folders this call CREATED - its Deleted Items, which the discard moves the draft
+        /// into - as <c>store/path</c>, reported whether the call then succeeded or failed, and
+        /// including what a failed Deleted Items lookup made before it failed (Q96 (ii)); null
+        /// when it created nothing (Q85).
         /// </param>
-        ComDraftDiscardResult? TryDiscardDraft(string entryIdHex, string? storeId, out string? createdFolder, out string? error);
+        ComDraftDiscardResult? TryDiscardDraft(string entryIdHex, string? storeId, out IReadOnlyList<string>? createdFolders, out string? error);
 
         /// <summary>Reads the state a draft must be in before it may be sent, including its content hash.</summary>
         ComSendableDraftState? TryGetSendableDraftState(string entryIdHex, string? storeId, out string? error);
