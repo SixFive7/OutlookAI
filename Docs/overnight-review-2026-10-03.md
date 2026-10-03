@@ -669,8 +669,8 @@ age of the data) is Q108 below - measured, directions only, nothing implemented.
   guests' other data files - and had never run: its first run found every COM collection unrolled
   into an array by PowerShell. Fixed: it resolves folders the product's way, times the stand-ins
   separately and labelled, and returns COM objects whole; `Invoke-GuestMeasure.ps1` takes
-  `-ScanFolder`, and both say that a sweep of an INDEXED store reads only the minutes since its
-  frontier. *Alternatives:* give Corpus A real default folders (a delivery store's; a 1.5 h rebuild
+  `-ScanFolder` and says that its sweeps of an INDEXED store read only the minutes since the store's
+  frontier (measured: 12 items across five stores). *Alternatives:* give Corpus A real default folders (a delivery store's; a 1.5 h rebuild
   plus the index, for a measurement only); leave the scripts and document the trap.
 - **D133 - The scratch measurement driver stays scratch**: the product-sweep read of Corpus A was done
   by a throwaway, read-only stdio driver beside `Invoke-GuestMeasure.ps1` (in `.work\g1-d62\guest\`),
