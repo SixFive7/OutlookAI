@@ -25,11 +25,49 @@ namespace OutlookAI.McpServer.Tests.T2;
 /// right now - refuse on a Production profile and print <c>PROVED NOTHING:</c> on a Portable one.
 /// The second used to log a line and return GREEN. Pinned by <c>T1/LiveEarlyReturnGuardTests</c>.
 /// </para>
+/// <para>
+/// <b>And it waits for the tree before refusing (Q101 2(b), 2026-10-03).</b> Exchange syncs a
+/// delegate mailbox's folder hierarchy lazily, so one walk that does not list the folder nested
+/// is not yet evidence of drift: the walk is repeated for up to
+/// <see cref="NestedListingWaitSeconds"/> before the refusal above can fire.
+/// </para>
 /// </summary>
 [Collection(LiveCollections.Phase2)]
 [Trait("Category", "Live")]
 public sealed class LiveStaleIndexRowTests
 {
+    /// <summary>
+    /// How long the delegate folder tree is given to list the probe folder NESTED before the test
+    /// refuses: five minutes, walked again every <see cref="NestedListingPollSeconds"/> (Q101 2(b)).
+    /// <para>
+    /// <b>The scale comes from the only measurements there are, and they say MINUTES.</b> The same
+    /// nested folder was listed in one walk and missing from the next, minutes apart (soak fix 16);
+    /// and the count tripwire saw a real 450-item subfolder of a delegate store absent from one census
+    /// and back afterwards (<c>StoreCountTripwire.Evaluate</c>). A wait of seconds would re-read the
+    /// same cached hierarchy and refuse the same way. The product's own leaf walk already retries
+    /// three times, 400 ms apart (<c>HitLocator.DelegateLeafWalkAttempts</c>), which absorbs a busy
+    /// Outlook rejecting one enumeration - a faster, different thing that this does not replace.
+    /// </para>
+    /// <para>
+    /// <b>Why 300 s.</b> It is the product's own ceiling for one Outlook operation
+    /// (<c>ComOperationBudgets.OperationDeadlineMs</c>), and above the live tier's allowance for a
+    /// mail crossing a real server (<see cref="LiveInboxArrival.DeadlineSeconds"/>, 180 s) - this is a
+    /// cache waiting on that same server. And it is asymmetric the way this repository's budgets
+    /// are: a tree that lists the folder ends the wait on the FIRST walk, so a healthy run pays
+    /// nothing; a tree that never lists it still refuses on a Production profile afterwards, so the
+    /// wait can turn a transient into a pass and never a real drift into one. What it costs is five
+    /// minutes of a run that fails anyway. Every run prints how many walks and how long it took, so
+    /// the number can be narrowed from evidence rather than from a guess.
+    /// </para>
+    /// </summary>
+    internal const int NestedListingWaitSeconds = 300;
+
+    /// <summary>
+    /// Between walks of the delegate tree. Each is a names-only walk of tens of folders (165 on the
+    /// profile the tripwire measured), so twenty of them in the five minutes is light; a shorter gap
+    /// would only re-read the cache before Exchange has had a chance to change it.
+    /// </summary>
+    internal const int NestedListingPollSeconds = 15;
     /// <summary>
     /// What the locator assertion resolves against, named as the Production refusal wraps it. A path
     /// of one segment is the folder at the top of the tree, where there is nothing flat to resolve.
@@ -90,11 +128,19 @@ public sealed class LiveStaleIndexRowTests
         // A delegate/shared mailbox syncs its folder HIERARCHY lazily: the same store
         // enumerated this nested folder in one walk and not in the next, minutes apart
         // (measured during soak fix 16). Resolution can only work while the tree exposes
-        // it, so the tree is asked FIRST and the read is asserted only when it does.
+        // it, so the tree is asked FIRST - and asked again for a bounded time before a tree
+        // that does not list it is believed (Q101 2(b), NestedListingWaitSeconds) - and the read
+        // is asserted only when it does.
         using OutlookComSession verify = OutlookComSession.Connect(allowStartingOutlook: true);
-        IReadOnlyList<IReadOnlyList<string>> matches = verify.FindFolderPathsByLeafName(
-            probe.StoreDisplayName, probe.FolderName, HitLocator.DelegateLeafWalkCap);
-        _output.WriteLine("COM leaf matches: "
+        LiveWaitBudget wait = LiveWaitBudget.OfSeconds(NestedListingWaitSeconds);
+        NestedListingWait listing = WaitForNestedListing(
+            () => verify.FindFolderPathsByLeafName(probe.StoreDisplayName, probe.FolderName, HitLocator.DelegateLeafWalkCap),
+            wait.Budget,
+            TimeSpan.FromSeconds(NestedListingPollSeconds),
+            () => wait.Elapsed,
+            Thread.Sleep);
+        IReadOnlyList<IReadOnlyList<string>> matches = listing.Matches;
+        _output.WriteLine($"COM leaf matches after {listing.Walks} walk(s) over {listing.Waited.TotalSeconds:F0} s: "
             + (matches.Count == 0
                 ? "(none - the delegate hierarchy is not enumerable right now)"
                 : string.Join(" | ", matches.Select(m => string.Join("/", m)))));
@@ -134,4 +180,54 @@ public sealed class LiveStaleIndexRowTests
         ArgumentNullException.ThrowIfNull(matches);
         return matches.Where(m => m.Count > 1).ToList();
     }
+
+    /// <summary>
+    /// Walks the delegate tree until it lists the probe folder NESTED - the shape
+    /// <see cref="NestedPaths"/> accepts - or until <paramref name="budget"/> is spent, and returns
+    /// the last walk. The decision only: the walk, the clock and the sleep are handed in, so
+    /// <c>T1/LiveEarlyReturnGuardTests</c> drives it with no mailbox and no real time.
+    /// <para>
+    /// The budget is checked AFTER each walk, so there is always at least one, and a last walk is
+    /// taken when the remaining time runs out mid-gap rather than giving up on a sleep. A walk that
+    /// lists the folder only at the top of the tree does not end the wait: that is the shape the
+    /// refusal fires on.
+    /// </para>
+    /// </summary>
+    internal static NestedListingWait WaitForNestedListing(
+        Func<IReadOnlyList<IReadOnlyList<string>>> walk,
+        TimeSpan budget,
+        TimeSpan poll,
+        Func<TimeSpan> elapsed,
+        Action<TimeSpan> sleep)
+    {
+        ArgumentNullException.ThrowIfNull(walk);
+        ArgumentNullException.ThrowIfNull(elapsed);
+        ArgumentNullException.ThrowIfNull(sleep);
+        if (poll <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(poll), poll, "a wait between walks must be positive.");
+        }
+
+        int walks = 0;
+        while (true)
+        {
+            IReadOnlyList<IReadOnlyList<string>> matches = walk();
+            walks++;
+            TimeSpan spent = elapsed();
+            if (NestedPaths(matches).Count > 0 || spent >= budget)
+            {
+                return new NestedListingWait(matches, walks, spent);
+            }
+
+            TimeSpan left = budget - spent;
+            sleep(left < poll ? left : poll);
+        }
+    }
 }
+
+/// <summary>
+/// What <see cref="LiveStaleIndexRowTests.WaitForNestedListing"/> saw: the last walk's leaf matches,
+/// how many walks it took, and how long - printed by the live test so the bound can be narrowed
+/// from evidence.
+/// </summary>
+internal sealed record NestedListingWait(IReadOnlyList<IReadOnlyList<string>> Matches, int Walks, TimeSpan Waited);

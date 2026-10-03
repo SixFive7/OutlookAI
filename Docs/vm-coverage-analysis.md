@@ -53,8 +53,12 @@ measurement records.
 >    what they need is a chain of pages - at least five mail items in the hub - not the corpus as the
 >    hub. The same commit put `LiveStaleIndexRowTests`' delegate-tree return through the same helper,
 >    and made `LiveDisconnectRecoveryTests`' non-empty Outbox a failure on every profile instead of a
->    green skip. Pinned by `T1/LiveEarlyReturnGuardTests`. The early returns that still end green are
->    listed in `Docs/live-tier-on-the-vm.md` section 8 item 19, as the maintainer's to decide.
+>    green skip. Pinned by `T1/LiveEarlyReturnGuardTests`. The early returns that still ended green
+>    were listed in `Docs/live-tier-on-the-vm.md` section 8 item 19 as the maintainer's to decide, and
+>    he decided them on 2026-10-03 (Q101): the same helper for the T3 availability, COM-host, UI search
+>    backend and headless read/thread returns, and the INVERSE for `LiveDisconnectRecoveryTests`'
+>    user-protection stops - a `SKIP (user protection):` line on `Production`, a failure on a
+>    `Portable` guest, where nobody is at the keyboard. Item 19 says what still ends green.
 > 9. **Section 7's first two questions, corrected against the code (2026-09-27).** Question 1's
 >    closure note named the wrong third tool (see the note there), and question 2 was settled on
 >    2026-08-24 and never marked: `Requires` is declared per METHOD, and

@@ -1,6 +1,5 @@
 # TODO
 
-
 - [ ] **ENFORCE, IN CODE, THAT THE WORKSTATION IS READ-ONLY FOR LIVE TESTS (Q72 decided; Q74 is how).**
   The maintainer decided 2026-09-24: live tests on his workstation run read-only, always, and only
   the fundamentally immovable ones - the Exchange-only tests - run there at all. `AGENTS.md` now
@@ -15,7 +14,6 @@
   **Waiting on:** the store-list split and the other Q69 work landing, since they touch the same
   test infrastructure, and the maintainer's go on Q74. Until then no write-capable live test may be
   started on the workstation at all.
-
 
 - [ ] **What still stops a rebuilder rebuilding the test VM from this repository alone.**
   `Testbed/` is the entry point and holds the runnable half - parameter set, host and guest
@@ -219,7 +217,6 @@
         its row is next touched; a stale number reads as evidence and points the next reader at
         unrelated code.
 
-
 - [ ] **Live tier: an aborted run leaves artifacts behind. Read this before the next live run.**
       (2026-08-18, ~03:00-03:45)
 
@@ -291,7 +288,6 @@
   Diagnostic logs: `C:\Users\jori\Downloads\tmp-aitrace\live-run4.txt` (the 22-minute test, with
   the long-running-test diagnostics that named it) and `cleanup-sweep.txt` (the fixture-setup hang).
 
-
 - [ ] **Two follow-ups the tag split leaves for the maintainer.** Neither is a defect; both are
   wording the maintainer owns.
 
@@ -312,7 +308,6 @@
   2. **ANSWERED - no, it must not SKIP them; it counts them and fails on a non-zero count.** The
      maintainer chose (c) over the recommended skip, and the recommendation was wrong for the
      reason recorded in the next item: a skip gives up the one thing worth knowing. See below.
-
 
 - [ ] **PARTLY FIXED 2026-09-15 - option (2) shipped; option (1) is the COM half and still needs a
   live run.** Fix the census's identity-to-count degradation, which is why the tripwire needs a
@@ -349,7 +344,6 @@
   would fail runs for a property of the census rather than of the mailbox.
 
   <details><summary>Original entry</summary>
-
 
   **The defect.** Whether a folder is compared BY IDENTITY or BY COUNT is decided independently
   on each pass, and the post-run decision is timing-dependent. `CensusIdentityPlan.Repeating`
@@ -450,7 +444,6 @@
     is unchanged and now easier to state: it is a different MACHINE, so it is a different settings
     file.
 
-
 - [ ] **PENDING TASK - process `C:/Source/SixFive7/BrowserAI/.work/truncation-prompt-for-sibling-project.md`.**
   *(Path corrected 2026-09-15: it was written with a Windows backslash before `truncation`, which this
   file stored as a literal TAB - so the path as printed named a file that cannot exist and the `t` was
@@ -459,7 +452,6 @@
   The maintainer asked for this at 09:00 on 2026-08-18. It is expected to be the portable
   description-budget prompt written for another project; read it and act on what it asks for. Recorded
   here because auto-compaction was imminent when it was requested.
-
 
 - [ ] **Run the index-collation probe on the live profile** - `T2 LiveOrderKeyCollationTests`
   (read-only, index statements only, no COM and no mailbox writes). It answers two things the
@@ -488,7 +480,6 @@
   the item:** the statements carried no `SCOPE='mapi...'`, so they ran over the general SystemIndex
   namespace rather than the one the product uses. Full write-up and the exact statements are in the
   session trace folder under Downloads (`tmp-aitrace/nullorder-finding.md`).
-
 
 - [ ] **Re-run the unindexed-store probes on a MIXED profile - the one shape no machine here has.**
   Group A and E of `Docs/completeness-gaps.md` are now all closed (A1-A5, E1). Everything about
@@ -848,7 +839,6 @@
   not answer. It was accepted on the standing rule that completeness outranks speed, so the number
   is worth having rather than worth acting on.
 
-
 - [ ] **Verify the exhaustive scan's depth guard against a live profile - the half of F4 that T1 cannot reach.**
   F4 was closed on 2026-08-18 and is pinned by T1 `ScanDepthAndSweepScopeTests` end to end from
   `ComExhaustiveResult` to the payload, plus the process-boundary round trip in
@@ -860,7 +850,6 @@
   `exhaustive.coverageGaps`, `freshness: "partial"`, `degraded: true`, and an advice sentence
   naming the guard's value. Worth pairing with the lowered-cap build the G3/G4 item above already
   asks for; both are read-only and neither needs a mailbox write.
-
 
 - [ ] **Add the second PST to the test VM - it is what makes the count tripwire mean anything
       there.** The tripwire exempts the hub store, so a machine whose only store IS the hub gives
@@ -1015,6 +1004,15 @@
         `OutlookHealthLiveToolShapeTests.OutlookHealth_CarriesTheFreshnessBlock_WithOrWithoutAnIndex`
         (skips the advice assertion when the index provider is unavailable). All four are now
         `Category=Live`, so the question is what the VM run should assert INSTEAD of returning.
+        **The first three were decided and converted on 2026-10-03 (Q101)**: each return goes
+        through `T2/LivePopulationCoverage` - a refusal on `Production`, a `PROVED NOTHING:` line on
+        `Portable` - and the search test now fails on any error but an unreachable index, which it
+        recognises by `outlook_health`'s own `index.provider` verdict. **The fourth is still as
+        described**, and is the one left in this entry. Worth knowing before the next Production run:
+        the transient-state test can only exercise its check while Outlook is starting, hung or
+        unavailable, so on a workstation with a healthy Outlook it now FAILS by design; the server's
+        `OUTLOOKAI_COMHOST_LIVENESS` override could make it force such a state instead, if that is
+        ever preferred to the Q57 answer.
   - [ ] **The pin reads tool NAMES, not arguments.** `search`, `read`, `thread`, the draft
         tools, `move_mail` and the show-me tools all have a refusal that fires before any COM
         work, which is what the protocol-only half of T3 is built on - so they cannot be

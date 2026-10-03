@@ -7926,7 +7926,22 @@ namespace OutlookAI.Core.Com
         /// <param name="fromOpenedItem">The opened item's own received time - local wall time.</param>
         public static DateTime? ScanCursorDate(DateTime? fromTable, DateTime? fromOpenedItem)
         {
-            return fromTable ?? ComDateValue.FromItemValue(fromOpenedItem);
+            return ScanCursorDate(fromTable, fromOpenedItem, TimeZoneInfo.Local);
+        }
+
+        /// <summary>
+        /// <see cref="ScanCursorDate(DateTime?, DateTime?)"/> with the zone the opened item's
+        /// wall time is in passed in. The scan passes <see cref="TimeZoneInfo.Local"/> and
+        /// nothing else; the parameter exists so a test can hold the zone still (Q95) - on a
+        /// machine whose zone is UTC the conversion is the identity, and a test reading the
+        /// machine's zone could not see whether it happened.
+        /// </summary>
+        /// <param name="fromTable">The row's date column, already UTC, or null if unreadable.</param>
+        /// <param name="fromOpenedItem">The opened item's own received time - wall time in <paramref name="localZone"/>.</param>
+        /// <param name="localZone">The zone the opened item's wall time is in.</param>
+        public static DateTime? ScanCursorDate(DateTime? fromTable, DateTime? fromOpenedItem, TimeZoneInfo localZone)
+        {
+            return fromTable ?? ComDateValue.FromItemValue(fromOpenedItem, localZone);
         }
 
         /// <summary>

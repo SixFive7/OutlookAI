@@ -3,6 +3,7 @@ using OutlookAI.ComHost.Supervision;
 using OutlookAI.McpServer.Tests.T2;
 using System.Text.Json;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace OutlookAI.McpServer.Tests.T3;
 
@@ -31,8 +32,30 @@ namespace OutlookAI.McpServer.Tests.T3;
 [Trait("Category", "Live")]
 public sealed class ComHostSupervisionLiveTests
 {
+    /// <summary>
+    /// What <see cref="NoComHostSurvivesTheServer"/> checks the death of, named as the Production
+    /// refusal wraps it.
+    /// </summary>
+    internal const string ComHostPopulation =
+        "a COM host process started by the server under test (outlook_health reports its processId)";
+
+    /// <summary>What a reader of a PROVED NOTHING line about it is to do about it.</summary>
+    internal const string ComHostRemedy =
+        "outlook_health starts the COM host only when Outlook is running - its liveness probe asks Windows first and "
+        + "spends nothing on COM when Outlook is closed - so start Outlook before the run to exercise the branch that "
+        + "matters: that no host outlives the server that started it.";
+
     /// <summary>Short enough to keep the suite quick, long enough not to be flaky on a loaded box.</summary>
     private const string DeadlineMs = "4000";
+
+    private readonly LiveMcpToolShapeFixture _fixture;
+    private readonly ITestOutputHelper _output;
+
+    public ComHostSupervisionLiveTests(LiveMcpToolShapeFixture fixture, ITestOutputHelper output)
+    {
+        _fixture = fixture;
+        _output = output;
+    }
 
     private static Dictionary<string, string> Fault(string spec) => new(StringComparer.Ordinal)
     {
@@ -156,9 +179,8 @@ public sealed class ComHostSupervisionLiveTests
         // Whether a host exists at all depends on the machine, not on the code under test.
         // Since 6f5a8b5 the liveness probe asks Windows whether Outlook is running BEFORE
         // spending anything on COM, so on a box with Outlook closed outlook_health answers
-        // without ever spawning the host. Asserting a pid there fails on the environment
-        // rather than on a defect, so branch on the observed state and keep an assertion in
-        // both branches.
+        // without ever spawning the host. So branch on the observed state - and the branch
+        // without a host says it proved nothing rather than passing quietly (Q101, below).
         int? childPid;
         await using (McpStdioClient client = await StartAsync(TimeSpan.FromSeconds(120), "delay:1:GetAccounts"))
         {
@@ -168,21 +190,30 @@ public sealed class ComHostSupervisionLiveTests
             Assert.True(exited, "the server must exit when its stdin closes");
         }
 
-        if (childPid is null)
+        // No host spawned means nothing can have outlived the server, and the stdin-close
+        // assertion above is all this run proved. That used to return GREEN with a comment and no
+        // line; it is the Q57 pattern now (Q101): a refusal on a Production profile, a PROVED
+        // NOTHING line on a Portable one.
+        IReadOnlyList<int> hosts = LivePopulationCoverage.Require(
+            _fixture.Settings,
+            childPid is int spawned ? new[] { spawned } : Array.Empty<int>(),
+            ComHostPopulation,
+            "the check that the COM host dies with its server",
+            ComHostRemedy,
+            _output.WriteLine);
+        if (hosts.Count == 0)
         {
-            // No host was spawned, so nothing can have outlived the server and the
-            // stdin-close assertion above is all this run can honestly prove. Start Outlook
-            // to exercise the branch that matters.
             return;
         }
 
         // Give the kernel a moment to reap the job.
-        for (int attempt = 0; attempt < 50 && IsAlive(childPid.Value); attempt++)
+        int hostPid = hosts[0];
+        for (int attempt = 0; attempt < 50 && IsAlive(hostPid); attempt++)
         {
             await Task.Delay(100);
         }
 
-        Assert.False(IsAlive(childPid.Value), $"COM host pid {childPid} outlived its server");
+        Assert.False(IsAlive(hostPid), $"COM host pid {hostPid} outlived its server");
     }
 
     [Fact]
