@@ -2223,6 +2223,27 @@ guest's filter. **Start the run inside that margin.** The frontier test reads th
 is a red run, not a quietly weaker one. The maintainer's own machine has no such field and no such
 step.
 
+**Then the throwaway data file - Q96 (iv), decided 2026-10-03, a script step for the same reason.**
+Straight after the hub rebuild, at the level it leaves Outlook running:
+
+```
+.\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 900 -Script "& 'C:\OutlookAI-Q5\Reset-ThrowawayStore.ps1' -Execute"
+```
+
+`Testbed/guest/Reset-ThrowawayStore.ps1` detaches the previous run's throwaway data file from the
+tier profile, attaches a fresh one - `AddStoreEx`, so Deleted Items and nothing else (section 1.3) -
+under the guest's `throwawayStoreDisplayName`, proves it has no Drafts folder without asking Outlook
+for one, and deletes the old files Outlook has let go of. It is the one store
+`T2/LiveCreatedFolderTests` writes to: a reply to a tagged post in its Deleted Items, which the
+product must file in a Drafts folder it creates there and REPORT in `createdFolders`, then
+`discard_draft` - the "created" branch of Q85, which never runs on the hub because the hub has a
+Drafts folder. The write allowlist grants that store draft and delete and nothing else, and no
+census or sweep watches it: the proof creates a folder there on purpose, and it proves its own zero
+end, by tagged count and by EntryID. A settings file rendered before 2026-10-03 has no
+`throwawayStoreDisplayName`; the script then refuses and the test prints `PROVED NOTHING` - re-render
+it (`Testbed/README.md` step 9). **Never run on a guest yet: section 8 item 25 is what its first run
+must record.**
+
 **On `OutlookAI-Unindexed` the filter also deselects the index tier:**
 `Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&Requires!=SearchIndex`. That guest has no index by design
 (section 1.1a), so every test carrying `Requires=SearchIndex` would refuse there, not measure. The
@@ -2270,12 +2291,13 @@ To see the sets without running anything - `--list-tests` discovers and does not
 is safe against any mailbox:
 
 ```
-dotnet test <csproj> --list-tests --filter "Category=Live"                                                       # 128
-dotnet test <csproj> --list-tests --filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"      # 121
+dotnet test <csproj> --list-tests --filter "Category=Live"                                                       # 129
+dotnet test <csproj> --list-tests --filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange"      # 122
 dotnet test <csproj> --list-tests --filter "Category=Live&(Requires=DelegateStore|Requires=CachedExchange)"      # 7
 ```
 
-Treat those numbers as "what they were when this was written" - measured 2026-10-03, after Q74. The
+Treat those numbers as "what they were when this was written" - measured 2026-10-03, after Q74, and
+again the same day after Q96 (iv) added `LiveCreatedFolderTests` (128 and 121 before it). The
 traits are the authority; the counts in a document drift. `Requires!=X` means "no value of `Requires` on
 this test equals X", which is what makes a multi-valued trait usable as an exclusion.
 
@@ -3433,6 +3455,31 @@ unrecorded or unverified.
     identity store, renamed `identity@vm.invalid`, is filed as `identity@vm.invalid($be889d8b)` - its
     own name, and a new hash because its file is a new path; the host reproduces `be889d8b` from its
     `StoreID`. `DIRECTORY` lists the three roots in 2 ms, and no two stores share a name any more.
+
+25. **PENDING - the created-folder proof has never run on a guest (Q96 (iv), built 2026-10-03).**
+    What exists is proven only off the guests: `Testbed/guest/Reset-ThrowawayStore.ps1 -SelfTest`
+    (its decisions and its own source), the settings, the renderer and the write allowlist by
+    `T1/ThrowawayStoreTests` and `T1/LiveTestSettingsTemplateTests`, and every verdict of the live
+    test by `T2/ThrowawayStoreProof`'s judges, which T1 drives branch by branch. Its first run - steps
+    9, 9a, 9a-ii and 9b of `Testbed/README.md`, on either guest - must record:
+    - **The script's `verify` line.** One store under the name, in the new file, Drafts designation
+      `NotFound`, no top-level `Drafts`. A designation of `Failed` on every run means PowerShell does not
+      surface `MAPI_E_NOT_FOUND` as the `HResult` the script reads (the C# lookup reads the same
+      property and is measured; this script's reading of it is not) - fix the reading, not the check.
+    - **The test's four lines.** `before:` Drafts absent, `reply_draft:` with `createdFolders` naming
+      the throwaway's Drafts, `after:` the non-creating lookup seeing it, `discard_draft:` discarded.
+      The `after:` line answers the question Q85 left open - where Outlook designates a Drafts folder
+      it makes in a data file with no Inbox. If the lookup does not see it, the test fails there by
+      design: `discard_draft` and `update_draft` would then refuse every draft in such a mailbox, and
+      that is a product finding for the maintainer, not a test to loosen.
+    - **The zero end**: the tagged count of the throwaway and the hub at 0, and no item the proof made
+      openable by EntryID.
+    - **The second run's detach**, and whether the previous file was deleted or left held by Outlook
+      (it is let go of at the next Outlook restart, which the hub rebuild provides).
+    - **Nothing else noticed the extra store.** It is in no list, so nothing watches it, but every
+      check that walks the profile's stores - the table probes, `outlook_health`, `list_accounts` -
+      now meets one more; on the code as it stands each either names its stores or tolerates one it
+      cannot probe. A run that says otherwise belongs here.
 
 ---
 

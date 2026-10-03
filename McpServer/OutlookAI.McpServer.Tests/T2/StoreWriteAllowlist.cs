@@ -38,6 +38,12 @@ public enum StoreWriteKind
 /// so the identity tests can create one tagged, never-displayed draft each and clean it
 /// up: <see cref="StoreWriteKind.Draft"/> and <see cref="StoreWriteKind.Delete"/> only, no
 /// send, no move, no folder work.</item>
+/// <item><b>the throwaway data file</b> (Q96 (iv), 2026-10-03) - the data file with no Drafts
+/// folder that <c>Testbed/guest/Reset-ThrowawayStore.ps1</c> recreates before every live run,
+/// granted the same two kinds and nothing else: the created-folder proof saves one tagged post
+/// in it, replies to that post - which makes the product create the store's Drafts folder - and
+/// discards the reply. It may be none of the other tiers; a contradictory declaration refuses to
+/// build.</item>
 /// <item><b>everything else</b> - delegate/shared mailboxes and any store not in the
 /// settings: nothing, ever.</item>
 /// </list>
@@ -62,6 +68,7 @@ public sealed class StoreWriteAllowlist
     private readonly HashSet<string> _identityDraftStores;
     private readonly HashSet<string> _bystanders;
     private readonly HashSet<string> _denied;
+    private readonly HashSet<string> _throwaways;
 
     /// <summary>
     /// Why every write is refused, or null on a machine that may write. Set only by
@@ -88,12 +95,18 @@ public sealed class StoreWriteAllowlist
     /// that one has no legitimate shape.
     /// </para>
     /// </param>
+    /// <param name="throwawayStores">
+    /// The throwaway data file(s) - granted draft+delete for the created-folder proof (Q96 (iv)).
+    /// May be null. One that is also the hub, a bystander, a read-only store or an identity-draft
+    /// store is a contradiction and refuses to build.
+    /// </param>
     public StoreWriteAllowlist(
         string hubStoreDisplayName,
         IEnumerable<string>? identityDraftStores = null,
         IEnumerable<string>? knownReadOnlyStores = null,
-        IEnumerable<string>? bystanderStores = null)
-        : this(hubStoreDisplayName, identityDraftStores, knownReadOnlyStores, bystanderStores, everyWriteRefusedBecause: null)
+        IEnumerable<string>? bystanderStores = null,
+        IEnumerable<string>? throwawayStores = null)
+        : this(hubStoreDisplayName, identityDraftStores, knownReadOnlyStores, bystanderStores, throwawayStores, everyWriteRefusedBecause: null)
     {
     }
 
@@ -102,6 +115,7 @@ public sealed class StoreWriteAllowlist
         IEnumerable<string>? identityDraftStores,
         IEnumerable<string>? knownReadOnlyStores,
         IEnumerable<string>? bystanderStores,
+        IEnumerable<string>? throwawayStores,
         string? everyWriteRefusedBecause)
     {
         _everyWriteRefusedBecause = everyWriteRefusedBecause;
@@ -132,6 +146,28 @@ public sealed class StoreWriteAllowlist
 
             _identityDraftStores.Add(store);
         }
+
+        _throwaways = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string store in throwawayStores ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(store))
+            {
+                continue;
+            }
+
+            if (IsHub(store) || _bystanders.Contains(store) || _denied.Contains(store) || _identityDraftStores.Contains(store))
+            {
+                // The throwaway is granted draft+delete BECAUSE it holds nothing but test artifacts
+                // and is recreated before every run. Every other tier says something else about the
+                // same store, so a store in two of them is a configuration nobody can mean.
+                throw new ArgumentException(
+                    "The throwaway data file '" + store + "' may not also be the hub, a bystander, a read-only store "
+                    + "or an identity-draft store.",
+                    nameof(throwawayStores));
+            }
+
+            _throwaways.Add(store);
+        }
     }
 
     /// <summary>
@@ -145,12 +181,14 @@ public sealed class StoreWriteAllowlist
     /// <param name="identityDraftStores">The other primaries. Granted nothing here.</param>
     /// <param name="knownReadOnlyStores">Delegate/shared mailboxes, for the error message.</param>
     /// <param name="bystanderStores">Declared bystanders, for the error message.</param>
+    /// <param name="throwawayStores">A declared throwaway data file. Granted nothing here either.</param>
     public static StoreWriteAllowlist RefusingEveryWrite(
         string reason,
         string hubStoreDisplayName,
         IEnumerable<string>? identityDraftStores = null,
         IEnumerable<string>? knownReadOnlyStores = null,
-        IEnumerable<string>? bystanderStores = null)
+        IEnumerable<string>? bystanderStores = null,
+        IEnumerable<string>? throwawayStores = null)
     {
         if (string.IsNullOrWhiteSpace(reason))
         {
@@ -159,7 +197,7 @@ public sealed class StoreWriteAllowlist
                 nameof(reason));
         }
 
-        return new StoreWriteAllowlist(hubStoreDisplayName, identityDraftStores, knownReadOnlyStores, bystanderStores, reason);
+        return new StoreWriteAllowlist(hubStoreDisplayName, identityDraftStores, knownReadOnlyStores, bystanderStores, throwawayStores, reason);
     }
 
     /// <summary>True when this allowlist refuses every write to every store, the hub included.</summary>
@@ -178,6 +216,15 @@ public sealed class StoreWriteAllowlist
     public bool IsBystander(string? storeDisplayName)
     {
         return storeDisplayName != null && _bystanders.Contains(storeDisplayName);
+    }
+
+    /// <summary>The declared throwaway data file(s) - granted draft+delete only (Q96 (iv)).</summary>
+    public IReadOnlyCollection<string> ThrowawayStores => _throwaways;
+
+    /// <summary>True when <paramref name="storeDisplayName"/> was declared the throwaway data file.</summary>
+    public bool IsThrowaway(string? storeDisplayName)
+    {
+        return storeDisplayName != null && _throwaways.Contains(storeDisplayName);
     }
 
     /// <summary>
@@ -214,7 +261,9 @@ public sealed class StoreWriteAllowlist
         HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
         foreach (string store in candidateStores ?? [])
         {
-            if (!IsHub(store) && IsAllowed(store, StoreWriteKind.Draft) && seen.Add(store))
+            // The throwaway data file is granted a draft for the created-folder proof, not for the
+            // identity tests: it is no account's store, and it is in no candidate list anyway.
+            if (!IsHub(store) && !IsThrowaway(store) && IsAllowed(store, StoreWriteKind.Draft) && seen.Add(store))
             {
                 accounts.Add(store);
             }
@@ -262,7 +311,7 @@ public sealed class StoreWriteAllowlist
             return false;
         }
 
-        if (!_identityDraftStores.Contains(storeDisplayName))
+        if (!_identityDraftStores.Contains(storeDisplayName) && !_throwaways.Contains(storeDisplayName))
         {
             return false;
         }
@@ -302,7 +351,10 @@ public sealed class StoreWriteAllowlist
                 : _identityDraftStores.Contains(target)
                     ? "that store is granted draft+delete only (identity tests), not "
                         + kind.ToString().ToLowerInvariant()
-                    : "only the designated test mailbox may be written to";
+                    : _throwaways.Contains(target)
+                        ? "that store is the throwaway data file, granted draft+delete only (the created-folder "
+                            + "proof), not " + kind.ToString().ToLowerInvariant()
+                        : "only the designated test mailbox may be written to";
 
         return "REFUSING '" + operation + "' (" + kind.ToString().ToLowerInvariant() + ") on store '" + target
             + "': " + why + ". See the mailbox-safety rules in AGENTS.md; widen the live-test settings, never the guard.";

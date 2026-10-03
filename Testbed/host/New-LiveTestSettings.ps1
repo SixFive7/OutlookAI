@@ -210,7 +210,7 @@ $script:GuestSettingsRelative = 'McpServer\OutlookAI.McpServer.Tests\live-fixtur
 # nobody checked.
 $script:TopLevelFields = @('machineProfile', 'testHubStoreDisplayName', 'hubPopulationManifestPath',
     'expectedStoreDisplayNames', 'indexedStoreDisplayNames', 'expectedDelegateStoreDisplayNames',
-    'bystanderStoreDisplayNames', 'probeTerm', 'subjectOnlyProbe', 'corpus', 'mailSink')
+    'bystanderStoreDisplayNames', 'throwawayStoreDisplayName', 'probeTerm', 'subjectOnlyProbe', 'corpus', 'mailSink')
 $script:BlockFields = @{
     subjectOnlyProbe = @('storeDisplayName', 'folderPath', 'subjectTerm', 'senderFragment')
     corpus           = @('storeDisplayName', 'manifestPath', 'corpusId', 'seed', 'anchorUtc', 'itemCount', 'windowDays')
@@ -897,6 +897,30 @@ function Add-SettingsProblems {
         }
     }
 
+    # throwawayStoreDisplayName - the data file with no Drafts folder that Reset-ThrowawayStore.ps1
+    # recreates before every run (Q96 (iv)). A store name, never the hub, and in NO other list: the
+    # loader refuses each of those, and this says so in seconds on the host instead.
+    $throwaway = $null
+    $throwawayValue = Get-FieldValue $Settings 'throwawayStoreDisplayName'
+    if (-not $throwawayValue.Present) {
+        $Problems.Add("throwawayStoreDisplayName: missing. On a test guest it names the data file with no Drafts folder that Testbed/guest/Reset-ThrowawayStore.ps1 recreates before every run, where T2/LiveCreatedFolderTests proves a draft tool reports the Drafts folder it creates (Q96 (iv)).")
+    }
+    else {
+        $problem = Test-StoreName -Name $throwawayValue.Value -Where 'throwawayStoreDisplayName'
+        if ($null -ne $problem) { $Problems.Add($problem) }
+        elseif ($null -ne $hub -and [string]::Equals($throwawayValue.Value, $hub, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $Problems.Add("throwawayStoreDisplayName: names the hub '$($throwawayValue.Value)'. The throwaway data file exists because it has NO Drafts folder; the hub has one, so the created-folder proof would prove nothing. The loader refuses it.")
+        }
+        else {
+            $throwaway = [string]$throwawayValue.Value
+            foreach ($pair in @(@('expectedStoreDisplayNames', $expected), @('indexedStoreDisplayNames', $indexed), @('expectedDelegateStoreDisplayNames', $delegates), @('bystanderStoreDisplayNames', $bystanders))) {
+                if (Test-NameIn $throwaway @($pair[1])) {
+                    $Problems.Add("throwawayStoreDisplayName: '$throwaway' is also in $($pair[0]). It is in no other list on purpose - watched, the count tripwire would fail the run over the Drafts folder the proof makes in it; a primary, the identity tests would draft in it; a bystander or a delegate, nothing may write to it. The loader refuses it.")
+                }
+            }
+        }
+    }
+
     # The tripwire's own refusal, restated: something watched must be non-hub AND denied every write.
     $policed = New-Object System.Collections.Generic.List[string]
     foreach ($store in (@($bystanders) + @($delegates))) {
@@ -1009,6 +1033,7 @@ function Add-SettingsProblems {
     $allNamed = @()
     if ($null -ne $hub) { $allNamed += $hub }
     $allNamed += @($expected) + @($indexed) + @($delegates) + @($bystanders)
+    if ($null -ne $throwaway) { $allNamed += $throwaway }
     if ($null -ne $corpusName) { $allNamed += $corpusName }
     if ($null -ne $subjectProbeStore) { $allNamed += $subjectProbeStore }
     $reported = @()
@@ -1504,6 +1529,7 @@ function Invoke-SelfTest {
   "indexedStoreDisplayNames": [ "hub@render.invalid", "bystander@render.invalid", "Synthetic Corpus" ],
   "expectedDelegateStoreDisplayNames": [],
   "bystanderStoreDisplayNames": [ "bystander@render.invalid", "Synthetic Corpus" ],
+  "throwawayStoreDisplayName": "throwaway@render.invalid",
   "probeTerm": "invoice",
   "subjectOnlyProbe": {
     "_note": "the hub population's notices folder",
@@ -1647,7 +1673,7 @@ function Invoke-SelfTest {
     $shape = Get-TemplateFields -Template $template
     Test-Case 'every value in it is the token for its own path' '' ($shape.Problems -join ' | ')
     Test-Case 'it names exactly the fields this script has rules for' '' ((Get-TemplateDriftProblems -Fields $shape.Fields) -join ' | ')
-    Test-Case 'in order' 'machineProfile,testHubStoreDisplayName,hubPopulationManifestPath,expectedStoreDisplayNames,indexedStoreDisplayNames,expectedDelegateStoreDisplayNames,bystanderStoreDisplayNames,probeTerm,subjectOnlyProbe.storeDisplayName,subjectOnlyProbe.folderPath,subjectOnlyProbe.subjectTerm,subjectOnlyProbe.senderFragment,corpus.storeDisplayName,corpus.manifestPath,corpus.corpusId,corpus.seed,corpus.anchorUtc,corpus.itemCount,corpus.windowDays,mailSink.submitHost,mailSink.submitPort,mailSink.retrieveHost,mailSink.retrievePort,mailSink.connectTimeoutMs' ((@($shape.Fields | ForEach-Object { $_.Path })) -join ',')
+    Test-Case 'in order' 'machineProfile,testHubStoreDisplayName,hubPopulationManifestPath,expectedStoreDisplayNames,indexedStoreDisplayNames,expectedDelegateStoreDisplayNames,bystanderStoreDisplayNames,throwawayStoreDisplayName,probeTerm,subjectOnlyProbe.storeDisplayName,subjectOnlyProbe.folderPath,subjectOnlyProbe.subjectTerm,subjectOnlyProbe.senderFragment,corpus.storeDisplayName,corpus.manifestPath,corpus.corpusId,corpus.seed,corpus.anchorUtc,corpus.itemCount,corpus.windowDays,mailSink.submitHost,mailSink.submitPort,mailSink.retrieveHost,mailSink.retrievePort,mailSink.connectTimeoutMs' ((@($shape.Fields | ForEach-Object { $_.Path })) -join ',')
 
     $bad = ConvertFrom-JsonText -Text '{ "machineProfile": "Portable", "corpus": { "seed": "{{corpus.itemCount}}", "deep": { "x": "{{corpus.deep.x}}" } } }' -What 'a bad template'
     $badShape = Get-TemplateFields -Template $bad
@@ -1662,7 +1688,7 @@ function Invoke-SelfTest {
     $resolved = Resolve-GuestValues -Fields $shape.Fields -Guest (New-Guest) -Where 'the synthetic guest'
     Test-Case 'a complete guest has no problems' '' ($resolved.Problems -join ' | ')
     Test-Case 'and no block left out' 0 $resolved.Omitted.Count
-    Test-Case 'and every field has a value' 24 $resolved.ByPath.Count
+    Test-Case 'and every field has a value' 25 $resolved.ByPath.Count
 
     $guest = New-Guest
     $guest.testHubStoreDisplayName = '<FILL: from the guest>'
@@ -1898,6 +1924,16 @@ function Invoke-SelfTest {
     Test-HasProblem 'a hub manifest not named after the hub population''s id is refused' (Get-RuleProblems { param($s) $s.hubPopulationManifestPath = 'C:\OutlookAI-Q5\corpus-hub-other.jsonl' }) 'must be named corpus-hub-synthetic.jsonl'
     Test-HasProblem 'nor after the bystander''s, the other population on the same guest' (Get-RuleProblems { param($s) $s.hubPopulationManifestPath = 'C:\OutlookAI-Q5\corpus-bystander-synthetic.jsonl' }) 'must be named corpus-hub-synthetic.jsonl'
     Test-Case 'the same name in another case is the same file, and accepted' '' ((Get-RuleProblems { param($s) $s.hubPopulationManifestPath = 'C:\OutlookAI-Q5\CORPUS-HUB-SYNTHETIC.jsonl' }) -join ' | ')
+    # The throwaway data file (Q96 (iv)): required, a store name, never the hub, and in no other list.
+    Test-HasProblem 'a guest without a throwaway data file is refused' (Get-RuleProblems { param($s) $s.PSObject.Properties.Remove('throwawayStoreDisplayName') }) 'throwawayStoreDisplayName: missing'
+    Test-HasProblem 'and the refusal names the script that recreates it' (Get-RuleProblems { param($s) $s.PSObject.Properties.Remove('throwawayStoreDisplayName') }) 'Reset-ThrowawayStore.ps1'
+    Test-HasProblem 'a blank throwaway is refused' (Get-RuleProblems { param($s) $s.throwawayStoreDisplayName = ' ' }) 'throwawayStoreDisplayName: holds an empty store name'
+    Test-HasProblem 'the hub as the throwaway is refused' (Get-RuleProblems { param($s) $s.throwawayStoreDisplayName = 'HUB@render.invalid' }) 'throwawayStoreDisplayName: names the hub'
+    Test-HasProblem 'the throwaway in the census list is refused' (Get-RuleProblems { param($s) $s.expectedStoreDisplayNames = @($s.expectedStoreDisplayNames) + 'throwaway@render.invalid' }) "'throwaway@render.invalid' is also in expectedStoreDisplayNames"
+    Test-HasProblem 'the throwaway declared a bystander is refused' (Get-RuleProblems { param($s) $s.expectedStoreDisplayNames = @($s.expectedStoreDisplayNames) + 'throwaway@render.invalid'; $s.bystanderStoreDisplayNames = @($s.bystanderStoreDisplayNames) + 'throwaway@render.invalid' }) "'throwaway@render.invalid' is also in bystanderStoreDisplayNames"
+    Test-HasProblem 'the throwaway declared a delegate is refused' (Get-RuleProblems { param($s) $s.expectedDelegateStoreDisplayNames = @('throwaway@render.invalid') }) "'throwaway@render.invalid' is also in expectedDelegateStoreDisplayNames"
+    Test-HasProblem 'a throwaway named as an address outside .invalid is refused' (Get-RuleProblems { param($s) $s.throwawayStoreDisplayName = 'throwaway@example.com' }) "'throwaway@example.com' is named as an address outside the RFC 2606 .invalid domain"
+    Test-Case 'a throwaway that is not an address at all is accepted' '' ((Get-RuleProblems { param($s) $s.throwawayStoreDisplayName = 'Throwaway Data File' }) -join ' | ')
     Test-HasProblem 'the hub manifest and the corpus manifest being one file is refused' (Get-RuleProblems { param($s) $s.corpus.manifestPath = 'C:\OutlookAI-Q5\corpus-hub-synthetic.jsonl' }) 'is the same file as corpus.manifestPath'
     Test-HasProblem 'a guest the record gives no hub population is refused' (Get-RuleProblems -ForVm 'OutlookAI-Nobody' { param($s) }) 'has 0 hub entries for guest'
     Test-HasProblem 'and one it gives two is refused' (Get-RuleProblems -ForVm 'OutlookAI-Twice' { param($s) }) 'has 2 hub entries for guest'
@@ -2048,6 +2084,7 @@ if ($indexedList.Count -gt 0) {
 }
 else { Write-Host '  indexed     none - this guest has no index, and the index tests refuse rather than pass here' }
 Write-Host ("  bystanders  {0}   - denied every write, and censused" -f ($bystanderList -join ', '))
+Write-Host ("  throwaway   {0}   - draft and delete only, NOT censused: recreated before every run by Testbed/guest/Reset-ThrowawayStore.ps1" -f $parsed.throwawayStoreDisplayName)
 if (([string]$parsed.probeTerm).Length -gt 0) { Write-Host ("  probeTerm   {0}" -f $parsed.probeTerm) }
 if ($null -ne (Get-ExactProperty $parsed 'subjectOnlyProbe')) {
     Write-Host ("  SF-6 probe  '{0}' in {1}, term {2}, sender {3}" -f $parsed.subjectOnlyProbe.folderPath, $parsed.subjectOnlyProbe.storeDisplayName, $parsed.subjectOnlyProbe.subjectTerm, $parsed.subjectOnlyProbe.senderFragment)
@@ -2075,6 +2112,8 @@ Write-Host '  * that the hub and bystander POPULATIONS are built and censused (D
 Write-Host '    every hub test, and the probe values above, read them'
 Write-Host ("  * that {0} exists on the guest and the hub was rebuilt for THIS run -" -f $parsed.hubPopulationManifestPath)
 Write-Host '    Testbed/guest/Reset-HubPopulation.ps1 -Execute, first in every run; the frontier test fails on a stale hub'
+Write-Host ("  * that '{0}' was recreated for THIS run, with no Drafts folder -" -f $parsed.throwawayStoreDisplayName)
+Write-Host '    Testbed/guest/Reset-ThrowawayStore.ps1 -Execute, straight after the hub rebuild; the created-folder proof refuses a stale one'
 if ($null -ne (Get-ExactProperty $parsed 'corpus')) {
     Write-Host ("  * that {0} exists on the guest, and the corpus is still fresh - the tier checks both at start" -f $parsed.corpus.manifestPath)
 }
