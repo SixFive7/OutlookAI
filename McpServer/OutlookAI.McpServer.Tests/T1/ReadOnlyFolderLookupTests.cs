@@ -164,6 +164,40 @@ public sealed class ReadOnlyFolderLookupTests
         AssertCreatedNothing(mailbox);
     }
 
+    [Theory]
+    [InlineData(0)] // olPrimaryExchangeMailbox
+    [InlineData(1)] // olExchangeMailbox: a delegate or shared mailbox
+    public void ArchiveOnExchange_WhoseLookupFails_AnswersWhatItAlwaysDid_AndNeverListsTheRoot(int exchangeStoreType)
+    {
+        // Q74 D1: archive_mail into an Exchange mailbox is a write no live tier reaches - the
+        // test VMs have no Exchange, and the maintainer's workstation is read-only for live tests.
+        // When Outlook will not hand over the Archive folder and the store designates none, the
+        // answer is the one the replaced code gave - no designated Archive folder, set one up and
+        // retry - for the read-only lookup and the move alike. Never "could not be read without
+        // asking Outlook to create one": that is the non-Exchange branch's answer, and on Exchange
+        // nothing here was ever going to be created.
+        FakeStore readOnlyStore = FakeStore.ExchangeMailbox();
+        FakeStore moveStore = FakeStore.ExchangeMailbox();
+        FakeStore twin = FakeStore.ExchangeMailbox();
+        foreach (FakeStore store in new[] { readOnlyStore, moveStore, twin })
+        {
+            store.ExchangeStoreTypeValue = exchangeStoreType;
+            store.DefaultFolderCallFails.Add(ArchiveFolderResolution.OlFolderArchive);
+        }
+
+        ArchiveFolderAnswer readOnly = ArchiveFolderResolution.ResolveReadOnly(readOnlyStore, FakeStore.StoreId);
+        ArchiveFolderAnswer forMove = ArchiveFolderResolution.ResolveForMove(moveStore, FakeStore.StoreId);
+        (string? preError, _, _) = PreFixReadOnlyResolution(twin);
+
+        Assert.Equal(ArchiveFolderResolution.NoDesignatedArchiveFolder, preError);
+        Assert.Equal(preError, readOnly.Error);
+        Assert.Equal(preError, forMove.Error);
+        Assert.False(forMove.Created);
+        AssertCreatedNothing(readOnlyStore);
+        AssertCreatedNothing(moveStore);
+        Assert.Equal(0, moveStore.RootListings);
+    }
+
     [Fact]
     public void ReadOnlyArchive_WhoseDesignationCannotBeRead_SaysSo_AndCreatesNothing()
     {
