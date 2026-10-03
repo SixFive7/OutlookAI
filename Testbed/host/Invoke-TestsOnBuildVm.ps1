@@ -23,7 +23,8 @@
       2. Takes the runner lock (queues behind any run already going - see CONCURRENT CALLERS).
       3. Takes a lease on the VM (Testbed/README.md section 5b), so the idle-saver keeps away.
       4. Restores the base checkpoint and resumes the VM from it, waits for its heartbeat and
-         PowerShell Direct, proves it is OAI-BUILD logged on as the autologon account, and waits
+         PowerShell Direct, proves it is OAI-BUILD logged on as the autologon account in the UTC
+         time zone (Q126 (a): the suite runs in a zone other than the workstation's), and waits
          for its clock to agree with this host's (a resumed guest starts at its checkpoint's time).
       5. Copies in the archive, Testbed/guest/Invoke-BuildVmRun.ps1 and a request file, starts the
          guest script detached, and follows its log until it writes done.txt. That script restores
@@ -199,7 +200,12 @@ if (Test-Path Variable:\PSNativeCommandUseErrorActionPreference) {
 $BuildVmName = 'OutlookAI-Build'
 $BuildVmComputerName = 'OAI-BUILD'
 $BuildVmUser = 'vmadmin'
-$BaseCheckpointName = 'CP-02-SDK-TEST-READY'
+$BaseCheckpointName = 'CP-03-SDK-TEST-READY-UTC'
+# The guest's time zone: UTC, decided by the maintainer 2026-10-03 (Q126 (a)), so the suite runs in a
+# zone other than the workstation's W. Europe - GitHub's UTC runner, which caught Q95's zone bug, is
+# gone. The base checkpoint holds it, and a run refuses a guest that reads anything else: a base
+# quietly back in W. Europe would pass exactly the tests this zone is here to fail.
+$BuildVmTimeZone = 'UTC'
 $GuestRunRoot = 'C:\OutlookAI-Q5\run'
 $GuestFeedRoot = 'C:\OutlookAI-Q5\nuget-offline'
 $GuestScriptName = 'Invoke-BuildVmRun.ps1'
@@ -326,6 +332,20 @@ function Test-IsBuildVmName {
     param([string] $Name)
     if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
     return [string]::Equals($Name.Trim(), $BuildVmName, [System.StringComparison]::OrdinalIgnoreCase) -and ($Name -eq $Name.Trim())
+}
+
+# Why the resumed guest is refused before anything is copied in - or '' when it is OAI-BUILD, logged
+# on as the autologon account, in $BuildVmTimeZone. The zone is compared ordinal: Windows' ids are
+# exact strings, and 'UTC' is not 'GMT Standard Time', which keeps British summer time.
+function Get-GuestRefusal {
+    param([string] $Computer, [string] $User, [string] $TimeZone)
+    if (-not [string]::Equals($Computer, $BuildVmComputerName, [System.StringComparison]::OrdinalIgnoreCase) -or $User -ne $BuildVmUser) {
+        return "the VM answers as '$User' on '$Computer', not '$BuildVmUser' on '$BuildVmComputerName'. Refusing to copy anything into it."
+    }
+    if (-not [string]::Equals($TimeZone, $BuildVmTimeZone, [System.StringComparison]::Ordinal)) {
+        return "the VM's time zone is '$TimeZone', not '$BuildVmTimeZone' (Q126 (a)): '$BaseCheckpointName' is not the base Testbed/README.md section 1c takes. Refusing to run the suite in the wrong zone."
+    }
+    return ''
 }
 
 # A run directory's name: when it started, and which commit. Sortable, unique per second and
@@ -533,6 +553,12 @@ function Invoke-SelfTest {
     Check 'a name that merely starts the same way is not' $false (Test-IsBuildVmName 'OutlookAI-Build2')
     Check 'nor one padded with a space' $false (Test-IsBuildVmName 'OutlookAI-Build ')
     Check 'nor an empty one' $false (Test-IsBuildVmName '')
+    Check 'OAI-BUILD as vmadmin in UTC is the guest a run expects' '' (Get-GuestRefusal -Computer 'OAI-BUILD' -User 'vmadmin' -TimeZone 'UTC')
+    Check 'another computer is refused' $true ((Get-GuestRefusal -Computer 'OAI-INDEXED' -User 'vmadmin' -TimeZone 'UTC') -like "*not 'vmadmin' on 'OAI-BUILD'*")
+    Check 'another account is refused' $true ((Get-GuestRefusal -Computer 'OAI-BUILD' -User 'tier' -TimeZone 'UTC') -like "*not 'vmadmin' on 'OAI-BUILD'*")
+    Check 'a guest still in W. Europe - the base before Q126 (a) - is refused, naming both zones' $true ((Get-GuestRefusal -Computer 'OAI-BUILD' -User 'vmadmin' -TimeZone 'W. Europe Standard Time') -like "*'W. Europe Standard Time', not 'UTC'*")
+    Check 'and so is GMT Standard Time, which is not UTC: it keeps British summer time' $true ((Get-GuestRefusal -Computer 'OAI-BUILD' -User 'vmadmin' -TimeZone 'GMT Standard Time') -ne '')
+    Check 'and a zone the guest did not report' $true ((Get-GuestRefusal -Computer 'OAI-BUILD' -User 'vmadmin' -TimeZone '') -ne '')
 
     Write-Host ''
     Write-Host '== run ids =='
@@ -730,6 +756,7 @@ Expected: 1</Message></ErrorInfo></Output></UnitTestResult>
         Check 'and the same computer name' $BuildVmComputerName $buildVm.computerName
         Check 'and the same base checkpoint' $BaseCheckpointName $buildVm.runnerBaseCheckpoint
         Check 'and the base checkpoint is one of its checkpoints' $true (@($buildVm.checkpoints) -contains $BaseCheckpointName)
+        Check 'and the same time zone (Q126 (a))' $BuildVmTimeZone $buildVm.timeZone
         Check 'and the same run directory' $GuestRunRoot $buildVm.guest.runRoot
         Check 'and the same offline feed' $GuestFeedRoot $buildVm.guest.offlineFeed
     }
@@ -1149,10 +1176,9 @@ try {
         }
     }
     $credential = $null
-    $who = Invoke-InGuest -Block { [pscustomobject]@{ Computer = $env:COMPUTERNAME; User = $env:USERNAME } }
-    if (-not [string]::Equals([string]$who.Computer, $BuildVmComputerName, [System.StringComparison]::OrdinalIgnoreCase) -or [string]$who.User -ne $BuildVmUser) {
-        throw "the VM answers as '$($who.User)' on '$($who.Computer)', not '$BuildVmUser' on '$BuildVmComputerName'. Refusing to copy anything into it."
-    }
+    $who = Invoke-InGuest -Block { [pscustomobject]@{ Computer = $env:COMPUTERNAME; User = $env:USERNAME; TimeZone = (Get-TimeZone).Id } }
+    $refusal = Get-GuestRefusal -Computer ([string]$who.Computer) -User ([string]$who.User) -TimeZone ([string]$who.TimeZone)
+    if ($refusal) { throw $refusal }
     # A resumed guest starts at its checkpoint's time and Hyper-V's time sync moves it to now within
     # seconds; a build or a test that started before that would see the clock jump under it.
     $skew = $null
@@ -1168,7 +1194,7 @@ try {
         Start-Sleep -Seconds 2
     }
     Measure-Phase 'connect' $t0
-    Say "VM: $($who.Computer) as $($who.User), clock within $skew s of this host, $(Format-Seconds ($timings['resume'] + $timings['connect'])) after the restore"
+    Say "VM: $($who.Computer) as $($who.User), time zone $($who.TimeZone), clock within $skew s of this host, $(Format-Seconds ($timings['resume'] + $timings['connect'])) after the restore"
 
     # Stage the run.
     $t0 = Get-Date
