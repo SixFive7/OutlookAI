@@ -335,56 +335,71 @@ public sealed class LiveDisconnectRecoveryTests
         // mutex reason in the sweep error + freshness advice, and must NOT start
         // Outlook. The staleness block must report the post-sweep reality
         // (outlookRunning=false - the D34 snapshot fix).
-        using (var installerMutex = new System.Threading.Mutex(initiallyOwned: true, "OutlookAISetup", out bool createdNew))
+        //
+        // It needs index results to degrade TO. On a machine whose settings name no indexed store
+        // (the unindexed guest, 2026-10-03: the search failed there with 0x80041820, no catalog) the
+        // step can prove nothing, and says so in the repository's own idiom; on a Production profile
+        // the same emptiness refuses the run. The rest of the scenario runs either way.
+        IReadOnlyList<string> indexedForDegradedSearch = LivePopulationCoverage.Require(
+            _fixture.Settings,
+            _fixture.Settings.IndexedStores,
+            "indexed store",
+            "the degraded-search check (3b), which needs index results for the search to fall back to",
+            "Run it on a guest whose index holds the hub (OutlookAI-Indexed), where 'indexedStoreDisplayNames' names it.",
+            _output.WriteLine);
+        if (indexedForDegradedSearch.Count > 0)
         {
-            try
+            using (var installerMutex = new System.Threading.Mutex(initiallyOwned: true, "OutlookAISetup", out bool createdNew))
             {
-                if (!createdNew)
+                try
                 {
-                    // Step (3b) only - the scenario carries on to (4) on a machine where it stands aside.
-                    LivePopulationCoverage.StandAsideForAUser(
-                        _fixture.Settings,
-                        "a real OutlookAISetup mutex is already held (an add-in install or update is running)",
-                        "the degraded-search check (3b), which has to hold that mutex itself",
-                        InstallerMutexOnAnUnattendedMachine,
-                        _output.WriteLine);
-                }
-                else
-                {
-                    service.ClearSweepCache(); // A <10 s-old cached sweep would mask the degradation path.
-                    SearchOutcome degraded = clock.Step(
-                        "degraded search while the installer mutex is held (D34)",
-                        () => service.Search(new SearchRequest
-                        {
-                            Query = "oaimcpDegradationProbe" + _fixture.RunMarker,
-                            Store = _fixture.Hub,
-                            Top = 5,
-                            SnippetChars = 0,
-                        }));
+                    if (!createdNew)
+                    {
+                        // Step (3b) only - the scenario carries on to (4) on a machine where it stands aside.
+                        LivePopulationCoverage.StandAsideForAUser(
+                            _fixture.Settings,
+                            "a real OutlookAISetup mutex is already held (an add-in install or update is running)",
+                            "the degraded-search check (3b), which has to hold that mutex itself",
+                            InstallerMutexOnAnUnattendedMachine,
+                            _output.WriteLine);
+                    }
+                    else
+                    {
+                        service.ClearSweepCache(); // A <10 s-old cached sweep would mask the degradation path.
+                        SearchOutcome degraded = clock.Step(
+                            "degraded search while the installer mutex is held (D34)",
+                            () => service.Search(new SearchRequest
+                            {
+                                Query = "oaimcpDegradationProbe" + _fixture.RunMarker,
+                                Store = _fixture.Hub,
+                                Top = 5,
+                                SnippetChars = 0,
+                            }));
 
-                    Assert.NotNull(degraded.Sweep);
-                    Assert.False(degraded.Sweep!.Performed, "the sweep must degrade while the installer mutex is held");
-                    Assert.NotNull(degraded.Sweep.Error);
-                    Assert.Contains("mutex", degraded.Sweep.Error!, StringComparison.OrdinalIgnoreCase);
-                    Assert.NotNull(degraded.Advice);
-                    // Pins the CONTRACT of the not-run case - the advice must shout, and must name
-                    // the sweep as the thing that could not run - rather than a phrase. It used to
-                    // assert "Freshness sweep unavailable", which the shipped advice stopped saying
-                    // long before this line was last read, so the live tier carried a failure that
-                    // had nothing to do with the behaviour under test.
-                    Assert.Contains(degraded.Advice!, a => a.Contains("INCOMPLETE RESULTS - TELL THE USER", StringComparison.Ordinal));
-                    Assert.Contains(degraded.Advice!, a => a.Contains("live check against Outlook could not", StringComparison.OrdinalIgnoreCase));
-                    Assert.Contains(degraded.Advice!, a => a.Contains("add-in update", StringComparison.OrdinalIgnoreCase));
-                    Assert.False(degraded.Staleness.OutlookRunning, "staleness must reflect post-sweep reality (D34)");
-                    Assert.Empty(Process.GetProcessesByName("OUTLOOK"));
-                    _output.WriteLine("degradation proven: search returned index results with mutex-reason advice, no autostart");
+                        Assert.NotNull(degraded.Sweep);
+                        Assert.False(degraded.Sweep!.Performed, "the sweep must degrade while the installer mutex is held");
+                        Assert.NotNull(degraded.Sweep.Error);
+                        Assert.Contains("mutex", degraded.Sweep.Error!, StringComparison.OrdinalIgnoreCase);
+                        Assert.NotNull(degraded.Advice);
+                        // Pins the CONTRACT of the not-run case - the advice must shout, and must name
+                        // the sweep as the thing that could not run - rather than a phrase. It used to
+                        // assert "Freshness sweep unavailable", which the shipped advice stopped saying
+                        // long before this line was last read, so the live tier carried a failure that
+                        // had nothing to do with the behaviour under test.
+                        Assert.Contains(degraded.Advice!, a => a.Contains("INCOMPLETE RESULTS - TELL THE USER", StringComparison.Ordinal));
+                        Assert.Contains(degraded.Advice!, a => a.Contains("live check against Outlook could not", StringComparison.OrdinalIgnoreCase));
+                        Assert.Contains(degraded.Advice!, a => a.Contains("add-in update", StringComparison.OrdinalIgnoreCase));
+                        Assert.False(degraded.Staleness.OutlookRunning, "staleness must reflect post-sweep reality (D34)");
+                        Assert.Empty(Process.GetProcessesByName("OUTLOOK"));
+                        _output.WriteLine("degradation proven: search returned index results with mutex-reason advice, no autostart");
+                    }
                 }
-            }
-            finally
-            {
-                if (createdNew)
+                finally
                 {
-                    installerMutex.ReleaseMutex();
+                    if (createdNew)
+                    {
+                        installerMutex.ReleaseMutex();
+                    }
                 }
             }
         }
