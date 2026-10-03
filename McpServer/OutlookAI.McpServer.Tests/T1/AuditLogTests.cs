@@ -209,9 +209,10 @@ public sealed class AuditLogTests
             AuditLog.WriterMutexName(log),
             AuditLog.WriterMutexName(Path.Combine(temp, "OutlookAI-AuditLogTests-other", AuditLog.LogFileName)));
 
-        // A session-local name the OS accepts: one backslash, after the namespace.
+        // A GLOBAL name the OS accepts (Q117: writers in different Windows sessions order against
+        // each other): one backslash, after the namespace.
         string name = AuditLog.WriterMutexName(log);
-        Assert.StartsWith(@"Local\OutlookAI.AuditLog.", name, StringComparison.Ordinal);
+        Assert.StartsWith(@"Global\OutlookAI.AuditLog.", name, StringComparison.Ordinal);
         Assert.Equal(1, name.Count(c => c == '\\'));
     }
 

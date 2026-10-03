@@ -55,6 +55,12 @@ namespace OutlookAI.McpServer.Tests.T2;
 [Trait("Category", "Live")]
 public sealed class LiveDisconnectRecoveryTests
 {
+    /// <summary>RPC_S_SERVER_UNAVAILABLE as an HRESULT: the COM server is gone or going.</summary>
+    private const int RpcServerUnavailable = unchecked((int)0x800706BA);
+
+    /// <summary>RPC_E_DISCONNECTED: the object invoked has disconnected from its clients.</summary>
+    private const int RpcDisconnected = unchecked((int)0x80010108);
+
     /// <summary>What a user-protection stop before the scenario leaves unexercised.</summary>
     internal const string Scenario = "the disconnect-recovery scenario";
 
@@ -194,9 +200,33 @@ public sealed class LiveDisconnectRecoveryTests
                 "the pre-existing Outlook windows have closed",
                 () => WindowProbe.VisibleOutlookWindows().Count == 0,
                 TimeSpan.FromSeconds(60));
-            _ = clock.Step(
-                "release the lifetime pin on the pre-existing instance",
-                () => independentGateway.Run(s => ((OutlookComSession)s).TryCloseInvisibleExplorers()));
+
+            // ...but on Office LTSC 2024 closing the last visible window quits Outlook outright
+            // (D49's second finding): the Quit event drops the session, and a Run here would
+            // RECONNECT - which on OutlookAI-Indexed (2026-10-03) was a CoCreateInstance into an
+            // Outlook already shutting down, failing with RPC_S_SERVER_UNAVAILABLE, and against
+            // one that had finished would START Outlook again (D17), the opposite of this step. So
+            // the pin is released only on a session that is still alive. With none there is no pin
+            // left to release, and the wait below is what proves Outlook exited.
+            if (independentGateway.ProbeConnected())
+            {
+                try
+                {
+                    _ = clock.Step(
+                        "release the lifetime pin on the pre-existing instance",
+                        () => independentGateway.Run(s => ((OutlookComSession)s).TryCloseInvisibleExplorers()));
+                }
+                catch (COMException ex) when (ex.HResult == RpcServerUnavailable || ex.HResult == RpcDisconnected)
+                {
+                    // The session died between the probe and the call: Outlook was quitting already.
+                    _output.WriteLine($"the session died under the pin release (0x{ex.HResult:X8}) - Outlook was already quitting, so there is no pin left to release");
+                }
+            }
+            else
+            {
+                _output.WriteLine("no live session left to release a pin on - Outlook quit as its last visible window closed "
+                    + $"(gone signal: {independentGateway.LastSessionGoneSignal ?? "none recorded"})");
+            }
 
             clock.WaitUntil(
                 "the pre-existing Outlook has exited after its parked windows were closed gracefully "

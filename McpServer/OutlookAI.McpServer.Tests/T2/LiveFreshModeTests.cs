@@ -120,10 +120,19 @@ public sealed class LiveFreshModeTests
             // The fresh-mode claim: the arrival was served by the LIVE sweep before
             // indexing, or - if the index genuinely raced ahead - its frontier must
             // already cover the send instant.
+            //
+            // AT THE INDEX'S OWN PRECISION, which is whole seconds. The first indexed run
+            // (OutlookAI-Indexed, 2026-10-03) had the index serve the hit with its frontier at
+            // 16:02:34.0000000Z for a send at 16:02:34.3804579Z: the arrival indexed within the
+            // second it was sent, and the comparison failed on the 380 ms the index does not
+            // keep. A frontier a whole second or more behind the send still fails.
             bool sweptLive = inboxFindSource == "live";
-            bool indexCaughtUp = stalenessAtInboxFind.HasValue && stalenessAtInboxFind.Value >= sentAtUtc;
+            DateTime sentAtIndexPrecision = new DateTime(
+                sentAtUtc.Ticks - (sentAtUtc.Ticks % TimeSpan.TicksPerSecond), sentAtUtc.Kind);
+            bool indexCaughtUp = stalenessAtInboxFind.HasValue && stalenessAtInboxFind.Value >= sentAtIndexPrecision;
             Assert.True(sweptLive || indexCaughtUp,
-                $"hit came from '{inboxFindSource}' while index frontier {stalenessAtInboxFind:O} predates the send {sentAtUtc:O}");
+                $"hit came from '{inboxFindSource}' while index frontier {stalenessAtInboxFind:O} predates the send {sentAtUtc:O} "
+                + $"(compared at the index's whole-second precision, {sentAtIndexPrecision:O})");
             _output.WriteLine($"fresh-mode proof: sweptLive={sweptLive} indexCaughtUp={indexCaughtUp} inboxFindMs={inboxFindMs}");
 
             HitSummary inboxCopy = inboxFind!;

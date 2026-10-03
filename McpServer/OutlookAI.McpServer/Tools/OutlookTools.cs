@@ -478,6 +478,12 @@ public static class OutlookTools
     // no COM host and works with Outlook closed or wedged. The read never blocks the server's own
     // appends (AuditLogReader opens the file shared for read, write and delete), and only the
     // live audit.log is read - never a renamed or archived one.
+    //
+    // PAGING (Q119) is the shared stateless kind (Core/Services/Paging.cs): nextToken names a byte
+    // position in the live log plus the file's identity, so entries sharing a millisecond are never
+    // skipped and a token survives a server restart; a token into a log archived since is refused.
+    // INTEGRITY (Q117): every line carries pid/run/seq/crc, and the reader reports what failed to
+    // verify and what is missing by the writers' own numbering.
     [McpServerTool(Name = "audit_log", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Read OutlookAI's audit log: the record of every change made through OutlookAI on this machine, by this "
         + "session and any other - drafts created, revised and discarded, attachments saved, mail moved and archived, each "
@@ -487,10 +493,14 @@ public static class OutlookTools
         + "took effect, or to trace one item: entry_id matches every line naming that EntryID (entryId, newEntryId, "
         + "sourceEntryId), and a move or discard records the item's NEW EntryID as newEntryId - follow it to trace the "
         + "item further.\n\n"
-        + "Each entry has utc, operation and the line's fields - metadata only (ids, stores, accounts, folders, paths), never "
-        + "a subject or body. truncated=true means older entries matched beyond top: narrow with after/before/operation/"
-        + "entry_id instead of raising it. Lines that cannot be parsed are counted in malformedLines, never returned. Read "
-        + "advice whenever present.")]
+        + "Each entry has utc, operation, pid (the server process that wrote it - one per session) and the line's fields - "
+        + "metadata only (ids, stores, accounts, folders, paths), never a subject or body.\n\n"
+        + "PAGING: top entries per page, newest first. truncated=true means older entries match: call again with "
+        + "resume_token=nextToken and the SAME filters for the next older page, and page until nextToken is absent. Do "
+        + "not page with after/before - entries can share a millisecond.\n\n"
+        + "INTEGRITY: every line carries a checksum and its writer's line number. Lines that do not parse or verify are "
+        + "counted (malformedLines, damagedLines), never returned; lines that never arrived are counted as missingLines "
+        + "and listed in sequenceGaps - then an absence here proves nothing. Read advice whenever present.")]
     public static async Task<CallToolResult> AuditLog(
         [Description("Only entries at/after this instant (ISO 8601, e.g. 2026-10-03 or 2026-10-03T08:00:00Z; no offset means UTC).")]
         string? after = null,
@@ -505,12 +515,18 @@ public static class OutlookTools
             + "line naming it as entryId, newEntryId or sourceEntryId. A hit id (h12) is refused: hit ids belong to one "
             + "session and the log records EntryIDs.")]
         string? entry_id = null,
-        [Description("Max entries (1-100, default 25), newest first. truncated=true means more matched.")]
+        [Description("Max entries per page (1-100, default 25), newest first. truncated=true means more matched: continue "
+            + "with resume_token.")]
         int top = MailService.AuditLogTopDefault,
+        [Description("Continue a previous audit_log listing: pass that result's nextToken. It is opaque - never parse it or "
+            + "build one. Repeat after/before/operation/entry_id unchanged (top may differ); a token used with other "
+            + "filters is REFUSED and the error names what changed. It stays valid across server restarts, but a token "
+            + "issued before the live log was archived or edited is refused - start again without it.")]
+        string? resume_token = null,
         CancellationToken cancellationToken = default)
     {
         return await GuardAsync(cancellationToken, () => MailService.ReadAuditLog(
-            ParseUtc(after, "after"), ParseUtc(before, "before"), operation, entry_id, top));
+            ParseUtc(after, "after"), ParseUtc(before, "before"), operation, entry_id, top, resume_token));
     }
 
     [McpServerTool(Name = "list_accounts")]
@@ -850,9 +866,10 @@ public static class OutlookTools
         + "exception is a draft composed by an older version of this server, whose signature image is still LINKED to a "
         + "file on disk - such a link cannot survive the re-render. That is never silent: the result reports "
         + "inlineImagesDropped with advice, and passing signature restores the signature and its images in embedded form.\n\n"
-        + "Only saved, UNSENT drafts in a Drafts folder can be updated - a sent mail, a received mail or an item elsewhere "
-        + "is refused with a clear reason and nothing is changed. Any pending send confirm_token for the draft is "
-        + "invalidated by the update."
+        + "Only saved, UNSENT drafts in a Drafts folder can be updated - ANY such draft, the user's own included, and a "
+        + "draft you revise can then be discarded with discard_draft in this session. A sent mail, a received mail or "
+        + "an item elsewhere is refused with a clear reason and nothing is changed. Any pending send confirm_token for "
+        + "the draft is invalidated by the update."
         + OutcomeHint)]
     public static async Task<CallToolResult> UpdateDraft(
         [Description("The draft to revise: the entryId a draft tool returned (preferred), or a hit id of a saved, UNSENT draft.")]
@@ -904,14 +921,16 @@ public static class OutlookTools
     }
 
     [McpServerTool(Name = "discard_draft")]
-    [Description("Throw away a draft YOU just created in this session - the cleanup counterpart of the draft tools, for "
+    [Description("Throw away a draft THIS session created or revised - the cleanup counterpart of the draft tools, for "
         + "when a draft turned out wrong or is no longer wanted. DESTRUCTIVE but deliberately tiny in reach.\n\n"
         + "WHAT IT CAN TOUCH: only a draft returned by new_draft / reply_draft / replyall_draft / forward_draft / "
         + "update_draft in THIS server session, that is still UNSENT and still in a Drafts folder. All three conditions "
-        + "must hold.\n\n"
-        + "WHAT IT CAN NEVER TOUCH: mail the user received or wrote themselves, anything already sent, anything outside "
-        + "Drafts, a draft from an earlier session (restarting the server clears the list), and the contents of Deleted "
-        + "Items. It cannot empty anything and it cannot delete permanently.\n\n"
+        + "must hold. update_draft can revise ANY unsent draft, the user's own included, so a user's draft this session "
+        + "revised is within reach too.\n\n"
+        + "WHAT IT CAN NEVER TOUCH: mail the user received, a draft this session neither created nor revised (the "
+        + "user's own drafts included), anything already sent, anything outside Drafts, a draft from an earlier "
+        + "session (restarting the server clears the list), and the contents of Deleted Items. It cannot empty "
+        + "anything and it cannot delete permanently.\n\n"
         + "It is a SOFT delete - exactly like pressing Delete in Outlook: the draft moves to Deleted Items and the result "
         + "carries newEntryId plus fromFolder, so it can be put back with move_mail. Anything it refuses comes back as a "
         + "clear error saying why - it never silently does nothing. A failure that is NOT a refusal is a different "
@@ -920,7 +939,7 @@ public static class OutlookTools
         + "draft was NOT deleted. Every discard is audit-logged."
         + OutcomeHint)]
     public static async Task<CallToolResult> DiscardDraft(
-        [Description("The draft to discard: the entryId a draft tool returned for a draft created in THIS session.")]
+        [Description("The draft to discard: the entryId a draft tool returned for a draft created or revised in THIS session.")]
         string id,
         CancellationToken cancellationToken = default)
     {

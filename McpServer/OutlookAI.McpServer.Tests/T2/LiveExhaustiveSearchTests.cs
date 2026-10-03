@@ -50,9 +50,7 @@ public sealed class LiveExhaustiveSearchTests
 
         // Index side runs subject+body parity mode directly against the SystemIndex.
         IndexSearchService index = IndexSearchService.CreateDefault(out _);
-        StoreScopeInfo? hubScope = index.DiscoverStoreScopes(2000)
-            .FirstOrDefault(s => string.Equals(s.StoreDisplayName, Hub, StringComparison.OrdinalIgnoreCase))
-            ?? index.TryDiscoverStoreScopeByAddress(Hub);
+        StoreScopeInfo? hubScope = LiveIndexScopes.Find(index, Hub);
         Assert.True(hubScope != null, "hub store scope not discoverable in the index");
 
         foreach (string term in controlTerms)

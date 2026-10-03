@@ -42,6 +42,17 @@ namespace OutlookAI.Core.IndexSearch
     /// provider needs anyway to stay off the file system.
     /// </para>
     /// <para>
+    /// A FOLDER'S OWN ROW IS NOT AN ITEM (2026-10-03). The index keeps one row for every
+    /// folder of a store, its root included: kind <c>folder</c>, undated, and with no item
+    /// segment in its URL. With no kind predicate under a mapi SCOPE they reached the caller
+    /// as hits - measured on the indexed test guest, a term-less search of the hub returned 21
+    /// of them (Calendar, Quick Step Settings, the root, the emptied subfolders in Deleted
+    /// Items...) beside its 79 items, and nothing a caller can open. They are dropped here
+    /// (<see cref="IsFolderRow"/>), on the kind AND the missing item segment together, so an
+    /// item is never taken for a folder on its kind alone. A contact card or an appointment is
+    /// still an item, admitted as above.
+    /// </para>
+    /// <para>
     /// The mapi-namespace check is load-bearing: without a Kind predicate an UNSCOPED
     /// statement would also match the file system, so only <c>mapi16://</c> rows are
     /// admitted here (an <c>.eml</c> file on disk indexes as kind <c>email</c> and would
@@ -99,8 +110,35 @@ namespace OutlookAI.Core.IndexSearch
             return itemUrl != null && itemUrl.IndexOf(AttachmentMarker, StringComparison.Ordinal) >= 0;
         }
 
+        /// <summary>
+        /// The kind the index gives a FOLDER's own row (measured 2026-10-03 on the indexed test
+        /// guest: every folder of the hub, its root included, <c>System.Kind = folder</c>).
+        /// </summary>
+        public const string FolderKind = "folder";
+
         /// <summary>True when the row's kinds contain <c>email</c> (System.Kind is case-insensitive).</summary>
         public static bool HasEmailKind(IReadOnlyList<string>? kinds)
+        {
+            return HasKind(kinds, EmailKind);
+        }
+
+        /// <summary>
+        /// True for a FOLDER's own row, never an item: not an attachment row, of
+        /// <see cref="FolderKind"/>, AND with no item segment in its URL - no EntryID was
+        /// decoded from it. Both halves are required, so a row whose URL addresses an item is
+        /// kept whatever kind it carries.
+        /// </summary>
+        public static bool IsFolderRow(IndexHit hit)
+        {
+            if (hit == null)
+            {
+                throw new ArgumentNullException(nameof(hit));
+            }
+
+            return !IsAttachmentRow(hit.ItemUrl) && hit.EntryIdHex == null && HasKind(hit.Kinds, FolderKind);
+        }
+
+        private static bool HasKind(IReadOnlyList<string>? kinds, string kind)
         {
             if (kinds == null)
             {
@@ -109,7 +147,7 @@ namespace OutlookAI.Core.IndexSearch
 
             for (int i = 0; i < kinds.Count; i++)
             {
-                if (string.Equals(kinds[i], EmailKind, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(kinds[i], kind, StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
                 }
@@ -142,13 +180,15 @@ namespace OutlookAI.Core.IndexSearch
                     // attachment_hits_only: every attachment row, whatever its kind.
                     return attachment;
                 case KindFilter.MessagesAndAttachments:
-                    // Everything the statement offered in the mapi namespace.
-                    return true;
+                    // Everything the statement offered in the mapi namespace - but a folder's
+                    // own row, which is not an item at all.
+                    return attachment || !IsFolderRow(hit);
                 case KindFilter.MessagesOnly:
-                    // Every message-level row, whatever its item class. The mapi-namespace
-                    // check above is what keeps this honest: without a kind test it is the
-                    // ONLY thing standing between this filter and the file system.
-                    return !attachment;
+                    // Every message-level row, whatever its item class - a folder's own row is
+                    // not one. The mapi-namespace check above is what keeps this honest:
+                    // without a kind test it is the ONLY thing standing between this filter
+                    // and the file system.
+                    return !attachment && !IsFolderRow(hit);
                 default:
                     throw new ArgumentException("Unknown KindFilter value.", nameof(kinds));
             }

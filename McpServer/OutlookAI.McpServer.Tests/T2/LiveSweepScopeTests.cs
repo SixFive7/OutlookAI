@@ -384,10 +384,8 @@ public sealed class LiveSweepScopeTests
 
     private static StoreScopeInfo ResolveStoreScope(IndexSearchService index, string storeDisplayName)
     {
-        StoreScopeInfo? scope = index.DiscoverStoreScopes(2000)
-                .FirstOrDefault(s => string.Equals(s.StoreDisplayName, storeDisplayName, StringComparison.OrdinalIgnoreCase))
-            ?? index.TryDiscoverStoreScopeByAddress(storeDisplayName);
-        Assert.True(scope != null, "store scope not discoverable in the index");
+        StoreScopeInfo? scope = LiveIndexScopes.Find(index, storeDisplayName);
+        Assert.True(scope != null, $"store scope of '{storeDisplayName}' not discoverable in the index");
         return scope!;
     }
 

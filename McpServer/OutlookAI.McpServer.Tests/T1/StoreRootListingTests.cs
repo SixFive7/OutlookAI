@@ -125,6 +125,23 @@ public sealed class StoreRootListingTests
         Assert.NotNull(pst);
         Assert.Null(pst!.FilePath);
         Assert.Null(pst.MappingSignatureHex);
+        Assert.Null(pst.OwnName);
+    }
+
+    [Fact]
+    public void AStoreSnapshot_CarriesTheStoresOwnNameAcrossTheWire()
+    {
+        // The name-and-hash rule (Q113 (a)) matches on the store's OWN name - its root folder's,
+        // read in the COM host - so it has to survive the pipe exactly, edge spaces included.
+        var original = new ComStoreDetail(
+            "identity@vm.invalid", "00AA", 3, null, false, filePath: @"C:\OutlookAI-Tier\identity.pst", ownName: " Outlook Data File ");
+
+        string json = JsonSerializer.Serialize(original, ComHostProtocol.Json);
+        ComStoreDetail? read = JsonSerializer.Deserialize<ComStoreDetail>(json, ComHostProtocol.Json);
+
+        Assert.NotNull(read);
+        Assert.Equal(" Outlook Data File ", read!.OwnName);
+        Assert.Equal("identity@vm.invalid", read.DisplayName);
     }
 
     /// <summary>Answers the listing with the given URLs, and refuses every other statement.</summary>

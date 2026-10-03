@@ -195,7 +195,8 @@ namespace OutlookAI.Core.Com
             bool nameUnreadable = false,
             string? filePath = null,
             string? mappingSignatureHex = null,
-            string? exchangeProfileSectionHex = null)
+            string? exchangeProfileSectionHex = null,
+            string? ownName = null)
         {
             DisplayName = displayName;
             StoreId = storeId;
@@ -205,6 +206,7 @@ namespace OutlookAI.Core.Com
             FilePath = filePath;
             MappingSignatureHex = mappingSignatureHex;
             ExchangeProfileSectionHex = exchangeProfileSectionHex;
+            OwnName = ownName;
         }
 
         /// <summary>
@@ -256,6 +258,15 @@ namespace OutlookAI.Core.Com
         /// store-hash code reads. Null for every non-Exchange store and when it would not read.
         /// </summary>
         public string? ExchangeProfileSectionHex { get; }
+
+        /// <summary>
+        /// The store's OWN name - its root folder's (<c>Store.GetRootFolder().Name</c>), which is the
+        /// name the search index files the store under and which need not be <see cref="DisplayName"/>
+        /// (measured, Q92/Q99). Read for every store Outlook reports as not Exchange, the stores the
+        /// index is matched by name AND hash for (Q113 (a)); null for an Exchange store, which keeps
+        /// its pre-Q113 match until Q113 (b) is measured, and when it would not read.
+        /// </summary>
+        public string? OwnName { get; }
     }
 
     /// <summary>

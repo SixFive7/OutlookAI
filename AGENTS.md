@@ -144,6 +144,20 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSuite -SelfTestInclude 'T
   or more. Never use the VM by hand while runs may happen; to hold runs off, take a lease on it
   with `Testbed/host/Set-TestbedLease.ps1 -VMName OutlookAI-Build` and release it after.
 
+**Live runs on the two test guests go through `Testbed/host/Invoke-LiveTierOnGuest.ps1`, one call
+per run** (2026-10-03, `Testbed/README.md` section 4c) - never driven by hand:
+
+```
+pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Indexed [<commit-or-branch>] [-FilterSuffix '&FullyQualifiedName~X']
+```
+
+It tests a commit, like the build-VM runner, and enforces the rest itself: the lease (it waits,
+and never takes over one somebody else holds), the checkpoint, the graceful restart, step 9a,
+`-RunLevel Limited` with the per-run opt-in, and on every path the resting checkpoint, the
+guest saved and the lease released. Exit 0 pass, 1 a test or a safety proof failed, 2 the commit did
+not build or stage, 3 not tested, 4 refused; `summary.txt` in `.work\guest-live-runs\<run>\` says
+why. Run it in the background or with a timeout of an hour or more.
+
 **What stays on this workstation - this, and nothing else:**
 
 - the four static guards, `Tools/Checks/check-*.ps1`, which only read files - run them under
@@ -178,6 +192,15 @@ I will forget and lose performance the coming months."*
   any running testbed VM that has no live lease and has been up ten minutes, every fifteen
   minutes (`Testbed/README.md` section 5b); and no test VM starts with the host
   (`AutomaticStartAction Nothing`, `AutomaticStopAction Save`).
+- **No scheduled task on this workstation may start `powershell.exe`, `pwsh.exe` or any other
+  console program directly.** Each run opens a console window - a Windows Terminal window here -
+  that takes the maintainer's keyboard focus; the idle-save task did that every 15 minutes until
+  2026-10-03. Start it through a GUI-subsystem launcher instead, as
+  `Testbed/host/Invoke-TestbedIdleSave.vbs` does (`wscript.exe`, the window hidden from creation).
+  The same goes for any background process a script starts on this workstation: hide it AT
+  CREATION (`Start-Process -WindowStyle Hidden`, `-NoNewWindow`, `CREATE_NO_WINDOW`, or `SW_HIDE`
+  in the startup info, as the build-VM runner's janitor does) - never `powershell.exe
+  -WindowStyle Hidden`, which hides a console window only after it has already taken focus.
 
 ## The Outlook test guests' clocks are frozen (Q130)
 

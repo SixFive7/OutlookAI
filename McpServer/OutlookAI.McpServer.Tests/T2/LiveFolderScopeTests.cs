@@ -58,12 +58,10 @@ public sealed class LiveFolderScopeTests
         IndexSearchService index = IndexSearchService.CreateDefault(out _);
 
         // The unordered 2000-row sample first, then the targeted per-address discovery for a store
-        // the sample missed - the same two steps LivePhase1Fixture, LiveSearchInTests and
-        // LiveExhaustiveSearchTests take. The sample alone finds a store only when it dominates the
-        // index; a small store beside a big one is found by the mail addressed to it.
-        StoreScopeInfo scope = index.DiscoverStoreScopes(2000)
-            .FirstOrDefault(s => string.Equals(s.StoreDisplayName, store, StringComparison.OrdinalIgnoreCase))
-            ?? index.TryDiscoverStoreScopeByAddress(store)
+        // the sample missed, then the index's store-root listing - the same three steps every live
+        // discovery takes (LiveIndexScopes). The sample alone finds a store only when it dominates
+        // the index; a small store beside a big one is found by the mail addressed to it.
+        StoreScopeInfo scope = LiveIndexScopes.Find(index, store)
             ?? throw new InvalidOperationException($"store scope for '{store}' not discovered");
 
         // A MAIL folder with populated children. Item counts alone would happily select
@@ -283,13 +281,27 @@ public sealed class LiveFolderScopeTests
             Assert.True(outcome.Sweep!.Performed);
             Assert.Contains(outcome.Hits, h => h.Subject == seedSubject);
 
-            // And the zero-row guard stays quiet: this folder IS new to the index, but
-            // the answer is not empty - the guard judges the merged result, not the index
-            // rows alone, or every just-created folder would be called unresolvable.
-            Assert.DoesNotContain(
-                outcome.Advice ?? Array.Empty<string>(),
-                a => a.Contains("matched NOTHING in the index", StringComparison.Ordinal));
-            _output.WriteLine($"apostrophe folder searched without throwing: hits={outcome.Hits.Count}, no false resolution advice");
+            // And the zero-row guard says exactly what the index tier saw. It judges the INDEX
+            // tier's own rows, not the merged answer - gap G5, decided in the product and pinned
+            // by T1 SearchCoverageClaimTests: a swept item comes from COM and says nothing about
+            // whether the index can address the folder. This assertion used to demand the guard
+            // stay quiet whenever the merged answer was not empty, the contract G5 replaced; no
+            // indexed hub ran it until OutlookAI-Indexed (2026-10-03), where the folder was new to
+            // the index and the guard said so. So: its flag and its sentence agree; an index row
+            // for the item means it stays quiet; and a hub that is not indexed has no folder bound
+            // to fail at all.
+            bool guardSpoke = (outcome.Advice ?? Array.Empty<string>())
+                .Any(a => a.Contains("matched NOTHING in the index", StringComparison.Ordinal));
+            bool indexServedIt = outcome.Hits.Any(h => h.Subject == seedSubject && h.Source == "index");
+            Assert.Equal(outcome.Index?.FolderNotIndexed == true, guardSpoke);
+            Assert.False(indexServedIt && guardSpoke, "the index served the item, yet the guard says the folder matched nothing in it");
+            if (!_fixture.Settings.IndexedStores.Contains(Hub, StringComparer.OrdinalIgnoreCase))
+            {
+                Assert.False(guardSpoke, "the hub is not indexed here, so no folder bound can have failed to resolve");
+            }
+
+            _output.WriteLine($"apostrophe folder searched without throwing: hits={outcome.Hits.Count}, "
+                + $"served by the index={indexServedIt}, zero-row guard={(guardSpoke ? "spoke (the folder is new to the index)" : "quiet")}");
 
             // Exhaustive too - a different escaping path (DASL, not WS-SQL).
             Assert.Contains(Exhaustive(folder, includeSubfolders: false).Hits, h => h.Subject == seedSubject);

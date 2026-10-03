@@ -421,6 +421,17 @@ namespace OutlookAI.Core.Services
         private StoreIndexMap? _storeIndexMap;
         private DateTime _storeIndexMapBuiltUtc;
         private DateTime _storeIndexMapFailedUtc = DateTime.MinValue;
+
+        /// <summary>
+        /// True when the last attempt to build the store map failed because the index's list of
+        /// store roots could not be READ - not because it was empty. A store Outlook reports as not
+        /// Exchange is then refused rather than looked up by name: it is matched by name and hash
+        /// only (Q113 (a)), never by its name alone.
+        /// </summary>
+        private bool _storeIndexListingFailed;
+
+        /// <summary>The Outlook profile name last read for the store map, for a rebuild while Outlook does not answer.</summary>
+        private string? _lastProfileName;
         private IReadOnlyList<ComStoreDetail>? _storeDetails;
         private DateTime _storeDetailsFetchedUtc;
         private int _nextHitId;
@@ -745,9 +756,23 @@ namespace OutlookAI.Core.Services
             // on the unscoped path for the same store.
             bool indexAddressable = folderScope == null || folderScope.IndexAddressable;
 
+            // An UNSCOPED search never mixes in mail the index cannot attribute (Q113 (a)): rows under
+            // an index store two of this profile's stores share - name and hash alike - are left out,
+            // and those stores are reported as unmatched (index.storesUnmatched) instead. A scoped
+            // search never gets this far for such a store: ResolveFolderScope refused it.
+            IReadOnlyList<StoreIndexMatch> unmatchable = request.Store == null
+                ? TryGetStoreIndexMap(SearchIndexTimeoutSeconds)?.Unmatchable ?? Array.Empty<StoreIndexMatch>()
+                : Array.Empty<StoreIndexMatch>();
+
             IndexQuery query = new IndexQuery
             {
                 Scope = folderScope?.Scope,
+                ExcludedStorePrefixes = unmatchable.Count == 0
+                    ? null
+                    : unmatchable.SelectMany(m => m.Contested)
+                        .Select(r => r.StorePrefix)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList(),
                 FolderPathsAnyOf = folderScope?.FolderPaths,
                 Terms = terms.Count > 0 ? terms : null,
                 SearchIn = request.SearchIn,
@@ -949,6 +974,14 @@ namespace OutlookAI.Core.Services
                 advice.Add(nonMailAdvice);
             }
 
+            List<string>? storesUnmatched = unmatchable.Count == 0
+                ? null
+                : unmatchable.Select(m => m.Store.DisplayName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (storesUnmatched != null)
+            {
+                advice.Add("INCOMPLETE RESULTS - " + DescribeUnmatchableStores(storesUnmatched));
+            }
+
             if (indexResult.CandidatesExhausted)
             {
                 // The index tier admits rows in code over an over-fetched candidate list, so
@@ -979,7 +1012,7 @@ namespace OutlookAI.Core.Services
             {
                 Hits = summaries,
                 Truncated = truncated,
-                Degraded = freshness != FreshMerge.FreshnessLive || scopeTruncated ? true : (bool?)null,
+                Degraded = freshness != FreshMerge.FreshnessLive || scopeTruncated || storesUnmatched != null ? true : (bool?)null,
                 Freshness = freshness,
                 IndexElapsedMs = indexResult.ElapsedMilliseconds,
                 Sweep = sweep,
@@ -990,6 +1023,7 @@ namespace OutlookAI.Core.Services
                     CandidatesExhausted = indexResult.CandidatesExhausted ? true : (bool?)null,
                     StoreNotIndexed = indexAddressable ? (bool?)null : true,
                     FolderNotIndexed = folderNotIndexed,
+                    StoresUnmatched = storesUnmatched?.Take(UnindexedStoreListCap).ToList(),
 
                     // Gaps B4/B5: what this tier read, and how it matched. The widest body
                     // scope of the three and the only whole-word one, stated so the other two
@@ -5699,7 +5733,7 @@ namespace OutlookAI.Core.Services
             if (string.IsNullOrWhiteSpace(id))
             {
                 throw new ArgumentException(
-                    "id is required (the entryId a draft tool returned for a draft created in THIS session).", nameof(id));
+                    "id is required (the entryId a draft tool returned for a draft created or revised in THIS session).", nameof(id));
             }
 
             (string entryId, string? storeId, string? _, long _, string? hitId) = ResolveToEntryId(id);
@@ -5714,10 +5748,11 @@ namespace OutlookAI.Core.Services
                     "discard_draft",
                     entryId,
                     "This draft was not created or last updated by this server session, so it cannot be discarded. "
-                    + "discard_draft exists only to clean up drafts the assistant itself just made: it can reach a draft "
-                    + "returned by new_draft / reply_draft / replyall_draft / forward_draft / update_draft in THIS session, "
-                    + "and nothing else - not mail you received, not anything you wrote yourself, not a sent item, and not a "
-                    + "draft from an earlier session (a server restart clears the list). Delete it in Outlook instead.");
+                    + "discard_draft exists only to clean up drafts the assistant itself just made or revised: it can reach a "
+                    + "draft returned by new_draft / reply_draft / replyall_draft / forward_draft / update_draft in THIS "
+                    + "session, and nothing else - not mail you received, not a draft of yours this session has not revised, "
+                    + "not a sent item, and not a draft from an earlier session (a server restart clears the list). Delete it "
+                    + "in Outlook instead.");
             }
 
             ComDraftDiscardResult discarded = _gateway.Run(s =>
@@ -7230,20 +7265,10 @@ namespace OutlookAI.Core.Services
                 throw new ArgumentNullException(nameof(fullBody));
             }
 
-            if (offset < 0)
-            {
-                offset = 0;
-            }
-
-            if (maxChars < 0)
-            {
-                maxChars = 0;
-            }
-
-            int start = Math.Min(offset, fullBody.Length);
-            int length = Math.Min(maxChars, fullBody.Length - start);
-            string window = length > 0 ? fullBody.Substring(start, length) : string.Empty;
-            return (start, window, start + length < fullBody.Length);
+            // The shared window (Q119): offset clamped into the body, a negative size read as 0.
+            PageWindow window = PageWindow.Of(fullBody.Length, offset, maxChars);
+            string text = window.Count > 0 ? fullBody.Substring(window.Start, window.Count) : string.Empty;
+            return (window.Start, text, window.HasMore);
         }
 
         public static IReadOnlyList<AttachmentView> CapAttachments(
@@ -7615,29 +7640,46 @@ namespace OutlookAI.Core.Services
                 ? null
                 : "The audit log is not writable (" + (error ?? "unknown") + ") - draft/save/send operations will fail.";
 
+            long unavailable = Audit.AuditLog.WriterLockUnavailable;
+            long abandoned = Audit.AuditLog.WriterLockAbandoned;
             return new AuditHealthView
             {
                 Path = Audit.AuditLog.EffectiveLogPath,
                 Writable = writable,
                 Error = error,
+                LockTimeouts = Audit.AuditLog.WriterLockTimeouts,
+                LockUnavailable = unavailable > 0 ? unavailable : (long?)null,
+                LockAbandoned = abandoned > 0 ? abandoned : (long?)null,
             };
         }
 
         // ------------------------------------------------------------------ audit_log (Q93)
 
+        /// <summary>The kind <see cref="Paging"/> tokens of audit_log carry, so another tool's token is told apart.</summary>
+        internal const string AuditLogTokenKind = "audit_log";
+
+        /// <summary>How many of a scan's missing runs the payload spells out; missingLines counts them all.</summary>
+        internal const int AuditLogGapsShown = 10;
+
         /// <summary>
         /// audit_log (Q93): the newest entries of the audit log this process appends to, filtered,
-        /// newest first, with what the read could not use reported beside them.
+        /// newest first, with what the read could not use reported beside them - and, since Q119, a
+        /// page at a time: <paramref name="resumeToken"/> continues from where the previous page
+        /// stopped, by byte position, so entries that share a millisecond are neither skipped nor
+        /// repeated (the after/before "paging" an agent had to improvise skipped 122 such lines over
+        /// the old log at page size 25).
         /// <para>
         /// Read-only and Outlook-free, and STATIC on purpose: answering never builds the COM
-        /// gateway, so it works with Outlook closed, wedged or uninstalled. Every argument is
-        /// validated before the log is opened, so a bad call costs no I/O at all.
+        /// gateway, so it works with Outlook closed, wedged or uninstalled. Every argument - the token
+        /// included - is validated before the log is opened, so a bad call costs no I/O at all.
         /// </para>
         /// <para>
         /// Only the live log is read - <c>AuditLog.EffectiveLogPath</c>, which is
         /// <c>%LOCALAPPDATA%\OutlookAI\audit.log</c> in every shipped process. A renamed or archived
         /// log beside it is never opened: the one archived when the log was cleaned up (Q86) is
-        /// mostly test noise, and an agent reading it would report the tests' drafts as the user's.
+        /// mostly test noise, and an agent reading it would report the tests' drafts as the user's
+        /// (Q120 kept it that way). A token issued before the live log was archived is therefore
+        /// refused rather than followed into the archive.
         /// The read never blocks the server's own appends (see <see cref="Audit.AuditLogReader"/>).
         /// </para>
         /// </summary>
@@ -7646,7 +7688,8 @@ namespace OutlookAI.Core.Services
             DateTime? beforeUtc = null,
             string? operation = null,
             string? entryId = null,
-            int top = AuditLogTopDefault)
+            int top = AuditLogTopDefault,
+            string? resumeToken = null)
         {
             if (afterUtc.HasValue && beforeUtc.HasValue && afterUtc.Value >= beforeUtc.Value)
             {
@@ -7659,39 +7702,147 @@ namespace OutlookAI.Core.Services
             IReadOnlyList<string>? operations = ParseAuditOperations(operation);
             string? entryIdFilter = ParseAuditEntryId(entryId);
             int effectiveTop = Clamp(top, 1, AuditLogTopCap);
+            string fingerprint = AuditLogFingerprint(afterUtc, beforeUtc, operations, entryIdFilter);
+            Audit.AuditLogPosition? resumeFrom = string.IsNullOrWhiteSpace(resumeToken)
+                ? null
+                : ResolveAuditResumeToken(resumeToken!.Trim(), fingerprint);
 
             string path = Audit.AuditLog.EffectiveLogPath;
             Audit.AuditLogScan scan = Audit.AuditLogReader.Read(
-                path, new Audit.AuditLogFilter(afterUtc, beforeUtc, operations, entryIdFilter), effectiveTop);
+                path, new Audit.AuditLogFilter(afterUtc, beforeUtc, operations, entryIdFilter), effectiveTop, resumeFrom);
+            if (resumeFrom != null && scan.Resume != Audit.AuditLogResumeStatus.Resumed)
+            {
+                throw new ArgumentException(DescribeAuditResumeRefusal(scan.Resume));
+            }
 
-            return DescribeAuditLogScan(path, scan, top, operations != null);
+            string? nextToken = scan.NextPosition == null ? null : IssueAuditResumeToken(fingerprint, scan.NextPosition);
+            return DescribeAuditLogScan(path, scan, top, operations != null, nextToken);
+        }
+
+        /// <summary>
+        /// The arguments that decide WHICH entries an audit_log chain pages through, in the shared
+        /// presence-first form (<see cref="PagingFingerprint"/>), normalised the way the filter compares
+        /// them: operations case-insensitively and in any order, the EntryID case-insensitively, the
+        /// instants to the tick. <c>top</c> is left out - it may change from page to page.
+        /// </summary>
+        internal static string AuditLogFingerprint(
+            DateTime? afterUtc, DateTime? beforeUtc, IReadOnlyList<string>? operations, string? entryId)
+        {
+            List<string>? normalized = operations?
+                .Select(o => o.ToLowerInvariant())
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(o => o, StringComparer.Ordinal)
+                .ToList();
+            return new PagingFingerprint()
+                .Add("after", afterUtc?.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture))
+                .Add("before", beforeUtc?.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture))
+                .AddList("operation", normalized)
+                .Add("entry_id", entryId?.ToUpperInvariant())
+                .ToString();
+        }
+
+        /// <summary>The nextToken for a page that stopped at <paramref name="next"/>.</summary>
+        internal static string IssueAuditResumeToken(string fingerprint, Audit.AuditLogPosition next)
+        {
+            return Paging.IssueToken(AuditLogTokenKind, fingerprint, new[]
+            {
+                next.FileIdentity ?? string.Empty,
+                next.Offset.ToString(CultureInfo.InvariantCulture),
+                Audit.AuditCrc32.ToHex(next.Anchor),
+            });
+        }
+
+        /// <summary>
+        /// The position a resume_token names, or an <see cref="ArgumentException"/> saying why it names
+        /// none - before anything is opened. The filters must be the ones the chain began with; top
+        /// may differ.
+        /// </summary>
+        internal static Audit.AuditLogPosition ResolveAuditResumeToken(string token, string fingerprint)
+        {
+            PageTokenDecision decision = Paging.ResolveToken(
+                token, AuditLogTokenKind, fingerprint, out IReadOnlyList<string> position, out IReadOnlyList<string> changed);
+            if (decision == PageTokenDecision.RequestChanged)
+            {
+                throw new ArgumentException(
+                    "resume_token continues an audit_log listing made with different filters: "
+                    + (changed.Count > 0 ? string.Join(", ", changed) : "a filter") + " changed. Repeat every filter of the "
+                    + "call that returned it (top may differ), or leave resume_token out to start again from the newest entry.");
+            }
+
+            if (decision == PageTokenDecision.Valid && position.Count == 3
+                && long.TryParse(position[1], NumberStyles.None, CultureInfo.InvariantCulture, out long offset)
+                && Audit.AuditCrc32.TryParseHex(position[2], out uint anchor))
+            {
+                return new Audit.AuditLogPosition(position[0].Length > 0 ? position[0] : null, offset, anchor);
+            }
+
+            throw new ArgumentException(
+                "resume_token is not a token audit_log issued"
+                + (decision == PageTokenDecision.OtherKind || ExhaustiveScanCursors.LooksLikeToken(token)
+                    ? " - it belongs to another tool's paging (search's exhaustive.nextToken does not work here)"
+                    : string.Empty)
+                + ". Pass the nextToken of a previous audit_log result exactly as it was returned, or leave resume_token "
+                + "out to start from the newest entry.");
+        }
+
+        /// <summary>Why a well-formed resume_token could not be continued from (pure, T1-pinned).</summary>
+        internal static string DescribeAuditResumeRefusal(Audit.AuditLogResumeStatus status)
+        {
+            const string StartAgain = " Leave resume_token out to read the live log again from its newest entry.";
+            switch (status)
+            {
+                case Audit.AuditLogResumeStatus.FileMissing:
+                    return "The audit log was archived after this resume_token was issued and no new log has been started "
+                        + "since, so there is nothing left to continue - an archived log is not readable through this tool."
+                        + StartAgain;
+                case Audit.AuditLogResumeStatus.FileReplaced:
+                    return "The audit log was archived or replaced after this resume_token was issued: the live log is now "
+                        + "a different file, and the entries the token pointed into are not in it - an archived log is not "
+                        + "readable through this tool." + StartAgain;
+                default:
+                    return "The audit log no longer matches this resume_token - it was truncated or edited after the token "
+                        + "was issued, so where the next page starts is unknown." + StartAgain;
+            }
         }
 
         /// <summary>
         /// The audit_log payload for one scan, advice included. Split out so T1 can pin every
-        /// branch - a missing log, a cut, a filter that matched nothing, malformed and incomplete
-        /// lines - from a scan it builds, rather than from whatever state the run's log is in.
+        /// branch - a missing log, a cut, a filter that matched nothing, malformed, damaged, missing
+        /// and incomplete lines - from a scan it builds, rather than from whatever state the run's
+        /// log is in.
         /// </summary>
-        internal static AuditLogOutcome DescribeAuditLogScan(string path, Audit.AuditLogScan scan, int requestedTop, bool operationFiltered)
+        internal static AuditLogOutcome DescribeAuditLogScan(
+            string path, Audit.AuditLogScan scan, int requestedTop, bool operationFiltered, string? nextToken = null)
         {
             List<string> advice = new List<string>();
             if (requestedTop > AuditLogTopCap)
             {
                 advice.Add("top=" + requestedTop.ToString(CultureInfo.InvariantCulture) + " was reduced to "
-                    + AuditLogTopCap.ToString(CultureInfo.InvariantCulture) + " (the hard cap). Narrow with after/before/"
-                    + "operation/entry_id instead.");
+                    + AuditLogTopCap.ToString(CultureInfo.InvariantCulture) + " (the hard cap). Page through the rest with "
+                    + "resume_token=nextToken, or narrow with after/before/operation/entry_id.");
             }
 
+            bool resumed = scan.Resume == Audit.AuditLogResumeStatus.Resumed;
             if (!scan.FileFound)
             {
                 advice.Add("There is no audit log at this path yet, so nothing has been recorded since it was started "
                     + "(or since it was last archived). Every change this server makes adds a line.");
             }
-            else if (scan.Matched > scan.Entries.Count)
+            else if (scan.OlderMatches > 0)
             {
-                advice.Add("These are the newest " + scan.Entries.Count.ToString(CultureInfo.InvariantCulture) + " of "
-                    + scan.Matched.ToString(CultureInfo.InvariantCulture) + " matching entries. To see older ones, "
-                    + "narrow with after/before/operation/entry_id.");
+                string older = scan.OlderMatches.ToString(CultureInfo.InvariantCulture);
+                advice.Add((resumed
+                        ? "This page continues the previous one with " + scan.Entries.Count.ToString(CultureInfo.InvariantCulture)
+                            + " older matching entries; " + older + " older still remain."
+                        : "These are the newest " + scan.Entries.Count.ToString(CultureInfo.InvariantCulture) + " of "
+                            + scan.Matched.ToString(CultureInfo.InvariantCulture) + " matching entries; " + older
+                            + " older ones remain.")
+                    + " For the next page call again with resume_token=nextToken and the same filters, and page until "
+                    + "nextToken is absent.");
+            }
+            else if (resumed)
+            {
+                advice.Add("This is the last page: no older entry matches.");
             }
             else if (scan.Matched == 0 && scan.LinesScanned > 0)
             {
@@ -7700,11 +7851,40 @@ namespace OutlookAI.Core.Services
                     : "No entry matched these filters.");
             }
 
-            if (scan.MalformedLines > 0)
+            long unparsable = scan.MalformedLines - scan.ChecksumFailures;
+            if (unparsable > 0)
             {
-                advice.Add(scan.MalformedLines.ToString(CultureInfo.InvariantCulture) + " line(s) of the log are not in the "
+                advice.Add(unparsable.ToString(CultureInfo.InvariantCulture) + " line(s) of the log are not in the "
                     + "format this server writes and were skipped - an older version's unstructured lines, or a line "
                     + "damaged by a crash. They are counted, never guessed at.");
+            }
+
+            if (scan.ChecksumFailures > 0)
+            {
+                advice.Add(scan.ChecksumFailures.ToString(CultureInfo.InvariantCulture) + " line(s) failed their checksum - "
+                    + "cut short by a crash and joined to the next line, overwritten, or edited - and were left out "
+                    + "(damagedLines). Whatever they recorded cannot be trusted.");
+            }
+
+            if (scan.MissingLines > 0)
+            {
+                advice.Add(scan.MissingLines.ToString(CultureInfo.InvariantCulture) + " line(s) are MISSING from the log by "
+                    + "the writers' own numbering (sequenceGaps): every writer numbers its lines in this file from 1, and "
+                    + "these numbers never arrived - a write that failed, or a crash. Whatever they recorded is not in this "
+                    + "answer, so do not read an absence here as proof that something did not happen.");
+            }
+
+            if (scan.UnverifiedLines > 0)
+            {
+                advice.Add(scan.UnverifiedLines.ToString(CultureInfo.InvariantCulture) + " line(s) were written before lines "
+                    + "carried a checksum, so they are returned unverified.");
+            }
+
+            if (scan.LinesWithoutWriterLock > 0)
+            {
+                advice.Add(scan.LinesWithoutWriterLock.ToString(CultureInfo.InvariantCulture) + " line(s) were written "
+                    + "without the writers' lock (it timed out or could not be taken), so their place in the order is not "
+                    + "guaranteed; their content is checksummed like any other line.");
             }
 
             if (scan.IncompleteLastLine)
@@ -7731,6 +7911,7 @@ namespace OutlookAI.Core.Services
                 {
                     Utc = entry.TimestampUtc,
                     Operation = entry.Operation,
+                    Pid = entry.Pid,
                     Fields = fields,
                 });
             }
@@ -7741,13 +7922,48 @@ namespace OutlookAI.Core.Services
                 Entries = entries,
                 Returned = entries.Count,
                 Matched = scan.Matched,
-                Truncated = scan.Matched > entries.Count,
+                Truncated = scan.OlderMatches > 0,
+                OlderMatches = scan.OlderMatches > 0 ? scan.OlderMatches : (long?)null,
+                NextToken = nextToken,
                 LinesScanned = scan.LinesScanned,
                 MalformedLines = scan.MalformedLines > 0 ? scan.MalformedLines : (long?)null,
+                DamagedLines = scan.ChecksumFailures > 0 ? scan.ChecksumFailures : (long?)null,
+                MissingLines = scan.MissingLines > 0 ? scan.MissingLines : (long?)null,
+                SequenceGaps = DescribeAuditGaps(scan),
+                UnverifiedLines = scan.UnverifiedLines > 0 ? scan.UnverifiedLines : (long?)null,
+                LinesWithoutWriterLock = scan.LinesWithoutWriterLock > 0 ? scan.LinesWithoutWriterLock : (long?)null,
                 IncompleteLastLine = scan.IncompleteLastLine ? true : (bool?)null,
                 LogMissing = scan.FileFound ? (bool?)null : true,
                 Advice = advice.Count > 0 ? advice : null,
             };
+        }
+
+        /// <summary>
+        /// The missing runs in words, one per run - "pid 4242 run 0a1b2c3d: seq 17-19 (3 lines)" - at most
+        /// <see cref="AuditLogGapsShown"/> of them, and a last line saying when there are more. Null when none.
+        /// </summary>
+        internal static IReadOnlyList<string>? DescribeAuditGaps(Audit.AuditLogScan scan)
+        {
+            if (scan.Gaps.Count == 0)
+            {
+                return null;
+            }
+
+            List<string> gaps = new List<string>();
+            foreach (Audit.AuditLogGap gap in scan.Gaps.Take(AuditLogGapsShown))
+            {
+                gaps.Add("pid " + gap.Pid.ToString(CultureInfo.InvariantCulture) + " run " + gap.Run + ": seq "
+                    + gap.FirstMissing.ToString(CultureInfo.InvariantCulture)
+                    + (gap.Count > 1 ? "-" + gap.LastMissing.ToString(CultureInfo.InvariantCulture) : string.Empty)
+                    + " (" + gap.Count.ToString(CultureInfo.InvariantCulture) + (gap.Count == 1 ? " line)" : " lines)"));
+            }
+
+            if (scan.Gaps.Count > AuditLogGapsShown || scan.Gaps.Count >= Audit.AuditLogReader.GapsCap)
+            {
+                gaps.Add("more runs are missing than are listed here; missingLines counts every missing line");
+            }
+
+            return gaps;
         }
 
         /// <summary>
@@ -8155,10 +8371,11 @@ namespace OutlookAI.Core.Services
                 offset = 0;
             }
 
+            // The shared window (Q119): the same clamping and has-more rule read's body window uses.
             IReadOnlyList<ComFolderInfo> folders = tree.Folders;
-            int end = (int)Math.Min((long)offset + FoldersPerCallCap, folders.Count);
-            List<ComFolderInfo> page = new List<ComFolderInfo>(Math.Max(0, end - offset));
-            for (int i = offset; i < end; i++)
+            PageWindow window = PageWindow.Of(folders.Count, offset, FoldersPerCallCap);
+            List<ComFolderInfo> page = new List<ComFolderInfo>(window.Count);
+            for (int i = window.Start; i < window.End; i++)
             {
                 page.Add(folders[i]);
             }
@@ -8185,7 +8402,7 @@ namespace OutlookAI.Core.Services
             // Gap G3. This was `end < folders.Count` alone - computed against the list the
             // WALK had already truncated, so the one truncation it could never see was the
             // one that lost whole folders rather than merely deferring them to a later page.
-            bool morePages = end < folders.Count;
+            bool morePages = window.HasMore;
             bool walkCut = tree.WalkCapReached || tree.DepthLimitReached;
             return new FoldersOutcome
             {
@@ -8197,7 +8414,7 @@ namespace OutlookAI.Core.Services
                 // Only the pageable half gets a continuation: the next call re-walks and
                 // stops at the same cap, so offering an offset past a walk cut would be an
                 // instruction that cannot work.
-                NextOffset = morePages ? end : (int?)null,
+                NextOffset = window.NextOffset,
                 WalkCapReached = tree.WalkCapReached ? true : (bool?)null,
                 DepthLimitReached = tree.DepthLimitReached ? true : (bool?)null,
                 StoresUnnamed = tree.StoresUnnamed > 0 ? tree.StoresUnnamed : (int?)null,
@@ -8585,14 +8802,37 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// The health rows when a store map could be built (Q92/Q99): one row per store of the
+        /// The outlook_health problem and the unscoped search's advice for stores the index cannot tell
+        /// apart from another store (Q113 (a)) - one wording, two callers.
+        /// </summary>
+        internal static string DescribeUnmatchableStores(IReadOnlyList<string> stores)
+        {
+            if (stores == null)
+            {
+                throw new ArgumentNullException(nameof(stores));
+            }
+
+            return "The local index cannot tell " + stores.Count.ToString(CultureInfo.InvariantCulture)
+                + " store(s) of this profile apart from another store (" + string.Join(", ", stores)
+                + "): each shares both the name and the hash of an index store with another, so the index cannot "
+                + "say whose mail it holds. Searches scoped to them are refused, and unscoped searches leave that "
+                + "index store's mail out rather than mix it in - only the live sweep of the last "
+                + EmptyIndexSweepWindow.TotalDays.ToString("F0", CultureInfo.InvariantCulture)
+                + " days covers them. Rename one store of each pair in Outlook (File > Account Settings > Data Files > "
+                + "Settings) so the index files it apart, or use exhaustive:true with store.";
+        }
+
+        /// <summary>
+        /// The health rows when a store map could be built (Q92/Q99, Q113): one row per store of the
         /// profile, under the name Outlook gives it, saying how it was tied to the index
         /// (<see cref="StoreStaleness.MatchedBy"/>) and whether anything lies BELOW its index root.
         /// A root alone is not content - it is what a catalog reset leaves for a profile not yet
         /// reopened - so it reads as "not in the local index", like no root at all. A store the
-        /// hash does not decide is looked up by the name rule, exactly as before, and its row says
-        /// so. Returns the index stores the rows tied BY NAME, which are therefore not "not in
-        /// this profile" even though no hash claimed them.
+        /// index cannot tell apart from another (<see cref="StoreIndexMatchKind.Ambiguous"/>) is
+        /// neither in nor out - its row says so, and a problem names it. An Exchange store the
+        /// hash does not decide - the one open exception - is looked up by the name rule, exactly
+        /// as before, and its row says so. Returns the index stores the rows tied BY NAME, which
+        /// are therefore not "not in this profile" even though no hash claimed them.
         /// <para>
         /// Bounded like the catalog loop it replaces: past <see cref="HealthPerStoreIndexBudgetMs"/>
         /// the remaining stores are left out and no store is called missing, because "not
@@ -8608,6 +8848,7 @@ namespace OutlookAI.Core.Services
             List<string> problems)
         {
             var tiedByName = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var unmatchable = new List<StoreIndexMatch>();
             bool complete = true;
             foreach (StoreIndexMatch match in map.Stores)
             {
@@ -8643,12 +8884,25 @@ namespace OutlookAI.Core.Services
                     // its own in the index, so it has no hash to be found by.
                     row.InLocalIndex = ProbeStoreInIndex(match.Store.DisplayName, isDelegate: true, HealthIndexTimeoutSeconds);
                 }
+                else if (match.Kind == StoreIndexMatchKind.Ambiguous)
+                {
+                    // The index may well hold its mail - under an index store it shares with another
+                    // store - so "not in the index" would be false and "in it" unprovable: not
+                    // established, and said as a problem of its own below.
+                    row.InLocalIndex = null;
+                    unmatchable.Add(match);
+                }
                 else
                 {
                     row.InLocalIndex = false;
                 }
 
                 perStore.Add(row);
+            }
+
+            if (unmatchable.Count > 0)
+            {
+                problems.Add(DescribeUnmatchableStores(unmatchable.Select(m => m.Store.DisplayName).ToList()));
             }
 
             if (complete)
@@ -8686,9 +8940,10 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// One outlook_health per-store row's MATCH fields (Q92/Q99) - how the store was tied to
-        /// the index, by what, to which index store, and why not when a hash was refused - before
-        /// the index is asked anything about its content. <paramref name="nameRuleRoot"/> is what
+        /// One outlook_health per-store row's MATCH fields (Q92/Q99, Q113) - how the store was tied to
+        /// the index, by what, to which index store, and why not when it was not - before the index is
+        /// asked anything about its content. <c>nameAndHash</c> is the rule; <c>storeHash</c> and
+        /// <c>displayName</c> are the Exchange exception's; <c>ambiguous</c> is a refusal. <paramref name="nameRuleRoot"/> is what
         /// the name rule found for a <see cref="StoreIndexMatchKind.NameRule"/> store, and is
         /// ignored for every other kind: a NameRule store has no wire spelling of its own, the row
         /// says what the name rule then found, <c>displayName</c> or <c>none</c>.
@@ -8704,8 +8959,14 @@ namespace OutlookAI.Core.Services
             string matchedBy;
             switch (match.Kind)
             {
+                case StoreIndexMatchKind.NameAndHash:
+                    matchedBy = "nameAndHash";
+                    break;
                 case StoreIndexMatchKind.StoreHash:
                     matchedBy = "storeHash";
+                    break;
+                case StoreIndexMatchKind.Ambiguous:
+                    matchedBy = "ambiguous";
                     break;
                 case StoreIndexMatchKind.Delegate:
                     matchedBy = "delegateFolder";
@@ -8722,10 +8983,13 @@ namespace OutlookAI.Core.Services
             {
                 Store = match.Store.DisplayName,
                 MatchedBy = matchedBy,
-                MatchedInput = match.Kind == StoreIndexMatchKind.StoreHash && match.Input.HasValue
+                MatchedInput = (match.Kind == StoreIndexMatchKind.NameAndHash || match.Kind == StoreIndexMatchKind.StoreHash)
+                    && match.Input.HasValue
                     ? DescribeMatchInput(match.Input.Value)
                     : null,
-                IndexStore = root?.StoreSegment,
+                IndexStore = match.Kind == StoreIndexMatchKind.Ambiguous
+                    ? string.Join(", ", match.Contested.Select(r => r.StoreSegment))
+                    : root?.StoreSegment,
                 MatchNote = match.Note,
             };
         }
@@ -8799,18 +9063,25 @@ namespace OutlookAI.Core.Services
         {
             int timeout = commandTimeoutSeconds ?? SearchIndexTimeoutSeconds;
 
-            // The store's own index store, by Microsoft's store hash (Q92/Q99). A match answers
-            // "does the index hold anything for it" with what is BELOW its root - a root alone is
-            // what a catalog reset or a rename leaves behind, and holds nothing searchable.
-            // A PST the map says is not in the index is not, whatever a name lookup would find -
-            // asked as a delegate too, because callers that cannot tell (StoreHasIndexRows) ask
-            // both ways, and the delegate half starts with the same name lookup. A store the map
-            // decides is never a delegate; every store it does not decide falls through to the
-            // name rule below.
-            StoreIndexMatch? matched = TryMatchStore(displayName, timeout);
-            if (matched != null)
+            // The store's own index store, by its name and hash (Q113 (a); Exchange: by hash, the open
+            // exception). A match answers "does the index hold anything for it" with what is BELOW
+            // its root - a root alone is what a catalog reset or a rename leaves behind, and holds
+            // nothing searchable. A store the map says is not in the index is not, whatever a name
+            // lookup would find - asked as a delegate too, because callers that cannot tell
+            // (StoreHasIndexRows) ask both ways, and the delegate half starts with the same name
+            // lookup. A store the map decides is never a delegate; only the name rule's cases fall
+            // through to it below.
+            (StoreNameDecision decision, StoreScopeInfo? matchedRoot, string? refusal) = DecideStoreName(displayName, timeout);
+            switch (decision)
             {
-                return matched.Root != null && _index.Value.ScopeHasAnyItem(matched.Root.StorePrefix, timeout);
+                case StoreNameDecision.Tied:
+                    return _index.Value.ScopeHasAnyItem(matchedRoot!.StorePrefix, timeout);
+                case StoreNameDecision.NotIndexed:
+                    return false;
+                case StoreNameDecision.Refused:
+                    // Not established, so not answered: every caller reads a throw as "unknown"
+                    // (null), never as "not in the index".
+                    throw new InvalidOperationException(refusal);
             }
 
             IReadOnlyList<StoreScopeInfo> catalog = GetCatalog(timeout);
@@ -8878,18 +9149,23 @@ namespace OutlookAI.Core.Services
         /// </summary>
         private FolderScopeResolution ResolveFolderScope(string store, string? folder, bool includeSubfolders)
         {
-            // By Microsoft's store hash first (Q92/Q99): the store's own index store whatever
-            // either side calls it. A PST the map ties to nothing is a store the index does not
-            // hold - searched with the index tier skipped, never widened, and never scoped to a
-            // same-named store of another profile, which is what a name lookup would find. A
-            // store the hash does not decide (unmeasured input, delegate) takes the name rule
-            // below, unchanged.
-            StoreIndexMatch? matched = TryMatchStore(store, SearchIndexTimeoutSeconds);
-            if (matched != null)
+            // By the store's own name AND hash first (Q113 (a)): its own index store, whatever the
+            // profile calls it. A store the map ties to nothing is a store the index does not hold -
+            // searched with the index tier skipped, never widened, and never scoped to a same-named
+            // store of another profile, which is what a name lookup would find. A store whose mail the
+            // index cannot attribute, or a name several stores share, is REFUSED rather than guessed.
+            // Only the name rule's own cases - no map, a name the profile does not have, THE ONE OPEN
+            // EXCEPTION (Exchange, Q113 (b)) and delegates - take the name rule below, unchanged.
+            (StoreNameDecision decision, StoreScopeInfo? matchedRoot, string? mapRefusal) =
+                DecideStoreName(store, SearchIndexTimeoutSeconds);
+            switch (decision)
             {
-                return matched.Root != null
-                    ? FolderScopeResolver.ForPrimaryStore(matched.Root.StorePrefix, folder, includeSubfolders)
-                    : FolderScopeResolver.ForUnindexedStore(folder);
+                case StoreNameDecision.Tied:
+                    return FolderScopeResolver.ForPrimaryStore(matchedRoot!.StorePrefix, folder, includeSubfolders);
+                case StoreNameDecision.NotIndexed:
+                    return FolderScopeResolver.ForUnindexedStore(folder);
+                case StoreNameDecision.Refused:
+                    throw new ArgumentException(mapRefusal, nameof(store));
             }
 
             IReadOnlyList<StoreScopeInfo> catalog = GetCatalog(SearchIndexTimeoutSeconds);
@@ -8907,6 +9183,16 @@ namespace OutlookAI.Core.Services
 
             if (match != null)
             {
+                // Not even by the index's own name for it does a search reach an index store whose
+                // mail the index cannot attribute to one store (Q113 (a)).
+                StoreIndexMatch? contested = TryGetStoreIndexMap(SearchIndexTimeoutSeconds)?.Unmatchable
+                    .FirstOrDefault(m => m.Contested.Any(r =>
+                        string.Equals(r.StorePrefix, match.StorePrefix, StringComparison.OrdinalIgnoreCase)));
+                if (contested != null)
+                {
+                    throw new ArgumentException(DescribeUnmatchableStore(contested), nameof(store));
+                }
+
                 return FolderScopeResolver.ForPrimaryStore(match.StorePrefix, folder, includeSubfolders);
             }
 
@@ -9079,20 +9365,22 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// Each of the profile's stores tied to its own slice of the index (Q92/Q99), or null when
-        /// no map can be built - Outlook could not be asked for its stores, or the index listed no
-        /// store root under this user's <c>mapi16</c> root - and every caller then keeps the name
-        /// rule it had before the map existed. Built from the store list and ONE fresh listing of
-        /// the index's store roots (<see cref="IndexSearchService.ListStoreRoots"/>), cached for
-        /// <see cref="StoreDetailsCacheTtl"/> like the store list itself; a failed build is not
-        /// retried for <see cref="StoreIndexMapRetryInterval"/>, so a wedged Outlook or a slow
+        /// Each of the profile's stores tied to its own slice of the index (Q92/Q99, Q113), or null
+        /// when no map can be built - Outlook has not listed its stores since this server started,
+        /// or the index's store roots under this user's <c>mapi16</c> root could not be read or
+        /// were none. Built from the store list - the one Outlook gave last when it does not answer
+        /// now, because a store's id and own name do not change while it is attached - and ONE fresh
+        /// listing of the index's store roots (<see cref="IndexSearchService.ListStoreRoots"/>),
+        /// cached for <see cref="StoreDetailsCacheTtl"/> like the store list itself; a failed build
+        /// is not retried for <see cref="StoreIndexMapRetryInterval"/>, so a wedged Outlook or a slow
         /// indexer costs one attempt a minute rather than one per call. <paramref name="comBudgetMs"/>
         /// bounds the COM calls when the caller has a budget of its own - outlook_health, which
         /// must report a slow Outlook rather than join it.
         /// <para>
-        /// THE RULE is <see cref="StoreIndexMatcher"/>'s: by Microsoft's store hash, never by a
-        /// name. Where the hash does not decide - a store whose hash input is unmeasured, a
-        /// delegate - the map says so, and the caller runs the name rule exactly as before.
+        /// THE RULE is <see cref="StoreIndexMatcher"/>'s (Q113 (a)): by the store's own name AND
+        /// hash, never by a guess. Only its open exception - an Exchange store, until Q113 (b) is
+        /// measured - and delegates are handed back to the name rule, which the caller runs exactly
+        /// as before; so are stores the map cannot speak for (<see cref="DecideStoreName"/>).
         /// </para>
         /// </summary>
         private StoreIndexMap? TryGetStoreIndexMap(int? commandTimeoutSeconds, int? comBudgetMs = null)
@@ -9110,10 +9398,11 @@ namespace OutlookAI.Core.Services
                 }
             }
 
-            StoreIndexMap? map = BuildStoreIndexMap(commandTimeoutSeconds, comBudgetMs);
+            StoreIndexMap? map = BuildStoreIndexMap(commandTimeoutSeconds, comBudgetMs, out bool listingFailed);
             lock (_catalogLock)
             {
                 _storeIndexMap = map;
+                _storeIndexListingFailed = map == null && listingFailed;
                 if (map != null)
                 {
                     _storeIndexMapBuiltUtc = MonotonicClock.UtcNow;
@@ -9127,39 +9416,84 @@ namespace OutlookAI.Core.Services
             return map;
         }
 
-        private StoreIndexMap? BuildStoreIndexMap(int? commandTimeoutSeconds, int? comBudgetMs)
+        private StoreIndexMap? BuildStoreIndexMap(int? commandTimeoutSeconds, int? comBudgetMs, out bool listingFailed)
         {
-            IReadOnlyList<ComStoreDetail> stores;
-            string? profile = null;
-            IReadOnlyList<StoreScopeInfo> roots;
+            listingFailed = false;
+            IReadOnlyList<ComStoreDetail>? stores;
             try
             {
                 stores = comBudgetMs.HasValue
                     ? _gateway.Run(GetStoreDetails, comBudgetMs.Value)
                     : _gateway.Run(s => GetStoreDetails(s));
-                if (stores.Any(d => d.ExchangeProfileSectionHex != null))
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // Outlook did not answer. The stores it listed last are still the right input: a
+                // store's id and own name do not change while it stays attached, so the name-and-hash
+                // rule (Q113 (a)) holds for them with Outlook closed or wedged - which is exactly when
+                // an index-only search leans on it. Never listed since this server started: no map,
+                // and no store's kind is known.
+                stores = LastKnownStoreDetails();
+                if (stores == null)
+                {
+                    return null;
+                }
+            }
+
+            string? profile = null;
+            if (stores.Any(d => d.ExchangeProfileSectionHex != null))
+            {
+                try
                 {
                     profile = comBudgetMs.HasValue
                         ? _gateway.Run(s => s.GetProfileName(), comBudgetMs.Value)
                         : _gateway.Run(s => s.GetProfileName());
+                    lock (_catalogLock)
+                    {
+                        _lastProfileName = profile;
+                    }
                 }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    lock (_catalogLock)
+                    {
+                        profile = _lastProfileName;
+                    }
+                }
+            }
 
+            IReadOnlyList<StoreScopeInfo> roots;
+            try
+            {
                 roots = _index.Value.ListStoreRoots(IndexSearchService.CurrentUserMapiRoot(), commandTimeoutSeconds);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
+                listingFailed = true;
                 return null;
             }
 
-            // Nothing listed: an index Outlook has never pushed to, or a root this code does not
-            // list. "No root carries this PST's hash" would then be true of every store and mean
-            // nothing, so no map is built and the name rule stays.
+            // Nothing listed: an index Outlook has never pushed to. No map is built and the name rule
+            // stays - and it cannot match a store by name either then, because the names it looks
+            // up come from the same index, which holds no store under this user.
             if (roots.Count == 0)
             {
                 return null;
             }
 
             return StoreIndexMatcher.Match(stores.Select(d => ToIndexIdentity(d, profile)).ToList(), roots);
+        }
+
+        /// <summary>
+        /// The store list Outlook gave last - the <see cref="StoreDetailsCacheTtl"/> cache, read
+        /// whatever its age - or null when Outlook has not answered since this server started.
+        /// </summary>
+        private IReadOnlyList<ComStoreDetail>? LastKnownStoreDetails()
+        {
+            lock (_catalogLock)
+            {
+                return _storeDetails;
+            }
         }
 
         /// <summary>
@@ -9186,31 +9520,156 @@ namespace OutlookAI.Core.Services
                     profileSignature,
                     exchange ? detail.FilePath : null),
                 detail.NameUnreadable,
-                detail.FilePath);
+                detail.FilePath,
+                detail.OwnName);
+        }
+
+        /// <summary>What the store map decides for a store NAME (<see cref="DecideStoreName"/>).</summary>
+        private enum StoreNameDecision
+        {
+            /// <summary>
+            /// The name rule, exactly as before the store map: no map could be built, the name is not
+            /// a store of this profile, or the store is in the one open exception (Exchange, Q113 (b))
+            /// or a delegate.
+            /// </summary>
+            NameRule,
+
+            /// <summary>Tied to its own index store: by name and hash (Q113 (a)), or - Exchange - by its hash.</summary>
+            Tied,
+
+            /// <summary>
+            /// A store matched by name and hash that no index store is: the index tier is skipped, never
+            /// widened, and never scoped to a store of the same name.
+            /// </summary>
+            NotIndexed,
+
+            /// <summary>
+            /// The index cannot attribute this store's mail (two stores share its name and hash), the name
+            /// picks out several stores of the profile, or the index's store list could not be read for a
+            /// store that may only be matched by name and hash: refused, with the reason.
+            /// </summary>
+            Refused,
         }
 
         /// <summary>
-        /// The map's DECISION for one store, by its display name: a hash match
-        /// (<see cref="StoreIndexMatchKind.StoreHash"/>) or a PST the index does not hold
-        /// (<see cref="StoreIndexMatchKind.None"/>). Null in every other case - no map, a name that
-        /// does not pick out exactly one store, a store the hash does not decide - and the caller
-        /// then keeps the name rule it had before the map existed.
+        /// The store map's decision for the store a caller NAMED (Q113 (a)): its own index store, not
+        /// indexed, refused - or the name rule, which is reached only where the rule cannot apply (no
+        /// map, a name the profile does not have) or by THE ONE OPEN EXCEPTION, an Exchange store
+        /// (<see cref="StoreIndexIdentity.InExchangeException"/>). A store matched by name and hash
+        /// never falls back to its name alone.
         /// </summary>
-        private StoreIndexMatch? TryMatchStore(string displayName, int? commandTimeoutSeconds)
+        private (StoreNameDecision Decision, StoreScopeInfo? Root, string? Refusal) DecideStoreName(
+            string displayName, int? commandTimeoutSeconds)
         {
-            StoreIndexMatch? match = TryGetStoreIndexMap(commandTimeoutSeconds)?.ForStore(displayName);
-            return match != null && (match.Kind == StoreIndexMatchKind.StoreHash || match.Kind == StoreIndexMatchKind.None)
-                ? match
-                : null;
+            StoreIndexMap? map = TryGetStoreIndexMap(commandTimeoutSeconds);
+            if (map == null)
+            {
+                // No map. When the index's store list could not be READ, a store Outlook lists as not
+                // Exchange cannot be located: refused, never looked up by name. Otherwise - the index
+                // lists no store at all, or Outlook has never answered so no store's kind is known -
+                // the name rule runs as before.
+                bool listingFailed;
+                lock (_catalogLock)
+                {
+                    listingFailed = _storeIndexListingFailed;
+                }
+
+                return listingFailed && IsKnownNonExchangeStore(displayName)
+                    ? (StoreNameDecision.Refused, null, DescribeUnreadableStoreList(displayName))
+                    : (StoreNameDecision.NameRule, null, null);
+            }
+
+            IReadOnlyList<StoreIndexMatch> named = map.StoresNamed(displayName);
+            if (named.Count == 0)
+            {
+                // Not a store of this profile by that name: the name rule decides, as before - it
+                // finds an index store of that own name (another profile's, a rename's leftover), or
+                // refuses with what the profile has.
+                return (StoreNameDecision.NameRule, null, null);
+            }
+
+            if (named.Count > 1)
+            {
+                // Several stores of this profile share the name, so it cannot say which is meant.
+                // Exchange stores alone keep the name rule (the open exception); any other store
+                // among them is refused rather than picked.
+                return named.All(m => m.Store.InExchangeException || m.Kind == StoreIndexMatchKind.Delegate)
+                    ? (StoreNameDecision.NameRule, null, null)
+                    : (StoreNameDecision.Refused, null, DescribeSharedStoreName(displayName, named));
+            }
+
+            StoreIndexMatch match = named[0];
+            switch (match.Kind)
+            {
+                case StoreIndexMatchKind.NameAndHash:
+                case StoreIndexMatchKind.StoreHash:
+                    return (StoreNameDecision.Tied, match.Root, null);
+                case StoreIndexMatchKind.None:
+                    return (StoreNameDecision.NotIndexed, null, null);
+                case StoreIndexMatchKind.Ambiguous:
+                    return (StoreNameDecision.Refused, null, DescribeUnmatchableStore(match));
+                default:
+                    // NameRule (the open exception, Exchange) and Delegate: as before.
+                    return (StoreNameDecision.NameRule, null, null);
+            }
+        }
+
+        /// <summary>Whether the last store list Outlook gave holds a store of this name that it reports as not Exchange.</summary>
+        private bool IsKnownNonExchangeStore(string displayName)
+        {
+            IReadOnlyList<ComStoreDetail>? known = LastKnownStoreDetails();
+            return known != null && known.Any(d => d.ExchangeStoreType == 3
+                && string.Equals(d.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>The refusal for a store the index cannot tell apart from another (<see cref="StoreIndexMatchKind.Ambiguous"/>).</summary>
+        internal static string DescribeUnmatchableStore(StoreIndexMatch match)
+        {
+            if (match == null)
+            {
+                throw new ArgumentNullException(nameof(match));
+            }
+
+            return "Store '" + match.Store.DisplayName + "' cannot be searched through the local index: "
+                + (match.Note ?? "the index cannot tell its mail apart from another store's")
+                + ". A store is matched to the index by its own name AND hash together, never by a guess, so this "
+                + "search is refused rather than answered with mail that may be another store's. Rename one of the "
+                + "stores in Outlook (File > Account Settings > Data Files > Settings) so the index files it apart, "
+                + "or read the store with exhaustive:true; outlook_health shows the match for every store.";
+        }
+
+        /// <summary>The refusal for a store name several stores of the profile share, one of them matched by name and hash.</summary>
+        internal static string DescribeSharedStoreName(string displayName, IReadOnlyList<StoreIndexMatch> named)
+        {
+            if (named == null)
+            {
+                throw new ArgumentNullException(nameof(named));
+            }
+
+            return named.Count.ToString(CultureInfo.InvariantCulture) + " stores in this Outlook profile are named '"
+                + displayName + "', so a search scoped by that name cannot say which one is meant, and it is refused "
+                + "rather than answered from one of them at random. Rename one of them in Outlook (File > Account "
+                + "Settings > Data Files > Settings), or search without store; outlook_health lists each store and "
+                + "the index store it is matched to.";
+        }
+
+        /// <summary>The refusal for a non-Exchange store while the index's list of stores cannot be read.</summary>
+        private static string DescribeUnreadableStoreList(string displayName)
+        {
+            return "The search index's list of stores could not be read just now, so store '" + displayName
+                + "' cannot be located in it: a store that is not Exchange is matched to the index by its own name "
+                + "and hash together, never by its name alone. Retry in a minute; outlook_health shows the index's "
+                + "state, and exhaustive:true reads the store without the index.";
         }
 
         /// <summary>
         /// The index scopes whose frontiers set an unscoped search's per-store sweep windows, each
-        /// keyed by the store name the sweep's counters carry. With a map: a hash-matched store by
-        /// its own index store under Outlook's name; a PST the index does not hold by nothing, so
-        /// it keeps the widest window rather than another store's clock; and every store the hash
-        /// does not decide by the catalog entries of its name, exactly as before. Without a map,
-        /// the whole catalog under the index's names, as before.
+        /// keyed by the store name the sweep's counters carry. With a map: a tied store by its own
+        /// index store under Outlook's name; a store the index does not hold, or whose mail it cannot
+        /// attribute, by nothing, so it keeps the widest window rather than another store's clock;
+        /// and the name rule's stores (the Exchange exception, delegates) by the catalog entries of
+        /// their name, exactly as before. Without a map, the whole catalog under the index's names,
+        /// as before.
         /// </summary>
         private IEnumerable<(string Store, string Prefix)> StoreFrontierScopes(StoreIndexMap? map)
         {
@@ -9223,7 +9682,7 @@ namespace OutlookAI.Core.Services
             HashSet<string>? byName = null;
             foreach (StoreIndexMatch m in map.Stores)
             {
-                if (m.Kind == StoreIndexMatchKind.StoreHash && m.Root != null)
+                if ((m.Kind == StoreIndexMatchKind.NameAndHash || m.Kind == StoreIndexMatchKind.StoreHash) && m.Root != null)
                 {
                     scopes.Add((m.Store.DisplayName, m.Root.StorePrefix));
                 }
@@ -9286,9 +9745,10 @@ namespace OutlookAI.Core.Services
         }
 
         /// <summary>
-        /// How long a store map that could not be built - Outlook not answering, the index not
-        /// listing - is not asked for again: every caller keeps the name rule meanwhile, and a
-        /// wedged Outlook or a saturated indexer costs one attempt a minute, not one per call.
+        /// How long a store map that could not be built - Outlook never having answered, the index
+        /// not listing - is not asked for again: callers take <see cref="DecideStoreName"/>'s no-map
+        /// answer meanwhile, and a wedged Outlook or a saturated indexer costs one attempt a minute,
+        /// not one per call.
         /// </summary>
         private static readonly TimeSpan StoreIndexMapRetryInterval = TimeSpan.FromSeconds(60);
 

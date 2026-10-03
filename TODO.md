@@ -1,5 +1,26 @@
 # TODO
 
+- [ ] **Make the test guests keep a crash dump of `OUTLOOK.EXE`, then find what crashed it inside Word**
+  (seen once, 2026-10-03, `OutlookAI-Indexed`, runbook 4.2f run 4; `QUESTIONS.md` decision log, the
+  indexed guest's first live runs, item 7). `wwlib.dll`, `0xc0000005`, during
+  `LiveDraftOptionsTests.NewDraft_Hub_SignatureOverride_BodyAboveTheSignature_OutsideTheSignatureBookmark`,
+  in one of five full runs; the same commit passed the next run. The guests keep no dump, so there is
+  nothing to read. Directions: (1) Windows Error Reporting's `LocalDumps` key for `OUTLOOK.EXE` on both
+  guests (a full dump into a guest folder the runner fetches with the results), then wait for the next
+  crash; (2) loop the draft-options class on a guest until it reproduces; (3) review Word's threading in
+  the signature path without a fault site. Recommended: (1).
+- [ ] **Find out why `LiveMoveArchiveTests.MoveChain` could not resolve the hub's new Archive folder
+  on a guest that was not restarted** (seen once, 2026-10-03, `OutlookAI-Indexed`; `QUESTIONS.md`
+  decision log, the indexed guest's first live runs, item 6). `archive_mail` created the hub's
+  Archive folder and the test's own verify session then read "NoDesignatedArchiveFolder"; the item
+  left in Archive failed five later tests' hub check. The run had staged the suite onto
+  `CP-17C`'s running Outlook - no graceful restart, no step 9a. Every run since through
+  `Testbed/host/Invoke-LiveTierOnGuest.ps1`, which always restarts, passed it (six of six). If a
+  user's long-running Outlook can hit the same, a second `archive_mail` could miss the folder the
+  first one made. Directions: (1) reproduce with a run that skips the restart; (2) re-read the
+  designation from a freshly opened store in the verify session; (3) read it in the product the way
+  the verify session does, after creating. Recommended: (1) first.
+
 - [ ] **Three decided jobs, held until the agents now running have merged (decided by the
   maintainer 2026-10-03).** Each one touches files every open branch also touches, or stops the
   build VM they all share, so each waits for a quiet moment.
@@ -25,6 +46,17 @@
   Exchange tests stay disabled on the Exchange test VM. Once it does: enable them there, and move
   test writes from telefonie into the shared mailbox wherever a test allows it (Q110).
 
+- [ ] **Find what crashes OUTLOOK.EXE in the compose tests on master - twice on 2026-10-03.** The
+  first live run from guest two's frozen checkpoint (`Docs/live-tier-on-the-vm.md` section 4.4, run 1:
+  `OLMAPI32.DLL`, `0xc0000005`, 3.5 minutes in, then 25 compose tests failing on `RPC server is
+  unavailable`) and the runner's run of the same hour on guest one on the real clock
+  (`20261003-202603-indexed-dc1b5c5d51cd`, section 4.2f: three `LiveDraftOptionsTests` failing the same
+  way). The next run from the same frozen checkpoint was green, 79 of 79, so it is intermittent, and it
+  is not the clock. Section 4.1e's crashes were heap damage from COM children left unreleased (`9664aa0`).
+  Directions: (1) count it - the frozen checkpoints make every run start identical, so N runs of the
+  compose collection alone give a rate; (2) bisect `fd2c58b` (80 of 80 three times) to `af1fd3f` with
+  that rate; (3) a crash dump - excluded: no debugger on the guests (Dependencies). Recommended: (1),
+  then (2) if the rate is high enough to bisect on.
 - [ ] **Decide what the add-in's tuning reconcile does with the five Cached Mode values it writes
   under `HKCU\Software\Policies` (found 2026-10-03 by the first guest run of the two-phase add-in
   install).** `OutlookTuningService.Reconcile` writes D25's five `caching.policy.*` values there, and
@@ -43,23 +75,26 @@
   values in the testbed's elevated install phase, which hides the defect the way the old elevated
   `-Execute` did. Recommended: (1), then the proof again from `CP-08`, for `ADDIN-READY` with no
   control.
-- [ ] **Recognise ANOTHER server session's lifetime pin on the show-me path's `ActiveExplorer()`
-  branch (D49, found 2026-10-03, not measured).** `EnsureVisibleExplorer` refuses to display an
-  Explorer `ActiveExplorer()` hands back only when `ComposeSurface.IsPin` knows it, and the pin
-  registry holds IUnknown pointers - which for an out-of-process server are per-apartment proxies, so
-  a pin another session made on another STA thread is very likely not recognised, whatever the
-  registry's remarks say about being process-wide. The `Explorers.Add` branch no longer depends on it
-  (the count check in `ComposeSurface.AddShowMeExplorer`, after the D49 probes of 2026-10-03), but if
-  `ActiveExplorer()` can return a hidden Explorer at all, a second session would display that pin and
-  the user's close would end Outlook again. Directions: (1) measure on a guest whether
-  `ActiveExplorer()` ever returns a non-displayed Explorer; (2) if it does, recognise a pin by its
-  window instead (`IOleWindow`, `IsWindowVisible`); (3) keep one pin per process, owned by the
-  gateway rather than by a session. Recommended: (1) first - it is one probe on a guest.
-
-- [ ] **Run the PST half of Q74 C3 on the indexed guest.** `LiveDecodeVerifyTests.ShortDecodedId_OpensAsTheItemItself_OnAPstStore`
-  carries `Requires=SearchIndex`, so `OutlookAI-Unindexed`'s filter never selects it and the first
-  guest live runs (2026-10-03) could not confirm it. It needs `OutlookAI-Indexed`, which was busy with
-  Q99 that night.
+- [ ] **Stop D49's lifetime pins being left behind - and decide whether S6 needs anything of its own
+  (Q118, measured 2026-10-03 on `OAI-UNINDEXED`; `McpServer/Docs/com-host.md`, "Pins left behind,
+  measured").** A session pins only when it finds no Explorer, so against a user's open Outlook no
+  pin is ever made (11 sessions, 0 pins). A pin is LEFT when its maker did not start Outlook - sessions
+  that connect while Outlook is starting or running window-less all pin, and none of them closes its
+  own (2 at once left 1, 3 at once left 3) - or when the maker's COM host is killed. A pin left keeps a
+  window-less OUTLOOK.EXE up: `Application.Quit()` did not end it (3 of 3), nor did the user's close of
+  the window they had opened over it (2 of 2); File > Exit did. **S6 is true in one state:** after
+  that close, `ActiveExplorer()` returns the hidden pin, the show-me path's `Activate()` makes it
+  visible, and the user's close of it ends Outlook - harmless there, because the close raised Quit
+  and dropped every attached session, so the pin had no live owner. Directions: (1) a pin lives as
+  long as the session that made it, closed on exit whether or not that session started Outlook;
+  (2) one pin per Outlook, made under a machine-wide mutex, so a cold-start race makes one;
+  (3) a per-user registry of live sessions and the pins they made, by owner PID and pin window
+  handle: the last session out closes the pins, and a session that finds a pin whose owner is dead
+  closes it - which also lets `outlook_health` name the other sessions and lets the show-me path
+  recognise a pin by its window (S6); (4) document it and leave the code. Recommended: (3) - (1)
+  alone makes a session's exit end Outlook under every other session, the cost measured for starters
+  today (the next call answers `OutlookStarting` and restarts it), and (2) alone still leaves the
+  winner's pin when the winner did not start Outlook.
 
 - [ ] **Let the count tripwire's census read a table date by its column spelling too.**
   `CensusTableRow.ReadUtc` still calls the one-argument `ComDateValue.FromTableValue`, which takes every
@@ -69,16 +104,19 @@
   departed item is off by the UTC offset. Pass the spelling (`CensusColumnMap` knows the index, the
   names list the spelling) when the census is next touched.
 
-- [ ] **Read which store-hash input Outlook uses for a cached Exchange store - the one half of Q99
-  no test machine can measure.** The product now finds each store in the search index by Microsoft's
-  store hash (`McpServer/README.md` load-bearing fact 16). For a PST that is measured; for a cached
-  Exchange store Microsoft documents the input (the profile's `PR_MAPPING_SIGNATURE`) and the product
-  computes it, plus the store's own signature and the entry-ID-plus-`.ost` variant, but no guest can
-  have Exchange, and agents never query the maintainer's Outlook. His own first `outlook_health` on a
-  build with Q99 (a release, or a dev build put on through `Tools/Switch-AddInBuild.ps1` when he asks)
-  answers it, read-only: each Exchange row's `matchedBy` and `matchedInput`. `storeHash` with an input
-  settles which one; `displayName` means no documented input matched and the store is still found by
-  its name, exactly as before - then look at why. Delegate rows stay `delegateFolder` either way.
+- [ ] **Measure which store-hash input - and which name - a cached Exchange store is filed under
+  (Q113 (b)), then remove the one open exception.** Every store that is not Exchange is now matched to
+  the search index by its own name AND hash, never by a guess (Q113 (a), `McpServer/README.md`
+  load-bearing fact 16). An Exchange store still keeps the pre-Q113 match - its hash alone when one
+  documented input fits (`storeHash`), else the old name rule (`displayName`) - because Microsoft
+  documents its input (the profile's `PR_MAPPING_SIGNATURE`; the product also tries the store's own
+  signature and the entry-ID-plus-`.ost` variant) but nothing has measured it, nor the name the index
+  files it under. The Exchange test VM being built answers both: each Exchange row's `matchedBy`,
+  `matchedInput` and `indexStore` in `outlook_health` (or the maintainer's own, read-only, on a build
+  he asks for). Then make `StoreIndexIdentity.InExchangeException` false for the measured store
+  types - the one switch - read the own name for them in `GetStoreDetails`, and delete
+  `StoreIndexMatchKind.StoreHash` and `NameRule` with the tests that pin them
+  (`T1/StoreIndexMatcherTests`, the "open exception" cases). Delegate rows stay `delegateFolder`.
 
 - [ ] **Decide what an UNSCOPED search does with hits from another Outlook profile's stores (Q99
   finding).** One Windows user has one search index for all of their Outlook profiles, so a search

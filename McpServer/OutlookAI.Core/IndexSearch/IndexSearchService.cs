@@ -89,7 +89,8 @@ namespace OutlookAI.Core.IndexSearch
         /// the mapi namespace (only reachable without a SCOPE), and rows of the wrong SHAPE
         /// for the requested <see cref="KindFilter"/> - an attachment row under
         /// <see cref="KindFilter.MessagesOnly"/>, a message row under
-        /// <see cref="KindFilter.AttachmentsOnly"/>.
+        /// <see cref="KindFilter.AttachmentsOnly"/> - plus the rows of an index store the query
+        /// excludes (<see cref="IndexQuery.ExcludedStorePrefixes"/>, Q113).
         /// <para>
         /// It no longer counts message rows dropped for their item class, because no search
         /// drops any (gap B3). It is the index tier's half of the counter the exhaustive
@@ -269,7 +270,10 @@ namespace OutlookAI.Core.IndexSearch
             // trim below happens after the ordering guard has run, and a row it never looked
             // at cannot be ranked. This is also what makes RowsScanned mean what it says.
             List<IndexHit> mapped = MapRows(rows);
-            List<IndexHit> admitted = Admit(mapped, query.Kinds);
+            HashSet<string>? excluded = query.ExcludedStorePrefixes == null || query.ExcludedStorePrefixes.Count == 0
+                ? null
+                : new HashSet<string>(query.ExcludedStorePrefixes, StringComparer.OrdinalIgnoreCase);
+            List<IndexHit> admitted = Admit(mapped, query.Kinds, excluded);
             IReadOnlyList<IndexHit> candidates = admitted;
             int scanned = mapped.Count;
             int dropped = scanned - admitted.Count;
@@ -289,7 +293,7 @@ namespace OutlookAI.Core.IndexSearch
                     IReadOnlyList<IReadOnlyDictionary<string, object?>> refetchRows =
                         _client.ExecuteRows(WsSqlBuilder.Build(query, sqlTop, true), sqlTop, commandTimeoutSeconds);
                     List<IndexHit> refetchMapped = MapRows(refetchRows);
-                    List<IndexHit> refetchAdmitted = Admit(refetchMapped, query.Kinds);
+                    List<IndexHit> refetchAdmitted = Admit(refetchMapped, query.Kinds, excluded);
                     scanned += refetchMapped.Count;
                     dropped += refetchMapped.Count - refetchAdmitted.Count;
                     candidates = IndexOrderGuard.Merge(admitted, refetchAdmitted);
@@ -335,12 +339,17 @@ namespace OutlookAI.Core.IndexSearch
             return mapped;
         }
 
-        private static List<IndexHit> Admit(IReadOnlyList<IndexHit> mapped, KindFilter kinds)
+        private static List<IndexHit> Admit(IReadOnlyList<IndexHit> mapped, KindFilter kinds, HashSet<string>? excludedStorePrefixes)
         {
             List<IndexHit> admitted = new List<IndexHit>(mapped.Count);
             for (int i = 0; i < mapped.Count; i++)
             {
-                if (IndexRowFilter.Keep(mapped[i], kinds))
+                // A row of an index store the query excludes (IndexQuery.ExcludedStorePrefixes)
+                // is dropped like a row of the wrong shape: counted, never returned.
+                bool excluded = excludedStorePrefixes != null
+                    && mapped[i].StorePrefix != null
+                    && excludedStorePrefixes.Contains(mapped[i].StorePrefix!);
+                if (!excluded && IndexRowFilter.Keep(mapped[i], kinds))
                 {
                     admitted.Add(mapped[i]);
                 }
