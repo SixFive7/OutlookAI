@@ -312,6 +312,30 @@ guest run with the new throwaway data file (runbook §8 item 25).
   asserts an exact store count; it needs a delegate store so it never runs on a test machine today,
   but if it ever does, the throwaway store will break that count.
 
+### D74-D80 - Guest one's populations (indexed guest), and the 160,000-item corpus
+Built and checkpointed as `CP-16C-POPULATIONS-V2` (hub 68 = 56 + 12 undated contacts, bystander
+342 = 300 + 42, identity 8; all in the index, every contact with no received date). Merged as
+`7d0e7a3` (build VM on the branch: 3,464 / 0 / 0, 21 self-tests).
+- **D74 - 12 and 42 undated contacts**, not 4 and 14: the bystander needs more than 35 undated rows
+  (the spare rows a scoped top-25 search fetches) to tell the widened search apart from luck.
+- **D75 - The contacts are marked in the population's shape key** (`|u:contacts`), because they
+  take the ordinals where the full set put appointments, so neither population is a prefix of the
+  other. *Consequence:* guest one's live run needs the suite restaged from master first (the old
+  suite does not know the marker and would refuse the hub).
+- **D76 - Undated contacts are checked in the index, not in the store**: a PST dates every contact
+  and Outlook will not remove it; `corpus-indexed` now counts undated rows and those with no
+  received date.
+- **D77 - The hub rebuild refuses to run elevated on an indexed hub** (an elevated Outlook never feeds
+  the index). *Alternatives:* warn only; keep the elevated build.
+- **D78 - Guest one's settings were rendered with no corpus**: Corpus A holds 20,000 items, lives only
+  in the corpus profile, and the renderer requires 160,000.
+- **D79 - The 160,000-item corpus is a new store**, not an extension of the 20,000: the old store
+  cannot be attached to the tier profile by script, and its anchor's 7-day window is empty.
+- **D80 - Build Corpus A at 160,000 now, on guest one, before its live run.** Estimated 2.5-3.5 h
+  (build about 2 h at the measured 19-24 items/s; the PST grows to about 8.6 GB). Guest one would
+  otherwise sit idle while guest two's live run finds the fixes both guests need; running guest
+  one's live run in parallel would fix the same failures twice.
+
 ## Open questions only you can answer
 
 ### Q104 - Seven tagged test leftovers in your workstation's hub mailbox
