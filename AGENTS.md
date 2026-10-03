@@ -57,6 +57,10 @@ UTC, and nobody looked: every merge had been verified locally, never on the runn
 - Version is derived from the latest GitHub release tag (base version) + commit count. No hardcoded version in the repo.
 - The release workflow requires a `version_bump` input in `major.minor.patch` format (e.g. `1.0.0` for major bump, `0.1.0` for minor, `0.0.1` for patch). This input is **required** — the workflow will not run without it. `0.0.0` is rejected — every release must bump at least one version component.
 - **After committing, ALWAYS ask the user if they want to create a release.** If yes:
+  0. **Ask whether he has run `Docs/release-manual-checks.md` on this release candidate** (Q74 D2,
+     decided on his behalf 2026-10-03 - see the overnight review). Those checks write to his real
+     mailbox, so he runs them himself and an agent never does; if he has not, say in one line what they
+     cover and let him decide whether to release anyway.
   1. **ALWAYS ask the version bump question.** Get the current version from the latest release tag via `gh release view --json tagName -q .tagName` and present options in A/B/C format showing current → new version. Example with latest tag v2.1.0.103:
      - A) Patch — 2.1.0 → 2.1.1
      - B) Minor — 2.1.0 → 2.2.0

@@ -18,10 +18,11 @@ copy-and-register route, `Tools/Switch-AddInBuild.ps1`, for running a dev build 
 
 ## Before you start
 
-- **The server answering must be the release candidate.** Call `outlook_health` and read `runningFrom`
-  and the version: if it is the installed release rather than the candidate, stop - nothing below would
-  be testing what is about to ship. (How the candidate's server is put in front of a session on the
-  workstation is open - see the Q74 report, question on D2.)
+- **The server answering must be the build under test.** Call `outlook_health` and read `runningFrom`
+  and the version, and write them down. There is no route yet for putting a release candidate's MCP
+  server in front of a session on the workstation without installing it (`Tools/Switch-AddInBuild.ps1`
+  moves the add-in only, and never the server - `TODO.md`). Until there is, run this list right after
+  installing the release, and keep the previous installer: a failure here is a reason to put it back.
 - **What you need:** a shared mailbox S on the profile (auto-mapped, not an account of its own) on which
   you have Full Access and Send on Behalf; and an address X on which you do NOT have Send on Behalf.
 - **Tag every subject** `[OutlookAI-D2 <version>]` and send only to yourself.

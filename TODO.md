@@ -1,6 +1,25 @@
 # TODO
 
 
+- [ ] **Put a release candidate's MCP server in front of one session on the workstation, without installing it.**
+  The manual pre-release checks (`Docs/release-manual-checks.md`, Q74 D2) exercise the Exchange-only
+  write paths through the MCP server, by hand, on the maintainer's own profile - and nothing can put a
+  candidate's server there today: `Tools/Switch-AddInBuild.ps1` copies and registers the ADD-IN only and
+  never touches the server. Until this exists the list runs right after a release is installed, with the
+  previous installer kept for rollback. Recommended shape: the same copy-then-register discipline as
+  Q81 - a server build copied out of any build folder and registered for one Claude Code session, never
+  globally - so it can never become the server every other session starts.
+
+- [ ] **The non-live suite writes into the audit log of whatever machine runs it.** Service-level T1 tests
+  drive `MailService` through stand-in sessions, and the product appends an audit line for every write it
+  makes - into the REAL `%LOCALAPPDATA%\OutlookAI\audit.log`. `AtomicityClaimsTests` has done this for a
+  while; `ExchangeWritePathTests` (Q74 D1) adds 16 lines a run, and on the maintainer's workstation those
+  are fake `send`/draft entries in the record of what agents did with his mail. Moving the non-live suite
+  to the build VM removes the workstation from the problem but not the problem. Recommended: give
+  `MailService` an injectable audit sink (the tests then assert the audit fields too, which the D1 success
+  path still cannot); the alternatives were a test-only audit directory, or dropping the service-level
+  tests.
+
 - [ ] **What still stops a rebuilder rebuilding the test VM from this repository alone.**
   `Testbed/` is the entry point and holds the runnable half - parameter set, host and guest
   scripts, the settings template, the credential contract - and `.github/scripts/check-testbed-references.ps1`
