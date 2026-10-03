@@ -265,6 +265,20 @@ public sealed class LiveDraftOptionsTests
                 $"A3 id from index GUID: seed={IdIsIndexGuid(seedInfo)} plain={IdIsIndexGuid(plainInfo)} renamed={IdIsIndexGuid(renamedInfo)}; "
                 + $"index tracking seed={Tracking(seedInfo)} plain={Tracking(plainInfo)} renamed={Tracking(renamedInfo)}; "
                 + $"index headers seed={IndexHeader(seedInfo)} plain={IndexHeader(plainInfo)} renamed={IndexHeader(renamedInfo)}");
+
+            // Q-coordinator job 3 (2026-10-03): is the renamed reply's id a HASH of a string - the new
+            // subject, or the topic it keeps? MD5 over each candidate, UTF-16LE and UTF-8, as written and
+            // upper-cased. Which candidate matched, by label only (S4).
+            _output.WriteLine(
+                "A3 renamed id is a hash of: "
+                + ConversationIdHashes.Describe(
+                    renamedInfo.ConversationId,
+                    ("newSubject", overriddenSubject),
+                    ("renamedSubjectAsStored", renamedInfo.Subject),
+                    ("keptTopic", renamedInfo.ConversationTopic),
+                    ("seedTopic", seedInfo.ConversationTopic))
+                + "; seed id is a hash of: "
+                + ConversationIdHashes.Describe(seedInfo.ConversationId, ("seedTopic", seedInfo.ConversationTopic)));
             Assert.Equal(seedInfo.ConversationId, renamedInfo.ConversationId);
             _output.WriteLine(
                 $"A3: subjectOverridden=true topicPreserved=true indexExtends=true "
