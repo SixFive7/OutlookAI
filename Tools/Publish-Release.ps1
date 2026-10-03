@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
     ============================================================================================
     WRITTEN 2026-10-03, WHEN THE GITHUB CI WAS REMOVED. DRY-RUN ON THE MAINTAINER'S WORKSTATION.
@@ -15,8 +15,9 @@
     (the result the updater accepts), DigiCert timestamp, 43.2 MB of the 50 MB cap; the build VM's
     run of 4d9d353 PASS - 3607 of 3607 tests and 23 of 23 self-tests, this script's 72/0 among
     them; and the stamp commit made, two lines of CHANGELOG.md and nothing else. It also measured
-    the notes at 151,497 characters, over the 125,000 GitHub accepts as a release body - which
-    step 3 now refuses before anything is pushed.
+    the notes at 151,497 characters, over the 125,000 GitHub accepts as a release body. Since Q123
+    (2026-10-03) the body is no longer the section: step 3 generates it, BrowserAI's way, from
+    each entry's headline and a link to that entry's lines.
 
 .SYNOPSIS
     Builds, tests, signs and publishes an OutlookAI release from the maintainer's workstation -
@@ -43,10 +44,20 @@
           patch, a minor bump resets patch. The fourth part is HEAD's commit count plus one - the
           stamp commit this run makes, as every release so far (v3.1.0.325 is commit 325). The tag
           must not exist yet.
-       3. RELEASE NOTES (release.yml's "Extract changelog"): the "## Unreleased" section of
-          CHANGELOG.md. Empty refuses, and so - with -Execute - do notes over GitHub's 125,000-
-          character limit for a release body, which the workflow would have found only after
-          pushing the stamp commit.
+       3. RELEASE NOTES (release.yml's "Extract changelog", replaced by BrowserAI's system - Q123):
+          the "## Unreleased" section of CHANGELOG.md, held to the changelog's rules (AGENTS.md,
+          Changelog). No entries refuses. So does an entry that is not '- <icon> **One-sentence
+          headline.** the detail', an icon outside the legend, a headline over 100 characters or of
+          two sentences, a detail that opens by repeating its headline, groups that are not Keep a
+          Changelog's in its order, a legend that is not the palette, a character nobody types in
+          what the release page shows, and a released section that differs from what the latest
+          release's tag carries. With -Execute a section with no preamble refuses too. Then the
+          stamp is worked out (step 10 commits that very text) and the GITHUB RELEASE BODY is made
+          from it: the preamble, each entry's icon and headline with a "read more" link to that
+          entry's own lines in CHANGELOG.md as the tag will carry it, the legend, and a link to the
+          whole section. A body over GitHub's 125,000-character limit drops the links; one still
+          over it refuses with -Execute, which the workflow would have found only after pushing
+          the stamp commit.
        4. THE SIGNING CERTIFICATE: the thumbprint OutlookAI.csproj pins, from
           Cert:\CurrentUser\My, with its private key. Expired refuses; under 30 days warns
           (release.yml's "Import signing certificate", minus the import - it is already here).
@@ -76,7 +87,8 @@
       10. STAMP COMMIT (release.yml's "Stamp changelog" and "Commit stamped changelog"): HEAD's
           tree with only CHANGELOG.md changed - "## Unreleased", a blank line, "## v<version> -
           <date>" - committed with git plumbing, so neither the working tree nor a branch moves.
-          The diff is checked: two lines added to CHANGELOG.md and nothing else.
+          The diff is checked: two lines added to CHANGELOG.md and nothing else; and the committed
+          CHANGELOG.md is read back, because the body's line ranges are true of that text only.
       11. PUBLISH - ONLY WITH -Execute. origin/master must still be HEAD; the stamp commit is pushed
           to master (a fast-forward, never forced - if master moved, the push is refused and
           nothing is released, as in the workflow); `gh release create v<version>` with the
@@ -101,8 +113,11 @@
     only one it had and this machine can hold more; the signature and the stamp diff are read
     back; the tag targets the exact commit that was pushed.
 
-    WINDOWS POWERSHELL 5.1 AND POWERSHELL 7 BOTH. No ternary, no `??`, ASCII only. It needs both
-    installed all the same: step 5 runs the guards under each.
+    WINDOWS POWERSHELL 5.1 AND POWERSHELL 7 BOTH. No ternary, no `??`, and ASCII apart from the
+    changelog palette's twelve icons, which is why the file is saved as UTF-8 WITH a byte order mark:
+    without one, Windows PowerShell 5.1 reads it in the ANSI code page (Tools/Checks/
+    check-powershell-51.ps1, check 2). It needs both installed all the same: step 5 runs the guards
+    under each.
 
 .PARAMETER VersionBump
     major.minor.patch, as the workflow's version_bump input: 0.0.1 a patch, 0.1.0 a minor, 1.0.0 a
@@ -128,11 +143,19 @@
 .PARAMETER SelfTest
     Run the pure decisions against synthetic inputs and exit. No git, no gh, no network, no
     certificate, no Visual Studio - it runs on the build VM like every other self-test. D7 (c)
-    itself is not in it: only its wiring is.
+    itself is not in it: only its wiring is. The wiring includes this repository's own
+    CHANGELOG.md, held to the changelog's rules, so a malformed entry fails the build VM's run.
+
+.PARAMETER CheckChangelog
+    Check CHANGELOG.md against the changelog's rules (step 3's, minus the release itself) and
+    write the release body the next release would get to .work\release\changelog-check\. Reads
+    the file and asks git for the newest release tag; builds, tests and publishes nothing, so it
+    is for the workstation: run it after writing an entry. Exit 0 clean, 1 a rule is broken.
 
 .EXAMPLE
     pwsh -File Tools/Publish-Release.ps1 -VersionBump 0.0.1             # dry run
     pwsh -File Tools/Publish-Release.ps1 -VersionBump 0.0.1 -Execute    # publishes
+    pwsh -File Tools/Publish-Release.ps1 -CheckChangelog                # the changelog alone
     pwsh -File Tools/Publish-Release.ps1 -SelfTest
 #>
 [CmdletBinding()]
@@ -143,7 +166,8 @@ param(
     [string] $WorkRoot,
     [string] $RepoRoot,
     [int]    $TestTimeoutMinutes = 200,
-    [switch] $SelfTest
+    [switch] $SelfTest,
+    [switch] $CheckChangelog
 )
 
 $ErrorActionPreference = 'Stop'
@@ -179,9 +203,64 @@ $TimestampServers = @('http://timestamp.digicert.com', 'http://timestamp.sectigo
 $CertificateWarnDays = 30
 
 # GitHub refuses a release body longer than this: "body is too long (maximum is 125000 characters)".
-# gh release create runs AFTER the stamp commit is pushed, so notes over it would leave master saying
-# a version was released that never was. Step 3 refuses them up front instead.
+# gh release create runs AFTER the stamp commit is pushed, so a body over it would leave master saying
+# a version was released that never was. Step 3 measures the body it generates against it up front.
 $ReleaseBodyLimit = 125000
+
+# THE CHANGELOG'S RULES. Decided by the maintainer 2026-10-03 (Q123), in his words: "copy the release
+# notes style and system and rules from the BrowserAI repo". Each one below is BrowserAI's - from its
+# CHANGELOG.md, RELEASING.md item 10, build/New-ReleaseNotes.ps1 and ChangelogTests - and AGENTS.md
+# (Changelog) states them for whoever writes an entry.
+#
+# The palette an entry opens with, in the order the legend lists it: BrowserAI's, which the maintainer
+# approved there (its Q192b). This list is the DECISION and the legend at the top of CHANGELOG.md is the
+# PUBLICATION; step 3 holds the two identical. The icons are written as themselves, which is why this
+# file carries a byte order mark (Q78), and the self-test holds each one to its code points, so an
+# editor that drops a variation selector is caught. DO NOT BUILD THEM FROM NUMBERS: the first draft
+# (2026-10-04) made them at run time from hex strings - split, [Convert]::ToInt32, [char], join - and
+# the build VM's antivirus refused to load the whole script (ScriptContainedMaliciousContent). That
+# shape is how obfuscated scripts hide text, which is the likely reason; it was not isolated, because
+# the same draft also started git through a raw ProcessStartInfo, and neither is used now.
+$ChangelogPalette = @(
+    [pscustomobject]@{ Icon = '✨'; Means = 'new capability' },
+    [pscustomobject]@{ Icon = '🐛'; Means = 'fix' },
+    [pscustomobject]@{ Icon = '🔧'; Means = 'behaviour or configuration change' },
+    [pscustomobject]@{ Icon = '🔒'; Means = 'security or permissions' },
+    [pscustomobject]@{ Icon = '🗑️'; Means = 'removal or deprecation' },
+    [pscustomobject]@{ Icon = '💥'; Means = 'breaking, or the reader must act' },
+    [pscustomobject]@{ Icon = '📝'; Means = 'documentation' },
+    [pscustomobject]@{ Icon = '✅'; Means = 'tests and the gate' },
+    [pscustomobject]@{ Icon = '📦'; Means = 'packaging, installer, release pipeline' },
+    [pscustomobject]@{ Icon = '⚡'; Means = 'performance' },
+    [pscustomobject]@{ Icon = '♻️'; Means = 'refactor with no behaviour change' },
+    [pscustomobject]@{ Icon = '⬆️'; Means = 'dependency move' }
+)
+# Keep a Changelog's groups, in the order that format fixes them; each at most once in a section.
+$ChangelogGroups = @('Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Security')
+# The longest a headline may be, its full stop included. BrowserAI's budget, CHOSEN and not measured:
+# about the width of the bold line a reader scans on a release page, and short enough that a headline
+# cannot become the entry.
+$HeadlineBudget = 100
+# How many of its headline's opening words an entry's detail may repeat. An entry about a named thing
+# opens with that name; five words in a row is the headline said twice.
+$RestatementBudget = 4
+# The eight characters a person typing into a text box does not produce, refused in everything the
+# release page shows - the preamble, every headline, the legend and the body's own words. A backticked
+# code span is exempt: it quotes something that exists.
+# Written as [char] numbers, never as themselves: PowerShell's parser reads a curly quote as a quote and
+# a dash as a hyphen, so the characters cannot sit in this file's own string literals.
+$UntypedCharacters = @(
+    [pscustomobject]@{ Character = [char]0x2014; Says = 'an em dash (U+2014); write a hyphen, a comma or two sentences' },
+    [pscustomobject]@{ Character = [char]0x2013; Says = 'an en dash (U+2013); write a hyphen or the word "to"' },
+    [pscustomobject]@{ Character = [char]0x2018; Says = 'a curly opening quote (U+2018); write a straight apostrophe' },
+    [pscustomobject]@{ Character = [char]0x2019; Says = 'a curly closing quote (U+2019); write a straight apostrophe' },
+    [pscustomobject]@{ Character = [char]0x201C; Says = 'a curly opening double quote (U+201C); write a straight double quote' },
+    [pscustomobject]@{ Character = [char]0x201D; Says = 'a curly closing double quote (U+201D); write a straight double quote' },
+    [pscustomobject]@{ Character = [char]0x2026; Says = 'an ellipsis character (U+2026); write three full stops' },
+    [pscustomobject]@{ Character = [char]0x00A0; Says = 'a non-breaking space (U+00A0); write an ordinary space' }
+)
+# Where -CheckChangelog writes the body it would publish.
+$ChangelogCheckDirectory = 'changelog-check'
 
 # CERT_E_UNTRUSTEDROOT, 0x800B0109. The certificate is SELF-SIGNED (CN=OutlookAI), so WinVerifyTrust
 # ends a perfectly good signature in an untrusted root, and the shipped updater accepts exactly that
@@ -395,11 +474,24 @@ function Get-UnreleasedNotes {
     return ''
 }
 
-# Notes GitHub would refuse as a release body. Publishing refuses them; a dry run notes it and goes on.
+# A body GitHub would refuse. New-ReleaseBody has already dropped the per-entry links to get under the
+# limit, so this is a release whose HEADLINES alone do not fit. Publishing refuses it; a dry run notes
+# it and goes on.
 function Get-NotesLengthVerdict {
     param([string] $Notes, [int] $Limit, [bool] $Publishing)
     if ($Notes.Length -le $Limit) { return [pscustomobject]@{ Problem = $null; Note = $null } }
-    $text = "the release notes are $($Notes.Length) characters, and GitHub refuses a release body over $Limit ('body is too long'). gh release create would fail after the stamp commit had been pushed. Shorten the Unreleased section, or decide how a release body should carry notes this long."
+    $text = "the release body is $($Notes.Length) characters with every per-entry link dropped, and GitHub refuses a release body over $Limit ('body is too long'). gh release create would fail after the stamp commit had been pushed. Release before the section grows this large, or shorten its headlines."
+    if ($Publishing) { return [pscustomobject]@{ Problem = $text; Note = $null } }
+    return [pscustomobject]@{ Problem = $null; Note = $text + ' -Execute would refuse; the dry run goes on.' }
+}
+
+# A release page opens with the section's preamble - the prose above its first group, written when the
+# release is cut, for somebody who has never seen OutlookAI. Publishing refuses a section without one; a
+# dry run notes it and goes on.
+function Get-PreambleVerdict {
+    param([string] $Preamble, [bool] $Publishing)
+    if ($Preamble -and $Preamble.Trim()) { return [pscustomobject]@{ Problem = $null; Note = $null } }
+    $text = "the Unreleased section has no preamble, so the release page would open with its first entry. Write a few short paragraphs above its first group - what OutlookAI is and what this release changes, for somebody who has never seen it (AGENTS.md, Changelog)."
     if ($Publishing) { return [pscustomobject]@{ Problem = $text; Note = $null } }
     return [pscustomobject]@{ Problem = $null; Note = $text + ' -Execute would refuse; the dry run goes on.' }
 }
@@ -424,6 +516,378 @@ function Test-StampDiff {
     if ($lines.Count -ne 1) { return "the stamp commit changes $($lines.Count) file(s); it must change CHANGELOG.md alone." }
     if ($lines[0] -notmatch '^2\t0\tCHANGELOG\.md$') { return "the stamp commit's change is '$($lines[0])'; it must be two lines added to CHANGELOG.md and none removed." }
     return $null
+}
+
+# ---------------------------------------------------------------------------------------------
+# THE CHANGELOG AND THE RELEASE BODY (Q123) - BrowserAI's system, ported
+# ---------------------------------------------------------------------------------------------
+# CHANGELOG.md is the record: every entry an icon, a bold one-sentence headline and the whole of what
+# happened. The GitHub release body is MADE from it and is not it: the section's preamble, each entry's
+# icon and headline with a "read more" link to that entry's own lines in the tagged file, the legend,
+# and a link to the whole section. A line range points AT the record instead of copying it, so the body
+# stays a page however much a release holds - BrowserAI measured its 1.0.0 at 41,288 characters linked,
+# where the same section folded into the body was 288,437.
+
+# The text with LF line ends, so line i of its split is line i+1 of the file whatever its endings.
+function ConvertTo-LfText {
+    param([string] $Text)
+    return ($Text -replace "`r`n", "`n")
+}
+
+# The legend: the last block above the first "## " heading in which every line is a table row - a block
+# and not a line scan, because the prose above it may mention a pipe. $null when there is none. Rows are
+# the body rows' cells, Pairs the icon-and-meaning pairs in reading order, Table the block as written.
+function Get-ChangelogLegend {
+    param([string] $ChangelogText)
+    $text = ConvertTo-LfText $ChangelogText
+    $first = [regex]::Match($text, '(?m)^## ')
+    $head = $text
+    if ($first.Success) { $head = $text.Substring(0, $first.Index) }
+    $block = $null
+    foreach ($paragraph in ($head -split "`n`n")) {
+        $rows = @(($paragraph -split "`n") | Where-Object { $_.Trim().Length -gt 0 })
+        $prose = @($rows | Where-Object { -not $_.TrimStart().StartsWith('|') })
+        if ($rows.Count -ge 3 -and $prose.Count -eq 0) { $block = $rows }
+    }
+    if ($null -eq $block) { return $null }
+    $cells = New-Object System.Collections.ArrayList
+    $pairs = New-Object System.Collections.ArrayList
+    foreach ($row in @($block | Select-Object -Skip 2)) {
+        $c = @($row.Trim().Trim('|').Split('|') | ForEach-Object { $_.Trim() })
+        $null = $cells.Add($c)
+        for ($i = 0; $i + 1 -lt $c.Count; $i += 2) {
+            if ($c[$i]) { $null = $pairs.Add($c[$i] + ' ' + $c[$i + 1]) }
+        }
+    }
+    return [pscustomobject]@{ Table = (@($block | ForEach-Object { $_.Trim() }) -join "`n"); Rows = $cells.ToArray(); Pairs = $pairs.ToArray() }
+}
+
+# What is wrong with the legend: nothing when it is the approved palette, in its order, as a table of two
+# icon-and-meaning pairs per row - six rows for the twelve. The body ends with this table as written.
+function Get-LegendProblems {
+    param([string] $ChangelogText)
+    $legend = Get-ChangelogLegend $ChangelogText
+    if ($null -eq $legend) {
+        return @("CHANGELOG.md has no icon legend above its first '## ' heading: a Markdown table - a heading row, a delimiter row and one row per two icons - which every release body ends with.")
+    }
+    $problems = @()
+    $expected = @($ChangelogPalette | ForEach-Object { $_.Icon + ' ' + $_.Means }) -join ' | '
+    $published = @($legend.Pairs) -join ' | '
+    if (-not [string]::Equals($expected, $published, [StringComparison]::Ordinal)) {
+        $problems += "CHANGELOG.md's legend is not the approved palette in its order (`$ChangelogPalette in Tools/Publish-Release.ps1). It lists: $published"
+    }
+    $rows = @($legend.Rows)
+    $short = @($rows | Where-Object { @($_).Count -ne 4 })
+    if ($rows.Count -ne 6 -or $short.Count -gt 0) {
+        $problems += "CHANGELOG.md's legend is not six rows of two icon-and-meaning pairs each."
+    }
+    return $problems
+}
+
+# One section of the changelog, read the way a release body is made from it: its heading, the prose above
+# its first group (the preamble), its groups in order, and every entry with its first and last LINE
+# NUMBER IN THE FILE. An entry is a line starting "- " and every following line that is blank or
+# indented, and it ends on its last line that carries text, so a range never highlights the blank line
+# before the next entry. An entry above the first group, and a paragraph under a group that is not an
+# entry, are Problems: the body is made group by group, and has no place for either. $null when no line
+# matches $HeadingPattern.
+function Read-ChangelogSection {
+    param([string] $ChangelogText, [string] $HeadingPattern)
+    $lines = (ConvertTo-LfText $ChangelogText) -split "`n"
+    $start = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match $HeadingPattern) { $start = $i; break }
+    }
+    if ($start -lt 0) { return $null }
+    $preamble = New-Object System.Collections.ArrayList
+    $groups = New-Object System.Collections.ArrayList
+    $entries = New-Object System.Collections.ArrayList
+    $problems = New-Object System.Collections.ArrayList
+    $group = $null
+    $entry = $null
+    for ($i = $start + 1; $i -le $lines.Count; $i++) {
+        $line = $null
+        if ($i -lt $lines.Count) { $line = $lines[$i] }
+        $isEnd = ($null -eq $line) -or $line.StartsWith('## ')
+        $groupMatch = $null
+        if (-not $isEnd) { $groupMatch = [regex]::Match($line, '^### +(\S.*?)\s*$') }
+        $isGroup = ($null -ne $groupMatch) -and $groupMatch.Success
+        $isEntry = (-not $isEnd) -and ($line.StartsWith('- ') -or $line.StartsWith("-`t"))
+        $continues = ($null -ne $entry) -and -not ($isEnd -or $isGroup -or $isEntry)
+        if ($continues -and ($line.Trim().Length -eq 0 -or $line.StartsWith(' ') -or $line.StartsWith("`t"))) {
+            $null = $entry.Lines.Add($line)
+            if ($line.Trim().Length -gt 0) { $entry.Last = $i + 1 }
+            continue
+        }
+        if ($null -ne $entry) {
+            if ($null -eq $entry.Group) {
+                $null = $problems.Add("CHANGELOG.md:$($entry.First): an entry above the first group heading of '$($lines[$start])'. Every entry sits under one of $($ChangelogGroups -join ', ').")
+            }
+            $null = $entries.Add($entry)
+            $entry = $null
+        }
+        if ($isEnd) { break }
+        if ($isGroup) {
+            $group = $groupMatch.Groups[1].Value
+            $null = $groups.Add([pscustomobject]@{ Name = $group; Line = $i + 1 })
+            continue
+        }
+        if ($isEntry) {
+            $entry = [pscustomobject]@{ First = $i + 1; Last = $i + 1; Group = $group; Lines = (New-Object System.Collections.ArrayList) }
+            $null = $entry.Lines.Add($line)
+            continue
+        }
+        if ($null -eq $group) {
+            $null = $preamble.Add($line)
+            continue
+        }
+        if ($line.Trim().Length -gt 0) {
+            $null = $problems.Add("CHANGELOG.md:$($i + 1): a paragraph under '### $group' that is not an entry. A group holds entries and nothing else; prose belongs in the preamble, above the first group.")
+        }
+    }
+    return [pscustomobject]@{
+        Heading     = $lines[$start]
+        HeadingLine = $start + 1
+        Preamble    = ((@($preamble.ToArray()) -join "`n").Trim())
+        Groups      = $groups.ToArray()
+        Entries     = $entries.ToArray()
+        Problems    = $problems.ToArray()
+    }
+}
+
+# An entry's lines as one line with its whitespace collapsed: the file wraps an entry, and its shape is
+# read whole.
+function Join-ChangelogEntry {
+    param($Entry)
+    return ((@($Entry.Lines) -join ' ') -replace '\s+', ' ').Trim()
+}
+
+# An entry's icon, headline and detail, or $null when it is not "- <icon> **Headline.** the detail".
+function Split-ChangelogEntry {
+    param([string] $Joined)
+    $m = [regex]::Match($Joined, '^-\s+(?<icon>\S+)\s+\*\*(?<headline>.+?)\*\*\s*(?<detail>.*)$')
+    if (-not $m.Success) { return $null }
+    return [pscustomobject]@{ Icon = $m.Groups['icon'].Value; Headline = $m.Groups['headline'].Value.Trim(); Detail = $m.Groups['detail'].Value }
+}
+
+# How many words in a row a detail's opening shares with its headline's, case and markup aside.
+function Get-SharedOpeningWords {
+    param([string] $Headline, [string] $Detail)
+    $left = @([regex]::Matches(($Headline -replace '[`*]', ''), "[A-Za-z0-9']+") | ForEach-Object { $_.Value.ToUpperInvariant() })
+    $right = @([regex]::Matches(($Detail -replace '[`*]', ''), "[A-Za-z0-9']+") | ForEach-Object { $_.Value.ToUpperInvariant() })
+    $n = 0
+    while ($n -lt $left.Count -and $n -lt $right.Count -and [string]::Equals($left[$n], $right[$n], [StringComparison]::Ordinal)) { $n++ }
+    return $n
+}
+
+# What is wrong with one entry, given its joined text and the line it starts on. The icon is compared
+# ORDINALLY: a culture comparison ignores the variation selector three of the icons carry.
+function Get-EntryProblems {
+    param([string] $Joined, [int] $Line)
+    $where = "CHANGELOG.md:$Line"
+    $excerpt = $Joined
+    if ($excerpt.Length -gt 90) { $excerpt = $excerpt.Substring(0, 90) + '...' }
+    $e = Split-ChangelogEntry $Joined
+    if ($null -eq $e) { return @("${where}: not in the shape '- <icon> **One-sentence headline.** the detail' - $excerpt") }
+    $problems = @()
+    $known = @($ChangelogPalette | Where-Object { [string]::Equals($_.Icon, $e.Icon, [StringComparison]::Ordinal) })
+    if ($known.Count -eq 0) { $problems += "${where}: '$($e.Icon)' is not one of the legend's twelve icons - $excerpt" }
+    $h = $e.Headline
+    if (-not $h.EndsWith('.')) { $problems += "${where}: the headline does not end in a full stop - $h" }
+    elseif ($h.Substring(0, $h.Length - 1) -match '[.!?]\s') { $problems += "${where}: the headline is more than one sentence - $h" }
+    if ($h.Length -gt $HeadlineBudget) { $problems += "${where}: the headline is $($h.Length) characters, over the $HeadlineBudget a headline may be - $h" }
+    $shared = Get-SharedOpeningWords $h $e.Detail
+    if ($shared -gt $RestatementBudget) { $problems += "${where}: the detail opens with $shared of the headline's own words in a row, which is the headline said twice - $excerpt" }
+    return $problems
+}
+
+# Group headings that are not Keep a Changelog's, appear twice, or run out of its order.
+function Get-GroupProblems {
+    param($Groups, [string] $Heading)
+    $problems = @()
+    $seen = New-Object System.Collections.ArrayList
+    foreach ($g in @($Groups)) {
+        $name = [string]$g.Name
+        $index = [array]::IndexOf($ChangelogGroups, $name)
+        if ($index -lt 0) { $problems += "CHANGELOG.md:$($g.Line): '### $name' is not a Keep a Changelog group: $($ChangelogGroups -join ', ')."; continue }
+        if ($seen.Contains($name)) { $problems += "CHANGELOG.md:$($g.Line): '### $name' appears twice under '$Heading'; its entries belong in one list."; continue }
+        if ($seen.Count -gt 0) {
+            $previous = [string]$seen[$seen.Count - 1]
+            if ($index -lt [array]::IndexOf($ChangelogGroups, $previous)) { $problems += "CHANGELOG.md:$($g.Line): '### $name' comes after '### $previous', out of Keep a Changelog's order: $($ChangelogGroups -join ', ')." }
+        }
+        $null = $seen.Add($name)
+    }
+    return $problems
+}
+
+# Every character of $UntypedCharacters in $Text, outside its code spans, as sentences naming $Where.
+function Get-UntypedCharacterProblems {
+    param([string] $Text, [string] $Where)
+    $plain = [regex]::Replace($Text, '`[^`]*`', '')
+    $problems = @()
+    foreach ($u in $UntypedCharacters) {
+        if ($plain.IndexOf([string]$u.Character, [StringComparison]::Ordinal) -ge 0) { $problems += "$Where carries $($u.Says)." }
+    }
+    return $problems
+}
+
+# Everything step 3 refuses about the Unreleased section, as sentences, with what it found: the number of
+# entries and the preamble. The legend, the groups and every entry are read; the preamble and every
+# headline are what the release page shows, so they are held to the untyped-character rule too. A
+# detail never reaches the page, and is not.
+function Test-UnreleasedSection {
+    param([string] $ChangelogText)
+    $problems = @(Get-LegendProblems $ChangelogText)
+    $section = Read-ChangelogSection $ChangelogText '^## Unreleased\s*$'
+    if ($null -eq $section) {
+        return [pscustomobject]@{ Problems = @($problems + "CHANGELOG.md has no '## Unreleased' heading."); Entries = 0; Preamble = '' }
+    }
+    $problems += @($section.Problems)
+    $problems += @(Get-GroupProblems $section.Groups $section.Heading)
+    foreach ($e in @($section.Entries)) {
+        $joined = Join-ChangelogEntry $e
+        $problems += @(Get-EntryProblems -Joined $joined -Line $e.First)
+        $parts = Split-ChangelogEntry $joined
+        if ($null -ne $parts) { $problems += @(Get-UntypedCharacterProblems $parts.Headline "The headline at CHANGELOG.md:$($e.First)") }
+    }
+    if ($section.Preamble) { $problems += @(Get-UntypedCharacterProblems $section.Preamble "The Unreleased section's preamble") }
+    return [pscustomobject]@{ Problems = $problems; Entries = @($section.Entries).Count; Preamble = $section.Preamble }
+}
+
+# The anchor GitHub gives a heading, by the rule BrowserAI's link checker applies: code spans lose their
+# angle brackets, a link becomes its text, inline HTML goes, code and emphasis markers go; then letters,
+# digits, hyphens and underscores stay in lower case, a space becomes a hyphen, and the rest goes.
+function Get-GitHubAnchor {
+    param([string] $Heading)
+    $text = $Heading
+    $spans = [regex]::Matches($text, '`([^`]*)`')
+    for ($k = $spans.Count - 1; $k -ge 0; $k--) {
+        $s = $spans[$k]
+        $text = $text.Substring(0, $s.Index) + ($s.Groups[1].Value -replace '[<>]', '') + $text.Substring($s.Index + $s.Length)
+    }
+    $text = [regex]::Replace($text, '\[([^\]]*)\]\([^)]*\)', '$1')
+    $text = [regex]::Replace($text, '<[^>]*>', '')
+    $text = [regex]::Replace($text, '[`*]', '')
+    $slug = New-Object System.Text.StringBuilder
+    foreach ($ch in $text.Trim().ToCharArray()) {
+        if ([char]::IsLetterOrDigit($ch) -or $ch -eq [char]'-' -or $ch -eq [char]'_') { $null = $slug.Append([char]::ToLowerInvariant($ch)) }
+        elseif ($ch -eq [char]' ' -or $ch -eq [char]"`t") { $null = $slug.Append('-') }
+        else {
+            $category = [System.Globalization.CharUnicodeInfo]::GetUnicodeCategory($ch)
+            if ($category -eq [System.Globalization.UnicodeCategory]::NonSpacingMark -or
+                $category -eq [System.Globalization.UnicodeCategory]::SpacingCombiningMark -or
+                $category -eq [System.Globalization.UnicodeCategory]::EnclosingMark) { $null = $slug.Append($ch) }
+        }
+    }
+    return $slug.ToString()
+}
+
+# The GitHub release body for $Version, made from the STAMPED changelog - the text the stamp commit
+# carries and the tag will point at - so every line range is true of the file a reader opens. ONE shape,
+# BrowserAI's: the preamble, then each group's entries as icon, headline and a "read more" link to that
+# entry's own lines (CHANGELOG.md?plain=1#L<first>-L<last>, the source view, which highlights exactly
+# those lines), then the legend and a link to the whole section. Over $Limit the links go and the
+# headlines stay - a fallback for a release several times the size of any either project has cut - and
+# Shape says which body this is.
+function New-ReleaseBody {
+    param([string] $StampedText, [string] $Version, [string] $RepositoryUrl, [int] $Limit)
+    $result = [pscustomobject]@{ Body = ''; Shape = ''; Entries = 0; Groups = 0; LinkedLength = 0; Problems = @() }
+    $section = Read-ChangelogSection $StampedText ('^## v' + [regex]::Escape($Version) + ' - ')
+    if ($null -eq $section) {
+        $result.Problems = @("the stamped CHANGELOG.md has no '## v$Version - ' section to make a release body from.")
+        return $result
+    }
+    $problems = @($section.Problems)
+    $legend = Get-ChangelogLegend $StampedText
+    if ($null -eq $legend) { $problems += 'CHANGELOG.md has no icon legend table for the release body to end with.' }
+    $items = New-Object System.Collections.ArrayList
+    foreach ($e in @($section.Entries)) {
+        $parts = Split-ChangelogEntry (Join-ChangelogEntry $e)
+        if ($null -eq $parts) { $problems += "CHANGELOG.md:$($e.First): not in the shape '- <icon> **One-sentence headline.** the detail'."; continue }
+        $null = $items.Add([pscustomobject]@{ Group = $e.Group; Icon = $parts.Icon; Headline = $parts.Headline; First = $e.First; Last = $e.Last })
+    }
+    if ($problems.Count -gt 0) {
+        $result.Problems = $problems
+        return $result
+    }
+    $file = $RepositoryUrl + '/blob/v' + $Version + '/CHANGELOG.md'
+    $anchor = Get-GitHubAnchor ($section.Heading -replace '^##\s+', '')
+    $paragraphs = @()
+    if ($section.Preamble) {
+        $paragraphs = @(($section.Preamble -split "\n[ \t]*\n") | ForEach-Object { ($_ -replace '\s+', ' ').Trim() } | Where-Object { $_.Length -gt 0 })
+    }
+    $used = New-Object System.Collections.ArrayList
+    foreach ($g in @($section.Groups)) {
+        $name = [string]$g.Name
+        if ($used.Contains($name)) { continue }
+        if (@($items | Where-Object { [string]::Equals([string]$_.Group, $name, [StringComparison]::Ordinal) }).Count -gt 0) { $null = $used.Add($name) }
+    }
+    $bodies = @{}
+    foreach ($linked in @($true, $false)) {
+        $out = New-Object System.Collections.ArrayList
+        foreach ($p in $paragraphs) { $null = $out.Add($p); $null = $out.Add('') }
+        foreach ($name in $used) {
+            $null = $out.Add('### ' + $name)
+            $null = $out.Add('')
+            foreach ($it in @($items | Where-Object { [string]::Equals([string]$_.Group, $name, [StringComparison]::Ordinal) })) {
+                $line = '- ' + $it.Icon + ' **' + $it.Headline + '**'
+                if ($linked) { $line += ' [read more](' + $file + '?plain=1#L' + $it.First + '-L' + $it.Last + ')' }
+                $null = $out.Add($line)
+            }
+            $null = $out.Add('')
+        }
+        $null = $out.Add('---')
+        $null = $out.Add('')
+        $null = $out.Add($legend.Table)
+        $null = $out.Add('')
+        $null = $out.Add('The full changelog for this release: [CHANGELOG.md](' + $file + '#' + $anchor + ')')
+        $bodies[$linked] = ((@($out.ToArray()) -join "`n") -replace "`n{3,}", "`n`n").Trim() + "`n"
+    }
+    $result.Body = $bodies[$true]
+    $result.Shape = 'linked'
+    if ($result.Body.Length -gt $Limit) {
+        $result.Body = $bodies[$false]
+        $result.Shape = 'headlines'
+    }
+    $result.Entries = $items.Count
+    $result.Groups = $used.Count
+    $result.LinkedLength = $bodies[$true].Length
+    return $result
+}
+
+# Everything from the first released heading ("## v") to the end of the file: the part of the changelog
+# nothing may change.
+function Get-ReleasedChangelog {
+    param([string] $ChangelogText)
+    $text = ConvertTo-LfText $ChangelogText
+    $m = [regex]::Match($text, '(?m)^## v')
+    if (-not $m.Success) { return '' }
+    return $text.Substring($m.Index).TrimEnd()
+}
+
+# $null when the released sections are exactly what the latest release's tag carries, and otherwise the
+# section where they part. BrowserAI seals each released section by length and SHA-256 in a table; here
+# every release's stamp commit is the seal on everything below it, so the table is the tags themselves.
+function Test-ReleasedSectionsUnchanged {
+    param([string] $ChangelogText, [string] $TaggedText, [string] $Tag)
+    $now = Get-ReleasedChangelog $ChangelogText
+    $then = Get-ReleasedChangelog $TaggedText
+    if ([string]::Equals($now, $then, [StringComparison]::Ordinal)) { return $null }
+    $a = @($now -split '(?m)^(?=## )')
+    $b = @($then -split '(?m)^(?=## )')
+    $where = ''
+    for ($k = 0; $k -lt [Math]::Max($a.Count, $b.Count); $k++) {
+        $x = ''
+        $y = ''
+        if ($k -lt $a.Count) { $x = $a[$k].TrimEnd() }
+        if ($k -lt $b.Count) { $y = $b[$k].TrimEnd() }
+        if (-not [string]::Equals($x, $y, [StringComparison]::Ordinal)) {
+            $where = ($x -split "`n")[0]
+            if (-not $where) { $where = ($y -split "`n")[0] }
+            break
+        }
+    }
+    return "CHANGELOG.md's released sections differ from what $Tag carries, from '$where' on. A released section is a record and is never rewritten: put it back as $Tag has it (git diff $Tag -- CHANGELOG.md)."
 }
 
 # owner/name from the origin URL, https or ssh.
@@ -596,6 +1060,103 @@ function Invoke-SelfTest {
     Test-Case 'no change at all is refused' $true ([string](Test-StampDiff @())).Contains('0 file(s)')
 
     Write-Host ''
+    Write-Host '== the changelog''s rules and the release body (Q123, BrowserAI''s system) =='
+    # Code points, not glyphs: a culture comparison ignores the variation selector three icons carry.
+    function Get-CodePointText([string] $Text) {
+        $points = @()
+        for ($n = 0; $n -lt $Text.Length; $n++) {
+            $point = [char]::ConvertToUtf32($Text, $n)
+            if ($point -gt 0xFFFF) { $n++ }
+            $points += ('{0:X}' -f $point)
+        }
+        return ($points -join ' ')
+    }
+    $palette = @($ChangelogPalette)
+    Test-Case 'the palette is twelve icons' 12 $palette.Count
+    Test-Case 'exactly these code points, in the approved order' '2728|1F41B|1F527|1F512|1F5D1 FE0F|1F4A5|1F4DD|2705|1F4E6|26A1|267B FE0F|2B06 FE0F' (@($palette | ForEach-Object { Get-CodePointText $_.Icon }) -join '|')
+    Test-Case 'each with its meaning, the first and the last' 'new capability|dependency move' ($palette[0].Means + '|' + $palette[11].Means)
+    $icon = @{}
+    foreach ($p in $palette) { $icon[$p.Means] = $p.Icon }
+    $newIcon = $icon['new capability']
+    $fixIcon = $icon['fix']
+    $testIcon = $icon['tests and the gate']
+    $legendLines = @('| Icon | Meaning | Icon | Meaning |', '|---|---|---|---|')
+    for ($k = 0; $k -lt $palette.Count; $k += 2) { $legendLines += ('| ' + $palette[$k].Icon + ' | ' + $palette[$k].Means + ' | ' + $palette[$k + 1].Icon + ' | ' + $palette[$k + 1].Means + ' |') }
+    $legendText = $legendLines -join "`n"
+    $fixture = @('# Changelog', '', 'Prose above the legend that mentions a | pipe.', '', $legendText, '', '## Unreleased', '',
+        'This release does two things.', 'It wraps.', '', 'A second paragraph.', '',
+        '### Added', '', "- $newIcon **A new thing.**", '  The detail of it,', '  over two lines.', '',
+        "- $testIcon **A test of it.** Detail on the headline's own line.", '',
+        '### Fixed', '', "- $fixIcon **A fixed thing.**", '',
+        '## v1.0.0.1 - 2026-01-01', '', '- Older, in the old shape.', '') -join "`n"
+    $clean = Test-UnreleasedSection $fixture
+    Test-Case 'a changelog in the shape breaks no rule' '' (@($clean.Problems) -join ' | ')
+    Test-Case 'its entries are counted' 3 $clean.Entries
+    Test-Case 'and its preamble is the prose above the first group' "This release does two things.`nIt wraps.`n`nA second paragraph." $clean.Preamble
+    $broken = @(
+        @('an entry with no icon', "- $fixIcon **A fixed thing.**", '- **A fixed thing.**', 'not in the shape'),
+        @('an icon the palette does not have', "- $fixIcon **A fixed thing.**", '- 🎉 **A fixed thing.**', 'twelve icons'),
+        @('a headline nobody made bold', "- $fixIcon **A fixed thing.**", "- $fixIcon A fixed thing.", 'not in the shape'),
+        @('a headline of two sentences', "- $fixIcon **A fixed thing.**", "- $fixIcon **Two sentences. That is one too many.**", 'more than one sentence'),
+        @('a headline with no full stop', "- $fixIcon **A fixed thing.**", "- $fixIcon **A fixed thing**", 'full stop'),
+        @('a headline one character over budget', "- $fixIcon **A fixed thing.**", ("- $fixIcon **" + ('x' * $HeadlineBudget) + '.**'), 'over the 100'),
+        @('a detail that opens with its headline', "- $fixIcon **A fixed thing.**", "- $fixIcon **The packer's own asset list no longer disagrees.** The packer's own asset list no longer disagrees, because it is written once.", 'the headline said twice'),
+        @('a group Keep a Changelog does not have', '### Fixed', '### Improved', 'not a Keep a Changelog group'),
+        @('a group out of its order', '### Added', '### Security', 'out of Keep a Changelog''s order'),
+        @('the same group twice', "- $fixIcon **A fixed thing.**", "- $fixIcon **A fixed thing.**`n`n### Fixed`n`n- $fixIcon **Fixed again.**", 'appears twice'),
+        @('an entry above the first group', 'A second paragraph.', "A second paragraph.`n`n- $newIcon **Above every group.**", 'above the first group heading'),
+        @('a paragraph under a group', "  over two lines.`n", "  over two lines.`n`nA paragraph nobody indented.`n", 'a paragraph under'),
+        @('an em dash in a headline', '**A fixed thing.**', ('**A fixed ' + [char]0x2014 + ' thing.**'), 'an em dash'),
+        @('a curly quote in the preamble', 'It wraps.', ('It' + [char]0x2019 + 's wrapped.'), 'curly closing quote'),
+        @('a legend on one line', $legendText, (@($palette | ForEach-Object { $_.Icon + ' ' + $_.Means }) -join ' - '), 'no icon legend'),
+        @('a legend missing an icon', ('| ' + $palette[10].Icon + ' | ' + $palette[10].Means + ' | ' + $palette[11].Icon + ' | ' + $palette[11].Means + ' |'), ('| ' + $palette[10].Icon + ' | ' + $palette[10].Means + ' | | |'), 'not the approved palette')
+    )
+    foreach ($b in $broken) {
+        $found = @((Test-UnreleasedSection ($fixture.Replace($b[1], $b[2]))).Problems) -join ' | '
+        Test-Case "refused: $($b[0])" $true ($found.Contains($b[3]))
+    }
+    Test-Case 'a headline of exactly 100 characters is allowed' '' (@((Test-UnreleasedSection ($fixture.Replace('**A fixed thing.**', ('**' + ('x' * ($HeadlineBudget - 1)) + '.**')))).Problems) -join ' | ')
+    Test-Case 'a short subject shared with the headline is ordinary English' 3 (Get-SharedOpeningWords 'The upload set is data.' ' The upload set was a judgement until today.')
+    Test-Case 'a dash in a detail is not refused: no detail reaches the release page' '' (@((Test-UnreleasedSection ($fixture.Replace('  over two lines.', ('  over two lines ' + [char]0x2014 + ' and on.')))).Problems) -join ' | ')
+    Test-Case 'nor one inside a code span in a headline' '' (@((Test-UnreleasedSection ($fixture.Replace('**A fixed thing.**', ('**A fixed `a' + [char]0x2014 + 'b` thing.**')))).Problems) -join ' | ')
+    $emptied = "# Changelog`n`n$legendText`n`n## Unreleased`n`nA preamble alone.`n`n### Added`n`n## v1.0.0.1 - 2026-01-01`n`n- Older.`n"
+    Test-Case 'a preamble and a group heading with no entry under it is no entries' 0 (Test-UnreleasedSection $emptied).Entries
+    $v = Get-PreambleVerdict -Preamble '' -Publishing $true
+    Test-Case 'no preamble refuses to publish' $true ([string]$v.Problem).Contains('no preamble')
+    $v = Get-PreambleVerdict -Preamble '' -Publishing $false
+    Test-Case 'and a dry run of it goes on, noted' $true ($null -eq $v.Problem -and ([string]$v.Note).Contains('dry run goes on'))
+    $v = Get-PreambleVerdict -Preamble 'What this release is.' -Publishing $true
+    Test-Case 'a preamble may publish' $true ($null -eq $v.Problem -and $null -eq $v.Note)
+    $stampedFixture = Set-ChangelogStamp $fixture '1.2.3.4' '2026-10-03'
+    $made = New-ReleaseBody -StampedText $stampedFixture -Version '1.2.3.4' -RepositoryUrl 'https://github.com/o/r' -Limit 125000
+    $file = 'https://github.com/o/r/blob/v1.2.3.4/CHANGELOG.md'
+    $expectedBody = (@('This release does two things. It wraps.', '', 'A second paragraph.', '', '### Added', '',
+            ('- ' + $newIcon + ' **A new thing.** [read more](' + $file + '?plain=1#L25-L27)'),
+            ('- ' + $testIcon + ' **A test of it.** [read more](' + $file + '?plain=1#L29-L29)'),
+            '', '### Fixed', '',
+            ('- ' + $fixIcon + ' **A fixed thing.** [read more](' + $file + '?plain=1#L33-L33)'),
+            '', '---', '', $legendText, '',
+            ('The full changelog for this release: [CHANGELOG.md](' + $file + '#v1234---2026-10-03)')) -join "`n") + "`n"
+    Test-Case 'the body: preamble unwrapped, each headline with its own lines, the legend, the section' $expectedBody $made.Body
+    Test-Case 'the same, compared ordinally' $true ([string]::Equals($expectedBody, $made.Body, [StringComparison]::Ordinal))
+    Test-Case 'linked, three entries, two groups' 'linked 3 2' "$($made.Shape) $($made.Entries) $($made.Groups)"
+    $stampedLines = (ConvertTo-LfText $stampedFixture) -split "`n"
+    Test-Case 'a range starts on its entry''s first line' ('- ' + $newIcon + ' **A new thing.**') $stampedLines[24]
+    Test-Case 'and ends on its last line with text, not the blank after it' '  over two lines.' $stampedLines[26]
+    $tight = New-ReleaseBody -StampedText $stampedFixture -Version '1.2.3.4' -RepositoryUrl 'https://github.com/o/r' -Limit ($made.Body.Length - 1)
+    Test-Case 'a body over the limit drops every link and keeps the headlines' 'headlines False 3' "$($tight.Shape) $($tight.Body.Contains('[read more]')) $($tight.Entries)"
+    Test-Case 'and says how long the linked one would have been' $made.Body.Length $tight.LinkedLength
+    $none = New-ReleaseBody -StampedText $fixture -Version '9.9.9.9' -RepositoryUrl 'https://github.com/o/r' -Limit 125000
+    Test-Case 'a version with no section is refused, not given an empty body' $true ((@($none.Problems) -join ' ').Contains("no '## v9.9.9.9 - ' section") -and $none.Body -eq '')
+    Test-Case 'the anchor GitHub gives a release heading' 'v310325---2026-08-15' (Get-GitHubAnchor 'v3.1.0.325 - 2026-08-15')
+    Test-Case 'and one with a code span, a link and emphasis' 'a-x-link-b' (Get-GitHubAnchor 'A `<x>` [link](u) *b*')
+    Test-Case 'released sections as the tag has them pass' $true ($null -eq (Test-ReleasedSectionsUnchanged -ChangelogText $fixture -TaggedText $fixture -Tag 'v1.0.0.1'))
+    Test-Case 'a new entry under Unreleased is no released section' $true ($null -eq (Test-ReleasedSectionsUnchanged -ChangelogText ($fixture.Replace('### Fixed', "### Fixed`n`n- $fixIcon **Another.**")) -TaggedText $fixture -Tag 'v1.0.0.1'))
+    $rewritten = Test-ReleasedSectionsUnchanged -ChangelogText ($fixture.Replace('- Older, in the old shape.', '- Older, quietly reworded.')) -TaggedText $fixture -Tag 'v1.0.0.1'
+    Test-Case 'a released section rewritten is refused, by its heading' $true ([string]$rewritten).Contains("from '## v1.0.0.1 - 2026-01-01' on")
+    Test-Case 'and CRLF against LF is no rewrite' $true ($null -eq (Test-ReleasedSectionsUnchanged -ChangelogText ($fixture.Replace("`n", "`r`n")) -TaggedText $fixture -Tag 'v1.0.0.1'))
+
+    Write-Host ''
     Write-Host '== publishing =='
     Test-Case 'the repository from an https remote' 'SixFive7/OutlookAI' (Get-GitHubRepository 'https://github.com/SixFive7/OutlookAI.git')
     Test-Case 'from an ssh remote' 'SixFive7/OutlookAI' (Get-GitHubRepository 'git@github.com:SixFive7/OutlookAI.git')
@@ -654,11 +1215,29 @@ function Invoke-SelfTest {
     Write-Host '  SKIP D7 (c) itself: it needs Visual Studio, so it runs in a release, on the workstation (AGENTS.md).'
 
     Write-Host ''
+    Write-Host '== the wiring: this repository''s own CHANGELOG.md, held to the same rules =='
+    $realText = [System.IO.File]::ReadAllText((Join-Path $RepoRoot 'CHANGELOG.md'))
+    Test-Case 'its legend is the approved palette, as a table' '' (@(Get-LegendProblems $realText) -join ' | ')
+    $real = Test-UnreleasedSection $realText
+    Test-Case 'every Unreleased entry keeps the rules (-CheckChangelog lists any that do not)' '' (@($real.Problems) -join ' | ')
+    if ($real.Entries -gt 0) {
+        $realStamped = Set-ChangelogStamp $realText '0.0.0.0' '2000-01-01'
+        $realBody = New-ReleaseBody -StampedText $realStamped -Version '0.0.0.0' -RepositoryUrl 'https://github.com/SixFive7/OutlookAI' -Limit $ReleaseBodyLimit
+        Test-Case "a body made from its $($real.Entries) entries is linked, within GitHub's limit" 'linked' $realBody.Shape
+        $realLines = (ConvertTo-LfText $realStamped) -split "`n"
+        $ranges = @([regex]::Matches($realBody.Body, '\?plain=1#L(\d+)-L(\d+)\)'))
+        $astray = @($ranges | Where-Object { -not $realLines[[int]$_.Groups[1].Value - 1].StartsWith('- ') -or $realLines[[int]$_.Groups[2].Value - 1].Trim().Length -eq 0 })
+        Test-Case 'one range per entry, each from its entry''s first line to its last with text' "$($real.Entries) 0" "$($ranges.Count) $($astray.Count)"
+    }
+    else { Write-Host '  SKIP no entries under ## Unreleased, as right after a release - a release refuses that itself' }
+
+    Write-Host ''
     Write-Host "$($script:Checks) assertion(s), $($script:Failures.Count) failure(s)."
     Write-Host ''
     Write-Host 'NOT COVERED HERE. Only a run on the workstation can settle these - its dry run does, all but the last:'
     Write-Host '  * that gh, git, signtool, the certificate and the build VM answer as assumed'
     Write-Host '  * that D7 (c) passes against the Visual Studio installed there'
+    Write-Host '  * that GitHub renders release-notes.md as written, and highlights each read-more range on github.com'
     Write-Host '  * that the push and gh release create succeed - which only -Execute does'
     if ($script:Failures.Count -gt 0) {
         Write-Host ''
@@ -691,6 +1270,19 @@ function Invoke-Gh {
     return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Lines = $out; Text = (($out | Out-String).Trim()) }
 }
 
+# One file as a revision holds it, read as the UTF-8 it is - or $null when git cannot produce it. Not
+# through Invoke-Git: a PowerShell pipe decodes a program's output in the console's code page, and
+# CHANGELOG.md carries emoji and dashes that would arrive garbled and compare unequal to themselves.
+# Invoke-Logged hands git a FILE for its output, so the bytes land as git wrote them.
+function Get-GitFileText {
+    param([string] $Revision, [string] $Path, [string] $ScratchDirectory)
+    New-Item -ItemType Directory -Force -Path $ScratchDirectory | Out-Null
+    $stem = Join-Path $ScratchDirectory ('git-show-' + ($Revision -replace '[^A-Za-z0-9.]', '_'))
+    $r = Invoke-Logged -FilePath 'git' -ArgumentList @('-C', (Format-Argument $RepoRoot), 'show', ($Revision + ':' + $Path)) -LogStem $stem -TimeoutMinutes 2
+    if ($r.TimedOut -or $r.ExitCode -ne 0) { return $null }
+    return [System.IO.File]::ReadAllText($r.Out, (New-Object System.Text.UTF8Encoding($false))).TrimStart([char]0xFEFF)
+}
+
 function Resolve-ShellExe([string] $Edition) {
     if ($Edition -eq 'Desktop') {
         $p = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -718,10 +1310,65 @@ function Invoke-ScriptStep {
     return Invoke-Logged -FilePath $ShellExe -ArgumentList $argList -LogStem $LogStem -TimeoutMinutes $TimeoutMinutes -WorkingDirectory $RepoRoot
 }
 
+# -CheckChangelog: step 3's checks on the working tree's CHANGELOG.md, its released sections against the
+# newest release tag HEAD descends from, and the body the next release would get - written out, never
+# published. Version 0.0.0.0 stands in for the one a release derives: it changes the links' tag and
+# nothing else, and no line range depends on it.
+function Invoke-ChangelogCheck {
+    $path = Join-Path $RepoRoot 'CHANGELOG.md'
+    $text = [System.IO.File]::ReadAllText($path)
+    $check = Test-UnreleasedSection $text
+    $problems = @($check.Problems)
+    Write-Host "Tools/Publish-Release.ps1 -CheckChangelog: $path"
+    Write-Host "  $($check.Entries) entr(y/ies) under ## Unreleased"
+    if ($check.Entries -eq 0) { Write-Host '  NOTE no entries: a release refuses until there are some. Right after a release that is expected.' }
+    if ($check.Entries -gt 0 -and -not $check.Preamble) { Write-Host '  NOTE no preamble yet: a release with -Execute refuses until the section opens with one.' }
+    $tag = Invoke-Git -Arguments @('describe', '--tags', '--abbrev=0', '--match', 'v*', 'HEAD') -AllowFailure
+    if ($tag.ExitCode -eq 0 -and $tag.Text) {
+        $tagged = Get-GitFileText -Revision $tag.Text -Path 'CHANGELOG.md' -ScratchDirectory (Join-Path $WorkRoot $ChangelogCheckDirectory)
+        if ($null -eq $tagged) { $problems += "git could not read CHANGELOG.md at $($tag.Text)." }
+        else {
+            $moved = Test-ReleasedSectionsUnchanged -ChangelogText $text -TaggedText $tagged -Tag $tag.Text
+            if ($moved) { $problems += $moved } else { Write-Host "  the released sections are exactly what $($tag.Text) carries" }
+        }
+    }
+    else { Write-Host '  NOTE no release tag is reachable from HEAD, so the released sections were not compared with one.' }
+    if ($check.Entries -gt 0 -and $problems.Count -eq 0) {
+        $repository = $null
+        $remoteUrl = Invoke-Git -Arguments @('remote', 'get-url', $Remote) -AllowFailure
+        if ($remoteUrl.ExitCode -eq 0) { $repository = Get-GitHubRepository $remoteUrl.Text }
+        if (-not $repository) { $repository = 'SixFive7/OutlookAI' }
+        $version = '0.0.0.0'
+        $stamped = Set-ChangelogStamp -ChangelogText $text -Version $version -Date (Get-Date -Format 'yyyy-MM-dd')
+        $made = New-ReleaseBody -StampedText $stamped -Version $version -RepositoryUrl "https://github.com/$repository" -Limit $ReleaseBodyLimit
+        $problems += @($made.Problems)
+        if ($made.Body) {
+            $problems += @(Get-UntypedCharacterProblems $made.Body 'The release body')
+            $lengthVerdict = Get-NotesLengthVerdict -Notes $made.Body -Limit $ReleaseBodyLimit -Publishing $true
+            if ($lengthVerdict.Problem) { $problems += $lengthVerdict.Problem }
+            $directory = Join-Path $WorkRoot $ChangelogCheckDirectory
+            New-Item -ItemType Directory -Force -Path $directory | Out-Null
+            $bodyFile = Join-Path $directory 'release-body.md'
+            [System.IO.File]::WriteAllText($bodyFile, $made.Body, (New-Object System.Text.UTF8Encoding($false)))
+            Write-Host "  release body $($made.Shape.ToUpperInvariant()): $($made.Body.Length) characters of the $ReleaseBodyLimit GitHub accepts, $($made.Entries) entries in $($made.Groups) group(s) -> $bodyFile"
+            Write-Host "  (v$version stands in for the version a release derives; no line range depends on it)"
+        }
+    }
+    if ($problems.Count -gt 0) {
+        Write-Host ''
+        Write-Host "$($problems.Count) problem(s). AGENTS.md (Changelog) says what each rule is:"
+        foreach ($p in $problems) { Write-Host "  $p" }
+        return 1
+    }
+    Write-Host 'The changelog keeps every rule.'
+    return 0
+}
+
 # =============================================================================================
 # MAIN
 # =============================================================================================
 if ($SelfTest) { exit (Invoke-SelfTest) }
+if ($CheckChangelog) { exit (Invoke-ChangelogCheck) }
 
 $bumpProblem = Test-VersionBumpText $VersionBump
 if ($bumpProblem) { throw $bumpProblem }
@@ -805,15 +1452,49 @@ $changelogBytes = [System.IO.File]::ReadAllBytes($changelogPath)
 $changelogHasBom = ($changelogBytes.Length -ge 3 -and $changelogBytes[0] -eq 0xEF -and $changelogBytes[1] -eq 0xBB -and $changelogBytes[2] -eq 0xBF)
 $changelogText = [System.IO.File]::ReadAllText($changelogPath)
 $notes = Get-UnreleasedNotes $changelogText
-if ([string]::IsNullOrWhiteSpace($notes)) { throw "REFUSING: no entries under '## Unreleased' in CHANGELOG.md. Add release notes before creating a release." }
+# EMPTY MEANS NO ENTRIES, not no characters: a section holding nothing but its group headings, or only
+# a preamble, is what a changelog nobody wrote looks like.
+$check = Test-UnreleasedSection $changelogText
+if ($check.Entries -eq 0) { throw "REFUSING: no entries under '## Unreleased' in CHANGELOG.md. Add release notes before creating a release." }
+if (@($check.Problems).Count -gt 0) {
+    throw ("REFUSING: CHANGELOG.md breaks the changelog's rules (AGENTS.md, Changelog) in $(@($check.Problems).Count) place(s); pwsh -File Tools/Publish-Release.ps1 -CheckChangelog lists them without a release:`n  " + (@($check.Problems) -join "`n  "))
+}
+Say "  $($check.Entries) entr(y/ies) under ## Unreleased, every one an icon from the legend, a one-sentence headline and its detail, in Keep a Changelog's groups and order"
+$preambleVerdict = Get-PreambleVerdict -Preamble $check.Preamble -Publishing ([bool]$Execute)
+if ($preambleVerdict.Problem) { throw "REFUSING: $($preambleVerdict.Problem)" }
+if ($preambleVerdict.Note) { Say "  NOTE $($preambleVerdict.Note)" }
+if ($latestTag) {
+    $null = Invoke-Git -Arguments @('fetch', '--quiet', '--no-tags', $Remote, "+refs/tags/${latestTag}:refs/tags/${latestTag}")
+    $taggedChangelog = Get-GitFileText -Revision "refs/tags/$latestTag" -Path 'CHANGELOG.md' -ScratchDirectory $logDir
+    if ($null -eq $taggedChangelog) { throw "REFUSING: git could not read CHANGELOG.md at $latestTag, the latest release, so nothing shows its released sections are unchanged." }
+    $moved = Test-ReleasedSectionsUnchanged -ChangelogText $changelogText -TaggedText $taggedChangelog -Tag $latestTag
+    if ($moved) { throw "REFUSING: $moved" }
+    Say "  the released sections are exactly what $latestTag carries"
+}
+else { Say '  no release yet, so no released section to hold unchanged' }
+# THE STAMP IS WORKED OUT HERE, AND STEP 10 COMMITS THIS VERY TEXT: every line range in the body is a
+# line of the stamped file, and true of no other. The date is the day this run reads the notes - the
+# day of the cut - even when the run ends after midnight.
+$date = Get-Date -Format 'yyyy-MM-dd'
+$stampedText = Set-ChangelogStamp -ChangelogText $changelogText -Version $version -Date $date
+if ($null -eq $stampedText) { throw "CHANGELOG.md has no '## Unreleased' heading at the start of a line to stamp." }
+$made = New-ReleaseBody -StampedText $stampedText -Version $version -RepositoryUrl "https://github.com/$repository" -Limit $ReleaseBodyLimit
+if (@($made.Problems).Count -gt 0) { throw ("REFUSING: the release body cannot be made:`n  " + (@($made.Problems) -join "`n  ")) }
+$untyped = @(Get-UntypedCharacterProblems $made.Body 'The release body')
+if ($untyped.Count -gt 0) { throw ('REFUSING: ' + ($untyped -join ' ')) }
 $notesFile = Join-Path $outDir 'release-notes.md'
-[System.IO.File]::WriteAllText($notesFile, $notes, (New-Object System.Text.UTF8Encoding($false)))
-$noteEntries = @(($notes -split "`n") | Where-Object { $_ -match '^- ' }).Count
-Say "  $noteEntries entr(y/ies), $($notes.Length) characters -> $notesFile"
-$notesVerdict = Get-NotesLengthVerdict -Notes $notes -Limit $ReleaseBodyLimit -Publishing ([bool]$Execute)
+[System.IO.File]::WriteAllText($notesFile, $made.Body, (New-Object System.Text.UTF8Encoding($false)))
+if ($made.Shape -eq 'linked') {
+    Say "  release body LINKED: $($made.Body.Length) characters of the $ReleaseBodyLimit GitHub accepts; $($made.Entries) entries in $($made.Groups) group(s), each its headline and its lines in CHANGELOG.md at $tag -> $notesFile"
+}
+else {
+    Say "  NOTE the linked body would be $($made.LinkedLength) characters, over the $ReleaseBodyLimit GitHub accepts, so this one is HEADLINES ONLY: $($made.Body.Length) characters, $($made.Entries) entries, no per-entry links - the footer's link to the section is the only way into the detail -> $notesFile"
+}
+$notesVerdict = Get-NotesLengthVerdict -Notes $made.Body -Limit $ReleaseBodyLimit -Publishing ([bool]$Execute)
 if ($notesVerdict.Problem) { throw "REFUSING: $($notesVerdict.Problem)" }
 if ($notesVerdict.Note) { Say "  NOTE $($notesVerdict.Note)" }
 $record.notesCharacters = $notes.Length
+$record.releaseBody = [ordered]@{ shape = $made.Shape; characters = $made.Body.Length; linkedCharacters = $made.LinkedLength; limit = $ReleaseBodyLimit; entries = $made.Entries; groups = $made.Groups; preamble = [bool]$check.Preamble }
 
 # ---------------------------------------------------------------------------------------------
 Say ''
@@ -950,9 +1631,7 @@ Say '  exit 0: the whole non-live suite and every self-test passed'
 # ---------------------------------------------------------------------------------------------
 Say ''
 Say '== 10. The stamp commit - made, not pushed =='
-$date = Get-Date -Format 'yyyy-MM-dd'
-$stampedText = Set-ChangelogStamp -ChangelogText $changelogText -Version $version -Date $date
-if ($null -eq $stampedText) { throw "CHANGELOG.md has no '## Unreleased' heading at the start of a line to stamp." }
+# $stampedText and $date are step 3's: the release body was made from this very text.
 $stampedPath = Join-Path $outDir 'CHANGELOG.stamped.md'
 [System.IO.File]::WriteAllText($stampedPath, $stampedText, (New-Object System.Text.UTF8Encoding($changelogHasBom)))
 $blob = (Invoke-Git -Arguments @('hash-object', '-w', '--path=CHANGELOG.md', $stampedPath)).Text
@@ -975,8 +1654,13 @@ finally {
 $stampCommit = (Invoke-Git -Arguments @('commit-tree', $tree, '-p', $head, '-m', "Release $tag")).Text
 $diffProblem = Test-StampDiff -NumstatLines @((Invoke-Git -Arguments @('diff', '--numstat', $head, $stampCommit)).Lines)
 if ($diffProblem) { throw "REFUSING: $diffProblem" }
+# Read back: the release body's line ranges were computed from $stampedText and are true of no other text.
+$committedChangelog = Get-GitFileText -Revision $stampCommit -Path 'CHANGELOG.md' -ScratchDirectory $logDir
+if ($null -eq $committedChangelog -or -not [string]::Equals((ConvertTo-LfText $committedChangelog), (ConvertTo-LfText $stampedText), [StringComparison]::Ordinal)) {
+    throw "REFUSING: CHANGELOG.md in the stamp commit $stampCommit is not the text the release body's line ranges were computed from."
+}
 Say "  $stampCommit  Release $tag"
-Say "  parent $head; CHANGELOG.md +2 lines (## v$version - $date), nothing else"
+Say "  parent $head; CHANGELOG.md +2 lines (## v$version - $date), nothing else - read back, and the release body's line ranges are its lines"
 $record.stampCommit = $stampCommit
 
 $pushArgs = @('push', $Remote, "${stampCommit}:refs/heads/$ReleaseBranch")
