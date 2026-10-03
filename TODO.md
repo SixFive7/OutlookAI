@@ -1,5 +1,17 @@
 # TODO
 
+- [ ] **Find out why `LiveMoveArchiveTests.MoveChain` could not resolve the hub's new Archive folder
+  on a guest that was not restarted** (seen once, 2026-10-03, `OutlookAI-Indexed`; `QUESTIONS.md`
+  decision log, the indexed guest's first live runs, item 6). `archive_mail` created the hub's
+  Archive folder and the test's own verify session then read "NoDesignatedArchiveFolder"; the item
+  left in Archive failed five later tests' hub check. The run had staged the suite onto
+  `CP-17C`'s running Outlook - no graceful restart, no step 9a. Every run since through
+  `Testbed/host/Invoke-LiveTierOnGuest.ps1`, which always restarts, passed it (three of three). If a
+  user's long-running Outlook can hit the same, a second `archive_mail` could miss the folder the
+  first one made. Directions: (1) reproduce with a run that skips the restart; (2) re-read the
+  designation from a freshly opened store in the verify session; (3) read it in the product the way
+  the verify session does, after creating. Recommended: (1) first.
+
 - [ ] **Recognise ANOTHER server session's lifetime pin on the show-me path's `ActiveExplorer()`
   branch (D49, found 2026-10-03, not measured).** `EnsureVisibleExplorer` refuses to display an
   Explorer `ActiveExplorer()` hands back only when `ComposeSurface.IsPin` knows it, and the pin
@@ -12,11 +24,6 @@
   `ActiveExplorer()` ever returns a non-displayed Explorer; (2) if it does, recognise a pin by its
   window instead (`IOleWindow`, `IsWindowVisible`); (3) keep one pin per process, owned by the
   gateway rather than by a session. Recommended: (1) first - it is one probe on a guest.
-
-- [ ] **Run the PST half of Q74 C3 on the indexed guest.** `LiveDecodeVerifyTests.ShortDecodedId_OpensAsTheItemItself_OnAPstStore`
-  carries `Requires=SearchIndex`, so `OutlookAI-Unindexed`'s filter never selects it and the first
-  guest live runs (2026-10-03) could not confirm it. It needs `OutlookAI-Indexed`, which was busy with
-  Q99 that night.
 
 - [ ] **Let the count tripwire's census read a table date by its column spelling too.**
   `CensusTableRow.ReadUtc` still calls the one-argument `ComDateValue.FromTableValue`, which takes every

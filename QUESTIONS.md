@@ -367,6 +367,85 @@ spelling".** See the decision log below.
 
 ## Decision log
 
+### 2026-10-03, autonomous - the indexed guest's first live runs: sixteen failures were the tests, one the product
+
+**Primer.** The first full live run on `OutlookAI-Indexed` (d4e31fe, runbook 4.2e) failed 17 of 123
+tests. Thirteen stopped at "Store 'Corpus A' not found among 3 discovered index scopes", and four
+failed on their own. Sixteen were tests that had never met an indexed guest with a 160,000-item
+store, or an Office 2024 behaviour; the seventeenth found a product defect (item 5). Each is decided
+here, with three failures another agent saw on the same guest (item 6).
+
+**1. A store the discovery sample cannot reach.** The live tier found a store's index scope in a
+2000-row unordered sample of mail rows, then, for an address-named store the sample missed, by the
+mail addressed to it. The sample held 1,941 rows of another profile's 20,000-item store, 59 of the
+hub's, 1 of the bystander's and none of Corpus A's, and no address names Corpus A. *Options:* (a) add
+the index's own store-root listing as a third step - the listing the product's store map already
+reads - taking the one root of that name with anything indexed below it; (b) resolve the scope
+through the product's store map (Microsoft's store hash) in the fixture; (c) a bigger or ordered
+sample; (d) take Corpus A out of the indexed stores. **Decided: (a)** (`T2/LiveIndexScopes`,
+`T1/LiveIndexScopesTests`): it finds every store the index holds, names its failure, never guesses
+between two roots of one name, and refuses a root with nothing below it; (b) needs the COM store
+details and the hash inputs in a fixture that measures the index on its own, (c) only moves the
+cliff, and (d) would stop measuring the one store the latency bounds exist for. **Undo:** revert.
+
+**2. The fresh-mode frontier at the index's precision.** `LiveFreshModeTests` accepts an index hit
+only when the index frontier covers the send. The index served the hit with its frontier at
+16:02:34.0000000Z for a send at 16:02:34.3804579Z: it had indexed the arrival within the second, and
+keeps whole seconds. *Options:* (a) compare at whole seconds; (b) compare with the arrived item's own
+indexed time; (c) a fixed tolerance; (d) demand the live sweep win. **Decided: (a)** - it is the
+precision of the data; a frontier a whole second behind still fails. (b) needs a second query for the
+same answer, (c) is arbitrary, (d) would race a fast indexer. **Undo:** revert.
+
+**3. The pin release must not reconnect.** On Office LTSC 2024 closing the last visible window
+raises Quit (the D49 entry below), so in `LiveDisconnectRecoveryTests` the parked windows' close
+ended the pre-existing Outlook, and the step that releases its pin reconnected - into an Outlook
+shutting down (RPC_S_SERVER_UNAVAILABLE); against one already gone it would have STARTED Outlook.
+*Options:* (a) release the pin only on a session that still answers, and read the two RPC
+disconnect codes in that race as "already quitting"; (b) a gateway call that never connects; (c)
+catch every exception. **Decided: (a)**: the wait that follows still proves Outlook exited; (b) is
+product surface for one test, (c) would hide a real failure. **Undo:** revert.
+
+**4. The apostrophe test asserted the zero-row guard's old contract.** It demanded "matched NOTHING
+in the index" stay quiet whenever the merged answer was non-empty. Gap G5 changed the product on
+purpose to judge the INDEX tier's own rows (`T1/SearchCoverageClaimTests`), and no indexed hub had run
+the test since; on this guest the folder, created a second earlier, was new to the index and the
+guard said so. *Options:* (a) hold the test to G5 - flag and sentence agree, an index row for the
+item keeps the guard quiet, an unindexed hub never trips it; (b) revert G5; (c) wait for the index to
+reach the folder, then demand silence; (d) drop the assertion. **Decided: (a)**; (b) would undo a
+decision for a stale test, (c) is the stronger proof of the escaping and is left as a possible
+follow-up, (d) would be loosening. **Undo:** revert.
+
+**5. A folder's own index row came back as a search hit - a product fix.** `search` on the hub
+with no query returned 100 hits for a store of 68 items. Counted by store, tier, folder and item
+class (two runs): 67 mail items, 12 contact cards and 21 rows of `System.Kind = folder` - one for
+every folder of the store, its root, Calendar, Quick Step Settings and the emptied subfolders in
+Deleted Items included - undated, with no item segment in their URL, and nothing a caller can open.
+Gap B3 dropped the kind predicate under a mapi scope on purpose, so an appointment or a contact card
+is admitted as over-return a caller can see; a folder was never meant to be a hit (the overnight
+review recorded folder rows as rows "no search returns"). *Options:* (a) drop a row that is of kind
+`folder` AND addresses no item (no EntryID decoded from its URL) in the index tier's admission;
+(b) drop every message-level row whose URL addresses no item, on the URL alone; (c) put a kind
+predicate back under a scope; (d) leave it, and count only items in the test. **Decided: (a)**
+(`IndexRowFilter.IsFolderRow`, T1 `IndexRowFilterTests`): both halves are required, so an item is
+never taken for a folder on its kind and a zipped-folder attachment stays an attachment; (b) would
+also drop the synthetic rows a large part of T1 builds its searches from and rests on a decode the
+product never needed for admission, (c) would undo B3, (d) would hide a defect users see. **Undo:**
+revert the commit.
+
+**6. Three failures another agent saw on this guest, not reproduced under the procedure.** A
+folder-path run from `CP-17C` (coordinator heads-up) failed `LiveMoveArchiveTests.MoveChain`
+("hub archive resolution failed after archiving: NoDesignatedArchiveFolder", which left an item in
+the hub's Archive and failed five later tests' hub check), `LiveSweepScopeTests.ControlledCorpus`
+(its self-sent mail never arrived through the mail sink) and the apostrophe test (item 4). That run
+staged the suite onto the checkpoint's running Outlook: no graceful restart, no step 9a or 9a-ii.
+Here MoveChain passed in both full runs and in a narrowed run that restarted the guest but skipped
+9a and 9a-ii; ControlledCorpus passed in both full runs. *Options:* (a) no code change - the one
+condition every pass shares and the failing run lacked is the graceful restart, which
+`Invoke-LiveTierOnGuest.ps1` makes unconditional - and keep the question open until it recurs under
+the procedure; (b) re-read the Archive designation from a fresh store object in the test's verify
+session, unproven against a failure nobody can reproduce; (c) reproduce it with a run that skips the
+restart. **Decided: (a)**, with the question kept in `TODO.md`; (c) is the way to close it.
+
 ### 2026-10-03, autonomous - D49 on Office LTSC 2024: the show-me window was the lifetime pin itself
 
 **Primer.** D49: a live session holds a non-displayed Explorer - the lifetime pin - so that an
