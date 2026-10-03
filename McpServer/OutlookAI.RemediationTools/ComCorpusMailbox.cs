@@ -1240,8 +1240,14 @@ public static class ComCorpusMailbox
     /// the indexed guest's contacts): a PST refuses the removal for every kind, measured, and the index
     /// does not use a contact's delivery time, measured too (Q98 (f)).
     /// </para>
+    /// <para>
+    /// A <see cref="CorpusUndatedDetail.DeliveryUtc"/> - an all-kinds appointment or task, D62 (b) - is
+    /// WRITTEN after the first save the way a mail item's date is (<see cref="ApplyDates"/>'s
+    /// PropertyAccessor rung), saved, and read back; the read-back, or the refusal, is returned for the
+    /// caller to record before it judges it.
+    /// </para>
     /// </summary>
-    private static (string EntryId, string? SavedStoreId, string? RemovalRefused) CreateUndatedItem(
+    private static (string EntryId, string? SavedStoreId, string? RemovalRefused, DateTime? DeliveryReadBackUtc, string? DeliveryRefused) CreateUndatedItem(
         dynamic items, CorpusItemSpec spec, string body, CorpusUndatedDetail detail, bool removeDeliveryTime = true)
     {
         dynamic? item = null;
@@ -1288,11 +1294,83 @@ public static class ComCorpusMailbox
             // "does not support this operation") - so the refusal is returned, and the probe reports it.
             // Not attempted at all for an item that must be undated in the INDEX (see the remarks).
             string? removalRefused = removeDeliveryTime ? TryRemoveDeliveryTime((object)item!) : null;
-            return (TryRead<string>(() => (string)item!.EntryID) ?? entryId, SavedItemStoreId(item), removalRefused);
+            DateTime? deliveryReadBack = null;
+            string? deliveryRefused = null;
+            if (detail.DeliveryUtc is DateTime planned)
+            {
+                (deliveryReadBack, deliveryRefused) = WritePlannedDeliveryTime((object)item!, planned);
+            }
+
+            return (TryRead<string>(() => (string)item!.EntryID) ?? entryId, SavedItemStoreId(item), removalRefused,
+                deliveryReadBack, deliveryRefused);
         }
         finally
         {
             Release(item);
+        }
+    }
+
+    /// <summary>
+    /// Writes <paramref name="deliveryUtc"/> as PR_MESSAGE_DELIVERY_TIME on a SAVED non-mail item, saves it,
+    /// and reads the property back - the all-kinds appointments and tasks (D62 (b)). Through the
+    /// PropertyAccessor, in UTC, exactly as <see cref="ApplyDates"/> dates a mail item. A refusal is
+    /// RETURNED as its description, never thrown, for the same reason a refused removal is: the item is
+    /// saved by then, and its caller holds what it takes to record or delete it.
+    /// </summary>
+    private static (DateTime? ReadBackUtc, string? Refused) WritePlannedDeliveryTime(dynamic item, DateTime deliveryUtc)
+    {
+        dynamic? accessor = null;
+        try
+        {
+            accessor = item.PropertyAccessor;
+            accessor!.SetProperty(PrMessageDeliveryTime, DateTime.SpecifyKind(deliveryUtc, DateTimeKind.Utc));
+        }
+        catch (Exception ex) when (IsUndatedWriteRefusal(ex))
+        {
+            return (null, ToolFailure.Describe(ex));
+        }
+        finally
+        {
+            Release(accessor);
+        }
+
+        try
+        {
+            item.Save();
+        }
+        catch (Exception ex) when (IsUndatedWriteRefusal(ex))
+        {
+            return (null, ToolFailure.Describe(ex));
+        }
+
+        return (ReadDeliveryTime(item), null);
+    }
+
+    /// <summary>
+    /// PR_MESSAGE_DELIVERY_TIME as the PropertyAccessor reads it - in UTC, as it writes it - or null when it
+    /// is absent or would not read. Only ever compared with a planned instant, so "could not read" and
+    /// "absent" are both simply "not the planned instant".
+    /// </summary>
+    private static DateTime? ReadDeliveryTime(dynamic item)
+    {
+        dynamic? accessor = null;
+        try
+        {
+            accessor = item.PropertyAccessor;
+            object? value = accessor!.GetProperty(PrMessageDeliveryTime);
+            return value is DateTime d ? DateTime.SpecifyKind(d, DateTimeKind.Utc) : null;
+        }
+        catch (COMException)
+        {
+            return null;
+        }
+        catch (Exception ex) when (IsUndatedWriteRefusal(ex))
+        {
+            return null;
+        }
+        finally
+        {
+            Release(accessor);
         }
     }
 
@@ -1409,13 +1487,20 @@ public static class ComCorpusMailbox
     /// (<see cref="CorpusUndatedCriterion.IndexHoldsNoDate"/>), so the probe proves the write path the
     /// build then uses.
     /// </param>
+    /// <param name="plannedDeliveryUtc">
+    /// For an all-kinds population (<see cref="CorpusUndatedCriterion.IndexDatesAsPlanned"/>, D62 (b)): the
+    /// delivery time the probe writes on its appointment and its task, as the build writes each one's
+    /// planned instant, and then reads back - so a store that will not take it refuses the build before
+    /// a single item is made. Null - the default - writes none.
+    /// </param>
     public static IReadOnlyList<CorpusUndatedProbe> ProbeUndated(
         string storeDisplayName,
         string corpusId,
         IReadOnlyList<CorpusItemKind> kinds,
         Action<CorpusItemKind, string>? whileHeld = null,
         TimeSpan holdBudget = default,
-        bool removeDeliveryTime = true)
+        bool removeDeliveryTime = true,
+        DateTime? plannedDeliveryUtc = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
         ArgumentNullException.ThrowIfNull(kinds);
@@ -1441,7 +1526,9 @@ public static class ComCorpusMailbox
 
                     foreach (CorpusItemKind kind in checkpoint.Steps(kinds, "undated probe"))
                     {
-                        probes.Add(RunOneUndatedProbe(store!, ns!, storeId, corpusId, kind, checkpoint, whileHeld, removeDeliveryTime));
+                        probes.Add(RunOneUndatedProbe(
+                            store!, ns!, storeId, corpusId, kind, checkpoint, whileHeld, removeDeliveryTime,
+                            kind is CorpusItemKind.Appointment or CorpusItemKind.Task ? plannedDeliveryUtc : null));
                         PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint, folderIds);
                     }
 
@@ -1465,7 +1552,8 @@ public static class ComCorpusMailbox
         CorpusItemKind kind,
         ComStaCheckpoint checkpoint,
         Action<CorpusItemKind, string>? whileHeld,
-        bool removeDeliveryTime)
+        bool removeDeliveryTime,
+        DateTime? plannedDeliveryUtc)
     {
         int folderId = CorpusItemKinds.FolderIdOf(kind);
         dynamic? folder = null;
@@ -1504,16 +1592,22 @@ public static class ComCorpusMailbox
                 kind,
                 kind == CorpusItemKind.Appointment ? new DateTime(2026, 1, 1, 9, 0, 0, DateTimeKind.Utc) : null,
                 kind == CorpusItemKind.Appointment ? 30 : null,
-                kind == CorpusItemKind.Contact ? subject : null);
+                kind == CorpusItemKind.Contact ? subject : null,
+                plannedDeliveryUtc);
             // (object): a dynamic argument would make the call - and so its tuple - dynamic.
-            (string createdId, string? savedStoreId, string? removalRefused) =
+            (string createdId, string? savedStoreId, string? removalRefused, DateTime? deliveryReadBack, string? deliveryRefused) =
                 CreateUndatedItem((object)items!, spec, "undated probe", detail, removeDeliveryTime);
             entryId = createdId;
             if (savedStoreId != null && !string.Equals(savedStoreId, storeId, StringComparison.OrdinalIgnoreCase))
             {
                 // Saved into ANOTHER store: deleted there, in the finally, and the kind is refused.
                 deleteFrom = savedStoreId;
-                return new CorpusUndatedProbe(kind, true, false, false, false, false, false, null, removalRefused);
+                return new CorpusUndatedProbe(kind, true, false, false, false, false, false, null, removalRefused)
+                {
+                    PlannedDeliveryUtc = plannedDeliveryUtc,
+                    DeliveryReadBackUtc = deliveryReadBack,
+                    DeliveryWriteRefused = deliveryRefused,
+                };
             }
 
             item = ns.GetItemFromID(entryId, storeId);
@@ -1532,7 +1626,13 @@ public static class ComCorpusMailbox
                 Answer(TableFind((object)folder!, CorpusUndatedTable.Filter(corpusId, withReceivedDate: false), entryId, checkpoint)),
                 Answer(TableFind((object)folder!, CorpusUndatedTable.Filter(corpusId, withReceivedDate: true), entryId, checkpoint)));
             var verified = new CorpusUndatedProbe(
-                kind, true, inFolder, tagParses, dated == false, classMatches, true, null, removalRefused, tableUndated);
+                kind, true, inFolder, tagParses, dated == false, classMatches, true, null, removalRefused, tableUndated)
+            {
+                PlannedDeliveryUtc = plannedDeliveryUtc,
+                // Re-read on the re-opened item, not the one that wrote it: what the STORE holds.
+                DeliveryReadBackUtc = plannedDeliveryUtc == null ? deliveryReadBack : ReadDeliveryTime(item!),
+                DeliveryWriteRefused = deliveryRefused,
+            };
 
             // Held, not yet deleted: an observer reads what the index made of the item. Nothing it
             // does changes the verdict above, and the finally below deletes the item regardless.
@@ -1577,7 +1677,10 @@ public static class ComCorpusMailbox
             string? messageClass = TryRead<string>(() => (string)item!.MessageClass);
             bool? dated = ReadDeliveryTimePresence(item!);
             return new CorpusEnrichmentObservation(
-                ordinal, null, null, null, null, null, null, null, messageClass, dated);
+                ordinal, null, null, null, null, null, null, null, messageClass, dated)
+            {
+                DeliveryUtc = dated == true ? ReadDeliveryTime(item!) : null,
+            };
         }
         catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
         {
@@ -1885,13 +1988,24 @@ public static class ComCorpusMailbox
                                     folderItems[spec.FolderId] = undatedItems!;
                                 }
 
-                                // Undated in the INDEX (the indexed guest's contacts, Q98 (f)): no removal
-                                // is attempted, so none is refused - see CreateUndatedItem.
-                                bool removeDeliveryTime = plan.Population!.UndatedCriterion != CorpusUndatedCriterion.IndexHoldsNoDate;
-                                (string undatedId, string? undatedStoreId, string? removalRefused) =
-                                    CreateUndatedItem((object)undatedItems!, spec, plan.BuildBody(spec), plan.UndatedDetail(ordinal)!, removeDeliveryTime);
+                                // Undated in the INDEX (the indexed guest's contacts, Q98 (f), and its
+                                // all-kinds populations, D62 (b)): no removal is attempted, so none is
+                                // refused - see CreateUndatedItem. An all-kinds appointment or task gets its
+                                // PLANNED delivery time instead, and the manifest records what the store
+                                // read back.
+                                bool removeDeliveryTime = CorpusUndatedCriteria.StoreMustHoldNoDate(plan.Population!.UndatedCriterion);
+                                CorpusUndatedDetail undatedDetail = plan.UndatedDetail(ordinal)!;
+                                (string undatedId, string? undatedStoreId, string? removalRefused, DateTime? deliveryReadBack, string? deliveryRefused) =
+                                    CreateUndatedItem((object)undatedItems!, spec, plan.BuildBody(spec), undatedDetail, removeDeliveryTime);
                                 RequireSavedInTarget(ns!, undatedId, undatedStoreId, targetStoreId, ordinal, plan.Options.CorpusId);
-                                var undatedLine = new CorpusManifestItem(ordinal, undatedId, spec.FolderId, spec.BodyBytes, null);
+                                var undatedLine = new CorpusManifestItem(
+                                    ordinal,
+                                    undatedId,
+                                    spec.FolderId,
+                                    spec.BodyBytes,
+                                    undatedDetail.DeliveryUtc == null || deliveryReadBack == null
+                                        ? null
+                                        : CorpusManifest.FormatUtc(deliveryReadBack.Value));
                                 manifest.Add(undatedLine);
                                 record(undatedLine);
                                 created++;
@@ -1900,6 +2014,7 @@ public static class ComCorpusMailbox
                                 // RECORDED FIRST, then refused: the item is in the target store and the
                                 // manifest now names it, so corpus-teardown removes it.
                                 RequireDeliveryTimeRemoved(ordinal, removalRefused);
+                                RequirePlannedDeliveryTime(ordinal, undatedDetail.DeliveryUtc, deliveryReadBack, deliveryRefused);
                             }
                             catch (Exception ex) when (OutlookComSession.IsComCallFailure(ex))
                             {
@@ -2842,6 +2957,36 @@ public static class ComCorpusMailbox
             + " was saved into ANOTHER store than the target - a write no allowlist named. It has been deleted from "
             + "there by the two-key rule. The placement and undated probes check exactly this on a throwaway item, so a "
             + "build should never get here; run corpus-probe and read its store column.");
+    }
+
+    /// <summary>
+    /// Refuses the build when an all-kinds appointment or task (D62 (b)) does not carry its PLANNED delivery
+    /// time in the store: the write was refused, or the store reads back another instant. Called after the
+    /// item is recorded, like <see cref="RequireDeliveryTimeRemoved"/>, so teardown still removes it. A
+    /// planned instant the store did not keep would put the item somewhere in the index's order the plan
+    /// did not choose - the nondeterminism D62 (b) was decided against.
+    /// </summary>
+    private static void RequirePlannedDeliveryTime(int ordinal, DateTime? planned, DateTime? readBack, string? refused)
+    {
+        if (planned == null)
+        {
+            return;
+        }
+
+        if (refused != null || readBack == null
+            || Math.Abs((readBack.Value - planned.Value).TotalSeconds) > CorpusIndexCoverage.DateTolerance.TotalSeconds)
+        {
+            throw new InvalidOperationException(
+                $"Population ordinal {ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture)}: its PLANNED delivery time "
+                + $"{CorpusManifest.FormatUtc(planned.Value)} did not land in the store ("
+                + (refused != null
+                    ? "Outlook refused the write: " + refused
+                    : readBack == null
+                        ? "it reads back no delivery time"
+                        : "it reads back " + CorpusManifest.FormatUtc(readBack.Value))
+                + "). An all-kinds appointment or task is dated by the plan or not built at all (D62 (b)); the item is "
+                + "recorded in the manifest, so corpus-teardown removes it.");
+        }
     }
 
     /// <summary>

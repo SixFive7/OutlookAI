@@ -9,7 +9,19 @@
       * the header comment, which described the EARLIER 40,000-item build and said every item was
         dated roughly now. That was true of the run it was written for and is false of the corpus
         it actually measured;
-      * the store display name, which was hard-coded twice, is now a parameter.
+      * the store display name, which was hard-coded twice, is now a parameter;
+      * the one-folder scan's folder, hard-coded 'Inbox', is now -ScanFolder (2026-10-03, D101
+        follow-up). A store with no Inbox of its own - Corpus A on OutlookAI-Indexed, whose mail
+        sits in the corpus builder's stand-ins (OutlookAI-Corpus-Folder-6 for the Inbox) - has
+        nothing for 'Inbox' to name, and the scan then measures a refusal, not a folder.
+
+    WHERE IT MEANS WHAT IT SAYS (2026-10-03, D101 follow-up). Its sweeps are UNSCOPED freshness
+    sweeps, and a sweep reads each store's default folders from that store's INDEX FRONTIER
+    forward - the seven-day fallback below applies only to a store the index does not hold. So it
+    measures sweep cost only against an UNINDEXED corpus store, as on the run it was written for.
+    Against an indexed one - Corpus A on OutlookAI-Indexed - the sweeps read the minutes since the
+    frontier, which is next to nothing, and the shipped sweep never walks a stand-in folder at all:
+    use Measure-SweepCost.ps1 there, which times the stand-ins directly and says that it does.
 
     Runs INSIDE the guest console session, Windows PowerShell 5.1. Reach session 1 with
     Register-InteractiveTask.ps1 - Outlook can never finish starting in session 0, and this script
@@ -43,6 +55,7 @@ param(
     [string]$ServerExe = 'C:\OutlookAI-Q5\server\OutlookAI.McpServer.exe',
     [string]$OutFile   = 'C:\OutlookAI-Q5\measure.jsonl',
     [string]$Store     = 'Outlook Data File',
+    [string]$ScanFolder = 'Inbox',
     [int]$ReplyTimeoutSeconds = 600
 )
 
@@ -157,7 +170,7 @@ try {
     # An exhaustive search needs a bound: a folder, or a date. Both shapes are measured, because
     # they stress different things - one folder's rows against the whole store's folder walk.
     $scans = @(
-        @{ id = 40; label = 'exhaustive, Inbox only, no match';       args = @{ query = 'zzzznomatch'; store = $Store; folder = 'Inbox'; include_subfolders = $false; exhaustive = $true; top = 100 } },
+        @{ id = 40; label = "exhaustive, $ScanFolder only, no match"; args = @{ query = 'zzzznomatch'; store = $Store; folder = $ScanFolder; include_subfolders = $false; exhaustive = $true; top = 100 } },
         @{ id = 41; label = 'exhaustive, whole store, 365-day window'; args = @{ query = 'zzzznomatch'; store = $Store; after = '2025-08-19'; exhaustive = $true; top = 100 } }
     )
     foreach ($sc in $scans) {

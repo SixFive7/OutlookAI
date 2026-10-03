@@ -1924,6 +1924,45 @@ deselected there (`Requires!=SearchIndex`). Where they run without undated rows 
 the option - they still print `verdict=no-undated-rows-in-sample`, `coverage: 0 ... on this machine`
 and a `PROVED NOTHING:` line, which now says to rebuild with `--undated-contacts`.
 
+**And all three kinds again - decided by the maintainer 2026-10-03 (his answer (b) to D62); how, decided on
+his behalf (D126-D129 of `Docs/overnight-review-2026-10-03.md`).** The indexed guest's hub and bystander
+carry version 2's full set once more, at its own ordinals and counts - the hub four appointments, four
+contacts and four tasks (57-68), the bystander fourteen of each (301-342) - as
+`CorpusPlanOptions.IncludeAllKinds`, `--all-kinds` on the command line, each kind given the date the index
+can be held to:
+
+* **a contact stays undated in the index**, exactly as under `--undated-contacts`: the store keeps the
+  delivery time a PST gives it, nothing tries to remove it, and the index gives it no
+  `System.Message.DateReceived`. The contacts are the undated rows `LiveOrderKeyCollationTests` measure;
+* **an appointment and a task are DATED BY THE PLAN** - the deterministic part. Their delivery time is
+  written after the first save, through the PropertyAccessor in UTC, exactly as a mail item is dated, to
+  `CorpusPopulation.PlannedDeliveryUtc`: one day older than the oldest dated item the population can hold,
+  one hour further back per ordinal - the hub's from 61 days back, the bystander's from 731. So under the
+  index's `DateReceived DESC` they sort after all of the population's mail and before its undated
+  contacts: never the frontier, never a "most recent" hit, never in a date window short of all the mail.
+  **Measured before a single one was built** (section 4.2e, phase P1): the undated probe wrote
+  `2026-08-03T09:32:50Z` on a throwaway appointment and task in the hub, read it back from the store, and
+  the index dated both at exactly that instant 9 s after their save (`DATED AS WRITTEN`) - while their
+  `System.Message.DateSent` and `System.DateModified` stayed at the save itself. So the index takes an
+  appointment's and a task's `System.Message.DateReceived` from `PR_MESSAGE_DELIVERY_TIME`, which a plan
+  can choose; the creation time Q98 (f) saw was only what a PST stamps into that property at the first save;
+* **the build holds every one to it**: the undated probe writes the youngest planned instant on its own
+  appointment and task and refuses the build unless both read it back; the build records each item
+  before it judges the read-back (`RequirePlannedDeliveryTime`); the population read-back counts
+  `UndatedDatedAsPlanned` and fails on a mismatch; and `corpus-indexed` is NOT complete until the index
+  dates every planned appointment and task at its planned instant - so the per-run hub rebuild's index
+  wait refuses a hub whose order is not the plan's;
+* **IN the shape key**, `|u:all-kinds`, exclusive with both other undated options: an appointment of this
+  population carries a date the full set's does not. `Testbed/guest/Reset-HubPopulation.ps1` tears a hub
+  down by the marker its manifest carries and BUILDS it the decided way - all three kinds where the hub is
+  indexed, none where it is not (D129) - so the next per-run rebuild moves a contacts-only hub over, and
+  says so;
+* **the hub's search budget is unchanged**: twelve non-mail rows, as with the twelve contacts, so the
+  top-100 hub search (`Phase7LiveMcpToolShapeTests`) sees the same number of hits from them.
+
+On the UNINDEXED guest nothing changes here either. Where the widened-search test can now contest a store
+is no longer a margin either - see "the sized contest" in section 4.2e (D74).
+
 **It costs nothing to look at one.** `corpus-plan` is pure - no Outlook, runnable on the host - and
 for a hub population it also prints the values a settings file must carry:
 
@@ -2049,9 +2088,12 @@ runs in the same task and attaches only to an Outlook at its own integrity level
 guest that level is NOT elevated** - run it through `Register-InteractiveTask.ps1 -RunLevel Limited`,
 and it refuses to `-Execute` elevated there - because an elevated Outlook never feeds the index, and
 every Outlook start on that guest is unelevated; it then starts both Outlooks directly, at its own
-level. On the unindexed guest either level works. **And on the indexed guest it keeps the hub's undated
-contacts** (Q98 (f), above): the manifest's shape key says the hub carries them, and every verb gets
-`--undated-contacts`.
+level. On the unindexed guest either level works. **And it builds the non-mail kinds the decision names
+for the guest** (D129, 2026-10-03): the TEARDOWN takes whatever the manifest's shape key says the old hub
+carried (`|u:all-kinds` → `--all-kinds`, `|u:contacts` → `--undated-contacts`), and the BUILD gives a hub
+that is indexed here all three kinds (`--all-kinds`, D62 (b), above) and one that is not none - so a
+contacts-only hub is moved over by its next rebuild, which says so in a note. Until 2026-10-03 it kept
+what it tore down.
 
 Teardown removes the population's items AND the folders it created, and drains Deleted Items behind
 itself: a delete in a PST is a soft one that re-issues the EntryID, so teardown re-scans and deletes
@@ -2875,6 +2917,35 @@ and two checks print `PROVED NOTHING` every run on this guest, by design: the re
 filter never selects it. Q101's Inspector/Outbox ordering in `LiveDisconnectRecoveryTests` never bit:
 every run read `no inspectors, outbox empty` before it closed the parked window.
 
+### 4.1f The guest clock with time synchronisation off - `OutlookAI-Unindexed`, 2026-10-03 (Q130, measured only)
+
+**Why this section exists.** Q108 (`Docs/overnight-review-2026-10-03.md`) asks whether freezing an
+Outlook guest's clock - Hyper-V time synchronisation off, every run from a checkpoint - would stop the
+test data ever going stale. This is what the guest's clock actually does, measured from the host over
+PowerShell Direct (guest UTC minus host UTC, the host's reading at the midpoint of the call). Nothing was
+left changed: every step began and ended on `CP-13B-LIVE-GREEN` with time sync back ON, the one
+temporary checkpoint (`CP-TEMP-CLOCK-PROBE-a24876cb`) was deleted, and the guest was saved with its 20
+checkpoints. No Outlook was started and no store opened. Raw logs: `.work\g1-d62\logs\` of the agent
+worktree `a24876cb`, phases `p4g2b` and `p4b`.
+
+| Step | Guest clock | Reading |
+| --- | --- | --- |
+| `CP-13B-LIVE-GREEN` restored, time sync ON (its own setting) | agrees with the host | skew 0.2 s at the first answer, 3 s after the restore; 0.1 s 20 s later |
+| Time sync OFF, `Set-Date` 10:00Z | stays where it was put | skew -25,443 s, unchanged 90 s later; `w32tm /query /source`: "the service has not been started" - nothing else sets the clock on this guest |
+| Saved 90 s, resumed | stopped while saved | lost 94.9 s against the host |
+| Checkpoint taken with time sync OFF; restored twice, 60 s apart | **the same instant every restore** | 1.7 s and 1.8 s before the checkpoint's instant; time sync still OFF after each restore - the setting travels with the checkpoint |
+| `CP-13B-LIVE-GREEN` restored after that | back to the host's time | time sync ON again (that checkpoint's own setting); skew 0.1 s |
+| COLD boot (graceful `Stop-VM`, `Start-VM`) from the time-sync-OFF checkpoint | host time plus the offset the guest last WROTE | before: skew -25,702 s (the restored instant); after: -25,445 s - the `Set-Date` offset, not the restored instant |
+| OS restart through `Testbed/host/Restart-Guest.ps1`, time sync OFF, no restore before it | keeps the offset it had | moved by -2.2 s; the restart script proved the restart by the later boot time as usual |
+| Clock set to 2026-08-01, then signatures checked | - | Authenticode of `dotnet.exe` and of the staged SDK installer `Valid`; `dotnet nuget verify --all` of `Microsoft.Extensions.Logging.Abstractions 10.0.10` exit 0, only the offline revocation warnings |
+
+**What it means for Q108 (a).** A checkpoint taken with time sync off starts every run at the same instant,
+and saving or resuming does not move it - the mechanism (a) needs is real. Two rules come with it: a run
+must not restart or cold-boot the guest after the restore (both leave the frozen instant - the restart case
+after a restore inferred from the cold boot, not measured), and the build VM can never be frozen (its runner
+requires the host's clock within 2 s). Not measured: installing a freshly built add-in on a frozen guest,
+and MSBuild with files the host dated after the guest's clock.
+
 ### 4.2 The indexed guest's build-out - `OutlookAI-Indexed`, 2026-09-24 and 2026-09-27
 
 **Why this section exists.** The same build-out as section 4.1, on the guest that must stay
@@ -3229,6 +3300,77 @@ again - `New-LiveTestSettings.ps1 -VMName OutlookAI-Indexed`, then the `Copy-ToG
 The suite then finds Corpus A in the settings: the freshness check runs at start, the corpus is
 the largest indexed store the latency bounds are timed against, and the count tripwire censuses it as a
 bystander. **Before 2026-11-01 23:59 UTC**, or after a rebuild.
+
+### 4.2e All three kinds, the sized contest and Corpus A's stand-ins - `OutlookAI-Indexed`, 2026-10-03 (D62 (b), D74, D101)
+
+**Why this section exists.** The maintainer's answers of 2026-10-03 to D62 (all three kinds), D74 ("no
+luck") and D101 ("measure if relevant"), on guest one; decisions D126-D133 of
+`Docs/overnight-review-2026-10-03.md`. Two phases, each from `CP-17C-CORPUS-160K` and back to it with the
+resting 30/60 settings staged, the guest saved and the lease released: **P1** (the premise, before anything
+was built) with this branch's tools at `6c528af`, and **P2** (the builds, the D101 measurements, a live run
+and a checkpoint) with its server, tools and suite at `0e018bf`. Every Outlook start NOT elevated, every step
+that attaches to Outlook in a `RunLevel Limited` job, every close `Testbed/host/Restart-Guest.ps1`, every
+mailbox write through the corpus tool or the hub rebuild. Raw logs: `.work\g1-d62\` of the agent worktree
+`a24876cb`.
+
+| Step | What ran | Verdict |
+| --- | --- | --- |
+| P1 premise | `corpus-probe --population hub --store tier@vm.invalid --all-kinds --undated-index-wait 180` (throwaway items, deleted by the two-key rule) | the appointment and the task took `2026-08-03T09:32:50Z` and read it back; the index dated both **at that instant, 9 s after their save** (`DATED AS WRITTEN`) while their `System.Message.DateSent` and `System.DateModified` stayed at the save itself; the contact `<null>`; exit 0 |
+| P1 folders | `corpus-folders` of Corpus A, read-only | defaults: Deleted Items only (Inbox, Sent Items, Outbox, Drafts, Junk Email, Calendar, Contacts, Tasks ABSENT); tree: Deleted Items 19,292, `OutlookAI-Corpus-Folder-6` 88,037, `-5` 39,709, `-Junk` 12,962 - the 160,000 |
+| P1 sweep cost | `Measure-SweepCost.ps1 -Store 'Corpus A' -WindowDays 30` as it stood | the new resolver right (`PR_VALID_FOLDER_MASK 0xC9`: Inbox and Sent Items ABSENT, Junk Email ABSENT through the absent Inbox, Deleted Items its own); then `Method 'System.Object[].Count' not found` - the unroll, fixed in `a857704` |
+| P2 bystander | the contacts population torn down by its own manifest (`--undated-contacts`), that manifest kept as `bystander-history\bystander-indexed.20261003T063842Z.contacts.jsonl`, the all-kinds one built at the SAME anchor, `2026-10-03T06:38:42Z` | teardown 684 deleted, 5 folders removed, 0 left; probe: both planned `2024-10-02T06:38:42Z` and read back; 342 built in 11 s; census 342 of 342 (Calendar 14, Contacts 14, Tasks 14); read-back 28 appointments and tasks at their planned instant, the 14 contacts store-dated; **index 342 of 342 at its first ask - 14 with no received date, 28 at their planned instant**, newest `2026-10-02T06:38:42Z` as before; manifest `259A0F27...` (350 lines) |
+| P2 D101 | on the same Outlook: `corpus-folders`, `Measure-SweepCost.ps1` (30 days, 2 passes, without and with `-OpenItems`), the product's sweep of Corpus A through the shipped server (read-only tools, a scratch stdio driver), `Invoke-GuestMeasure.ps1 -Store 'Corpus A' -ScanFolder OutlookAI-Corpus-Folder-6` | below |
+| P2 hub | `Reset-HubPopulation.ps1 -Execute` (this branch's), `RunLevel Limited` | "torn down as undated contacts only (--undated-contacts); built with appointments, contacts and tasks (--all-kinds)", the move noted; teardown 136 deleted, 2 folders; probe planned `2026-08-03T17:26:22Z`, read back; 68 built; **index 68 of 68 after 16 s: 4 with no received date, 8 at their planned instant; newest planned = newest indexed = `2026-10-03T17:25:22Z`** - the frontier untouched; 109 min of margin |
+| P2 live | the guest's filter, `OAI-INDEXED` opt-in, `RunLevel Limited`, 626 s | 123 tests: 107 passed, 16 failed - **every one of the 16 also failed in another agent's run of master's suite on the contacts populations the same afternoon**, with the same message (12 x `Store 'Corpus A' not found among 3 discovered index scopes` and one `store scope not discoverable in the index` - store discovery, being fixed elsewhere; the hub's top-100 search at exactly 100, as with the twelve contacts; the apostrophe-in-a-folder-name search; the Outlook-exit COM case); that run's 17th, a timing race, passed here; 0 Outlook crashes |
+| P2 checkpoint | `Restart-Guest.ps1`, then `CP-18C-ALL-KINDS` | below |
+
+**The sized contest and the collation, from that live run** - the order-key tests measure the hub and the
+bystander before they reach Corpus A, where store discovery stops them:
+
+```
+NullCollation  store=tier@vm.invalid rows=103 undated=28 firstUndated=75 lastDated=74 verdict=NULLS LAST (guard rarely fires)
+               store=bystander@vm.invalid rows=380 undated=28 firstUndated=352 lastDated=351 verdict=NULLS LAST (guard rarely fires)
+Floor          store=tier@vm.invalid rows=75 undated=0 undatedWithoutTheFloor=28
+               store=bystander@vm.invalid rows=352 undated=0 undatedWithoutTheFloor=28
+WidenedSearch  store=tier@vm.invalid contest: 28 undated row(s) against Top 17, fetched as TOP 44 (27 row(s) of over-fetch room) - if the undated rows sort ahead, the statement can hold at most 16 dated row(s), fewer than 17
+               store=tier@vm.invalid top=17 sqlTop=44 statementRows=44 statementDated=39 predictedDated=39 widened=17 (dated 17) mailKindOnly=17 (dated 17) ... guard=not needed (...)
+               store=bystander@vm.invalid contest: 28 undated row(s) against Top 17, fetched as TOP 44 ...
+               store=bystander@vm.invalid top=17 sqlTop=44 statementRows=44 statementDated=44 predictedDated=44 widened=17 (dated 17) mailKindOnly=17 (dated 17) ... guard=not needed (...)
+```
+
+So the provider sorts a row with no `System.Message.DateReceived` LAST under `DESC` inside a mapi `SCOPE`,
+and accepts the `1601` floor literal, which excludes exactly those rows - the two facts the order-key guard
+was written not to need (`Docs/magic-numbers.md`). The undated rows are more than the contacts: 28 in each
+store, the rest folder rows, which carry no received date either; the contest counts whatever the index
+leaves undated. Both stores are contested (twelve rows or more), the unguarded statement held exactly what
+the wider sample predicted, and the guard was not load-bearing - on this provider it never is, and the test
+now says so every run. The frontier test and the completeness oracle passed on the all-kinds hub (the oracle
+56 of 56 for each of three terms).
+
+**D101, measured on Corpus A** (Outlook on the account-less profile, which mounts it):
+
+* **The product's sweep is right about it.** A search scoped to Corpus A sweeps
+  `"folders":["Corpus A/Deleted Items"]`, `foldersSwept 1`, `foldersAbsent 3`, `foldersSkipped 0`, from the
+  store's frontier `2026-10-02T23:59:16Z` less its 10-minute margin; the index tier returns hits from all four
+  folders, stand-ins included, and a search scoped to the stand-in `OutlookAI-Corpus-Folder-6` sweeps that
+  folder. No default folder is created, none is mistaken for another, and the absent three are not reported as
+  gaps - a data file with no Inbox has nothing arriving in one.
+* **`Measure-SweepCost.ps1`, first run** (fixed): every folder sorted; 28.5-35.9 ms a row walking the table,
+  34.9-43.3 ms with `-OpenItems` - PowerShell's late-binding cost more than Outlook's, so only the difference,
+  about +7 ms a row, speaks for opening an item; the stand-ins cost what Deleted Items costs.
+* **`Invoke-GuestMeasure.ps1`**: its unscoped sweeps read 12 items across the five stores (every store here is
+  indexed, so each is swept from its frontier) - they measure an unindexed corpus only, which its header now
+  says; its scan of the stand-in took 372 ms and the whole-store 365-day scan 461 ms, neither timed out.
+
+| Checkpoint | State |
+| --- | --- |
+| `CP-18C-ALL-KINDS` (parent `CP-17C-CORPUS-160K`; taken with the guest running, 2026-10-03 19:42 local) | Outlook not running (the restart closed it); default profile `OutlookAI-Tier`; the hub all-kinds at anchor `2026-10-03T17:26:22Z` (`D08B4C19...`), the bystander all-kinds at `06:38:42Z` (`259A0F27...`, its contacts manifest in `bystander-history\`), the identity store as at `CP-16C` (`EB2F0B06...`), Corpus A as at `CP-17C` (`AB395B81...`); the server, tools and suite at `0e018bf`; the live-test settings rendered from this branch, windows 30 and 60 (`4702979C...`); E: 227.7 GB free |
+
+**Guest one RESTS on `CP-17C-CORPUS-160K`** with the 30/60 settings (`FDDA110B...`), as before: the contacts
+populations stay its resting state until this branch is merged. **After the merge**, restore
+`CP-18C-ALL-KINDS` instead - its hub is rebuilt by every run anyway (the rebuild keeps all three kinds from
+then on), and its bystander is the one that needs the all-kinds build. The same date applies: **before
+2026-11-01 23:59 UTC** for Corpus A's 30-day window (Q108).
 
 ### 4.3 The build VM - `OutlookAI-Build`, 2026-10-03 (Q94, Q102)
 
@@ -3696,9 +3838,11 @@ unrecorded or unverified.
 14. **CLOSED, with a caveat that matters.** `Docs/v3-probes/soakfix13-probe-sweep-cost.ps1` was
     gitignored, so it lived on one machine and is gone. It has been **reconstructed in the
     repository** as `Testbed/guest/Measure-SweepCost.ps1`, written from the shipped sweep's own
-    source rather than from memory, and read-only by construction. **It has never been
-    executed.** Read it before trusting a number out of it, and replace its banner with what it
-    actually did once it has run.
+    source rather than from memory, and read-only by construction. **It first ran on
+    2026-10-03** (section 4.2e), against Corpus A on `OutlookAI-Indexed`: that run found two
+    faults - default folders resolved by the call that creates them, and every COM collection
+    unrolled by PowerShell - and fixed both; its banner now says what it did, and that its
+    absolute milliseconds are PowerShell's rather than the sweep's.
 15. **CLOSED 2026-08-24.** The real parameters are `vm2 / 7777 / 2026-08-19 / 20000`, recorded
     machine-readably in `Testbed/testbed.json` together with the expected plan, the per-folder
     and per-window counts, the store path and the build cost. They are not an example: they were

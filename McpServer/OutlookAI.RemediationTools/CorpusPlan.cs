@@ -180,6 +180,41 @@ public sealed record CorpusPlanOptions(string CorpusId, long Seed, DateTime Anch
         => shapeKey != null && shapeKey.EndsWith(UndatedContactsShapeKeyMarker, StringComparison.Ordinal);
 
     /// <summary>
+    /// Whether a hub or bystander population carries ALL THREE non-mail kinds the way the INDEXED guest
+    /// can hold them deterministically - decided by the maintainer 2026-10-03 (his answer (b) to D62,
+    /// "all three kinds"; how, decided on his behalf: D126-D130 of Docs/overnight-review-2026-10-03.md).
+    /// Version 2's full set, at its ordinals and counts - the hub four appointments, four contacts and
+    /// four tasks, the bystander fourteen of each - with each kind given the date the index can be
+    /// held to:
+    /// <list type="bullet">
+    /// <item><description>a CONTACT keeps the delivery time a PST gives it and Outlook will not remove;
+    /// the index gives a contact NO <c>System.Message.DateReceived</c> (measured 2026-10-03, Q98 (f)), so
+    /// the contacts are the undated rows <c>LiveOrderKeyCollationTests</c> measure;</description></item>
+    /// <item><description>an APPOINTMENT and a TASK, which the index DATES, are dated by the PLAN: their
+    /// delivery time is written after the first save, like mail's, to an instant OLDER than every dated
+    /// item of the population (<see cref="CorpusPopulation.PlannedDeliveryUtc"/>) - so neither ever
+    /// becomes the newest row a frontier, a "most recent" read or a date window sees, and where each
+    /// sorts is fixed by the seed and the anchor rather than by when the build ran. The build reads every
+    /// one back from the store, and <c>corpus-indexed</c> holds the index to the same instant.</description></item>
+    /// </list>
+    /// PART of <see cref="ShapeKey"/> (<see cref="AllKindsShapeKeyMarker"/>): the appointments and tasks
+    /// carry a date the other two undated options do not give them. Exclusive with
+    /// <see cref="IncludeUndatedItems"/> and <see cref="IncludeUndatedContacts"/>; refused for the identity
+    /// population, which carries no undated item.
+    /// </summary>
+    public bool IncludeAllKinds { get; init; }
+
+    /// <summary>
+    /// What a population's shape key carries after its kind, version and owner when it holds all three
+    /// non-mail kinds (<see cref="IncludeAllKinds"/>).
+    /// </summary>
+    public const string AllKindsShapeKeyMarker = "|u:all-kinds";
+
+    /// <summary>Whether <paramref name="shapeKey"/> - a manifest header's - is a population's that holds all three non-mail kinds.</summary>
+    public static bool ShapeKeyCarriesAllKinds(string? shapeKey)
+        => shapeKey != null && shapeKey.EndsWith(AllKindsShapeKeyMarker, StringComparison.Ordinal);
+
+    /// <summary>
     /// A stable digest of everything except the item COUNT, so a resumed or extended run
     /// can prove it is adding to the same corpus. The count is excluded on purpose: item
     /// N's description never depends on how many items were asked for, which is what
@@ -189,14 +224,16 @@ public sealed record CorpusPlanOptions(string CorpusId, long Seed, DateTime Anch
     /// A population appends its kind, its format version and its owner, so a population's
     /// manifest can never be continued as a corpus's or as another store's population. Without
     /// one the key is byte-identical to what it has always been. A population carrying undated
-    /// contacts appends <see cref="UndatedContactsShapeKeyMarker"/> after that.
+    /// contacts appends <see cref="UndatedContactsShapeKeyMarker"/> after that, and one carrying all three
+    /// non-mail kinds <see cref="AllKindsShapeKeyMarker"/>.
     /// </para>
     /// </summary>
     public string ShapeKey => BaseShapeKey
         + (Population == null || Owner == null
             ? string.Empty
             : CorpusPopulation.ShapeKeySuffixFor(Population.Value, Owner)
-                + (IncludeUndatedContacts ? UndatedContactsShapeKeyMarker : string.Empty));
+                + (IncludeUndatedContacts ? UndatedContactsShapeKeyMarker : string.Empty)
+                + (IncludeAllKinds ? AllKindsShapeKeyMarker : string.Empty));
 
     private string BaseShapeKey
     {
@@ -291,6 +328,28 @@ public enum CorpusUndatedCriterion
     /// <see cref="CorpusPlanOptions.IncludeUndatedContacts"/>.
     /// </summary>
     IndexHoldsNoDate = 2,
+
+    /// <summary>
+    /// Held to the INDEX, kind by kind - <see cref="CorpusPlanOptions.IncludeAllKinds"/>, the indexed guest's
+    /// all-kinds populations (D62 (b), 2026-10-03). A CONTACT as under <see cref="IndexHoldsNoDate"/>: the
+    /// store keeps its delivery time, nothing removes it, and the index must give it no received date. An
+    /// APPOINTMENT and a TASK get a PLANNED delivery time written after their first save
+    /// (<see cref="CorpusUndatedDetail.DeliveryUtc"/>), read back from the store by the build, and the index
+    /// must date them at exactly that instant.
+    /// </summary>
+    IndexDatesAsPlanned = 3,
+}
+
+/// <summary>What each <see cref="CorpusUndatedCriterion"/> asks of the STORE. Pure.</summary>
+public static class CorpusUndatedCriteria
+{
+    /// <summary>
+    /// Whether the store must hold NO delivery time on an undated item - only
+    /// <see cref="CorpusUndatedCriterion.StoreHoldsNoDate"/>, version 2's design, whose write path removes it.
+    /// Every criterion held to the index leaves the PST's own delivery time where it is.
+    /// </summary>
+    public static bool StoreMustHoldNoDate(CorpusUndatedCriterion criterion)
+        => criterion == CorpusUndatedCriterion.StoreHoldsNoDate;
 }
 
 /// <summary>The fixed Outlook facts about each <see cref="CorpusItemKind"/>. Pure.</summary>
