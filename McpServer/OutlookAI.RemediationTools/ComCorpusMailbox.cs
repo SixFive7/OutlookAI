@@ -1388,14 +1388,26 @@ public static class ComCorpusMailbox
     /// folder, like every other probe. A store that cannot say whether it has the folder is reported
     /// unreachable, which refuses the build.
     /// </summary>
+    /// <param name="whileHeld">
+    /// Called with each item's kind and subject AFTER it verified and BEFORE it is deleted, so an
+    /// observer can read what the Windows Search index made of it (<c>--undated-index-wait</c>,
+    /// <see cref="CorpusUndatedIndex"/>). It must not throw; it is called on this probe's STA
+    /// thread, and the item is deleted afterwards whatever it does. Null - the default - holds
+    /// nothing.
+    /// </param>
+    /// <param name="holdBudget">The most time <paramref name="whileHeld"/> may add to the run, in total.</param>
     public static IReadOnlyList<CorpusUndatedProbe> ProbeUndated(
-        string storeDisplayName, string corpusId, IReadOnlyList<CorpusItemKind> kinds)
+        string storeDisplayName,
+        string corpusId,
+        IReadOnlyList<CorpusItemKind> kinds,
+        Action<CorpusItemKind, string>? whileHeld = null,
+        TimeSpan holdBudget = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
         ArgumentNullException.ThrowIfNull(kinds);
         return RunSta<IReadOnlyList<CorpusUndatedProbe>>(
             "corpus undated probe",
-            TimeSpan.FromMinutes(10),
+            TimeSpan.FromMinutes(10) + (holdBudget > TimeSpan.Zero ? holdBudget : TimeSpan.Zero),
             checkpoint =>
             {
                 dynamic app = CreateOutlookApplication();
@@ -1415,7 +1427,7 @@ public static class ComCorpusMailbox
 
                     foreach (CorpusItemKind kind in checkpoint.Steps(kinds, "undated probe"))
                     {
-                        probes.Add(RunOneUndatedProbe(store!, ns!, storeId, corpusId, kind, checkpoint));
+                        probes.Add(RunOneUndatedProbe(store!, ns!, storeId, corpusId, kind, checkpoint, whileHeld));
                         PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint, folderIds);
                     }
 
@@ -1432,7 +1444,13 @@ public static class ComCorpusMailbox
     }
 
     private static CorpusUndatedProbe RunOneUndatedProbe(
-        dynamic store, dynamic ns, string storeId, string corpusId, CorpusItemKind kind, ComStaCheckpoint checkpoint)
+        dynamic store,
+        dynamic ns,
+        string storeId,
+        string corpusId,
+        CorpusItemKind kind,
+        ComStaCheckpoint checkpoint,
+        Action<CorpusItemKind, string>? whileHeld)
     {
         int folderId = CorpusItemKinds.FolderIdOf(kind);
         dynamic? folder = null;
@@ -1498,8 +1516,13 @@ public static class ComCorpusMailbox
             bool? tableUndated = CorpusUndatedTable.Verdict(
                 Answer(TableFind((object)folder!, CorpusUndatedTable.Filter(corpusId, withReceivedDate: false), entryId, checkpoint)),
                 Answer(TableFind((object)folder!, CorpusUndatedTable.Filter(corpusId, withReceivedDate: true), entryId, checkpoint)));
-            return new CorpusUndatedProbe(
+            var verified = new CorpusUndatedProbe(
                 kind, true, inFolder, tagParses, dated == false, classMatches, true, null, removalRefused, tableUndated);
+
+            // Held, not yet deleted: an observer reads what the index made of the item. Nothing it
+            // does changes the verdict above, and the finally below deletes the item regardless.
+            whileHeld?.Invoke(kind, subject);
+            return verified;
         }
         catch (Exception ex) when (IsUndatedWriteRefusal(ex))
         {
