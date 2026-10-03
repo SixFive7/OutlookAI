@@ -71,6 +71,17 @@ public sealed class TripwireReRunPlan
 /// The third rung of <see cref="TripwireRetryLadder"/>, made real: a bounded re-run of the
 /// plausibly-implicated collections IN A SEPARATE PROCESS.
 /// <para>
+/// <b>Reached by no declared machine profile since Q74 A1 (2026-10-03).</b> The rung was a
+/// Production accommodation, and the only Production machine is the maintainer's workstation,
+/// which is read-only for live tests: <see cref="TripwireRetryPolicy.For(LiveMachineProfile)"/>
+/// gives it the re-censuses and no re-run, and a Portable guest never had one. Two reasons, both
+/// visible below: <see cref="Run"/> re-runs every class of every collection that ran, not the
+/// run's own filter - writing classes included - under the inherited opt-in; and
+/// <see cref="Classify"/> can at best clear a delta to
+/// <see cref="TripwireRunOutcome.PassedWithASurvivedDelta"/>, which still fails the run. The code
+/// stays, unit-tested, for the day a profile that may write wants it back - which is a decision.
+/// </para>
+/// <para>
 /// <b>Out of process is what makes the rung safe at all, and it is the whole design.</b>
 /// Starting a second xunit run inside the first one's teardown would re-enter fixtures that are
 /// currently disposing, re-take a baseline over a profile mid-teardown, and write to a mailbox

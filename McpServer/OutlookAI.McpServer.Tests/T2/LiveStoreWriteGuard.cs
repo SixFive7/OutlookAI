@@ -31,10 +31,29 @@ public static class LiveStoreWriteGuard
         }
     }
 
-    /// <summary>Builds the allowlist for <paramref name="settings"/> (pure - used by tests too).</summary>
+    /// <summary>
+    /// Builds the allowlist for <paramref name="settings"/> (pure - used by tests too).
+    /// <para>
+    /// On a READ-ONLY machine (<see cref="LiveWriteAccess.RefusesEveryWrite"/> - since Q72 the
+    /// maintainer's workstation, whose settings declare Production or nothing at all) it is the
+    /// allowlist that refuses EVERY store, the hub included (Q74 layer 2). The same declarations go
+    /// into it either way, so the tripwire's soundness check and the artifact sweep still see which
+    /// store is the hub, a bystander or a delegate - they just find nothing writable.
+    /// </para>
+    /// </summary>
     public static StoreWriteAllowlist Build(LiveTestSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        if (LiveWriteAccess.RefusesEveryWrite(settings.MachineProfile))
+        {
+            return StoreWriteAllowlist.RefusingEveryWrite(
+                LiveWriteAccess.ReadOnlyReason(settings.MachineProfile),
+                settings.TestHubStoreDisplayName,
+                settings.ExpectedStoreDisplayNames,
+                settings.ExpectedDelegateStoreDisplayNames,
+                settings.BystanderStoreDisplayNames);
+        }
+
         return new StoreWriteAllowlist(
             settings.TestHubStoreDisplayName,
             settings.ExpectedStoreDisplayNames,

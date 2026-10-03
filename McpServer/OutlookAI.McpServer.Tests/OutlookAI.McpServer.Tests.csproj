@@ -55,13 +55,14 @@
          The add-in itself is net48/VSTO and cannot be referenced from here. -->
     <Compile Include="..\..\Services\McpConfigEditor.cs" Link="Linked\McpConfigEditor.cs" />
     <!-- McpConfigEditor takes its `mcpServers` / `outlookai` / `command` names from the shared
-         add-in-to-server contract, so that file has to be linked here too. It is safe to link
-         (unlike PromptStore below) precisely because it is INTERNAL: OutlookAI.Core compiles the
-         same file, and Core grants this assembly no InternalsVisibleTo, so Core's copy is
-         invisible here and the two cannot collide as CS0436. Making that type public - or linking
-         it into OutlookAI.McpServer, which DOES open its internals to this assembly - would break
-         the build immediately. -->
-    <Compile Include="..\..\Services\AddInServerContract.cs" Link="Linked\AddInServerContract.cs" />
+         add-in-to-server contract, Services\AddInServerContract.cs. That file is deliberately NOT
+         linked here any more: OutlookAI.Core compiles it, and since Q86 (2026-10-03) Core opens its
+         internals to this assembly so the test run can redirect its audit lines away from the real
+         log. Core's internal copy is therefore visible here, McpConfigEditor binds to it, and
+         linking the file as well would put the same internal type in front of this compilation
+         twice - CS0436, an error under TreatWarningsAsErrors. The rule that follows: nothing
+         linked into OutlookAI.Core may be linked here too. -->
+
     <!-- And the rules deciding WHEN the add-in may change that configuration by itself and
          when it must stop and ask the user instead. Linked for the same reason: acting on
          guessed intent is what destroys a registration someone set up on purpose, so the
@@ -83,8 +84,8 @@
          pure arithmetic. UpdateService itself cannot be linked (HttpClient, a Timer, Outlook's
          process lifetime, JavaScriptSerializer), which is precisely why the schedule was split
          out of it - the curve that decides how hard an offline machine hammers GitHub is worth
-         pinning, and this is the only compilation that can pin it. Internal, so Core's and this
-         assembly's copies of the other linked files cannot collide as CS0436. -->
+         pinning, and this is the only compilation that can pin it. Internal, and compiled into no
+         other McpServer project, so nothing can collide with it as CS0436. -->
     <Compile Include="..\..\Services\UpdatePollSchedule.cs" Link="Linked\UpdatePollSchedule.cs" />
     <!-- The testbed's hand-declared Windows Search Crawl Scope Manager interop. It ships as
          SOURCE to the guests, where Windows PowerShell 5.1's Add-Type compiles it, so there is

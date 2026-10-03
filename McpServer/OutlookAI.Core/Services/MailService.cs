@@ -299,6 +299,16 @@ namespace OutlookAI.Core.Services
         /// <summary>Default thread member count.</summary>
         public const int ThreadTopDefault = 50;
 
+        /// <summary>
+        /// Hard cap on audit_log entries per call. The same as search's: an entry is smaller than
+        /// a hit, but a draft's line carries some twenty fields, and the remedy for more is the
+        /// same - narrow the time window or the operation - rather than a bigger page.
+        /// </summary>
+        public const int AuditLogTopCap = 100;
+
+        /// <summary>Default audit_log entry count, newest first.</summary>
+        public const int AuditLogTopDefault = 25;
+
         /// <summary>Hard cap on read body characters.</summary>
         public const int BodyCharsCap = 500_000;
 
@@ -7517,10 +7527,10 @@ namespace OutlookAI.Core.Services
             }
 
             // Audit log writability (write tools fail-closed without it).
-            bool auditWritable = Audit.AuditLog.TryProbeWritable(Audit.AuditLog.DefaultDirectory, out string? auditError);
-            if (!auditWritable)
+            AuditHealthView audit = DescribeAuditLog(out string? auditProblem);
+            if (auditProblem != null)
             {
-                problems.Add("The audit log is not writable (" + (auditError ?? "unknown") + ") - draft/save/send operations will fail.");
+                problems.Add(auditProblem);
             }
 
             return new HealthOutcome
@@ -7559,17 +7569,236 @@ namespace OutlookAI.Core.Services
                     IndexerProcessRunning = indexerRunning,
                 },
                 Advice = advice.Count > 0 ? advice : null,
-                Audit = new AuditHealthView
-                {
-                    Path = Audit.AuditLog.DefaultLogPath,
-                    Writable = auditWritable,
-                    Error = auditError,
-                },
+                Audit = audit,
                 Tuning = HealthReporting.ReadTuningStateFromRegistry(),
                 // The apphost that was actually launched, which is precisely what a
                 // registration has to name in order to spawn this server.
                 Registration = HealthReporting.ReadMcpRegistration(HealthReporting.CurrentProcessPath()),
             };
+        }
+
+        /// <summary>
+        /// The audit block of <c>outlook_health</c>, plus the problem line that goes with an
+        /// unwritable log (null when it is writable).
+        /// <para>
+        /// It probes and names the log THIS process appends to, <c>AuditLog.EffectiveDirectory</c>:
+        /// the real one in every shipped process, a throwaway one in a test process (Q86). It used
+        /// to name <c>DefaultDirectory</c> outright, which in a test process meant the health
+        /// report described - and its probe opened - the maintainer's real log while every line
+        /// the process wrote went elsewhere. Split out and internal so T1 pins that it does not.
+        /// </para>
+        /// </summary>
+        internal static AuditHealthView DescribeAuditLog(out string? problem)
+        {
+            bool writable = Audit.AuditLog.TryProbeWritable(Audit.AuditLog.EffectiveDirectory, out string? error);
+            problem = writable
+                ? null
+                : "The audit log is not writable (" + (error ?? "unknown") + ") - draft/save/send operations will fail.";
+
+            return new AuditHealthView
+            {
+                Path = Audit.AuditLog.EffectiveLogPath,
+                Writable = writable,
+                Error = error,
+            };
+        }
+
+        // ------------------------------------------------------------------ audit_log (Q93)
+
+        /// <summary>
+        /// audit_log (Q93): the newest entries of the audit log this process appends to, filtered,
+        /// newest first, with what the read could not use reported beside them.
+        /// <para>
+        /// Read-only and Outlook-free, and STATIC on purpose: answering never builds the COM
+        /// gateway, so it works with Outlook closed, wedged or uninstalled. Every argument is
+        /// validated before the log is opened, so a bad call costs no I/O at all.
+        /// </para>
+        /// <para>
+        /// Only the live log is read - <c>AuditLog.EffectiveLogPath</c>, which is
+        /// <c>%LOCALAPPDATA%\OutlookAI\audit.log</c> in every shipped process. A renamed or archived
+        /// log beside it is never opened: the one archived when the log was cleaned up (Q86) is
+        /// mostly test noise, and an agent reading it would report the tests' drafts as the user's.
+        /// The read never blocks the server's own appends (see <see cref="Audit.AuditLogReader"/>).
+        /// </para>
+        /// </summary>
+        public static AuditLogOutcome ReadAuditLog(
+            DateTime? afterUtc = null,
+            DateTime? beforeUtc = null,
+            string? operation = null,
+            string? entryId = null,
+            int top = AuditLogTopDefault)
+        {
+            if (afterUtc.HasValue && beforeUtc.HasValue && afterUtc.Value >= beforeUtc.Value)
+            {
+                throw new ArgumentException(
+                    "'after' must be earlier than 'before': no entry can be at or after "
+                    + afterUtc.Value.ToString("o", CultureInfo.InvariantCulture) + " and before "
+                    + beforeUtc.Value.ToString("o", CultureInfo.InvariantCulture) + ".");
+            }
+
+            IReadOnlyList<string>? operations = ParseAuditOperations(operation);
+            string? entryIdFilter = ParseAuditEntryId(entryId);
+            int effectiveTop = Clamp(top, 1, AuditLogTopCap);
+
+            string path = Audit.AuditLog.EffectiveLogPath;
+            Audit.AuditLogScan scan = Audit.AuditLogReader.Read(
+                path, new Audit.AuditLogFilter(afterUtc, beforeUtc, operations, entryIdFilter), effectiveTop);
+
+            return DescribeAuditLogScan(path, scan, top, operations != null);
+        }
+
+        /// <summary>
+        /// The audit_log payload for one scan, advice included. Split out so T1 can pin every
+        /// branch - a missing log, a cut, a filter that matched nothing, malformed and incomplete
+        /// lines - from a scan it builds, rather than from whatever state the run's log is in.
+        /// </summary>
+        internal static AuditLogOutcome DescribeAuditLogScan(string path, Audit.AuditLogScan scan, int requestedTop, bool operationFiltered)
+        {
+            List<string> advice = new List<string>();
+            if (requestedTop > AuditLogTopCap)
+            {
+                advice.Add("top=" + requestedTop.ToString(CultureInfo.InvariantCulture) + " was reduced to "
+                    + AuditLogTopCap.ToString(CultureInfo.InvariantCulture) + " (the hard cap). Narrow with after/before/"
+                    + "operation/entry_id instead.");
+            }
+
+            if (!scan.FileFound)
+            {
+                advice.Add("There is no audit log at this path yet, so nothing has been recorded since it was started "
+                    + "(or since it was last archived). Every change this server makes adds a line.");
+            }
+            else if (scan.Matched > scan.Entries.Count)
+            {
+                advice.Add("These are the newest " + scan.Entries.Count.ToString(CultureInfo.InvariantCulture) + " of "
+                    + scan.Matched.ToString(CultureInfo.InvariantCulture) + " matching entries. To see older ones, "
+                    + "narrow with after/before/operation/entry_id.");
+            }
+            else if (scan.Matched == 0 && scan.LinesScanned > 0)
+            {
+                advice.Add(operationFiltered && scan.OperationsSeen.Count > 0
+                    ? "No entry matched. Operations this log does contain: " + string.Join(", ", scan.OperationsSeen) + "."
+                    : "No entry matched these filters.");
+            }
+
+            if (scan.MalformedLines > 0)
+            {
+                advice.Add(scan.MalformedLines.ToString(CultureInfo.InvariantCulture) + " line(s) of the log are not in the "
+                    + "format this server writes and were skipped - an older version's unstructured lines, or a line "
+                    + "damaged by a crash. They are counted, never guessed at.");
+            }
+
+            if (scan.IncompleteLastLine)
+            {
+                advice.Add("The log's last line was still being written when it was read (or a crash cut it short), so it "
+                    + "was left out. Call again to include it.");
+            }
+
+            List<AuditLogEntryView> entries = new List<AuditLogEntryView>(scan.Entries.Count);
+            foreach (Audit.AuditLogEntry entry in scan.Entries)
+            {
+                Dictionary<string, string> fields = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (KeyValuePair<string, string> field in entry.Fields)
+                {
+                    // First wins. The writer never repeats a key; if a line ever did, the list in
+                    // AuditLogEntry keeps both and entry_id matching sees both.
+                    if (!fields.ContainsKey(field.Key))
+                    {
+                        fields.Add(field.Key, field.Value);
+                    }
+                }
+
+                entries.Add(new AuditLogEntryView
+                {
+                    Utc = entry.TimestampUtc,
+                    Operation = entry.Operation,
+                    Fields = fields,
+                });
+            }
+
+            return new AuditLogOutcome
+            {
+                Path = path,
+                Entries = entries,
+                Returned = entries.Count,
+                Matched = scan.Matched,
+                Truncated = scan.Matched > entries.Count,
+                LinesScanned = scan.LinesScanned,
+                MalformedLines = scan.MalformedLines > 0 ? scan.MalformedLines : (long?)null,
+                IncompleteLastLine = scan.IncompleteLastLine ? true : (bool?)null,
+                LogMissing = scan.FileFound ? (bool?)null : true,
+                Advice = advice.Count > 0 ? advice : null,
+            };
+        }
+
+        /// <summary>
+        /// audit_log's <c>operation</c>: comma-separated names, each optionally ending in <c>*</c>
+        /// for a family. Null when absent. Refused when a name could never match a line, so a typo
+        /// in the syntax is told apart from an operation that simply has no entries.
+        /// </summary>
+        internal static IReadOnlyList<string>? ParseAuditOperations(string? operation)
+        {
+            if (string.IsNullOrWhiteSpace(operation))
+            {
+                return null;
+            }
+
+            List<string> patterns = new List<string>();
+            foreach (string part in operation!.Split(','))
+            {
+                string pattern = part.Trim();
+                if (pattern.Length == 0)
+                {
+                    continue;
+                }
+
+                string name = pattern.EndsWith("*", StringComparison.Ordinal) ? pattern.Substring(0, pattern.Length - 1) : pattern;
+                foreach (char c in name)
+                {
+                    if (!char.IsLetterOrDigit(c) && c != '_' && c != '-')
+                    {
+                        throw new ArgumentException(
+                            "operation '" + pattern + "' is not an operation name: names are letters, digits, '_' and '-', "
+                            + "with an optional trailing * for a family (send* matches every send step). Separate several "
+                            + "with commas.");
+                    }
+                }
+
+                patterns.Add(pattern);
+            }
+
+            return patterns.Count > 0 ? patterns : null;
+        }
+
+        /// <summary>
+        /// audit_log's <c>entry_id</c>: a full EntryID in hex, or null when absent. A hit id is
+        /// refused rather than resolved: hit ids belong to one server session, and resolving one may
+        /// need Outlook, which this tool never touches.
+        /// </summary>
+        internal static string? ParseAuditEntryId(string? entryId)
+        {
+            if (string.IsNullOrWhiteSpace(entryId))
+            {
+                return null;
+            }
+
+            string id = entryId!.Trim();
+            if (id.Length > 1 && (id[0] == 'h' || id[0] == 'H') && id.Skip(1).All(char.IsDigit))
+            {
+                throw new ArgumentException(
+                    "entry_id takes an EntryID, not a hit id: '" + id + "' names a search result of one session, and the "
+                    + "audit log records EntryIDs. read the hit (or take entryId from the result that created the item) "
+                    + "and pass that.");
+            }
+
+            if (id.Length < MinRawEntryIdHexChars || id.Length % 2 != 0 || !IsHex(id))
+            {
+                throw new ArgumentException(
+                    "entry_id must be a full EntryID in hex (at least "
+                    + MinRawEntryIdHexChars.ToString(CultureInfo.InvariantCulture)
+                    + " hex digits), as read, the draft tools and move results return it.");
+            }
+
+            return id;
         }
 
         // ------------------------------------------------------------------ list_accounts / list_folders

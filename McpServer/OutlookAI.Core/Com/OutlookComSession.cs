@@ -4819,6 +4819,25 @@ namespace OutlookAI.Core.Com
         }
 
         /// <summary>
+        /// The <c>SentOnBehalfOfName</c> a confirmed send writes onto the draft - null to write
+        /// none - and, because it is the same decision, the on-behalf value the send result
+        /// reports. Pure and public so T1 pins it (Q74 D1): send-on-behalf needs an Exchange
+        /// mailbox and a delegate permission on it, so no live tier ever reaches this line - the
+        /// test VMs have no Exchange, and the live tests that may run on the maintainer's
+        /// workstation are read-only.
+        /// <para>
+        /// A blank request writes nothing at all. A non-blank one is written exactly as given:
+        /// the service layer has already trimmed it, and the content hash the confirm token is
+        /// bound to compares it case-insensitively (<see cref="SendContentHash"/>), so the
+        /// spelling is the caller's and is not this layer's to change.
+        /// </para>
+        /// </summary>
+        public static string? OnBehalfOfToApply(string? requested)
+        {
+            return string.IsNullOrWhiteSpace(requested) ? null : requested;
+        }
+
+        /// <summary>
         /// Executes the CONFIRMED send of a saved draft (Phase 5, v3.MD D4/L5) as ONE
         /// STA operation so nothing can change between the checks and <c>Send()</c>:
         /// re-opens the draft, re-verifies it is unsent mail, RECOMPUTES the content
@@ -4943,9 +4962,12 @@ namespace OutlookAI.Core.Com
                         return null;
                     }
 
-                    if (!string.IsNullOrWhiteSpace(sentOnBehalfOfName))
+                    // Only once the identity is verified: an abort above must never leave an
+                    // on-behalf name written on the user's draft.
+                    string? onBehalfOf = OnBehalfOfToApply(sentOnBehalfOfName);
+                    if (onBehalfOf != null)
                     {
-                        ((dynamic)item!).SentOnBehalfOfName = sentOnBehalfOfName;
+                        ((dynamic)item!).SentOnBehalfOfName = onBehalfOf;
                     }
 
                     // Capture the outcome BEFORE Send() - the EntryID dies with it.
@@ -4953,7 +4975,7 @@ namespace OutlookAI.Core.Com
                         info.EntryId,
                         info.StoreDisplayName,
                         accountSmtp!,
-                        string.IsNullOrWhiteSpace(sentOnBehalfOfName) ? null : sentOnBehalfOfName,
+                        onBehalfOf,
                         info.Subject,
                         info.Recipients);
 
@@ -7537,11 +7559,7 @@ namespace OutlookAI.Core.Com
                         {
                             string? deliveryStoreId = TryGetString(() => (string?)((dynamic)deliveryStore!).StoreID);
                             string? deliveryStoreName = TryGetString(() => (string?)((dynamic)deliveryStore!).DisplayName);
-                            bool idMatch = storeId != null && deliveryStoreId != null
-                                && string.Equals(deliveryStoreId, storeId, StringComparison.OrdinalIgnoreCase);
-                            bool nameMatch = storeDisplayName != null && deliveryStoreName != null
-                                && string.Equals(deliveryStoreName, storeDisplayName, StringComparison.OrdinalIgnoreCase);
-                            if (idMatch || nameMatch)
+                            if (IsDeliveryStoreFor(storeId, storeDisplayName, deliveryStoreId, deliveryStoreName))
                             {
                                 return account;
                             }
@@ -7565,6 +7583,38 @@ namespace OutlookAI.Core.Com
                 Release(accounts);
                 Release(session);
             }
+        }
+
+        /// <summary>
+        /// Whether an account whose delivery store reads (<paramref name="deliveryStoreId"/>,
+        /// <paramref name="deliveryStoreName"/>) delivers into the store an item lives in
+        /// (<paramref name="storeId"/>, <paramref name="storeDisplayName"/>) - the one decision
+        /// <see cref="FindAccountByDeliveryStore"/> makes per account. It is the whole of the
+        /// send identity: the account a confirmed send goes out as, and the account a reply or
+        /// forward is pinned to. It is also why a draft in a delegate or shared mailbox that is
+        /// not itself an account of the profile cannot be sent (send refuses it as
+        /// <c>no_sending_account</c>) and why a reply to mail there reports
+        /// <c>accountResolved: false</c>. Pure and public so T1 pins it (Q74 D1): delegate
+        /// mailboxes exist only on Exchange, so no live tier can write into one.
+        /// <para>
+        /// StoreID first, display name as the fallback, because store EntryID wrappings can
+        /// differ between retrieval paths. Both comparisons are whole-string and
+        /// case-insensitive, and a value that would not read matches nothing: a delivery store
+        /// whose identity could not be read must never adopt a draft, or the send would go out
+        /// from whichever such account the profile happens to list first.
+        /// </para>
+        /// </summary>
+        public static bool IsDeliveryStoreFor(
+            string? storeId,
+            string? storeDisplayName,
+            string? deliveryStoreId,
+            string? deliveryStoreName)
+        {
+            bool idMatch = storeId != null && deliveryStoreId != null
+                && string.Equals(deliveryStoreId, storeId, StringComparison.OrdinalIgnoreCase);
+            bool nameMatch = storeDisplayName != null && deliveryStoreName != null
+                && string.Equals(deliveryStoreName, storeDisplayName, StringComparison.OrdinalIgnoreCase);
+            return idMatch || nameMatch;
         }
 
         // ------------------------------------------------------------------ exhaustive scan (Phase 3, v3.MD D19)
