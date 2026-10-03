@@ -6,15 +6,65 @@ Before working in a subfolder, read any AGENTS.md from that folder up to the rep
 
 ## Changelog
 
-When committing changes, **always update `CHANGELOG.md`** under the `## Unreleased` section.
+**Every change worth telling somebody about gets an entry in `CHANGELOG.md`, under `## Unreleased`,
+in the commit that makes it - written as the work lands, never reconstructed from `git log` at
+release time.** The system is BrowserAI's, decided by the maintainer 2026-10-03 (Q123), in his
+words: *"copy the release notes style and system and rules from the BrowserAI repo"*. Tests, the
+testbed, documentation and the release pipeline get entries too, each with its own icon; a typo fix
+does not. One entry per logical change: a follow-up to an unreleased entry amends that entry. Add to
+`## Unreleased`; never replace what is there.
 
-Rules:
-- Write entries as **user-facing summaries**, not developer jargon. Describe what changed from the user's or project's perspective.
-- Keep entries concise — one line per change, starting with a verb (Add, Fix, Remove, Update, Improve).
-- Group related commits into a single entry when they are part of the same logical change.
-- Do not include CI fixes, typo fixes, or internal refactoring unless they affect user-visible behavior.
-- Never modify released sections (any `## v...` heading). Only add to `## Unreleased`.
-- If the Unreleased section already has entries from earlier in the session, add to it rather than replacing it.
+**An entry is an icon, a bold one-sentence headline, then the whole of what happened:**
+
+    - 🐛 **A search of one folder finds its mail when the folder's name contains `%`.**
+      Windows writes that character as a code in the index's address for a folder, so a folder
+      called `50% off` is filed as `50%25 off`, and OutlookAI looked for the name as written.
+
+- **The icon** is one of the twelve in the legend at the top of `CHANGELOG.md`, chosen for what the
+  entry *is*, not for its group: a fix to a test or a test machine is ✅ under Fixed, a tool
+  description or a note is 📝, and a fix that removes something is 🗑️.
+- **The headline** is one sentence ending in a full stop, at most 100 characters, alone on the
+  entry's first line. It says what is true now, in the present tense ("A failed move names the
+  folders it created."), not an instruction ("Fix ..."). It is all the GitHub release shows of the
+  entry, so it has to make sense on its own.
+- **The detail** starts on the next line, indented two spaces and wrapped at about 100 columns. It
+  is the whole of what happened - what was wrong, what changed, what was measured, the decision
+  behind it - and it does not open by repeating the headline: five of the headline's words in a row
+  is the headline said twice. No wrapped line may start with `-`, `+`, `*`, `>`, `#` or `1.`, which
+  Markdown reads as a new list, quote or heading.
+- **The group** is one of Keep a Changelog's, in this order and each at most once under
+  `## Unreleased`: `### Added`, `### Changed`, `### Deprecated`, `### Removed`, `### Fixed`,
+  `### Security`. Create the heading when it is missing. Within a group, what somebody using
+  OutlookAI would notice comes first, and the project's own tests, testbed, documentation and build
+  after it; a new entry goes at the top of its half. One blank line between entries.
+- **Nothing the release page shows carries a character a person does not type**: no em dash, en
+  dash, curly quote, ellipsis character or non-breaking space in a headline or the release
+  preamble. A backticked code span is exempt. Write a hyphen, straight quotes, three full stops.
+- **A released section is never modified** - any `## v...` heading and everything below it. A
+  release refuses a changelog whose released sections differ from what the latest release's tag
+  carries.
+
+**The release preamble** is a few short paragraphs above the first group of `## Unreleased`: what
+OutlookAI is and what this release changes, for somebody who has never seen it. It is written, or
+re-read and brought up to date, when the release is cut. `-Execute` refuses without one, and only a
+person can judge it.
+
+**`pwsh -File Tools/Publish-Release.ps1 -CheckChangelog` checks every rule above that a script can**,
+reading `CHANGELOG.md` and asking git for the newest release tag and nothing else, and writes the
+release body the next release would get to `.work\release\changelog-check\release-body.md`. Run it
+after writing an entry. The script's `-SelfTest` holds the real `CHANGELOG.md` to the same rules on
+the build VM, so a malformed entry fails the build VM's run.
+
+**Folding in entries written before these rules** - one line each, `- Fix X: details`, as on any
+branch older than Q123: give each an icon and a group, turn its opening sentence or clause into a
+present-tense headline, and keep the rest of its text, word for word, as the detail. When the
+opening says something the headline cannot hold, add a sentence for it at the start of the detail.
+Then run `-CheckChangelog`.
+
+**What no script can check is whether a headline or the preamble reads as a person wrote it.** Write
+what you would say to a colleague who asked: short sentences, a number where there is one, no
+sentence announcing what it is about to say, no summary of what was just said, no "X rather than
+Y". The fix is always the shorter sentence.
 
 ## TODO.md
 
@@ -61,9 +111,14 @@ everything except publishing; `-Execute` publishes. In order, it:
    plus one - the stamp commit - as the fourth part. No hardcoded version in the repo. The bump is
    **required**, in `major.minor.patch` form (`1.0.0` major, `0.1.0` minor, `0.0.1` patch), and
    `0.0.0` is rejected - every release bumps at least one component;
-3. takes the release notes from the CHANGELOG's `## Unreleased` section - and **refuses if it is
-   empty**: you must have release notes before creating a release. It also refuses notes longer than
-   the 125,000 characters GitHub accepts as a release body (a dry run only notes that);
+3. takes the release notes from the CHANGELOG's `## Unreleased` section - and **refuses if it holds
+   no entries**: you must have release notes before creating a release. It also refuses anything
+   that breaks the Changelog rules above, and with `-Execute` a section with no preamble (a dry run
+   only notes that). Then it makes the **GitHub release body** from the section as the stamp commit
+   will carry it: the preamble, each entry's icon and headline with a *read more* link to that
+   entry's own lines in the tagged `CHANGELOG.md`, the icon legend, and a link to the whole section.
+   A body over the 125,000 characters GitHub accepts drops the per-entry links; one still over it
+   refuses with `-Execute` (a dry run only notes that);
 4. checks that the certificate `OutlookAI.csproj` pins is in `Cert:\CurrentUser\My` with its private
    key and not expired;
 5. runs the four guards under `pwsh` and `powershell.exe`, then `check-pinned-constants.ps1` against
@@ -76,7 +131,8 @@ everything except publishing; `-Execute` publishes. In order, it:
 9. runs the whole non-live suite and every self-test of HEAD on the build VM - anything but exit 0
    refuses;
 10. makes the stamp commit - `## Unreleased`, then `## v<version> - <date>` - with git plumbing, so
-    neither the working tree nor any branch moves;
+    neither the working tree nor any branch moves, and reads it back: the body's line ranges are
+    lines of exactly that file;
 11. with `-Execute` only: pushes that one commit to master (a fast-forward), runs `gh release create`
     with the signed installer, and fast-forwards a local master that sat on the released commit.
 
@@ -106,7 +162,8 @@ run either script's `-SelfTest` here.
      - C) Major — 2.1.0 → 3.0.0
   2. Run `pwsh -File Tools/Publish-Release.ps1 -VersionBump X.X.X -Execute` with the user's chosen
      bump, from a clean checkout of master with everything pushed. Without `-Execute` the same
-     command is a dry run, for when he wants to see it first.
+     command is a dry run, for when he wants to see it first; its `release-notes.md` is the body
+     the release page will show, and its first paragraphs are the preamble he should have read.
   3. Read its verdict: exit 0 and `RELEASED v<version>`, then `gh release view v<version>`. Any
      refusal names the step and its log under `.work\release\v<version>\logs\`.
 - After a release, a local master that sat on the released commit has been fast-forwarded by the
