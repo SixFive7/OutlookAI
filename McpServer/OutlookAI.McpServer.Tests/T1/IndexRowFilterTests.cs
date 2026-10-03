@@ -145,6 +145,61 @@ public sealed class IndexRowFilterTests
         Assert.False(IndexRowFilter.Keep(Hit("file:C:/notes/agenda.ics", "calendar"), KindFilter.MessagesOnly));
     }
 
+    private const string HubRoot = "mapi16://{S-1-5-21-1-2-3-1000}/tier@vm.invalid($93f42b43)";
+
+    /// <summary>
+    /// A FOLDER'S OWN ROW IS NEVER A HIT (2026-10-03). On the indexed test guest a term-less
+    /// search of the hub returned one row for every folder of it - the root, Calendar, Quick
+    /// Step Settings, the emptied subfolders in Deleted Items - each of kind <c>folder</c>,
+    /// undated and with no item segment: 21 of a top=100 page, and none of them openable.
+    /// </summary>
+    [Theory]
+    [InlineData("/0")]
+    [InlineData("/0/Calendar")]
+    [InlineData("/0/Quick Step Settings")]
+    [InlineData("/0/Deleted Items/OutlookAI-Corpus-Folder-Projects (2)")]
+    public void AFoldersOwnRow_IsNeverAHit(string path)
+    {
+        IndexHit folder = Hit(HubRoot + path, "folder");
+
+        Assert.True(IndexRowFilter.IsFolderRow(folder));
+        Assert.False(IndexRowFilter.Keep(folder, KindFilter.MessagesOnly));
+        Assert.False(IndexRowFilter.Keep(folder, KindFilter.MessagesAndAttachments));
+        Assert.False(IndexRowFilter.Keep(folder, KindFilter.MailKindOnly));
+        Assert.False(IndexRowFilter.Keep(folder, KindFilter.AttachmentsOnly));
+    }
+
+    [Fact]
+    public void AnItem_IsNeverTakenForAFolder_OnItsKindAlone()
+    {
+        // An item's URL ends in its encoded EntryID: whatever kind the row carries, it is an item.
+        string itemUrl = HubRoot + "/0/Inbox/" + EntryIdCodecTests.SyntheticEncodedTail();
+        IndexHit item = Hit(itemUrl, "folder");
+        Assert.NotNull(item.EntryIdHex);
+        Assert.False(IndexRowFilter.IsFolderRow(item));
+        Assert.True(IndexRowFilter.Keep(item, KindFilter.MessagesOnly));
+
+        // A folder-kind ATTACHMENT - a zipped folder - is an attachment row, judged as one.
+        IndexHit zipped = Hit(itemUrl + "/at=1:archive.zip", "folder");
+        Assert.False(IndexRowFilter.IsFolderRow(zipped));
+        Assert.True(IndexRowFilter.Keep(zipped, KindFilter.MessagesAndAttachments));
+        Assert.True(IndexRowFilter.Keep(zipped, KindFilter.AttachmentsOnly));
+
+        // And a row with no kind at all is not a folder for want of one (gap B3 above).
+        Assert.False(IndexRowFilter.IsFolderRow(Hit(HubRoot + "/0/Inbox")));
+        Assert.Throws<ArgumentNullException>(() => IndexRowFilter.IsFolderRow(null!));
+    }
+
+    [Fact]
+    public void AContactCard_IsStillAnItem()
+    {
+        // Gap B3 admits every item class, so the hub's undated contacts stay hits: they are
+        // items, as a folder's row is not.
+        IndexHit contact = Hit(HubRoot + "/0/Contacts/" + EntryIdCodecTests.SyntheticEncodedTail(), "contact", "communication");
+        Assert.False(IndexRowFilter.IsFolderRow(contact));
+        Assert.True(IndexRowFilter.Keep(contact, KindFilter.MessagesOnly));
+    }
+
     [Fact]
     public void AttachmentDetectionIsAUrlTest_NotAParseResult()
     {

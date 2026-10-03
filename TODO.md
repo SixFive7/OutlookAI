@@ -1,5 +1,26 @@
 # TODO
 
+- [ ] **Make the test guests keep a crash dump of `OUTLOOK.EXE`, then find what crashed it inside Word**
+  (seen once, 2026-10-03, `OutlookAI-Indexed`, runbook 4.2f run 4; `QUESTIONS.md` decision log, the
+  indexed guest's first live runs, item 7). `wwlib.dll`, `0xc0000005`, during
+  `LiveDraftOptionsTests.NewDraft_Hub_SignatureOverride_BodyAboveTheSignature_OutsideTheSignatureBookmark`,
+  in one of five full runs; the same commit passed the next run. The guests keep no dump, so there is
+  nothing to read. Directions: (1) Windows Error Reporting's `LocalDumps` key for `OUTLOOK.EXE` on both
+  guests (a full dump into a guest folder the runner fetches with the results), then wait for the next
+  crash; (2) loop the draft-options class on a guest until it reproduces; (3) review Word's threading in
+  the signature path without a fault site. Recommended: (1).
+- [ ] **Find out why `LiveMoveArchiveTests.MoveChain` could not resolve the hub's new Archive folder
+  on a guest that was not restarted** (seen once, 2026-10-03, `OutlookAI-Indexed`; `QUESTIONS.md`
+  decision log, the indexed guest's first live runs, item 6). `archive_mail` created the hub's
+  Archive folder and the test's own verify session then read "NoDesignatedArchiveFolder"; the item
+  left in Archive failed five later tests' hub check. The run had staged the suite onto
+  `CP-17C`'s running Outlook - no graceful restart, no step 9a. Every run since through
+  `Testbed/host/Invoke-LiveTierOnGuest.ps1`, which always restarts, passed it (six of six). If a
+  user's long-running Outlook can hit the same, a second `archive_mail` could miss the folder the
+  first one made. Directions: (1) reproduce with a run that skips the restart; (2) re-read the
+  designation from a freshly opened store in the verify session; (3) read it in the product the way
+  the verify session does, after creating. Recommended: (1) first.
+
 - [ ] **Three decided jobs, held until the agents now running have merged (decided by the
   maintainer 2026-10-03).** Each one touches files every open branch also touches, or stops the
   build VM they all share, so each waits for a quiet moment.
@@ -63,11 +84,6 @@
   alone makes a session's exit end Outlook under every other session, the cost measured for starters
   today (the next call answers `OutlookStarting` and restarts it), and (2) alone still leaves the
   winner's pin when the winner did not start Outlook.
-
-- [ ] **Run the PST half of Q74 C3 on the indexed guest.** `LiveDecodeVerifyTests.ShortDecodedId_OpensAsTheItemItself_OnAPstStore`
-  carries `Requires=SearchIndex`, so `OutlookAI-Unindexed`'s filter never selects it and the first
-  guest live runs (2026-10-03) could not confirm it. It needs `OutlookAI-Indexed`, which was busy with
-  Q99 that night.
 
 - [ ] **Let the count tripwire's census read a table date by its column spelling too.**
   `CensusTableRow.ReadUtc` still calls the one-argument `ComDateValue.FromTableValue`, which takes every

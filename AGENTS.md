@@ -144,6 +144,20 @@ pwsh -File Testbed/host/Invoke-TestsOnBuildVm.ps1 -SkipSuite -SelfTestInclude 'T
   or more. Never use the VM by hand while runs may happen; to hold runs off, take a lease on it
   with `Testbed/host/Set-TestbedLease.ps1 -VMName OutlookAI-Build` and release it after.
 
+**Live runs on the two test guests go through `Testbed/host/Invoke-LiveTierOnGuest.ps1`, one call
+per run** (2026-10-03, `Testbed/README.md` section 4c) - never driven by hand:
+
+```
+pwsh -File Testbed/host/Invoke-LiveTierOnGuest.ps1 -VMName OutlookAI-Indexed [<commit-or-branch>] [-FilterSuffix '&FullyQualifiedName~X']
+```
+
+It tests a commit, like the build-VM runner, and enforces the rest itself: the lease (it waits,
+and never takes over one somebody else holds), the checkpoint, the graceful restart, step 9a,
+`-RunLevel Limited` with the per-run opt-in, and on every path the resting checkpoint, the
+guest saved and the lease released. Exit 0 pass, 1 a test or a safety proof failed, 2 the commit did
+not build or stage, 3 not tested, 4 refused; `summary.txt` in `.work\guest-live-runs\<run>\` says
+why. Run it in the background or with a timeout of an hour or more.
+
 **What stays on this workstation - this, and nothing else:**
 
 - the four static guards, `Tools/Checks/check-*.ps1`, which only read files - run them under
