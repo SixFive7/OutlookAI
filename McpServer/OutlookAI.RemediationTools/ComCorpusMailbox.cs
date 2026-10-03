@@ -1887,10 +1887,9 @@ public static class ComCorpusMailbox
 
                                 // Undated in the INDEX (the indexed guest's contacts, Q98 (f)): no removal
                                 // is attempted, so none is refused - see CreateUndatedItem.
+                                bool removeDeliveryTime = plan.Population!.UndatedCriterion != CorpusUndatedCriterion.IndexHoldsNoDate;
                                 (string undatedId, string? undatedStoreId, string? removalRefused) =
-                                    CreateUndatedItem(
-                                        (object)undatedItems!, spec, plan.BuildBody(spec), plan.UndatedDetail(ordinal)!,
-                                        plan.Population!.UndatedCriterion != CorpusUndatedCriterion.IndexHoldsNoDate);
+                                    CreateUndatedItem((object)undatedItems!, spec, plan.BuildBody(spec), plan.UndatedDetail(ordinal)!, removeDeliveryTime);
                                 RequireSavedInTarget(ns!, undatedId, undatedStoreId, targetStoreId, ordinal, plan.Options.CorpusId);
                                 var undatedLine = new CorpusManifestItem(ordinal, undatedId, spec.FolderId, spec.BodyBytes, null);
                                 manifest.Add(undatedLine);
