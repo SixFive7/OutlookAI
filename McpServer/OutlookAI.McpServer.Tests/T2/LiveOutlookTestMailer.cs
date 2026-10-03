@@ -2160,6 +2160,109 @@ public static class LiveOutlookTestMailer
         }
     }
 
+    /// <summary>
+    /// READ-ONLY, for the Q118 pins (<c>T2/LivePinWindowTests</c>): how many Explorers the RUNNING
+    /// Outlook holds, whether each one's window is visible (<c>IOleWindow.GetWindow</c>, then
+    /// <c>IsWindowVisible</c>), and what <c>ActiveExplorer()</c> returns. Never starts an Outlook: null
+    /// when none is running or it will not read - with the same caveat as <see cref="DescribeExplorers"/>:
+    /// it attaches through the class factory, so not while the Outlook it watches may be exiting.
+    /// Creates nothing and releases every reference it takes.
+    /// </summary>
+    public static ExplorerWindowReading? ReadExplorerWindows()
+    {
+        if (!OutlookComSession.IsOutlookProcessRunning())
+        {
+            return null;
+        }
+
+        try
+        {
+            return RunSta<ExplorerWindowReading?>(() =>
+            {
+                dynamic? app = null;
+                dynamic? explorers = null;
+                object? active = null;
+                List<object> held = new List<object>();
+                try
+                {
+                    app = CreateOutlookApplication();
+                    explorers = app.Explorers;
+                    int count = (int)explorers.Count;
+                    int visible = 0;
+                    int hidden = 0;
+                    int unknown = 0;
+                    for (int i = 1; i <= count; i++)
+                    {
+                        object explorer = explorers.Item(i);
+                        held.Add(explorer);
+                        bool? shown = WindowVisibility(explorer);
+                        if (shown == true)
+                        {
+                            visible++;
+                        }
+                        else if (shown == false)
+                        {
+                            hidden++;
+                        }
+                        else
+                        {
+                            unknown++;
+                        }
+                    }
+
+                    active = (object?)app.ActiveExplorer();
+                    return new ExplorerWindowReading(count, visible, hidden, unknown, active == null, active == null ? null : WindowVisibility(active));
+                }
+                finally
+                {
+                    Release(active);
+                    foreach (object explorer in held)
+                    {
+                        Release(explorer);
+                    }
+
+                    Release(explorers);
+                    Release(app);
+                }
+            });
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>True or false when the Explorer's window could be read, null when it could not.</summary>
+    private static bool? WindowVisibility(object explorer)
+    {
+        if (explorer is not IOleWindowForPins window)
+        {
+            return null;
+        }
+
+        return window.GetWindow(out IntPtr hwnd) == 0 && hwnd != IntPtr.Zero ? PinNativeMethods.IsWindowVisible(hwnd) : null;
+    }
+
+    /// <summary>The OLE window interface every Outlook Explorer implements; the one way from it to its HWND.</summary>
+    [ComImport]
+    [Guid("00000114-0000-0000-C000-000000000046")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IOleWindowForPins
+    {
+        [PreserveSig]
+        int GetWindow(out IntPtr phwnd);
+
+        [PreserveSig]
+        int ContextSensitiveHelp([MarshalAs(UnmanagedType.Bool)] bool fEnterMode);
+    }
+
+    private static class PinNativeMethods
+    {
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool IsWindowVisible(IntPtr hWnd);
+    }
+
     private static dynamic CreateOutlookApplication()
     {
         Type progIdType = Type.GetTypeFromProgID("Outlook.Application")
