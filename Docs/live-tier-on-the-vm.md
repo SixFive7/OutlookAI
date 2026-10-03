@@ -3183,7 +3183,7 @@ unrecorded or unverified.
   property of the userbase - though it had previously been discussed as though it were.
   **Measured past grace on 2026-09-15: every COM read works, and a cold COM start completes in
   3.7 s with no dialog.** Nothing stops. The monthly rebuild cadence this clock justified is
-  therefore **retired**, and the `TODO.md` preflight item is **closed** - both of its
+  therefore **retired**, and the `TODO.md` preflight item was **closed** (and has since been removed from `TODO.md`) - both of its
   justifications were measured false. Rebuilds now trigger on `corpus-verify` refusing and on a
   release, neither of which is a calendar.
 
