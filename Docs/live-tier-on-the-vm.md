@@ -2747,7 +2747,22 @@ whenever a collection happened, after the table, the document or the mail it bel
 inside Outlook. The faults moved with every run (`ntdll.dll`, `OLMAPI32.DLL`, `OUTLOOK.EXE` itself),
 which is what a damaged heap looks like. `9664aa0` holds and releases every one of them and
 `T1/ComChildObjectReleaseTests` pins it from the sources. **Run 13 was the first merged run without a
-crash**; runs 18 and 19 below are the other two of the three the coordinator asked for.
+crash**, and the next two were clean too:
+
+| Run | Revision | Total | Passed | Failed | Outlook | Suite time |
+| --- | --- | --- | --- | --- | --- | --- |
+| 13 | `ace09f9` | 80 | 79 | 1 (D49, before its decision) | no crash | 7.9 min |
+| 18 | `fd2c58b` | 80 | 80 | 0 | no crash | 7.5 min |
+| 19 | `c1a72f1` (`585a9f6` + this record) | 80 | 80 | 0 | no crash | 7.2 min |
+
+Three clean merged runs of three after `9664aa0`, against six crashes in seven before it. The mechanism
+is inferred from that and from the code - no crash dump was taken (no debugger on the guests, by the
+dependency rule) - so it is the strongest available reading, not an observed one. In between, D49
+was found and decided (F9 below) with Explorer-only probes and a ninety-second subset run (the
+show-me tests plus `LiveDisconnectRecoveryTests`, no hub rebuild) that reproduced the full suite's
+failure where five probe designs had not. **`CP-13B-LIVE-GREEN` was taken** right after run 18
+(16:49 local, a standard checkpoint, parent `CP-12B-POPULATIONS-V2`): `fd2c58b` staged, the hub as
+that run left it, Outlook not running. Run 19 ran from `CP-12B` as every run does.
 
 **Every run, the guards.** The sink probe answered from run 2 on (`[sink] submission 127.0.0.1:25 and
 retrieval 127.0.0.1:110 both answering` - run 1 never armed it, F1). The count tripwire's baseline:
@@ -2796,11 +2811,13 @@ script refuses to start one): `detach : 'throwaway@vm.invalid' <- ...\throwaway-
 `attach : ...\throwaway-20261003T082322Z.pst`, the same `verify` line, then `delete :
 ...\throwaway-20261003T081352Z.pst` - the freshly started Outlook did not hold the old file, so it went.
 
-**What stayed red.** F8 and F9, both product findings with directions in `TODO.md`; the tests are
-unchanged. Q74 C3's PST half (`ShortDecodedId_OpensAsTheItemItself_OnAPstStore`) carries
-`Requires=SearchIndex`, so this guest's filter never selects it. Q101's Inspector/Outbox ordering in
-`LiveDisconnectRecoveryTests` never bit: every run read `no inspectors, outbox empty` before it closed
-the parked window. No `CP-13B-LIVE-GREEN` checkpoint was taken - no run was green.
+**What stayed red.** Nothing, from run 18 on. F8 and F9 were decided rather than loosened - each
+test now holds its store kind or its Office build to what was measured, and says so in its output -
+and two checks print `PROVED NOTHING` every run on this guest, by design: the retry-guidance check
+(no transient Outlook state to report) and D49's step 3b (no index to degrade to). Q74 C3's PST half
+(`ShortDecodedId_OpensAsTheItemItself_OnAPstStore`) carries `Requires=SearchIndex`, so this guest's
+filter never selects it. Q101's Inspector/Outbox ordering in `LiveDisconnectRecoveryTests` never bit:
+every run read `no inspectors, outbox empty` before it closed the parked window.
 
 ### 4.2 The indexed guest's build-out - `OutlookAI-Indexed`, 2026-09-24 and 2026-09-27
 
@@ -4104,12 +4121,14 @@ unrecorded or unverified.
   the thing to check when host and guest disagree about something that should not depend on the
   toolchain.
 
-* **The VM bucket has run end to end on ONE guest, `OutlookAI-Unindexed`, eight times on 2026-10-03
-  (section 4.1e) - the unindexed filter, 80 or 81 tests a run.** The index tier (`Requires=SearchIndex`) has
-  not run on a guest yet; `OutlookAI-Indexed` is where it can. Two tests stay red there on product
-  findings the maintainer has to decide (`LiveDisconnectRecoveryTests`, D49 on Office LTSC 2024, and
-  `LiveDraftOptionsTests.DerivedDrafts`, a renamed reply's ConversationId in a PST - `TODO.md`). The count moved from 31 to 121 by re-reading what each test needs method by method - no
-  test was changed to make it fit.
+* **The VM bucket has run end to end on ONE guest, `OutlookAI-Unindexed`, on 2026-10-03 (section
+  4.1e) - the unindexed filter, 80 or 81 tests a run - and is GREEN there: 80 of 80 in runs 18 and 19,
+  checkpoint `CP-13B-LIVE-GREEN`.** Green includes two decisions taken on the maintainer's behalf, each
+  in `QUESTIONS.md`: a renamed derived draft's ConversationId is held to Exchange's promise on Exchange
+  and to the kept topic's hash elsewhere (F8), and on Office LTSC 2024 the user's close of the last
+  window may end an Outlook OutlookAI started (F9). The index tier (`Requires=SearchIndex`) has not run
+  on a guest yet; `OutlookAI-Indexed` is where it can. The count moved from 31 to 121 by re-reading what
+  each test needs method by method - no test was changed to make it fit.
 
 * **The VM runs a different Office from the maintainer's machine, by 3,598 builds, and that is
   accepted rather than fixed.** Measured 2026-09-15: the guest is `ProPlus2024Volume` on
