@@ -41,6 +41,28 @@ public enum LiveMachineProfile
     /// </para>
     /// </summary>
     Portable = 1,
+
+    /// <summary>
+    /// The dedicated Exchange test VM, <c>OutlookAI-Exchange</c> (decided by the maintainer 2026-10-03,
+    /// Q108 to Q111): ONE cached Exchange mailbox - real, production mail of lower value, which is also
+    /// the hub - a populated search index, no PST, no mail sink, and internet. Nobody is at its keyboard
+    /// during a run, but the mailbox has an owner, a server, server-side rules and mail arriving, so
+    /// it gets the re-censuses a real mailbox needs (<see cref="TripwireRetryPolicy.For(LiveMachineProfile)"/>).
+    /// <para>
+    /// <b>READ-ONLY, and nothing had to be written to make it so.</b> <see cref="LiveWriteAccess"/> lets
+    /// only <see cref="Portable"/> write, so this profile refuses every in-process write and every
+    /// write-capable MCP tool exactly as the workstation's profile did. Writes here wait for the
+    /// maintainer's approval of the Phase 2 write-safety design (Testbed/README.md, the Exchange VM's
+    /// section); until then, and on a read-only machine generally, the count tripwire censuses the hub
+    /// like any other store (<see cref="LiveStoreCountTripwire.ExemptHub"/>), so that a hub that is the
+    /// machine's only mailbox is still a store the census can fail on.
+    /// </para>
+    /// <para>
+    /// Rendered by <c>Testbed/host/New-LiveTestSettings.ps1</c> for the VM <c>Testbed/testbed.json</c>'s
+    /// <c>exchangeVm</c> block names, and for no other.
+    /// </para>
+    /// </summary>
+    ExchangeGuest = 2,
 }
 
 /// <summary>

@@ -66,6 +66,14 @@ public static class LiveWriteAccess
     public static string ReadOnlyReason(LiveMachineProfile profile)
     {
         string declared = Enum.IsDefined(profile) ? "'" + profile + "'" : "the undefined value " + (int)profile;
+        if (profile == LiveMachineProfile.ExchangeGuest)
+        {
+            return ReadOnlyMachine + ": these live-test settings declare machineProfile " + declared
+                + " - the Exchange test VM, whose one mailbox is real mail (Q108). It is read-only for live tests until "
+                + "the maintainer approves the write-safety design of its Phase 2, which no change to a settings file can "
+                + "stand in for (Testbed/README.md section 4e). On it only tests carrying Writes=Nothing are selected.";
+        }
+
         return ReadOnlyMachine + ": these live-test settings declare machineProfile " + declared
             + ", and only a machine that declares 'Portable' - a test guest - may write anything. "
             + "'Production' is the maintainer's workstation, which is read-only for live tests ALWAYS, the "
