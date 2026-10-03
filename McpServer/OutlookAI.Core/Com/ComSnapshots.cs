@@ -1555,9 +1555,12 @@ namespace OutlookAI.Core.Com
 
         /// <summary>
         /// Resolution mechanism: "outlookDefaultFolder" (GetDefaultFolder 39),
-        /// "storeArchiveProperty" (PR_IPM_ARCHIVE_ENTRYID on the store object) or
-        /// "inboxArchiveProperty" (PR_IPM_ARCHIVE_ENTRYID on the Inbox - how a read-only lookup
-        /// finds a non-Exchange store's Archive folder without asking Outlook for it).
+        /// "storeArchiveProperty" (PR_IPM_ARCHIVE_ENTRYID on the store object),
+        /// "inboxArchiveProperty" (PR_IPM_ARCHIVE_ENTRYID on the Inbox) or
+        /// "inboxAdditionalRenEntryIdsEx" (block 0x800F of the Inbox's PR_ADDITIONAL_REN_ENTRYIDS_EX,
+        /// where Outlook records the Archive folder it made on a PST - measured 2026-10-03). The last
+        /// three are how a read-only lookup finds a non-Exchange store's Archive folder without asking
+        /// Outlook for it.
         /// </summary>
         public string Via { get; }
     }

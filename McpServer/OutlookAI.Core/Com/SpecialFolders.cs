@@ -88,6 +88,13 @@ namespace OutlookAI.Core.Com
 
         /// <summary>The entry id designated on the store object itself, opened with <c>GetFolderFromID</c>.</summary>
         StoreDesignation = 3,
+
+        /// <summary>
+        /// The entry id in one PersistData block of the Inbox's <c>PR_ADDITIONAL_REN_ENTRYIDS_EX</c>
+        /// (MS-OXOSFLD 2.2.4.1), opened with <c>GetFolderFromID</c> - where Outlook records the
+        /// Archive folder it makes on a PST (measured 2026-10-03; <see cref="SpecialFolders.ArchivePersistId"/>).
+        /// </summary>
+        InboxPersistData = 4,
     }
 
     /// <summary>
@@ -232,6 +239,26 @@ namespace OutlookAI.Core.Com
 
         /// <summary>PR_ADDITIONAL_REN_ENTRYIDS (PidTagAdditionalRenEntryIds, 0x36D8, PT_MV_BINARY).</summary>
         public const string AdditionalRenEntryIdsSchema = "http://schemas.microsoft.com/mapi/proptag/0x36D81102";
+
+        /// <summary>PR_ADDITIONAL_REN_ENTRYIDS_EX (PidTagAdditionalRenEntryIdsEx, 0x36D9, PT_BINARY): PersistData blocks (MS-OXOSFLD 2.2.4.1).</summary>
+        public const string AdditionalRenEntryIdsExSchema = "http://schemas.microsoft.com/mapi/proptag/0x36D90102";
+
+        /// <summary>
+        /// The PersistID under which Outlook records the ARCHIVE folder in the Inbox's
+        /// <c>PR_ADDITIONAL_REN_ENTRYIDS_EX</c> on a PST. NOT in MS-OXOSFLD's list (which stops at
+        /// RSF_PID_BUDDYLIST_CONTACTS 0x800B) - MEASURED, the way <see cref="ArchiveFolderResolution.OlFolderArchive"/>
+        /// (39) is: on 2026-10-03, on the hub PST of the first live run on a test guest (POP3 PST,
+        /// Office LTSC 2024 16.0.17932), after archive_mail's <c>GetDefaultFolder(39)</c> had made an
+        /// <c>Archive</c> folder, the Inbox's blob held seven blocks - 0x8001, 0x8006, 0x8007, 0x8009,
+        /// 0x8002, 0x800F, 0x8004 - and the 0x800F block's entry id was that Archive folder's,
+        /// byte for byte, while <c>PR_IPM_ARCHIVE_ENTRYID</c> was on neither the Inbox nor the store.
+        /// It is read only as a DESIGNATION: what it names is opened with <c>GetFolderFromID</c> and
+        /// then verified like every other archive candidate.
+        /// </summary>
+        public const int ArchivePersistId = 0x800F;
+
+        /// <summary>RSF_ELID_ENTRYID (MS-OXOSFLD 2.2.4.1.1): the data element of a PersistData block that holds its entry id.</summary>
+        public const int PersistElementEntryId = 0x0001;
 
         /// <summary>FOLDER_IPM_INBOX_VALID (MAPIDefS.h).</summary>
         public const int FolderIpmInboxValid = 0x00000002;
@@ -417,6 +444,85 @@ namespace OutlookAI.Core.Com
                 default:
                     return DesignatedEntryId.Unrecognised;
             }
+        }
+
+        /// <summary>
+        /// Reads the entry id one PersistData block of a <c>PR_ADDITIONAL_REN_ENTRYIDS_EX</c> value
+        /// designates (MS-OXOSFLD 2.2.4.1): a run of blocks, each a little-endian PersistID and
+        /// DataElementsSize followed by that many bytes of elements - an ElementID, an
+        /// ElementDataSize and the data - and ended by a zero PersistID. The block asked for, holding
+        /// an RSF_ELID_ENTRYID element, designates that entry id. No value, no such block, or such a
+        /// block without an entry id designates nothing. A value that is not a byte array, or whose
+        /// lengths run past its end before the block is found, is unrecognised - a truncated blob
+        /// cannot be read as "not designated".
+        /// </summary>
+        public static DesignatedEntryId ReadPersistDataEntryId(object? value, int persistId)
+        {
+            if (value == null)
+            {
+                return DesignatedEntryId.None;
+            }
+
+            if (!(value is byte[] blob))
+            {
+                return DesignatedEntryId.Unrecognised;
+            }
+
+            int offset = 0;
+            while (offset + 4 <= blob.Length)
+            {
+                int id = blob[offset] | (blob[offset + 1] << 8);
+                int size = blob[offset + 2] | (blob[offset + 3] << 8);
+                if (id == 0)
+                {
+                    return DesignatedEntryId.None;
+                }
+
+                int dataStart = offset + 4;
+                if (dataStart + size > blob.Length)
+                {
+                    return DesignatedEntryId.Unrecognised;
+                }
+
+                if (id == persistId)
+                {
+                    int element = dataStart;
+                    while (element + 4 <= dataStart + size)
+                    {
+                        int elementId = blob[element] | (blob[element + 1] << 8);
+                        int elementSize = blob[element + 2] | (blob[element + 3] << 8);
+                        if (elementId == 0)
+                        {
+                            break;
+                        }
+
+                        if (element + 4 + elementSize > dataStart + size)
+                        {
+                            return DesignatedEntryId.Unrecognised;
+                        }
+
+                        if (elementId == PersistElementEntryId)
+                        {
+                            if (elementSize < 4)
+                            {
+                                return DesignatedEntryId.None;
+                            }
+
+                            byte[] entryId = new byte[elementSize];
+                            Array.Copy(blob, element + 4, entryId, 0, elementSize);
+                            return DesignatedEntryId.Of(ToHex(entryId));
+                        }
+
+                        element += 4 + elementSize;
+                    }
+
+                    return DesignatedEntryId.None;
+                }
+
+                offset = dataStart + size;
+            }
+
+            return offset == blob.Length ? DesignatedEntryId.None : DesignatedEntryId.Unrecognised;
         }
 
         /// <summary>
@@ -723,6 +829,7 @@ namespace OutlookAI.Core.Com
             source = SpecialFolderSource.None;
             int? index = AdditionalRenIndex(olDefaultFolderId);
 
+            OutlookComSession.DefaultFolderResolution persisted = OutlookComSession.DefaultFolderResolution.Absent;
             OutlookComSession.DefaultFolderResolution primary =
                 ResolveByValidMask(store, OlFolderInbox, FolderIpmInboxValid, out object? inbox);
             if (primary == OutlookComSession.DefaultFolderResolution.Resolved)
@@ -730,6 +837,19 @@ namespace OutlookAI.Core.Com
                 try
                 {
                     primary = OpenDesignated(store, store.ReadFolderProperty(inbox!, schema), index, out folder);
+
+                    // The Archive folder Outlook makes on a PST is designated NOT by
+                    // PR_IPM_ARCHIVE_ENTRYID but by a PersistData block of the same Inbox's
+                    // PR_ADDITIONAL_REN_ENTRYIDS_EX (ArchivePersistId, measured 2026-10-03): without
+                    // reading it, every read-only lookup - the sweeps, the census, the archive
+                    // tools' own read-back - answered "no designated Archive folder" about the
+                    // folder archive_mail had just moved mail into.
+                    if (primary != OutlookComSession.DefaultFolderResolution.Resolved
+                        && olDefaultFolderId == ArchiveFolderResolution.OlFolderArchive)
+                    {
+                        persisted = OpenPersistDataDesignated(
+                            store, store.ReadFolderProperty(inbox!, AdditionalRenEntryIdsExSchema), ArchivePersistId, out folder);
+                    }
                 }
                 finally
                 {
@@ -740,6 +860,12 @@ namespace OutlookAI.Core.Com
                 {
                     source = SpecialFolderSource.InboxDesignation;
                     return primary;
+                }
+
+                if (persisted == OutlookComSession.DefaultFolderResolution.Resolved)
+                {
+                    source = SpecialFolderSource.InboxPersistData;
+                    return persisted;
                 }
             }
 
@@ -755,7 +881,35 @@ namespace OutlookAI.Core.Com
                 return OutlookComSession.DefaultFolderResolution.Resolved;
             }
 
-            return primary;
+            // A PersistData blob that could not be read proves nothing either way: never Absent.
+            return persisted == OutlookComSession.DefaultFolderResolution.Unreadable
+                ? OutlookComSession.DefaultFolderResolution.Unreadable
+                : primary;
+        }
+
+        /// <summary>
+        /// Turns one <c>PR_ADDITIONAL_REN_ENTRYIDS_EX</c> read into the folder its
+        /// <paramref name="persistId"/> block designates - the same outcomes as
+        /// <see cref="OpenDesignated"/>, read through <see cref="ReadPersistDataEntryId"/>.
+        /// </summary>
+        private static OutlookComSession.DefaultFolderResolution OpenPersistDataDesignated(
+            ISpecialFolderStore store,
+            PropertyRead designation,
+            int persistId,
+            out object? folder)
+        {
+            folder = null;
+            if (designation.Status == PropertyReadStatus.NotFound)
+            {
+                return OutlookComSession.DefaultFolderResolution.Absent;
+            }
+
+            if (designation.Status != PropertyReadStatus.Found)
+            {
+                return OutlookComSession.DefaultFolderResolution.Unreadable;
+            }
+
+            return OpenEntryId(store, ReadPersistDataEntryId(designation.Value, persistId), out folder);
         }
 
         /// <summary>
@@ -784,6 +938,20 @@ namespace OutlookAI.Core.Com
             DesignatedEntryId entryId = index.HasValue
                 ? ReadEntryIdAt(designation.Value, index.Value)
                 : ReadEntryId(designation.Value);
+            return OpenEntryId(store, entryId, out folder);
+        }
+
+        /// <summary>
+        /// Opens the folder one designation names. None: absent. Unrecognised: unreadable. An entry
+        /// id that no longer opens (<c>MAPI_E_NOT_FOUND</c>) names a folder that is gone, so absent
+        /// too; any other failure to open it is unreadable.
+        /// </summary>
+        private static OutlookComSession.DefaultFolderResolution OpenEntryId(
+            ISpecialFolderStore store,
+            DesignatedEntryId entryId,
+            out object? folder)
+        {
+            folder = null;
             if (entryId.Kind == DesignatedEntryIdKind.None)
             {
                 return OutlookComSession.DefaultFolderResolution.Absent;

@@ -2768,7 +2768,7 @@ namespace OutlookAI.Core.Services
         /// <summary>Store-relative path of the designated Archive folder (localized name - e.g. Archive/Archiveren).</summary>
         public string Folder { get; set; } = string.Empty;
 
-        /// <summary>Resolution mechanism ("outlookDefaultFolder", "storeArchiveProperty" or "inboxArchiveProperty").</summary>
+        /// <summary>Resolution mechanism ("outlookDefaultFolder", "storeArchiveProperty", "inboxArchiveProperty" or "inboxAdditionalRenEntryIdsEx").</summary>
         public string Via { get; set; } = string.Empty;
     }
 
