@@ -55,7 +55,7 @@ public sealed class LiveOrderKeyCollationTests
     /// </summary>
     [Fact]
     [Trait("Requires", "SearchIndex")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public void NullCollation_UnderDateReceivedDescending_IsMeasured()
     {
         IIndexClient client = IndexClientFactory.CreateAuto(out string report);
@@ -160,7 +160,7 @@ public sealed class LiveOrderKeyCollationTests
     /// </summary>
     [Fact]
     [Trait("Requires", "SearchIndex")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public void OrderKeyFloorPredicate_IsAccepted_AndAdmitsOnlyDatedRows()
     {
         IIndexClient client = IndexClientFactory.CreateAuto(out _);
@@ -217,7 +217,7 @@ public sealed class LiveOrderKeyCollationTests
     /// </summary>
     [Fact]
     [Trait("Requires", "SearchIndex")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public void WidenedSearch_NeverReturnsFewerRowsThanTheOldMailKindShape()
     {
         IIndexClient client = IndexClientFactory.CreateAuto(out _);

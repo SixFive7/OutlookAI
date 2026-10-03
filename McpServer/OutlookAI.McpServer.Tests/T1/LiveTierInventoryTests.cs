@@ -375,10 +375,10 @@ public sealed class LiveTierInventoryTests
                 }
 
                 carriers++;
-                foreach (string value in values.Where(v => !string.Equals(v, LiveRunFilters.WritesNone, StringComparison.Ordinal)))
+                foreach (string value in values.Where(v => !string.Equals(v, LiveRunFilters.WritesNothing, StringComparison.Ordinal)))
                 {
                     problems.Add(Name(method) + ": unknown " + LiveRunFilters.WritesTrait + " value '" + value
-                        + "' - the one value is '" + LiveRunFilters.WritesNone + "', and absence means the test may write.");
+                        + "' - the one value is '" + LiveRunFilters.WritesNothing + "', and absence means the test may write.");
                 }
 
                 if (values.Count > 1)
@@ -388,7 +388,7 @@ public sealed class LiveTierInventoryTests
 
                 if (!liveClass && !MethodTraitValues(method, "Category").Contains("Live"))
                 {
-                    problems.Add(Name(method) + ": " + LiveRunFilters.WritesTrait + "=" + LiveRunFilters.WritesNone
+                    problems.Add(Name(method) + ": " + LiveRunFilters.WritesTrait + "=" + LiveRunFilters.WritesNothing
                         + " on a test that is not Category=Live, where it selects nothing and means nothing.");
                 }
             }
@@ -399,7 +399,7 @@ public sealed class LiveTierInventoryTests
     }
 
     [Fact]
-    public void EveryTestOnlyTheWorkstationCanRun_DeclaresWritesNone()
+    public void EveryTestOnlyTheWorkstationCanRun_DeclaresWritesNothing()
     {
         // Since Q72 the maintainer's workstation runs only tests that write nothing, and no test guest
         // can be given an Exchange profile. A test that needs one and may write could therefore run
@@ -410,10 +410,10 @@ public sealed class LiveTierInventoryTests
         foreach (MethodInfo method in LiveTestMethods())
         {
             List<string> blocking = MethodTraitValues(method, "Requires").Where(ProductionOnlyCapabilities.Contains).ToList();
-            if (blocking.Count > 0 && !MethodTraitValues(method, LiveRunFilters.WritesTrait).Contains(LiveRunFilters.WritesNone))
+            if (blocking.Count > 0 && !MethodTraitValues(method, LiveRunFilters.WritesTrait).Contains(LiveRunFilters.WritesNothing))
             {
                 problems.Add(Name(method) + " (Requires " + string.Join(", ", blocking) + ") does not declare "
-                    + LiveRunFilters.WritesTrait + "=" + LiveRunFilters.WritesNone
+                    + LiveRunFilters.WritesTrait + "=" + LiveRunFilters.WritesNothing
                     + ": no guest can run it and the read-only workstation may not");
             }
         }
@@ -425,16 +425,16 @@ public sealed class LiveTierInventoryTests
     public void TheWorkstationFilter_IsDerivedFromTheVocabulary()
     {
         Assert.Equal(
-            "Category=Live&Writes=None&(Requires=DelegateStore|Requires=CachedExchange)",
+            "Category=Live&Writes=Nothing&(Requires=DelegateStore|Requires=CachedExchange)",
             LiveRunFilters.Workstation);
     }
 
     [Fact]
     public void EveryTraitKeyTheRunFiltersUse_IsCarriedByALiveTest()
     {
-        // VSTest does not evaluate a clause on a trait KEY no test carries: it matches everything
-        // (measured 2026-10-03, `Category=Live&Bogus=None` listed all 128 live tests). So a filter key
-        // that falls out of use - or one never carried - silently stops narrowing the run. Every key the
+        // A key no test carries makes its clause select NOTHING (measured 2026-10-03:
+        // `Category=Live&Bogus=Thing` lists no test) - the safe direction, but a filter that has
+        // silently become an empty run proves nothing on the machine it is meant for. Every key the
         // derived filters use must therefore be carried by at least one live test.
         HashSet<string> carried = new(
             LiveTestMethods().SelectMany(m => m.GetCustomAttributesData().Concat(m.DeclaringType!.GetCustomAttributesData()))
@@ -447,8 +447,30 @@ public sealed class LiveTierInventoryTests
             foreach (string key in System.Text.RegularExpressions.Regex.Matches(filter, @"([A-Za-z]+)!?=").Select(m => m.Groups[1].Value))
             {
                 Assert.True(carried.Contains(key), "the run filter " + filter + " uses the trait key '" + key
-                    + "', which no live test carries - VSTest would match everything on that clause");
+                    + "', which no live test carries - that clause selects nothing, and the run is empty");
             }
+        }
+    }
+
+    [Fact]
+    public void NoTraitValueAndNoRunFilter_UsesTheWordNone()
+    {
+        // To the VSTest filter a test that does NOT carry a trait has the value `None` for it (measured
+        // 2026-10-03: `Requires=None` lists all 3,144 tests without a Requires, `Bogus=None` every test).
+        // A positive clause `Key=None` therefore selects every test that never declared the key - which
+        // is how the Writes trait, first spelt `Writes=None`, selected all 128 live tests instead of its
+        // 54 carriers until a --list-tests count showed it. Control: with that spelling every assertion
+        // below fails.
+        Assert.False(
+            string.Equals(LiveRunFilters.WritesNothing, "None", StringComparison.OrdinalIgnoreCase),
+            "the Writes trait's value is 'None', which VSTest also gives every test that lacks the trait");
+        Assert.DoesNotContain(AllCapabilities, c => string.Equals(c, "None", StringComparison.OrdinalIgnoreCase));
+
+        foreach (string filter in new[] { LiveRunFilters.Guest, LiveRunFilters.GuestUnindexed, LiveRunFilters.Workstation })
+        {
+            Assert.False(
+                System.Text.RegularExpressions.Regex.IsMatch(filter, @"!?=None\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+                "the run filter " + filter + " compares a trait with None, which every test lacking that trait matches");
         }
     }
 

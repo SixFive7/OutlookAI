@@ -885,8 +885,8 @@ plus A1, B1, C1 with C3, and D1 + D2"). Every other live test runs on a guest, t
 
 ```powershell
 $env:OUTLOOKAI_LIVE_OPT_IN = '<this workstation's computer name>'
-dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --list-tests --filter "Category=Live&Writes=None&(Requires=DelegateStore|Requires=CachedExchange)"
-dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --filter "Category=Live&Writes=None&(Requires=DelegateStore|Requires=CachedExchange)"
+dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --list-tests --filter "Category=Live&Writes=Nothing&(Requires=DelegateStore|Requires=CachedExchange)"
+dotnet test McpServer\OutlookAI.McpServer.Tests\OutlookAI.McpServer.Tests.csproj -c Release --filter "Category=Live&Writes=Nothing&(Requires=DelegateStore|Requires=CachedExchange)"
 ```
 
 List first and read the list: it was 7 tests on 2026-10-03, the six that need a delegate mailbox
@@ -894,14 +894,14 @@ and the cached-Exchange half of the short-decoded-id check. The filter is DERIVE
 `McpServer/OutlookAI.McpServer.Tests/T2/LiveRunFilters.cs` builds it from the trait vocabulary and
 `T1/LiveTierInventoryTests` fails the build if this copy, or the runbook's, stops matching it. Two
 halves, each sufficient on its own: `Requires=DelegateStore|CachedExchange` is "needs an Exchange
-profile, so no guest can run it", and `Writes=None` is "changes nothing". Every test with the first
-must carry the second (`EveryTestOnlyTheWorkstationCanRun_DeclaresWritesNone`), so a test that needs
+profile, so no guest can run it", and `Writes=Nothing` is "changes nothing". Every test with the first
+must carry the second (`EveryTestOnlyTheWorkstationCanRun_DeclaresWritesNothing`), so a test that needs
 Exchange and may write is a test nobody can run - which is a decision to make out loud, not a test to
 keep.
 
 **What stands behind the filter - none of it typed, none of it remembered:**
 
-1. **The trait, proven (layer 1).** `Writes=None` is declared per method, and
+1. **The trait, proven (layer 1).** `Writes=Nothing` is declared per method, and
    `T1/ReadOnlyLiveTestTests` walks the compiled code of every carrier - its body, its class's and its
    fixtures' constructors and teardown, lambdas, async state machines, interface dispatch - and fails
    the build on any way it can reach the write guard, a product member not listed as a read
@@ -921,14 +921,15 @@ keep.
 4. **No bounded re-run (A1).** If the count tripwire suspects a loss it re-counts twice, as before, and
    then fails; it no longer starts a child live run of every class in the collections that ran.
 
-**A VSTest property this run depends on, measured 2026-10-03.** A filter clause on a trait KEY that no
-test in the assembly carries is not evaluated - it matches everything (`Category=Live&Bogus=None`
-listed all 128 live tests). A misspelt key therefore does not narrow a run, it silently stops
-narrowing it. That is why the filter above is derived, why every key it uses is pinned to be carried
-by a live test, and why layers 2 and 3 exist at all. **Never run this filter against a build from
-before Q74**: no test carried `Writes` then, so that clause would be ignored, and the old
-`LiveFolderScopeTests` delegate tests sat in a collection whose fixture creates and deletes test
-folders.
+**A VSTest property this run depends on, measured 2026-10-03.** To the filter, a test that does not
+carry a trait has the value `None` for it: `Requires=None` lists all 3,144 tests without a `Requires`,
+and `Bogus=None` lists every test. So a clause `Key=None` selects every test that never declared the
+key - the opposite of what it reads as - which is why the trait's value is `Nothing`, and why
+`T1/LiveTierInventoryTests` refuses `None` as a trait value and in any derived filter. (The trait
+was briefly spelt `Writes=Nothing`; a `--list-tests` count of 128 instead of 54 is what showed it.) A
+key or value spelt wrong otherwise selects nothing (`Category=Live&Bogus=Thing` lists none), which
+is the safe direction: an empty run. On a build from before Q74 this filter therefore selects
+nothing, because no test there carries `Writes=Nothing` - read the list before running.
 
 **Releases.** The live tier is not a release gate; a short manual check of the Exchange-only WRITE
 paths no automated test reaches is, by hand: `Docs/release-manual-checks.md`.

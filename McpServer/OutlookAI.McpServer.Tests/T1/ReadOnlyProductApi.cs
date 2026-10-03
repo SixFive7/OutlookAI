@@ -4,7 +4,7 @@ using System.Runtime.CompilerServices;
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
-/// The product members a <c>Writes=None</c> live test may call - each one CHECKED, not trusted:
+/// The product members a <c>Writes=Nothing</c> live test may call - each one CHECKED, not trusted:
 /// <see cref="WritePathAnalyzer"/> stops its walk at the product boundary and asks this list, and
 /// <c>ReadOnlyLiveTestTests.EveryListedProductMember_ReachesNoWriteInsideTheProduct</c> walks INSIDE the
 /// product from every entry here and fails if any of them can reach an audit-log append (the product
@@ -15,7 +15,7 @@ namespace OutlookAI.McpServer.Tests.T1;
 /// shapes, value objects, parsers, planners. And a single MEMBER (every overload of that name) of a type
 /// that can also write, such as <c>MailService</c> or <c>OutlookComSession</c>. Starting or attaching to
 /// Outlook counts as a read: it changes no data, and these tests have always been allowed to do it
-/// (S7/D17). A member a <c>Writes=None</c> test reaches that is on neither list is a finding - a write,
+/// (S7/D17). A member a <c>Writes=Nothing</c> test reaches that is on neither list is a finding - a write,
 /// or a read nobody has listed yet; adding it here is a claim about product code, so it says why, and the
 /// in-product walk checks the claim.
 /// </para>

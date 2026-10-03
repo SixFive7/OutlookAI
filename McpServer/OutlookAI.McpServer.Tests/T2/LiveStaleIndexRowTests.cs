@@ -57,7 +57,7 @@ public sealed class LiveStaleIndexRowTests
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "DelegateStore")]
     [Trait("Requires", "ProbePopulation")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public void DelegateHitsInANestedFolder_AreReadable_ViaTheFlatLeafName()
     {
         DelegateNestedFolderProbeSettings? probe = _fixture.Settings.DelegateNestedFolderProbe;

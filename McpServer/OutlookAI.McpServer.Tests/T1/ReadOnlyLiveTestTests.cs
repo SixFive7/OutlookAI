@@ -9,7 +9,7 @@ using Xunit.Abstractions;
 namespace OutlookAI.McpServer.Tests.T1;
 
 /// <summary>
-/// Q74 layer 1, the static half: a live test carrying <c>Writes=None</c> cannot reach a write - in
+/// Q74 layer 1, the static half: a live test carrying <c>Writes=Nothing</c> cannot reach a write - in
 /// its own body, in its class's or its fixtures' constructors and teardown, or through a tool it asks
 /// the MCP server for - as far as that can be proven statically (<see cref="WritePathAnalyzer"/> says
 /// where that stops). The workstation filter selects only such tests, so this is what stands behind
@@ -31,9 +31,9 @@ public sealed class ReadOnlyLiveTestTests
     }
 
     [Fact]
-    public void EveryWritesNoneTest_ReachesNoWrite_InItsBodyOrItsFixtures()
+    public void EveryWritesNothingTest_ReachesNoWrite_InItsBodyOrItsFixtures()
     {
-        List<MethodInfo> carriers = WritesNoneTests().ToList();
+        List<MethodInfo> carriers = WritesNothingTests().ToList();
         List<string> problems = new();
         int walked = 0;
         foreach (MethodInfo test in carriers)
@@ -43,7 +43,7 @@ public sealed class ReadOnlyLiveTestTests
             problems.AddRange(walk.Findings.Select(f => test.DeclaringType!.Name + "." + test.Name + ": " + f));
         }
 
-        _output.WriteLine("Writes=None tests: " + carriers.Count + ", method bodies walked: " + walked);
+        _output.WriteLine("Writes=Nothing tests: " + carriers.Count + ", method bodies walked: " + walked);
         foreach (string problem in problems.Take(40))
         {
             _output.WriteLine("PROBLEM " + problem);
@@ -51,14 +51,14 @@ public sealed class ReadOnlyLiveTestTests
 
         Assert.True(
             problems.Count == 0,
-            problems.Count + " way(s) a Writes=None test can reach a write. Either the test writes - take the trait "
+            problems.Count + " way(s) a Writes=Nothing test can reach a write. Either the test writes - take the trait "
             + "off, it cannot run on the read-only workstation - or it calls a product member nobody has listed as a "
             + "read: list it in ReadOnlyProductApi with its reason, and the in-product walk will check the claim.\n"
             + string.Join("\n", problems.Take(20)));
 
         // The seven Exchange-only tests and the PST half of the short-id check carry it at the least; a
         // scan that found fewer is scanning the wrong thing, and the walk must have read real code.
-        Assert.True(carriers.Count >= 8, "only " + carriers.Count + " Writes=None tests found");
+        Assert.True(carriers.Count >= 8, "only " + carriers.Count + " Writes=Nothing tests found");
         Assert.True(walked > carriers.Count * 50, "the walk read only " + walked + " method bodies - it has stopped following calls");
     }
 
@@ -158,7 +158,7 @@ public sealed class ReadOnlyLiveTestTests
     private const BindingFlags Everything = BindingFlags.Public | BindingFlags.NonPublic
         | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
 
-    private static IEnumerable<MethodInfo> WritesNoneTests()
+    private static IEnumerable<MethodInfo> WritesNothingTests()
     {
         return typeof(LiveCollections).Assembly.GetTypes()
             .Where(t => t.IsClass && !t.IsAbstract)
@@ -167,7 +167,7 @@ public sealed class ReadOnlyLiveTestTests
             .Where(m => m.GetCustomAttributesData().Any(a => a.AttributeType == typeof(TraitAttribute)
                 && a.ConstructorArguments.Count == 2
                 && string.Equals(a.ConstructorArguments[0].Value as string, LiveRunFilters.WritesTrait, StringComparison.Ordinal)
-                && string.Equals(a.ConstructorArguments[1].Value as string, LiveRunFilters.WritesNone, StringComparison.Ordinal)))
+                && string.Equals(a.ConstructorArguments[1].Value as string, LiveRunFilters.WritesNothing, StringComparison.Ordinal)))
             .OrderBy(m => m.DeclaringType!.FullName + "." + m.Name, StringComparer.Ordinal);
     }
 

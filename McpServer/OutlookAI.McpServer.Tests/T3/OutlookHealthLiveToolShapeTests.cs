@@ -39,7 +39,7 @@ public sealed class OutlookHealthLiveToolShapeTests
     /// </summary>
     [Fact]
     [Trait("Requires", "OutlookInstance")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public async Task OutlookHealth_CarriesTheFreshnessBlock_WithOrWithoutAnIndex()
     {
         await using McpStdioClient client = await StartAsync();
@@ -68,7 +68,7 @@ public sealed class OutlookHealthLiveToolShapeTests
     /// </summary>
     [Fact]
     [Trait("Requires", "OutlookInstance")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public async Task OutlookHealth_OnAnyMachine_ReturnsWellFormedReport()
     {
         await using McpStdioClient client = await StartAsync();
@@ -172,7 +172,7 @@ public sealed class OutlookHealthLiveToolShapeTests
     /// </summary>
     [Fact]
     [Trait("Requires", "OutlookInstance")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public async Task OutlookHealth_IsCallableOverRawStdio_AndAnswersWithAStatus()
     {
         await using McpStdioClient client = await StartAsync();

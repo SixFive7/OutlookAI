@@ -83,7 +83,7 @@ public sealed class LiveDelegateFolderScopeTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "DelegateStore")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public void DelegateSubfolders_AreReachableAgain_AndTheOldNestedShapeStillReturnsZero()
     {
         // This one has always asserted the list is non-empty, and it keeps doing so: the guard
@@ -195,7 +195,7 @@ public sealed class LiveDelegateFolderScopeTests
     [Fact]
     [Trait("Requires", "SearchIndex")]
     [Trait("Requires", "DelegateStore")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public void DelegateFirstLevelFolders_StillResolve_AndTheWholeMailboxIsUnfiltered()
     {
         foreach (string delegateStore in DelegateStores("the delegate first-level folder probe"))

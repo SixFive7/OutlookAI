@@ -437,7 +437,7 @@ if ($inventorySource -and $runbook) {
 # ---------------------------------------------------------------------------------------------
 # 11b. The live tier's Writes trait (Q74, 2026-10-03).
 #     Beside the capability vocabulary of #11, one trait says what a live test DOES to the machine:
-#     Writes=None, declared per method, the claim the maintainer's read-only workstation run rests on
+#     Writes=Nothing, declared per method, the claim the maintainer's read-only workstation run rests on
 #     (Testbed/README.md section 4d). Its key and its one value live in T2/LiveRunFilters.cs, which
 #     derives the run filters from them, and Docs/live-tier-on-the-vm.md is where a human reads what
 #     it means. C# and Markdown cannot see each other, so a renamed key or value would leave the
@@ -448,9 +448,9 @@ $script:Checks++
 $filtersSource = Read-Source 'McpServer/OutlookAI.McpServer.Tests/T2/LiveRunFilters.cs'
 if ($filtersSource -and $runbook) {
     $writesKey = [regex]::Match($filtersSource, 'const\s+string\s+WritesTrait\s*=\s*"([A-Za-z]+)"')
-    $writesValue = [regex]::Match($filtersSource, 'const\s+string\s+WritesNone\s*=\s*"([A-Za-z]+)"')
+    $writesValue = [regex]::Match($filtersSource, 'const\s+string\s+WritesNothing\s*=\s*"([A-Za-z]+)"')
     if (-not $writesKey.Success -or -not $writesValue.Success) {
-        Fail "live-tier Writes trait" "could not find WritesTrait and WritesNone in T2/LiveRunFilters.cs - the file changed shape and this check no longer proves anything."
+        Fail "live-tier Writes trait" "could not find WritesTrait and WritesNothing in T2/LiveRunFilters.cs - the file changed shape and this check no longer proves anything."
     } else {
         $writesToken = '`' + $writesKey.Groups[1].Value + '=' + $writesValue.Groups[1].Value + '`'
         if ($runbook -cnotmatch [regex]::Escape($writesToken)) {

@@ -70,7 +70,7 @@ public static class LiveWriteAccess
             + ", and only a machine that declares 'Portable' - a test guest - may write anything. "
             + "'Production' is the maintainer's workstation, which is read-only for live tests ALWAYS, the "
             + "designated test mailbox included (AGENTS.md, Mailbox Safety; Q72, enforced in code since Q74). "
-            + "A test that writes runs on a test guest; on this machine only tests carrying Writes=None are selected, "
+            + "A test that writes runs on a test guest; on this machine only tests carrying Writes=Nothing are selected, "
             + "through the workstation filter in Testbed/README.md section 4d.";
     }
 

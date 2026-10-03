@@ -2141,7 +2141,7 @@ is how to stop needing that line at all - by building the account, which is the 
 turns those two tests from an announcement into a verification.
 
 **The maintainer's workstation runs a different filter, and only that one:** read-only, Exchange-only
-- `Testbed/README.md` section 4d, and section 5 below for the `Writes=None` trait it rests on.
+- `Testbed/README.md` section 4d, and section 5 below for the `Writes=Nothing` trait it rests on.
 
 To run one class:
 
@@ -2494,18 +2494,18 @@ and not three traits either. It used to be three, and the third one was the prob
   **per method**. Nothing else is declared: which bucket a test is in is a question asked of
   `Requires` at filter time.
 
-**And one trait that is not a bucket: `Writes=None` (Q74, 2026-10-03).** It says what a test DOES to
+**And one trait that is not a bucket: `Writes=Nothing` (Q74, 2026-10-03).** It says what a test DOES to
 the machine - nothing: no mail item or folder, no signature, no registry value, nothing on the
 user's screen - declared **per method**, with that one value, and absence meaning "may write". It
 is not the retired third axis come back: that one restated `Requires` by hand and could only drift,
 while this one cannot be derived from `Requires` at all, and it is not trusted either -
 `T1/ReadOnlyLiveTestTests` walks the compiled code of every carrier, its fixtures included, and
 fails the build on any way it can reach a write. It exists for one machine: the maintainer's
-workstation runs only live tests that need an Exchange profile AND carry `Writes=None`, and every
+workstation runs only live tests that need an Exchange profile AND carry `Writes=Nothing`, and every
 test needing Exchange must carry it. The run is `Testbed/README.md` section 4d; its filter, derived in
 `McpServer/OutlookAI.McpServer.Tests/T2/LiveRunFilters.cs` and pinned there and here, is:
 
-`Category=Live&Writes=None&(Requires=DelegateStore|Requires=CachedExchange)`
+`Category=Live&Writes=Nothing&(Requires=DelegateStore|Requires=CachedExchange)`
 
 Fifty-four live tests carry the trait on 2026-10-03; seven of them need Exchange, and those seven are
 the workstation run.

@@ -55,7 +55,7 @@ public sealed class LiveCompletenessOracleTests
 
     [Fact]
     [Trait("Requires", "SearchIndex")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public void CompletenessOracle_IndexMatchesGroundTruth_ForProbeTerms()
     {
         string hubStore = _fixture.Settings.TestHubStoreDisplayName;

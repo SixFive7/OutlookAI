@@ -149,7 +149,7 @@ mailboxes, cached mode), which no test VM can have under the Dependencies rule â
 **read-only**. **Never run a write-capable live test on the workstation, and never select a
 workstation run by a filter that could include one.** Since Q74 (2026-10-03) code enforces this:
 the workstation runs only the derived filter in `Testbed/README.md` section 4d - live tests that need
-Exchange AND carry `Writes=None`, which T1 proves read-only from the compiled code - its settings'
+Exchange AND carry `Writes=Nothing`, which T1 proves read-only from the compiled code - its settings'
 profile makes every in-process write throw, the test hub included, and the test-side MCP client
 refuses every tool not classified read-only. Those gates are a floor, not a licence: never edit the
 workstation's settings file, never re-declare it `Portable`, and if you cannot show a workstation

@@ -36,7 +36,7 @@ public sealed class LiveExhaustiveSearchTests
 
     [Fact]
     [Trait("Requires", "SearchIndex")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public void Exhaustive_KnownAnswer_MatchesIndexAndGroundTruth_OnHubStore()
     {
         IReadOnlyList<OutlookAI.Core.Com.ComWalkedItem> corpus = _fixture.TestHubCorpus;
@@ -141,7 +141,7 @@ public sealed class LiveExhaustiveSearchTests
 
     [Fact]
     [Trait("Requires", "OutlookInstance")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public void Exhaustive_FolderBounded_ReturnsExactlyThatFoldersMatches()
     {
         IReadOnlyList<OutlookAI.Core.Com.ComWalkedItem> corpus = _fixture.TestHubCorpus;

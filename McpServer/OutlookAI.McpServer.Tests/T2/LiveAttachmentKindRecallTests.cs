@@ -46,7 +46,7 @@ public sealed class LiveAttachmentKindRecallTests
 
     [Fact]
     [Trait("Requires", "SearchIndex")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public void DroppedAttachmentKinds_AreRecoveredByTheNewShape_AndTheGrowthIsMeasured()
     {
         IIndexClient client = Client;
@@ -116,7 +116,7 @@ public sealed class LiveAttachmentKindRecallTests
 
     [Fact]
     [Trait("Requires", "SearchIndex")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public void PostFilter_KeepsMailOnly_AndAttachmentRowsOfEveryKind()
     {
         // Admission moved from SQL to code; prove the code decides the same thing the old
@@ -166,7 +166,7 @@ public sealed class LiveAttachmentKindRecallTests
 
     [Fact]
     [Trait("Requires", "SearchIndex")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public void QuerySetLatency_IsUnchangedWithinNoise()
     {
         // The block-(q) claim is "no extra query, ~+6% rows". Measure the agent-sized
@@ -208,7 +208,7 @@ public sealed class LiveAttachmentKindRecallTests
 
     [Fact]
     [Trait("Requires", "SearchIndex")]
-    [Trait("Writes", "None")]
+    [Trait("Writes", "Nothing")]
     public void PreviouslyDroppedAttachmentKinds_SurfaceThroughSearch_AndReadOpensTheParent()
     {
         // Deterministic end-to-end proof through the PRODUCT, read-only on the real

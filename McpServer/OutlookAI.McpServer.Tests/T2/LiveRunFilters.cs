@@ -36,7 +36,7 @@ public static class LiveRunFilters
     public const string WritesTrait = "Writes";
 
     /// <summary>The trait's one value. Absence means "may write" - the direction that fails safe.</summary>
-    public const string WritesNone = "None";
+    public const string WritesNothing = "Nothing";
 
     /// <summary>
     /// The capabilities only an Exchange profile has - the whole definition of the tests that cannot
@@ -58,18 +58,21 @@ public static class LiveRunFilters
     /// <summary>
     /// The filter the maintainer's workstation runs, and the only one it may (Q72, Q74): the live tests
     /// that need an Exchange profile - nothing else may run there - AND that carry
-    /// <see cref="WritesTrait"/>=<see cref="WritesNone"/>. Every such test must carry it
+    /// <see cref="WritesTrait"/>=<see cref="WritesNothing"/>. Every such test must carry it
     /// (<c>T1.LiveTierInventoryTests</c>), so in practice the two halves select the same tests; both are
     /// kept so that neither alone decides.
     /// <para>
-    /// <b>A VSTest property worth knowing.</b> A clause on a trait KEY that no test in the assembly
-    /// carries is not evaluated at all - it matches everything (measured 2026-10-03:
-    /// <c>Category=Live&amp;Bogus=None</c> lists every live test). So a misspelt key does not narrow a run,
-    /// it silently stops narrowing it, which is one more reason this string is derived rather than typed,
-    /// and why <c>T1.LiveTierInventoryTests</c> requires every key used here to be carried by a live test.
+    /// <b>Why the value is <see cref="WritesNothing"/> and never <c>None</c> - measured 2026-10-03.</b>
+    /// To the VSTest filter a test that does not carry a trait has the value <c>None</c> for it:
+    /// <c>Requires=None</c> lists all 3,144 tests that carry no <c>Requires</c>, and <c>Bogus=None</c> lists
+    /// every test. A positive clause <c>Writes=Nothing</c> therefore selects every test that never declared
+    /// anything - the exact opposite of its meaning - and the trait shipped that way for one commit before
+    /// a <c>--list-tests</c> count showed it. A key or value spelt wrong otherwise selects NOTHING (measured:
+    /// <c>Category=Live&amp;Bogus=Thing</c> lists none), which is the safe direction: an empty run.
+    /// <c>T1.LiveTierInventoryTests</c> refuses <c>None</c> as a trait value and in any derived filter.
     /// </para>
     /// </summary>
     public static string Workstation { get; } =
-        "Category=Live&" + WritesTrait + "=" + WritesNone + "&("
+        "Category=Live&" + WritesTrait + "=" + WritesNothing + "&("
         + string.Join("|", WorkstationOnlyCapabilities.Select(c => "Requires=" + c)) + ")";
 }
