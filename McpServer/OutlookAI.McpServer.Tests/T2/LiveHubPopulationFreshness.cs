@@ -49,10 +49,13 @@ public static class LiveHubPopulationFreshness
             ?? throw new InvalidOperationException(
                 $"The hub population manifest records an anchor that is not a UTC instant ('{header.AnchorUtc}').");
 
+        // The indexed guest's hub carries undated CONTACTS (Q98 (f)), which its shape key says; the
+        // newest DATED item - what the age is judged on - is the same with them or without.
         var options = new CorpusPlanOptions(header.CorpusId, header.Seed, anchor)
         {
             Population = CorpusPopulationKind.Hub,
             Owner = CorpusMailboxOwner.ForStore(header.StoreDisplayName),
+            IncludeUndatedContacts = CorpusPlanOptions.ShapeKeyCarriesUndatedContacts(header.ShapeKey),
         };
         if (!string.Equals(options.ShapeKey, header.ShapeKey, StringComparison.Ordinal))
         {

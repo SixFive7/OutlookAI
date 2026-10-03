@@ -89,6 +89,20 @@ public sealed record CorpusEnrichmentReport(
 
     /// <summary>Undated items whose delivery time could not be read either way.</summary>
     public int UndatedDateUnestablished { get; init; }
+
+    /// <summary>
+    /// Where the plan's undated items must be undated (<see cref="CorpusPopulation.UndatedCriterion"/>).
+    /// Under <see cref="CorpusUndatedCriterion.IndexHoldsNoDate"/> a delivery time in the STORE is
+    /// expected - a PST gives a contact one and Outlook will not remove it - so it is counted in
+    /// <see cref="UndatedDatedInTheStore"/>, not as a fault, and the index is checked instead.
+    /// </summary>
+    public CorpusUndatedCriterion UndatedCriterion { get; init; }
+
+    /// <summary>
+    /// Under <see cref="CorpusUndatedCriterion.IndexHoldsNoDate"/>: undated items the store gives a
+    /// delivery time - every one, on a PST. An observation; <c>corpus-indexed</c> checks the index.
+    /// </summary>
+    public int UndatedDatedInTheStore { get; init; }
 }
 
 /// <summary>
@@ -140,6 +154,9 @@ public static class CorpusEnrichmentCheck
         int undatedClass = 0;
         int undatedDated = 0;
         int undatedUnknownDate = 0;
+        int undatedStoreDated = 0;
+        CorpusUndatedCriterion criterion = plan.Population.UndatedCriterion;
+        bool storeMustHoldNoDate = criterion != CorpusUndatedCriterion.IndexHoldsNoDate;
         var idsByThread = new SortedDictionary<int, List<string?>>();
         for (int ordinal = 1; ordinal <= itemCount; ordinal++)
         {
@@ -147,7 +164,9 @@ public static class CorpusEnrichmentCheck
             if (want == null)
             {
                 // An UNDATED item: no sender, recipients, attachments or conversation to compare.
-                // What it must be instead is the right KIND of item, with NO delivery time.
+                // What it must be instead is the right KIND of item - with NO delivery time when the
+                // store is where it must be undated; when the INDEX is (the indexed guest's contacts,
+                // Q98 (f)), the store's delivery time is expected and only counted.
                 CorpusItemSpec spec = plan.Describe(ordinal);
                 undatedPlanned++;
                 if (!byOrdinal.TryGetValue(ordinal, out CorpusEnrichmentObservation? seen))
@@ -167,7 +186,14 @@ public static class CorpusEnrichmentCheck
                     undatedClass++;
                 }
 
-                if (seen.HasDeliveryTime == true)
+                if (!storeMustHoldNoDate)
+                {
+                    if (seen.HasDeliveryTime == true)
+                    {
+                        undatedStoreDated++;
+                    }
+                }
+                else if (seen.HasDeliveryTime == true)
                 {
                     undatedDated++;
                 }
@@ -249,6 +275,8 @@ public static class CorpusEnrichmentCheck
             UndatedClassMismatches = undatedClass,
             UndatedCarryingADate = undatedDated,
             UndatedDateUnestablished = undatedUnknownDate,
+            UndatedCriterion = criterion,
+            UndatedDatedInTheStore = undatedStoreDated,
         };
     }
 
@@ -332,9 +360,13 @@ public static class CorpusEnrichmentCheck
                 + "will say."
             : string.Empty;
 
-        string undated = report.UndatedPlanned > 0
-            ? $" {report.UndatedPlanned.ToString(invariant)} of them UNDATED - the right kind of item, with no delivery time."
-            : string.Empty;
+        string undated = report.UndatedPlanned == 0
+            ? string.Empty
+            : report.UndatedCriterion == CorpusUndatedCriterion.IndexHoldsNoDate
+                ? $" {report.UndatedPlanned.ToString(invariant)} of them UNDATED IN THE INDEX - the right kind of item; the store gives "
+                    + $"{report.UndatedDatedInTheStore.ToString(invariant)} of them a delivery time Outlook will not remove, which the "
+                    + "index does not use for this kind (Q98 (f)) - corpus-indexed checks the index."
+                : $" {report.UndatedPlanned.ToString(invariant)} of them UNDATED - the right kind of item, with no delivery time.";
 
         return faults.Count == 0
             ? (true, head + " Every item carries the sender, recipients, attachments and conversation the plan names."
@@ -568,11 +600,27 @@ public static class CorpusUndatedFidelity
             + (p.Error == null ? string.Empty : $" error={p.Error}");
     }
 
-    /// <summary>Whether a build may proceed, and the sentence that says why either way.</summary>
+    /// <summary>
+    /// Whether a build may proceed, and the sentence that says why either way - judged as version 2's
+    /// full undated set is: undated in the STORE (<see cref="CorpusUndatedCriterion.StoreHoldsNoDate"/>).
+    /// </summary>
     /// <param name="required">The undated kinds the population carries.</param>
     /// <param name="probes">What the probe found, one entry per kind it probed.</param>
     public static (bool Proceed, string Message) Decide(
         IReadOnlyList<CorpusItemKind> required, IReadOnlyList<CorpusUndatedProbe> probes)
+        => Decide(required, probes, CorpusUndatedCriterion.StoreHoldsNoDate);
+
+    /// <summary>
+    /// Whether a build may proceed, judged by WHERE the population's undated items must be undated
+    /// (<see cref="CorpusPopulation.UndatedCriterion"/>). Every criterion requires the kind's folder, the
+    /// target store, the folder by EntryID, the tag and the class. Only
+    /// <see cref="CorpusUndatedCriterion.StoreHoldsNoDate"/> also requires the store to hold no delivery
+    /// time: under <see cref="CorpusUndatedCriterion.IndexHoldsNoDate"/> - the indexed guest's contacts,
+    /// Q98 (f) - a PST's delivery time is EXPECTED, nothing tries to remove it, and the index's own column
+    /// is what <c>corpus-indexed</c> checks on every built item.
+    /// </summary>
+    public static (bool Proceed, string Message) Decide(
+        IReadOnlyList<CorpusItemKind> required, IReadOnlyList<CorpusUndatedProbe> probes, CorpusUndatedCriterion criterion)
     {
         ArgumentNullException.ThrowIfNull(required);
         ArgumentNullException.ThrowIfNull(probes);
@@ -580,6 +628,8 @@ public static class CorpusUndatedFidelity
         {
             return (true, "Undated probe: this population carries no undated item; nothing to probe.");
         }
+
+        bool storeMustHoldNoDate = criterion != CorpusUndatedCriterion.IndexHoldsNoDate;
 
         var failed = new List<string>();
         foreach (CorpusItemKind kind in required)
@@ -619,7 +669,11 @@ public static class CorpusUndatedFidelity
                 why.Add("its subject lost the corpus tag, so the two-key rule could never delete it");
             }
 
-            if (!probe.HasNoDeliveryTime)
+            if (!storeMustHoldNoDate)
+            {
+                // Undated in the INDEX: the store's delivery time is expected and is not asked about.
+            }
+            else if (!probe.HasNoDeliveryTime)
             {
                 why.Add("it CARRIES a delivery time, so the index would date it"
                     + (probe.StoreTableSaysUndated == true
@@ -654,7 +708,13 @@ public static class CorpusUndatedFidelity
                 + "mis-measure, and an untagged one is an item teardown cannot remove. There is no flag for this.");
         }
 
-        return (true, "Undated probe verified for " + string.Join(", ", required.Select(k => k.ToString().ToLowerInvariant()))
-            + ": each lands in its own folder of the target store, keeps its tag, and carries no delivery time.");
+        string kinds = string.Join(", ", required.Select(k => k.ToString().ToLowerInvariant()));
+        return storeMustHoldNoDate
+            ? (true, "Undated probe verified for " + kinds
+                + ": each lands in its own folder of the target store, keeps its tag, and carries no delivery time.")
+            : (true, "Undated probe verified for " + kinds
+                + ": each lands in its own folder of the target store, keeps its tag and its class. The store gives it a "
+                + "delivery time, as a PST does and Outlook will not remove; what makes it UNDATED is the index, which gives "
+                + "this kind no received date (measured 2026-10-03, Q98 (f)) - corpus-indexed checks that on every built item.");
     }
 }

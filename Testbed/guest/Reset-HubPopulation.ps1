@@ -45,7 +45,16 @@
     corpus-<id>.jsonl, is the population's id; whether to wait for the index is whether
     indexedStoreDisplayNames names the hub. The seed comes from the manifest's own header line,
     and so does the anchor the old population is torn down by - teardown refuses any other,
-    because the anchor is part of the shape key. Nothing is typed on a normal run but -Execute.
+    because the anchor is part of the shape key. So does whether the hub carries undated CONTACTS
+    (the indexed guest's, Q98 (f) - the key ends '|u:contacts'): a rebuild keeps what it tears down,
+    and every verb then gets --undated-contacts; a FIRST build gives them to an indexed hub only.
+    Nothing is typed on a normal run but -Execute.
+
+    ON THE INDEXED GUEST IT RUNS NOT ELEVATED - Register-InteractiveTask.ps1 -RunLevel Limited - and
+    refuses to -Execute elevated there: every Outlook start on that guest is NOT elevated, the
+    rebuild's own included, because an elevated Outlook never feeds the index. Run that way, it
+    starts both Outlooks directly, at its own level. On the unindexed guest either level works; it
+    ran at the task's default, Highest, there.
 
     WHAT IT DOES, IN ORDER, with -Execute:
 
@@ -221,6 +230,11 @@ $script:HistoryDirectoryName = 'hub-history'
 # What a hub population's shape key carries (CorpusPopulation.ShapeKeySuffixFor): '|p:hub:v<N>|o:...'.
 $script:HubShapeMarker = '|p:hub:v'
 
+# What it ends with when the hub carries undated CONTACTS - the indexed guest's hub since 2026-10-03
+# (Q98 (f); CorpusPlanOptions.UndatedContactsShapeKeyMarker). Part of the shape key, so the teardown
+# and the build of such a hub both need --undated-contacts, and a rebuild keeps what it tears down.
+$script:UndatedContactsMarker = '|u:contacts'
+
 # The only manifest format there is (CorpusManifest.CurrentVersion).
 $script:ManifestVersion = 1
 
@@ -355,6 +369,7 @@ function Read-HubManifestHeader {
     $seedValue = $null
     $anchor = $null
     $store = $null
+    $contacts = $false
     if ($null -ne $parsed) {
         $version = Get-JsonField $parsed 'Version'
         if (-not (($version -is [int] -or $version -is [long]) -and [long]$version -eq $script:ManifestVersion)) {
@@ -375,11 +390,12 @@ function Read-HubManifestHeader {
         if (-not ($shapeKey -is [string]) -or $shapeKey.IndexOf($script:HubShapeMarker, [System.StringComparison]::Ordinal) -lt 0) {
             $problems.Add('its shape key is not a HUB population''s - another population''s manifest, or the measurement corpus''s.')
         }
+        elseif ($shapeKey.EndsWith($script:UndatedContactsMarker, [System.StringComparison]::Ordinal)) { $contacts = $true }
         $store = Get-JsonField $parsed 'StoreDisplayName'
         if (-not ($store -is [string]) -or $store.Length -eq 0) { $problems.Add('it names no store.'); $store = $null }
     }
 
-    return [pscustomobject]@{ CorpusId = $corpusId; Seed = $seedValue; AnchorUtc = $anchor; Store = $store; Problems = $problems.ToArray() }
+    return [pscustomobject]@{ CorpusId = $corpusId; Seed = $seedValue; AnchorUtc = $anchor; Store = $store; UndatedContacts = $contacts; Problems = $problems.ToArray() }
 }
 
 <#
@@ -396,7 +412,7 @@ function Select-NewestHistorySeed {
         $header = Read-HubManifestHeader $entry.HeaderLine
         if ($header.Problems.Count -gt 0 -or $header.CorpusId -cne $CorpusId) { continue }
         if ($null -eq $best -or [string]::CompareOrdinal($header.AnchorUtc, $best.AnchorUtc) -gt 0) {
-            $best = [pscustomobject]@{ Name = $entry.Name; Seed = $header.Seed; AnchorUtc = $header.AnchorUtc }
+            $best = [pscustomobject]@{ Name = $entry.Name; Seed = $header.Seed; AnchorUtc = $header.AnchorUtc; UndatedContacts = $header.UndatedContacts }
         }
     }
     return $best
@@ -435,6 +451,10 @@ function Resolve-HubResetPlan {
 
     $seedValue = $null
     $teardownAnchor = $null
+    # Whether the hub carries undated CONTACTS (Q98 (f)): what the manifest or the torn-down one says - a
+    # rebuild reproduces the population it tears down - and, for a first build, whether the hub is
+    # indexed here, which is the decision: contacts on the indexed guest only.
+    $contacts = [bool]$SettingsFact.Indexed
     $manifestPath = $SettingsFact.ManifestPath
     $corpusId = $SettingsFact.PopulationId
     if ($problems.Count -eq 0) {
@@ -454,6 +474,7 @@ function Resolve-HubResetPlan {
                 }
                 $seedValue = $Header.Seed
                 $teardownAnchor = $Header.AnchorUtc
+                $contacts = [bool]$Header.UndatedContacts
             }
         }
         elseif ($SkipRebuild) {
@@ -465,6 +486,7 @@ function Resolve-HubResetPlan {
         }
         elseif ($null -ne $HistorySeed) {
             $seedValue = $HistorySeed.Seed
+            $contacts = [bool]$HistorySeed.UndatedContacts
             $notes.Add("no manifest at $manifestPath - the last rebuild stopped after its teardown and before its build wrote one. Rebuilding with seed $($HistorySeed.Seed), from the newest torn-down manifest, $($script:HistoryDirectoryName)\$($HistorySeed.Name).")
         }
         else {
@@ -472,35 +494,64 @@ function Resolve-HubResetPlan {
         }
     }
 
+    # The two disagreeing is worth a line, never a refusal: the rebuild keeps the population it has.
+    if ($problems.Count -eq 0 -and $null -ne $seedValue -and $contacts -ne [bool]$SettingsFact.Indexed) {
+        if ($contacts) {
+            $notes.Add("the hub's population carries undated contacts, and the hub is NOT indexed here - nothing reads them on this guest (Q98 (f): the order-key tests need an index). Rebuilt as it was.")
+        }
+        else {
+            $notes.Add("the hub is INDEXED here, and its population carries NO undated contacts, so LiveOrderKeyCollationTests will find no undated row in it (Q98 (f)). Rebuilt as it was; to add them, tear it down and build it once with --undated-contacts (Docs/live-tier-on-the-vm.md section 3b).")
+        }
+    }
+
     $whole = [datetime]::SpecifyKind($NowUtc, [System.DateTimeKind]::Utc)
     $whole = $whole.AddTicks(-($whole.Ticks % [TimeSpan]::TicksPerSecond))
     return [pscustomobject]@{
-        Proceed        = ($problems.Count -eq 0)
-        Problems       = $problems.ToArray()
-        Notes          = $notes.ToArray()
-        CorpusId       = $corpusId
-        Store          = $SettingsFact.Hub
-        ManifestPath   = $manifestPath
-        Seed           = $seedValue
-        TeardownAnchor = $teardownAnchor
-        NewAnchor      = $whole.ToString($script:UtcFormat, $script:Invariant)
-        Rebuild        = (-not $SkipRebuild)
-        Indexed        = $SettingsFact.Indexed
+        Proceed         = ($problems.Count -eq 0)
+        Problems        = $problems.ToArray()
+        Notes           = $notes.ToArray()
+        CorpusId        = $corpusId
+        Store           = $SettingsFact.Hub
+        ManifestPath    = $manifestPath
+        Seed            = $seedValue
+        TeardownAnchor  = $teardownAnchor
+        NewAnchor       = $whole.ToString($script:UtcFormat, $script:Invariant)
+        Rebuild         = (-not $SkipRebuild)
+        Indexed         = $SettingsFact.Indexed
+        UndatedContacts = $contacts
     }
 }
 
 <#
     One corpus verb's arguments for this population. NEVER the write flag: the call site that
-    means it appends it, where it can be read.
+    means it appends it, where it can be read. -UndatedContacts adds --undated-contacts, which every
+    verb on such a hub needs: it is part of the shape key.
 #>
 function Get-HubToolArgument {
-    param([string] $Verb, [string] $Store, [string] $CorpusId, [long] $SeedValue, [string] $Anchor, [string] $ManifestPath, [int] $WaitSeconds = -1)
+    param([string] $Verb, [string] $Store, [string] $CorpusId, [long] $SeedValue, [string] $Anchor, [string] $ManifestPath, [int] $WaitSeconds = -1, [bool] $UndatedContacts = $false)
     $arguments = @($Verb, '--population', 'hub', '--store', $Store)
     if ($Verb -ceq 'corpus-teardown' -or $Verb -ceq 'corpus-build') { $arguments += @('--allow-store', $Store) }
     $arguments += @('--corpus-id', $CorpusId, '--seed', $SeedValue.ToString($script:Invariant), '--anchor', $Anchor)
+    if ($UndatedContacts) { $arguments += '--undated-contacts' }
     if ($Verb -cne 'corpus-plan') { $arguments += @('--manifest', $ManifestPath) }
     if ($WaitSeconds -ge 0) { $arguments += @('--wait-seconds', $WaitSeconds.ToString($script:Invariant)) }
     return , $arguments
+}
+
+<#
+    Whether this run may start its Outlook at the integrity level it has. On a guest whose hub is
+    INDEXED every Outlook start is NOT elevated, the rebuild's own included: an elevated Outlook never
+    feeds the Windows Search index (runbook section 8 item 22), and the index there stops moving.
+    Running this script elevated would start the rebuild's Outlook elevated - and the corpus tool,
+    which runs in this script's task, attaches only to an Outlook at its own level. So on the indexed
+    guest it refuses to -Execute elevated, and says how to run it.
+#>
+function Test-HubRunLevel {
+    param([bool] $Indexed, [bool] $Elevated, [bool] $Execute)
+    if ($Indexed -and $Elevated -and $Execute) {
+        return , @("this guest's hub is INDEXED, and this script is running ELEVATED, so the Outlook it starts for the rebuild would be elevated too - and an elevated Outlook never feeds the index (runbook section 8 item 22). Run it NOT elevated: Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 3600 -Script `"& 'C:\OutlookAI-Q5\Reset-HubPopulation.ps1' -Execute`".")
+    }
+    return , @()
 }
 
 <#
@@ -672,6 +723,11 @@ function Invoke-SelfTest {
     Test-Says 'an anchor that is not UTC is refused' (Read-HubManifestHeader (New-HeaderLine -Anchor '2026-09-24T10:00:00+02:00')).Problems 'not a UTC instant'
     Test-Says 'a line that is not JSON is refused' (Read-HubManifestHeader '{ torn').Problems 'not JSON'
     Test-Says 'an empty file is refused' (Read-HubManifestHeader '').Problems 'no header line'
+    $contactsKey = 'v1|hub-indexed|8181|2026-09-24T08:00:00Z|s:x|p:hub:v2|o:Tier <tier@vm.invalid>|u:contacts'
+    $contactsHeader = Read-HubManifestHeader (New-HeaderLine -ShapeKey $contactsKey)
+    Test-Case 'a hub without the contacts marker carries no undated contacts' $false $header.UndatedContacts
+    Test-Case 'the marker at the end of the key: the indexed guest''s hub, with its undated contacts (Q98 (f))' 'True|0' @($contactsHeader.UndatedContacts, $contactsHeader.Problems.Count)
+    Test-Case 'the marker anywhere else is not it' $false (Read-HubManifestHeader (New-HeaderLine -ShapeKey 'v1|hub-indexed|8181|x|u:contacts|p:hub:v2|o:Tier <tier@vm.invalid>')).UndatedContacts
 
     Write-Host ''
     Write-Host '== the plan =='
@@ -699,6 +755,19 @@ function Invoke-SelfTest {
     Test-Case '-SkipRebuild with a manifest: finish, rebuild nothing' 'True|False' @($finish.Proceed, $finish.Rebuild)
     Test-Says '-SkipRebuild with no manifest is refused' (Resolve-HubResetPlan -SettingsFact $fact -ManifestExists $false -Header $null -HistorySeed $null -SeedText '8181' -SkipRebuild $true -NowUtc $now).Problems '-SkipRebuild finishes'
     Test-Says 'settings problems stop the plan, labelled' (Resolve-HubResetPlan -SettingsFact (Read-HubSettingsFact (New-Settings -MachineProfile 'Production')) -ManifestExists $true -Header $header -HistorySeed $null -SeedText '' -SkipRebuild $false -NowUtc $now).Problems 'settings: machineProfile'
+    # Undated contacts (Q98 (f)): a rebuild keeps what it tears down; a first build follows the decision.
+    $withContacts = Resolve-HubResetPlan -SettingsFact $fact -ManifestExists $true -Header $contactsHeader -HistorySeed $null -SeedText '' -SkipRebuild $false -NowUtc $now
+    Test-Case 'an indexed hub built with its contacts is rebuilt with them, and nothing is noted' 'True|True|0' @($withContacts.Proceed, $withContacts.UndatedContacts, @($withContacts.Notes).Count)
+    Test-Case 'an indexed hub built WITHOUT them is rebuilt as it was' 'True|False' @($plan.Proceed, $plan.UndatedContacts)
+    Test-Says 'and the run says the order-key tests will find nothing in it' $plan.Notes 'carries NO undated contacts'
+    $unindexedFact = Read-HubSettingsFact (New-Settings -Indexed @())
+    $strayContacts = Resolve-HubResetPlan -SettingsFact $unindexedFact -ManifestExists $true -Header $contactsHeader -HistorySeed $null -SeedText '' -SkipRebuild $false -NowUtc $now
+    Test-Case 'a hub with contacts where nothing is indexed is rebuilt as it was too' 'True|True' @($strayContacts.Proceed, $strayContacts.UndatedContacts)
+    Test-Says 'and says nothing reads them there' $strayContacts.Notes 'NOT indexed here'
+    Test-Case 'an unindexed hub without them: nothing noted' 'False|0' @((Resolve-HubResetPlan -SettingsFact $unindexedFact -ManifestExists $true -Header $header -HistorySeed $null -SeedText '' -SkipRebuild $false -NowUtc $now).UndatedContacts, @((Resolve-HubResetPlan -SettingsFact $unindexedFact -ManifestExists $true -Header $header -HistorySeed $null -SeedText '' -SkipRebuild $false -NowUtc $now).Notes).Count)
+    Test-Case 'a FIRST build follows the decision: contacts where the hub is indexed' $true $first.UndatedContacts
+    Test-Case 'and none where it is not' $false (Resolve-HubResetPlan -SettingsFact $unindexedFact -ManifestExists $false -Header $null -HistorySeed $null -SeedText '8181' -SkipRebuild $false -NowUtc $now).UndatedContacts
+    Test-Case 'a rebuild from history keeps the torn-down manifest''s contacts' 'False|True' @($resume.UndatedContacts, (Resolve-HubResetPlan -SettingsFact $fact -ManifestExists $false -Header $null -HistorySeed ([pscustomobject]@{ Name = 'hub-indexed.x.jsonl'; Seed = [long]8181; AnchorUtc = '2026-09-23T07:00:00Z'; UndatedContacts = $true }) -SeedText '' -SkipRebuild $false -NowUtc $now).UndatedContacts)
 
     Write-Host ''
     Write-Host '== history =='
@@ -710,6 +779,8 @@ function Invoke-SelfTest {
     )
     Test-Case 'the newest readable one of THIS population is chosen' 'hub-indexed.20260923T070000Z.jsonl|8181' @((Select-NewestHistorySeed -CorpusId 'hub-indexed' -Entries $entries).Name, (Select-NewestHistorySeed -CorpusId 'hub-indexed' -Entries $entries).Seed)
     Test-Case 'none of it: nothing' '<null>' (Select-NewestHistorySeed -CorpusId 'hub-other' -Entries $entries)
+    $contactsEntries = @([pscustomobject]@{ Name = 'hub-indexed.20260925T070000Z.jsonl'; HeaderLine = (New-HeaderLine -Anchor '2026-09-25T07:00:00Z' -ShapeKey $contactsKey) })
+    Test-Case 'a torn-down manifest says whether its hub carried contacts' 'False|True' @((Select-NewestHistorySeed -CorpusId 'hub-indexed' -Entries $entries).UndatedContacts, (Select-NewestHistorySeed -CorpusId 'hub-indexed' -Entries $contactsEntries).UndatedContacts)
     $historyName = Format-HubHistoryName -CorpusId 'hub-indexed' -AnchorText '2026-09-24T08:00:00Z'
     Test-Case 'a torn-down manifest is kept as <id>.<anchor>.jsonl' 'hub-indexed.20260924T080000Z.jsonl' $historyName
     Test-Case 'which Copy-FromGuest.ps1 never takes for a live manifest' $false ($historyName.StartsWith('corpus-', [System.StringComparison]::OrdinalIgnoreCase))
@@ -725,6 +796,16 @@ function Invoke-SelfTest {
     $spaced = Get-HubToolArgument -Verb 'corpus-plan' -Store 'Tier Hub' -CorpusId 'h' -SeedValue 1 -Anchor 'a' -ManifestPath 'm'
     Test-Case 'a store name with a space is one argument' 3 @($spaced | Where-Object { $_ -ceq 'Tier Hub' -or $_ -ceq '--store' -or $_ -ceq 'h' }).Count
     Test-Case 'and the list is exactly as long as its parts' 11 @($spaced).Count
+    Test-Case 'a hub with undated contacts: every verb says so - it is part of the shape' 'corpus-teardown|--population|hub|--store|tier@vm.invalid|--allow-store|tier@vm.invalid|--corpus-id|hub-indexed|--seed|8181|--anchor|2026-09-24T08:00:00Z|--undated-contacts|--manifest|C:\m\corpus-hub-indexed.jsonl' (Get-HubToolArgument -Verb 'corpus-teardown' -Store 'tier@vm.invalid' -CorpusId 'hub-indexed' -SeedValue 8181 -Anchor '2026-09-24T08:00:00Z' -ManifestPath 'C:\m\corpus-hub-indexed.jsonl' -UndatedContacts $true)
+    Test-Case 'the plan sheet as well' 'corpus-plan|--population|hub|--store|tier@vm.invalid|--corpus-id|hub-indexed|--seed|8181|--anchor|2026-09-24T09:15:42Z|--undated-contacts' (Get-HubToolArgument -Verb 'corpus-plan' -Store 'tier@vm.invalid' -CorpusId 'hub-indexed' -SeedValue 8181 -Anchor '2026-09-24T09:15:42Z' -ManifestPath 'C:\m\corpus-hub-indexed.jsonl' -UndatedContacts $true)
+    Test-Case 'and the index wait' 'corpus-indexed|--population|hub|--store|tier@vm.invalid|--corpus-id|hub-indexed|--seed|8181|--anchor|2026-09-24T09:15:42Z|--undated-contacts|--manifest|C:\m\corpus-hub-indexed.jsonl|--wait-seconds|900' (Get-HubToolArgument -Verb 'corpus-indexed' -Store 'tier@vm.invalid' -CorpusId 'hub-indexed' -SeedValue 8181 -Anchor '2026-09-24T09:15:42Z' -ManifestPath 'C:\m\corpus-hub-indexed.jsonl' -WaitSeconds 900 -UndatedContacts $true)
+
+    Write-Host ''
+    Write-Host '== the run level - every Outlook start NOT elevated where the hub is indexed =='
+    Test-Says 'an indexed hub refuses to -Execute elevated, and says how to run it' (Test-HubRunLevel -Indexed $true -Elevated $true -Execute $true) '-RunLevel Limited'
+    Test-Case 'NOT elevated it proceeds' 0 @(Test-HubRunLevel -Indexed $true -Elevated $false -Execute $true).Count
+    Test-Case 'a dry run starts no Outlook and is never refused for it' 0 @(Test-HubRunLevel -Indexed $true -Elevated $true -Execute $false).Count
+    Test-Case 'an unindexed hub may run elevated, as it did on 2026-10-03' 0 @(Test-HubRunLevel -Indexed $false -Elevated $true -Execute $true).Count
 
     Write-Host ''
     Write-Host '== the one Quit - mailbox-safety rule 7 =='
@@ -848,6 +929,20 @@ function Get-OutlookProcessId {
     return , @(Get-Process -Name 'OUTLOOK' -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
 }
 
+<#
+    Whether THIS process holds an elevated token: an administrator's full token. A task registered at
+    RunLevel Limited gets the filtered one, where the Administrators group is deny-only, so this is
+    false there - and an Outlook it starts is NOT elevated either.
+#>
+function Test-CurrentProcessElevated {
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    try {
+        $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+        return [bool]$principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+    }
+    finally { $identity.Dispose() }
+}
+
 function Find-OutlookExe {
     if (-not [string]::IsNullOrWhiteSpace($OutlookExe)) {
         if (-not (Test-Path -LiteralPath $OutlookExe)) { throw "-OutlookExe '$OutlookExe' does not exist." }
@@ -913,12 +1008,23 @@ function Set-HubDefaultProfile {
     Windows Search index (measured on OutlookAI-Indexed, 2026-09-24; runbook section 8 item 22) - so on
     the indexed guest corpus-indexed would wait for a crawl that never comes - and the live run, which
     attaches at the user's own integrity level, could not attach to it either. The rebuild's OWN
-    Outlook (step 4) stays elevated, on purpose: the corpus tool runs in this task too, and attaches
-    only to an Outlook at its own level.
+    Outlook (step 4) is at this task's level, on purpose: the corpus tool runs in this task too, and
+    attaches only to an Outlook at its own level. On the INDEXED guest this task is NOT elevated
+    (Test-HubRunLevel), so both Outlooks are, and this one is started directly.
 #>
 function Start-HubOutlookUnelevated {
     param([string] $ProfileName, [string] $What)
     Write-Line ''
+    if (-not (Test-CurrentProcessElevated)) {
+        # Already NOT elevated - the indexed guest's way of running this (Test-HubRunLevel): an Outlook
+        # this process starts is at its level, so it is started directly, the way the rebuild's own is.
+        $exe = Find-OutlookExe
+        Write-Line "=== starting Outlook for $What, NOT elevated - this script runs NOT elevated, so directly: $exe /profile $ProfileName"
+        $direct = Start-Process -FilePath $exe -ArgumentList @('/profile', ('"' + $ProfileName + '"')) -PassThru
+        $directClock = [System.Diagnostics.Stopwatch]::StartNew()
+        return [pscustomobject]@{ Id = $direct.Id; Clock = $directClock }
+    }
+
     Write-Line "=== starting Outlook for $What, NOT elevated: Start-OutlookUnelevated.ps1 -Profile $ProfileName"
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     & (Join-Path $PSScriptRoot 'Start-OutlookUnelevated.ps1') -Profile $ProfileName -ExpectedUser $ExpectedUser | ForEach-Object { Write-Line ([string]$_) }
@@ -1123,6 +1229,9 @@ Write-Line "  hub         $($plan.Store)"
 Write-Line "  population  $($plan.CorpusId), manifest $($plan.ManifestPath) ($(if ($manifestExists) { 'present' } else { 'ABSENT' }))"
 if ($null -ne $header -and $header.Problems.Count -eq 0) { Write-Line "  built       against $($header.AnchorUtc), seed $($header.Seed)" }
 Write-Line "  index       $(if ($plan.Indexed) { 'the hub is indexed here - the run waits for the index to take the new population' } else { 'the hub is not indexed here - no index wait' })"
+Write-Line "  undated     $(if ($plan.UndatedContacts) { 'the hub carries undated CONTACTS (Q98 (f)) - every verb gets --undated-contacts' } else { 'none - the hub carries its dated items alone' })"
+$elevated = Test-CurrentProcessElevated
+Write-Line "  run level   $(if ($elevated) { 'ELEVATED' } else { 'NOT elevated' }) - the rebuild's Outlook starts at this level"
 foreach ($note in $plan.Notes) { Write-Line "  note: $note" }
 
 # ---------------------------------------------------------------------------------------------
@@ -1130,6 +1239,7 @@ foreach ($note in $plan.Notes) { Write-Line "  note: $note" }
 # ---------------------------------------------------------------------------------------------
 $refusals = New-Object System.Collections.Generic.List[string]
 foreach ($problem in $plan.Problems) { $refusals.Add($problem) }
+foreach ($problem in (Test-HubRunLevel -Indexed ([bool]$plan.Indexed) -Elevated $elevated -Execute ([bool]$Execute))) { $refusals.Add($problem) }
 $running = Get-OutlookProcessId
 if ($running.Count -gt 0) {
     $refusals.Add("OUTLOOK.EXE is running (pid $($running -join ', ')). This script switches the default profile, which needs Outlook closed, and it closes no Outlook it did not start. " + (Format-RestartAdvice -Then 'run this again.'))
@@ -1147,20 +1257,20 @@ if ($refusals.Count -gt 0) {
 }
 
 if (-not $Execute) {
-    [void](Invoke-HubTool -Arguments (Get-HubToolArgument -Verb 'corpus-plan' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $plan.NewAnchor -ManifestPath $plan.ManifestPath))
+    [void](Invoke-HubTool -Arguments (Get-HubToolArgument -Verb 'corpus-plan' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $plan.NewAnchor -ManifestPath $plan.ManifestPath -UndatedContacts $plan.UndatedContacts))
     Write-Line ''
     Write-Line 'Dry run. Nothing written, no Outlook started. With -Execute this would, in order:'
     if ($plan.Rebuild) {
         Write-Line "  - make '$CorpusProfileName' the default profile, start Outlook, wait ${WarmupSeconds}s"
         if ($null -ne $plan.TeardownAnchor) {
-            Write-Line ("  - " + ((Get-HubToolArgument -Verb 'corpus-teardown' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $plan.TeardownAnchor -ManifestPath $plan.ManifestPath) -join ' ') + ' --execute')
+            Write-Line ("  - " + ((Get-HubToolArgument -Verb 'corpus-teardown' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $plan.TeardownAnchor -ManifestPath $plan.ManifestPath -UndatedContacts $plan.UndatedContacts) -join ' ') + ' --execute')
             Write-Line "  - move the manifest to $historyDirectory\$(Format-HubHistoryName -CorpusId $plan.CorpusId -AnchorText $plan.TeardownAnchor)"
         }
-        Write-Line ("  - " + ((Get-HubToolArgument -Verb 'corpus-build' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor '<now>' -ManifestPath $plan.ManifestPath) -join ' ') + ' --execute')
+        Write-Line ("  - " + ((Get-HubToolArgument -Verb 'corpus-build' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor '<now>' -ManifestPath $plan.ManifestPath -UndatedContacts $plan.UndatedContacts) -join ' ') + ' --execute')
         Write-Line '  - quit that Outlook gracefully (mailbox-safety rule 7)'
     }
     Write-Line "  - make '$TierProfileName' the default profile, start Outlook NOT elevated (Start-OutlookUnelevated.ps1)"
-    if ($plan.Indexed) { Write-Line ("  - " + ((Get-HubToolArgument -Verb 'corpus-indexed' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor '<the anchor built>' -ManifestPath $plan.ManifestPath -WaitSeconds $IndexWaitSeconds) -join ' ')) }
+    if ($plan.Indexed) { Write-Line ("  - " + ((Get-HubToolArgument -Verb 'corpus-indexed' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor '<the anchor built>' -ManifestPath $plan.ManifestPath -WaitSeconds $IndexWaitSeconds -UndatedContacts $plan.UndatedContacts) -join ' ')) }
     Write-Line '  - leave Outlook running, warm, and report the frontier test''s margin'
     return
 }
@@ -1177,7 +1287,7 @@ if ($plan.Rebuild) {
     $corpusOutlook = Start-HubOutlook -What "the rebuild, on '$CorpusProfileName'" -Seconds $WarmupSeconds
 
     if ($null -ne $plan.TeardownAnchor) {
-        $teardown = Invoke-HubTool -Write -Arguments (Get-HubToolArgument -Verb 'corpus-teardown' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $plan.TeardownAnchor -ManifestPath $plan.ManifestPath)
+        $teardown = Invoke-HubTool -Write -Arguments (Get-HubToolArgument -Verb 'corpus-teardown' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $plan.TeardownAnchor -ManifestPath $plan.ManifestPath -UndatedContacts $plan.UndatedContacts)
         if ($teardown.Code -ne 0) {
             throw "corpus-teardown failed (exit $($teardown.Code)); the manifest is where it was, and Outlook is running on '$CorpusProfileName'. Read the output above. If it says the manifest records a different shape, the population was built by an older generator: corpus-reindex it into a NEW manifest path, inspect that, and tear down with it - never by hand. Then restart the guest (Testbed/host/Restart-Guest.ps1 -Execute) and run this again. Log: $LogPath"
         }
@@ -1196,7 +1306,7 @@ if ($plan.Rebuild) {
     # The anchor is taken NOW - after the warm-up and the teardown - so the newest item is as young
     # as it can be when the run starts.
     $anchorBuilt = [datetime]::UtcNow.ToString($script:UtcFormat, $script:Invariant)
-    $build = Invoke-HubTool -Write -Arguments (Get-HubToolArgument -Verb 'corpus-build' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $anchorBuilt -ManifestPath $plan.ManifestPath)
+    $build = Invoke-HubTool -Write -Arguments (Get-HubToolArgument -Verb 'corpus-build' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $anchorBuilt -ManifestPath $plan.ManifestPath -UndatedContacts $plan.UndatedContacts)
     if ($build.Code -ne 0) {
         throw "corpus-build failed (exit $($build.Code)); Outlook is running on '$CorpusProfileName'. Read the output above: a probe that refused wrote nothing, and a build that failed after writing left a manifest the next run tears down. Restart the guest (Testbed/host/Restart-Guest.ps1 -Execute) and run this again. Log: $LogPath"
     }
@@ -1217,7 +1327,7 @@ Set-HubDefaultProfile -Name $TierProfileName
 $tierOutlook = Start-HubOutlookUnelevated -ProfileName $TierProfileName -What "the live run, on '$TierProfileName'"
 
 if ($plan.Indexed) {
-    $indexed = Invoke-HubTool -Arguments (Get-HubToolArgument -Verb 'corpus-indexed' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $anchorBuilt -ManifestPath $plan.ManifestPath -WaitSeconds $IndexWaitSeconds)
+    $indexed = Invoke-HubTool -Arguments (Get-HubToolArgument -Verb 'corpus-indexed' -Store $plan.Store -CorpusId $plan.CorpusId -SeedValue $plan.Seed -Anchor $anchorBuilt -ManifestPath $plan.ManifestPath -WaitSeconds $IndexWaitSeconds -UndatedContacts $plan.UndatedContacts)
     if ($indexed.Code -ne 0) {
         throw "The index did not take the rebuilt hub in within ${IndexWaitSeconds}s. A run now would measure part of it, and the frontier test would fail on a frontier older than the population. Outlook is running on '$TierProfileName'; if the indexer is slow, run corpus-indexed again with a longer --wait-seconds, and if it never advances, check the guest is in scope (Set-OutlookIndexingDisabled.ps1 -Verify). Log: $LogPath"
     }

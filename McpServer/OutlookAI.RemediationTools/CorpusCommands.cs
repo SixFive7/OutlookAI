@@ -109,6 +109,15 @@ public sealed class CorpusOptions
     /// </summary>
     public int UndatedIndexWaitSeconds { get; private set; }
 
+    /// <summary>
+    /// <c>--undated-contacts</c>: the hub or bystander population with its undated CONTACTS - the
+    /// indexed guest's populations since 2026-10-03 (Q98 (f); <see cref="CorpusPlanOptions.IncludeUndatedContacts"/>).
+    /// Part of the shape key, so every verb that reads such a population's manifest - teardown,
+    /// census, reindex, the index wait - needs it too, and a verb without it is refused as another
+    /// population. Needs <c>--population hub</c> or <c>bystander</c>.
+    /// </summary>
+    public bool UndatedContacts { get; private set; }
+
     /// <summary>Parses the arguments after the command word. Throws on anything unrecognised.</summary>
     public static CorpusOptions Parse(IEnumerable<string> args)
     {
@@ -168,6 +177,12 @@ public sealed class CorpusOptions
 
         if (Population == null)
         {
+            if (UndatedContacts)
+            {
+                throw new ArgumentException(
+                    "--undated-contacts needs --population hub or bystander: the measurement corpus carries no undated item.");
+            }
+
             return new CorpusPlanOptions(CorpusId!, Seed, AnchorUtc.Value);
         }
 
@@ -183,6 +198,7 @@ public sealed class CorpusOptions
         {
             Population = Population,
             Owner = CorpusMailboxOwner.ForStore(Store!),
+            IncludeUndatedContacts = UndatedContacts,
         };
     }
 
@@ -192,6 +208,9 @@ public sealed class CorpusOptions
         {
             case "allow-undated":
                 AllowUndated = true;
+                break;
+            case "undated-contacts":
+                UndatedContacts = true;
                 break;
             case "allow-drafts-placement":
                 AllowDraftsPlacement = true;
@@ -462,7 +481,9 @@ public static class CorpusCommands
                     ? "none - switched off since 2026-10-03 (Q98 (a)): in a PST these kinds are dated, and Outlook will not remove it"
                     : "none")
                 : string.Join(", ", undatedKinds.Select(k => k.Key + "=" + k.Value.ToString(invariant)))
-                    + " - no delivery time, for LiveOrderKeyCollationTests"));
+                    + (population.UndatedCriterion == CorpusUndatedCriterion.IndexHoldsNoDate
+                        ? " - dated in the store, UNDATED in the index (Q98 (f)), for LiveOrderKeyCollationTests on the indexed guest"
+                        : " - no delivery time, for LiveOrderKeyCollationTests")));
         if (population.SubjectOnlyProbe != null)
         {
             CorpusSubjectOnlyProbe probe = population.SubjectOnlyProbe;
@@ -539,9 +560,10 @@ public static class CorpusCommands
     private static (bool Proceed, string Message) ProbeUndated(CorpusOptions options, CorpusPlan plan, TextWriter output)
     {
         IReadOnlyList<CorpusItemKind> kinds = plan.Population?.UndatedKinds ?? Array.Empty<CorpusItemKind>();
+        CorpusUndatedCriterion criterion = plan.Population?.UndatedCriterion ?? CorpusUndatedCriterion.None;
         if (kinds.Count == 0)
         {
-            return CorpusUndatedFidelity.Decide(kinds, Array.Empty<CorpusUndatedProbe>());
+            return CorpusUndatedFidelity.Decide(kinds, Array.Empty<CorpusUndatedProbe>(), criterion);
         }
 
         output.WriteLine("== undated probe ==");
@@ -555,14 +577,23 @@ public static class CorpusCommands
             holdBudget = TimeSpan.FromSeconds((double)options.UndatedIndexWaitSeconds * kinds.Count);
         }
 
-        IReadOnlyList<CorpusUndatedProbe> probes =
-            ComCorpusMailbox.ProbeUndated(options.Store!, plan.Options.CorpusId, kinds, whileHeld, holdBudget);
+        // Undated in the INDEX (the indexed guest's contacts, Q98 (f)): the probe writes its item exactly
+        // as the build will - without trying to remove the delivery time a PST will not give up.
+        if (criterion == CorpusUndatedCriterion.IndexHoldsNoDate)
+        {
+            output.WriteLine("  undated in the INDEX, not the store (Q98 (f)): no delivery-time removal is attempted, and the store's "
+                + "date is reported, not judged - corpus-indexed checks the index");
+        }
+
+        IReadOnlyList<CorpusUndatedProbe> probes = ComCorpusMailbox.ProbeUndated(
+            options.Store!, plan.Options.CorpusId, kinds, whileHeld, holdBudget,
+            removeDeliveryTime: criterion != CorpusUndatedCriterion.IndexHoldsNoDate);
         foreach (CorpusUndatedProbe p in probes)
         {
             output.WriteLine(CorpusUndatedFidelity.Line(p));
         }
 
-        return CorpusUndatedFidelity.Decide(kinds, probes);
+        return CorpusUndatedFidelity.Decide(kinds, probes, criterion);
     }
 
     /// <summary>Runs the enrichment probe and reports it. Shared by <c>corpus-probe</c> and <c>corpus-build</c>.</summary>

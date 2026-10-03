@@ -1234,9 +1234,15 @@ public static class ComCorpusMailbox
     /// holding what it takes to delete or record it. Thrown, it escaped the probe with the item's EntryID
     /// unread (OAI-UNINDEXED, 2026-09-27).
     /// </para>
+    /// <para>
+    /// <paramref name="removeDeliveryTime"/> false skips the removal altogether - for an item that must be
+    /// undated in the INDEX rather than the store (<see cref="CorpusUndatedCriterion.IndexHoldsNoDate"/>,
+    /// the indexed guest's contacts): a PST refuses the removal for every kind, measured, and the index
+    /// does not use a contact's delivery time, measured too (Q98 (f)).
+    /// </para>
     /// </summary>
     private static (string EntryId, string? SavedStoreId, string? RemovalRefused) CreateUndatedItem(
-        dynamic items, CorpusItemSpec spec, string body, CorpusUndatedDetail detail)
+        dynamic items, CorpusItemSpec spec, string body, CorpusUndatedDetail detail, bool removeDeliveryTime = true)
     {
         dynamic? item = null;
         try
@@ -1280,7 +1286,8 @@ public static class ComCorpusMailbox
             // read-back re-open the item by EntryID and check that it stayed gone. MEASURED the same day:
             // for an appointment the PropertyAccessor REFUSES the removal (UnauthorizedAccessException,
             // "does not support this operation") - so the refusal is returned, and the probe reports it.
-            string? removalRefused = TryRemoveDeliveryTime((object)item!);
+            // Not attempted at all for an item that must be undated in the INDEX (see the remarks).
+            string? removalRefused = removeDeliveryTime ? TryRemoveDeliveryTime((object)item!) : null;
             return (TryRead<string>(() => (string)item!.EntryID) ?? entryId, SavedItemStoreId(item), removalRefused);
         }
         finally
@@ -1396,12 +1403,19 @@ public static class ComCorpusMailbox
     /// nothing.
     /// </param>
     /// <param name="holdBudget">The most time <paramref name="whileHeld"/> may add to the run, in total.</param>
+    /// <param name="removeDeliveryTime">
+    /// Whether the write path removes the delivery time after the first save, as the build will -
+    /// false for a population whose undated items must be undated in the INDEX
+    /// (<see cref="CorpusUndatedCriterion.IndexHoldsNoDate"/>), so the probe proves the write path the
+    /// build then uses.
+    /// </param>
     public static IReadOnlyList<CorpusUndatedProbe> ProbeUndated(
         string storeDisplayName,
         string corpusId,
         IReadOnlyList<CorpusItemKind> kinds,
         Action<CorpusItemKind, string>? whileHeld = null,
-        TimeSpan holdBudget = default)
+        TimeSpan holdBudget = default,
+        bool removeDeliveryTime = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(corpusId);
         ArgumentNullException.ThrowIfNull(kinds);
@@ -1427,7 +1441,7 @@ public static class ComCorpusMailbox
 
                     foreach (CorpusItemKind kind in checkpoint.Steps(kinds, "undated probe"))
                     {
-                        probes.Add(RunOneUndatedProbe(store!, ns!, storeId, corpusId, kind, checkpoint, whileHeld));
+                        probes.Add(RunOneUndatedProbe(store!, ns!, storeId, corpusId, kind, checkpoint, whileHeld, removeDeliveryTime));
                         PurgeProbeResidue(store!, ns!, storeId, corpusId, checkpoint, folderIds);
                     }
 
@@ -1450,7 +1464,8 @@ public static class ComCorpusMailbox
         string corpusId,
         CorpusItemKind kind,
         ComStaCheckpoint checkpoint,
-        Action<CorpusItemKind, string>? whileHeld)
+        Action<CorpusItemKind, string>? whileHeld,
+        bool removeDeliveryTime)
     {
         int folderId = CorpusItemKinds.FolderIdOf(kind);
         dynamic? folder = null;
@@ -1492,7 +1507,7 @@ public static class ComCorpusMailbox
                 kind == CorpusItemKind.Contact ? subject : null);
             // (object): a dynamic argument would make the call - and so its tuple - dynamic.
             (string createdId, string? savedStoreId, string? removalRefused) =
-                CreateUndatedItem((object)items!, spec, "undated probe", detail);
+                CreateUndatedItem((object)items!, spec, "undated probe", detail, removeDeliveryTime);
             entryId = createdId;
             if (savedStoreId != null && !string.Equals(savedStoreId, storeId, StringComparison.OrdinalIgnoreCase))
             {
@@ -1870,8 +1885,12 @@ public static class ComCorpusMailbox
                                     folderItems[spec.FolderId] = undatedItems!;
                                 }
 
+                                // Undated in the INDEX (the indexed guest's contacts, Q98 (f)): no removal
+                                // is attempted, so none is refused - see CreateUndatedItem.
                                 (string undatedId, string? undatedStoreId, string? removalRefused) =
-                                    CreateUndatedItem((object)undatedItems!, spec, plan.BuildBody(spec), plan.UndatedDetail(ordinal)!);
+                                    CreateUndatedItem(
+                                        (object)undatedItems!, spec, plan.BuildBody(spec), plan.UndatedDetail(ordinal)!,
+                                        plan.Population!.UndatedCriterion != CorpusUndatedCriterion.IndexHoldsNoDate);
                                 RequireSavedInTarget(ns!, undatedId, undatedStoreId, targetStoreId, ordinal, plan.Options.CorpusId);
                                 var undatedLine = new CorpusManifestItem(ordinal, undatedId, spec.FolderId, spec.BodyBytes, null);
                                 manifest.Add(undatedLine);
