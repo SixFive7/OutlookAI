@@ -327,14 +327,14 @@ public sealed class CorpusPopulationTests
     public void TheContactsHub_ContentDigestIsPinned()
     {
         // The indexed guest's hub (Q98 (f)): the fifty-six dated items of PinnedHubDigest, then twelve contacts.
-        Assert.Fail("DIGEST=" + Sha256(Render(Plan(CorpusPopulationKind.Hub, HubStore, contacts: true))));
+        Assert.Equal(PinnedHubDigestWithUndatedContacts, Sha256(Render(Plan(CorpusPopulationKind.Hub, HubStore, contacts: true))));
     }
 
     /// <summary>
     /// Recorded 2026-10-03 from population format version 2 with <see cref="CorpusPlanOptions.IncludeUndatedContacts"/>:
     /// ordinals 1-56 as <see cref="PinnedHubDigest"/>, then twelve undated contacts, 57-68.
     /// </summary>
-    private const string PinnedHubDigestWithUndatedContacts = "PIN-ME";
+    private const string PinnedHubDigestWithUndatedContacts = "26D9CD681651D582ACEFE8BDDDA4C40842093F7C6B9A91099EEE49A83EEB8CE1";
 
     [Fact]
     public void TheContactsOption_IsRefusedWhereItDescribesNothing_OrBesideTheFullUndatedSet()
