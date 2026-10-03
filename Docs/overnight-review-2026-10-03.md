@@ -277,6 +277,41 @@ the new one searches the right root and returns none. Build VM: 3,408 / 0 / 0 on
 - **Alternatives:** all three kinds; none (the tests keep printing `PROVED NOTHING`).
 - **Undo.** Build without the new plan option.
 
+### D63-D73 - Q96: folder-creation reporting, finished
+Merged as `a0f6310` (build VM: 3,456 / 0 / 0, 21 self-tests). The live proof is pending the first
+guest run with the new throwaway data file (runbook §8 item 25).
+- **D63 - After a failed creating call, compare the top-level folder lists before and after**, rather
+  than re-reading only the official Drafts/Deleted Items slot - it also catches a folder Outlook made
+  but did not register. Unreadable listings mean "unverified", never a claim.
+- **D64 - `createdFolders` is a list**, because a failed call can leave more than one folder.
+- **D65 - A failed Drafts lookup is outcome `unchanged`** (new tokens `DraftsFolderUnavailable`,
+  `DraftsFolderCreationUnverified`, `DraftNotStarted`): no draft can exist before the compose step.
+  "A DRAFT MAY HAVE BEEN SAVED" now appears only after the compose has started, where it is true.
+- **D66 - The live proof uses `reply_draft`, not `new_draft`:** new drafts file into an account's
+  mailbox, and no account delivers into the throwaway data file.
+- **D67 - The reply's source is a tagged post saved in the throwaway's Deleted Items**: a post's first
+  save stays in that file (a mail's would land in the default mailbox's Drafts).
+- **D68 - The throwaway file is not watched by the mail-loss tripwire or the sweep**: the proof
+  creates a folder there on purpose; the test proves its own clean end by EntryID instead.
+- **D69 - The new settings field `throwawayStoreDisplayName` is optional for the loader but required
+  by the renderer**, value `throwaway@vm.invalid`; without it the test prints `PROVED NOTHING`.
+- **D70 - A separate script, `Reset-ThrowawayStore.ps1`** (run step 9a-ii), not a bigger
+  `Reset-HubPopulation.ps1`; it detaches only `throwaway-*.pst` files in its own folder, uses a new
+  file name each run (Outlook can hold a detached file until it restarts), and refuses if Outlook
+  is not running or the session is elevated.
+- **D71 - Q96's four follow-up questions, answered with their recommendations and being
+  implemented:** (1) report CREATED only for a new folder that now holds the slot that was asked for,
+  anything else as "appeared while the call ran" (a syncing IMAP store could otherwise be
+  misreported); (2) compare folder lists on success too, but in the live test only, to measure
+  whether the product needs it; (3) where Outlook registers a Drafts folder it creates in a data
+  file with no Inbox - wait for the item-25 run, then widen the non-creating lookup if it is blind;
+  (4) give `discard_draft` a "delete started" marker, so a failure before the delete says the draft
+  was NOT deleted, outcome `unchanged`.
+- **D72 - A CHANGELOG entry for the live-proof machinery**, following the Unreleased section's habit.
+- **D73 - Noted, not changed:** `LiveMailServiceTests.ListAccounts_ExactAccountsDelegatesAndFlags`
+  asserts an exact store count; it needs a delegate store so it never runs on a test machine today,
+  but if it ever does, the throwaway store will break that count.
+
 ## Open questions only you can answer
 
 ### Q104 - Seven tagged test leftovers in your workstation's hub mailbox
@@ -385,7 +420,17 @@ the real audit log since renamed; and 05:51Z), plus mutation and targeted runs. 
 lacked `Category!=Live` and selected 4 live tests, which all refused at the opt-in check - nothing
 touched a mailbox.
 
+### V12 - Q96: test runs on the workstation before the rules reached it
+Before Q86 was merged, the Q96 agent's workstation test runs (02:21Z-02:27Z) appended about 149
+fake-ID lines to the real audit log; they are the last lines of the now-renamed
+`audit.until-2026-10-03.log`, and nothing has been written there since. It also ran one script
+self-test on the workstation before the build-VM rule reached it.
+
 ## Notes (no decision needed)
+
+- **Script self-tests now run only under Windows PowerShell 5.1** (on the build VM), so nothing
+  exercises them under PowerShell 7 any more; and the build VM's summary does not report compiler
+  warnings, so "0 warnings" still needs a workstation build.
 
 - **An ANSI PST's `Store.DisplayName` comes back one character short**, so a name lookup cannot find
   it at all (Q99 finding); and `IsInstantSearchEnabled` read False for an ANSI store whose items were
