@@ -58,6 +58,7 @@ public sealed class LiveTestSettingsTemplateTests
     private const string CorpusStore = "Synthetic Corpus";
     private const string Bystander = "bystander@render.invalid";
     private const string Identity = "identity@render.invalid";
+    private const string Throwaway = "throwaway@render.invalid";
 
     /// <summary>Every placeholder in testbed.json begins with this; the renderer refuses a section holding one.</summary>
     private const string PlaceholderMarker = "<FILL";
@@ -65,7 +66,7 @@ public sealed class LiveTestSettingsTemplateTests
     private const string NoFailableStore = "NO STORE THIS CENSUS WATCHES CAN PRODUCE A FAILURE";
 
     /// <summary>How many token fields the template carries: the renderer's self-test and check 8 count the same.</summary>
-    private const int TemplateFieldCount = 24;
+    private const int TemplateFieldCount = 25;
 
     /// <summary>The synthetic guest's hub population manifest - named after a synthetic population id.</summary>
     private const string HubManifest = @"C:\OutlookAI-Q5\corpus-hub-synthetic.jsonl";
@@ -118,6 +119,7 @@ public sealed class LiveTestSettingsTemplateTests
               "indexedStoreDisplayNames": [ "hub@render.invalid", "bystander@render.invalid", "Synthetic Corpus" ],
               "expectedDelegateStoreDisplayNames": [],
               "bystanderStoreDisplayNames": [ "bystander@render.invalid", "Synthetic Corpus" ],
+              "throwawayStoreDisplayName": "throwaway@render.invalid",
               "probeTerm": "invoice",
               "subjectOnlyProbe": {
                 "_note": "the hub population's notices folder",
@@ -266,6 +268,7 @@ public sealed class LiveTestSettingsTemplateTests
 
         Assert.Equal(TemplateFieldCount, fields.Count);
         Assert.Contains("hubPopulationManifestPath", fields);
+        Assert.Contains("throwawayStoreDisplayName", fields);
         Assert.Contains("indexedStoreDisplayNames", fields);
         Assert.Contains("probeTerm", fields);
         Assert.Contains("subjectOnlyProbe.senderFragment", fields);
@@ -284,6 +287,7 @@ public sealed class LiveTestSettingsTemplateTests
         Assert.Equal(new[] { Hub, Bystander, CorpusStore }, settings.RequireIndexedStores());
         Assert.Empty(settings.ExpectedDelegateStoreDisplayNames);
         Assert.Equal(new[] { Bystander, CorpusStore }, settings.BystanderStoreDisplayNames);
+        Assert.Equal(Throwaway, settings.ThrowawayStoreDisplayName);
 
         Assert.Equal("invoice", settings.ProbeTerm);
         Assert.NotNull(settings.SubjectOnlyProbe);
@@ -326,9 +330,14 @@ public sealed class LiveTestSettingsTemplateTests
             Assert.True(allowlist.IsAllowed(Hub, kind));
             Assert.False(allowlist.IsAllowed(CorpusStore, kind));
             Assert.False(allowlist.IsAllowed(Bystander, kind));
+
+            // The throwaway data file (Q96 (iv)): the created-folder proof's draft and delete, and
+            // nothing else - and, being in no watched list, outside the census altogether.
+            Assert.Equal(kind is StoreWriteKind.Draft or StoreWriteKind.Delete, allowlist.IsAllowed(Throwaway, kind));
         }
 
         Assert.Equal(new[] { Identity }, allowlist.IdentityAccountsAmong(settings.ExpectedStoreDisplayNames));
+        Assert.DoesNotContain(Throwaway, LiveStoreCountTripwire.WatchedStores(settings), StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -466,6 +475,52 @@ public sealed class LiveTestSettingsTemplateTests
         LiveTestSettings settings = LiveTestSettings.Parse(rendered.ToJsonString());
         Assert.Null(settings.HubPopulationManifestPath);
         Assert.True(Admit(settings).Usable);
+    }
+
+    [Fact]
+    public void AThrowawayDataFileNamedInTheWatchedList_IsRefusedByTheLoader_AndAnAbsentOneLoads()
+    {
+        // Watched, the census would fail the run over the Drafts folder the created-folder proof
+        // makes; it lives in throwawayStoreDisplayName alone. Absent is a machine without one - the
+        // maintainer's own - and the proof then says it had nothing to run against.
+        JsonObject values = SyntheticValues();
+        values["expectedStoreDisplayNames"]!.AsArray().Add(Throwaway);
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => Load(values));
+        Assert.Contains("'expectedStoreDisplayNames' as well", ex.Message, StringComparison.Ordinal);
+
+        JsonObject rendered = JsonNode.Parse(Render(TemplateText(), SyntheticValues()))!.AsObject();
+        Assert.True(rendered.Remove("throwawayStoreDisplayName"));
+        LiveTestSettings settings = LiveTestSettings.Parse(rendered.ToJsonString());
+        Assert.Null(settings.ThrowawayStoreDisplayName);
+        Assert.True(Admit(settings).Usable);
+    }
+
+    [Fact]
+    public void EveryCommittedGuest_DeclaresAThrowawayDataFile_InNoOtherList()
+    {
+        // Testbed/guest/Reset-ThrowawayStore.ps1 reads this name off the guest's own settings and
+        // recreates the store under it before every run (Q96 (iv)); a guest without one never runs the
+        // created-folder proof.
+        int guests = 0;
+        foreach (KeyValuePair<string, JsonNode?> section in Guests())
+        {
+            if (section.Key.StartsWith('_'))
+            {
+                continue;
+            }
+
+            guests++;
+            string throwaway = section.Value!["throwawayStoreDisplayName"]!.GetValue<string>();
+            Assert.EndsWith(".invalid", throwaway, StringComparison.Ordinal);
+            foreach (string list in new[] { "expectedStoreDisplayNames", "indexedStoreDisplayNames", "expectedDelegateStoreDisplayNames", "bystanderStoreDisplayNames" })
+            {
+                Assert.DoesNotContain(
+                    section.Value![list]!.AsArray(),
+                    n => n is JsonValue v && v.TryGetValue(out string? name) && string.Equals(name, throwaway, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+
+        Assert.Equal(2, guests);
     }
 
     [Fact]
