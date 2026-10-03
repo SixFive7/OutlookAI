@@ -766,6 +766,31 @@ it directly. Sources:
 [Microsoft's subscription-free 'perpetual' Office LTSC 2024 (Directions on Microsoft)](https://www.directionsonmicrosoft.com/microsofts-subscription-free-perpetual-office-ltsc-2024-to-ship-this-year/),
 [Office 2024 and Office LTSC 2024 FAQ (Microsoft Support)](https://support.microsoft.com/en-us/office/lifecycle/office-2024-and-office-ltsc-2024-faq).
 
+## The build VM - two of the media above, and nothing new
+
+**`OutlookAI-Build`, the third machine (`Testbed/README.md` section 1c; Q94 and Q102, 2026-10-03),
+needs no media this file does not already name.** It is built from the Windows image above, with
+the same answer file and so the same locale, time zone and keyboard as the guests, and from the
+.NET SDK above, pinned by the same SHA-512 - both staged once and reused. It has **no Office**
+(none of the non-live tests needs it - decision D3 of `Docs/overnight-review-2026-10-03.md`), so
+it needs neither the Office Deployment Tool nor the VSTO runtime, and no mail sink, because no
+test there sends mail. Its NuGet feed and its source are artefacts, staged from a commit by
+`Testbed/host/Publish-LiveTierPayload.ps1` (above).
+
+| Media | On the build VM |
+| --- | --- |
+| Windows 11 image | yes - the unattended install, 2026-10-03 |
+| .NET SDK 10.0.401 | yes - `C:\OutlookAI-Q5\media\`, installed by `Testbed/guest/Install-DotnetSdk.ps1` |
+| Office Deployment Tool and `Testbed.xml` | no - an optional later step (README section 1c), for the day a test needs Office |
+| Mail sink, VSTO runtime | no |
+
+**Budget, measured on the host 2026-10-03, about 39 GB in all:** the base VHDX 21.3 GB (Windows,
+at `CP-01-WIN-CLEAN`); the differencing disk from there to the base checkpoint 14.8 GB (the SDK,
+the feed, the package cache, a built suite and Windows's own first hour); the base checkpoint's
+saved memory 1.6 GB, and the VM's saved state between runs another 1.6 GB - saved memory is
+written sparse, so 6 GB of RAM costs 1.6 GB of disk. A run writes into a differencing disk of
+its own, which the restore at its end discards: straight after one, it held 30 MB.
+
 ## The rule
 
 **Never destroy a working testbed before the replacement runs.**
