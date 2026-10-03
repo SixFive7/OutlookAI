@@ -52,9 +52,12 @@ Each **deviation** names what the plan said, what happened instead, and why.
   tested everywhere - the later fix if those branches matter.
 - **Undo.** Add the existing Office Deployment Tool step to the build VM.
 
-### D4 - Q102: the build VM's time zone is W. Europe Standard Time
+### D4 - Q102: the build VM's time zone is W. Europe Standard Time *(replaced the same day by Q126 (a): UTC)*
 - Matches the workstation and the test guests; GitHub CI keeps covering UTC.
   **Alternatives:** UTC; an odd-offset zone; both on every run.
+- **Replaced.** GitHub CI was removed the same day, and with it the only run in another zone, so
+  the maintainer moved the build VM to UTC - Q126 below. Its base checkpoint is
+  `CP-03-SDK-TEST-READY-UTC`; `CP-02-SDK-TEST-READY` keeps this zone and is kept.
 
 ### D5 - Q102: source reaches the build VM as `git archive` plus an empty `.git` marker
 - No git on the VM - it would be new media under the Dependencies rule. One self-test
@@ -213,8 +216,9 @@ Each **deviation** names what the plan said, what happened instead, and why.
 no Office, no network, 4 vCPU, 6 GB fixed memory, about 39 GB on `E:`. The runner,
 `Testbed/host/Invoke-TestsOnBuildVm.ps1 [<commit|branch>]`, reproduced master's 3,346 / 0 / 0 plus
 every script self-test in about 4 minutes. Decided along the way:
-- **D44 - A clean machine for every run:** restore checkpoint `CP-02-SDK-TEST-READY` before and
-  after every run, then save the VM, so every run starts identical and your RAM comes back.
+- **D44 - A clean machine for every run:** restore checkpoint `CP-02-SDK-TEST-READY` (since
+  Q126 (a), `CP-03-SDK-TEST-READY-UTC`) before and after every run, then save the VM, so every run
+  starts identical and your RAM comes back.
   *Alternatives:* reset a work folder; one VM per run; reuse a running VM.
 - **D45 - One run at a time**, behind a lock with a queue: tests share `%TEMP%`, the registry and
   loopback ports, so parallel runs on one VM are unsafe, and a second VM costs about 39 GB.
@@ -724,6 +728,28 @@ the rule is in `AGENTS.md`. *Undo:* `Testbed/host/Register-IdleSaveTask.ps1 -Unr
 - **Recommendation.** (a).
 - **Withdrawn:** your system-level Claude settings are out of scope for this project.
 
+
+### Q126 - D4 again: the build VM's time zone once CI is gone *(answered 2026-10-03: (a) UTC - done, `Docs/live-tier-on-the-vm.md` section 4.3a)*
+- **Primer.** D4 kept the build VM in W. Europe Standard Time, like the workstation and the two
+  Outlook guests, because GitHub's runners were UTC and covered the other zone - that is how Q95's
+  bug was found, a T1 test that only passed where the local zone was not UTC. With CI removed,
+  every run of the suite happened in W. Europe, so anything that silently relied on that zone
+  passed everywhere.
+- **Answered (a): UTC.** The build VM runs the non-live suite and every self-test in UTC. The
+  workstation and the Outlook guests stay W. Europe - the guests' frontier test needs a zone that is
+  not UTC. D4's other alternatives, an odd-offset zone and both zones on every run, were not taken.
+- **Done 2026-10-03, under the build VM's lease.** `CP-02-SDK-TEST-READY` restored,
+  `Set-TimeZone -Id UTC`, a graceful restart, `TEST-READY`, then `CP-03-SDK-TEST-READY-UTC` taken
+  running at 22:10:40Z. The runner restores it, prints the zone, and refuses a guest in any other
+  zone (`testbed.json`'s `buildVm.timeZone`). The first run in UTC passed whole - 3,818 of 3,818 and
+  27 of 27 self-tests, the counts of the last W. Europe run of the same tests - so no time-zone bug
+  showed, and nothing needed fixing.
+- **Left open:** in UTC, tests that use the machine's own zone as the "other" zone prove only the
+  identity, and nothing now runs the suite anywhere else - `TODO.md` has the question and its
+  directions.
+- **Undo.** Point the runner's `$BaseCheckpointName` and `$BuildVmTimeZone`, and `testbed.json`'s
+  `runnerBaseCheckpoint` and `timeZone`, back at `CP-02-SDK-TEST-READY` and
+  `W. Europe Standard Time`, in one commit - `CP-02` is kept.
 
 ### Q130 - D102/D103: why the data's age matters, and how to stop it mattering *(answered 2026-10-03: (a) with (b)'s window change, after the add-in measurement - implemented, `Docs/live-tier-on-the-vm.md` section 4.5)*
 - **Primer.** Two clocks decide when the test data has to be rebuilt. Guest one's live tier refuses

@@ -164,7 +164,7 @@
   },
 
   "buildVm": {
-    "_what": "THE THIRD MACHINE, and not a live-tier guest: OutlookAI-Build, the build-and-test VM (Q102 (b), decided by the maintainer 2026-10-03). It runs the non-live suite and the script self-tests for Testbed/host/Invoke-TestsOnBuildVm.ps1, which restores runnerBaseCheckpoint before every run and again after it - so a run leaves nothing behind and the VM rests saved, holding no RAM. No Office, no Outlook, no mailbox, no network. It therefore has no section under liveTestSettings, no corpus and no corpus id. Built 2026-10-03 from the committed scripts and the media in Testbed/MEDIA.md: Testbed/README.md section 1c is the procedure, Docs/live-tier-on-the-vm.md section 4.3 the record. Invoke-TestsOnBuildVm.ps1 -SelfTest holds vmName, computerName, runnerBaseCheckpoint and guest against its own constants.",
+    "_what": "THE THIRD MACHINE, and not a live-tier guest: OutlookAI-Build, the build-and-test VM (Q102 (b), decided by the maintainer 2026-10-03). It runs the non-live suite and the script self-tests for Testbed/host/Invoke-TestsOnBuildVm.ps1, which restores runnerBaseCheckpoint before every run and again after it - so a run leaves nothing behind and the VM rests saved, holding no RAM. No Office, no Outlook, no mailbox, no network. It therefore has no section under liveTestSettings, no corpus and no corpus id. Built 2026-10-03 from the committed scripts and the media in Testbed/MEDIA.md: Testbed/README.md section 1c is the procedure, Docs/live-tier-on-the-vm.md section 4.3 the record. Invoke-TestsOnBuildVm.ps1 -SelfTest holds vmName, computerName, runnerBaseCheckpoint, timeZone and guest against its own constants.",
     "vmName": "OutlookAI-Build",
     "computerName": "OAI-BUILD",
     "spec": {
@@ -179,14 +179,17 @@
       "checkpointType": "Standard",
       "network": "none - the adapter is disconnected"
     },
-    "windows": "Windows 11 Pro 10.0.26200, unattended from .work/media/Win11_25H2_EnglishInternational_x64_v2.iso with Testbed/guest/autounattend.template.xml - the same locale, time zone and keyboard as the two guests, so a culture- or zone-sensitive test behaves here as on the maintainer's machine",
+    "windows": "Windows 11 Pro 10.0.26200, unattended from .work/media/Win11_25H2_EnglishInternational_x64_v2.iso with Testbed/guest/autounattend.template.xml - the same locale and keyboard as the two guests, so a culture-sensitive test behaves here as on the maintainer's machine. Installed in their time zone too, W. Europe Standard Time (D4); UTC since Q126 (a) - timeZone below",
     "dotnetSdk": "10.0.401, from .work/media/dotnet-sdk-10.0.401-win-x64.exe by Testbed/guest/Install-DotnetSdk.ps1",
     "office": "none. Adding it later is an optional step on CP-02 with the Office Deployment Tool and .work/office-odt/Testbed.xml, then a new base checkpoint and a new runnerBaseCheckpoint - Testbed/README.md section 1c",
     "checkpoints": [
       "CP-01-WIN-CLEAN",
-      "CP-02-SDK-TEST-READY"
+      "CP-02-SDK-TEST-READY",
+      "CP-03-SDK-TEST-READY-UTC"
     ],
-    "runnerBaseCheckpoint": "CP-02-SDK-TEST-READY",
+    "runnerBaseCheckpoint": "CP-03-SDK-TEST-READY-UTC",
+    "timeZone": "UTC",
+    "_timeZone": "Decided by the maintainer 2026-10-03 (Q126 (a)), replacing D4's W. Europe Standard Time: GitHub's UTC runner, which caught Q95's zone bug, went with CI, so the non-live suite runs here in a zone other than the workstation's. Made 2026-10-03 under a lease: CP-02-SDK-TEST-READY restored, Set-TimeZone -Id UTC at 22:04:50Z, a graceful restart (Restart-Guest.ps1), Install-DotnetSdk.ps1 -Verify TEST-READY, three minutes at 0 % CPU, then CP-03-SDK-TEST-READY-UTC taken running at 22:10:40Z (its parent is CP-02). CP-02 keeps W. Europe and is kept, so a branch whose runner still names it runs as before. The runner refuses a guest whose zone reads anything else (Get-GuestRefusal) and its -SelfTest holds this value equal to its $BuildVmTimeZone. Docs/live-tier-on-the-vm.md section 4.3a is the record.",
     "guest": {
       "runRoot": "C:\\OutlookAI-Q5\\run",
       "offlineFeed": "C:\\OutlookAI-Q5\\nuget-offline",

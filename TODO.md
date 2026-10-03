@@ -21,17 +21,35 @@
   designation from a freshly opened store in the verify session; (3) read it in the product the way
   the verify session does, after creating. Recommended: (1) first.
 
-- [ ] **Two decided jobs, held until the agents now running have merged (decided by the
-  maintainer 2026-10-03).** Each one touches files every open branch also touches, or stops the
-  build VM they all share, so each waits for a quiet moment.
+- [ ] **One decided job, held until the agents now running have merged (decided by the
+  maintainer 2026-10-03).** It touches files every open branch also touches, so it waits for a
+  quiet moment.
   - **Q125 - security scanning without GitHub.** (b) Turn on the security analysers that ship with
     the .NET SDK in the builds, and triage what they find. Plus an exception to the Dependencies rule,
     granted by the maintainer: CodeQL may be run locally. Record the exception in `AGENTS.md` beside
     Q71/Q111, pin the CodeQL bundle by version and published hash, and add a script to run it.
-  - **Q126 - the build VM in UTC.** Set `OutlookAI-Build` to UTC and take a new base checkpoint, so
-    the non-live suite runs in a zone other than the workstation's - GitHub's runner used to catch
-    zone bugs that way (Q95). Update the runner, its records and its pins. Hold the build VM's lease
-    while switching.
+
+- [ ] **Decide how the non-live suite keeps a non-UTC zone, now that it runs only in UTC (after
+  Q126 (a), 2026-10-03).** The build VM is UTC and nothing else runs the suite (Q94), so tests that
+  use the machine's own zone as the "other" zone - build a `Local` value, compare it with the `Utc`
+  one - prove only the identity: a product bug that mixes local and UTC times passes them in UTC
+  and would have failed them in W. Europe. Found by searching T1 for reads of the machine's zone,
+  which is not exhaustive: `FreshMergeTests` (Outlook's local received time against the index's
+  UTC one), `ComHostProtocolTests` (a date's kind over the wire), `DaslDateLiteralTests`'s
+  local-kind case, `CensusTableRowTests`'s local-kind fingerprint, and two `ComDateValueTests` -
+  whose conversion is also pinned in a zone of the test's own (Q95), the pattern that holds in any
+  zone. The first UTC run passed whole, so nothing
+  is known broken. Directions: (1) both zones on every run - the runner runs the suite again after
+  switching the guest to W. Europe inside the run (the restore throws that away): complete, about
+  3 more minutes a run; (2) the same, but the second pass runs only tests tagged as reading the
+  machine's zone, with a T1 guard that finds such tests by their IL and fails an untagged one:
+  seconds a run; (3) make those tests zone-explicit, as `ComDateValueTests` is - the product
+  function takes a `TimeZoneInfo`, the machine overload passes `TimeZoneInfo.Local` (pinned by IL),
+  and the test uses a zone of its own: right in any zone, but product refactoring per function;
+  (4) an odd-offset zone with daylight saving instead of UTC (D4's other alternative): every test
+  keeps a non-zero offset, but loses what UTC catches - a test that assumes the offset is not zero,
+  Q95's kind; (5) accept it - the live tier on the W. Europe guests drives Outlook's real dates.
+  Recommended: (2), with (3) for each test as it is next touched.
 
 - [ ] **On or after 2026-10-05, ask the maintainer whether the shared test mailbox exists (Q109).**
   He requested a free shared mailbox in his Microsoft 365 tenant on 2026-10-03 (for example
