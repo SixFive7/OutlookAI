@@ -182,6 +182,19 @@ function Invoke-NativeCommand {
 # PURE DECISIONS. No Hyper-V, no git, no guest. -SelfTest pins them.
 # =============================================================================================
 
+# From when the guest's Application log is searched for an OUTLOOK.EXE crash: a minute before the suite
+# started BY THE GUEST'S CLOCK, which is what its events carry - the host's only when the guest's could not
+# be read. On a frozen guest the two differ by hours or days (Q130 (a)).
+function Get-CrashEventsSince {
+    param([string] $GuestRunStartUtc, [DateTime] $HostRunStartUtc)
+    $start = [DateTime]::SpecifyKind($HostRunStartUtc, [DateTimeKind]::Utc)
+    $parsed = [DateTime]::MinValue
+    if ($GuestRunStartUtc -and [DateTime]::TryParse($GuestRunStartUtc, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$parsed)) {
+        $start = [DateTime]::SpecifyKind($parsed, [DateTimeKind]::Utc)
+    }
+    return $start.AddMinutes(-1).ToString('o')
+}
+
 # What PREPARE does, by whether the start checkpoint is frozen (its time sync off, Q130 (a)). A frozen
 # start is verified, never restarted or rebuilt: either would leave the instant its data was built for.
 function Get-PrepareSteps {
@@ -429,7 +442,11 @@ function Invoke-SelfTest {
     Check 'the profile a frozen start opens is the one step 9a opens' $true $hubReset.Contains("[string] `$TierProfileName = '$TierProfileName'")
     Check 'an unfrozen start is restarted and its hub rebuilt' 'restart|hub rebuild' (Get-PrepareSteps -StartIsFrozen $false -SkipHubReset $false)
     Check 'an unfrozen start with -SkipHubReset is only restarted' 'restart' (Get-PrepareSteps -StartIsFrozen $false -SkipHubReset $true)
+    $hostStart = [DateTime]::SpecifyKind([DateTime]::new(2026, 10, 3, 21, 0, 0), [DateTimeKind]::Utc)
+    Check 'crash events are searched from the GUEST''s clock - a frozen guest''s is hours behind the host''s' '2026-10-03T14:50:00.0000000Z' (Get-CrashEventsSince -GuestRunStartUtc '2026-10-03T14:51:00.0000000Z' -HostRunStartUtc $hostStart)
+    Check 'and from the host''s only when the guest''s could not be read' '2026-10-03T20:59:00.0000000Z' (Get-CrashEventsSince -GuestRunStartUtc '' -HostRunStartUtc $hostStart)
     $own = [System.IO.File]::ReadAllText($PSCommandPath)
+    Check 'the crash search takes the guest''s clock read before the suite' $true $own.Contains("`$since = Get-CrashEventsSince -GuestRunStartUtc `$guestRunStartUtc")
     Check 'the frozen branch calls the guard with -Verify' $true $own.Contains("'Set-GuestClockFrozen.ps1') -VMName `$facts.Name -Verify")
     Check 'the build VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-Build'))
     Check 'the retired test VM is refused' $true ($null -eq (Get-GuestFacts 'OutlookAI-TestVM'))
@@ -804,6 +821,12 @@ Set-Location '$GuestRoot\src'
 exit `$LASTEXITCODE
 "@
     $runStartUtc = [DateTime]::UtcNow
+    # The GUEST's clock at the start, for the crash events below, which carry the guest's time: on a
+    # frozen guest (Q130 (a)) the host's clock is hours or days ahead of it, and filtering the guest's
+    # Application log from the host's time found no crash at all (measured 2026-10-03).
+    $guestRunStartUtc = ''
+    try { $guestRunStartUtc = [string](Invoke-Command -VMName $facts.Name -Credential $credential -ErrorAction Stop -ScriptBlock { [DateTime]::UtcNow.ToString('o') }) }
+    catch { Say "  (the guest's clock could not be read before the suite - the crash count falls back to the host's: $($_.Exception.Message))" }
     $o = Invoke-Guest 'live' $liveScript ($RunTimeoutMinutes * 60)
     $suiteExit = Get-TaskExit $o
     $suiteSeconds = ((Get-Date) - $t0).TotalSeconds
@@ -820,7 +843,7 @@ exit `$LASTEXITCODE
     if ($trxFile) { $trx = ConvertFrom-TrxText ([System.IO.File]::ReadAllText($trxFile.FullName)) }
     $consoleFile = Get-ChildItem -LiteralPath $resultsDir -Filter 'console.txt' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($consoleFile) { $consoleFacts = Read-ConsoleFacts ([System.IO.File]::ReadAllText($consoleFile.FullName)) }
-    $since = $runStartUtc.AddMinutes(-1).ToString('o')
+    $since = Get-CrashEventsSince -GuestRunStartUtc $guestRunStartUtc -HostRunStartUtc $runStartUtc
     $o = Invoke-Guest 'crash-events' "`$s = ([datetime]'$since').ToLocalTime(); `$e = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = `$s; Id = 1000 } -ErrorAction SilentlyContinue | Where-Object { `$_.Message -match 'OUTLOOK\.EXE' }); `"CRASHES `$(`$e.Count)`"; `$e | ForEach-Object { `$_.TimeCreated.ToString('o') + ' ' + ((`$_.Message -split [char]10 | Select-Object -First 4) -join ' | ') }" 300 -Session0
     $cm = [regex]::Match($o, 'CRASHES (\d+)')
     if ($cm.Success) { $crashes = [int]$cm.Groups[1].Value }
