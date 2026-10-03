@@ -183,6 +183,10 @@ I will forget and lose performance the coming months."*
   that takes the maintainer's keyboard focus; the idle-save task did that every 15 minutes until
   2026-10-03. Start it through a GUI-subsystem launcher instead, as
   `Testbed/host/Invoke-TestbedIdleSave.vbs` does (`wscript.exe`, the window hidden from creation).
+  The same goes for any background process a script starts on this workstation: hide it AT
+  CREATION (`Start-Process -WindowStyle Hidden`, `-NoNewWindow`, `CREATE_NO_WINDOW`, or `SW_HIDE`
+  in the startup info, as the build-VM runner's janitor does) - never `powershell.exe
+  -WindowStyle Hidden`, which hides a console window only after it has already taken focus.
 
 ## Dependencies
 
