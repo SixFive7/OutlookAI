@@ -278,6 +278,8 @@ the new one searches the right root and returns none. Build VM: 3,408 / 0 / 0 on
 - **Undo.** Build without the new plan option.
 
 ### D63-D73 - Q96: folder-creation reporting, finished
+*Superseded the same day: the maintainer dropped Q85's reporting requirement, and D120-D125 removed
+what these built. D65's unchanged outcome and "no draft" wording stay (D122).*
 Merged as `a0f6310` (build VM: 3,456 / 0 / 0, 21 self-tests). The live proof is pending the first
 guest run with the new throwaway data file (runbook §8 item 25).
 - **D63 - After a failed creating call, compare the top-level folder lists before and after**, rather
@@ -338,6 +340,8 @@ Built and checkpointed as `CP-16C-POPULATIONS-V2` (hub 68 = 56 + 12 undated cont
   one's live run in parallel would fix the same failures twice.
 
 ### D81-D87 - Q96's follow-ups, implemented
+*Superseded the same day by D120-D125, except D83 (`outlook_failed_before_delete`), which stays
+(D122).*
 Merged as `d62c15b` (build VM on the branch: 3,491 / 0 / 0, 21 self-tests; 16 of 16 mutants caught).
 - **D81 - "Created" means a new folder that now holds the asked-for slot**, judged by the same
   non-creating lookup the discard and update checks use. Every other new folder is reported in a new
@@ -534,7 +538,72 @@ name; `move_mail` kept Outlook's escapes, breaking its documented undo for such 
   folder searches find the item - D105 stands. Guest one's throwaway keeps its ordinary name in
   `testbed.json`; *alternative:* give it such a name so every run re-measures D105.
 
-### D120-D127 - The maintainer's answers of 2026-10-03 to D62, D74 and D101, implemented
+### D120-D125 - Q85 dropped: the folder-creation reporting removed
+The maintainer, 2026-10-03: *"It feels like the reporting directive is adding a lot of programmatic
+complexity here. Let's drop that requirement and remove as much complexity from our code concerning
+this as possible."* Q85 was "may create, must report" for the paths that put an item INTO a special
+folder - `new_draft`, `reply_draft`/`replyall_draft`/`forward_draft` and `discard_draft` - and Q96 built
+it out. Removed: the `createdFolders`/`appearedFolders` fields of those tools (result, error object,
+exceptions), their sentences and audit-line field, `SpecialFolders.GetDefaultFolderReportingCreation`,
+`CreatingLookupReport` and the re-check of a failed lookup, `ComErrorTokens.DraftsFolderCreationUnverified`,
+the live created-folder proof and everything that existed for it (D123), and their T1 tests. Kept: Q84
+(no lookup creates a folder), every lookup that FINDS a folder (the PST Archive in the Inbox's `0x800F`
+block, the true root, a discarded PST draft by the EntryID it keeps) and every Mailbox Safety mechanism.
+Branch `worktree-agent-a0422e4b3010668c0`, `9614189`: 230 lines added, 4,384 removed. Build VM 3,520 / 0 / 0
+and 20 of 20 self-tests (87 tests and one self-test fewer than master's 3,607 and 21: the removed
+reporting tests and `Reset-ThrowawayStore.ps1`'s). Live on `OutlookAI-Unindexed`, restored to
+`CP-13B-LIVE-GREEN`, the suite restaged from `9614189` (`TEST-READY`) and the hub rebuilt: the ten
+classes that drive the draft, update, discard, reply/forward and archive paths (`LiveDraftTests`,
+`LiveHtmlDraftTests`, `LiveDraftOptionsTests`, `LiveUpdateDiscardTests`, `LiveHeadlessComposeParityTests`,
+`LiveHeadlessGuaranteeTests`, `LiveSignatureTests`, `LiveMoveArchiveTests`, T3
+`Phase4LiveMcpToolShapeTests` and `MoveArchiveLiveMcpToolTests`) passed 39 of 39 in 4.3 min; tripwire
+`0 failure(s), 0 note(s)`, `post-suite: 0 tagged artifacts (incl. Archive), 0 test folders`; the guest
+restored to `CP-13B-LIVE-GREEN` again and saved.
+- **D120 - Only the draft tools' and `discard_draft`'s reporting goes; `archive_mail`'s and
+  `move_mail`'s `createdFolders` stay.** Both predate Q85 - `move_mail` names the folders
+  `create_folder: true` was asked to make (2026-08-20), `archive_mail`'s is Q84 decision (c) - and the
+  live tests on both guests assert them. *Alternative:* drop `archive_mail`'s too, which would also
+  remove its top-level comparison and its `ArchiveFolderStateUnreadable` refusal - a behaviour change to
+  a write path the decision did not name.
+- **D121 - The three destinations call `Store.GetDefaultFolder` directly again**, as they did before
+  Q85, instead of the non-creating lookup first: Outlook hands back a folder that exists, so the first
+  step only served the before/after proof. They stay on T1's reviewed list of creating calls,
+  relabelled "may create". *Alternatives:* keep the non-creating lookup first (more reads per draft for
+  nothing now); go through `SpecialFolders.GetDefaultFolderMayCreate` (it classifies the failure, and the
+  draft paths need the COM failure itself for their messages).
+- **D122 - Kept, because each is true whatever happens to folders:** a `new_draft` whose Drafts lookup
+  failed says "NO DRAFT WAS CREATED ... Retrying cannot leave a second draft", outcome `unchanged`
+  (`DraftsFolderUnavailable`); "A DRAFT MAY HAVE BEEN SAVED" only once the compose has started
+  (`DraftNotStarted` before it); a discard that fails before its delete says the draft was NOT deleted
+  (`outlook_failed_before_delete`). **Removed with the reporting:** `DraftsFolderCreationUnverified` and the
+  draft paths' folder sentences ("CREATED before this failed", "No folder was created either", "could NOT be
+  checked"), which only said what the re-check found. *Alternative:* fold `DraftsFolderUnavailable` into
+  `DraftNotStarted` - one token fewer, but the answer would stop saying it was the account's Drafts folder
+  that failed.
+- **D123 - The throwaway data file goes entirely**: `Reset-ThrowawayStore.ps1` (step 9a-ii),
+  the `throwawayStoreDisplayName` setting (loader, renderer, templates, `testbed.json`), the allowlist's
+  draft+delete grant for it, the tagged-post helper and the Drafts-designation reader, and
+  `T1/ThrowawayStoreTests`, `T2/ThrowawayStoreProof` and `T2/LiveCreatedFolderTests`. Its one other user is
+  D114's store-name measurement, on the unmerged `q99-name-encoding-followup`: its new
+  `T2/LiveStoreNameEncodingTests` needs `ThrowawayStoreDisplayName`, `ThrowawayStoreProof.Population` and
+  `.Remedy` and `SaveTaggedPostInDeletedItems`, so **whichever of the two branches merges second drops that
+  test** (or re-points it, (d)). D114's answer is on the record - D105 stands - and by D114's own choice
+  guest one's throwaway kept its ordinary name, so the test measured nothing on an ordinary run.
+  *Alternatives:* (b) keep the throwaway as a generic second writable store for that test - about 1,000
+  lines of script, settings, validation and allowlist whose reason is gone; (c) keep only the script, for
+  ad-hoc measurements; (d) when store names need re-measuring, rename a store the guests have anyway (the
+  identity store, `Rename-OutlookStore.ps1`) for that run. *Undo:* revert the Testbed and T2 files of this
+  change.
+- **D124 - The true-root Drafts lookup stays, proven by T1 alone.** It FINDS a folder - it is what lets
+  `discard_draft` and `update_draft` accept a draft a reply filed in a data file with no Inbox - and only
+  the proof D123 removes measured it live (runbook section 8 item 25 keeps the answer). *Alternative:* a
+  slim live round trip (reply into such a file, then discard), which needs the machinery D123 removes.
+- **D125 - Records:** the runbook's dated run records keep what they recorded; its procedure loses step
+  9a-ii (a note says why) and section 8 item 25 now states the answer the true-root lookup rests on. The
+  Unreleased CHANGELOG entries for the reporting were removed or trimmed, and none was added: the
+  reporting never reached a release. No `TODO.md` item referred to it.
+
+### D126-D133 - The maintainer's answers of 2026-10-03 to D62, D74 and D101, implemented
 His answers: **D62 → (b)**, all three kinds; **D74 → "ensure there is no luck involved"**; **D101 →
 "measure if you think it is relevant"** (it was, and was measured and fixed). The how of each was
 decided on his behalf, below. Branch `worktree-agent-a24876cb1c1fa45f5`; evidence in
@@ -543,7 +612,7 @@ were built, indexed exactly as planned and run under the live tier - 16 failures
 failing in master's run of the same afternoon on the contacts populations, none new - and checkpointed as
 **`CP-18C-ALL-KINDS`**; the guest rests on `CP-17C-CORPUS-160K` until the branch is merged. D102/D103 (the
 age of the data) is Q108 below - measured, directions only, nothing implemented.
-- **D120 - D62 (b): an appointment and a task are DATED BY THE PLAN**, not by when they were built.
+- **D126 - D62 (b): an appointment and a task are DATED BY THE PLAN**, not by when they were built.
   Their delivery time is written after the first save, the way a mail item's is, to an instant one
   day older than the oldest dated item the population can hold, one hour further back per ordinal (the
   hub's from 61 days back, the bystander's from 731) - so they sort after all the population's mail and
@@ -557,27 +626,27 @@ age of the data) is Q108 below - measured, directions only, nothing implemented.
   only and keep the hub contacts-only; date them inside the mail's own age range (more realistic, but
   every "newest N" read would then have to be checked against them). *Undo:* build without
   `--all-kinds`.
-- **D121 - The counts are version 2's full set** - the hub 4 + 4 + 4, the bystander 14 + 14 + 14, at
+- **D127 - The counts are version 2's full set** - the hub 4 + 4 + 4, the bystander 14 + 14 + 14, at
   version 2's ordinals - not the 12/42 contacts with appointments and tasks on top. The hub's twelve
   non-mail rows leave its top-100 search budget where the contacts left it (guest one's run of the same
   afternoon already reached 100 hits there - `Search_TopOne_OnHubStore_SetsTruncated_AndTopHundredDoesNot`,
-  not this work's to fix); with D125 a store is contested from twelve undated rows, which the
+  not this work's to fix); with D131 a store is contested from twelve undated rows, which the
   bystander's fourteen contacts give; the forty-two were the margin D74 removes. *Alternatives:* 12/42
   contacts plus 4/4 and 14/14 (the hub 76, the bystander 370); thirds sized to contest both stores (36
   non-mail rows in the hub - over its budget).
-- **D122 - The indexed guest only.** The unindexed guest's populations are unchanged: the order-key
+- **D128 - The indexed guest only.** The unindexed guest's populations are unchanged: the order-key
   tests that read these rows are deselected there (`Requires=SearchIndex`), and its tier is green on
   `CP-13B-LIVE-GREEN`. *Alternative:* both guests.
-- **D123 - The per-run hub rebuild BUILDS the decided kinds** - all three where the hub is indexed,
+- **D129 - The per-run hub rebuild BUILDS the decided kinds** - all three where the hub is indexed,
   none where it is not - and tears down by the kinds the manifest's own shape key names, instead of
   keeping what it tore down. So guest one's contacts-only hub moves over at its next rebuild, and the
   run says so in a note. *Alternatives:* keep what it tears down and move the hub over once by hand; a
   `-UndatedKinds` switch someone must remember.
-- **D124 - An appointment or task the index dates elsewhere makes `corpus-indexed` NOT complete** -
+- **D130 - An appointment or task the index dates elsewhere makes `corpus-indexed` NOT complete** -
   the hub rebuild's index wait then refuses the run - rather than a note like a mail date that differs.
   Its order is the point of D62 (b); a note would let a nondeterministic hub through. The build, the
   read-back and the undated probe refuse the same way in the store. *Alternative:* a note.
-- **D125 - D74: the widened-search test is SIZED, not margined.** It counts the undated rows a store
+- **D131 - D74: the widened-search test is SIZED, not margined.** It counts the undated rows a store
   holds and searches for the largest `Top` whose over-fetch they out-number (`T2/OrderKeyContest`,
   from the product's own `IndexRowFilter.ComputeSqlTop`: 14 contacts give `Top 3` fetched as `TOP 16`).
   It then runs the unguarded statement itself, requires its dated rows to equal what the head of a
@@ -591,7 +660,7 @@ age of the data) is Q108 below - measured, directions only, nothing implemented.
   either, and the contest counts whatever the index leaves undated. *Alternatives:* keep `Top 25` and assert the undated
   rows exceed the 35 rows of slack (the margin made explicit, still silent if the formula moves);
   require the guard to be load-bearing (red for ever on a NULLS-LAST provider, which is a correct one).
-- **D126 - D101: the product's sweep is right about Corpus A; the step-10 scripts were not.** Measured
+- **D132 - D101: the product's sweep is right about Corpus A; the step-10 scripts were not.** Measured
   (section 4.2e): Corpus A's `PR_VALID_FOLDER_MASK` is `0xC9` - no Inbox, Outbox or Sent Items - so the
   product's non-creating resolver finds only Deleted Items there (19,292 of the 160,000) and sweeps
   nothing else; 88% of the corpus sits in the three stand-ins, which the product correctly does not
@@ -603,7 +672,7 @@ age of the data) is Q108 below - measured, directions only, nothing implemented.
   `-ScanFolder`, and both say that a sweep of an INDEXED store reads only the minutes since its
   frontier. *Alternatives:* give Corpus A real default folders (a delivery store's; a 1.5 h rebuild
   plus the index, for a measurement only); leave the scripts and document the trap.
-- **D127 - The scratch measurement driver stays scratch**: the product-sweep read of Corpus A was done
+- **D133 - The scratch measurement driver stays scratch**: the product-sweep read of Corpus A was done
   by a throwaway, read-only stdio driver beside `Invoke-GuestMeasure.ps1` (in `.work\g1-d62\guest\`),
   not committed, because its one question - which folders the sweep walks in a store - is answered and
   recorded. *Alternative:* a `-SweepStore` case in `Invoke-GuestMeasure.ps1`.
@@ -889,7 +958,7 @@ self-test on the workstation before the build-VM rule reached it.
   unrolling of COM collections; it was fixed and its measurement folded into the build phase (P2) instead
   of a phase of its own, so Corpus A was measured with the all-kinds tools staged, not the P1 ones.
 - The product's sweep of Corpus A was read by a scratch, read-only stdio driver beside
-  `Invoke-GuestMeasure.ps1` (D127), not by a committed script.
+  `Invoke-GuestMeasure.ps1` (D133), not by a committed script.
 - The clock measurements for Q108 ran on guest two, `OutlookAI-Unindexed`, once the two agents using it
   first had released it - not on guest one: the mechanism is Hyper-V's, not the index's, and guest one
   was busy. The first attempt lost its readings to a script fault (a function that printed into its own

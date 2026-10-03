@@ -541,7 +541,7 @@ public sealed class CorpusPopulationTests
     [Fact]
     public void TheAllKindsDates_AreOlderThanEveryDatedItem_DistinctAndFixedByTheAnchor()
     {
-        // D120 (decided on the maintainer's behalf, 2026-10-03): one day beyond the oldest dated item the population
+        // D126 (decided on the maintainer's behalf, 2026-10-03): one day beyond the oldest dated item the population
         // can hold, one hour further back per ordinal. So under DateReceived DESC every appointment and task sorts
         // after ALL the population's mail - never the frontier, never a "most recent" hit - and where it sorts is
         // the plan's, not the build clock's.

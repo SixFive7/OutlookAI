@@ -52,7 +52,7 @@
     and so does the anchor the old population is torn down by - teardown refuses any other,
     because the anchor is part of the shape key. So does which non-mail kinds the hub carries - the
     key ends '|u:all-kinds' (D62 (b)) or '|u:contacts' (Q98 (f)) - and the TEARDOWN gets the matching
-    --all-kinds or --undated-contacts. The BUILD follows the decision, not the old manifest (D123,
+    --all-kinds or --undated-contacts. The BUILD follows the decision, not the old manifest (D129,
     2026-10-03): a hub that is INDEXED here is built with all three kinds (--all-kinds, D62 (b)), one
     that is not with none - so an indexed hub still carrying the contacts-only population is moved to
     the decided one by its next rebuild, and the run says so.
@@ -258,7 +258,7 @@ $script:UndatedContactsMarker = '|u:contacts'
 $script:AllKindsMarker = '|u:all-kinds'
 
 # The undated kinds a hub is BUILT with, by whether it is indexed on this guest - decided 2026-10-03
-# (D62 (b); D123): all three kinds where the order-key tests can read them, none where they cannot.
+# (D62 (b); D129): all three kinds where the order-key tests can read them, none where they cannot.
 function Get-DecidedUndatedKinds {
     param([bool] $Indexed)
     if ($Indexed) { return 'all-kinds' }
@@ -483,7 +483,7 @@ function Resolve-HubResetPlan {
     $seedValue = $null
     $teardownAnchor = $null
     # Which non-mail kinds the hub carries. The TEARDOWN needs what the manifest says - it is part of the
-    # shape key; the BUILD follows the decision for a hub indexed here or not (D62 (b), D123). $priorKinds
+    # shape key; the BUILD follows the decision for a hub indexed here or not (D62 (b), D129). $priorKinds
     # is what the population being replaced carried - the manifest's, or a torn-down one's - for the note.
     $teardownKinds = ''
     $priorKinds = $null
@@ -822,7 +822,7 @@ function Invoke-SelfTest {
     Test-Case '-SkipRebuild with a manifest: finish, rebuild nothing' 'True|False' @($finish.Proceed, $finish.Rebuild)
     Test-Says '-SkipRebuild with no manifest is refused' (Resolve-HubResetPlan -SettingsFact $fact -ManifestExists $false -Header $null -HistorySeed $null -SeedText '8181' -SkipRebuild $true -NowUtc $now).Problems '-SkipRebuild finishes'
     Test-Says 'settings problems stop the plan, labelled' (Resolve-HubResetPlan -SettingsFact (Read-HubSettingsFact (New-Settings -MachineProfile 'Production')) -ManifestExists $true -Header $header -HistorySeed $null -SeedText '' -SkipRebuild $false -NowUtc $now).Problems 'settings: machineProfile'
-    # The non-mail kinds (D62 (b), D123): the teardown takes the manifest's own; the build follows the
+    # The non-mail kinds (D62 (b), D129): the teardown takes the manifest's own; the build follows the
     # decision for a hub that is indexed here or not, and a change between the two is said.
     $withAllKinds = Resolve-HubResetPlan -SettingsFact $fact -ManifestExists $true -Header $allKindsHeader -HistorySeed $null -SeedText '' -SkipRebuild $false -NowUtc $now
     Test-Case 'an indexed hub built with all three kinds is torn down and rebuilt with them, and nothing is noted' 'True|all-kinds|all-kinds|0' @($withAllKinds.Proceed, $withAllKinds.TeardownKinds, $withAllKinds.BuildKinds, @($withAllKinds.Notes).Count)

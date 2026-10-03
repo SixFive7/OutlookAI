@@ -530,21 +530,88 @@ the same day and again on 2026-09-27 (section 4.2 step 4, section 4.2b step 4.4)
 first, then `ADDIN-READY` twice each time, the trust entry kept on the second run, and the index
 exclusion state unchanged by it.
 
-**The two phases have NOT run on a guest - PENDING (Q100, 2026-10-03).** Their proof so far is the
-script's `-SelfTest` on the host - 168 assertions under Windows PowerShell 5.1 and PowerShell 7, seven
-of them reading the script's own syntax tree (the install phase reaches no Outlook start, the first
-run no installer and no registry, environment or file write, and each refuses the wrong token
-first), and eleven rules broken on purpose in scratch copies, each caught - and the four
-`Tools/Checks` guards. Both guests were busy when it was written, so the guest proof waits for the
-next guest rebuild or a free slot. On a guest, from a checkpoint with the add-in NOT installed, it
-must record: `-Verify` `NOT-INSTALLED`; `-Phase Install -Execute` from the default task ending
-`INSTALLED-NEVER-RAN` with no OUTLOOK.EXE started (the task's job output, and `Get-Process` after it)
-and the install record written; `-Verify` then `INSTALLED-NEVER-RAN` too; `-Phase FirstRun -Execute`
-at `-RunLevel Limited` printing `token NOT elevated` for its OUTLOOK.EXE and `ADDIN-READY`; a second
-`-Phase Install` over that, `INSTALLED-NEVER-RAN` again although a valid state is there; and after
-a graceful restart `Set-OutlookIndexingDisabled.ps1 -Verify` - `UNINDEXED` on the unindexed guest,
-`INDEXED` with its count unchanged on the indexed one. Also worth one look: that FirstRun refuses
-from the default (elevated) task, exit 1, before it starts anything.
+**The two phases RAN on a guest - `OutlookAI-Unindexed`, 2026-10-03 - and work as designed. Their
+first run found a PRODUCT DEFECT: in a NOT elevated Outlook the add-in's tuning reconcile never
+finishes, so on a fresh guest step 7c ends `BROKEN`, not `ADDIN-READY` (below; open in `TODO.md`).**
+Until that day their proof was the host's: `-SelfTest`, 168 assertions under Windows PowerShell 5.1
+and PowerShell 7 - seven reading the script's own syntax tree - eleven rules broken on purpose in
+scratch copies, each caught, and the four `Tools/Checks` guards.
+
+*The run.* The guest restored to `CP-08-MAIL-SINK` - the checkpoint before `CP-09-ADDIN-READY`: no
+add-in, no VSTO `v4R`, the tier profile the default with its POP3 password stored, the Q80 policy in,
+the index excluded by the POLICY alone (that line predates the scope rule), Outlook not running. The
+payload built on the host from `883ec5f` by `Testbed/host/Publish-AddInPayload.ps1` (guard 3
+`UNCHANGED` over 305 host lines), staged with the pinned `vstor_redist.exe` and `883ec5f`'s guest
+scripts. Every phase through `Register-InteractiveTask.ps1` in session 1 and every plain `-Verify`
+over PowerShell Direct, while a READ-ONLY poller in session 0 sampled OUTLOOK.EXE every 0.5 s: its token
+(TokenElevation, TokenElevationType, integrity level), command line, parent and modules. Raw logs,
+one file per step below, the poller and both build-VM runs: `.work\q100-proof\` in the main checkout.
+
+| # | What ran | Verdict, exit code, and what else was seen |
+| --- | --- | --- |
+| 1 | `-SelfTest` (guest), `-Verify` | 138 assertions, 0 failures (the contract section SKIPs off the repository); `NOT-INSTALLED`, 3 - `v4R` absent, `v4` 10.0.60910 |
+| 2 | `-Execute` with no `-Phase`, default task | refused, 1: `REFUSING: -Execute needs -Phase since 2026-10-03 (Q100)`, both phase commands printed; nothing installed, no record |
+| 3 | `-Phase Install -Execute`, default task (elevated) | **`INSTALLED-NEVER-RAN`, 2**, 66 s: the runtime installed (`v4R` 10.0.60917, 35 s), the installer 14 s, the trust entry and `install-addin-record.json` written, the exclusion state `UNCHANGED`. **No OUTLOOK.EXE at any sample, and none after** |
+| 4 | `-Verify` | `INSTALLED-NEVER-RAN`, 2 - "the add-in has NOT run since" |
+| 5 | `-Phase FirstRun -Execute` from the DEFAULT task; `-Phase Install -Execute` at `-RunLevel Limited` | both refused, 1, in under 4 s - `REFUSING TO RUN -Phase FirstRun: this session is ELEVATED` and `REFUSING TO RUN -Phase Install: this session is NOT elevated` - no Outlook, the record untouched |
+| 6 | `-Phase FirstRun -Execute`, `-RunLevel Limited` | **`BROKEN`, 1**, 253 s. COM start 3.5 s, MAPI ok; `OUTLOOK.EXE pid 9064: token NOT elevated`; `Connect = True`, the add-in answered `GetRestartNeeded()`; `Initialized` and `Enabled` written - and **no `LastReconcileUtc` in 240 s**. Exclusion `UNCHANGED`. Outlook left running headless; it had closed by itself 3.5 minutes later |
+| 7 | `-Verify -WithOutlook` at Limited, then `-Verify` | `INSTALLED-NEVER-RAN`, 2, both - Outlook had closed, so the COM half was not checked. **Wrong: the add-in had run.** Fixed in the script (below) |
+| 8 | the fixed script: `-SelfTest`, `-Verify`, then FirstRun again | 151, 0 failures; `BROKEN`, 1 - "the add-in HAS run since ... registration reconcile wrote ...Mcp\LastReconcileUtc at 16:01:25Z ... Tuning\Applied records 4 of the 13 Desired values"; FirstRun `BROKEN`, 1: "tuning state (Tuning\LastReconcileUtc) written NEVER, in 240 s; registration reconcile (Mcp\LastReconcileUtc) written after 2.4 s" |
+| 9 | **Control:** the five Cached Mode policy values written from session 0, elevated, equal to `Tuning\Desired` - as a GPO would set them | - |
+| 10 | `-Phase FirstRun -Execute`, Limited | **`ADDIN-READY`, 0**, 8.4 s: COM 2 s, `LastReconcileUtc` 2.1 s in, `tuning walk: ... 13 of the 13`, `token NOT elevated`, `GetRestartNeeded() = True`, exclusion `UNCHANGED` |
+| 11 | `-Verify` | `ADDIN-READY`, 0 - "the add-in has run since" |
+| 12 | `-Phase Install -Execute` again, default task | **`INSTALLED-NEVER-RAN`, 2, over that valid state**, 12 s: "already registered: v4R 10.0.60917 - not reinstalling", "kept the existing entry ... same URL, same key", the record rewritten; no OUTLOOK.EXE |
+| 13 | `-Verify`; FirstRun, Limited | `INSTALLED-NEVER-RAN`, 2 - "LastReconcileUtc '...16:20:11Z' is from before" the install at 16:20:55Z; then `ADDIN-READY`, 0, 5.7 s, `GetRestartNeeded() = False` |
+| 14 | `Testbed/host/Restart-Guest.ps1 -Execute`, then `Set-OutlookIndexingDisabled.ps1 -Verify` | restarted in 22 s (Outlook had closed by itself); **`UNINDEXED`**: two readings 10 minutes apart, `mapiRows=0 outlookRowsTotal=0`, the catalog `IDLE` with 430 other items - after three NOT elevated Outlook starts, with the policy-only caveat that line carries |
+| 15 | `Restore-VMSnapshot CP-13B-LIVE-GREEN`, saved, lease released | no checkpoint kept from this run |
+
+*That the add-in loaded in the NOT elevated Outlook, independently of the script.* For each of the four
+FirstRun starts the poller read OUTLOOK.EXE as `TokenElevation=0 TokenElevationType=3` (Limited) at
+integrity `0x2000` (Medium), command line `OUTLOOK.EXE -Embedding`, parent `svchost.exe -k DcomLaunch` -
+started by COM, not by the task - with `VSTOLoader.dll` and `vstoee.dll` mapped into it within 0.8 s.
+`Addins\OutlookAI\LoadBehavior` stayed 3 after every run (Outlook sets 2 on a load that fails), and
+Outlook's own `...\16.0\Outlook\AddInLoadTimes` gained an `OutlookAI` value at the first start and then
+recorded loads of 829 ms and 625 ms. `OutlookAI.dll` itself never appeared in the module list; a
+managed assembly need not.
+
+*The defect, read on the guest and in the source.* `OutlookTuningService.Reconcile` walks its catalog
+in order: four `search.*` values in Outlook's user Search key, then D25's five `caching.policy.*`
+values under `HKCU\Software\Policies\Microsoft\Office\16.0\Outlook\Cached Mode`, then two user Cached
+Mode values and two PST size values, and `LastReconcileUtc` last. `HKCU\Software\Policies` grants the
+user ReadKey only - Administrators and SYSTEM hold FullControl, and a filtered token does not use the
+Administrators group (its ACL read on the guest; the maintainer's workstation's has the same shape).
+So in a NOT elevated Outlook the first policy write throws, the reconcile's catch-all swallows it to
+the debugger, and nothing after it runs: `Tuning\Applied` held the four search values and nothing
+else, the policy key and the user Cached Mode key were absent, and the reconcile's own bookkeeping -
+updating `RestartNeeded`, writing `PolicyConflicts` and `LastReconcileUtc` - never ran. The class's own summary says "Everything is
+HKCU - no elevation is ever required"; for the Policies hive that is not so. **What hid it:** the
+single elevated `-Execute` this split replaced - its Outlook could write there, and every later
+start, elevated or not, found the five values in sync. Both live guests were installed by that
+`-Execute`, so they should carry the five values too - not read on them in this run. **What it means for users:** the installer is
+per-user and Outlook runs NOT elevated, so on any machine where an administrator, a GPO or an earlier
+elevated Outlook has not already set those five values, the reconcile never completes - the user
+Cached Mode and OST size values never apply either, and `outlook_health` reports
+`tuning.lastReconcileUtc` null. The maintainer's workstation carries the five values and a fresh
+`LastReconcileUtc` (read 2026-10-03), so it is not affected; who set them there is not recorded.
+**The control (step 9) isolates it:** the same build, guest, token level and command, and only the
+five values differ - `BROKEN` without them, `ADDIN-READY` with them. It is a control, not a build
+step: setting them in the testbed would hide the defect exactly as the elevated `-Execute` did.
+
+*The script, fixed from this run (step 8).* `-Verify` judged "run since the install" by the tuning
+state alone. It now also reads the add-in's second startup marker, `Mcp\LastReconcileUtc` - written by
+the registration reconcile at every start, failed or not - and an add-in that started since the
+install without finishing a tuning reconcile is `BROKEN`, with when it started and how far its walk
+got (`Tuning\Applied` against `Tuning\Desired`, printed as `tuning walk`). FirstRun watches that marker
+during its wait, so a tuning state that never comes says which failure it was, and its timing is no
+longer read after the 240 s wait (step 6 printed "registration reconcile after 245.4s"). `-SelfTest`:
+187 assertions, 0 failures, on the build VM under Windows PowerShell 5.1, with all 21 scripts'
+self-tests passing (`Testbed/host/Invoke-TestsOnBuildVm.ps1 9bfc135 -SkipSuite`); 151 on the guest,
+whose copy has no repository for the contract section.
+
+**Not settled by it:** `ADDIN-READY` on a fresh guest, which waits on the defect; the indexed guest -
+that an unelevated first run there feeds the index and leaves it `INDEXED`; `-Verify -WithOutlook`
+against a running Outlook, which had closed each time before the attach was tried; and the two live
+tests on a guest installed this way.
 
 **Checkpoint `CP-03-OUTLOOKAI-INSTALLED` once `-Phase FirstRun` prints `ADDIN-READY`.** `CP-05-ADDIN-TRUSTED`
 is no longer a separate manual step - the trust entry is part of the scripted install - and the name
@@ -1858,7 +1925,7 @@ the option - they still print `verdict=no-undated-rows-in-sample`, `coverage: 0 
 and a `PROVED NOTHING:` line, which now says to rebuild with `--undated-contacts`.
 
 **And all three kinds again - decided by the maintainer 2026-10-03 (his answer (b) to D62); how, decided on
-his behalf (D120-D123 of `Docs/overnight-review-2026-10-03.md`).** The indexed guest's hub and bystander
+his behalf (D126-D129 of `Docs/overnight-review-2026-10-03.md`).** The indexed guest's hub and bystander
 carry version 2's full set once more, at its own ordinals and counts - the hub four appointments, four
 contacts and four tasks (57-68), the bystander fourteen of each (301-342) - as
 `CorpusPlanOptions.IncludeAllKinds`, `--all-kinds` on the command line, each kind given the date the index
@@ -1888,7 +1955,7 @@ can be held to:
 * **IN the shape key**, `|u:all-kinds`, exclusive with both other undated options: an appointment of this
   population carries a date the full set's does not. `Testbed/guest/Reset-HubPopulation.ps1` tears a hub
   down by the marker its manifest carries and BUILDS it the decided way - all three kinds where the hub is
-  indexed, none where it is not (D123) - so the next per-run rebuild moves a contacts-only hub over, and
+  indexed, none where it is not (D129) - so the next per-run rebuild moves a contacts-only hub over, and
   says so;
 * **the hub's search budget is unchanged**: twelve non-mail rows, as with the twelve contacts, so the
   top-100 hub search (`Phase7LiveMcpToolShapeTests`) sees the same number of hits from them.
@@ -2022,7 +2089,7 @@ guest that level is NOT elevated** - run it through `Register-InteractiveTask.ps
 and it refuses to `-Execute` elevated there - because an elevated Outlook never feeds the index, and
 every Outlook start on that guest is unelevated; it then starts both Outlooks directly, at its own
 level. On the unindexed guest either level works. **And it builds the non-mail kinds the decision names
-for the guest** (D123, 2026-10-03): the TEARDOWN takes whatever the manifest's shape key says the old hub
+for the guest** (D129, 2026-10-03): the TEARDOWN takes whatever the manifest's shape key says the old hub
 carried (`|u:all-kinds` → `--all-kinds`, `|u:contacts` → `--undated-contacts`), and the BUILD gives a hub
 that is indexed here all three kinds (`--all-kinds`, D62 (b), above) and one that is not none - so a
 contacts-only hub is moved over by its next rebuild, which says so in a note. Until 2026-10-03 it kept
@@ -2338,26 +2405,10 @@ guest's filter. **Start the run inside that margin.** The frontier test reads th
 is a red run, not a quietly weaker one. The maintainer's own machine has no such field and no such
 step.
 
-**Then the throwaway data file - Q96 (iv), decided 2026-10-03, a script step for the same reason.**
-Straight after the hub rebuild, at the level it leaves Outlook running:
-
-```
-.\Register-InteractiveTask.ps1 -RunLevel Limited -TimeoutSeconds 900 -Script "& 'C:\OutlookAI-Q5\Reset-ThrowawayStore.ps1' -Execute"
-```
-
-`Testbed/guest/Reset-ThrowawayStore.ps1` detaches the previous run's throwaway data file from the
-tier profile, attaches a fresh one - `AddStoreEx`, so Deleted Items and nothing else (section 1.3) -
-under the guest's `throwawayStoreDisplayName`, proves it has no Drafts folder without asking Outlook
-for one, and deletes the old files Outlook has let go of. It is the one store
-`T2/LiveCreatedFolderTests` writes to: a reply to a tagged post in its Deleted Items, which the
-product must file in a Drafts folder it creates there and REPORT in `createdFolders`, then
-`discard_draft` - the "created" branch of Q85, which never runs on the hub because the hub has a
-Drafts folder. The write allowlist grants that store draft and delete and nothing else, and no
-census or sweep watches it: the proof creates a folder there on purpose, and it proves its own zero
-end, by tagged count and by EntryID. A settings file rendered before 2026-10-03 has no
-`throwawayStoreDisplayName`; the script then refuses and the test prints `PROVED NOTHING` - re-render
-it (`Testbed/README.md` step 9). **Never run on a guest yet: section 8 item 25 is what its first run
-must record.**
+*Until 2026-10-03 a second step followed here - `Reset-ThrowawayStore.ps1`, which
+recreated a throwaway data file for the created-folder proof (`T2/LiveCreatedFolderTests`). Both
+were removed that day with the requirement they proved: the maintainer dropped Q85's "must report"
+(section 8 item 25). A run record that names step 9a-ii predates that.*
 
 **On `OutlookAI-Unindexed` the filter also deselects the index tier:**
 `Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&Requires!=SearchIndex`. That guest has no index by design
@@ -3098,8 +3149,8 @@ The frontier test can catch a local-time misreading until 2026-10-03T08:42:34Z -
 | `CP-16C-POPULATIONS-V2` (parent `CP-15C-SIGNATURE-SUITE-STAGED`; taken with the guest running, 2026-10-03 08:55 local) | Outlook not running; default profile `OutlookAI-Tier`; no `ImportPRF`; `INDEXED`, 20,524 rows; the hub at anchor `2026-10-03T06:48:34Z` with its twelve contacts (manifest SHA-256 `7A999122...`, its predecessor in `hub-history\`), the bystander at `06:38:42Z` with its forty-two (`E0D55AFB...`), the identity store at `06:39:44Z` (`EB2F0B06...`); Corpus A untouched (`0BCFA3DA...`, 20,001 lines); the live-test settings staged; the tools from `6d01e72`, the server and the suite still `af56efc`'s |
 
 **For the run, which is not part of this:** the suite on the guest is `af56efc`'s; re-stage it from
-master first (`Testbed/README.md` step 8b). The run starts with step 9a at `-RunLevel Limited` and 9a-ii
-(`Reset-ThrowawayStore.ps1`, never yet run). With no corpus declared, the corpus tests print that they
+master first (`Testbed/README.md` step 8b). The run starts with step 9a at `-RunLevel Limited`. With
+no corpus declared, the corpus tests print that they
 have none, and the index tests measure the hub and the bystander - where `LiveOrderKeyCollationTests`
 should now find the 12 and 42 undated rows `corpus-indexed` counted; that run is what shows they do.
 
@@ -3245,15 +3296,15 @@ again - `New-LiveTestSettings.ps1 -VMName OutlookAI-Indexed`, then the `Copy-ToG
 | `CP-17C-CORPUS-160K` (parent `CP-16C-POPULATIONS-V2`; taken with the guest running, 2026-10-03 11:56 local) | Outlook not running; default profile `OutlookAI-Tier`; no `ImportPRF`; `INDEXED`, 180,520 rows - `Corpus A($996dc7a9)` 160,006; Corpus A at `C:\OutlookAI-Tier\corpus-a.pst` (8,520,360,960 bytes), mounted in both profiles, its manifest `AB395B81...` (160,004 lines); the old corpus inert, its manifest in `corpus-history\`; the hub at anchor `2026-10-03T09:32:50Z` with its twelve contacts (`8A1257E9...`), the bystander and the identity store as at `CP-16C`; the live-test settings with the corpus staged (`9674ED3E...`, windows 7, 30 and 60 - since replaced on the running guest by `688FDB99...`, windows 30 and 60, above); `Set-OutlookIndexingDisabled.ps1` with the count fix, `Build-Corpus.ps1` and `Reset-HubPopulation.ps1` from master; the tools `6d01e72`'s, the server and the suite still `af56efc`'s |
 
 **For the run, which is not part of this:** as section 4.2c says - re-stage the suite from master first
-(its hub-freshness check must know the `|u:contacts` marker), then step 9a at `-RunLevel Limited` and
-9a-ii. The suite then finds Corpus A in the settings: the freshness check runs at start, the corpus is
+(its hub-freshness check must know the `|u:contacts` marker), then step 9a at `-RunLevel Limited`.
+The suite then finds Corpus A in the settings: the freshness check runs at start, the corpus is
 the largest indexed store the latency bounds are timed against, and the count tripwire censuses it as a
 bystander. **Before 2026-11-01 23:59 UTC**, or after a rebuild.
 
 ### 4.2e All three kinds, the sized contest and Corpus A's stand-ins - `OutlookAI-Indexed`, 2026-10-03 (D62 (b), D74, D101)
 
 **Why this section exists.** The maintainer's answers of 2026-10-03 to D62 (all three kinds), D74 ("no
-luck") and D101 ("measure if relevant"), on guest one; decisions D120-D127 of
+luck") and D101 ("measure if relevant"), on guest one; decisions D126-D133 of
 `Docs/overnight-review-2026-10-03.md`. Two phases, each from `CP-17C-CORPUS-160K` and back to it with the
 resting 30/60 settings staged, the guest saved and the lease released: **P1** (the premise, before anything
 was built) with this branch's tools at `6c528af`, and **P2** (the builds, the D101 measurements, a live run
@@ -4141,59 +4192,17 @@ unrecorded or unverified.
       not openable from this profile. Whether to drop or flag such hits is open (`TODO.md`); doing
       either from the map alone would also catch an Exchange store the hash did not decide.
 
-25. **RAN on `OutlookAI-Unindexed`, 2026-10-03 (section 4.1e) - its first run failed by design and
-    answered Q85's open question; the fix (`5ac1d85`) passed the next runs. Every point below is
-    recorded there, the second run's detach included.** The original brief, kept for the record:
-    **the created-folder proof has never run on a guest (Q96 (iv), built 2026-10-03).**
-    What exists is proven only off the guests: `Testbed/guest/Reset-ThrowawayStore.ps1 -SelfTest`
-    (its decisions and its own source), the settings, the renderer and the write allowlist by
-    `T1/ThrowawayStoreTests` and `T1/LiveTestSettingsTemplateTests`, and every verdict of the live
-    test by `T2/ThrowawayStoreProof`'s judges, which T1 drives branch by branch. Its first run - steps
-    9, 9a, 9a-ii and 9b of `Testbed/README.md`, on either guest - must record:
-    - **The script's `verify` line.** One store under the name, in the new file, Drafts designation
-      `NotFound`, no top-level `Drafts`. A designation of `Failed` on every run means PowerShell does not
-      surface `MAPI_E_NOT_FOUND` as the `HResult` the script reads (the C# lookup reads the same
-      property and is measured; this script's reading of it is not) - fix the reading, not the check.
-    - **The test's four lines.** `before:` Drafts absent, `reply_draft:` with `createdFolders` naming
-      the throwaway's Drafts (and `appearedFolders` empty), `after:` the non-creating lookup seeing it,
-      `discard_draft:` discarded. If the lookup does not see the new folder, the test fails at `after:`
-      by design: `discard_draft` and `update_draft` would then refuse every draft in such a mailbox,
-      and that is a product finding for the maintainer, not a test to loosen.
-    - **The `designation:` line - WHERE Outlook registers the Drafts folder it created** (Q96 question
-      3, decided 2026-10-03: (a) this run records it, then (b) widen the non-creating lookup from
-      it). It reads `PR_IPM_DRAFTS_ENTRYID` at every place the object model reaches - the store
-      object and the Inbox, which the lookup reads, and the store's top folder, which it does not -
-      and says what each names: `THE CREATED DRAFTS FOLDER`, another folder, not set, unreadable, or
-      no such folder (a data file attached with `AddStoreEx` has no Inbox). Record it verbatim, with
-      the `after:` line beside it. It is written before the first verdict, so a run that fails at
-      `after:` still has it. If no place names the folder, Outlook registered it where only Extended
-      MAPI can read (the store's hidden root): (b) is then not reachable through the object model,
-      and the maintainer's choice is between the other directions of that question.
-    - **The two `top level of ...` lines** (Q96 question 2, decided (c) 2026-10-03: this test only).
-      Each lists the throwaway's top-level folders before and after `reply_draft` and `discard_draft`
-      beside what the call reported. Expected: `appeared [Drafts]` around the reply with exactly that
-      folder in `reported created`, and nothing around the discard. The test fails - LAST, after the
-      zero-artifact proof - if a folder appeared that the call did not report: on success the product
-      names only the folder its lookup returned, so such a failure is the measured answer that it
-      needs the top-level comparison on success too (that question's (b), for the maintainer).
-      Record both lines whichever way it goes.
-    - **The zero end**: the tagged count of the throwaway and the hub at 0, and no item the proof made
-      openable by EntryID.
-    - **The second run's detach**, and whether the previous file was deleted or left held by Outlook
-      (it is let go of at the next Outlook restart, which the hub rebuild provides).
-    - **Nothing else noticed the extra store.** It is in no list, so nothing watches it, but every
-      check that walks the profile's stores - the table probes, `outlook_health`, `list_accounts` -
-      now meets one more; on the code as it stands each either names its stores or tolerates one it
-      cannot probe. A run that says otherwise belongs here.
-    **Both of Q96's remaining questions answered by the merged runs (2026-10-03, section 4.1e).**
-    The bisect run E4b - the first run of master's version of this test - printed `designation: ...
-    store object = not set; top folder = not set; Inbox = no such folder in this store`, the three
-    places the object model hands out; since `5d94851` the record reads the TRUE root too, and run 13
-    printed `... true root = THE CREATED DRAFTS FOLDER` beside `after: the non-creating lookup sees
-    Drafts='Drafts'` - question 3, answered where F10 (`5ac1d85`) had already widened the lookup. And
-    both `top level of ...` lines came back as expected in every run since: `appeared [Drafts]` with
-    `reported created [throwaway@vm.invalid/Drafts]` around the reply, nothing around the discard -
-    question 2: nothing appeared that the call did not report, so its (b) is not needed.
+25. **ANSWERED 2026-10-03, and its proof REMOVED the same day - where Outlook registers the Drafts
+    folder it creates in a data file with no Inbox.** On the store's TRUE root folder - the parent of
+    the IPM subtree, reached through the top folder's `PR_PARENT_ENTRYID` - and nowhere the object model
+    hands out: not the store object, not the top folder, and there is no Inbox (bisect run E4b and run
+    13, section 4.1e; F10). The non-creating lookup reads it there since `5ac1d85`, which is what lets
+    `discard_draft` and `update_draft` accept a draft a reply filed in such a file. The measurement came
+    from the created-folder proof (`T2/LiveCreatedFolderTests`, its throwaway data file and
+    `Reset-ThrowawayStore.ps1`), which ran green on that guest and was then removed with the
+    requirement it proved: the maintainer dropped Q85's "may create, must report" for the draft tools
+    and `discard_draft` (`Docs/overnight-review-2026-10-03.md`, D120-D125). The true-root reading keeps
+    its T1 pins (`T1/ReadOnlyFolderLookupTests`); nothing on a guest re-measures it any more.
 26. **MEASURED 2026-10-03 (the Q99 folder finding) - how the index spells a FOLDER name holding
     `% / \ * ?`, and what a folder-scoped search does with it.** Microsoft documents those five as
     percent-encoded "if they are in the store or folder display name" (*About MAPI URLs for

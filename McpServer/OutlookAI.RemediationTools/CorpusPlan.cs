@@ -182,7 +182,7 @@ public sealed record CorpusPlanOptions(string CorpusId, long Seed, DateTime Anch
     /// <summary>
     /// Whether a hub or bystander population carries ALL THREE non-mail kinds the way the INDEXED guest
     /// can hold them deterministically - decided by the maintainer 2026-10-03 (his answer (b) to D62,
-    /// "all three kinds"; how, decided on his behalf: D120-D124 of Docs/overnight-review-2026-10-03.md).
+    /// "all three kinds"; how, decided on his behalf: D126-D130 of Docs/overnight-review-2026-10-03.md).
     /// Version 2's full set, at its ordinals and counts - the hub four appointments, four contacts and
     /// four tasks, the bystander fourteen of each - with each kind given the date the index can be
     /// held to:

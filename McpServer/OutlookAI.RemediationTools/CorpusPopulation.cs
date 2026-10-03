@@ -633,7 +633,7 @@ public sealed class CorpusPopulation
     /// <summary>
     /// The delivery time an APPOINTMENT or a TASK of an all-kinds population is given
     /// (<see cref="CorpusPlanOptions.IncludeAllKinds"/>), or null for every other item. Decided on the
-    /// maintainer's behalf 2026-10-03 (D120): one day older than the oldest dated item the population can
+    /// maintainer's behalf 2026-10-03 (D126): one day older than the oldest dated item the population can
     /// hold (<see cref="OldestDatedAgeSeconds"/>), then one hour further back per ordinal - the hub's at 61
     /// days and up, the bystander's at 731. So in the index's <c>DateReceived DESC</c> order every one of
     /// them sorts after every dated mail item and before the undated contacts: never the frontier, never a

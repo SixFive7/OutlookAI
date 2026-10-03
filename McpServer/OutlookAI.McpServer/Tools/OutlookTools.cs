@@ -687,13 +687,6 @@ public static class OutlookTools
         + "saved draft with their names and sizes. Attaching a file to a draft that already has a pending send "
         + "confirm_token invalidates that token.";
 
-    // Q85 (may create, must report), written once for the four draft creators so the wording
-    // cannot drift between them.
-    private const string CreatedDraftsFolderHint = " If the mailbox the draft is saved in has no Drafts folder (POP3, IMAP, "
-        + "data files), Outlook creates one and createdFolders names it; Exchange and Microsoft 365 mailboxes always have one. "
-        + "A folder that only appeared while a failed Drafts lookup ran is listed in appearedFolders instead - not claimed "
-        + "as created.";
-
     // The conversationId sentence is a decision (2026-10-03, QUESTIONS.md decision log): measured on a
     // POP3 data file under Office LTSC 2024, Outlook gives a renamed reply the id it derives from the kept
     // topic rather than the original's, and refuses a write to it. Exchange keeps the original's.
@@ -709,7 +702,6 @@ public static class OutlookTools
         + "identity and signature, and opened on screen (default) so the user can review, edit and send it themselves. "
         + "NOTHING IS SENT by this tool. Supply EITHER body (plain text, line breaks preserved) OR body_html (real HTML, for a "
         + "formatted letter); either way the text is placed above the signature."
-        + CreatedDraftsFolderHint
         + OutcomeHint)]
     public static async Task<CallToolResult> NewDraft(
         [Description("Sending account SMTP address (see list_accounts) - determines the From identity, the Drafts folder and the signature.")]
@@ -747,7 +739,6 @@ public static class OutlookTools
     [Description("Create a REPLY draft to a mail (hit id from search/thread, or EntryID) via Outlook's own Reply - "
         + "threading and the quoted original are preserved and the right account's signature is applied; your text goes above the quote. "
         + "The draft is saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT."
-        + CreatedDraftsFolderHint
         + OutcomeHint)]
     public static async Task<CallToolResult> ReplyDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
@@ -781,7 +772,6 @@ public static class OutlookTools
     [Description("Create a REPLY-ALL draft to a mail (hit id or EntryID) via Outlook's own ReplyAll - all original recipients kept, "
         + "threading and quoted history preserved, correct signature applied, your text above the quote. "
         + "Saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT."
-        + CreatedDraftsFolderHint
         + OutcomeHint)]
     public static async Task<CallToolResult> ReplyAllDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to reply to.")] string id,
@@ -815,7 +805,6 @@ public static class OutlookTools
     [Description("Create a FORWARD draft of a mail (hit id or EntryID) via Outlook's own Forward - quoted content and attachments "
         + "carried over, correct signature applied, your text above the quote. "
         + "Saved to Drafts and opened on screen (default) for the user to review, edit and send. NOTHING IS SENT."
-        + CreatedDraftsFolderHint
         + OutcomeHint)]
     public static async Task<CallToolResult> ForwardDraft(
         [Description("Hit id (e.g. h12) or full EntryID hex of the mail to forward.")] string id,
@@ -924,9 +913,7 @@ public static class OutlookTools
         + "Drafts, a draft from an earlier session (restarting the server clears the list), and the contents of Deleted "
         + "Items. It cannot empty anything and it cannot delete permanently.\n\n"
         + "It is a SOFT delete - exactly like pressing Delete in Outlook: the draft moves to Deleted Items and the result "
-        + "carries newEntryId plus fromFolder, so it can be put back with move_mail. A mailbox with no Deleted Items folder "
-        + "gets one created by Outlook, and createdFolders names it (one that only appeared while a failed lookup ran is "
-        + "in appearedFolders, not claimed as created). Anything it refuses comes back as a "
+        + "carries newEntryId plus fromFolder, so it can be put back with move_mail. Anything it refuses comes back as a "
         + "clear error saying why - it never silently does nothing. A failure that is NOT a refusal is a different "
         + "case: if Outlook fails during the delete itself, whether the draft was deleted is UNKNOWN and the error "
         + "says so - look in Deleted Items rather than assuming nothing happened. A failure before the delete says the "
@@ -1239,18 +1226,13 @@ public static class OutlookTools
             return Error("DraftRefused", ex.Message,
                 DraftRefusalAdvice(ex.Reason),
                 ex.Reason,
-                outcome: DraftRefusalOutcome(ex.Reason),
-                createdFolders: ex.CreatedFolders,
-                appearedFolders: ex.AppearedFolders);
+                outcome: DraftRefusalOutcome(ex.Reason));
         }
         catch (OperationOutcomeException ex)
         {
             // A service-layer failure that already knows what happened to the mail and says
-            // so in its own message; this arm only carries the machine-readable half out -
-            // including any folder the failed call created (Q85), and apart from those any
-            // that only appeared while it ran (Q96 question 1 (b)).
-            return Error("OperationFailed", ex.Message, null, outcome: ex.Outcome,
-                createdFolders: ex.CreatedFolders, appearedFolders: ex.AppearedFolders);
+            // so in its own message; this arm only carries the machine-readable half out.
+            return Error("OperationFailed", ex.Message, null, outcome: ex.Outcome);
         }
         catch (OutlookUnavailableException ex)
         {
@@ -1305,16 +1287,14 @@ public static class OutlookTools
     /// nothing that already read it breaks; the flag and the structured copy are additive.
     /// </para>
     /// </summary>
-    internal static CallToolResult Error(
+    private static CallToolResult Error(
         string type,
         string message,
         string? advice,
         string? reason = null,
         string? outcome = null,
         int? retryAfterSeconds = null,
-        string? writingRules = null,
-        IReadOnlyList<string>? createdFolders = null,
-        IReadOnlyList<string>? appearedFolders = null)
+        string? writingRules = null)
     {
         // 'reason' is the machine-readable refusal code (send/draft refusals), and
         // 'retryAfterSeconds' is machine-readable retry guidance for the transient states
@@ -1331,17 +1311,7 @@ public static class OutlookTools
         // sentence is the one thing no test can check. Absent means this server is NOT
         // stating an outcome, which is deliberately different from stating that nothing
         // changed.
-        //
-        // 'createdFolders' is the success result's field of the same name, carried by a
-        // failure: a draft tool or discard_draft that CREATED a folder before it failed says so
-        // here too (Q85: may create, must report), because this server cannot delete folders.
-        // Absent on every other error, so it changes no existing shape.
-        //
-        // 'appearedFolders' is its sibling (Q96 question 1 (b), 2026-10-03): folders that only
-        // appeared while a failed folder lookup ran, which this server does NOT claim to have
-        // created - kept out of 'createdFolders' so nothing reading that field can mistake one.
-        // Absent unless there were any.
-        var payload = new { error = new { type, reason, outcome, message, advice, retryAfterSeconds, createdFolders, appearedFolders, writingRules } };
+        var payload = new { error = new { type, reason, outcome, message, advice, retryAfterSeconds, writingRules } };
         return new CallToolResult
         {
             IsError = true,
