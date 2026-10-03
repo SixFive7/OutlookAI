@@ -247,6 +247,16 @@ public sealed class LiveDraftOptionsTests
             Assert.True(
                 renamedInfo.ConversationIndex!.Length > seedInfo.ConversationIndex!.Length,
                 "the renamed draft's ConversationIndex must still be a CHILD of the source's");
+
+            // Diagnostic (2026-10-03): on the first guest live run - a PST - the renamed draft's
+            // ConversationId differed from the seed's while its topic and index both held. Whether
+            // a PLAIN reply keeps the seed's id there says whether that is the override path's doing
+            // or how a PST computes the id at all. Ids and index lengths only (S4).
+            _output.WriteLine(
+                $"A3 conversation ids: seed={seedInfo.ConversationId ?? "-"} plain={plainInfo.ConversationId ?? "-"} "
+                + $"renamed={renamedInfo.ConversationId ?? "-"} (index len seed={seedInfo.ConversationIndex!.Length} "
+                + $"plain={plainInfo.ConversationIndex?.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-"} "
+                + $"renamed={renamedInfo.ConversationIndex!.Length})");
             Assert.Equal(seedInfo.ConversationId, renamedInfo.ConversationId);
             _output.WriteLine(
                 $"A3: subjectOverridden=true topicPreserved=true indexExtends=true "

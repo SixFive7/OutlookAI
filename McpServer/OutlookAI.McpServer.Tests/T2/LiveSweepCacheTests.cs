@@ -26,8 +26,18 @@ public sealed class LiveSweepCacheTests
         _output = output;
     }
 
+    /// <remarks>
+    /// <b>Requires the index (corrected 2026-10-03).</b> The cache is keyed on the scope's INDEX
+    /// FRONTIER, and a scope the index holds no mail for falls back to a wall-clock key that never
+    /// repeats - deliberately, so such a profile keeps sweeping live
+    /// (<c>MailService.SweepWindowPlan.CacheKeyBaseUtc</c>; pinned by
+    /// <c>T1/SweepCacheKeyTests.AProfileWithNoIndexedMailAtAll_StillSweepsLiveEveryTime</c>). This
+    /// test claimed only <c>OutlookInstance</c>, so it was scheduled on the unindexed guest, where
+    /// the first live run there found every follow-up search live (<c>cached=</c> empty, three
+    /// attempts) - the designed answer, not a regression. It belongs with the index tier.
+    /// </remarks>
     [Fact]
-    [Trait("Requires", "OutlookInstance")]
+    [Trait("Requires", "SearchIndex")]
     [Trait("Writes", "Nothing")]
     public void RapidSearches_PayOneSweep_SecondServedFromCache()
     {
