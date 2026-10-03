@@ -389,7 +389,7 @@ namespace OutlookAI.Core.Com
                     // the event, at near-zero cost. Best-effort either way.
                     try
                     {
-                        session._quitSink = new OutlookQuitSink(session.SignalOutlookGone);
+                        session._quitSink = new OutlookQuitSink(() => session.SignalOutlookGone(GoneByQuitEvent));
                         session._quitSinkRegistration = OutlookQuitSink.TryAdvise(session._application, session._quitSink);
                         session.QuitSinkActive = session._quitSinkRegistration != null;
                     }
@@ -446,7 +446,7 @@ namespace OutlookAI.Core.Com
                 {
                     // Died between attach and wiring - Exited may already have fired
                     // before the handler was added; signal explicitly (idempotent).
-                    SignalOutlookGone();
+                    SignalOutlookGone(GoneByProcessExit);
                 }
             }
             catch (Exception ex) when (!(ex is OutOfMemoryException))
@@ -458,21 +458,37 @@ namespace OutlookAI.Core.Com
 
         private void OnWatchedProcessExited(object? sender, EventArgs e)
         {
-            SignalOutlookGone();
+            SignalOutlookGone(GoneByProcessExit);
         }
+
+        /// <summary><see cref="GoneSignal"/> when the Application Quit event arrived first.</summary>
+        public const string GoneByQuitEvent = "quit event";
+
+        /// <summary><see cref="GoneSignal"/> when the OUTLOOK.EXE process exit was seen first.</summary>
+        public const string GoneByProcessExit = "process exit";
+
+        /// <summary>
+        /// Which signal told this session its Outlook was going - <see cref="GoneByQuitEvent"/> or
+        /// <see cref="GoneByProcessExit"/> - or null while neither has. A diagnostic surface: on Office
+        /// LTSC 2024 the Quit event arrives when the user closes the last visible window even though a
+        /// hidden Explorer would keep Outlook running (measured 2026-10-03), and the live tests tell that
+        /// apart from a crash by it.
+        /// </summary>
+        public string? GoneSignal { get; private set; }
 
         /// <summary>
         /// Signals (once) that the attached Outlook is quitting or gone. Runs the
         /// gateway-provided callback on a worker thread; the callback disposes this
         /// session, which releases all COM refs on the STA.
         /// </summary>
-        private void SignalOutlookGone()
+        private void SignalOutlookGone(string signal)
         {
             if (System.Threading.Interlocked.Exchange(ref _outlookGoneSignaled, 1) != 0)
             {
                 return;
             }
 
+            GoneSignal = signal;
             Action<OutlookComSession>? callback = _onOutlookGone;
             if (callback == null)
             {

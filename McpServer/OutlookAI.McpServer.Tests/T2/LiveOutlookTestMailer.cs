@@ -2348,6 +2348,43 @@ public static class LiveOutlookTestMailer
         }
     }
 
+    /// <summary>
+    /// READ-ONLY, for diagnostics: <c>Explorers.Count</c> of the RUNNING Outlook, or null when none is
+    /// running or it will not read. Never starts an Outlook, with the same caveat as
+    /// <see cref="DescribeExplorers"/>: not while the Outlook it watches may be exiting.
+    /// </summary>
+    public static int? CountExplorers()
+    {
+        if (!OutlookComSession.IsOutlookProcessRunning())
+        {
+            return null;
+        }
+
+        try
+        {
+            return RunSta<int?>(() =>
+            {
+                dynamic? app = null;
+                dynamic? explorers = null;
+                try
+                {
+                    app = CreateOutlookApplication();
+                    explorers = app.Explorers;
+                    return (int)explorers.Count;
+                }
+                finally
+                {
+                    Release(explorers);
+                    Release(app);
+                }
+            });
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     private static dynamic CreateOutlookApplication()
     {
         Type progIdType = Type.GetTypeFromProgID("Outlook.Application")

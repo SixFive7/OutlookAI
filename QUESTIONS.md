@@ -401,6 +401,31 @@ is reached through another apartment's proxy, which the registry does not hold. 
 is unchanged. **Not measured:** the maintainer's Office build, and whether `ActiveExplorer()` can
 return another session's hidden pin (`TODO.md`). **Undo:** revert the commit.
 
+**Then measured, and decided a second time (same day).** With the fix in, the test still failed in
+every full-suite run - two Explorers present, the pin's reference held - and passed when run alone.
+Five more probes never reproduced the exit; a ninety-second subset run (the show-me tests plus this
+one) did, and two scratch builds bisected it: without the session's Application Quit sink the test
+passed, with it it failed. **Office LTSC 2024 raises `Quit` when the user closes the last VISIBLE
+window, even though the hidden Explorer then keeps Outlook running.** The session hears it (SF-2),
+the gateway drops it, and its `Dispose` - because that session STARTED this Outlook - closes the pin
+("leave Outlook as you found it"), so Outlook ends. Alone, the test's pin belonged to another session,
+which kept it; in the suite the session that re-started Outlook pinned and promoted itself.
+*Options:* (i) keep honouring Quit - the user closing Outlook's last window is quitting it on Office
+2024, and closing the pin on Quit is also the only thing that lets the user's own Exit end an Outlook
+OutlookAI started (a pin left in place keeps it running, measured for the D49 dispose rule); (ii)
+treat Quit as a hint and keep the pin until the process really exits - then the user's Exit would
+leave Outlook running headless for as long as the server lives; (iii) drop the Quit sink - the same
+cost as (ii) on Exit, plus SF-2's early release. **Decided: (i)**, and the test is scoped to it, not
+loosened: when Outlook ends on the close, it passes only if the promoting session started Outlook,
+the window was not the pin (two Explorers before the close), and the session was ended by the QUIT
+EVENT - a process exit first would be a crash; the reattach that follows must still bring Outlook back
+headless. Otherwise Outlook must survive, as before. Made observable by `OutlookComSession.GoneSignal`
+and `ComGateway.LastSessionGoneSignal` (diagnostics, like `QuitSinkActive`). **What a user sees:**
+closing the window OutlookAI showed ends an Outlook that OutlookAI itself started, as closing Outlook
+would; OutlookAI starts it again, without a window, on its next request. **Undo:** revert the scoping
+commit; the test then holds every build to "survives" and fails on Office 2024 when OutlookAI started
+Outlook.
+
 ### 2026-10-03, autonomous - a subject override's conversation id outside Exchange: the promise is scoped, not dropped
 
 **Primer.** `reply_draft`, `replyall_draft` and `forward_draft` take a `subject` override. Assigning
