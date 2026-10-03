@@ -3545,6 +3545,19 @@ part in code. Nothing below is built; the maintainer decides first.
    has removed them.
 10. **Never**: an untagged item touched, a deletion by subject pattern, a send to anyone but the hub.
 
+**Which writes can move to the shared test mailbox once it exists (Q110) - read from the product's
+code on 2026-10-03, to be confirmed on it.** `new_draft` creates the draft with `Items.Add` in the
+SENDING ACCOUNT's Drafts and pins `SendUsingAccount` from an Account object
+(`OutlookComSession.TryCreateNewDraft`); a shared mailbox reached through the account is a delegate
+store, not an account, so new drafts - and `update_draft` and `discard_draft` on them - stay in
+telefonie's Drafts. `send` sends from the account, so its Sent Items copy stays in telefonie's Sent
+Items, and under the recipient allowlist the delivered copy lands in telefonie's Inbox. `reply_draft`,
+`replyall_draft` and `forward_draft` pin the account whose delivery store holds the source item and
+save "into that store's Drafts" (`TryCreateDerivedDraft`): for a source item in the shared mailbox no
+account has that store, `SendUsingAccount` is left to Outlook, and whether the draft then stays in the
+shared mailbox's Drafts is exactly what the first run there must read. `move_mail` and `archive_mail`
+move items wherever they are, so a population built in the shared mailbox can stay there.
+`manage_signature` writes no mailbox at all.
 ---
 ## 5. Which tests are in which bucket, and how to find out
 
