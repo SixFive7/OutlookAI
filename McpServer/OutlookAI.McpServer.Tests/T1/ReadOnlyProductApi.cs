@@ -136,6 +136,19 @@ internal static class ReadOnlyProductApi
             + "a window it owns, never an item, a folder or the user's own window",
     };
 
+    /// <summary>
+    /// Test-side methods that name a write-capable MCP tool ONLY to refuse it before anything is sent -
+    /// keyed by the analyzer's own description of the method (<c>Type.Member</c>), each with the reason
+    /// the literal is a refusal and never a call. <c>EveryRefusalOnlyToolName_StillPointsAtRealCode</c>
+    /// keeps every key on real code.
+    /// </summary>
+    internal static readonly IReadOnlyDictionary<string, string> RefusalOnlyToolNames = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["McpStdioClient.DescribeAuditLogContact"] =
+            "compares the tool name with 'discard_draft' to REFUSE, before sending, a call the server would answer by "
+            + "writing its real audit log (Q86); the client never sends it",
+    };
+
     /// <summary>The key a product member is listed under: its type's full name, a dot, its name.</summary>
     public static string KeyOf(MethodBase method)
     {

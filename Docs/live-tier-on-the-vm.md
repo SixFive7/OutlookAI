@@ -2514,8 +2514,11 @@ OK: OUTLOOK.EXE pid 544 in session 1, NOT elevated, profile 'OutlookAI-Tier'. Le
 Hub population 'hub-unindexed' in 'tier@vm.invalid' is anchored 2026-10-03T01:29:52Z; its newest item is 2026-10-03T01:28:52Z.
 The frontier test can catch a local-time misreading until 2026-10-03T03:23:52Z - 110 min from now (115 min on this guest's UTC offset of 02:00:00). START THE RUN NOW, by Testbed/README.md section 4c, with:
   the opt-in   $env:OUTLOOKAI_LIVE_OPT_IN = 'OAI-UNINDEXED'
-  the filter   --filter "Category=Live&Requires!=DelegateStore&Requires!=SearchIndex"
+  the filter   --filter "Category=Live&Requires!=DelegateStore&Requires!=CachedExchange&Requires!=SearchIndex"
 ```
+
+(Shown as the script prints it since Q74. The guest's copy that night predated Q74 and printed the
+same filter without `Requires!=CachedExchange`, which Q74 added a few hours later.)
 
 **Why it ran twice.** Section 3b's item 7 asked what the teardown leaves in the hub's Deleted Items; the
 first run answered "two emptied folders", and only a second could say whether a second pair collides,

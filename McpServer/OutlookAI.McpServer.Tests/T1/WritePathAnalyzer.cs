@@ -111,7 +111,8 @@ internal static class WritePathAnalyzer
                 IlInstruction instruction = body[i];
                 if (instruction.Text != null)
                 {
-                    if (McpToolWriteClassification.Classify(instruction.Text) == McpToolEffect.Writes)
+                    if (McpToolWriteClassification.Classify(instruction.Text) == McpToolEffect.Writes
+                        && !ReadOnlyProductApi.RefusalOnlyToolNames.ContainsKey(Describe(method)))
                     {
                         findings.Add(Finding(method, "names the write-capable MCP tool '" + instruction.Text + "'"));
                     }

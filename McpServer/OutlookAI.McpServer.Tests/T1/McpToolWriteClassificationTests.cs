@@ -27,7 +27,7 @@ public sealed class McpToolWriteClassificationTests
     /// </summary>
     private static readonly string[] ReadOnlyTools =
     {
-        "search", "thread", "read", "list_accounts", "list_folders", "list_signatures", "outlook_health",
+        "search", "thread", "read", "list_accounts", "list_folders", "list_signatures", "outlook_health", "audit_log",
     };
 
     private readonly ITestOutputHelper _output;

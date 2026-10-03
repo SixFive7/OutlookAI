@@ -103,6 +103,21 @@ public sealed class ReadOnlyLiveTestTests
         }
     }
 
+    [Fact]
+    public void EveryRefusalOnlyToolName_StillPointsAtRealCode()
+    {
+        foreach (string key in ReadOnlyProductApi.RefusalOnlyToolNames.Keys)
+        {
+            string[] parts = key.Split('.');
+            Assert.Equal(2, parts.Length);
+            bool found = typeof(ReadOnlyLiveTestTests).Assembly.GetTypes()
+                .Where(t => t.Name == parts[0])
+                .SelectMany(t => t.GetMethods(Everything))
+                .Any(m => m.Name == parts[1]);
+            Assert.True(found, "the refusal-only exemption '" + key + "' names a test-side method that no longer exists");
+        }
+    }
+
     // ------------------------------------------------------------------ controls: each kind of write is seen
 
     [Theory]
