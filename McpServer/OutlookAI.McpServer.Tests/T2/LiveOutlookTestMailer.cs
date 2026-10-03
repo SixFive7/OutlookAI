@@ -1088,9 +1088,11 @@ public static class LiveOutlookTestMailer
 
     /// <summary>
     /// READ-ONLY: where a store says which folder is its Drafts - <c>PR_IPM_DRAFTS_ENTRYID</c> read
-    /// at the three places the object model can reach: the store object and the Inbox (where the
-    /// product's non-creating lookup reads it) and the store's top folder (where it does not) -
-    /// beside the EntryID of the folder <paramref name="draftEntryId"/> sits in. For the
+    /// at the three places the object model hands out: the store object and the Inbox (where the
+    /// product's non-creating lookup reads it) and the store's top folder (where it does not) - and,
+    /// since the first guest runs (2026-10-03, F10), at the store's TRUE root folder, which the
+    /// object model never hands out and the lookup now reads too - beside the EntryID of the folder
+    /// <paramref name="draftEntryId"/> sits in. For the
     /// created-folder proof's record (Q96 question 3, 2026-10-03): where Outlook registers a Drafts
     /// folder it makes in a data file with no Inbox, which decides whether and where the lookup is
     /// widened. Reads through the product's own <see cref="ComSpecialFolderStore"/>, opens the
@@ -1107,6 +1109,7 @@ public static class LiveOutlookTestMailer
             dynamic? store = null;
             object? root = null;
             object? inbox = null;
+            object? trueRoot = null;
             dynamic? draft = null;
             dynamic? parent = null;
             dynamic? parentStore = null;
@@ -1159,10 +1162,37 @@ public static class LiveOutlookTestMailer
                         null));
                 }
 
+                // The store's TRUE root folder (MS-PST NID 0x122), the parent of the top folder: where the
+                // first guest runs found Outlook registering the Drafts folder it made in a data file with no
+                // Inbox (runbook 4.1e, F10), and where the product's lookup reads it since 5ac1d85. Reached
+                // the way the product reaches it - the top folder's PR_PARENT_ENTRYID, opened with
+                // GetFolderFromID - so nothing is created. Status null: the top folder names no parent.
+                PropertyRead parentOfTop = special.ReadFolderProperty(root!, SpecialFolders.ParentEntryIdSchema);
+                string? trueRootId = parentOfTop.Status == PropertyReadStatus.Found
+                    ? ArchiveFolderResolution.TryReadEntryIdHex(parentOfTop.Value)
+                    : null;
+                if (trueRootId == null)
+                {
+                    reads.Add(new DesignationRead(
+                        "true root",
+                        parentOfTop.Status == PropertyReadStatus.NotFound ? null : PropertyReadStatus.Failed,
+                        null));
+                }
+                else if (special.OpenFolder(trueRootId, out trueRoot) == PropertyReadStatus.Found && trueRoot != null)
+                {
+                    PropertyRead onTrueRoot = special.ReadFolderProperty(trueRoot, SpecialFolders.DraftsEntryIdSchema);
+                    reads.Add(new DesignationRead("true root", onTrueRoot.Status, onTrueRoot.Value));
+                }
+                else
+                {
+                    reads.Add(new DesignationRead("true root", PropertyReadStatus.Failed, null));
+                }
+
                 return new DraftsDesignationReading(draftsFolderEntryId, reads);
             }
             finally
             {
+                Release(trueRoot);
                 Release(inbox);
                 Release(root);
                 Release(parentStore);
